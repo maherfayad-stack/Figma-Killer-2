@@ -41,10 +41,14 @@
  * imported rule is left to render from THIS injector alone, so its CSSOM-
  * lossy registry entry is never emitted at all.
  *
- * `mc-authored` is always inserted BEFORE `mc-classes` in DOM source order
- * (see the effect below) — both share `@layer user-authored`, and cascade
- * order inside a layer is source order, so a session-edited overlay rule for
- * the SAME selector still wins over this raw, on-disk value.
+ * `mc-authored` must always precede `mc-classes` in DOM source order — both
+ * share `@layer user-authored`, and cascade order inside a layer is source
+ * order, so a session-edited overlay rule for the SAME selector still wins
+ * over this raw, on-disk value. Since `live-05` (STATE.md), both are managed
+ * through `adapter.applyOverlay`, whose first-call-wins insertion order is
+ * fixed by `IframeFrameSurface.tsx`'s JSX order (this component before
+ * `ClassStyleInjector`) — see that file's comment at the call site. Do not
+ * reorder those two without re-checking this invariant.
  *
  * ## Known gap — deleting an imported ambient rule
  *
@@ -57,8 +61,9 @@
  * narrow follow-up, not silently swallowed.
  */
 
-import { useEffect, useSyncExternalStore } from 'react'
+import { useContext, useEffect, useSyncExternalStore } from 'react'
 import { getStudioAuthoredCss, subscribeStudioAuthoredCss } from '@site/studio/fsCodemodAdapter'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
 import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
@@ -66,8 +71,6 @@ import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 const STYLE_TAG_ID = 'mc-authored'
 
 interface AuthoredCssInjectorProps {
-  /** Document to inject the <style> tag into. Defaults to the editor's main document. */
-  targetDocument?: Document
   /**
    * Frame viewport used to resolve CSS viewport units (`vh`/`vw`/…) to fixed
    * px so they don't feed the iframe's grow-to-content height loop. When
@@ -76,35 +79,25 @@ interface AuthoredCssInjectorProps {
   viewport?: CanvasViewport
 }
 
-export function AuthoredCssInjector({ targetDocument, viewport }: AuthoredCssInjectorProps = {}) {
+export function AuthoredCssInjector({ viewport }: AuthoredCssInjectorProps = {}) {
   const authoredCss = useSyncExternalStore(subscribeStudioAuthoredCss, getStudioAuthoredCss, getStudioAuthoredCss)
+  const adapter = useContext(CanvasFrameAdapterContext)
 
   useEffect(() => {
-    const doc = targetDocument ?? document
-    let styleEl = doc.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = doc.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'AuthoredCssInjector')
-      // Prepend — same pattern `ProjectCssInjector` uses — so this
-      // stylesheet is read BEFORE `mc-classes` (`ClassStyleInjector`)
-      // regardless of which component's mount effect happens to run first.
-      // Both share `@layer user-authored`; cascade priority inside one
-      // layer is source order, so this ordering is what lets a session-
-      // edited overlay rule win over this injector's raw, on-disk value for
-      // the same selector — see this module's "Raw vs. overlay" doc.
-      doc.head.insertBefore(styleEl, doc.head.firstChild)
-    }
+    if (!adapter) return
     const viewportResolved = viewport ? resolveViewportUnitsForCanvas(authoredCss, viewport) : authoredCss
     const css = rewritePrefersColorScheme(viewportResolved)
-    styleEl.textContent = css
-      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n/* no authored css */`
+    adapter.applyOverlay(
+      STYLE_TAG_ID,
+      css
+        ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+        : `${CANVAS_CSS_LAYER_ORDER}\n/* no authored css */`,
+    )
+  }, [adapter, viewport, authoredCss])
 
-    return () => {
-      doc.getElementById(STYLE_TAG_ID)?.remove()
-    }
-  }, [targetDocument, viewport, authoredCss])
+  useEffect(() => {
+    return () => adapter?.removeOverlay(STYLE_TAG_ID)
+  }, [adapter])
 
   return null
 }

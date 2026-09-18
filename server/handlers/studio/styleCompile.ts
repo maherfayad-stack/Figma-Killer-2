@@ -41,7 +41,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
 import { joinAppRoot } from './appRoot'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
 import { CSS_MODULE_FILE_RE, readCappedFile } from './styleCompileFileRead'
@@ -178,6 +178,7 @@ function compileCssModules(dir: string, warnings: ProbeWarning[]): { css: string
   let sassModuleCount = 0
 
   for (const relPath of files) {
+    if (isDesignSystemPath(relPath)) continue // Studio's own copy — see `isDesignSystemPath`
     if (!CSS_MODULE_FILE_RE.test(relPath)) continue
     if (!CSS_MODULE_PLAIN_CSS_RE.test(relPath)) {
       sassModuleCount++
@@ -227,7 +228,9 @@ const BARE_CSS_IMPORT_RE = /import\s+(?:[\w*${},\s]+\s+from\s+)?['"]([^'"]+\.css
  * excluded here so the caller only ever sees real package specifiers.
  */
 function findBareCssImportSpecifiers(dir: string): Set<string> {
-  const files = listWorkspaceFiles(dir).filter((f) => /\.(tsx?|jsx?)$/i.test(f)).sort()
+  const files = listWorkspaceFiles(dir)
+    .filter((f) => /\.(tsx?|jsx?)$/i.test(f) && !isDesignSystemPath(f))
+    .sort()
   const specifiers = new Set<string>()
   for (const relPath of files) {
     const text = readCappedFile(join(dir, ...relPath.split('/')))
@@ -335,6 +338,11 @@ function cacheFilePaths(dir: string, cacheKey: string): { css: string; json: str
 function computeStyleCacheKey(dir: string, profile: ProjectProfile, trust: TrustTier, hasVendorCssCandidates: boolean): string {
   const toolchain = profile.styleToolchain
   const relevant = listWorkspaceFiles(dir).filter((relPath) => {
+    // Studio's own design-system copy contributes nothing to the compile
+    // output (no `.module.css`, no bare-specifier import of its own), so
+    // fingerprinting its ~45 stylesheets would only add cost — and would
+    // re-invalidate the whole cache every time Studio re-synced the folder.
+    if (isDesignSystemPath(relPath)) return false
     if (/\.(css|scss|sass|less)$/i.test(relPath)) return true
     if (/^(postcss|tailwind)\.config\.(js|cjs|mjs|ts)$/i.test(basename(relPath))) return true
     // Only when Tailwind's JIT output depends on it, OR when a bare-specifier

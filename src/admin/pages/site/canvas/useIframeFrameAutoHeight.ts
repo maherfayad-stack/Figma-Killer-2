@@ -1,8 +1,8 @@
 import { useEffect, type RefObject } from 'react'
+import { collectScrollDeficits, resolveFrameFitHeight } from '@core/studio-runtime'
 import { isCanvasGestureActive, onCanvasGestureSettle } from './canvasGesture'
 import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
-import { collectScrollDeficits, resolveFrameFitHeight } from './resolveFrameFitHeight'
 import {
   createFrameFitMutationScheduler,
   FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
@@ -12,10 +12,14 @@ import {
   getIframeObserverDocument,
   observeIframeMutations,
 } from './iframeFrameObservers'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 interface UseIframeFrameAutoHeightOptions {
   iframeRef: RefObject<HTMLIFrameElement | null>
+  /** Portal-mode-only — the escape hatch this hook's own portal branch still uses directly, alongside `adapter`, since its DOM-observer wiring is far more than a single `Document` reference. */
   iframeDoc: Document | null
+  adapter: FrameDocumentAdapter | null
   isLive: boolean
 }
 
@@ -42,16 +46,52 @@ interface UseIframeFrameAutoHeightOptions {
  *
  * Nothing here writes a measured value into body: body is only ever the fitted
  * pin, which is what keeps the pin ⇄ relayout loop open.
+ *
+ * Bridge-mode branch (`live-05`, STATE.md, Batch 5): a cross-origin frame
+ * cannot be observed from the parent at all (no `contentDocument` access),
+ * so `runtime.ts` runs the BODY-pinning half of this same logic in-frame
+ * (the SAME `resolveFrameFitHeight`/`collectScrollDeficits` pair, ported
+ * into `@core/studio-runtime` for exactly this) and reports the result via
+ * an outbound `frame:resize` message. This hook's bridge branch is only the
+ * OTHER half — translating that reported height into the outer `<iframe>`
+ * element's own height on the parent canvas, via the same
+ * `resolveCanvasFrameHeight` shrink-capable smoothing portal mode uses.
+ * `frame:resize` carries a single `body.scrollHeight` reading (not a
+ * separate `documentElement.scrollHeight`, which only exists as a distinct
+ * quantity due to a same-origin iframe-viewport-flooring quirk that doesn't
+ * apply to a value read fresh, in-frame, every fit pass) — passing that one
+ * value for BOTH of `resolveCanvasFrameHeight`'s inputs correctly collapses
+ * its portal-only "stuck at the stale floor" branch to a no-op and always
+ * falls through to trusting the reported height directly, which is exactly
+ * right here.
  */
 export function useIframeFrameAutoHeight({
   iframeRef,
   iframeDoc,
+  adapter,
   isLive,
 }: UseIframeFrameAutoHeightOptions): void {
   useEffect(() => {
-    if (isLive || !iframeDoc) return
+    if (isLive) return
     const iframe = iframeRef.current
     if (!iframe) return
+
+    if (!isPortalFrameAdapter(adapter)) {
+      if (!adapter) return
+      let current = parseFloat(iframe.style.height || '0')
+      return adapter.on('frame:resize', ({ height }) => {
+        const target = resolveCanvasFrameHeight({
+          bodyScrollHeight: height,
+          documentScrollHeight: height,
+          currentFrameHeight: current,
+        })
+        if (Math.abs(current - target) <= 0.5) return
+        iframe.style.height = `${target}px`
+        current = target
+      })
+    }
+
+    if (!iframeDoc) return
     const observerDocument = getIframeObserverDocument(iframe, iframeDoc)
     const observerBody = observerDocument.body
     const observerRoot = observerDocument.documentElement
@@ -155,5 +195,5 @@ export function useIframeFrameAutoHeight({
       ro.disconnect()
       mo?.disconnect()
     }
-  }, [iframeDoc, iframeRef, isLive])
+  }, [iframeDoc, iframeRef, isLive, adapter])
 }

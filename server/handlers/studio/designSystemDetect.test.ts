@@ -33,6 +33,33 @@ describe('detectDesignSystems', () => {
     expect(detectDesignSystems(dir, [], identityPrefix)).toEqual([])
   })
 
+  /**
+   * DS-3 — the built-in design system is declared by the FOLDER Studio writes,
+   * not by any dependency. `root` names the project's own copy (what its
+   * imports point at); the system's docs and compiled CSS are read from
+   * Studio's vendored copy instead — see `designSystemCssRoot`.
+   */
+  it("reports the built-in design system for a project carrying Studio's folder", () => {
+    write('design-system/index.js', 'export {}')
+    expect(detectDesignSystems(dir, [], identityPrefix)).toEqual([
+      { name: 'alm', source: 'builtin', root: 'design-system' },
+    ])
+  })
+
+  it('does NOT report it for a folder with no entry file — a half-written copy is not a design system', () => {
+    write('design-system/components/Button.jsx', 'export function Button() { return null }')
+    expect(detectDesignSystems(dir, [], identityPrefix)).toEqual([])
+  })
+
+  it('puts the built-in system FIRST when a project also has an installed package', () => {
+    // An unmigrated project mid-migration is exactly this shape. Whatever
+    // picks "the" design system (the guide generator, the catalog note)
+    // should land on the one the project's own pages import.
+    write('design-system/index.js', 'export {}')
+    const result = detectDesignSystems(dir, ['acme-ui'], identityPrefix)
+    expect(result.map((d) => d.source)).toEqual(['builtin', 'node-modules'])
+  })
+
   it('reports one entry per componentPackages name, app-root-prefixed through the caller-supplied closure', () => {
     const prefixAppRoot = (rel: string): string => `apps/web/${rel}`
     const result = detectDesignSystems(dir, ['@alm-design/design-system'], prefixAppRoot)

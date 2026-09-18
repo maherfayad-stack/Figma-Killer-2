@@ -43,7 +43,8 @@
  * CSS injectors) — one IframeFrameSurface = one set of <style> elements.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 
 const STYLE_TAG_ID = 'studio-editor-chrome'
 
@@ -125,25 +126,26 @@ const CHROME_TOKEN_ALIASES = [
   ['--space-12xl', '--chrome-space-12xl'],
 ] as const
 
-interface EditorChromeInjectorProps {
-  /** The iframe document to inject the chrome stylesheet into. */
-  targetDocument: Document
-  /** The parent (editor) document to read design tokens from. */
-  parentDocument: Document
-}
-
 /**
- * Read the listed tokens from parentDoc's computed :root and return a
- * `:root { ... }` block that sets them on the iframe's root. Only tokens
- * that resolve to a non-empty value are included. Admin typography aliases are
- * mapped onto chrome-namespaced variables so they never override the site's own
- * Framework tokens.
+ * Read the listed tokens from the ADMIN document's computed `:root` and
+ * return a `:root { ... }` block that sets them on the iframe's root. Only
+ * tokens that resolve to a non-empty value are included. Admin typography
+ * aliases are mapped onto chrome-namespaced variables so they never override
+ * the site's own Framework tokens.
+ *
+ * Always reads the global `document` — this is the admin shell's OWN
+ * top-level document, never an iframe's, regardless of `documentMode`
+ * ('portal' or a future 'bridge'). It is intentionally not threaded through
+ * `FrameDocumentAdapter`: that interface exists to abstract reaching INTO a
+ * canvas frame, not the admin app's own document, which is always
+ * same-origin and always just `document`. See
+ * `frame-document-adapter-isolation.test.ts`'s allowlist note.
  *
  * Module-scope so the React Compiler doesn't flag the getComputedStyle call
  * as a side-effect inside a component body.
  */
-function buildTokenBlock(parentDoc: Document): string {
-  const parentStyles = getComputedStyle(parentDoc.documentElement)
+function buildTokenBlock(): string {
+  const parentStyles = getComputedStyle(document.documentElement)
   const declarations = CHROME_TOKENS.flatMap((token) => {
     const value = parentStyles.getPropertyValue(token).trim()
     return value ? [`  ${token}: ${value};`] : []
@@ -485,31 +487,20 @@ const CHROME_RULES = `
 }
 `.trim()
 
-export function EditorChromeInjector({ targetDocument, parentDocument }: EditorChromeInjectorProps) {
-  useEffect(() => {
-    let styleEl = targetDocument.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = targetDocument.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'EditorChromeInjector')
-      // Prepend before author CSS injectors (ClassStyleInjector, UserStylesheetInjector)
-      // so source order inside the head is tidy. The unlayered-vs-@layered cascade
-      // is what actually ensures chrome wins — source order is secondary.
-      targetDocument.head.insertBefore(styleEl, targetDocument.head.firstChild)
-    }
-    const tokenBlock = buildTokenBlock(parentDocument)
-    styleEl.textContent = tokenBlock ? `${tokenBlock}\n\n${CHROME_RULES}` : CHROME_RULES
-  }, [targetDocument, parentDocument])
+export function EditorChromeInjector() {
+  const adapter = useContext(CanvasFrameAdapterContext)
 
-  // Cleanup: remove the style element when the component unmounts or when
-  // targetDocument changes. Captures the current doc value so cleanup always
-  // targets the document this effect installed to.
   useEffect(() => {
-    const targetDoc = targetDocument
-    return () => {
-      targetDoc.getElementById(STYLE_TAG_ID)?.remove()
-    }
-  }, [targetDocument])
+    if (!adapter) return
+    const tokenBlock = buildTokenBlock()
+    adapter.applyOverlay(STYLE_TAG_ID, tokenBlock ? `${tokenBlock}\n\n${CHROME_RULES}` : CHROME_RULES)
+  }, [adapter])
+
+  // Cleanup: remove the overlay when the component unmounts or the adapter
+  // instance changes (a fresh frame document).
+  useEffect(() => {
+    return () => adapter?.removeOverlay(STYLE_TAG_ID)
+  }, [adapter])
 
   return null
 }

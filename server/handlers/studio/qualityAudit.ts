@@ -135,7 +135,8 @@
  *      as a JSX tag — an unused import is not coverage).
  *
  * **Composition** (`off-scale-spacing`, `off-scale-type-size`,
- * `flat-type-hierarchy`) lives in `compositionAudit.ts`, not here: those are
+ * `flat-type-hierarchy`, and A13's `monotone-band-rhythm` / `no-focal-point`)
+ * lives in `compositionAudit.ts`, not here: those are
  * PAGE-level aggregates over the page's whole sheet set, a different unit of
  * work from this module's per-declaration, per-file compliance scan. Their
  * codes stay in `QualityFindingCode` below because both audits feed one
@@ -241,6 +242,8 @@ export type QualityFindingCode =
   | 'off-scale-spacing'
   | 'off-scale-type-size'
   | 'flat-type-hierarchy'
+  | 'monotone-band-rhythm'
+  | 'no-focal-point'
 
 export interface QualityFinding {
   readonly code: QualityFindingCode
@@ -251,6 +254,17 @@ export interface QualityFinding {
   readonly message: string
   /** Present only for `raw-hex-color`/`raw-px-length`, when a project token is within range of the authored value. */
   readonly suggestedToken?: { readonly name: string; readonly value: string }
+  /**
+   * A12 — how hard this finding bites under the turn's design policy.
+   *
+   * Stamped by `studio_quality_check` (the one caller that knows the policy),
+   * not by the audits, which are pure text scanners with no session in view.
+   * `error` fails the Stop gate; `warning` does not. A finding the policy
+   * turns OFF is never produced at all, so `'off'` never appears here — see
+   * `designPolicy.ts` for why a suppressed-but-returned finding is worse than
+   * no finding.
+   */
+  readonly severity?: 'error' | 'warning'
 }
 
 export interface QualityAuditResult {

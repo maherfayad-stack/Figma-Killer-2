@@ -32,15 +32,13 @@
  */
 
 import { useSyncExternalStore } from 'react'
+import type { AnimationPlayPhase } from '@core/studio-runtime'
 
-/**
- * `reset` strips `animation` entirely for one frame so the next phase starts
- * every animation from its first keyframe; `playing` lets each run once at its
- * authored speed and settle on its last. `idle` is the resting state, in which
- * `progress` (or, when that is `null`, the frame's own freeze point) decides
- * what is shown.
- */
-export type AnimationPlayPhase = 'idle' | 'reset' | 'playing'
+// `AnimationPlayPhase` itself now lives in `@core/studio-runtime`
+// (`animationFreezeRules.ts`) — it's part of the freeze-rules contract the
+// live runtime shares, and this store is one of its two consumers. Re-export
+// so existing importers of this module don't need a second import line.
+export type { AnimationPlayPhase }
 
 export interface CanvasAnimationScrub {
   /**

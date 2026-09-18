@@ -1,9 +1,11 @@
 /**
  * Who owns Ctrl/⌘+Z — the editor, or the focused text field?
  *
- * `UndoRedoButtons` owns the undo/redo keystroke (it is listed in
+ * `useEditorHistoryShortcuts` owns the undo/redo keystroke — the `global` rung
+ * of the editor key ladder (`K1` moved it off `UndoRedoButtons`, which is now
+ * buttons only). `editor.undo`/`editor.redo` are listed in
  * `shortcutDispatch.ts`'s `COMPONENT_OWNED_SHORTCUTS`, so the spotlight
- * dispatcher deliberately does not also fire it). Its guard used to be a
+ * dispatcher deliberately does not also fire them. The guard used to be a
  * blanket "target is INPUT / TEXTAREA / contentEditable → do nothing".
  *
  * That was survivable while inspector fields were empty boxes. Since the
@@ -22,7 +24,19 @@
 import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
 import { render, cleanup, fireEvent } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
-import { UndoRedoButtons } from '@site/canvas/UndoRedoButtons'
+import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
+import { useEditorHistoryShortcuts } from '@site/canvas/useEditorHistoryShortcuts'
+
+/**
+ * The two halves that make ⌘Z real: the ONE `document` listener (normally
+ * mounted by `SitePage`) and the `global` scope handler that claims the key.
+ * Rendering them together is the smallest honest stand-in for the editor.
+ */
+function HistoryKeys() {
+  useEditorKeyDispatcher()
+  useEditorHistoryShortcuts()
+  return null
+}
 
 afterEach(cleanup)
 
@@ -60,7 +74,7 @@ describe('Ctrl/⌘+Z routing', () => {
   })
 
   it('runs the editor undo when focus is not in a text field', () => {
-    render(<UndoRedoButtons />)
+    render(<HistoryKeys />)
     expect(nodeCount()).toBe(seeded.nodeCount + 1)
     pressUndo(document)
     expect(nodeCount()).toBe(seeded.nodeCount)
@@ -69,7 +83,7 @@ describe('Ctrl/⌘+Z routing', () => {
   it('runs the editor undo when focus is in a field with no uncommitted draft', () => {
     const { container } = render(
       <>
-        <UndoRedoButtons />
+        <HistoryKeys />
         <input aria-label="Width" defaultValue="320px" />
       </>,
     )
@@ -83,7 +97,7 @@ describe('Ctrl/⌘+Z routing', () => {
   it('leaves ⌘Z to the field when it holds an uncommitted draft', () => {
     const { container } = render(
       <>
-        <UndoRedoButtons />
+        <HistoryKeys />
         <input aria-label="Width" defaultValue="320px" />
       </>,
     )
@@ -98,7 +112,7 @@ describe('Ctrl/⌘+Z routing', () => {
   it('hands ⌘Z back to the editor once the field commits its draft', () => {
     const { container } = render(
       <>
-        <UndoRedoButtons />
+        <HistoryKeys />
         <input aria-label="Width" defaultValue="320px" />
       </>,
     )
@@ -115,7 +129,7 @@ describe('Ctrl/⌘+Z routing', () => {
   it('a fresh focus clears a previous field draft', () => {
     const { container } = render(
       <>
-        <UndoRedoButtons />
+        <HistoryKeys />
         <input aria-label="Width" defaultValue="320px" />
         <input aria-label="Height" defaultValue="200px" />
       </>,
@@ -132,7 +146,7 @@ describe('Ctrl/⌘+Z routing', () => {
   it('a textarea keeps native undo while its draft is pending', () => {
     const { container } = render(
       <>
-        <UndoRedoButtons />
+        <HistoryKeys />
         <textarea aria-label="Prompt" defaultValue="" />
       </>,
     )

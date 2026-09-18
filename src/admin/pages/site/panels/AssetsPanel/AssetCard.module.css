@@ -1,0 +1,102 @@
+/* AssetCard — a borderless tile on the panel's darker surface, per the card
+   surface pattern (see Widget.module.css): tone, never a border, carries
+   hover. */
+
+.cell {
+    position: relative;
+    min-width: 0;
+}
+
+.card {
+    width: 100%;
+    height: auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--space-4xs);
+    padding: var(--space-2xs);
+    background: var(--bg-surface-2);
+    border-radius: var(--card-radius);
+    text-align: start;
+    overflow: hidden;
+}
+
+.card:hover:not(:disabled) {
+    background: var(--bg-surface-3);
+}
+
+.cardDisabled {
+    opacity: 0.55;
+}
+
+/* The picture. A fixed aspect ratio keeps the grid on a rhythm no matter how
+   tall the rendered component turns out to be — `AssetPreview` scales its own
+   content to fit inside this box. */
+.preview {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    border-radius: var(--radius);
+    background: var(--bg-surface);
+    color: var(--text-muted);
+    overflow: hidden;
+}
+
+.name {
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    color: var(--text-bright);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.description {
+    font-size: var(--text-3xs);
+    line-height: 1.35;
+    color: var(--text-subtle);
+    /* Two lines, then ellipsis — a one-line clamp cut nearly every
+       design-system description mid-phrase. */
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    overflow: hidden;
+}
+
+/* Why this card matched, when the reason was not its own name. */
+.keywordChip {
+    align-self: flex-start;
+    max-width: 100%;
+    padding: 0 var(--space-3xs);
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-4);
+    color: var(--text-muted);
+    font-size: var(--text-3xs);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* Outside the card button — a button inside a button is invalid, and pinning
+   must never insert. */
+.favorite {
+    position: absolute;
+    top: var(--space-3xs);
+    inset-inline-end: var(--space-3xs);
+    opacity: 0;
+    color: var(--text-subtle);
+}
+
+.cell:hover .favorite,
+.favorite:focus-visible,
+.favorite[aria-pressed='true'] {
+    opacity: 1;
+}
+
+.favorite[aria-pressed='true'] {
+    color: var(--text-bright);
+}

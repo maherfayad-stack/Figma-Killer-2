@@ -83,7 +83,14 @@ export function SlotPicker({ propKey, label, ownerRelPath, submittingName, mode,
 
   function handlePick(candidate: SlotCandidate) {
     if (candidate.kind === 'component') {
-      onPick({ name: candidate.name, importSpecifier: candidate.importSpecifier }, candidate.name)
+      onPick(
+        {
+          name: candidate.name,
+          ...(candidate.importSpecifier === undefined ? {} : { importSpecifier: candidate.importSpecifier }),
+          ...(candidate.designSystemImport === undefined ? {} : { designSystemImport: candidate.designSystemImport }),
+        },
+        candidate.name,
+      )
       return
     }
     const converted = svgToJsxNode(candidate.markup)

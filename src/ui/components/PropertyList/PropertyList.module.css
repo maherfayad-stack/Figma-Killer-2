@@ -12,9 +12,22 @@
  * are fixed-width so they never get squeezed off the edge.
  */
 
+/*
+ * Every caller mounts this inside a `Section`, whose `.sectionContent`
+ * already insets its children by `--inspector-pad-x` (the frozen panel-
+ * content inset). `.row` below re-applies that SAME inset to its own
+ * content (so the hover/focus highlight can bleed to the section's true
+ * edge, Figma-style, rather than stopping at the inherited inset) — which
+ * means the outer `.list` box must cancel the inherited inset first, or the
+ * row's text lands 24px in instead of 12px, visibly further right than
+ * every plain property row beside it. Found auditing the reported
+ * Component-section spacing bug: this was the same class of drift across
+ * Fill/Stroke/Shadow/Blur/Animations/Export (every `PropertyList` consumer).
+ */
 .list {
     display: flex;
     flex-direction: column;
+    margin-inline: calc(var(--inspector-pad-x) * -1);
 }
 
 .row {
@@ -35,6 +48,16 @@
 .row:focus-visible {
     outline: none;
     box-shadow: var(--focus-ring);
+}
+
+/* "Rendered, not stored" (`STATE.md` panel-30): the row's value came from
+   the frame's real computed style, not from anything the active target
+   declares. `.summary`/`.value` inherit `color` from this rule (neither sets
+   its own), the same "one tone down, never a placeholder" language
+   `ScrubInput.module.css`'s own `.input.inherited` already uses for the
+   identical fact on a scalar field. */
+.row.rowMuted {
+    color: var(--text-muted);
 }
 
 .leading {
@@ -58,4 +81,10 @@
     color: var(--text-subtle);
     font-size: var(--text-2xs);
     font-variant-numeric: tabular-nums;
+}
+
+/* `.value` sets its own `color` above, so a muted row's inherited `color`
+   (from `.row.rowMuted`) needs restating here to actually reach it. */
+.row.rowMuted .value {
+    color: var(--text-muted);
 }

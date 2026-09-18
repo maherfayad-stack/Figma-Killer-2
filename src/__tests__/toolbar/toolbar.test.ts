@@ -8,8 +8,14 @@
  *      Undo/Redo only appears on the visual editor, not on Content / Plugins
  *      admin pages.
  *   2. ZoomControls — zoom percentage rendering, correct store subscriptions.
- *   3. ModulePickerDropdown — search filter pure logic.
- *   4. Toolbar — overall structure (role, testid, always-rendered sub-components).
+ *   3. Toolbar — overall structure (role, testid, always-rendered sub-components).
+ *   4. ModulePicker — the DOM panel's right-click submenu, ArrowDown bridge.
+ *
+ * The picker's own search filter used to be re-implemented here as a local
+ * pure function standing in for a `useMemo` inside `ModulePickerDropdown`.
+ * That component is deleted (the Assets panel replaced it) and the ranking it
+ * became has its own tests — `src/__tests__/panels/rankAssets.test.ts` and
+ * `src/__tests__/architecture/assets-search-coverage.test.ts`.
  *
  * React component rendering tests use renderToStaticMarkup (same pattern as
  * canvas/accessibility.test.tsx) so no JSDOM or browser is needed.
@@ -236,12 +242,17 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
   })
 
   it('delegates that routing decision to pendingTextEdit, with no editable-target check of its own', () => {
+    // `K1` — the handler moved off this component into
+    // `useEditorHistoryShortcuts` (the `global` rung of the editor key
+    // ladder), so the shortcut survives the notch being hidden and — the real
+    // reason — stands down during a canvas inline text edit like every other
+    // canvas shortcut. The RULE is unchanged; only its address is.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/useEditorHistoryShortcuts.ts', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('hasPendingTextEdit(e.target)')
+    expect(src).toContain('hasPendingTextEdit(event.target)')
     // A reintroduced blanket check here would silently restore the bug the
     // rewrite above describes, and the behaviour test cannot see it — this
     // half is what makes the refusal single-sourced.
@@ -250,14 +261,15 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     expect(src).not.toContain('isContentEditable')
   })
 
-  it('keyboard handler registers on document (global scope, not canvas-local)', () => {
+  it('the button component carries no keyboard listener of its own', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
       new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('document.addEventListener')
-    expect(src).toContain('document.removeEventListener')
+    // One listener for the whole editor (`K1`) — a second one here would be a
+    // second ⌘Z, unguarded against inline edits.
+    expect(src).not.toContain("addEventListener('keydown'")
   })
 
   it('handler supports both Cmd+Z (undo) and Cmd+Shift+Z / Cmd+Y (redo)', () => {
@@ -270,11 +282,11 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
     // both keystrokes as redo) rather than grepping for a literal that moved.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/canvas/UndoRedoButtons.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/useEditorHistoryShortcuts.ts', import.meta.url),
       'utf-8',
     )
-    expect(src).toContain('kbUndo?.match(e)')
-    expect(src).toContain('kbRedo?.match(e)')
+    expect(src).toContain("getKeybindingForCommand('editor.undo')?.match(event)")
+    expect(src).toContain("getKeybindingForCommand('editor.redo')?.match(event)")
     expect(src).not.toContain("e.key === 'y'")
 
     const kbRedo = getKeybindingForCommand('editor.redo')
@@ -286,105 +298,7 @@ describe('UndoRedoButtons — WCAG aria-disabled pattern (Guideline #224)', () =
 })
 
 // ---------------------------------------------------------------------------
-// 3 — ModulePickerDropdown — search filter logic
-// ---------------------------------------------------------------------------
-
-// The filtering logic is extracted here for pure-function testing.
-// It mirrors what the useMemo in ModulePickerDropdown computes.
-function filterModules(
-  grouped: Record<string, Array<{ id: string; name: string }>>,
-  query: string,
-): Record<string, Array<{ id: string; name: string }>> {
-  const q = query.trim().toLowerCase()
-  if (!q) return grouped
-  const result: Record<string, Array<{ id: string; name: string }>> = {}
-  for (const [cat, mods] of Object.entries(grouped)) {
-    const matching = mods.filter(
-      (m) =>
-        m.name.toLowerCase().includes(q) ||
-        m.id.toLowerCase().includes(q) ||
-        cat.toLowerCase().includes(q),
-    )
-    if (matching.length > 0) result[cat] = matching
-  }
-  return result
-}
-
-const MOCK_REGISTRY: Record<string, Array<{ id: string; name: string }>> = {
-  Layout: [
-    { id: 'base.container', name: 'Container' },
-  ],
-  Typography: [
-    { id: 'base.text', name: 'Text' },
-  ],
-  Interactive: [
-    { id: 'base.button', name: 'Button' },
-    { id: 'base.link', name: 'Link' },
-  ],
-}
-
-describe('ModulePickerDropdown — search filter', () => {
-  it('returns all modules when query is empty', () => {
-    const result = filterModules(MOCK_REGISTRY, '')
-    expect(Object.keys(result)).toHaveLength(3)
-    expect(result['Layout']).toHaveLength(1)
-    expect(result['Typography']).toHaveLength(1)
-  })
-
-  it('filters by module name (case-insensitive)', () => {
-    const result = filterModules(MOCK_REGISTRY, 'text')
-    expect(Object.keys(result)).toHaveLength(1)
-    expect(result['Typography']).toHaveLength(1)
-    expect(result['Typography'][0].name).toBe('Text')
-  })
-
-  it('filters by module ID', () => {
-    const result = filterModules(MOCK_REGISTRY, 'base.button')
-    expect(result['Interactive']).toHaveLength(1)
-    expect(result['Interactive'][0].id).toBe('base.button')
-  })
-
-  it('filters by category name', () => {
-    const result = filterModules(MOCK_REGISTRY, 'layout')
-    expect(result['Layout']).toHaveLength(1)
-    expect(Object.keys(result)).toHaveLength(1)
-  })
-
-  it('returns empty object when no modules match', () => {
-    const result = filterModules(MOCK_REGISTRY, 'xyznonexistent')
-    expect(Object.keys(result)).toHaveLength(0)
-  })
-
-  it('is case-insensitive for all match types', () => {
-    expect(filterModules(MOCK_REGISTRY, 'BUTTON')['Interactive']).toHaveLength(1)
-    expect(filterModules(MOCK_REGISTRY, 'TEXT')['Typography']).toHaveLength(1)
-    expect(filterModules(MOCK_REGISTRY, 'LAYOUT')['Layout']).toHaveLength(1)
-  })
-
-  it('trims whitespace from query before filtering', () => {
-    const result = filterModules(MOCK_REGISTRY, '  container  ')
-    expect(result['Layout']).toHaveLength(1)
-    expect(result['Layout'][0].id).toBe('base.container')
-  })
-
-  it('partial match works (prefix, suffix, substring)', () => {
-    // "tex" should match "Text" (prefix)
-    const byPrefix = filterModules(MOCK_REGISTRY, 'tex')
-    expect(byPrefix['Typography']).toHaveLength(1)
-    expect(byPrefix['Typography'][0].name).toBe('Text')
-
-    // "ext" suffix — unique to Text, does NOT appear in category name "Typography"
-    const bySuffix = filterModules(MOCK_REGISTRY, 'ext')
-    expect(bySuffix['Typography']).toHaveLength(1)
-    expect(bySuffix['Typography'][0].name).toBe('Text')
-
-    // Note: "raph" is a substring of "typography" (the category), so it matches
-    // the whole category — we do NOT use "raph" for suffix testing here.
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 4 — Toolbar shell structure
+// 3 — Toolbar shell structure
 // ---------------------------------------------------------------------------
 
 describe('Toolbar — structural requirements', () => {
@@ -425,7 +339,6 @@ describe('Toolbar — structural requirements', () => {
     )
     // Toolbar.tsx must not import the editor-only sub-components.
     expect(toolbarSrc).not.toContain('UndoRedoButtons')
-    expect(toolbarSrc).not.toContain('ModulePickerDropdown')
     expect(toolbarSrc).not.toContain('ExportButton')
     expect(toolbarSrc).not.toContain('SaveIndicator')
     expect(toolbarSrc).not.toContain("from './ZoomControls'")
@@ -447,10 +360,10 @@ describe('Toolbar — structural requirements', () => {
     expect(layoutSrc).toContain('persistence.saveStatus')
   })
 
-  it('module picker trigger has data-testid for Playwright', () => {
+  it('Add page trigger has data-testid for Playwright', () => {
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/ModulePickerDropdown.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/BoardFramesLayer/AddPagePicker.tsx', import.meta.url),
       'utf-8',
     )
     expect(src).toContain('triggerTestId')
@@ -470,16 +383,18 @@ describe('Toolbar — structural requirements', () => {
     expect(src).not.toContain('NewComponentButton')
   })
 
-  it('Add inserter is module-only — no in-toolbar page/component create actions', () => {
-    // Page / Component creation lives in the Site Explorer panel (the dedicated
-    // place for site structure). The toolbar "+ Add" inserter is module-only.
+  it('the Add picker creates pages through the server scaffold, never a file dialog', () => {
+    // The "+" is Add page now (DS-8): a page is scaffolded by the server
+    // (`createStudioPage`) or curated onto the board (`addFrame`). No modal
+    // file-creation dialog, and no hand-built `src/pages/` path — the server
+    // owns where a page file lands.
     const { readFileSync } = require('fs')
     const src = readFileSync(
-      new URL('../../admin/pages/site/toolbar/ModulePickerDropdown.tsx', import.meta.url),
+      new URL('../../admin/pages/site/canvas/BoardFramesLayer/AddPagePicker.tsx', import.meta.url),
       'utf-8',
     )
-    expect(src).not.toContain('toolbar-add-page-action')
-    expect(src).not.toContain('toolbar-add-component-action')
+    expect(src).toContain('createStudioPage')
+    expect(src).toContain('addFrame')
     expect(src).not.toContain('SiteCreateDialog')
     expect(src).not.toContain('NewFileModal')
     expect(src).not.toContain('src/pages/')
@@ -510,7 +425,7 @@ describe('Toolbar — structural requirements', () => {
     // wrapping ContextMenuSubmenu for that — and uses ContextMenuItem for
     // every row, which renders a `role="menuitem"` button.
     const src = readFileSync(
-      new URL('../../admin/pages/site/module-picker/ModulePicker.tsx', import.meta.url), 'utf-8',
+      new URL('../../admin/pages/site/panels/AssetsPanel/ModulePicker.tsx', import.meta.url), 'utf-8',
     )
     expect(src).toContain('ContextMenuItem')
     // UX Review #333: role="listbox" without arrow-key nav is incorrect. The
@@ -603,7 +518,7 @@ describe('Toolbar — structural requirements', () => {
 })
 
 // ---------------------------------------------------------------------------
-// 7 — ModulePickerDropdown keyboard navigation: ArrowDown from search input
+// 4 — ModulePicker keyboard navigation: ArrowDown from search input
 //     Regression test for the WCAG 2.1.1 gap found in UX Review #343.
 //
 //     Bug: handleMenuKeyDown was attached to the menu container div, NOT the
@@ -622,7 +537,7 @@ describe('ModulePicker — ArrowDown keyboard bridge (WCAG SC 2.1.1)', () => {
   // DOM-panel right-click submenu.
   const { readFileSync } = require('fs')
   const src = readFileSync(
-    new URL('../../admin/pages/site/module-picker/ModulePicker.tsx', import.meta.url),
+    new URL('../../admin/pages/site/panels/AssetsPanel/ModulePicker.tsx', import.meta.url),
     'utf-8',
   )
 

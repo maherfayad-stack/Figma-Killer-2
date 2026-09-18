@@ -69,11 +69,148 @@ jobs:
       - name: Install dependencies
         run: bun install --frozen-lockfile
 
+      # No path filter, deliberately: every architecture gate under
+      # `src/__tests__/architecture/` — including every new one a work order
+      # adds — is picked up by this job automatically. A gate that has to be
+      # named here to run is a gate that will be forgotten.
       - name: Test
         run: bun test
 
-# NOTE: The Playwright E2E suite is intentionally NOT run in CI yet. As
-# configured (`workers: 1`, fully serial, 156 tests) it takes ~45-60 min and is
-# timeout-fragile against the un-optimized dev server, so it cannot gate PRs
-# reliably today. Run it locally with `bun run test:e2e`. It will be reintroduced
-# as its own workflow once the suite is sharded/parallelized and stabilized.
+  # The FULL Playwright suite.
+  #
+  # It was left out of CI for as long as nobody knew what it did: `verify-2`'s
+  # first cold whole-suite run reported 23 passed / 64 failed / 13 skipped and
+  # had no baseline to diff those 64 against, because the suite had never been
+  # run end to end on any machine. A suite in that state cannot gate anything —
+  # so `verify-4` triaged every non-passing test into deleted (a surface PR #18
+  # removed), fixed (a fixture outside the containment root), or annotated with
+  # the defect and owner it is waiting on. What remains is a run whose result
+  # MEANS something, which is the only kind worth spending CI minutes on.
+  #
+  # Separate from `e2e-budgets` below, not merged into it: the budget slice is
+  # a ~10 min measurement gate that should stay readable and fast on every PR,
+  # and folding it into an hour-long job would bury a 40 ms regression inside
+  # someone else's flake. They also fail for different reasons and want
+  # different triage.
+  #
+  # `timeout-minutes: 90` is a ceiling, not an expectation: the measured cold
+  # Windows run is ~53 min under an eleven-agent load, and Linux CI has the
+  # machine to itself. A job that times out here is a hung stack, not a slow
+  # suite — `scripts/e2e-dev.ts` reports its own boot failures.
+  e2e:
+    name: E2E (full Playwright suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # No path list, deliberately — the same reason the `test` job has no path
+      # filter. A spec that has to be named in this file to run is a spec that
+      # will be forgotten, and the whole point of this job is that the suite's
+      # result is now complete.
+      - name: Run the full suite
+        run: bun run test:e2e
+
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-full
+          path: |
+            .tmp/playwright-report
+            .tmp/playwright-results
+            .tmp/e2e-dev.log
+            .tmp/e2e-vite.log
+            .tmp/e2e-cms.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The narrow canvas + inspector BUDGET slice — the specs that measure
+  # computed layout and frame time, which happy-dom structurally cannot answer
+  # (`standing-02`). Kept as its own job so a budget regression is visible in
+  # ~10 minutes instead of at the end of the full suite above.
+  e2e-budgets:
+    name: Browser budgets (canvas + inspector)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # The stack is NOT started here. `playwright.config.ts`'s `webServer`
+      # block starts `bun run e2e:dev` itself, waits up to 300s for the admin
+      # origin, sets `VITE_ALLOWED_ORIGIN` for the ports it chose, and relays
+      # the stack's output into this job's log — so a failure to boot is
+      # readable rather than a bare timeout.
+      #
+      # This job deliberately uses the DEFAULT path rather than starting the
+      # stack by hand and setting `E2E_REUSE_SERVER=1`. CI is the only place
+      # that proves `webServer` works on Linux; a job that bypasses it would
+      # let the bypass rot into the only thing that works (the shape that hid
+      # the Windows `webServer` bug for seven weeks — `verify-01` finding 3).
+      #
+      # Only paths that exist are passed to Playwright: a path it cannot
+      # resolve fails the whole run with "no tests found", so a spec that has
+      # not landed yet would turn this job red for the wrong reason. A missing
+      # spec costs coverage and says so.
+      #
+      # `studio-board-perf.e2e.ts` no longer self-skips: its corpus is the
+      # committed `studio-workspace/__board-perf-fixture`, so this job measures
+      # the canvas mount budgets on every run.
+      - name: Run the budget specs
+        run: |
+          specs=""
+          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
+            if [ -f "$spec" ]; then
+              specs="$specs $spec"
+            else
+              echo "::notice::$spec is not in this checkout yet — running without it"
+            fi
+          done
+          if [ -z "$specs" ]; then
+            echo "::error::none of the budget specs exist in this checkout"
+            exit 1
+          fi
+          echo "running:$specs"
+          bunx playwright test $specs
+
+      # ONE upload, not two. There used to be an `if: failure()` step and an
+      # `if: always()` step that both uploaded an artifact called
+      # `playwright-report`; on a failing run both fire, and
+      # `actions/upload-artifact@v4` rejects a duplicate artifact name — so the
+      # one case where the report is worth having was the one case where the
+      # upload errored.
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-budgets
+          path: |
+            .tmp/playwright-report
+            .tmp/playwright-results
+            .tmp/e2e-dev.log
+          retention-days: 7
+          if-no-files-found: warn

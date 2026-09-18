@@ -5,7 +5,7 @@
  * Hug and Fill are only honest once you know how the parent lays the element
  * out (`elementSizing.ts`'s module doc explains why `100%` overflows a gapped
  * flex row). This hook is where that fact comes from, and it comes from the
- * same place `SingleNodeAlignRow` gets it: a live `getComputedStyle` read of
+ * same place `AlignSection` gets it: a live `getComputedStyle` read of
  * the parent's rendered element inside a canvas frame — never the parent's
  * stored declarations, which say nothing about what a class, the cascade, or
  * a media query actually resolved `display` to.
@@ -50,7 +50,7 @@ export function useSizingParentLayout(): SizingParentResolution {
   const page = useEditorStore(selectActiveCanvasPage)
 
   const parentNode = selectedNodeId && page ? getParent(page, selectedNodeId) : undefined
-  const parentComputed = useFrameComputedStyleValues(
+  const { value: parentComputed, isLoading: parentComputedLoading } = useFrameComputedStyleValues(
     parentNode?.id ?? null,
     activeBreakpointId,
     PARENT_LAYOUT_PROPERTIES,
@@ -76,6 +76,12 @@ export function useSizingParentLayout(): SizingParentResolution {
       reason:
         "This element's parent lives outside this file, so how it gets laid out isn't knowable here.",
     }
+  }
+  if (parentComputedLoading) {
+    // Tier 2 (bridge-mode) board: a real measurement is in flight, not
+    // permanently unavailable — "no live canvas frame is rendering it yet"
+    // below reads as PERMANENT, which is actively misleading mid-request.
+    return { layout: null, reason: 'Measuring the live frame…' }
   }
   return {
     layout: null,

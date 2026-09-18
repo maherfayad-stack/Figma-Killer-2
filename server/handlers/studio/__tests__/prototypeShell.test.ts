@@ -43,6 +43,17 @@ function read(rel: string): string {
 }
 
 /**
+ * Makes the workspace design-system-backed the way a real one is: by carrying
+ * the folder. Not by declaring a dependency — the npm is retired, and
+ * `isDesignSystemBacked` reads the entry file, which is what an
+ * `import … from '../design-system'` actually resolves to.
+ */
+function writeDesignSystemFolder(): void {
+  fs.mkdirSync(path.join(tmpDir, 'design-system'), { recursive: true })
+  fs.writeFileSync(path.join(tmpDir, 'design-system', 'index.js'), "export const DesignSystemProvider = null\n")
+}
+
+/**
  * Write a complete `ProjectProfile` into `.studio/meta.json` with `extra`
  * merged in. Every required field has to be present: `readStudioMeta`
  * validates the profile as one value, so a partial object is dropped entirely
@@ -79,7 +90,14 @@ describe('ensurePrototypeShell — scaffolding', () => {
     expect(result.created).toContain('index.html')
     expect(result.created).toContain('vite.config.js')
     expect(result.created).toContain('prototype/main.jsx')
+    // Plain root-absolute — NOT '%BASE_URL%prototype/main.jsx'. Vite's own
+    // dev/build HTML transform already rewrites every root-absolute
+    // src/href it finds to carry a non-root 'base' automatically; adding
+    // '%BASE_URL%' on top double-prefixes it (confirmed empirically against
+    // a real running dev server before this was caught — Part B, live-06
+    // STATE.md).
     expect(read('index.html')).toContain('/prototype/main.jsx')
+    expect(read('index.html')).not.toContain('%BASE_URL%')
   })
 
   it('is idempotent — a second run creates nothing and rewrites nothing', () => {
@@ -156,7 +174,7 @@ describe('ensurePrototypeShell — scaffolding', () => {
     // `max-width` query has to be measured against the DEVICE, not against the
     // browser window the shell happens to be open in.
     expect(read('prototype/ScreenFrame.jsx')).toContain('<iframe')
-    expect(read('prototype/App.jsx')).toContain("import ScreenFrame from './ScreenFrame'")
+    expect(read('prototype/App.jsx')).toContain("import ScreenFrame, { RESET } from './ScreenFrame'")
   })
 
   it('DOES bring a generated file back, because that one is Studio\'s', () => {
@@ -167,6 +185,108 @@ describe('ensurePrototypeShell — scaffolding', () => {
 
     expect(result.regenerated).toContain('prototype/registry.generated.jsx')
     expect(read('prototype/registry.generated.jsx')).toContain('export const SCREENS')
+  })
+})
+
+/**
+ * L3 — the workspace-side id-stamping plugin. `vite.config.js` is a STATIC
+ * file (frozen the moment a user edits it); the plugin's actual logic lives
+ * in the ALWAYS-rewritten `studioRuntime.generated.js` so a fix reaches an
+ * already-scaffolded project regardless of `vite.config.js`'s freeze state.
+ */
+describe('ensurePrototypeShell — the studio-runtime id-stamping plugin', () => {
+  it('writes a vite.config.js that imports the plugin, and the always-rewritten bundle it imports', () => {
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('vite.config.js')).toContain(
+      "import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'",
+    )
+    expect(read('vite.config.js')).toContain('studioRuntimeIdPlugin()')
+    expect(read('prototype/studioRuntime.generated.js')).toContain('studioRuntimeIdPlugin')
+  })
+
+  it('re-running on an untouched scaffold picks up a newer plugin template', () => {
+    ensurePrototypeShell(tmpDir)
+    // Simulate "an older Studio scaffolded this workspace before the plugin
+    // wiring existed": vite.config.js on disk (and its recorded hash) predate
+    // today's template, exactly like the "DOES replace a static file nobody
+    // has touched" case above.
+    const stale = "import { defineConfig } from 'vite'\nexport default defineConfig({})\n"
+    fs.writeFileSync(path.join(tmpDir, 'vite.config.js'), stale)
+    const manifestPath = path.join(tmpDir, '.studio', 'shell.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as {
+      version: number
+      files: Record<string, string>
+    }
+    manifest.files['vite.config.js'] = createHash('sha256').update(stale, 'utf8').digest('hex')
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest))
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.viteConfigEditedByUser).toBe(false)
+    expect(result.regenerated).toContain('vite.config.js')
+    expect(read('vite.config.js')).toContain('studioRuntimeIdPlugin')
+  })
+
+  it('leaves a hand-edited vite.config.js alone and reports it', () => {
+    ensurePrototypeShell(tmpDir)
+    const mine = "import { defineConfig } from 'vite'\nexport default defineConfig({ server: { port: 4321 } })\n"
+    fs.writeFileSync(path.join(tmpDir, 'vite.config.js'), mine)
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.viteConfigEditedByUser).toBe(true)
+    expect(read('vite.config.js')).toBe(mine)
+    // The generated bundle is still refreshed — only the STATIC config file
+    // (the import + the plugin call) is frozen; the plugin's own logic keeps
+    // reaching the workspace either way.
+    expect(read('prototype/studioRuntime.generated.js')).toContain('studioRuntimeIdPlugin')
+  })
+})
+
+/**
+ * L4/live-08 — the in-frame runtime bridge. `main.jsx` is a STATIC file
+ * (frozen the moment a user edits it); the bridge's actual logic lives in the
+ * ALWAYS-rewritten `studioRuntimeBridge.generated.js`, same shape as L3's
+ * `studioRuntime.generated.js` above, so a fix reaches an already-scaffolded
+ * project regardless of `main.jsx`'s freeze state.
+ */
+describe('ensurePrototypeShell — the studio-runtime bridge boot wiring', () => {
+  it('writes a main.jsx that imports virtual:studio-runtime and the bridge, gated on parentOrigin + window.parent', () => {
+    ensurePrototypeShell(tmpDir)
+
+    const mainJsx = read('prototype/main.jsx')
+    expect(mainJsx).toContain("import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'")
+    expect(mainJsx).toContain("import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'")
+    expect(mainJsx).toContain('STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window')
+    expect(mainJsx).toContain('createStudioRuntimeBridge(')
+  })
+
+  it('writes the always-rewritten bundled bridge alongside it', () => {
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('re-running brings the generated bridge file back even after it is wiped, because it is Studio\'s', () => {
+    ensurePrototypeShell(tmpDir)
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'studioRuntimeBridge.generated.js'), 'wiped\n')
+
+    const result = ensurePrototypeShell(tmpDir)
+
+    expect(result.regenerated).toContain('prototype/studioRuntimeBridge.generated.js')
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
+  })
+
+  it('leaves a hand-edited main.jsx alone and reports it, while still refreshing the always-rewritten bridge bundle', () => {
+    ensurePrototypeShell(tmpDir)
+    const mine = "import { createRoot } from 'react-dom/client'\ncreateRoot(document.getElementById('root')).render(null)\n"
+    fs.writeFileSync(path.join(tmpDir, 'prototype', 'main.jsx'), mine)
+
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/main.jsx')).toBe(mine)
+    expect(read('prototype/studioRuntimeBridge.generated.js')).toContain('createStudioRuntimeBridge')
   })
 })
 
@@ -189,7 +309,7 @@ describe('ensurePrototypeShell — package.json', () => {
       path.join(tmpDir, 'package.json'),
       JSON.stringify({
         name: 'mine',
-        dependencies: { react: '18.0.0', '@alm-design/design-system': '^1.1.2' },
+        dependencies: { react: '18.0.0', 'some-ui-kit': '^1.1.2' },
         scripts: { dev: 'my-own-server' },
       }),
     )
@@ -206,7 +326,7 @@ describe('ensurePrototypeShell — package.json', () => {
     expect(pkg.scripts.dev).toBe('my-own-server')
     // …and still gains what it was missing.
     expect(pkg.scripts.build).toBe('vite build')
-    expect(pkg.dependencies['@alm-design/design-system']).toBe('^1.1.2')
+    expect(pkg.dependencies['some-ui-kit']).toBe('^1.1.2')
   })
 })
 
@@ -277,10 +397,7 @@ describe('ensurePrototypeShell — the generated providers', () => {
   it('mounts the project\'s LanguageProvider and feeds the design system its direction', () => {
     fs.mkdirSync(path.join(tmpDir, 'i18n'), { recursive: true })
     fs.writeFileSync(path.join(tmpDir, 'i18n', 'LanguageContext.tsx'), 'export const x = 1\n')
-    fs.writeFileSync(
-      path.join(tmpDir, 'package.json'),
-      JSON.stringify({ dependencies: { '@alm-design/design-system': '^1.1.2' } }),
-    )
+    writeDesignSystemFolder()
 
     ensurePrototypeShell(tmpDir)
     const providers = read('prototype/providers.generated.jsx')
@@ -298,11 +415,45 @@ describe('ensurePrototypeShell — the generated providers', () => {
     expect(providers).toContain('return children')
     expect(providers).toContain("lang: 'en', dir: 'ltr'")
   })
+
+  /**
+   * The design system is a folder in the project now, so the shell imports it
+   * by the relative path from `prototype/` — and does NOT import a stylesheet
+   * beside it: the folder's own `index.js` imports the token CSS, which the
+   * retired package's `dist` build did not.
+   */
+  it('imports the design system from the project\'s own folder, with no separate CSS import', () => {
+    writeDesignSystemFolder()
+
+    ensurePrototypeShell(tmpDir)
+    const providers = read('prototype/providers.generated.jsx')
+
+    expect(providers).toContain("import { DesignSystemProvider } from '../design-system'")
+    expect(providers).not.toContain('index.css')
+    expect(providers).toContain('<DesignSystemProvider platform="ios" dir="ltr">')
+  })
+
+  it('does not mount the provider for a project that carries no design-system folder', () => {
+    // A leftover dependency on the retired npm is not evidence of anything —
+    // the folder is.
+    fs.writeFileSync(
+      path.join(tmpDir, 'package.json'),
+      JSON.stringify({ dependencies: { 'some-ui-kit': '^1.1.2' } }),
+    )
+
+    ensurePrototypeShell(tmpDir)
+
+    expect(read('prototype/providers.generated.jsx')).not.toContain('DesignSystemProvider')
+  })
 })
 
 describe('ensurePrototypeShell — refusals', () => {
   it('does nothing for a directory that does not exist, and does not throw', () => {
-    expect(ensurePrototypeShell(path.join(tmpDir, 'nope'))).toEqual({ created: [], regenerated: [] })
+    expect(ensurePrototypeShell(path.join(tmpDir, 'nope'))).toEqual({
+      created: [],
+      regenerated: [],
+      viteConfigEditedByUser: false,
+    })
   })
 
   it('still scaffolds a project with no pages at all', () => {
@@ -375,7 +526,7 @@ describe('ensurePrototypeShell — prototype links', () => {
             id: 'link-1',
             origin: 'design',
             source: { pageId: 'home', node: { nodeId: 'pages/Home.tsx:2:10', indexPath: [0, 1], moduleId: 'alm.Button', textSnippet: '' } },
-            trigger: 'click',
+            trigger: { kind: 'click' },
             action: 'navigate',
             targetPageId: 'home',
             transition: 'instant',
@@ -399,5 +550,62 @@ describe('ensurePrototypeShell — prototype links', () => {
     // Not omitted: `Player.jsx` imports LINKS unconditionally, so the export of
     // a project nobody has wired up still has to be a valid module.
     expect(read('prototype/registry.generated.jsx')).toContain('export const LINKS = []')
+  })
+})
+
+/**
+ * L6 (`STUDIO-LIVE-CANVAS-PLAN.md` §2, `live-06` STATE.md) — the
+ * `/__screen/<key>` route inside the generated `App.jsx`, so a live Tier-2
+ * frame (or a bookmarked/shared link) can boot exactly one screen,
+ * full-viewport, with no board chrome.
+ */
+describe('ensurePrototypeShell — the /__screen/<key> route in App.jsx', () => {
+  it('matches the route as a pathname SUFFIX, works both proxied (/p/<projectKey>/__screen/<key>) and bare (/__screen/<key>)', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    expect(app).toContain('/__screen/')
+    // The exact suffix-match regex source: anchored to the end of the
+    // pathname ('$') and tolerant of the URL's own trailing slash ('/?') —
+    // not an exact-match/prefix-match, which the proxied shape would fail.
+    expect(app).toContain('/\\/__screen\\/([^/?#]+)\\/?$/')
+  })
+
+  it('renders the screen directly, not nested inside ScreenFrame — nesting would hide the data-node-id-stamped DOM from the studio-runtime bridge in a second, separate iframe document', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    // Isolate ScreenRouteInner's own body (the routed component) — FramePreview,
+    // the board/flow UI's OWN per-frame preview, legitimately nests
+    // `<screen.Component />` inside `<ScreenFrame>` a few hundred lines further
+    // down in this same generated file, and must not be what this assertion
+    // matches against.
+    const start = app.indexOf('function ScreenRouteInner')
+    expect(start).toBeGreaterThan(-1)
+    const end = app.indexOf('\nfunction Shell(', start)
+    expect(end).toBeGreaterThan(start)
+    const body = app.slice(start, end)
+
+    // The routed component renders `screen.Component` directly — not
+    // `<ScreenFrame>...<screen.Component /></ScreenFrame>` the way
+    // FramePreview does.
+    expect(body).toMatch(/<screen\.Component\s*\/>/)
+    expect(body).not.toContain('<ScreenFrame')
+  })
+
+  it('imports RESET from ./ScreenFrame for visual parity (scrollbar-hiding, margin reset), rather than duplicating the CSS string', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+    const screenFrame = read('prototype/ScreenFrame.jsx')
+
+    expect(app).toContain("import ScreenFrame, { RESET } from './ScreenFrame'")
+    expect(screenFrame).toContain('export const RESET')
+  })
+
+  it('never crashes for a stale/unknown screen key — renders a fallback paragraph instead', () => {
+    ensurePrototypeShell(tmpDir)
+    const app = read('prototype/App.jsx')
+
+    expect(app).toContain('Unknown screen:')
   })
 })

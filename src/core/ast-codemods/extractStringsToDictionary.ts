@@ -50,6 +50,7 @@ import {
   type JsxAttribute,
   type SourceFile,
 } from 'ts-morph'
+import { applyLineEnding, detectLineEnding, toLf } from '@core/utils/lineEndings'
 
 /** One literal to replace, as `findHardcodedStrings` reported it plus the key it was assigned. */
 export interface StringExtraction {
@@ -262,7 +263,13 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
     // they match the corpus's own style rather than ts-morph's defaults.
     manipulationSettings: { quoteKind: QuoteKind.Single, indentationText: IndentationText.TwoSpaces },
   })
-  const sourceFile = project.createSourceFile(params.fileName, params.sourceText)
+  // Text-in/text-out, so the line ending is this function's own contract
+  // rather than a file system's: parse LF-only (every inserted import and
+  // hook line below is written with `'\n'`), and put the caller's ending back
+  // on the way out. A refusal returns `params.sourceText` untouched, so the
+  // bytes of a file nothing was applied to are never rewritten at all.
+  const eol = detectLineEnding(params.sourceText)
+  const sourceFile = project.createSourceFile(params.fileName, toLf(params.sourceText))
 
   if (bindsNameElsewhere(sourceFile, 't', params.hookName)) {
     return {
@@ -331,5 +338,5 @@ export function extractStringsToDictionary(params: ExtractStringsParams): Extrac
 
   ensureImport(sourceFile, params.importSpecifier, params.hookName, semicolons)
 
-  return { text: sourceFile.getFullText(), applied: applied.reverse(), refused }
+  return { text: applyLineEnding(sourceFile.getFullText(), eol), applied: applied.reverse(), refused }
 }

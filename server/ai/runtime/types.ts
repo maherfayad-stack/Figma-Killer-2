@@ -78,15 +78,23 @@ export type AiMessage =
 // ---------------------------------------------------------------------------
 
 /**
- * Tool execution mode.
+ * Tool execution mode — WHERE the work happens, and therefore whether the
+ * connector owner's board has to be open. Read it through
+ * `./toolExecution.ts`'s predicates, never by re-matching the literal; that
+ * module's doc comment carries the full table and the reasoning.
  *
- *  - `server`: runner calls `handler(input, ctx)` directly server-side; the
- *    result feeds back into the model in the same loop.
- *  - `browser`: runner emits `toolRequest` and awaits a `tool-result` POST
- *    from the browser. Use for any tool that mutates an in-browser store
- *    (the live editor) or requires DOM access (render_snapshot).
+ *  - `server`: runs in-process. Never needs a board.
+ *  - `server-with-bridge-fallback`: runs in-process, headless, and relays to
+ *    an open board only when the headless path cannot run (no Chromium) or
+ *    when the caller explicitly asks for the live tab's own state. Never
+ *    NEEDS a board — it gets slower without one, not unavailable.
+ *  - `bridge`: the work happens in the connector owner's open workspace, and
+ *    no board means a refusal. The runner relays the whole call when the tool
+ *    declares no `handler` (the sentinel shape whose implementation lives
+ *    client-side); a `bridge` tool that DOES declare one relays from inside
+ *    it and owns its own "no board" message.
  */
-type ToolExecution = 'server' | 'browser'
+export type ToolExecution = 'server' | 'server-with-bridge-fallback' | 'bridge'
 
 /**
  * One tool, defined once. Drivers translate `inputSchema` (TypeBox) into
@@ -122,6 +130,24 @@ export interface AiTool {
    */
   readonly mutates?: boolean
   /**
+   * Why this mutating tool has NO canvas-parity path — one sentence, stated
+   * on the tool rather than in a test's allowlist.
+   *
+   * `STUDIO_CANVAS_PARITY_MATRIX` requires every `mutates: true` tool to map
+   * to a real editor action. A tool whose only artefact is Studio's own agent
+   * bookkeeping has no such action, and the honest answer is to say so HERE,
+   * where the next person to read the tool sees it, instead of adding its
+   * name to a list inside `parityMatrix.test.ts` that nothing makes them
+   * justify. The gate reads this field and `docs/features/agent.md` renders
+   * it, so "headless-only" is a documented property of the tool, not a
+   * silently-suppressed gate failure.
+   *
+   * Declaring it and appearing in a parity row are mutually exclusive — the
+   * gate fails on a tool that claims both, because one of the two statements
+   * is then untrue.
+   */
+  readonly headlessOnly?: string
+  /**
    * Capabilities that gate this tool, mirroring its HTTP-route equivalent.
    * ANY-OF semantics: the caller needs at least one. Undefined / empty means
    * the tool is reachable by any `ai.chat` caller (e.g. tools that only read
@@ -130,8 +156,12 @@ export interface AiTool {
    */
   readonly requiredCapabilities?: readonly CoreCapability[]
   /**
-   * Server-side handler. Required when `execution === 'server'`; ignored when
-   * `execution === 'browser'` (the browser bridge runs the tool instead).
+   * Server-side handler. Required for `server` and
+   * `server-with-bridge-fallback`. Optional for `bridge`: omitting it is the
+   * sentinel that tells the runner to relay the whole call to the open
+   * workspace, declaring it means the handler does its own relay and owns the
+   * "no board is connected" message. `toolDispatchesInProcess`
+   * (`./toolExecution.ts`) is the single reader of that distinction.
    */
   handler?: (input: unknown, ctx: ToolContext) => Promise<unknown>
 }
@@ -164,6 +194,14 @@ export interface ToolContext {
    * simply starts the chain one tier lower.
    */
   readonly fidelityMode?: import('../../handlers/studio/fidelityMode').FidelityMode
+  /**
+   * This turn's resolved design policy (A12), mirroring
+   * `ToolContextBase.designPolicy` — where it is set, and where the reasoning
+   * for the precedence lives. `studio_quality_check` reads it; `undefined`
+   * for a call that did not come from a chat turn, which starts the chain one
+   * tier lower.
+   */
+  readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
   readonly snapshot: unknown
   readonly signal: AbortSignal
 }

@@ -10,7 +10,7 @@
  *       → `{ isRepo, status: { branch, entries, excludedCount, hasOrigin } | null }`
  *       `isRepo: false` is a NORMAL answer, not an error — it is what makes the
  *       panel offer `init`. `entries` carries staged/unstaged/untracked/unmerged
- *       per path (see `gitStatusParse.ts`).
+ *       per path (see `gitOutputParse.ts`).
  *
  *   GET  /admin/api/studio/git/diff?dir=<abs>&file=<workspace-rel>
  *       → `{ file, staged, unstaged, untracked, truncated }` — both halves of
@@ -31,8 +31,10 @@
  *
  *   POST /admin/api/studio/git/push     { dir? }
  *       → `{ ok, branch, output }`. `--set-upstream origin <branch>`, never
- *       `--force`. Authentication is the user's own credential helper's;
- *       Studio stores no token and reads none from its environment.
+ *       `--force`. Authentication is the token the signed-in user stored via
+ *       `/admin/api/studio/github/*` (G2) — resolved from the SESSION, never
+ *       from a body field — or, when nobody signed in, the host's own
+ *       credential helper. Studio reads no token from its environment.
  *
  *   POST /admin/api/studio/git/init     { dir?, confirm: true, message? }
  *       → `{ ok, branch, sha, filesCommitted }`. Offered only when no `.git`
@@ -49,7 +51,7 @@
  * Routing only: dir resolution, body validation, mapping a typed
  * `GitOperationFailure` onto an HTTP status. Every git invocation lives in
  * `gitOperations.ts`, the spawn discipline and the repository guard in
- * `gitRunner.ts`, the porcelain parser in `gitStatusParse.ts`, and every
+ * `gitRunner.ts`, the porcelain parser in `gitOutputParse.ts`, and every
  * judgement of a caller-supplied string in `gitPaths.ts`. Nothing here builds
  * an argv.
  *
@@ -69,11 +71,30 @@
  * A rejected path (`..`, absolute, `node_modules/…`) is also a 404 rather than
  * a 400 — it is indistinguishable from a file that does not exist, and saying
  * more would describe the server's layout.
+ *
+ * ## Every POST goes through `originAllowed`
+ *
+ * The same CSRF check `gitSyncRoutes.ts`, `gitRemoteRoutes.ts`,
+ * `githubAuthRoutes.ts` and `handleCmsRequest` apply, and it is not
+ * belt-and-braces here: these routes carry no per-request capability (the
+ * single-operator posture — see `docs/server.md`), so `SameSite=Lax` on a
+ * session cookie protects nothing that does not read one. `readValidatedBody`
+ * calls `req.json()` whatever the content type says, which means a page on an
+ * unrelated origin can reach these with a plain
+ * `<form enctype="text/plain">` — no preflight, no cookie needed. A forged
+ * `push` publishes to the user's remote under the GitHub token they signed in
+ * with; a forged `restore` overwrites a file they have open and never saved.
+ *
+ * A request with NO `Origin` header still passes, so a non-browser client
+ * (curl, a script) is unaffected — the header is only ever present when a
+ * browser is the one asking.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isCommitSha, isAcceptableCommitMessage, resolveWorkspaceRelativePath } from './gitPaths'
+import { getGithubTokenForRequest } from './githubToken'
 import { assertOwnGitRepo, assertWithinWorkspace, hasGitRepo } from './gitRunner'
 import {
   commitFiles,
@@ -92,6 +113,17 @@ import {
 const ROUTE_PREFIX = '/admin/api/studio/git/'
 
 const NOT_FOUND = () => new Response('Not found', { status: 404 })
+
+/**
+ * The state-changing actions this sub-router owns.
+ *
+ * Declared as a set rather than inferred from the `if` ladder — exactly as
+ * `gitSyncRoutes.ts` does it — so the CSRF check can run BEFORE the dispatch
+ * without also answering for a POST that belongs to a sibling sub-router
+ * under the same prefix (`pull`, `fetch`, `conflict/*`, `pull-request`,
+ * `remote`, `clone`), which must fall through untouched.
+ */
+const OWNED_POST_ACTIONS = new Set(['branch', 'commit', 'push', 'init', 'restore'])
 
 /**
  * Body of `POST /admin/api/studio/git/branch`. Exactly one of `create`/`switch`
@@ -141,7 +173,14 @@ const RestoreBodySchema = Type.Object({
 
 export type GitCommitBody = Static<typeof CommitBodySchema>
 
-/** Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the repository's state says no); a git invocation failure is a 500. */
+/**
+ * Refusal → HTTP status. A refusal is a 409 (the request was well-formed, the
+ * repository's state says no); a git invocation failure is a 500.
+ *
+ * `code: 'busy'` is a 409 like the rest: something else is writing to this
+ * project right now (a save, an install, another git verb). It is the
+ * project's state answering, and the next action is simply "try again".
+ */
 function failureResponse(failure: GitOperationFailure): Response {
   const status = failure.code === 'git-failed' ? 500 : 409
   return jsonResponse(
@@ -154,6 +193,12 @@ function failureResponse(failure: GitOperationFailure): Response {
 export async function tryServeStudioGit(req: Request, url: URL, pathname: string): Promise<Response | null> {
   if (!pathname.startsWith(ROUTE_PREFIX)) return null
   const action = pathname.slice(ROUTE_PREFIX.length)
+
+  // CSRF, for the reason the module doc gives: nothing here reads a session,
+  // so a cookie's SameSite flag defends none of it.
+  if (isStateChangingMethod(req.method) && OWNED_POST_ACTIONS.has(action) && !originAllowed(req)) {
+    return jsonResponse({ error: 'Forbidden: invalid origin' }, { status: 403 })
+  }
 
   try {
     if (action === 'status' && req.method === 'GET') return await serveStatus(url)
@@ -263,7 +308,12 @@ async function servePush(req: Request): Promise<Response> {
   const guard = assertOwnGitRepo(resolveProjectDir(body.dir))
   if (!guard.ok) return NOT_FOUND()
 
-  const result = await pushCurrentBranch(guard.dir)
+  // The credential is resolved from the SESSION, never from the body: there
+  // is deliberately no `token` field on this wire, so a request cannot supply
+  // one and no proxy log can capture one. `null` (nobody signed in) is normal
+  // and means git falls back to the host's own credential helper.
+  const credential = await getGithubTokenForRequest(req)
+  const result = await pushCurrentBranch(guard.dir, credential ? { credential } : {})
   if (isGitFailure(result)) return failureResponse(result)
   return jsonResponse(result)
 }

@@ -202,6 +202,77 @@ describe('originAllowed', () => {
     })
     expect(originAllowed(req)).toBe(true)
   })
+
+  it('rejects the literal `null` Origin a sandboxed iframe form POST sends', () => {
+    configurePublicOrigins(['https://cms.example.com'])
+    const req = makeReq('http://app:3001/admin/api/cms/login', {
+      method: 'POST',
+      headers: { origin: 'null' },
+    })
+    expect(originAllowed(req)).toBe(false)
+  })
+
+  it('rejects an Origin that merely has the allowed one as a prefix', () => {
+    const req = makeReq('http://localhost:3001/admin/api/cms/login', {
+      method: 'POST',
+      headers: { origin: 'http://127.0.0.1:5173.evil.test' },
+    })
+    expect(originAllowed(req)).toBe(false)
+  })
+})
+
+/**
+ * `sec-16`. A missing `Origin` used to be an unconditional pass, so anything
+ * that could arrange for the header to be absent bypassed the CSRF check
+ * entirely. `Sec-Fetch-Site` is a forbidden header name — script cannot set
+ * it — so when a browser DOES send it, it is trustworthy evidence about where
+ * the request came from, and a scripted caller that sends neither header is
+ * unaffected.
+ */
+describe('originAllowed — no Origin header, Sec-Fetch-Site decides', () => {
+  it('still trusts a caller that sends neither header (curl, server-to-server)', () => {
+    configurePublicOrigins(['https://cms.example.com'])
+    const req = makeReq('http://app:3001/admin/api/cms/login', { method: 'POST' })
+    expect(originAllowed(req)).toBe(true)
+  })
+
+  it('refuses an origin-less cross-site browser POST', () => {
+    configurePublicOrigins(['https://cms.example.com'])
+    const req = makeReq('http://app:3001/admin/api/cms/login', {
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'cross-site', referer: 'https://evil.test/csrf.html' },
+    })
+    expect(originAllowed(req)).toBe(false)
+  })
+
+  it('refuses an origin-less same-site (different subdomain) browser POST — the case SameSite=Lax misses', () => {
+    configurePublicOrigins(['https://cms.example.com'])
+    const req = makeReq('http://app:3001/admin/api/cms/login', {
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'same-site' },
+    })
+    expect(originAllowed(req)).toBe(false)
+  })
+
+  it.each(['same-origin', 'none', 'Same-Origin', ' none '] as const)(
+    'allows an origin-less POST labelled %p',
+    (value) => {
+      configurePublicOrigins(['https://cms.example.com'])
+      const req = makeReq('http://app:3001/admin/api/cms/login', {
+        method: 'POST',
+        headers: { 'sec-fetch-site': value },
+      })
+      expect(originAllowed(req)).toBe(true)
+    },
+  )
+
+  it('lets a present Origin decide, so the Vite dev origin still passes with a same-site label', () => {
+    const req = makeReq('http://localhost:3001/admin/api/cms/login', {
+      method: 'POST',
+      headers: { origin: 'http://localhost:5173', 'sec-fetch-site': 'same-site' },
+    })
+    expect(originAllowed(req)).toBe(true)
+  })
 })
 
 describe('clientIp', () => {

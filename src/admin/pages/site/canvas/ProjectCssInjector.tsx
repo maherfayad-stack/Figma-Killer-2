@@ -6,13 +6,14 @@
  *
  * Two sources, concatenated into one bucket
  * ──────────────────────────────────────────
- * 1. `@alm-design/design-system`'s bundled stylesheet — Studio's OWN
- *    dependency (not the open project's), imported once at Studio's own
- *    build time via Vite `?inline`. This is what `AlmDesignSystemCssInjector`
- *    used to inject on its own; `standing-07` in `STATE.md` keeps this
- *    dependency and `src/modules/alm/` alive until the generic package-
- *    component pipeline is proven to render the eSIM board equivalently —
- *    this injector still needs to feed it CSS in the meantime.
+ * 1. The BUILT-IN design system's bundled stylesheet — Studio's own vendored
+ *    copy (`vendor/alm-design-system/dist/index.css`, a committed build
+ *    artefact), not anything the open project installed, imported once at
+ *    Studio's own build time via Vite `?inline` (`canvasVendorCss.ts`). It is
+ *    injected into EVERY frame, at every trust tier, because the `alm.*`
+ *    module pack renders from Studio's own code — a project's own
+ *    `design-system/` folder exists so its repository builds standalone, and
+ *    is never read back for the canvas.
  * 2. The OPEN project's own package CSS, reached through a bare-specifier
  *    import (`import '@acme/ui/dist/style.css'`) inside ITS source, resolved
  *    against ITS OWN `node_modules` server-side
@@ -55,35 +56,25 @@
  * now writes `data-theme` explicitly in BOTH schemes for exactly the reason
  * this pin existed. See `VENDOR_THEME_ATTR` there.
  */
-import { useEffect, useSyncExternalStore } from 'react'
+import { useContext, useEffect, useSyncExternalStore } from 'react'
 import { getStudioVendorCss, subscribeStudioVendorCss } from '@site/studio/fsCodemodAdapter'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { buildVendorCss } from './canvasVendorCss'
 
 const STYLE_TAG_ID = 'mc-vendor'
 
-export function ProjectCssInjector({ targetDocument }: { targetDocument?: Document } = {}) {
+export function ProjectCssInjector() {
   const projectVendorCss = useSyncExternalStore(subscribeStudioVendorCss, getStudioVendorCss, getStudioVendorCss)
+  const adapter = useContext(CanvasFrameAdapterContext)
 
   useEffect(() => {
-    const doc = targetDocument ?? document
-    let styleEl = doc.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = doc.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'ProjectCssInjector')
-      // Prepend so this stylesheet — and the layer-order declaration it opens
-      // with — is read before any `@layer user-authored` stylesheet, giving
-      // the pre-declaration the best chance of being the very first mention
-      // of either layer name. See `canvasCssLayers.ts` for why every side
-      // repeats the declaration regardless.
-      doc.head.insertBefore(styleEl, doc.head.firstChild)
-    }
-    styleEl.textContent = buildVendorCss(projectVendorCss)
+    if (!adapter) return
+    adapter.applyOverlay(STYLE_TAG_ID, buildVendorCss(projectVendorCss))
+  }, [adapter, projectVendorCss])
 
-    return () => {
-      doc.getElementById(STYLE_TAG_ID)?.remove()
-    }
-  }, [targetDocument, projectVendorCss])
+  useEffect(() => {
+    return () => adapter?.removeOverlay(STYLE_TAG_ID)
+  }, [adapter])
 
   return null
 }

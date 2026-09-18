@@ -28,7 +28,8 @@ import { ContainerPropsSchema, type ContainerStoredProps } from './props'
 export const ContainerModule: ModuleDefinition<ContainerStoredProps> = {
   id: 'base.container',
   name: 'Container',
-  description: 'A semantic container.',
+  description: 'A semantic container — the box every layout is built from.',
+  keywords: ['box', 'div', 'wrapper', 'section', 'stack', 'flex row', 'flex column', 'flex', 'grid', 'frame', 'group'],
   category: 'Layout',
   version: '2.0.0',
   icon: SquareSolidIcon,

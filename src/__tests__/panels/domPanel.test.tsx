@@ -691,7 +691,7 @@ describe('DomPanel — tree keyboard navigation', () => {
   it('keeps hidden nodes in the tree and marks them with a hidden icon', () => {
     loadContainerSite()
     act(() => {
-      useEditorStore.getState().toggleNodeHidden('container-1')
+      useEditorStore.getState().setNodesHidden(['container-1'], true)
     })
 
     render(<DomPanel />)

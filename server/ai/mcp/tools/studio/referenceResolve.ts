@@ -57,6 +57,7 @@
  * screen" keeps working. What no longer happens is a silent choice between
  * two of them.
  */
+import { toolRefusal, type ToolRefusal } from '@core/ai'
 import { authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import {
   getDesignReference,
@@ -69,25 +70,20 @@ import {
 } from '../../../../handlers/studio/designReferenceSchema'
 
 /**
- * Why resolution failed, for the one caller that must act differently per
- * cause. `pageWriteVerification.ts` turns this into the sentence the Stop-hook
- * gate blocks with, and "register a design reference" is the wrong instruction
- * for a page that already has two — it would send the agent to add a third.
- * Every other caller just surfaces `error`.
+ * A14 — the failure arm is the canonical `ToolRefusal`, so every tool that
+ * resolves a reference forwards the same coded refusal instead of re-wrapping
+ * a string.
+ *
+ * `code` is also the discriminator one caller acts on: `pageWriteVerification.ts`
+ * turns `ambiguous-reference` into a different sentence for the Stop-hook
+ * gate, because "register a design reference" is the wrong instruction for a
+ * page that already has two — it would send the agent to add a third. It used
+ * to be a parallel `failure` field; a second discriminator beside `code` is
+ * exactly the drift this work order removes.
  */
-export type ResolveReferenceFailure =
-  /** `referenceId` named something that is not registered. */
-  | 'unknown-id'
-  /** The top-ranked tier held more than one candidate. `referenceId` settles it. */
-  | 'ambiguous'
-  /** References exist, but every one is scoped to a different page. */
-  | 'other-pages-only'
-  /** Nothing is registered for this project at all. */
-  | 'none'
-
 export type ResolveReferenceResult =
   | { ok: true; reference: DesignReference; implicit: boolean; role: DesignReferenceRole }
-  | { ok: false; failure: ResolveReferenceFailure; error: string }
+  | ToolRefusal
 
 /** `<id> 375x800 "SMS — Figma"` — enough for the agent to pick one without a second list call. */
 function describeCandidate(reference: DesignReference): string {
@@ -137,7 +133,9 @@ export function resolveDesignReference(
   if (referenceId !== undefined) {
     const explicit = getDesignReference(dir, referenceId)
     if (!explicit) {
-      return { ok: false, failure: 'unknown-id', error: `No design reference "${referenceId}" is registered for this project — call studio_list_design_references to see what is.` }
+      return toolRefusal('no-such-reference', `No design reference "${referenceId}" is registered for this project.`, {
+        remedy: 'Call studio_list_design_references to see what is.',
+      })
     }
     // An explicit id is the explicit gesture: it promotes a `context` image to
     // the spec for this call, which is exactly the escape hatch every refusal
@@ -156,7 +154,7 @@ export function resolveDesignReference(
   for (const tier of tiers) {
     if (tier.candidates.length === 0) continue
     if (tier.candidates.length > 1) {
-      return { ok: false, failure: 'ambiguous', error: ambiguousMessage(pageId, tier.role, tier.candidates) }
+      return toolRefusal('ambiguous-reference', ambiguousMessage(pageId, tier.role, tier.candidates))
     }
     return { ok: true, reference: tier.candidates[0]!, implicit: true, role: tier.role }
   }
@@ -169,20 +167,18 @@ export function resolveDesignReference(
   const otherPages = all.filter((r) => r.pageId !== undefined && r.pageId !== pageId)
   if (otherPages.length > 0) {
     const list = otherPages.map((r) => `${r.id} → ${r.pageId}`).join('; ')
-    return {
-      ok: false,
-      failure: 'other-pages-only',
-      error:
-        `There is no design reference registered for "${pageId}". ${otherPages.length} reference(s) are registered, but every one of them is scoped to a different screen (${list}), and another screen's design is not this screen's spec — measuring against it would produce a confident wrong number. Register this page's own design with studio_register_design_reference (pageId:"${pageId}"), or pass referenceId explicitly if one of those really is the design for this page.`,
-    }
+    return toolRefusal(
+      'no-design-reference',
+      `There is no design reference registered for "${pageId}". ${otherPages.length} reference(s) are registered, but every one of them is scoped to a different screen (${list}), and another screen's design is not this screen's spec — measuring against it would produce a confident wrong number.`,
+      { remedy: `Register this page's own design with studio_register_design_reference (pageId:"${pageId}"), or pass referenceId explicitly if one of those really is the design for this page.` },
+    )
   }
 
-  return {
-    ok: false,
-    failure: 'none',
-    error:
-      `There is no design reference registered for this project, so there is nothing to measure "${pageId}" against. If the user gave you a design — a Figma export, an attached image, a URL — register it with studio_register_design_reference (pass pageId:"${pageId}") and call this again. If they did not, say so rather than guessing at a score: without a reference, "does it match" has no answer.`,
-  }
+  return toolRefusal(
+    'no-design-reference',
+    `There is no design reference registered for this project, so there is nothing to measure "${pageId}" against.`,
+    { remedy: `If the user gave you a design — a Figma export, an attached image, a URL — register it with studio_register_design_reference (pass pageId:"${pageId}") and call this again. If they did not, say so rather than guessing at a score: without a reference, "does it match" has no answer.` },
+  )
 }
 
 /**

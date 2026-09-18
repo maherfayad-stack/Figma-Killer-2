@@ -6,7 +6,8 @@
  * classes applied to the body land on `<body class="...">` via the publisher
  * (see `publishPage` in `src/core/publisher/render.ts`). The editor preview
  * applies identity/presentation directly to the iframe's real body through
- * `CanvasDocumentContext`; it adds no wrapper or probe child.
+ * `CanvasFrameAdapterContext`'s portal escape hatch (`live-05`, STATE.md);
+ * it adds no wrapper or probe child.
  */
 import type { ModuleDefinition } from '@core/module-engine'
 import { registry } from '@core/module-engine'

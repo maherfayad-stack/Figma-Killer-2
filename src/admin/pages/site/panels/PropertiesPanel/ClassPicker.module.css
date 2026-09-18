@@ -5,27 +5,76 @@
     gap: var(--inspector-space-m);
 }
 
-.pillsContainer {
+/*
+ * One tag-input row: the selector pills, then the add-a-selector input, then
+ * the optional trailing action (the Componentize button).
+ *
+ * The pills used to be a SECOND row below this one (`.pillsContainer`, now
+ * gone), and `WriteTargetRow` a THIRD statement of the same targets inside
+ * the scroll container. That cost the panel 67px of permanent chrome plus
+ * 40px of scroll content to say one thing — which selectors this element
+ * carries and where an edit lands. One row says it once: 67px of chrome →
+ * ~37px, and the Design tab gets that height back as room
+ * (`docs/features/inspector.md` §6).
+ *
+ * `flex-wrap` rather than a grid: the number of pills is the user's, not the
+ * layout's. An element with eight classes wraps to a second line — growth
+ * proportional to real content, the same contract Figma's variant rows have
+ * — and an element with one stays on one line, which is every fixture in the
+ * height baseline.
+ *
+ * The suggestions dropdown is portaled to <body> and anchors to this row, so
+ * it still spans the full width whatever the pills do.
+ */
+.inputRow {
+    position: relative;
     display: flex;
     flex-wrap: wrap;
+    align-items: center;
     gap: var(--inspector-space-3xs);
 }
 
-/* Input + optional trailing action (e.g. the Componentize button).
-   Single column by default; when a trailing action is present, the input
-   takes the flexible space (minmax(0, 1fr)) and the action takes its
-   intrinsic width (auto). The suggestions dropdown is portaled to <body>
-   and anchors to this row, so its width covers both columns. */
-.inputRow {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--inspector-space-s);
-    align-items: center;
+/*
+ * The input keeps a usable floor and takes whatever the pills leave. The
+ * floor is deliberately small: a wider one made the row's height depend on
+ * how long the element's class name happens to be (`.image-layer` wrapped
+ * where `.board` did not), which moved the Design tab's budget between two
+ * selections of the same project.
+ */
+.inputCell {
+    display: block;
+    flex: 1 1 96px;
+    min-width: 72px;
 }
 
-.inputRow[data-with-action="true"] {
-    grid-template-columns: minmax(0, 1fr) auto;
+/*
+ * A pill's write-target wrapper. `text-decoration` is set here rather than on
+ * the label because it INHERITS: the pill's own label markup lives inside the
+ * `TagPill` primitive's hashed class names, which this module cannot select.
+ */
+.pillSlot {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.pillSlotLocked {
+    text-decoration: line-through;
+    opacity: 0.7;
+}
+
+/*
+ * The default write target — the one chip a brand-new property lands in when
+ * it has no declaration anywhere yet. A dot, not a colour: the panel's
+ * achromatic rule, and the pill's own accent already means "which selector",
+ * not "which target".
+ */
+.defaultTargetDot {
+    display: inline-block;
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: currentcolor;
 }
 
 .noMatch {

@@ -329,7 +329,7 @@ export async function* streamClaudeCli(
 
   let configDir: string
   try {
-    configDir = ensureClaudeCliConfigDir(options.dataRoot ?? resolveClaudeCliDataRoot(), req.toolContextBase.userId)
+    configDir = await ensureClaudeCliConfigDir(options.dataRoot ?? resolveClaudeCliDataRoot(), req.toolContextBase.userId)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Could not prepare the Claude CLI environment: ${detail}` }
@@ -524,7 +524,7 @@ export async function* streamClaudeCli(
     // turn to "no MCP tools", the same fail-soft posture a connector-mint
     // failure already gets, rather than aborting the whole turn.
     const mcpConfigFile = turn.connector
-      ? tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
+      ? await tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
       : null
 
     try {
@@ -536,6 +536,9 @@ export async function* streamClaudeCli(
           stdin: new TextEncoder().encode(prompt),
           signal: req.signal,
           spawn: options.spawn,
+          // Z3 — the total-turn ceiling. Omitted means the driver default
+          // (`TOTAL_TURN_CAP_MS`); it is never absent.
+          ...(req.turnCapMs !== undefined ? { totalTurnCapMs: req.turnCapMs } : {}),
         }),
       )
     } catch (err) {

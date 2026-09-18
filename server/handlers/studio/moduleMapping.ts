@@ -19,7 +19,6 @@
 import type { ComponentSource, ParsedPropValue } from '@core/page-parser'
 import { TEXT_HTML_TAG_SET } from '@modules/base/utils/htmlTag'
 import { packageModuleId } from '@core/module-engine'
-import { ALM_DESIGN_PACKAGE_SPECIFIER } from './designSystemDetect'
 
 const CONTAINER_TAGS: ReadonlySet<string> = new Set([
   'div', 'section', 'main', 'header', 'footer', 'nav', 'article', 'aside',
@@ -29,19 +28,28 @@ const CONTAINER_TAGS: ReadonlySet<string> = new Set([
  * Map a parsed node to an Studio moduleId (design-system → alm.* / pkg.*, host
  * tags → base.*).
  *
- * WS-3.3 — a `kind: 'component'` node whose `componentSources` classification
- * (computed earlier in `loadStudioPages`, from the PRE-inline tree — see that
- * function's doc) says it's a `package` import gets the generic
+ * DS-3 — a `kind: 'design-system'` classification (the import resolved inside
+ * the project's own Studio-written `design-system/` folder) gets
+ * `alm.<ExportName>`: those components are served by the BUILT-IN module pack
+ * (`src/modules/alm/register.tsx`), rendered from Studio's own vendored source
+ * at every trust tier, with no bundling step. The name comes from the SOURCE,
+ * not from the JSX tag, so `import { Button as Btn }` still lands on
+ * `alm.Button`.
+ *
+ * WS-3.3 — a `kind: 'package'` node gets the generic
  * `pkg.<sanitized-package>.<ComponentName>` id (`packageModuleId`), so
  * `registerProjectModules.ts` can register — and the canvas can find — a
- * module for whatever npm design system the project actually imports, not
- * just the one hardcoded `@alm-design/design-system` case (kept on `alm.*`
- * — see `ALM_DESIGN_PACKAGE_SPECIFIER`'s doc). A `kind: 'component'` node with
- * no package classification at all (a LOCAL component `inlineLocalComponents`
- * declined to expand — recursion, missing declaration, cap reached) keeps the
- * old `alm.<Name>` id: there is no package to bundle for it, so it renders
- * "Unknown module" exactly as it did before this change, which is the honest
- * outcome for content this pipeline cannot materialize.
+ * module for whatever npm design system the project actually imports. There is
+ * no carve-out for any specifier any more: the built-in design system is not a
+ * package, and a project still importing the retired
+ * `@alm-design/design-system` npm is an UNMIGRATED project, which honestly
+ * shows the Tier-0 package placeholder plus the migration banner rather than
+ * silently rendering Studio's components for a dependency that no longer
+ * exists. A `kind: 'component'` node with no classification at all (a LOCAL
+ * component `inlineLocalComponents` declined to expand — recursion, missing
+ * declaration, cap reached) keeps the `alm.<Name>` fallback: there is no
+ * package to bundle for it, so it renders "Unknown module", which is the
+ * honest outcome for content this pipeline cannot materialize.
  *
  * `base.text` and `base.button` are the two modules that need care, because
  * they share two properties: both are leaves (`canHaveChildren: false`) and
@@ -95,9 +103,8 @@ export function resolveModuleId(
     // pre-WS-4 fallback below unchanged.
     if (node.instanceOf) return 'studio.instance'
     const source = componentSources[node.id]
-    if (source?.kind === 'package' && source.specifier !== ALM_DESIGN_PACKAGE_SPECIFIER) {
-      return packageModuleId(source.specifier, node.name)
-    }
+    if (source?.kind === 'design-system') return `alm.${source.name}`
+    if (source?.kind === 'package') return packageModuleId(source.specifier, node.name)
     return `alm.${node.name}`
   }
   // An element carrying resolved raw SVG markup renders as `base.svg`

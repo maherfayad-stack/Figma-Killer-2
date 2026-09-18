@@ -58,11 +58,12 @@ import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { discoverPageFiles, projectPagesDir } from '../../studioProjects'
 import { assignPageIds } from '../../studioPageIds'
+import { isDesignSystemBacked } from '../builtinDesignSystem'
 import { readStudioMeta } from '../studioMeta'
 import { readPrototypeFile } from '../prototypeStore'
 import { generatedShellFiles, hasLanguageContext, readBoardsForShell, type ShellScreen } from './registryFile'
 import { playerShellFiles } from './playerTemplate'
-import { staticShellFiles } from './shellFiles'
+import { staticShellFiles, VITE_CONFIG_REL_PATH } from './shellFiles'
 import type { ShellFile } from './shellPaths'
 
 export { PROTOTYPE_SHELL_DIR } from './shellPaths'
@@ -107,6 +108,17 @@ export interface EnsureShellResult {
   created: string[]
   /** Generated files whose contents changed. */
   regenerated: string[]
+  /**
+   * `true` when `vite.config.js` exists, does NOT match the hash Studio last
+   * wrote there, and the workspace already had a manifest (so this isn't a
+   * pre-manifest adoption) — i.e. a human has edited it, so this run left it
+   * alone rather than overwriting a hand-added plugin/alias/proxy config.
+   * L3's `studioRuntimeIdPlugin()` (and any future fix to `VITE_CONFIG`'s own
+   * template text) only reaches a workspace in this state if the user
+   * re-adds the import themselves — surfaced here so a caller can say so
+   * instead of silently wondering why live ids never show up.
+   */
+  viteConfigEditedByUser: boolean
 }
 
 /** `pages/SignUp.tsx` -> `SignUp`. The title the board and the flow tab row show. */
@@ -162,8 +174,14 @@ function writeIfDifferent(absPath: string, contents: string): boolean {
  * A workspace that pins its own React, or already has a `dev` script pointing
  * somewhere else, keeps both — the shell adds what is missing and nothing
  * more. Returns whether the file changed.
+ *
+ * Exported because `../projectSeed.ts` needs exactly this manifest at CREATION
+ * time (before the project has ever been opened, and before anything would
+ * call `ensurePrototypeShell`). One definition of what a Studio project's
+ * `package.json` declares — react, react-dom, vite, `@vitejs/plugin-react` and
+ * the three scripts — rather than a copy in the seed that drifts from it.
  */
-function mergePackageJson(dir: string): boolean {
+export function mergeShellPackageJson(dir: string): boolean {
   const file = join(dir, 'package.json')
   const existing = existsSync(file)
     ? parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as Record<string, unknown>
@@ -203,7 +221,7 @@ function mergePackageJson(dir: string): boolean {
  * workspace, never a precondition for reading one.
  */
 export function ensurePrototypeShell(dir: string): EnsureShellResult {
-  const result: EnsureShellResult = { created: [], regenerated: [] }
+  const result: EnsureShellResult = { created: [], regenerated: [], viteConfigEditedByUser: false }
   if (!existsSync(dir)) return result
 
   try {
@@ -235,7 +253,10 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       // record to compare against, and the only files in it are ones Studio
       // itself wrote, so it is adopted once and protected from then on.
       const studioWroteIt = present && manifest.files[file.relPath] === sha256(current ?? '')
-      if (present && !studioWroteIt && hadManifest) continue
+      if (present && !studioWroteIt && hadManifest) {
+        if (file.relPath === VITE_CONFIG_REL_PATH) result.viteConfigEditedByUser = true
+        continue
+      }
 
       mkdirSync(dirname(abs), { recursive: true })
       writeFileSync(abs, file.contents, 'utf8')
@@ -249,7 +270,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       writeIfDifferent(manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
     }
 
-    if (mergePackageJson(dir)) result.created.push('package.json')
+    if (mergeShellPackageJson(dir)) result.created.push('package.json')
 
     const meta = readStudioMeta(dir)
     const generated: ShellFile[] = generatedShellFiles({
@@ -271,7 +292,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
       colorScheme: meta.profile?.colorScheme ?? null,
       hasLanguageProvider: hasLanguageContext(dir),
       locales: collectLocales(dir),
-      hasDesignSystem: hasDesignSystemDependency(dir),
+      hasDesignSystem: isDesignSystemBacked(dir),
       links: readPrototypeFile(dir).links,
     })
 
@@ -286,15 +307,4 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
   }
 
   return result
-}
-
-/** True when the workspace declares `@alm-design/design-system` — the provider stack differs if it does. */
-function hasDesignSystemDependency(dir: string): boolean {
-  const file = join(dir, 'package.json')
-  if (!existsSync(file)) return false
-  const pkg = parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as {
-    dependencies?: Record<string, string>
-    devDependencies?: Record<string, string>
-  }
-  return Boolean(pkg.dependencies?.['@alm-design/design-system'] ?? pkg.devDependencies?.['@alm-design/design-system'])
 }

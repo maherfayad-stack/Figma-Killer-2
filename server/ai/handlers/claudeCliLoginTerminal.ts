@@ -56,7 +56,7 @@ async function handleLoginTerminal(req: Request, db: DbClient): Promise<Response
 
   let configDir: string
   try {
-    configDir = ensureClaudeCliConfigDir(resolveClaudeCliDataRoot(), userOrResponse.id)
+    configDir = await ensureClaudeCliConfigDir(resolveClaudeCliDataRoot(), userOrResponse.id)
   } catch (err) {
     console.error('[ai/claudeCliLoginTerminal] config dir preparation failed:', err)
     return jsonResponse({ ok: false, reason: 'Could not prepare a login directory for this account.' })

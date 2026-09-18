@@ -34,8 +34,9 @@
  * upgrade.
  */
 
-import { readFileSync, writeFileSync, existsSync } from 'node:fs'
+import { writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { readCommittedArtefact } from './lib/generatedArtefact'
 
 const ROOT = resolve(import.meta.dir, '..')
 const SRC_DIR = join(ROOT, 'server/plugins/quickjs/bootstrap/src')
@@ -137,8 +138,7 @@ async function main(): Promise<number> {
     const stale: string[] = []
     for (const { outFile, content } of built) {
       const path = join(GENERATED_DIR, outFile)
-      const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
-      if (current !== content) stale.push(outFile)
+      if (readCommittedArtefact(path) !== content) stale.push(outFile)
     }
     if (stale.length > 0) {
       console.error(

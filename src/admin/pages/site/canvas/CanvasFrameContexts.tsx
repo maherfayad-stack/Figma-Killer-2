@@ -2,11 +2,13 @@
  * CanvasFrameContexts — everything a mounted canvas frame publishes to the
  * React tree portaled into it, in one place.
  *
- * Four contexts, all scoped to the same thing (the nearest frame) and all set
+ * Three contexts, all scoped to the same thing (the nearest frame) and all set
  * from values `IframeFrameSurface` already has in hand:
  *
- *   - the host `<iframe>` element,
- *   - its `contentDocument`,
+ *   - the host `<iframe>` element and its `FrameDocumentAdapter` (`live-05`,
+ *     STATE.md — the one sanctioned way to reach a raw `Document`, via
+ *     `isPortalFrameAdapter`/`getPortalWindow()`, for the portal-mode-only
+ *     code that genuinely needs one),
  *   - the preview axes (direction / colour scheme) the frame renders under —
  *     the board's, with this frame's own `BoardFrame.axes` merged over them,
  *   - and its interaction model, which is what tells a node whether it is being
@@ -20,19 +22,29 @@
  */
 import type { ReactNode } from 'react'
 import type { PreviewAxes } from '@core/studio-board'
-import { CanvasDocumentContext, CanvasFrameElementContext, CanvasInteractionContext } from './CanvasContexts'
+import {
+  CanvasFrameAdapterContext,
+  CanvasFrameElementContext,
+  CanvasInteractionContext,
+} from './CanvasContexts'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import type { IframeInteraction } from './iframeBodyReset'
 import { FramePreviewAxesContext } from './previewAxesFrameEffect'
 
 export function CanvasFrameContexts({
   frameElement,
-  frameDocument,
+  adapter,
   axes,
   interaction,
   children,
 }: {
   frameElement: HTMLIFrameElement | null
-  frameDocument: Document
+  /**
+   * The frame's `FrameDocumentAdapter` — see `CanvasFrameAdapterContext`'s
+   * own doc. `IframeFrameSurface` constructs this (`PortalFrameAdapter` for
+   * `documentMode: 'portal'`, `BridgeFrameAdapter` for `'bridge'`).
+   */
+  adapter: FrameDocumentAdapter | null
   /** The frame's EFFECTIVE axes — see `FramePreviewAxesContext` for why a component may need these and `html[dir]` is not enough. */
   axes: PreviewAxes
   /** Editing surface or live page — see `CanvasInteractionContext`. */
@@ -41,11 +53,11 @@ export function CanvasFrameContexts({
 }) {
   return (
     <CanvasFrameElementContext.Provider value={frameElement}>
-      <CanvasDocumentContext.Provider value={frameDocument}>
+      <CanvasFrameAdapterContext.Provider value={adapter}>
         <CanvasInteractionContext.Provider value={interaction}>
           <FramePreviewAxesContext.Provider value={axes}>{children}</FramePreviewAxesContext.Provider>
         </CanvasInteractionContext.Provider>
-      </CanvasDocumentContext.Provider>
+      </CanvasFrameAdapterContext.Provider>
     </CanvasFrameElementContext.Provider>
   )
 }

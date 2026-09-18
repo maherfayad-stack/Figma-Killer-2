@@ -300,7 +300,48 @@ Used by destructive commands: delete user, sign out all devices, revoke session,
 
 Selected-layer shortcuts are command shortcuts too. `⌘C` / `Ctrl+C`, `⌘X` / `Ctrl+X`, `⌘V` / `Ctrl+V`, and `⌘D` / `Ctrl+D` run when focus is on the canvas or the Layers tree. `⌘⌫` / `Ctrl+Backspace` deletes the selected layer from either surface through the normal delete confirmation flow; plain Delete / Backspace remains accepted by the canvas handler for selected canvas nodes.
 
+`⌘V` and `⌘D` land the new node as the **next sibling of the selection**, not appended inside it, and select it (`K7`). The right-click "Paste here" menus keep the older "into the container" placement — they name a container, while the keystroke names a selection. The split is `pasteNode(targetNodeId, placement)`: `'after'` for the selection-anchored callers (⌘V, the palette's `layers.paste`, the multi-selection inspector's Paste button), `'auto'` for the two right-click menus. `⌘D` selects at the call site, never inside `duplicateNode` — that action is reachable from the agent and from `applyTreeOperation`, and a background tool must not move the user's selection. On a studio-imported board neither keystroke has an id to select at the call site (the element is written to the user's `.tsx` and only exists once the board has re-read it), so the selection arrives one beat later, from the ids the save route reports (`store-13`, `editor-store.md`). Both paths end with the new element selected; only the timing differs.
+
+### Canvas tools (`K4`)
+
+| Key | Action |
+|---|---|
+| `T` / `F` | Insert a text node / a container **inside** the selection |
+| `R` / `O` | Insert a box / a round box (`border-radius: 50%`) **beside** the selection |
+| `H` | Latch the hand tool — drag anywhere pans. Press `H` again to put it away |
+| `K` | Latch the scale tool — the selection's resize handles keep its aspect ratio and write both `width` and `height` |
+| `C` | Comment mode |
+| `⌘]` / `⌘[` | Move the selected layer up / down among its siblings (alias of `⌥↑` / `⌥↓`) |
+| `⌘⇧L` | Lock / unlock the selected layer |
+| `⌘G` | Group the selection into one container (`K3`). On a source-backed board this WRITES the container into the `.tsx`, around a contiguous run of siblings only |
+| `⌘⇧G` | Ungroup — dissolve the selected container, its children taking its place |
+
+`⌘G` does not always write a `<div>`. The container's tag follows the HTML
+content model of what is above it and what is inside it (`struct-11`,
+`@core/utils/htmlContentModel.ts`): a `<span>` in phrasing content — inside a
+`<p>`, an `<h2>`, a `<label>`, another `<span>` — a `<div>` in flow content,
+and a refusal naming the reason where neither would be valid (inside a `<ul>`,
+a `<tr>` or a `<select>`, or around an `<li>`, a `<td>`, a `<figcaption>`).
+Grouping is not a formatting gesture on this board; it edits the user's real
+markup, and invalid markup is a runtime error in their app.
+
+The bare letters are safe to bind because each `match` rejects **every** modifier and every one carries `ignoreInEditableField` — so `⌘K` stays the palette, `⌘R` stays rename, and typing an `o` in any field is just an `o`. The two latched tools toggle on their own key; Escape also disarms, but only as a second chance (with anything selected the `node` rung claims Escape first, to deselect).
+
+`H` does not implement panning. It becomes a third source on the shared `data-*` space-pan flag (`canvasPanInput.ts`), which the pan gesture, the grab cursor, the frames' `pointer-events`, the marquee and the reorder drag already read — so there is exactly one definition of "the canvas is panning".
+
 The keybindings registry is **the single source of truth** for shortcuts — gated by `keybindings-registry-single-source.test.ts`. Register each command shortcut in `keybindings.ts`; component-owned handlers may consume those registered bindings when a surface needs local selection or confirmation behavior, but they must not hard-code a second shortcut definition.
+
+### Who hears the key, in the editor workspace
+
+The registry says *what* a chord is; it does not say who runs it. Inside `/admin/site` that second question has exactly one answer since `K1`: **one `keydown` listener**, mounted by `SitePage` (`canvas/useEditorKeyDispatcher.ts`), routing to an ordered ladder of scopes (`canvas/editorKeyDispatcher.ts`):
+
+```
+inline-edit > prototype-link > annotation > node > board > global
+```
+
+Each active scope gets first refusal; claiming stops dispatch, declining falls through to the next rung. Canvas features register a handler with `useEditorKeyScope(...)` and own no listener of their own — gated by `keybindings-single-dispatcher.test.ts`, which allows exactly one `addEventListener('keydown'` under `src/admin/pages/site/canvas/` plus a justified list of iframe-realm and gesture-local exemptions. The full rationale is in [`docs/agent-refs/canvas-internals.md`](../agent-refs/canvas-internals.md) → "One keyboard dispatcher, six scopes".
+
+Modal-local listeners outside `canvas/` are unaffected and stay where they are: `AgentPanel`, `AgentImagePreview`, `ModuleInserterDialog`, `ConfirmDeleteDialog`, `MediaPickerModal`, `StepUpDialog` and the spotlight's own `SpotlightRoot` / `Spotlight` each bind Escape (or a focus trap) only while their own surface is open, which is a different thing from a standing shortcut whose precedence against other shortcuts could drift.
 
 ---
 
@@ -447,6 +488,7 @@ run: async (ctx) => {
 | Pattern                                                              | Use instead                                              |
 |----------------------------------------------------------------------|----------------------------------------------------------|
 | Adding a raw `keydown` listener for a global shortcut                | Register in `keybindings.ts`. Gated.                    |
+| Adding a `keydown` listener under `src/admin/pages/site/canvas/`     | Register a scope with `useEditorKeyScope(...)`. Gated by `keybindings-single-dispatcher.test.ts`. |
 | Direct store mutation inside a provider's `search`                   | Providers are read-only — mutate in commands' `run`. Gated by `spotlight-no-direct-store-mutation.test.ts`. |
 | Persisting recents server-side                                       | They're per-device in localStorage. Cross-device recents need a real feature, not a Spotlight detail. |
 | Lazy-importing the editor store at module-eval time                  | The store mounts only when SitePage mounts — eager import would force the chunk. Use `require(...)` inside `search` (see `pagesProvider.ts`). |
@@ -475,7 +517,10 @@ run: async (ctx) => {
   - `src/admin/spotlight/matcher.ts` — fuzzy match
   - `src/admin/spotlight/types.ts` — `Command`, `SpotlightProvider`, `Scope`, `CommandContext`
   - `src/admin/spotlight/keybindings.ts` — keybinding registry
+  - `src/admin/pages/site/canvas/editorKeyDispatcher.ts` — the editor's key-scope ladder
+  - `src/admin/pages/site/canvas/useEditorKeyDispatcher.ts` — the one `keydown` listener
   - `src/admin/spotlight/groupAccent.ts` — CommandGroup → categorical accent mapping
 - Gate tests:
   - `src/__tests__/architecture/spotlight-no-direct-store-mutation.test.ts`
   - `src/__tests__/architecture/keybindings-registry-single-source.test.ts`
+  - `src/__tests__/architecture/keybindings-single-dispatcher.test.ts`

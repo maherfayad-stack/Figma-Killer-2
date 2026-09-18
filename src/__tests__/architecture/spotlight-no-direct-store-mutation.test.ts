@@ -11,26 +11,14 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const COMMANDS_DIR = join(SRC_ROOT, 'admin/spotlight/commands')
 
-function collectTsFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectTsFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTsFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 // Direct setState call patterns that are forbidden in commands/
 const FORBIDDEN_PATTERNS = [
@@ -52,7 +40,7 @@ describe('Spotlight commands — no direct store mutation', () => {
     const violations: string[] = []
 
     for (const file of files) {
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       const rel = file.replace(SRC_ROOT, 'src/')
 
       for (const pattern of FORBIDDEN_PATTERNS) {
@@ -78,7 +66,7 @@ describe('Spotlight commands — no direct store mutation', () => {
     const violations: string[] = []
 
     for (const file of files) {
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       const rel = file.replace(SRC_ROOT, 'src/')
 
       for (const pattern of FORBIDDEN_IMPORTS) {

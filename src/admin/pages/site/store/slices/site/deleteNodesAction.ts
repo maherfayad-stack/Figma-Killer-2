@@ -19,11 +19,12 @@
  * canvas showing a tree the files do not describe.
  */
 import { deleteNode, type NodeTree, type PageNode } from '@core/page-tree'
+import { broadcastOptimisticDelete } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, toastStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { tagStructuralGesture } from './structuralHistory'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
@@ -60,7 +61,17 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       nodeIds.map((id) => target.tree.nodes[id] ?? cur.site?.pages.find((page) => page.nodes[id])?.nodes[id]),
     )
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              get().deleteNodes(nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)))
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
       return
     }
 
@@ -81,6 +92,10 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     if (!deleted) return
     if (plan.commit) {
       void commitStudioDelete(plan.commit)
+      // `live-07` — same-tick paint for a live (bridge) frame, one call per
+      // deleted id (a multi-select delete can span several source-derived
+      // nodes, unlike the single-node `deleteNode` action).
+      for (const id of plan.commit) broadcastOptimisticDelete(id)
       // `store-08` — the elements are gone from the user's `.tsx` and no
       // writeback kind can put their markup back, so this entry must never be
       // patch-replayed (that would re-add nodes the file does not contain).

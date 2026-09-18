@@ -2,18 +2,30 @@
  * MCP tool registry — the full set of tools an external MCP client may use,
  * filtered to the connector's granted capabilities.
  *
- * Two execution classes are exposed:
- *   - server-resolved tools (`site_list_documents` + `site_read_styles` +
+ * Three execution classes are exposed — one `AiTool.execution` value each,
+ * defined and read through `../runtime/toolExecution.ts`:
+ *   - `server` tools (`site_list_documents` + `site_read_styles` +
  *     `studio_import_project`, a thin adapter over the Phase 7B GitHub import
  *     engine) run in-process and work with NO editor open;
- *   - browser tools (structure edits, HTML/CSS authoring, design tokens, page
- *     lifecycle, code assets, live-DOM reads) are relayed to the connector
- *     owner's open Site workspace via the live editor bridge
- *     (`./editorBridge`). If that workspace is not connected, the call
- *     returns a clear scope-specific error.
+ *   - `server-with-bridge-fallback` tools (the visual-audit family —
+ *     `studio_screenshot`, `studio_compare`, `studio_computed_styles`,
+ *     `studio_export_frames`) also run in-process, headless, and reach for an
+ *     open board only when the headless browser cannot run or when the caller
+ *     explicitly wants the live tab's own unsaved state. They never REQUIRE
+ *     a board;
+ *   - `bridge` tools (structure edits, HTML/CSS authoring, design tokens,
+ *     page lifecycle, code assets, live-frame reads, the session-authenticated
+ *     asset upload) need the connector owner's open Site workspace via the
+ *     live editor bridge (`./editorBridge`). If that workspace is not
+ *     connected, the call returns a clear scope-specific error.
+ *
+ * That third class — and only that third class — is what the Studio system
+ * prompt's "these tools need the open board" sentence is generated from, so
+ * the prompt cannot describe a tool's requirement differently from the way it
+ * is dispatched.
  *
  * The editor's live store is the single source of truth: ALL page editing goes
- * through it (browser tools). There is deliberately no headless DB-mutating
+ * through it (`bridge` tools). There is deliberately no headless DB-mutating
  * page-tree tool — that created a second surface with identical node ids that
  * desynced from the open editor and got clobbered by its autosave.
  *
@@ -22,6 +34,13 @@
  * sees a mutating tool, and a tool's `requiredCapabilities` (ANY-OF) must be
  * held. An MCP caller can never invoke a tool the granting capabilities
  * couldn't authorize over HTTP.
+ *
+ * ## Why no CMS `site_*` WRITE tool is in this catalog
+ *
+ * See {@link CMS_SITE_WRITE_TOOLS_WITHHELD}. Every one of them is a `bridge`
+ * tool, and every editor bridge scope is `site:<projectKey>` — a Studio
+ * project on disk. There is no workspace on this fork for a CMS page-tree
+ * write to land in honestly.
  */
 import type { CoreCapability } from '@core/capabilities'
 import type { AiTool } from '../runtime/types'
@@ -47,6 +66,54 @@ import { mcpServerMcpTools } from './tools/mcpServerTool'
 // the de-dup for any shared name.
 const MCP_EXCLUDED_TOOLS = new Set<string>(['site_list_tokens'])
 
+/**
+ * The CMS `site_*` WRITE tools, withheld from every MCP connector.
+ *
+ * Derived from `siteTools` rather than spelled out, so a tool renamed or
+ * added in `../tools/site/writeTools.ts` cannot re-enter this catalog by
+ * escaping a hand-maintained name list. `mutates` is the exact predicate:
+ * `site/index.ts` stamps it, and the seven browser-backed READS that live in
+ * `writeTools.ts` for bridge-dispatch reasons are stamped `false` there — so
+ * `site_read_document`, `site_get_node_html`, `site_render_snapshot` and
+ * their siblings are unaffected. `site_publish` is not in `siteTools` at all
+ * (it is `createPublishMcpTool`, server-resolved and separately gated by
+ * `pages.publish`), so it is unaffected too.
+ *
+ * ## Why they cannot work here, not merely why they are unwanted
+ *
+ * Every tool in this set is `execution: 'bridge'` — it has no server handler
+ * and is relayed to the connector owner's open workspace. The only thing that
+ * ever registers a workspace is the Studio editor (`SitePage.tsx` →
+ * `useMcpWorkspaceBridge`), which registers under
+ * `editorBridgeScope(studioProjectDir)` — an `EditorBridgeScope`, whose type
+ * IS `` `site:${string}` ``. So the only tree an MCP write can ever reach is a
+ * studio-imported one, whose source of truth is `.tsx` on disk:
+ *
+ *   - `site_insert_html` / `site_replace_node_html` already REFUSE there by
+ *     name (`HTML_IMPORT_ON_SOURCE_REFUSAL`, `store-13`): an HTML fragment has
+ *     no honest single source form, and half of it is a `<style>` block that
+ *     targets a stylesheet rather than the `.tsx`.
+ *   - `site_add_page` / `site_duplicate_page` / `site_delete_page` /
+ *     `site_rename_page` and the two template verbs address `data_rows`
+ *     pages, which no file in the user's repository describes.
+ *   - the node verbs and the token/code-asset writers address CMS state whose
+ *     Studio counterpart lives in the repo or in `.studio/`.
+ *
+ * The replacements are in this same catalog: `studio_apply_edits` and
+ * `studio_codemod` write real JSX and return addressable node ids,
+ * `studio_create_page` scaffolds a real route file, `studio_upload_asset`
+ * lands a real file. An external client has no filesystem access to the
+ * project, which is exactly why those tools stay here while the in-canvas
+ * agent's own subset (`mcpToolsForStudioWorkspace`) drops them.
+ *
+ * This is the same conclusion `mcpToolsForStudioWorkspace` already reached for
+ * a BOUND connector, applied one step wider — and strictly narrower than that
+ * rule, which drops the CMS reads and publish as well.
+ */
+export const CMS_SITE_WRITE_TOOLS_WITHHELD: ReadonlySet<string> = new Set(
+  siteTools.filter((tool) => tool.mutates).map((tool) => tool.name),
+)
+
 function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {
   // De-dup by tool name. Order matters: the headless MCP-specific + content
   // tools win over the site toolset for shared names, so the version that works
@@ -64,6 +131,7 @@ function allMcpTools(runtime?: McpPublishRuntime): AiTool[] {
   const byName = new Map<string, AiTool>()
   for (const tool of ordered) {
     if (MCP_EXCLUDED_TOOLS.has(tool.name)) continue
+    if (CMS_SITE_WRITE_TOOLS_WITHHELD.has(tool.name)) continue
     if (!byName.has(tool.name)) byName.set(tool.name, tool)
   }
   return [...byName.values()]

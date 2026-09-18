@@ -41,6 +41,7 @@ import {
   type ReactNode,
   type RefObject,
 } from 'react'
+import { cn } from '@ui/cn'
 import { Button } from '@ui/components/Button'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { EyeOffSolidIcon } from 'pixel-art-icons/icons/eye-off-solid'
@@ -60,6 +61,25 @@ export interface PropertyListEntry<T = unknown> {
   value?: ReactNode
   /** Caller-owned payload (the actual fill/stroke/effect object) — handed back verbatim through `onActivate` / `onRemove` / `onReorder` so the caller never has to re-look-up an entry by `id`. */
   data: T
+  /**
+   * True for a row showing a value the frame actually renders but that
+   * nothing stores anywhere on the active target (`STATE.md` `panel-30`'s
+   * "rendered, not stored" tier — `renderedNotStored.ts`'s the caller-side
+   * decision, this component only renders the resulting tone). Draws
+   * `label`/`summary`/`value` in the panel's existing muted tone
+   * (`--text-muted`) instead of the default full-contrast text — the same
+   * visual language `ScrubInput`'s own `inherited` prop already uses
+   * elsewhere in this panel for the identical fact about a scalar field.
+   */
+  muted?: boolean
+  /**
+   * False to omit the remove button entirely for this row — not merely
+   * disable it. Default `true`. A muted row has nothing STORED to remove;
+   * offering a fake remove button would either no-op (confusing) or write an
+   * explicit override the user never asked for just to "undo" a value they
+   * never stored.
+   */
+  removable?: boolean
 }
 
 export interface PropertyListProps<T = unknown> {
@@ -189,6 +209,7 @@ export function PropertyList<T = unknown>({
     <div className={styles.list} role="list" aria-label={listLabel}>
       {entries.map((entry, index) => {
         const visible = onToggleVisible ? (isVisible ? isVisible(entry) : true) : true
+        const removable = entry.removable ?? true
 
         return (
           <div
@@ -198,7 +219,8 @@ export function PropertyList<T = unknown>({
             }}
             role="listitem"
             tabIndex={0}
-            className={styles.row}
+            className={cn(styles.row, entry.muted && styles.rowMuted)}
+            data-muted={entry.muted ? 'true' : undefined}
             onClick={() => handleRowClick(entry)}
             onKeyDown={(event) => handleRowKeyDown(event, index, entry)}
           >
@@ -220,20 +242,22 @@ export function PropertyList<T = unknown>({
                 {visible ? <EyeSolidIcon size={12} aria-hidden="true" /> : <EyeOffSolidIcon size={12} aria-hidden="true" />}
               </Button>
             )}
-            <Button
-              variant="ghost"
-              size="micro"
-              iconOnly
-              tone="danger"
-              aria-label={`Remove ${entry.label}`}
-              tooltip="Remove"
-              onClick={(event) => {
-                stopRowActivation(event)
-                handleRemove(index, entry)
-              }}
-            >
-              <MinusIcon size={12} aria-hidden="true" />
-            </Button>
+            {removable && (
+              <Button
+                variant="ghost"
+                size="micro"
+                iconOnly
+                tone="danger"
+                aria-label={`Remove ${entry.label}`}
+                tooltip="Remove"
+                onClick={(event) => {
+                  stopRowActivation(event)
+                  handleRemove(index, entry)
+                }}
+              >
+                <MinusIcon size={12} aria-hidden="true" />
+              </Button>
+            )}
           </div>
         )
       })}

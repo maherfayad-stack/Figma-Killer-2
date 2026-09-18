@@ -129,6 +129,15 @@
 }
 
 .title {
+    /* `min-width: 0` is required for a flex item's `text-overflow: ellipsis`
+       to ever engage — without it a flex item's default `min-width: auto`
+       refuses to shrink below its own content, so the badge below would just
+       get pushed off instead of the title truncating. Only relevant once the
+       header can hold a second flex child (the axes badge); `flex: 1` claims
+       the header's remaining space so the badge (not the title) is the one
+       that never needs to shrink. */
+    flex: 1;
+    min-width: 0;
     font-size: var(--text-s);
     font-weight: 600;
     color: var(--text);
@@ -139,6 +148,21 @@
 
 .titleInput {
     flex: 1;
+    min-width: 0;
+}
+
+/* Per-frame preview-axes override badge (`canvas-16`) — secondary to the
+   title, never competing with it: smaller, muted text, no background/border
+   of its own (the header's `--bg-surface-2`/`--bg-surface-4` chrome is
+   already the frame's own identity marker). `flex-shrink: 0` so a long page
+   title truncates first — the pin state is the thing that must stay legible.
+   Same "smaller + muted, no new visual language" treatment `BreakpointFrame.
+   module.css`'s `.pxBadge` uses for its own secondary label text. */
+.axesBadge {
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    color: var(--text-subtle);
+    white-space: nowrap;
 }
 
 /* Static stand-in for an offscreen frame's body — no iframe, no animation.
@@ -285,4 +309,17 @@
 .emptyStateBody {
     font-size: var(--text-s);
     color: var(--text-muted);
+}
+
+/* S1 — the staged-mount poster: the same frozen picture (or plain title
+   stand-in) the offscreen placeholder shows, painted OVER the live iframe
+   between its injector commit and its node-tree commit. Without it a frame
+   entering the viewport flashes an empty white document for one commit, and a
+   zoom-out that admits a dozen frames reads as a wave of blank boxes rather
+   than content that was always there. `.frameBody` is already the containing
+   block (it positions `CanvasEmptyPageHint` the same way). */
+.mountOverlay {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
 }

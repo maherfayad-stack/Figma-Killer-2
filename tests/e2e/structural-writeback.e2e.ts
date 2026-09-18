@@ -1,7 +1,11 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+  createAuthoredFixtureProject,
+  removeFixtureProject,
+  type FixtureProject,
+} from './helpers/studioFixtureProject'
 
 /**
  * `struct-01` — real-browser proof that a structural edit on the board either
@@ -27,8 +31,11 @@ import * as path from 'node:path'
  *      the file is byte-identical.
  *
  * SAFETY — this spec WRITES, so it never points at real user data. The fixture
- * below is created fresh in an OS temp directory, opened by absolute path, and
- * removed afterwards. Nothing under `studio-workspace/` is read or written.
+ * below is created fresh under this RUN's THROWAWAY COPY of `studio-workspace/`
+ * (`WORKSPACE_ROOT`, made by `scripts/e2e-dev.ts`) and removed afterwards; the
+ * tracked tree is never read or written. It used to be created in an OS temp
+ * directory instead, which `resolveProjectDir`'s containment check 404s — so
+ * both cases died on a timeout that read exactly like a product bug.
  */
 
 const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
@@ -58,10 +65,10 @@ const FIXTURE_PAGE = `export default function Home() {
 }
 `
 
-let fixtureDir: string
+let fixture: FixtureProject
 
 function pagePath(): string {
-  return path.join(fixtureDir, 'pages', 'Home.tsx')
+  return path.join(fixture.dir, 'pages', 'Home.tsx')
 }
 
 function readPage(): string {
@@ -94,16 +101,20 @@ function nodeId(tag: string, occurrence = 1): string {
 }
 
 test.beforeAll(() => {
-  fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-struct01-'))
-  fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
-  fs.writeFileSync(pagePath(), FIXTURE_PAGE, 'utf8')
+  // Under this RUN's throwaway copy of `studio-workspace/`, not an OS temp
+  // directory: `resolveProjectDir`'s containment check 404s any project
+  // outside the root the server resolved, so a temp-dir fixture could never be
+  // opened at all — the spec failed on a timeout that read like a product bug.
+  fixture = createAuthoredFixtureProject('__e2e-structural-writeback', {
+    'pages/Home.tsx': FIXTURE_PAGE,
+  })
 })
 
 test.afterAll(() => {
-  if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true })
+  if (fixture) removeFixtureProject(fixture)
 })
 
-/** Open the studio board on the temp fixture. Safe to write only because `fixtureDir` is a throwaway. */
+/** Open the studio board on the fixture — safe to write because it is in the run's throwaway workspace copy. */
 async function openStudioBoard(page: Page, projectDir: string): Promise<FrameLocator> {
   await page.addInitScript((dir: string) => {
     window.localStorage.setItem('studio:studio:dir', dir)
@@ -193,7 +204,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
   test.setTimeout(180_000)
 
   test('dragging one sibling past another rewrites the JSX, byte-exact elsewhere', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixtureDir)
+    const contentFrame = await openStudioBoard(page, fixture.dir)
     expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
 
     // Selecting on the canvas auto-expands the layers tree to the node's row.
@@ -237,7 +248,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
   })
 
   test('dragging an element into a different parent REFUSES, and touches nothing', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixtureDir)
+    const contentFrame = await openStudioBoard(page, fixture.dir)
     const before = readPage()
 
     await clickInFrame(page, contentFrame.locator(`[data-node-id="${nodeId('em')}"]`).first())

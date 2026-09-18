@@ -13,6 +13,8 @@ export {
   FlowRowReverseIcon,
   FlowColumnIcon,
   FlowColumnReverseIcon,
+  WrapIcon,
+  WrapReverseIcon,
   DisplayBlockIcon,
   DisplayFlexIcon,
   DisplayGridIcon,
@@ -30,4 +32,5 @@ export {
   RotateIcon,
   FlipHorizontalIcon,
   FlipVerticalIcon,
+  UnlockedIcon,
 } from './InspectorIcons'

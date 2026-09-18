@@ -17,7 +17,8 @@
  * synchronously at the top of the effect.
  *
  * Deliberately thin glue over two already-tested pure functions, so it
- * carries no test of its own — `TypographySettings`'s tests drive the
+ * carries no test of its own — `TextSettingsPopover`'s tests
+ * (`inspector/sections/__tests__/textSettingsPopover.test.tsx`) drive the
  * RESULT (a `variationAxes` prop) directly instead of mocking a network
  * fetch to exercise this hook end to end.
  */

@@ -63,12 +63,54 @@ src/modules/studio/
 └── slot/                — studio.slot (Studio-only; imported by base/index.ts)
 
 src/modules/alm/
-├── register.tsx         — registers @alm-design/design-system components as editor modules
-├── manifest.generated.json — build-time-generated component manifest (scripts/gen-alm-manifest.mjs)
+├── register.tsx         — registers the vendored design system's components as editor modules
+├── manifest.generated.json — generated component manifest (bun run alm:sync)
 └── curatedDefaults.ts   — curated per-component default props
 ```
 
-Two of these are **Studio-only, publisher-transparent modules** (`publishBehavior: 'transparent'`, no HTML/CSS emitted): `studio.instance` is the addressable call-site node `inlineLocalComponents` leaves in the tree for a component call `src/core/page-parser/inlineLocalComponents.ts` successfully expanded (its call-site props are what `detachComponent`/`swapComponentInstance` in `src/core/ast-codemods/` act on); `studio.slot` is its `{children}`-slot counterpart. Neither has a publisher representation — Studio boards aren't published, the filesystem is the source of truth. `src/modules/alm/` is a first-party module pack wrapping the `@alm-design/design-system` npm package's components as canvas modules for one hardcoded design system; `src/admin/pages/site/studio/registerProjectModules.ts` generalizes the same pattern to register modules dynamically from whichever user project is open.
+Two of these are **Studio-only, publisher-transparent modules** (`publishBehavior: 'transparent'`, no HTML/CSS emitted): `studio.instance` is the addressable call-site node `inlineLocalComponents` leaves in the tree for a component call `src/core/page-parser/inlineLocalComponents.ts` successfully expanded (its call-site props are what `detachComponent`/`swapComponentInstance` in `src/core/ast-codemods/` act on); `studio.slot` is its `{children}`-slot counterpart. Neither has a publisher representation — Studio boards aren't published, the filesystem is the source of truth. `src/modules/alm/` is a first-party module pack wrapping the **built-in design system** — vendored at `vendor/alm-design-system/` and imported as `alm-design-system` — as canvas modules; `src/admin/pages/site/studio/registerProjectModules.ts` generalizes the same pattern to register modules dynamically from whichever user project is open.
+
+### The built-in design system
+
+`vendor/alm-design-system/` holds the design system's **source** (40 `.jsx`
+components + CSS, `context/`, `tokens/`, 568 icons) plus its own `CLAUDE.md` /
+`design.md`, wired into `package.json` as
+`"alm-design-system": "file:./vendor/alm-design-system"` — the same arrangement
+`vendor/pixel-art-icons/` uses. There is no npm dependency any more.
+
+`bun run alm:sync` (`scripts/sync-alm-design-system.ts`) produces four committed
+artefacts from that source, and `alm-design-system-fresh.test.ts` fails if any of
+them drifts:
+
+| Artefact | What it is |
+|---|---|
+| `dist/index.js` + `dist/index.css` | Vite lib build. The admin bundle imports `dist/`, never `src/`, so the per-component `import './X.css'` side effects stay out of the admin document. `canvasVendorCss.ts` injects `dist/index.css` into every canvas iframe. |
+| `dist/tokens.generated.json` | `{ name, light, dark, group }[]` for every `--color-*` / `--background-*` / `--text-*` / `--border-*` / `--icon-*` token, with `var()` references resolved so each value is paintable. |
+| `dist/BUILD_HASH` | SHA-256 over every file under `src/` — what the freshness gate compares instead of re-running a 10 s Vite build. |
+| `src/modules/alm/manifest.generated.json` | The component manifest (`buildDesignSystemManifest`). |
+
+The manifest carries two kinds of truth. **Prop truth** (names, kinds, enum
+values, documented examples) drives the Properties panel's generated inspector.
+**Findability truth** drives the palette and its search, and is new:
+
+- `description` — the first sentence of the component's `design.md` section
+  ("Buttons trigger actions."). A component whose docs yield nothing fails
+  `assets-search-coverage.test.ts` rather than shipping a placeholder.
+- `keywords` — the union of the `design.md` Decision-Map intents that resolve to
+  the component, its own documented enum values (`destructive`, `payment`), its
+  heading alias where the docs spell the name differently (`## List / ListItem`),
+  and `vendor/alm-design-system/studio/keywords.json` — Studio's curated synonym
+  list. `dir`'s `ltr`/`rtl` are excluded: every component documents them, so they
+  identify none.
+- `group` — `vendor/alm-design-system/studio/groups.json`. Ten purpose groups
+  (Navigation · Actions · Inputs · Selection · Lists & cells · Feedback ·
+  Progress · Content & cards · Overlays · Brand); `register.tsx` maps it onto
+  `ModuleDefinition.category`, which is what the picker groups and colours by.
+  A component in no group fails the build.
+
+The two `studio/*.json` files are Studio's own curation and sit BESIDE the
+upstream docs, never inside them, so re-vendoring a newer upstream never has to
+merge them.
 
 ---
 
@@ -79,13 +121,21 @@ interface ModuleDefinition<TProps extends Record<string, unknown>> {
   /** Namespaced id — 'base.text', 'acme.product-card'. URL-safe lowercase. */
   id: string
 
-  /** Display name in the module picker. */
+  /** Display name on the Assets panel card. */
   name: string
 
-  /** One-line description (shown in the picker). */
+  /** One-line description (shown under the name on the card). */
   description?: string
 
-  /** Category for grouping in the picker ('Layout', 'Typography', 'Forms', ...). */
+  /**
+   * Search keywords the Assets panel matches in addition to `name` and
+   * `description` — purposes ("header"), synonyms ("pill"), variant names.
+   * A card shows the keyword that matched when the hit did not come from the
+   * module's own name.
+   */
+  keywords?: string[]
+
+  /** Category for grouping ('Layout', 'Typography', 'Forms', ...). In the Assets panel it is the sub-heading a design-system component sits under — a design-system component carries its PURPOSE group (Navigation, Actions, Inputs, ...) here. */
   category: string
 
   /** Icon component from pixel-art-icons (deep-imported, tree-shakeable). */
@@ -437,7 +487,7 @@ registry.registerOrReplace(HeadingModule)
 // Then add `import './heading'` to src/modules/base/index.ts
 ```
 
-That's it. The module shows up in the picker, in the Properties panel, in the publisher, in the canvas.
+That's it. The module shows up in the **Assets panel** (the palette — a left-rail card grid; the insert dialog it replaced is gone), in the Properties panel, in the publisher, in the canvas. Its card is a live render of the `component` you just wrote, with the `defaults` you just declared.
 
 ### Override per-breakpoint props
 

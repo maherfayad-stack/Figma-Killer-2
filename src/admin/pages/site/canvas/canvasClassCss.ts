@@ -1,5 +1,6 @@
 import {
   bagToCSS,
+  collectSiteStyleBackgroundImagePaths,
   createStyleRuleCssEmitter,
   generateClassCSS,
   type ViewportContext,
@@ -255,3 +256,118 @@ export function generateForcedStateCSS(
 function escapeCssAttribute(value: string): string {
   return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
 }
+
+// ---------------------------------------------------------------------------
+// Per-node class CSS for a SANDBOXED module iframe (`ModuleSandboxFrame`)
+//
+// A sandboxed module renders inside its own `srcdoc` iframe, which none of the
+// canvas injectors reach — so it is handed a self-contained CSS string built
+// from just the style rules its own node references. `buildCanvasClassCSS`'s
+// filter (`styleRuleNeedsCanvasOverlay`) deliberately does NOT apply here:
+// there is no `AuthoredCssInjector` raw-text copy inside a sandbox document,
+// so an unedited imported rule has to be emitted or it is simply absent.
+//
+// The memo is `createCanvasClassCssMemo`'s shape, one axis wider (see the memo
+// table in `docs/agent-refs/canvas-internals.md`): the SHARED inputs
+// (`styleRules`, `breakpoints`, `conditions`, the media signature) are
+// identity-compared exactly as there, but the answer also depends on WHICH
+// node is asking, so the cache is a `Map` keyed by the node's `classIds`
+// signature instead of a single slot. A single slot would thrash the moment a
+// page holds two sandboxed modules, which is the common case. The point of the
+// memo is that the module's render body no longer re-emits CSS on every
+// unrelated store change — before it did, because it subscribed to the whole
+// `site` object and regenerated inline.
+// ---------------------------------------------------------------------------
+
+/** Stable empty results — a node with no classes must not mint a new identity per render. */
+const EMPTY_NODE_CLASS_RULES: Record<string, StyleRule> = {}
+const EMPTY_NODE_BACKGROUND_PATHS: readonly string[] = []
+
+function classIdsCacheKey(classIds: readonly string[] | undefined): string {
+  return classIds?.length ? JSON.stringify(classIds) : ''
+}
+
+/**
+ * A keyed cache whose whole contents are dropped when any of the shared,
+ * identity-compared inputs changes. Mutative gives every real edit a new
+ * `styleRules` reference, so "identity changed" is exactly "a rule changed".
+ */
+function createSharedInputCache<T>(): (shared: readonly unknown[], key: string, compute: () => T) => T {
+  let lastShared: readonly unknown[] | null = null
+  let cache = new Map<string, T>()
+  return (shared, key, compute) => {
+    const prev = lastShared
+    if (!prev || prev.length !== shared.length || !shared.every((value, i) => Object.is(value, prev[i]))) {
+      lastShared = shared
+      cache = new Map()
+    }
+    const hit = cache.get(key)
+    if (hit !== undefined) return hit
+    const value = compute()
+    cache.set(key, value)
+    return value
+  }
+}
+
+const nodeClassRulesCache = createSharedInputCache<Record<string, StyleRule>>()
+
+/**
+ * The subset of `styleRules` a node's `classIds` name, with a STABLE identity
+ * for the same (registry, classIds) pair. Stability is the point: the subset
+ * feeds both the background-path scan and the CSS generation below, and a
+ * fresh object per render would defeat both.
+ */
+function selectNodeClassRules(
+  styleRules: Record<string, StyleRule>,
+  classIds: readonly string[] | undefined,
+): Record<string, StyleRule> {
+  if (!classIds?.length) return EMPTY_NODE_CLASS_RULES
+  return nodeClassRulesCache([styleRules], classIdsCacheKey(classIds), () => {
+    const subset: Record<string, StyleRule> = {}
+    for (const id of classIds) {
+      const rule = styleRules[id]
+      if (rule) subset[id] = rule
+    }
+    return subset
+  })
+}
+
+const nodeBackgroundPathsCache = createSharedInputCache<readonly string[]>()
+
+/**
+ * Background-image paths referenced by one node's own class rules — what a
+ * sandboxed module needs to resolve before it can emit responsive CSS.
+ * Memoized so the scan does not re-run on every unrelated store change.
+ */
+export function nodeClassBackgroundImagePaths(
+  styleRules: Record<string, StyleRule>,
+  classIds: readonly string[] | undefined,
+): readonly string[] {
+  if (!classIds?.length) return EMPTY_NODE_BACKGROUND_PATHS
+  return nodeBackgroundPathsCache([styleRules], classIdsCacheKey(classIds), () =>
+    [...collectSiteStyleBackgroundImagePaths({ styleRules: selectNodeClassRules(styleRules, classIds) })],
+  )
+}
+
+const nodeClassCssCache = createSharedInputCache<string>()
+
+/**
+ * The CSS text for one node's own class rules — the string a sandboxed module
+ * iframe is handed. See this section's header for the memo's shape.
+ */
+export function generateNodeClassCSS(
+  styleRules: Record<string, StyleRule>,
+  classIds: readonly string[] | undefined,
+  breakpoints: ViewportContext[],
+  conditions: ReadonlyArray<ConditionDef> = [],
+  responsiveOptions: CanvasResponsiveCssOptions = {},
+): string {
+  if (!classIds?.length) return ''
+  const shared = [styleRules, breakpoints, conditions, responsiveOptions.mediaSignature]
+  return nodeClassCssCache(shared, classIdsCacheKey(classIds), () => {
+    const classes = selectNodeClassRules(styleRules, classIds)
+    if (Object.keys(classes).length === 0) return ''
+    return generateClassCSS(classes, breakpoints, conditions, responsiveOptions)
+  })
+}
+

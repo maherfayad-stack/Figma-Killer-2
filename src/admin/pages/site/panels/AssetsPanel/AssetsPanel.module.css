@@ -1,0 +1,116 @@
+/* AssetsPanel — search row, collapsible sections, card + icon grids. */
+
+.searchRow {
+    flex: 0 0 auto;
+    padding: var(--space-s) var(--space-s) var(--space-2xs);
+}
+
+.scroll {
+    flex: 1 1 auto;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0 var(--space-s) var(--space-2xl);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+}
+
+.sectionHeader {
+    width: 100%;
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: 650;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.sectionTitle {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3xs);
+    min-width: 0;
+}
+
+.sectionChevron {
+    display: inline-flex;
+    color: var(--text-subtle);
+}
+
+.sectionCount {
+    color: var(--text-subtle);
+    font-variant-numeric: tabular-nums;
+}
+
+.sectionBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2xs);
+    padding-bottom: var(--space-s);
+}
+
+.groupLabel {
+    padding: var(--space-3xs) var(--space-3xs) 0;
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    letter-spacing: 0.03em;
+}
+
+/* Responsive card grid — the panel is user-resizable, so the column count
+   follows its width instead of being a fixed number. */
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: var(--space-3xs);
+}
+
+/* A group label dropped INTO the grid (the Layouts section interleaves them)
+   spans the full row so the next card starts a fresh line. */
+.grid > .groupLabel {
+    grid-column: 1 / -1;
+}
+
+.iconGrid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+    gap: var(--space-4xs);
+}
+
+.iconTile {
+    width: 100%;
+    aspect-ratio: 1;
+    border-radius: var(--radius);
+    background: var(--bg-surface-2);
+    color: var(--text-muted);
+}
+
+.iconTile:hover {
+    background: var(--bg-surface-3);
+    color: var(--text-bright);
+}
+
+.iconGlyph {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+}
+
+.iconGlyph svg {
+    width: 100%;
+    height: 100%;
+    fill: currentColor;
+}
+
+.iconCount {
+    margin: 0;
+    padding: var(--space-3xs) var(--space-3xs) 0;
+    font-size: var(--text-2xs);
+    color: var(--text-subtle);
+}

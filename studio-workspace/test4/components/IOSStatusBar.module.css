@@ -9,6 +9,14 @@
   padding: 11px var(--space);
   box-sizing: border-box;
   width: 100%;
+
+  /* The island is a hardware cutout, so it is pure black in both schemes. No DS
+     token is pure black: the nearest, --icon-base-default-static, is #1C1C1C —
+     which is also the dark-mode value of --background-base-default, so the
+     island vanished on every screen whose status bar sits straight on the page
+     background (Onboarding). Screens behind a sheet scrim happened to hide the
+     collision. Named here rather than inlined at the one use site below. */
+  --status-bar-cutout: #000;
 }
 
 .time {
@@ -22,7 +30,8 @@
   font-size: 17px;
   font-weight: 600;
   line-height: 22px;
-  color: var(--text-base-default-static);
+  /* Not the -static token: status bar content has to invert in dark mode. */
+  color: var(--text-base-default);
   white-space: nowrap;
 }
 
@@ -41,7 +50,7 @@
   width: 126px;
   height: 36px;
   border-radius: var(--rounded-full);
-  background: var(--icon-base-default-static);
+  background: var(--status-bar-cutout);
 }
 
 .levels {
@@ -52,6 +61,8 @@
   gap: 7px;
   height: 22px;
   padding-top: 1px;
+  /* The three SVGs paint from currentColor so they invert with the scheme. */
+  color: var(--icon-base-default);
 }
 
 .levels span {

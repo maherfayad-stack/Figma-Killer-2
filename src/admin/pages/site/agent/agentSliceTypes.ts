@@ -103,9 +103,22 @@ export interface AgentSlice {
    * the way this project is set up to be graded".
    */
   agentFidelityMode: 'creative' | 'balanced' | 'strict' | null
+  /**
+   * A12's design policy for this session — how much of the project's own
+   * design system the agent is held to. `null` means "let the server decide":
+   * the persisted project default, else `balanced`.
+   *
+   * A SECOND axis, not more values on `agentFidelityMode`. Fidelity is about
+   * measurement against a reference; this is about adherence to the design
+   * system, and the two combine in both directions — see
+   * `server/handlers/studio/designPolicy.ts` for the positions that a single
+   * combined control could not express.
+   */
+  agentDesignPolicy: 'follow' | 'balanced' | 'free' | null
   setAgentEffort(effort: AgentSlice['agentEffort']): void
   setAgentPermissionMode(mode: AgentSlice['agentPermissionMode']): void
   setAgentFidelityMode(mode: AgentSlice['agentFidelityMode']): void
+  setAgentDesignPolicy(policy: AgentSlice['agentDesignPolicy']): void
 
   openAgent(): void
   closeAgent(): void

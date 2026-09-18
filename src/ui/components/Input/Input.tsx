@@ -1,5 +1,6 @@
 import {
   useRef,
+  type CSSProperties,
   type InputHTMLAttributes,
   type ReactNode,
   type Ref,
@@ -93,6 +94,18 @@ interface TextareaProps extends TextareaHTMLAttributes<HTMLTextAreaElement> {
   monospace?: boolean
   emphasis?: TextEmphasis
   resize?: 'none' | 'vertical' | 'both'
+  /**
+   * Size to the VALUE rather than to `rows` — one line of text gets one line
+   * of box, and the field grows as it is typed into, up to `rows` lines and
+   * then scrolls. `rows` stops being a fixed height and becomes the ceiling.
+   *
+   * Opt-in, not the default: a form that wants a stable, reserved multi-line
+   * box (a page's meta description, a plugin setting) is a different control
+   * from an inspector row, and only the latter is paying for the height. See
+   * `.textareaAutoGrow` in the stylesheet for the one-line mechanism and its
+   * support caveat.
+   */
+  autoGrow?: boolean
   /** React 19: ref is a regular prop on function components. */
   ref?: Ref<HTMLTextAreaElement>
 }
@@ -221,6 +234,7 @@ export function Textarea({
   emphasis = 'default',
   resize = 'vertical',
   autoComplete = 'off',
+  autoGrow = false,
   ref,
   ...props
 }: TextareaProps) {
@@ -237,9 +251,17 @@ export function Textarea({
         styles[`size-${fieldSize}`],
         monospace && styles.monospace,
         invalid && styles.invalid,
+        autoGrow && styles.textareaAutoGrow,
         className,
       )}
       {...props}
+      // `rows` becomes the CEILING under `autoGrow` — read back as
+      // `--textarea-max-rows` by `.textareaAutoGrow`'s `max-height`.
+      style={
+        autoGrow && props.rows !== undefined
+          ? ({ '--textarea-max-rows': String(props.rows) } as CSSProperties)
+          : props.style
+      }
     />
   )
 }

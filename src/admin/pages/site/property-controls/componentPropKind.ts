@@ -44,10 +44,32 @@ export const PropKindSchema = Type.Union([
 ])
 export type PropKind = Static<typeof PropKindSchema>
 
+/**
+ * Same shape as `component-manifest/types.ts`'s `PropSpec.appliesWhen` — see
+ * that file's doc, and `buildDesignSystemManifest.ts`'s for exactly which
+ * doc-comment prose produces one. Optional here for the identical reason the
+ * server's own `componentSpecExtract.ts` extraction has no producer for it
+ * TODAY: that pipeline reads a component's TYPES (ts-morph, syntactic, no
+ * prose) rather than hand-written doc comments, so a purely local project
+ * component has no applicability PROSE to read a gate from in the first
+ * place. Declared here anyway, additive, so `buildComponentCallSiteRows`
+ * below has one honest place to check regardless of which producer a future
+ * catalog entry comes from — a local wrapper around a design-system
+ * component, or a package instance's own manifest, either of which could
+ * legitimately populate it without a second row-filtering rule needing to
+ * exist.
+ */
+export const PropApplicabilitySchema = Type.Object({
+  prop: Type.String(),
+  values: Type.Array(Type.String()),
+})
+export type PropApplicability = Static<typeof PropApplicabilitySchema>
+
 export const PropSpecSchema = Type.Object({
   name: Type.String(),
   kind: PropKindSchema,
   required: Type.Boolean(),
+  appliesWhen: Type.Optional(PropApplicabilitySchema),
 })
 export type PropSpec = Static<typeof PropSpecSchema>
 

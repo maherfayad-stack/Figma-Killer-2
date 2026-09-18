@@ -1,5 +1,5 @@
 /**
- * The Properties panel's control for every `@alm-design/design-system` prop,
+ * The Properties panel's control for every vendored design-system prop,
  * end to end from the generated manifest.
  *
  * Three defects this pins, all of them the same root cause — `register.tsx`

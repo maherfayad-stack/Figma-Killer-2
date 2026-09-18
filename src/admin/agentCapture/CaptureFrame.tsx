@@ -36,9 +36,10 @@ import type { Breakpoint, Page } from '@core/page-tree'
 import { CanvasComposedTree } from '@site/canvas/CanvasComposedTree'
 import {
   CanvasBreakpointContext,
-  CanvasDocumentContext,
+  CanvasFrameAdapterContext,
   CanvasPageContext,
 } from '@site/canvas/CanvasContexts'
+import { isPortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { IframeFrameSurface } from '@site/canvas/IframeFrameSurface'
 import {
   CanvasPreviewReadinessContext,
@@ -127,6 +128,13 @@ export function CaptureFrame({ page, width, moduleRegistration, onSettled }: Cap
  * belongs to `settleCaptureDocument`, which returns a bounded result instead of
  * being cut off — an abort would leave this frame with no entry at all, and the
  * capture run would hang until the driver's own (longer) ready timeout.
+ *
+ * Portal-mode only (`live-05`, STATE.md, Batch 7): `settleCaptureDocument` and
+ * `measureFrame` both need a real `Document` — reached through
+ * `CanvasFrameAdapterContext`'s portal escape hatch instead of the removed
+ * `CanvasDocumentContext`. `CaptureFrame` is `/admin/agent-capture`'s own
+ * dedicated capture surface and never passes `documentMode`, so it is always
+ * portal mode — not a new bridge-mode gap.
  */
 function CaptureSettleReporter({
   pageId,
@@ -139,7 +147,9 @@ function CaptureSettleReporter({
   moduleRegistration: Promise<void>
   onSettled: (report: AgentCaptureFrameReport) => void
 }) {
-  const iframeDocument = use(CanvasDocumentContext)
+  const adapter = use(CanvasFrameAdapterContext)
+  const iframeDocument =
+    adapter && isPortalFrameAdapter(adapter) ? (adapter.getPortalWindow()?.document ?? null) : null
 
   useEffect(() => {
     if (!iframeDocument) return

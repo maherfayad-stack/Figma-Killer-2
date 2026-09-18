@@ -39,48 +39,12 @@
  */
 
 import { canvasShellFiles } from './canvasTemplate'
+import { INDEX_HTML, MAIN_JSX, VITE_CONFIG, VITE_CONFIG_REL_PATH } from './bootstrapTemplates'
 import { screenFrameFile } from './screenFrameTemplate'
 import { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
 import { SHELL_CSS } from './shellCssTemplate'
 
 export { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
-
-const INDEX_HTML = `<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Prototype</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/prototype/main.jsx"></script>
-  </body>
-</html>
-`
-
-const VITE_CONFIG = `import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-// The workspace root IS the app root: pages/, components/ and i18n/ sit
-// beside this file, exactly as Studio reads them.
-export default defineConfig({
-  plugins: [react()],
-  server: { open: true },
-})
-`
-
-const MAIN_JSX = `import { StrictMode } from 'react'
-import { createRoot } from 'react-dom/client'
-import App from './App'
-import './shell.css'
-
-createRoot(document.getElementById('root')).render(
-  <StrictMode>
-    <App />
-  </StrictMode>,
-)
-`
 
 const URL_STATE_JS = `// The shell's state in the query string, so a board, a screen, a language and
 // a theme are all shareable as a link and survive a reload.
@@ -107,13 +71,26 @@ export function setUrlParams(next) {
 
 const APP_JSX = `import { useCallback, useEffect, useRef, useState } from 'react'
 import CanvasPanel from './CanvasPanel'
-import ScreenFrame from './ScreenFrame'
+import ScreenFrame, { RESET } from './ScreenFrame'
 import Player from './Player'
 import { BOARDS, FRAME_DEFAULTS, PREVIEW_AXES, PROJECT_NAME, SCREENS, applyColorSchemeGate } from './registry.generated'
 import { Providers, useShellLanguage } from './providers.generated'
 import { getUrlParams, setUrlParams } from './urlState'
 
 const SCREEN_BY_ID = Object.fromEntries(SCREENS.map((screen) => [screen.key, screen]))
+
+/**
+ * Matches '/__screen/<key>' as a PATHNAME SUFFIX, not an exact/prefix match —
+ * load-bearing, not a style choice. Studio's own live-origin proxy
+ * (server/liveOrigin.ts) is transparent: a browser at
+ * '<LIVE_ORIGIN>/p/<projectKey>/__screen/<key>' still sees that full path in
+ * 'window.location.pathname' even though the proxy forwards it upstream
+ * unchanged (see server/liveOrigin.ts's own doc for why the prefix survives).
+ * The SAME generated file also has to work hit directly (downloaded, 'npm run
+ * dev'), where the pathname is exactly '/__screen/<key>' with no prefix at
+ * all. One suffix regex handles both.
+ */
+const SCREEN_ROUTE_PATTERN = /\\/__screen\\/([^/?#]+)\\/?$/
 
 /**
  * The whole prototype: a board tab row, a pan/zoom canvas, and a flow view
@@ -127,6 +104,11 @@ const SCREEN_BY_ID = Object.fromEntries(SCREENS.map((screen) => [screen.key, scr
  * does keep in step are the \`.generated\` ones this imports.
  */
 export default function App() {
+  const screenMatch = typeof window !== 'undefined'
+    ? SCREEN_ROUTE_PATTERN.exec(window.location.pathname)
+    : null
+  if (screenMatch) return <ScreenRoute screenKey={decodeURIComponent(screenMatch[1])} />
+
   const params = getUrlParams()
   const [boardId, setBoardId] = useState(params.board || (BOARDS[0] && BOARDS[0].id) || null)
   const [pageId, setPageId] = useState(params.page || null)
@@ -170,6 +152,75 @@ export default function App() {
         onOpenFrame={openFrame}
       />
     </Providers>
+  )
+}
+
+/**
+ * '/__screen/<key>' — one screen, full-viewport, no board chrome. This is
+ * what a live Tier-2 canvas frame (or a bookmarked/shared link) actually
+ * loads: \`screen.Component\` rendered directly at the top level of THIS
+ * document, not nested inside another \`ScreenFrame\` iframe. \`ScreenFrame\`
+ * exists so the board/flow UI above gives each preview its own real
+ * viewport; nesting it here would put the screen's real DOM (and its
+ * data-node-id stamps) inside a SECOND, separate contentDocument that
+ * \`virtual:studio-runtime\` — injected once, into main.jsx, at the top of
+ * THIS page — can never see or measure. The outer element already sizing
+ * this document (Studio's own canvas bridge iframe, sized to the
+ * breakpoint's width/height, or the bare browser window when hit directly)
+ * already IS the device viewport, so there is no second CSS-isolation
+ * problem left for a nested iframe to solve.
+ */
+function ScreenRoute({ screenKey }) {
+  const params = getUrlParams()
+  const screen = SCREEN_BY_ID[screenKey]
+  const dir = params.dir === 'rtl' ? 'rtl' : params.dir === 'ltr' ? 'ltr' : (PREVIEW_AXES.direction || 'ltr')
+  const theme = params.theme === 'dark' ? 'dark' : (PREVIEW_AXES.colorScheme || 'light')
+  const lang = params.lang || undefined
+  return (
+    <Providers>
+      <ScreenRouteInner dir={dir} theme={theme} lang={lang} screen={screen} screenKey={screenKey} />
+    </Providers>
+  )
+}
+
+/**
+ * Split from \`ScreenRoute\` so it sits INSIDE \`Providers\` and can therefore
+ * read the language context — same reason \`Shell\` below needs the split.
+ */
+function ScreenRouteInner({ dir, theme, lang, screen, screenKey }) {
+  const { setLang, locales } = useShellLanguage()
+  // Apply '?lang=' once, same rule Shell already enforces (only a locale the
+  // project actually declares). Unlike Shell's own effect, this one does not
+  // reflect the language back onto the URL — a screen route has no other
+  // shell state (board/view/theme) worth syncing, and reflecting only 'lang'
+  // here would rewrite a query string a caller (Studio's own iframe src)
+  // constructed on purpose.
+  const langAppliedRef = useRef(false)
+  useEffect(() => {
+    if (langAppliedRef.current) return
+    langAppliedRef.current = true
+    if (lang && lang !== '' && locales.indexOf(lang) !== -1) setLang(lang)
+  }, [lang, locales, setLang])
+
+  useEffect(() => {
+    const html = document.documentElement
+    // Independent 'dir' override — sets the CSS attribute only, same
+    // fidelity FramePreview's own per-frame axes override already has (it
+    // does not force the design system's OWN JS-computed direction, which
+    // follows the language context, not this attribute). Pre-existing gap,
+    // not new here.
+    html.setAttribute('dir', dir)
+    if (lang) html.setAttribute('lang', lang)
+    html.setAttribute('data-theme', theme)
+    html.style.colorScheme = theme
+    applyColorSchemeGate(html, theme)
+  }, [dir, theme, lang])
+
+  return (
+    <>
+      <style>{RESET}</style>
+      {screen ? <screen.Component /> : <p className="shell__empty">Unknown screen: {screenKey}</p>}
+    </>
   )
 }
 
@@ -590,6 +641,8 @@ function FramePreview({ frame, dir, lang, theme }) {
 }
 `
 
+export { VITE_CONFIG_REL_PATH } from './bootstrapTemplates'
+
 /**
  * Every file the shell writes once. Ordered so a reader meets the entry point
  * before the parts it pulls in.
@@ -597,7 +650,7 @@ function FramePreview({ frame, dir, lang, theme }) {
 export function staticShellFiles(): ShellFile[] {
   return [
     { relPath: 'index.html', contents: INDEX_HTML },
-    { relPath: 'vite.config.js', contents: VITE_CONFIG },
+    { relPath: VITE_CONFIG_REL_PATH, contents: VITE_CONFIG },
     { relPath: `${PROTOTYPE_SHELL_DIR}/main.jsx`, contents: MAIN_JSX },
     { relPath: `${PROTOTYPE_SHELL_DIR}/App.jsx`, contents: APP_JSX },
     screenFrameFile(),

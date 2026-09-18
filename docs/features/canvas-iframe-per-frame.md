@@ -10,7 +10,7 @@ There is exactly **one** sanctioned selector rewrite, and it is deliberately nar
 
 ## TL;DR
 
-- `IframeFrameSurface` is the iframe primitive. It boots from a sentinel-tagged empty `srcDoc`, ignores the browser's short-lived initial `about:blank` document, and mounts children once via `createPortal(tree, iframeDoc.body)` only after the final document is ready. `CanvasDocumentContext` exposes that document to body ownership/evidence helpers without inserting probe elements into authored DOM.
+- `IframeFrameSurface` is the iframe primitive. It boots from a sentinel-tagged empty `srcDoc`, ignores the browser's short-lived initial `about:blank` document, and mounts children via `createPortal(tree, iframeDoc.body)` only after the final document is ready — in **three staged commits** (iframe, then injectors, then the node tree in a `startTransition`), so a zoom-out admitting a dozen frames is not one 350 ms task. See "Mounting is three commits" below. `CanvasDocumentContext` exposes that document to body ownership/evidence helpers without inserting probe elements into authored DOM.
 - **Design mode** renders one `IframeFrameSurface` per framed viewport context inside `CanvasTransformLayer` (pan/zoom). All frames mount as soon as the page document is in the store — the tree is already in memory, so there is nothing to stagger; `CanvasTransformLayer` renders skeleton frames only while the document itself hasn't loaded yet (`page === null`). **Live mode** renders a single real-size `IframeFrameSurface` inside `CanvasLiveSurface` (normal scroll).
 - Both modes are fully editable — click-to-select, properties panel, structural edits all work. Neither is a read-only preview.
 - Agent evidence can request any configured viewport. Each capture renders once through an offscreen `AgentSnapshotFrame` at the configured width, then removes it without changing the visible canvas state.
@@ -75,9 +75,59 @@ Source: `src/admin/pages/site/canvas/CanvasTransformLayer.tsx`, `BreakpointFrame
 
 Viewport contexts flagged `previewFrame: false` are frameless — they're still selectable editing contexts in the context selector (overrides route to them) but don't render a canvas iframe.
 
-Frames mount as soon as the page document is in the store. The node tree is already in memory, so every `BreakpointFrame` mounts its iframe and `NodeRenderer` tree directly — there is no async load to stage and no per-frame stagger. `CanvasFrameSkeletonFrame` covers the only genuine wait: the document not being loaded yet (`page === null`). The same shared skeleton frame is used by the editor-body lazy fallback and the no-site canvas state, so startup does not step through separate text-only loading screens.
+Frames mount as soon as the page document is in the store. The node tree is already in memory, so every `BreakpointFrame` mounts its iframe and `NodeRenderer` tree directly — there is no async load to wait for. `CanvasFrameSkeletonFrame` covers the only genuine wait: the document not being loaded yet (`page === null`). The same shared skeleton frame is used by the editor-body lazy fallback and the no-site canvas state, so startup does not step through separate text-only loading screens.
 
-(An earlier version staged inactive frames behind a `requestAnimationFrame` → `setTimeout` → `requestIdleCallback` chain. That was an unmeasured optimization for a cost — mounting in-memory trees — that is cheap in practice, and it could strand frames as skeletons forever whenever `requestAnimationFrame` was suspended, e.g. a backgrounded tab or a headless CI runner. It was removed in favour of mounting directly.)
+(An earlier version staged inactive frames behind a `requestAnimationFrame` → `setTimeout` → `requestIdleCallback` chain. That was an unmeasured optimization for a cost — mounting in-memory trees — that is cheap in practice, and it could strand frames as skeletons forever whenever `requestAnimationFrame` was suspended, e.g. a backgrounded tab or a headless CI runner. It was removed in favour of mounting directly. The staged mount described below is **not** a return to it: `startTransition` is ordinary React work that always runs, it is merely allowed to yield to a higher-priority update first.)
+
+### Mounting is three commits (S1)
+
+A board zoom-out that admits a dozen frames used to do all of this in one React
+commit, and cost a 350 ms animation frame for it. `IframeFrameSurface` now
+stages the mount:
+
+1. the `<iframe srcDoc>` element alone,
+2. the injector chain, once `load` / `contentDocument` hands over a real document,
+3. the node tree and `RuntimeScriptInjector`, scheduled with `startTransition`
+   from the effect that runs right after (2) commits.
+
+`onContentReadyChange` (a `useState` setter, threaded through `BreakpointFrame`
+so it cannot defeat that component's `memo()` bailout) reports stage 3. A board
+frame keeps its frozen poster painted over the iframe until then, so a frame
+entering the viewport never flashes an empty white document.
+
+What the profile actually said, and what it cost per mounting frame, is in
+[`docs/agent-refs/canvas-internals.md`](../agent-refs/canvas-internals.md)
+§Perf — including the two surprises: creating an iframe is only ~12 ms, and the
+single most expensive thing happening during a mount sweep was the **poster
+rasterization** of frames that had just arrived.
+
+### The mount pool — a departed frame keeps its document
+
+`framePool.ts` is the one module that decides which frames hold a live iframe:
+everything `isFrameOnScreen` says is visible, **plus** the recently-departed
+frames the pool still has room for. Panning back to where you just were
+therefore remounts nothing at all. Eviction is least-recently-on-screen, and
+the cap exists because each mounted frame is a whole document carrying its own
+parsed copy of every injected stylesheet, so an uncapped pool would end a pan
+across a 40-frame board with 40 of them resident.
+
+The budget is the one thing that varies, and it varies by what a frame **costs**
+on this board — a Tier 0/1 portal frame is one cheap same-origin `srcDoc`
+document (`max(8, onScreen + 4)`, a floor with headroom); a Tier-2 frame is a
+`LiveBoardFrame`, which is a fallback document **and** a cross-origin bridge
+iframe against a real dev-server process (`max(onScreen, 8)`, a ceiling only
+the visible set may exceed). The trust tier picks the cost in
+`BoardFramesLayer` and touches mounting nowhere else.
+
+`BoardFrameView` takes two separate props as a result: `isOnScreen` (the
+viewport test — drives poster CAPTURE, which has to happen while the frame is
+genuinely visible and settled) and `isMounted` (is the pool holding it — drives
+the live frame, the auto-height box, and the empty-page hint). It resolves them
+through `resolveFrameMount`, and stamps the answer's reason onto the frame
+element as `data-frame-mount` (`on-screen` / `pooled` / `offscreen`), which is
+how a test, the agent's capture path and a human with devtools open all read
+the same answer. `isMounted` is **optional** and defaults to `isOnScreen`; see
+`docs/agent-refs/canvas-internals.md` §Perf for why that is load-bearing.
 
 The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
 
@@ -86,6 +136,24 @@ The active viewport context (highlighted, drives style override routing) is trac
 `site_render_snapshot` always asks `CanvasRoot` to mount one `AgentSnapshotFrame` through a portal outside the canvas clipping/transform layers. It uses the same `IframeFrameSurface`, `CanvasComposedTree`, breakpoint context, class CSS, and user stylesheet path as the editor, at the breakpoint's configured width. A deterministic transient path avoids capturing a visible frame midway through an asynchronous preview fetch and makes Live/collapsed/disabled-frame state irrelevant. The frame sits offscreen rather than using `display:none`, so it has real layout geometry for evidence collection.
 
 This frame is transient editor-session state. It does not change the active viewport, Design/Live mode, pan/zoom, or collapsed frame ids, and it never runs authored runtime scripts (a read must not duplicate arbitrary side effects or network calls). A revisioned readiness tracker covers post-type preview rows, loop data, and media metadata; capture additionally waits for fonts, React/DOM settling, and cloned image/background embedding. The request-specific marker is stored on the host iframe rather than authored DOM. The executor captures only after that marker appears and releases the request in `finally`. Explicit breakpoint lookup is exact; it never substitutes another frame.
+
+### Frozen posters are queued, never raced against a gesture
+
+`useFramePosterCapture` rasterizes a settled on-screen frame into
+`frameSnapshotCache` so it can come back as a picture rather than an empty box.
+The rasterization is `html-to-image`'s `toCanvas`, which clones the whole
+document and reads and writes a computed style for every element in it —
+**measured at ~85–350 ms per frame** on an 18-frame board. Each frame used to
+arm its own settle timer, so a zoom-out that admitted a dozen frames ran a
+dozen of those inside the gesture.
+
+`framePosterQueue.ts` owns the timing now. Every request, and every wheel /
+pointer / key event on the editor document, re-arms one shared quiet timer;
+only once nothing has happened for the quiet period does the queue drain, and
+it drains serially, one capture per macrotask. A pointer that is DOWN counts as
+busy on its own, since a drag easily outlasts the quiet period without emitting
+anything else the queue listens for. It is a `setTimeout`, never an rAF or idle
+callback, for the reason the staging chain above was removed.
 
 ### Body presentation and snapshot paint
 
@@ -150,7 +218,7 @@ Nine `<style>` elements are injected per iframe (three from `ClassStyleInjector`
 | Injector | `id` attribute | Cascade layer | Purpose |
 |---|---|---|---|
 | `EditorChromeInjector` | `studio-editor-chrome` | **unlayered** | Editor chrome: placeholder, slot-instance, unknown-module styles. Copies safe required design tokens from parent `:root` onto iframe `:root`. The editor UI font, admin text-size tokens, and admin spacing tokens are forwarded as **chrome-namespaced** `--chrome-font-sans`, `--chrome-text-*`, and `--chrome-space-*` aliases, not as `--font-sans`, `--text-*`, or `--space-*`, because the injector is unlayered and would otherwise clobber the site's own Framework tokens. |
-| `ProjectCssInjector` | `mc-vendor` | `@layer vendor` | **Read-only** package CSS (WS-2.3): `@alm-design/design-system`'s bundled stylesheet (Studio's own dependency, `?inline`-imported at Studio's build time) concatenated with the OPEN project's own bare-specifier package CSS (`import '@acme/ui/dist/style.css'`, resolved against the project's own `node_modules` server-side by `styleCompile.ts`'s `collectVendorCss`, threaded onto the client via `GET /admin/api/studio/load`'s `vendorCss` field). Opens with a bare `@layer vendor, user-authored;` pre-declaration — see "Vendor vs. user-authored ordering" below. Never parsed into a `StyleRule`; never editable. |
+| `ProjectCssInjector` | `mc-vendor` | `@layer vendor` | **Read-only** vendor CSS (WS-2.3): the built-in design system's bundled stylesheet (Studio's own vendored `vendor/alm-design-system/dist/index.css`, `?inline`-imported at Studio's build time) concatenated with the OPEN project's own bare-specifier package CSS (`import '@acme/ui/dist/style.css'`, resolved against the project's own `node_modules` server-side by `styleCompile.ts`'s `collectVendorCss`, threaded onto the client via `GET /admin/api/studio/load`'s `vendorCss` field). Opens with a bare `@layer vendor, user-authored;` pre-declaration — see "Vendor vs. user-authored ordering" below. Never parsed into a `StyleRule`; never editable. |
 | `AuthoredCssInjector` | `mc-authored` | `@layer user-authored` | The project's own `.css` files plus WS-2.1's compiled Tailwind/Sass/PostCSS and CSS-Modules-renamed output, injected **raw and unparsed** — the same treatment `mc-vendor` gets, and for the same reason. `cssToStyleRules` parses through happy-dom's CSSOM, which SILENTLY DROPS declarations it cannot handle (`color-mix()`, `Canvas`/`CanvasText`, slash-alpha `rgb(0 0 0 / .2)`), so a registry-regenerated sheet is not a faithful copy of what the author wrote. This is the renderer; `mc-classes` is now only an OVERLAY (see below). Always `insertBefore(head.firstChild)` so it precedes `mc-classes` in source order regardless of React mount timing. |
 | `CanvasAnimationInjector` | `studio-canvas-animation` | **unlayered**, `!important` | Design frames only — see "Freeze and unroll" below. Its rules also carry the inspector's scrub position and play-once phase (W5-5). |
 | `CanvasScrollUnrollInjector` | `studio-canvas-scroll-unroll` | **unlayered**, `!important` | Design frames only, toggleable — see "Freeze and unroll" below. |
@@ -188,7 +256,7 @@ dark mode and RTL, and both were wrong until they were fixed together.
 
 **The frame root carries an explicit `data-theme`, in both schemes.** A design
 system's tokens are commonly declared under `:root:not([data-theme=light])` —
-`@alm-design/design-system` does exactly this — which means an UNSET attribute
+Studio's own built-in one does exactly this — which means an UNSET attribute
 resolves to the dark palette. `previewAxesFrameEffect.ts` therefore writes
 `data-theme="light"` or `"dark"`, and never removes it; removing it for
 "light" rendered the vendor palette dark on a light preview.
@@ -264,6 +332,12 @@ Native events require explicit handling for four cases:
 Native mouse movement is also surfaced for editor chrome that must follow the cursor in the parent document, such as inactive-viewport activation hints. These events are not forwarded as new DOM events; `IframeFrameSurface` invokes callback props with the iframe-native `MouseEvent`, and callers translate the point with `clientPointToEditorDoc`.
 
 Live frames skip wheel/pointer/keyboard forwarding — they scroll natively, have no pan/zoom, and host real interactive controls (forms, links) that must keep their own keystrokes. Overlay dismiss listeners still apply in live mode (menus can be open while the canvas is in live view).
+
+**A gesture that can be cancelled listens on BOTH documents.** Escape during an element drag (`useCanvasReorderDrag`) and during an element resize (`useElementResizeDrag`) is a native `keydown` handler attached to the parent `window` *and* to the frame's own `contentDocument`, because the cursor may be over either when the key is pressed and a keystroke raised inside an iframe never reaches the parent window. This is deliberately NOT routed through the keyboard clone bridge above: the clone exists to reach the editor's global shortcut listeners, while a cancel must be handled by the session that owns the pointer and by nothing else.
+
+**A drag measures the frame, it does not re-render it.** The element drag builds its `frameCandidateIndex` once from the frame's `contentDocument` (`measureCanvasDropCandidates`'s `[data-node-id]` scan), then rebuilds it only when a `ResizeObserver` on the **frame body** reports a real reflow. **Nothing is ADDED to the frame's DOM at any point** — the drop line, the refusal chip, the alignment guides and the ghost are all painted into the parent document's per-frame overlay layer, which is already transform-scaled with the board. See `docs/reference/canvas-dnd.md` → "The drag session (S2)".
+
+The one thing a drag writes inside the frame is a **free move's preview** (K6): `left`/`top` (and `position`) on the dragged element's own `style`, the same preview-then-commit shape `useElementResizeDrag` uses for `width`/`height`. No element is created, no attribute is added, and the preview is dropped before the store commit — so React's re-render is the last thing to touch the property, and the frame's DOM is byte-identical to what the source says the moment the gesture ends.
 
 ---
 

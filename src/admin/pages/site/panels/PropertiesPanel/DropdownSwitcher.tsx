@@ -38,7 +38,7 @@ import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { isMixed, MIXED, type Mixed } from '@ui/components/MixedValue'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { ChevronDownIcon } from 'pixel-art-icons/icons/chevron-down'
-import styles from './LayoutSection.module.css'
+import styles from './PropertyControlChrome.module.css'
 
 interface PrimarySegment {
   value: string

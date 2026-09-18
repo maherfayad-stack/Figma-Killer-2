@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { mcpToolsForCapabilities } from './registry'
+import { CMS_SITE_WRITE_TOOLS_WITHHELD, mcpToolsForCapabilities } from './registry'
+import { editorBridgeScope } from './editorBridge'
+import { siteTools } from '../tools/site'
 
 const FULL: Parameters<typeof mcpToolsForCapabilities>[0] = [
   'ai.chat',
@@ -8,6 +10,7 @@ const FULL: Parameters<typeof mcpToolsForCapabilities>[0] = [
   'site.structure.edit',
   'site.content.edit',
   'site.style.edit',
+  'studio.write',
   'pages.publish',
   'content.manage',
   'content.create',
@@ -19,18 +22,56 @@ const FULL: Parameters<typeof mcpToolsForCapabilities>[0] = [
 ]
 
 describe('mcp registry', () => {
-  it('exposes the full catalog: headless reads + browser editing tools', () => {
+  it('exposes the full catalog: headless reads + relayed reads + the Studio edit tools', () => {
     const tools = mcpToolsForCapabilities(FULL)
     const names = tools.map((t) => t.name)
     // headless (server-resolved) reads
     expect(names).toContain('site_read_styles') // headless design-system read
     expect(names).toContain('site_publish') // explicit full-site deployment
-    // browser-execution editing (relayed via the editor bridge)
-    expect(names).toContain('site_insert_html')
-    expect(names).toContain('site_delete_node')
-    expect(names).toContain('site_apply_css')
-    expect(names).toContain('site_set_color_tokens')
-    expect(tools.some((t) => t.execution === 'browser')).toBe(true)
+    // bridge-execution reads (relayed via the editor bridge) survive
+    expect(names).toContain('site_read_document')
+    expect(names).toContain('site_get_node_html')
+    expect(tools.some((t) => t.execution === 'bridge')).toBe(true)
+    // the writes an external client actually has: real AST edits on disk
+    expect(names).toContain('studio_apply_edits')
+    expect(names).toContain('studio_codemod')
+    expect(names).toContain('studio_create_page')
+  })
+
+  describe('a Studio-scoped connector is offered no CMS site write tool', () => {
+    // The only bridge scope that exists. Every relayed tool this catalog
+    // advertises is routed to one of these, so this IS the connector's scope.
+    const scope = editorBridgeScope('studio-workspace/acme-marketing')
+
+    it('the scope really is site:<projectKey>', () => {
+      expect(scope).toMatch(/^site:.+$/)
+    })
+
+    it('the withheld set is non-empty and names the CMS write tools', () => {
+      // Guards against the whole rule passing vacuously if `mutates` stamping
+      // ever breaks in `tools/site/index.ts`.
+      expect(CMS_SITE_WRITE_TOOLS_WITHHELD.size).toBeGreaterThan(20)
+      for (const name of ['site_insert_html', 'site_replace_node_html', 'site_duplicate_node', 'site_delete_node', 'site_add_page', 'site_apply_css', 'site_set_color_tokens', 'site_write_code_asset']) {
+        expect(CMS_SITE_WRITE_TOOLS_WITHHELD.has(name)).toBe(true)
+      }
+    })
+
+    it('the tool list for that scope contains no site_* mutator', () => {
+      const tools = mcpToolsForCapabilities(FULL)
+      // `site_publish` is the one deliberate survivor: server-resolved (no
+      // bridge, no page tree) and gated on `pages.publish` of its own.
+      expect(tools.filter((t) => t.name.startsWith('site_') && t.mutates).map((t) => t.name)).toEqual(['site_publish'])
+      for (const withheld of CMS_SITE_WRITE_TOOLS_WITHHELD) {
+        expect(tools.map((t) => t.name)).not.toContain(withheld)
+      }
+    })
+
+    it('withholds the writes without withholding the browser-backed site reads', () => {
+      const names = mcpToolsForCapabilities(FULL).map((t) => t.name)
+      const siteReads = siteTools.filter((t) => !t.mutates && t.name !== 'site_list_tokens')
+      expect(siteReads.length).toBeGreaterThan(5)
+      for (const read of siteReads) expect(names).toContain(read.name)
+    })
   })
 
   it('does not expose the removed headless page-tree tools', () => {
@@ -64,7 +105,7 @@ describe('mcp registry', () => {
     expect(tools.length).toBeGreaterThan(0)
     expect(tools.some((t) => t.mutates)).toBe(false)
     expect(tools.some((t) => t.name === 'mutate_page_tree')).toBe(false)
-    expect(tools.some((t) => t.name === 'site_insert_html')).toBe(false)
+    expect(tools.some((t) => t.name === 'studio_apply_edits')).toBe(false)
   })
 
   it('only exposes full-site publish when both write and publish capabilities are granted', () => {

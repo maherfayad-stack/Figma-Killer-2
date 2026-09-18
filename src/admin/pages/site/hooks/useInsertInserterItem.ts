@@ -1,16 +1,16 @@
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
 import { pushToast } from '@ui/components/Toast'
-import type { ModuleInserterItem } from '@site/module-picker/moduleInserterModel'
+import type { AssetItem } from '@site/panels/AssetsPanel/assetsModel'
 import { useInsertModule } from './useInsertModule'
 
 /**
  * Shared handler for the module inserter dialog's `onInsertItem` callback.
  *
  * Inserts the picked module / saved layout / Visual Component into the active
- * canvas document and surfaces a success toast. Both inserter entry points use
- * it — the main toolbar "+ Add" button (`ModulePickerDropdown`) and the canvas
- * selection toolbar's "Insert module" action — so the two flows stay identical.
+ * canvas document and surfaces a success toast. Every inserter entry point uses
+ * it — the Assets panel's cards and the canvas selection toolbar's "Insert
+ * module" action — so the flows stay identical.
  *
  * Target resolution: when the dialog passes an explicit drop `target` it is
  * used verbatim; otherwise the shared insert hooks resolve the location from
@@ -39,7 +39,7 @@ export function useInsertInserterItem() {
   }
 
   return (
-    item: ModuleInserterItem,
+    item: AssetItem,
     target: InsertLocation | undefined,
     mode: 'click' | 'drop',
   ): boolean => {
@@ -58,7 +58,7 @@ export function useInsertInserterItem() {
       kind: 'success',
       title: mode === 'drop' ? `Placed ${item.name}` : `Inserted ${item.name}`,
       body: mode === 'drop' ? 'Dropped on canvas.' : 'Inserted at the current selection.',
-      location: 'module-inserter',
+      location: 'assets-panel',
     })
     return true
   }

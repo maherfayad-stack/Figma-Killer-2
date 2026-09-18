@@ -52,6 +52,99 @@ export default function Page() {
 }
 `
 
+/**
+ * DS-3 — the built-in design system is imported by RELATIVE PATH (a project
+ * carries its own `design-system/` folder), so the specifier this codemod is
+ * handed is now routinely `'../design-system'` rather than a bare package
+ * name. The codemod itself does not compute it — `studioStructuralWriteback.ts`
+ * does, from the file being written — but these are the writes that path
+ * produces, asserted whole-file like every other one here.
+ */
+describe('insertJsxElement — a relative design-system specifier', () => {
+  const PLAIN_PAGE = `export default function Page() {
+  return (
+    <section className="list">
+      <p>hi</p>
+    </section>
+  )
+}
+`
+
+  it('writes the relative specifier verbatim, never normalising it', () => {
+    const file = writeFixture(PLAIN_PAGE)
+    const at = locateTag(PLAIN_PAGE, 'section')
+
+    const result = insertJsxElement({ file, ...at, name: 'Button', importSpecifier: '../design-system' })
+
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Button } from '../design-system'
+export default function Page() {
+  return (
+    <section className="list">
+      <p>hi</p>
+      <Button />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('merges a second component into the existing import rather than adding a duplicate', () => {
+    const source = `import { Button } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Chip', importSpecifier: '../design-system' })).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      `import { Button, Chip } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+      <Chip />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it('treats a DIFFERENT relative depth as a different module, because it is one', () => {
+    // `'../design-system'` and `'../../design-system'` name the same folder
+    // only from the same directory. Merging them would be a guess about the
+    // file's location that this codemod has no way to make.
+    const source = `import { Button } from '../design-system'
+
+export default function Page() {
+  return (
+    <section className="list">
+      <Button />
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const at = locateTag(source, 'section')
+
+    expect(insertJsxElement({ file, ...at, name: 'Chip', importSpecifier: '../../design-system' })).toMatchObject({ ok: true })
+    const after = fs.readFileSync(file, 'utf8')
+    expect(after).toContain("import { Button } from '../design-system'")
+    expect(after).toContain("import { Chip } from '../../design-system'")
+  })
+})
+
 describe('insertJsxElement — writes', () => {
   it('appends as the last child, at the siblings own indentation', () => {
     const file = writeFixture(PAGE)
@@ -65,7 +158,7 @@ describe('insertJsxElement — writes', () => {
       importSpecifier: DS,
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Chip, Button } from '@alm-design/design-system'
 
@@ -100,7 +193,7 @@ export default function Page() {
       importSpecifier: DS,
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Chip, Button } from '@alm-design/design-system'
 
@@ -133,7 +226,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'main')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import React from "react"
 import { Button } from "@alm-design/design-system"
@@ -160,7 +253,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'div')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Button } from '@alm-design/design-system'
 export default function Page() {
@@ -184,7 +277,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'div')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Button } from '@alm-design/design-system'
 export default function Page() {
@@ -208,7 +301,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'div')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Chip, Button } from '@alm-design/design-system'
 
@@ -256,7 +349,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'div')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Button } from '@alm-design/design-system'
 
@@ -381,7 +474,7 @@ export default function Page() {
     fs.writeFileSync(file, shifted, 'utf8')
     const at = locateTag(shifted, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS, project })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS, project })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `// touched
 import { Chip, Button } from '@alm-design/design-system'
@@ -412,7 +505,7 @@ describe('insertJsxElement — intrinsic tags', () => {
     const file = writeFixture(PAGE)
     const at = locateTag(PAGE, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'div' })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'div' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Chip } from '@alm-design/design-system'
 
@@ -437,7 +530,7 @@ export default function Page() {
 
     expect(
       insertJsxElement({ file, ...at, name: 'span', props: { className: 'cta' }, children: 'Sign in' }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<span className="cta">Sign in</span>')
   })
 
@@ -445,7 +538,7 @@ export default function Page() {
     const file = writeFixture(PAGE)
     const at = locateTag(PAGE, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'p', children: 'a {b} <c> & d' })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'p', children: 'a {b} <c> & d' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<p>a &#123;b&#125; &lt;c&gt; &amp; d</p>')
   })
 
@@ -464,7 +557,7 @@ export default function Page() {
     const file = writeFixture(source)
     const at = locateTag(source, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'div' })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'div' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
     expect(fs.readFileSync(file, 'utf8')).not.toContain('import')
   })
@@ -520,7 +613,7 @@ export default function Page() {
     const file = writeFixture(PAGE)
     const at = locateTag(PAGE, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'Button', importSpecifier: DS })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain(`import { Chip, Button } from '${DS}'`)
   })
 })
@@ -555,7 +648,7 @@ describe('insertJsxElement — nested subtrees', () => {
           },
         ],
       }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     expect(fs.readFileSync(file, 'utf8')).toBe(
       `import { Chip, Button } from '@alm-design/design-system'
@@ -604,7 +697,7 @@ export default function Page() {
           { name: 'Icon', importSpecifier: './icons' },
         ],
       }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     const written = fs.readFileSync(file, 'utf8')
     // Both DS components collapse onto ONE declaration, not two.
@@ -629,7 +722,7 @@ export default function Page() {
 
     expect(
       insertJsxElement({ file, ...at, name: 'div', children: [{ name: 'span', children: 'x' }] }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     // Four-space file: the new div sits at 12, its child at 16.
     expect(fs.readFileSync(file, 'utf8')).toContain('            <div>\n                <span>x</span>\n            </div>')
@@ -672,7 +765,7 @@ export default function Page() {
     const file = writeFixture(PAGE)
     const at = locateTag(PAGE, 'section')
 
-    expect(insertJsxElement({ file, ...at, name: 'div', children: [] })).toEqual({ ok: true })
+    expect(insertJsxElement({ file, ...at, name: 'div', children: [] })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<div />')
   })
 
@@ -693,7 +786,7 @@ export default function Page() {
 
     expect(
       insertJsxElement({ file, ...at, name: 'div', children: [{ name: 'p', children: 'a {b} <c>' }] }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<p>a &#123;b&#125; &lt;c&gt;</p>')
   })
 
@@ -712,7 +805,7 @@ export default function Page() {
         name: 'div',
         children: [{ name: 'div', children: [{ name: 'div', children: [{ name: 'span', children: 'deep' }] }] }],
       }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
 
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain('<span>deep</span>')
@@ -744,7 +837,7 @@ describe('insertJsxElement — structured prop values', () => {
       importSpecifier: DS,
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     // Bare keys and spaced braces: this lands in the user's own repository and
     // is the first thing they read after inserting, so `{"label":"Home"}` —
     // which is what a plain `JSON.stringify` would have written — is not good
@@ -849,7 +942,7 @@ describe('insertJsxElement — a React element inside a prop', () => {
       importSpecifier: DS,
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain('<svg viewBox="0 0 24 24" fill="none">')
     expect(written).toContain('<path d="M4 12L9 17" />')

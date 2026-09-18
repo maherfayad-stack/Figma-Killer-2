@@ -32,6 +32,17 @@ export interface CanvasOverlayMeasureSession {
   canvasRect: DOMRect | null
   /** Measure one iframe element into canvas-root-relative overlay coords. */
   measure(target: CanvasRectSource | null): CanvasOverlayRect | null
+  /**
+   * The conversion {@link CanvasOverlayMeasureSession.measure} applies after
+   * reading an element, exposed for a caller that already HAS a rect in the
+   * frame document's own coordinates and only needs it projected — the
+   * bridge-mode `MeasureLayer`, whose rects come off the wire from
+   * `FrameDocumentAdapter.measure` and so were never read from a local
+   * element. Same arithmetic, one implementation: a second copy of "×zoom,
+   * +iframe offset, −canvas origin" is exactly how `standing-03` drift gets
+   * re-introduced one term at a time.
+   */
+  project(rect: CanvasOverlayRect): CanvasOverlayRect
 }
 
 /**
@@ -51,8 +62,16 @@ export function createCanvasOverlayMeasureSession(
   const originLeft = canvasRect?.left ?? 0
   const originTop = canvasRect?.top ?? 0
 
+  const project = (rect: CanvasOverlayRect): CanvasOverlayRect => ({
+    x: iframeRect.left + rect.x * iframeScale - originLeft,
+    y: iframeRect.top + rect.y * iframeScale - originTop,
+    width: rect.width * iframeScale,
+    height: rect.height * iframeScale,
+  })
+
   return {
     canvasRect,
+    project,
     measure(target) {
       // Duck-type check (`getBoundingClientRect` is callable) rather than
       // `instanceof Element` because iframe nodes have their own Element class.
@@ -65,12 +84,12 @@ export function createCanvasOverlayMeasureSession(
 
       const elementRectInIframe = nodeVisualRect(target)
       if (!elementRectInIframe) return null
-      return {
-        x: iframeRect.left + elementRectInIframe.left * iframeScale - originLeft,
-        y: iframeRect.top + elementRectInIframe.top * iframeScale - originTop,
-        width: elementRectInIframe.width * iframeScale,
-        height: elementRectInIframe.height * iframeScale,
-      }
+      return project({
+        x: elementRectInIframe.left,
+        y: elementRectInIframe.top,
+        width: elementRectInIframe.width,
+        height: elementRectInIframe.height,
+      })
     },
   }
 }
@@ -114,6 +133,28 @@ export function measureIframeLocalRect(target: CanvasRectSource | null): CanvasO
   const rect = nodeVisualRect(target)
   if (!rect) return null
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
+}
+
+/** Two nullable rects are equal when every field matches (or both are null). */
+export function overlayRectsEqual(a: CanvasOverlayRect | null, b: CanvasOverlayRect | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
+
+/**
+ * `null` (the frame doesn't own the node — legitimate) or every field a finite
+ * number. A layout read taken mid-reflow can come back non-finite, and
+ * `BreakpointSelectionOverlay` refuses to mark its anchor clean on one.
+ */
+export function overlayRectIsFinite(rect: CanvasOverlayRect | null): boolean {
+  if (!rect) return true
+  return (
+    Number.isFinite(rect.x) &&
+    Number.isFinite(rect.y) &&
+    Number.isFinite(rect.width) &&
+    Number.isFinite(rect.height)
+  )
 }
 
 /** Smallest rect containing both `a` (may be null) and `b`. */

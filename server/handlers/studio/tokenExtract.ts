@@ -30,6 +30,23 @@
  * ## Sources, tried in order — first one that yields at least one classified
  * token wins, and `TokenExtractionResult.source` records which:
  *
+ *   0. **`builtin-design-system`** — Studio's own copy of the built-in design
+ *      system's compiled CSS (`vendor/alm-design-system/dist/index.css`),
+ *      tried FIRST and only for a DS-backed project (`isDesignSystemBacked` —
+ *      the project carries the `design-system/` folder Studio writes). It goes
+ *      ahead of the project's own CSS because for such a project this IS the
+ *      design language: its pages import that folder, whose index loads these
+ *      very tokens, so this is not "something merely sitting in node_modules"
+ *      (the reason the installed-package source below is tried last) — it is
+ *      the stylesheet the app actually loads, read from the copy the canvas
+ *      renders from so it works with no dependency install at all.
+ *      KNOWN CONSEQUENCE, accepted deliberately: a DS-backed project that ALSO
+ *      declares its own `:root` tokens has them skipped here, because the
+ *      first source with any token wins. The Colors/Type/Space panels stay
+ *      editable and `mergeExtractedFramework` never clobbers a family the user
+ *      has filled, so the cost is "the palette starts as the design system's",
+ *      which is the intent.
+ *
  *   1. **`project-css`** — `styleCompile.ts`'s `compileProjectStyles(dir,
  *      profile).styles.css`: CSS Modules (Tier 0) selectors + Sass/PostCSS/
  *      Tailwind (Tier 1, when promoted) output, already concatenated. Reading
@@ -114,7 +131,8 @@ import { classifyCssText, hasAnyTokens, type ClassifiedTokens } from './tokenExt
 import { extractTailwindThemeTokens } from './tokenExtractTailwind'
 import { extractScssVariableTokens, findScssFileCandidates } from './tokenExtractScss'
 import { extractJsThemeTokens, findJsThemeFileCandidates } from './tokenExtractJsTheme'
-import { readInstalledPackageCss } from './tokenExtractPackageCss'
+import { readBuiltinDesignSystemCss, readInstalledPackageCss } from './tokenExtractPackageCss'
+import { isDesignSystemBacked } from './builtinDesignSystem'
 import { resolveAppRoot } from './appRoot'
 import { buildFrameworkSettings, type ExtractedColorOrigin } from './tokenExtractBuild'
 
@@ -124,7 +142,14 @@ export type { ClassifiedTokens } from './tokenExtractCssScan'
 // extractProjectTokens — the entry point
 // ---------------------------------------------------------------------------
 
-export type TokenExtractionSource = 'project-css' | 'tailwind-theme' | 'vendor-css' | 'scss-vars' | 'js-theme' | 'none'
+export type TokenExtractionSource =
+  | 'builtin-design-system'
+  | 'project-css'
+  | 'tailwind-theme'
+  | 'vendor-css'
+  | 'scss-vars'
+  | 'js-theme'
+  | 'none'
 
 export interface TokenExtractionCounts {
   colors: number
@@ -159,6 +184,18 @@ export async function extractProjectTokens(dir: string, profile: ProjectProfile)
 
   let tokens = classifyCssText(compiled.css)
   let source: TokenExtractionSource = 'project-css'
+
+  // Source 0 — see the module doc. Checked BEFORE the project's own compiled
+  // CSS is accepted, so a DS-backed project's Colors/Type/Space populate from
+  // the design system it actually imports.
+  if (isDesignSystemBacked(dir)) {
+    const builtinCss = readBuiltinDesignSystemCss()
+    const builtinTokens = builtinCss ? classifyCssText(builtinCss) : undefined
+    if (builtinTokens && hasAnyTokens(builtinTokens)) {
+      tokens = builtinTokens
+      source = 'builtin-design-system'
+    }
+  }
 
   if (!hasAnyTokens(tokens) && profile.styleToolchain.tailwind) {
     const configText = readCappedFile(join(dir, ...profile.styleToolchain.tailwind.configPath.split('/')))

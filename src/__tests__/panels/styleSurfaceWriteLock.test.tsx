@@ -1,21 +1,36 @@
 /**
- * `StyleSurface`'s pre-flight write lock, end to end at the panel level.
+ * The panel's pre-flight class write lock, end to end.
  *
- * Three facts:
+ * Track P / `panel-21` replaced the old exclusive Element/Class block pair
+ * (and its dedicated `ClassCssLockedNotice` banner) with ONE merged
+ * composer plus an informational chip strip — see `resolveWriteTarget.ts`. A
+ * locked class no longer disables a whole block: it is struck through on its
+ * chip, excluded from `resolveWriteTarget`'s candidates, and a NEW value for
+ * a property that class would have owned now lands on the element's inline
+ * layer instead — never silently discarded, never claimed by a control that
+ * can't save it.
+ *
+ * panel-41 moved the chips themselves: they used to be `WriteTargetRow`, a
+ * read-only strip inside the Design tab's scroll container listing the same
+ * selectors `ClassPicker`'s pills already listed 40px above. The facts now
+ * ride those pills, so this file renders `ClassPicker` — same store setup,
+ * same `write-target-chip-*` test ids, same three facts.
+ *
+ * Three facts this file still checks:
  *
  *  1. A class Studio maps to a build artefact (or cannot map at all) is
- *     announced BEFORE the first keystroke, not by a toast 2 s after autosave.
- *  2. The banner offers the remedy its own wording recommends — switching to
- *     the element's inline-style layer, which DOES write back — instead of
- *     recommending it and leaving the user to find the chip.
- *  3. Outside Studio, where every class is "unmapped" simply because there is
- *     no file on disk to map to, nothing is locked. Getting this wrong would
- *     disable the whole properties panel in the DB-backed editor.
+ *     announced BEFORE the first keystroke (struck through, with a reason),
+ *     not by a toast 2 s after autosave.
+ *  2. That class is excluded from the merged composer's writable targets —
+ *     confirmed indirectly via the chip's `data-locked` attribute.
+ *  3. Outside Studio, where every class is "unmapped" simply because there
+ *     is no file on disk to map to, nothing is locked. Getting this wrong
+ *     would disable the whole properties panel in the DB-backed editor.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'bun:test'
-import { render, screen, cleanup, act } from '@testing-library/react'
+import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
+import { render, screen, cleanup } from '@testing-library/react'
 import type { StyleRule } from '@core/page-tree'
-import { StyleSurface } from '@site/panels/PropertiesPanel/StyleSurface'
+import { ClassPicker } from '@site/panels/PropertiesPanel/ClassPicker'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { useEditorStore } from '@site/store/store'
 import { makeSite, makePage, makeNode } from '../fixtures'
@@ -39,26 +54,39 @@ function makeClass(id: string): StyleRule {
   } as StyleRule
 }
 
-/** A board page (`<pageId>:body` root) with one source-derived node. */
-function loadStudioPage() {
+/**
+ * A board page (`<pageId>:body` root) with one source-derived node, carrying
+ * `cls` in its `classIds` so `useSelectionModel()` resolves the SAME
+ * `assignedClassRules` this file used to pass to `StyleSurface` as a prop
+ * directly (P4 — `StyleSurface` reads the selection out of the store now,
+ * not props; see `selectionModel.ts`).
+ */
+function loadStudioPage(cls: StyleRule) {
   const rootId = 'page-studio:body'
   const page = makePage({
     id: 'page-studio',
     rootNodeId: rootId,
     nodes: {
       [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [STUDIO_NODE_ID] }),
-      [STUDIO_NODE_ID]: makeNode({ id: STUDIO_NODE_ID, moduleId: 'base.text', children: [] }),
+      [STUDIO_NODE_ID]: makeNode({
+        id: STUDIO_NODE_ID,
+        moduleId: 'base.text',
+        children: [],
+        classIds: [cls.id],
+      }),
     },
   })
   useEditorStore.setState({
-    site: makeSite({ pages: [page] }),
+    site: makeSite({ pages: [page], styleRules: { [cls.id]: cls } }),
     activePageId: 'page-studio',
+    selectedNodeId: STUDIO_NODE_ID,
+    activeBreakpointId: 'desktop',
     inlineStyleEditing: false,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
 
 /** The same shape, but a CMS page — a nanoid root, no source locations. */
-function loadCmsPage() {
+function loadCmsPage(cls: StyleRule) {
   const rootId = 'root-1'
   const nodeId = 'text-1'
   const page = makePage({
@@ -66,27 +94,21 @@ function loadCmsPage() {
     rootNodeId: rootId,
     nodes: {
       [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
-      [nodeId]: makeNode({ id: nodeId, moduleId: 'base.text', children: [] }),
+      [nodeId]: makeNode({ id: nodeId, moduleId: 'base.text', children: [], classIds: [cls.id] }),
     },
   })
   useEditorStore.setState({
-    site: makeSite({ pages: [page] }),
+    site: makeSite({ pages: [page], styleRules: { [cls.id]: cls } }),
     activePageId: 'page-1',
+    selectedNodeId: nodeId,
+    activeBreakpointId: 'desktop',
     inlineStyleEditing: false,
   } as Parameters<typeof useEditorStore.setState>[0])
   return nodeId
 }
 
-function renderSurface(cls: StyleRule, nodeId: string) {
-  return render(
-    <StyleSurface
-      activeClass={cls}
-      activeClassId={cls.id}
-      assignedClassRules={[cls]}
-      activeBreakpointId="desktop"
-      nodeId={nodeId}
-    />,
-  )
+function renderSurface(nodeId: string = STUDIO_NODE_ID) {
+  return render(<ClassPicker nodeId={nodeId} />)
 }
 
 beforeEach(() => {
@@ -95,53 +117,42 @@ beforeEach(() => {
 })
 
 describe('StyleSurface — pre-flight class write lock', () => {
-  it('announces a compiled class before the user types, and marks the block locked', () => {
-    loadStudioPage()
+  it('announces a compiled class before the user types, struck through in the write-target chip row', () => {
     const cls = makeClass('sc-abc1234567')
     setStudioStyleRuleSources({ [cls.id]: { file: 'dist/style.css', selector: '.card' } }, {})
+    loadStudioPage(cls)
 
-    renderSurface(cls, STUDIO_NODE_ID)
+    renderSurface()
 
-    const notice = screen.getByTestId('class-css-locked-notice')
-    expect(notice.textContent).toContain('.card')
-    expect(notice.textContent).toContain('build/output directory')
-    expect(screen.getByTestId('style-target-block-class').getAttribute('data-write-locked')).toBe('true')
-  })
+    const chip = screen.getByTestId(`write-target-chip-${cls.id}`)
+    expect(chip.getAttribute('data-locked')).toBe('true')
+    expect(chip.textContent).toContain('.card')
 
-  it('offers the element as the remedy, and taking it opens the inline block', () => {
-    loadStudioPage()
-    const cls = makeClass('sc-abc1234567')
-    setStudioStyleRuleSources({ [cls.id]: { file: 'dist/style.css', selector: '.card' } }, {})
-
-    renderSurface(cls, STUDIO_NODE_ID)
-
-    expect(useEditorStore.getState().inlineStyleEditing).toBe(false)
-    act(() => {
-      screen.getByRole('button', { name: 'Style the element instead' }).click()
-    })
-    expect(useEditorStore.getState().inlineStyleEditing).toBe(true)
+    // Excluded from the merged composer's candidates — the element's inline
+    // layer becomes the default target instead of silently failing.
+    const inlineChip = screen.getByTestId('write-target-chip-inline')
+    expect(inlineChip.getAttribute('data-default')).toBe('true')
   })
 
   it('locks an imported class Studio could not map to any file', () => {
-    loadStudioPage()
-    renderSurface(makeClass('sc-tailwind001'), STUDIO_NODE_ID)
-    expect(screen.getByTestId('class-css-locked-notice')).toBeTruthy()
+    loadStudioPage(makeClass('sc-tailwind001'))
+    renderSurface()
+    expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('true')
   })
 
   it('does not lock a class whose source is a hand-authored .css file', () => {
-    loadStudioPage()
     const cls = makeClass('sc-abc1234567')
     setStudioStyleRuleSources({ [cls.id]: { file: 'src/pages/Home.css', selector: '.card' } }, {})
+    loadStudioPage(cls)
 
-    renderSurface(cls, STUDIO_NODE_ID)
+    renderSurface()
 
-    expect(screen.queryByTestId('class-css-locked-notice')).toBeNull()
-    expect(screen.getByTestId('style-target-block-class').getAttribute('data-write-locked')).toBe('false')
+    expect(screen.getByTestId(`write-target-chip-${cls.id}`).getAttribute('data-locked')).toBe('false')
   })
 
   it('locks nothing outside a Studio session, where "unmapped" costs the user nothing', () => {
-    const nodeId = loadCmsPage()
-    renderSurface(makeClass('sc-tailwind001'), nodeId)
-    expect(screen.queryByTestId('class-css-locked-notice')).toBeNull()
+    const nodeId = loadCmsPage(makeClass('sc-tailwind001'))
+    renderSurface(nodeId)
+    expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('false')
   })
 })

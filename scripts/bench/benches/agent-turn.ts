@@ -3,7 +3,7 @@
  * from the guide it regenerates before the subprocess exists to the capture
  * and compare loop the agent runs to check its own work.
  *
- * Four things are measured, in the order a turn pays for them:
+ * Five things are measured, in the order a turn pays for them:
  *
  *  1. **Project guide** (`generateStudioProjectGuide`) — called synchronously,
  *     on the critical path, on every real turn against an open project. Cold
@@ -31,10 +31,17 @@
  *     `pixelmatch` diffing. Single frame and a five-page batch, then a
  *     five-page `studio_compare` cold and cache-served.
  *
+ *  5. **Recorded turn telemetry** (A9) — what a REAL turn actually cost, read
+ *     back from `.studio/agent-turns.jsonl`. Per-tool p50/p95 and the turn
+ *     total graded against A9's two budgets. Everything above it is synthetic
+ *     by construction, which is what makes it repeatable and what stops it
+ *     from ever answering "did the last screen come in under three minutes".
+ *
  * ## What runs where
  *
  * 1–3 are offline and deterministic: no network, no browser, no database, no
- * real `claude` binary. 4 needs a built `dist/` (for the capture entry) and a
+ * real `claude` binary. 5 reads one JSONL per project and never writes. 4
+ * needs a built `dist/` (for the capture entry) and a
  * Chromium Playwright can launch; without either it reports `skipped` with the
  * reason rather than failing the suite — the same posture `benches/browser.ts`
  * and `studioBoard.bench.ts` take. `bun run bench:browser:install` provides
@@ -46,7 +53,7 @@
  * (board geometry, registered references, generated guides) lands in the copy.
  */
 import { performance } from 'node:perf_hooks'
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { PNG } from 'pngjs'
 import type { BenchModule, BenchResult, BenchRow, BenchSection, BenchContext } from '../lib/types'
@@ -581,6 +588,126 @@ async function captureSections(ctx: BenchContext, dir: string): Promise<CaptureO
   }
 }
 
+// ── 5. Recorded turn telemetry (A9) ─────────────────────────────────────────
+
+/**
+ * What a REAL turn cost, read back from `.studio/agent-turns.jsonl`.
+ *
+ * Everything above this point is synthetic by construction — a fake `claude`,
+ * a white reference, a fixture copy — and that is what makes it repeatable.
+ * None of it can answer "did the last screen this agent built come in under
+ * three minutes", because that number only exists after a real turn happened.
+ * `execTool.ts` now records one line per tool round, and this section reports
+ * p50/p95 per tool across whatever the log holds, then grades the total
+ * against A9's two budgets.
+ *
+ * ## Which log
+ *
+ * The fixture COPY, first — a bench run that just exercised the capture and
+ * compare path above has written rounds there. Then every project under
+ * `studio-workspace/`, read-only, because that is where a real dogfood turn's
+ * log lives. A machine with neither reports `unavailable` with the reason,
+ * the same posture the capture section takes without Chromium; it never
+ * fabricates a number.
+ *
+ * ## Why the budgets are WARNINGS
+ *
+ * No turn has been measured on this machine yet, so a budget that failed the
+ * bench would be failing on a number nobody has observed. The row says
+ * `within` / `OVER` and the headline carries it; promoting it to a hard
+ * assert is a one-line change once a real log exists to calibrate against.
+ * See `AGENT_TURN_BUDGETS`.
+ */
+async function telemetrySections(dir: string): Promise<{ sections: BenchSection[]; headline: Record<string, string> }> {
+  const { readAgentTurnLog, summarizeToolLatency, gradeTurnAgainstBudget, AGENT_TURN_BUDGETS } =
+    await import('../../../server/handlers/studio/agentTurnLog')
+
+  const candidates = [dir, ...workspaceProjectDirs()]
+  const entries = candidates.flatMap((candidate) => readAgentTurnLog(candidate))
+
+  if (entries.length === 0) {
+    return {
+      sections: [skippedSection(
+        'Recorded turn telemetry',
+        'unavailable: no .studio/agent-turns.jsonl on this machine yet. Run one real agent turn against a project in studio-workspace/ and re-run this bench; every tool round writes one line (server/ai/drivers/http/execTool.ts).',
+      )],
+      headline: { 'turn telemetry': 'no turns recorded' },
+    }
+  }
+
+  const summaries = summarizeToolLatency(entries)
+  const rows: BenchRow[] = summaries.slice(0, 15).map((s) => ({
+    label: s.tool,
+    inputs: { calls: s.count },
+    metrics: {
+      p50: fmtMs(s.p50Ms),
+      p95: fmtMs(s.p95Ms),
+      max: fmtMs(s.maxMs),
+      total: fmtMs(s.totalMs),
+      cacheHit: `${Math.round(s.cacheHitRate * 100)}%`,
+    },
+  }))
+
+  // Grouped by conversation: a budget is about ONE turn, and summing every
+  // round this machine has ever recorded would grade a week as a turn.
+  const byConversation = new Map<string, typeof entries>()
+  for (const entry of entries) {
+    byConversation.set(entry.conversationId, [...(byConversation.get(entry.conversationId) ?? []), entry])
+  }
+  const budgetRows: BenchRow[] = []
+  for (const [conversationId, turnEntries] of byConversation) {
+    const creative = turnEntries.some((e) => e.fidelityMode === 'creative')
+    const budgetMs = creative ? AGENT_TURN_BUDGETS.creativeNoReferenceMs : AGENT_TURN_BUDGETS.balancedWithReferenceMs
+    const verdict = gradeTurnAgainstBudget(turnEntries, budgetMs)
+    budgetRows.push({
+      label: conversationId.slice(0, 12),
+      inputs: { rounds: turnEntries.length, mode: turnEntries[0]?.fidelityMode ?? '(none)', policy: turnEntries[0]?.designPolicy ?? '(none)' },
+      metrics: {
+        toolTime: fmtMs(verdict.observedMs),
+        budget: fmtMs(verdict.budgetMs),
+        verdict: verdict.withinBudget ? 'within' : 'OVER',
+        worstTool: verdict.worstTool ?? '—',
+      },
+    })
+  }
+
+  const over = budgetRows.filter((r) => r.metrics.verdict === 'OVER').length
+  return {
+    headline: {
+      'turn telemetry': `${entries.length} rounds · ${byConversation.size} turns`,
+      'turns over budget': over === 0 ? '0 (warning-only)' : `${over} (warning-only)`,
+    },
+    sections: [
+      {
+        title: 'Recorded turn telemetry — per tool',
+        intro:
+          'Read back from .studio/agent-turns.jsonl, one line per tool round, written by executeAiTool — the single choke point both the HTTP drivers and the claude CLI (via the MCP server) pass through. Slowest total first: that is the order that answers "where did the turn go". cacheHit is the share of calls a Studio-side cache answered without recomputing.',
+        rows: rows.length > 0 ? rows : [{ label: '(no rounds)', metrics: { n: '0' } }],
+      },
+      {
+        title: 'Recorded turn telemetry — against the A9 budgets',
+        intro:
+          'One row per conversation. toolTime is the SUM of Studio\'s own tool time for that turn, not wall clock — the model\'s thinking time is neither Studio\'s to measure nor Studio\'s to fix. Budget: 90 s for a creative turn (no reference to measure against), 3 min otherwise. These are WARNINGS, not assertions, until a real turn has been measured on this machine; worstTool is where to look first when a row reads OVER.',
+        rows: budgetRows,
+        ...(over > 0 ? { highlights: [`${over} recorded turn${over === 1 ? '' : 's'} exceeded its budget — see worstTool on each.`] } : {}),
+      },
+    ],
+  }
+}
+
+/** Every project directory under `studio-workspace/`, for the telemetry read. Never written to, never copied — this is the one place in this bench that looks at real user data, and it only reads one JSONL. */
+function workspaceProjectDirs(): string[] {
+  const root = resolve(REPO_ROOT, 'studio-workspace')
+  try {
+    if (!existsSync(root)) return []
+    return readdirSync(root, { withFileTypes: true })
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => join(root, entry.name))
+  } catch {
+    return []
+  }
+}
+
 // ── Bench module ────────────────────────────────────────────────────────────
 
 export const agentTurnBench: BenchModule = {
@@ -614,12 +741,16 @@ export const agentTurnBench: BenchModule = {
     const guide = await guideSections(ctx, dir)
     const turn = await turnSections(ctx, projectsRoot, dir)
     const capture = await captureSections(ctx, dir)
+    // Last, deliberately: the capture section above has just written real
+    // rounds into the fixture copy's own log, so reading it here reports
+    // something even on a machine that has never run a dogfood turn.
+    const telemetry = await telemetrySections(dir)
 
     return {
       name: this.name,
       title: this.title,
-      headline: { ...guide.headline, ...turn.headline, ...capture.headline },
-      sections: [...guide.sections, ...turn.sections, ...capture.sections],
+      headline: { ...guide.headline, ...turn.headline, ...capture.headline, ...telemetry.headline },
+      sections: [...guide.sections, ...turn.sections, ...capture.sections, ...telemetry.sections],
     }
   },
 }

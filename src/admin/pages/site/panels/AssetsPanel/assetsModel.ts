@@ -1,0 +1,455 @@
+/**
+ * assetsModel — WHAT the Assets panel can offer, and whether each offer is
+ * honest in the current document.
+ *
+ * Moved out of `module-picker/moduleInserterModel.ts` with the insert dialog
+ * it served. Same three item kinds (registry module, saved layout, Visual
+ * Component) and the same `moduleAvailability` rules — those are about what
+ * Studio can WRITE into a user's source, not about which panel is asking, so
+ * every surface that offers an insert (the Assets panel, the DOM panel's
+ * right-click `ModulePicker`, the canvas notch's favourites) still resolves
+ * through this one module.
+ *
+ * Two things the dialog carried are gone: the CSS wireframe (`wire`) — cards
+ * render the real component now (`AssetPreview`) — and the per-category accent
+ * colour, which was decoration, not identity.
+ */
+import type { AnyModuleDefinition } from '@core/module-engine'
+import { PALETTE_HIDDEN_ALM_MODULE_IDS } from '@modules/alm/register'
+import { getPaletteHiddenPackageModuleIds } from '@site/studio/registerProjectModules'
+import type { SavedLayout } from '@core/layouts'
+import {
+  DEFAULT_MODULE_INSERTER_PREFERENCE,
+  type ModuleInserterItemRef,
+} from '@core/persistence/userPreferences'
+
+/**
+ * One ref shape for a module, a saved layout or a Visual Component. Named for
+ * the inserter in `@core/persistence` because that is the stored preference's
+ * key; aliased here so panel code speaks the panel's vocabulary.
+ */
+export type AssetItemRef = ModuleInserterItemRef
+import { wouldCreateCycle, type VisualComponent } from '@core/visualComponents'
+import { firstOutletId } from '@core/templates'
+
+type AssetItemKind = 'module' | 'savedLayout' | 'component'
+
+export interface RegistryModuleForAssets {
+  id: string
+  name: string
+  category: string
+  description?: string
+  keywords?: string[]
+  /**
+   * Present when the module has an intrinsic spelling in a user's source
+   * (`ModuleDefinition.sourceIntrinsic`). Only its PRESENCE matters here — it
+   * is what makes a `base.*` module insertable in studio mode — so this is
+   * typed as an opaque callable rather than restating the signature.
+   */
+  sourceIntrinsic?: (props: never) => unknown
+  /**
+   * Present when the module is spelled in a user's source as an IMPORT
+   * (`ModuleDefinition.sourceImport`) — a design-system or third-party package
+   * component. Only its presence matters here, same as `sourceIntrinsic`.
+   */
+  sourceImport?: { name: string }
+}
+
+interface BaseAssetItem {
+  key: string
+  id: string
+  kind: AssetItemKind
+  name: string
+  description: string
+  /** Purposes, synonyms and variant names `rankAssets` matches on. */
+  keywords: string[]
+  /**
+   * When set, the item renders greyed-out and cannot be inserted — the string
+   * explains why, e.g. "Templates only". Disabled items stay visible so authors
+   * learn the module exists and what unlocks it.
+   */
+  disabledReason?: string
+}
+
+interface AssetModuleItem<
+  TModule extends RegistryModuleForAssets = AnyModuleDefinition,
+> extends BaseAssetItem {
+  kind: 'module'
+  module: TModule
+  category: string
+}
+
+interface AssetSavedLayoutItem extends BaseAssetItem {
+  kind: 'savedLayout'
+  layout: SavedLayout
+  blocks: number
+  /**
+   * Owning plugin when the layout was installed by a pack (pack layout ids
+   * are namespaced `<pluginId>/<rest>`; user-saved layouts use generated ids
+   * that never contain a slash). Drives the per-plugin groups in the
+   * inserter's Layouts section.
+   */
+  pluginId: string | null
+}
+
+interface AssetComponentItem extends BaseAssetItem {
+  kind: 'component'
+  component: VisualComponent
+  uses: number
+}
+
+export type AssetItem =
+  | AssetModuleItem
+  | AssetSavedLayoutItem
+  | AssetComponentItem
+
+const HIDDEN_MODULE_IDS = new Set([
+  'base.body',
+  'base.visual-component-ref',
+  'base.slot-instance',
+  // WS-4.2 — auto-materialized by `inlineLocalComponents` expanding a call
+  // site; a manual insert has no call site + inlined subtree to give it, so
+  // there is nothing a picker entry could meaningfully create. (Also already
+  // covered by the "has an honest source spelling" rule below, this closes
+  // the same gap for any future non-Studio surface.)
+  'studio.instance',
+])
+
+/** Seeded notch favourites for a user who has never customised the shelf. */
+export const DEFAULT_ASSET_FAVORITES = DEFAULT_MODULE_INSERTER_PREFERENCE.favorites
+
+/**
+ * Where the picker is inserting into — drives per-module availability
+ * (hidden / disabled-with-reason / insertable).
+ */
+export interface ModuleInsertionContext {
+  /** The active document is a Visual Component definition tree. */
+  isVCMode: boolean
+  /** The open VC's id in VC mode; null in page mode. Feeds cycle checks. */
+  activeVcId: string | null
+  /** The active document is a template page (`template.enabled`). */
+  isTemplate: boolean
+  /** The active document tree already contains a `base.outlet`. */
+  hasOutlet: boolean
+}
+
+type ModuleAvailability =
+  | { kind: 'insertable' }
+  | { kind: 'hidden' }
+  | { kind: 'disabled'; reason: string }
+
+/**
+ * Editor insertion rules for a registry module in the given context.
+ *
+ * - Auto-materialized internals (`base.body`, VC refs, slot instances) are
+ *   never user-insertable → hidden.
+ * - `base.slot-outlet` only means something inside a VC definition → hidden
+ *   in page mode.
+ * - `base.outlet` only means something on a template page (matched content
+ *   flows into it), and a document holds at most one. Outside that context it
+ *   stays VISIBLE but disabled with a reason, so authors discover the module
+ *   and learn what unlocks it instead of hitting a blocked insert.
+ */
+export function moduleAvailability(
+  mod: RegistryModuleForAssets,
+  context: ModuleInsertionContext,
+): ModuleAvailability {
+  if (HIDDEN_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
+  // Design-system overlays/portals render detached from the canvas flow and are
+  // confusing to place by hand — but they stay REGISTERED so an imported page
+  // that already uses one renders it instead of an "Unknown module" box.
+  if (PALETTE_HIDDEN_ALM_MODULE_IDS.has(mod.id)) return { kind: 'hidden' }
+  // WS-3.3 — the generic `pkg.*` equivalent: same overlay/portal name
+  // heuristic plus `.studio/meta.json`'s `paletteHiddenModuleIds` override,
+  // computed per project by `registerProjectModules.ts`.
+  if (getPaletteHiddenPackageModuleIds().has(mod.id)) return { kind: 'hidden' }
+  // A module is insertable only if it has an honest spelling in the user's
+  // source — an IMPORT (`sourceImport`: a design-system or package component),
+  // or an intrinsic element (`sourceIntrinsic`: `base.container` is a `<div>`,
+  // `base.text` a `<p>`). Everything else is an editor construct with no JSX
+  // to write, and stays hidden rather than offering an insert that can only be
+  // refused.
+  //
+  // This asks for the spelling directly. It used to ask whether the module's
+  // CATEGORY was the literal string `'Design System'`, which was the same
+  // answer only for as long as every importable module shared one flat
+  // category — design-system components now carry their purpose group instead
+  // (Navigation, Actions, …), and the string check would have hidden all 39.
+  if (mod.sourceImport === undefined && mod.sourceIntrinsic === undefined) {
+    return { kind: 'hidden' }
+  }
+  if (mod.id === 'base.slot-outlet' && !context.isVCMode) return { kind: 'hidden' }
+  if (mod.id === 'base.outlet') {
+    if (context.isVCMode) {
+      return {
+        kind: 'disabled',
+        reason: 'Templates only — a component has no matched content to flow in.',
+      }
+    }
+    if (!context.isTemplate) {
+      return {
+        kind: 'disabled',
+        reason: 'Templates only — mark this page "Use as template" to place a content outlet.',
+      }
+    }
+    if (context.hasOutlet) {
+      return {
+        kind: 'disabled',
+        reason: 'This template already has a content outlet — matched content flows into just one.',
+      }
+    }
+  }
+  return { kind: 'insertable' }
+}
+
+export function getVisibleModuleItems<TModule extends RegistryModuleForAssets>(
+  modules: readonly TModule[],
+  context: ModuleInsertionContext,
+): AssetModuleItem<TModule>[] {
+  const items: AssetModuleItem<TModule>[] = []
+  for (const mod of modules) {
+    const availability = moduleAvailability(mod, context)
+    if (availability.kind === 'hidden') continue
+    const description = mod.description ?? `${mod.name} module`
+    items.push({
+      key: recentKey({ kind: 'module', id: mod.id }),
+      id: mod.id,
+      kind: 'module',
+      name: mod.name,
+      description,
+      category: mod.category,
+      keywords: mod.keywords ?? [],
+      module: mod,
+      ...(availability.kind === 'disabled' ? { disabledReason: availability.reason } : {}),
+    })
+  }
+  return items
+}
+
+/** Component ids referenced by `base.visual-component-ref` nodes in a snapshot. */
+function referencedVcIdsInLayout(layout: SavedLayout): string[] {
+  const ids = new Set<string>()
+  for (const node of Object.values(layout.nodes)) {
+    if (node.moduleId !== 'base.visual-component-ref') continue
+    const componentId = node.props.componentId
+    if (typeof componentId === 'string' && componentId) ids.add(componentId)
+  }
+  return [...ids]
+}
+
+/**
+ * Availability for a SAVED layout in the given context. Two snapshot-borne
+ * hazards make an item disabled-with-reason (never hidden — authors should
+ * see the layout exists and learn what unlocks it):
+ *   - The snapshot carries a `base.outlet`: same placement rules as the
+ *     outlet module itself (templates only, at most one per document).
+ *   - VC mode + the snapshot references a component that (transitively)
+ *     references the open component — inserting it would create a cycle.
+ */
+function savedLayoutDisabledReason(
+  layout: SavedLayout,
+  context: ModuleInsertionContext,
+  visualComponents: readonly VisualComponent[],
+): string | undefined {
+  if (firstOutletId(layout.nodes) !== null) {
+    if (context.isVCMode) {
+      return 'Includes a content outlet — a component has no matched content to flow in.'
+    }
+    if (!context.isTemplate) {
+      return 'Includes a content outlet — mark this page "Use as template" to insert it.'
+    }
+    if (context.hasOutlet) {
+      return 'Includes a content outlet and this document already has one.'
+    }
+  }
+  if (context.isVCMode && context.activeVcId) {
+    for (const refId of referencedVcIdsInLayout(layout)) {
+      if (wouldCreateCycle([...visualComponents], context.activeVcId, refId)) {
+        return 'Includes a component that references the component being edited.'
+      }
+    }
+  }
+  return undefined
+}
+
+/** Owning plugin id for a pack-installed layout, or null for user layouts. */
+export function layoutPluginId(layout: SavedLayout): string | null {
+  const slash = layout.id.indexOf('/')
+  return slash > 0 ? layout.id.slice(0, slash) : null
+}
+
+export function getSavedLayoutItems(
+  layouts: readonly SavedLayout[],
+  context: ModuleInsertionContext,
+  visualComponents: readonly VisualComponent[],
+): AssetSavedLayoutItem[] {
+  return layouts.map((layout) => {
+    const disabledReason = savedLayoutDisabledReason(layout, context, visualComponents)
+    const pluginId = layoutPluginId(layout)
+    return {
+      key: recentKey({ kind: 'savedLayout', id: layout.id }),
+      id: layout.id,
+      kind: 'savedLayout',
+      name: layout.name,
+      description: pluginId ? 'Plugin layout' : 'Saved layout',
+      keywords: pluginId ? ['layout', 'plugin layout', pluginId] : ['layout', 'saved layout'],
+      layout,
+      blocks: Object.keys(layout.nodes).length,
+      pluginId,
+      ...(disabledReason ? { disabledReason } : {}),
+    }
+  })
+}
+
+/**
+ * Compose the Layouts section: the user's saved layouts first, then one group
+ * per plugin (labelled with the plugin's display name). Every layout is a
+ * `SavedLayout` row in `data_rows` — there are no code-defined presets. Group
+ * labels render only when more than one group is present; `labelByKey` keys
+ * each label to its group's first item.
+ */
+export function composeLayoutsSection(
+  savedItems: readonly AssetSavedLayoutItem[],
+  pluginNameFor: (pluginId: string) => string | null,
+): {
+  items: AssetSavedLayoutItem[]
+  labelByKey: Map<string, string>
+} {
+  const userItems = savedItems.filter((item) => item.pluginId === null)
+  const byPlugin = new Map<string, AssetSavedLayoutItem[]>()
+  for (const item of savedItems) {
+    if (item.pluginId === null) continue
+    const group = byPlugin.get(item.pluginId) ?? []
+    group.push(item)
+    byPlugin.set(item.pluginId, group)
+  }
+  const pluginGroups = [...byPlugin.entries()]
+    .map(([pluginId, items]) => ({
+      label: pluginNameFor(pluginId) ?? pluginId,
+      items,
+    }))
+    .sort((a, b) => a.label.localeCompare(b.label))
+
+  const groupCount = (userItems.length > 0 ? 1 : 0) + pluginGroups.length
+
+  const items = [
+    ...userItems,
+    ...pluginGroups.flatMap((group) => group.items),
+  ]
+  const labelByKey = new Map<string, string>()
+  if (groupCount > 1) {
+    if (userItems.length > 0) labelByKey.set(userItems[0].key, 'Saved')
+    for (const group of pluginGroups) labelByKey.set(group.items[0].key, group.label)
+  }
+  return { items, labelByKey }
+}
+
+function getComponentItems(
+  components: readonly VisualComponent[],
+): AssetComponentItem[] {
+  return components.map((component) => ({
+    key: recentKey({ kind: 'component', id: component.id }),
+    id: component.id,
+    kind: 'component',
+    name: component.name,
+    description: 'Saved Visual Component',
+    keywords: ['component', 'visual component'],
+    component,
+    uses: 0,
+  }))
+}
+
+interface BuiltAssetItems {
+  moduleItems: AssetModuleItem[]
+  /** User-saved layouts (`SavedLayout` rows) — the sole source of the Layouts section. */
+  savedLayoutItems: AssetSavedLayoutItem[]
+  componentItems: AssetComponentItem[]
+  /** Every visible item — including disabled ones (carrying `disabledReason`). */
+  allItems: AssetItem[]
+}
+
+export function buildAssetItems({
+  modules,
+  context,
+  savedLayouts,
+  visualComponents,
+}: {
+  modules: readonly AnyModuleDefinition[]
+  context: ModuleInsertionContext
+  savedLayouts: readonly SavedLayout[]
+  visualComponents: readonly VisualComponent[]
+}): BuiltAssetItems {
+  const moduleItems = getVisibleModuleItems(modules, context)
+  const savedLayoutItems = getSavedLayoutItems(savedLayouts, context, visualComponents)
+  const componentItems = getComponentItems(visualComponents)
+  return {
+    moduleItems,
+    savedLayoutItems,
+    componentItems,
+    allItems: [
+      ...moduleItems,
+      ...savedLayoutItems,
+      ...componentItems,
+    ],
+  }
+}
+
+export function refForAssetItem(item: AssetItem): AssetItemRef {
+  return { kind: item.kind, id: item.id }
+}
+
+export function resolveRecentAssetItems(
+  recent: readonly AssetItemRef[],
+  items: readonly AssetItem[],
+): AssetItem[] {
+  return resolveAssetRefs(recent, items)
+}
+
+export function resolveAssetRefs(
+  refs: readonly AssetItemRef[],
+  items: readonly AssetItem[],
+): AssetItem[] {
+  const byKey = new Map(items.map((item) => [item.key, item]))
+  const resolved: AssetItem[] = []
+  const seen = new Set<string>()
+  for (const ref of refs) {
+    const key = recentKey(ref)
+    if (seen.has(key)) continue
+    const item = byKey.get(key)
+    if (!item) continue
+    resolved.push(item)
+    seen.add(key)
+  }
+  return resolved
+}
+
+export function dedupeAssetRefs(
+  refs: readonly AssetItemRef[],
+): AssetItemRef[] {
+  const deduped: AssetItemRef[] = []
+  const seen = new Set<string>()
+  for (const ref of refs) {
+    const key = recentKey(ref)
+    if (seen.has(key)) continue
+    deduped.push(ref)
+    seen.add(key)
+  }
+  return deduped
+}
+
+export function itemDescription(item: AssetItem): string {
+  // A disabled item's most useful description is WHY it can't be inserted here.
+  if (item.disabledReason) return item.disabledReason
+  if (item.kind === 'savedLayout') {
+    return item.blocks === 1 ? `1 block · ${item.description}` : `${item.blocks} blocks · ${item.description}`
+  }
+  if (item.kind === 'component') {
+    const count = item.component.params.length
+    return count === 1 ? '1 param · Saved component' : `${count} params · Saved component`
+  }
+  return item.description
+}
+
+export function recentKey(ref: AssetItemRef): string {
+  return `${ref.kind}:${ref.id}`
+}

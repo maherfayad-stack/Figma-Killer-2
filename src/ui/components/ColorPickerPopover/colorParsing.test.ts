@@ -5,10 +5,31 @@ import {
   hsvaToRgba,
   isColorToken,
   parseCssColor,
+  resolveSwatchColor,
   rgbaToHsla,
   rgbaToHsva,
   type Rgba,
 } from './colorParsing'
+
+// `STATE.md` panel-33 — the swatch-painting decision, factored to a pure
+// function so every caller (`ColorSwatch`, `TokenizedColorField`) shares one
+// rule: paint the authored value when it already parses, fall back to the
+// caller-supplied RESOLVED value (the frame's own `getComputedStyle` truth)
+// only for a reference nothing else can resolve.
+describe('colorParsing — resolveSwatchColor', () => {
+  it('paints a literal colour verbatim, ignoring any resolved fallback', () => {
+    expect(resolveSwatchColor('#112233', 'rgb(9, 9, 9)')).toBe('#112233')
+    expect(resolveSwatchColor('rgb(1, 2, 3)', undefined)).toBe('rgb(1, 2, 3)')
+  })
+
+  it('falls back to the resolved value for a var() reference this module cannot parse', () => {
+    expect(resolveSwatchColor('var(--text-base-default)', 'rgb(248, 249, 249)')).toBe('rgb(248, 249, 249)')
+  })
+
+  it('returns the authored value unchanged when no resolved value is available', () => {
+    expect(resolveSwatchColor('var(--text-base-default)', undefined)).toBe('var(--text-base-default)')
+  })
+})
 
 describe('colorParsing — isColorToken', () => {
   it('recognises a var(--token) reference', () => {

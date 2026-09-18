@@ -91,7 +91,7 @@ describe('CanvasAnimationInjector mounting', () => {
     await waitFor(
       () => {
         doc = container.querySelector('iframe')?.contentDocument ?? null
-        expect(doc?.getElementById('studio-editor-chrome')).not.toBeNull()
+        expect(doc?.querySelector('[data-studio-overlay-id="studio-editor-chrome"]')).not.toBeNull()
       },
       { timeout: CANVAS_FRAME_READY_TIMEOUT_MS },
     )

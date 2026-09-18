@@ -26,8 +26,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -43,19 +44,7 @@ const EDITOR_ROOT = join(SRC_ROOT, 'admin/pages/site')
 // File walker
 // ---------------------------------------------------------------------------
 
-function collectTs(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectTs(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTs = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function relPath(full: string): string {
   return toPosixPath(relative(SRC_ROOT, full))
@@ -97,14 +86,10 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
   //   resolve against either page mode or Visual Component canvas mode.
   'admin/pages/site/hooks/useInsertModule.ts',
 
-  // §A.3 — module inserter toolbar trigger: uses selectActiveCanvasPage for
-  //   Component-ref insertion target resolution.
-  'admin/pages/site/toolbar/ModulePickerDropdown.tsx',
-
-  // §A.4 — page preview overlay: publishes the active page via publishPage() to
-  //   render it in a sandboxed iframe. VCs are not publishable pages and have no
-  //   slug; the preview concept is inherently page-mode-only.
-  'admin/pages/site/preview/PreviewOverlay.tsx',
+  // §A.4 — RETIRED (P8). The entry was `preview/PreviewOverlay.tsx`, the
+  //   CMS-static preview overlay, deleted with its spotlight command and its
+  //   store state. Studio's two real previews are the Live canvas view and,
+  //   at Tier 2, the project's own dev server; neither publishes a page.
 
   // §A.6 — store.ts is the module that DEFINES both selectActivePage and
   //   selectActiveCanvasPage; it is not a consumer. selectActiveCanvasPage's
@@ -118,7 +103,7 @@ const SELECT_ACTIVE_PAGE_ALLOWLIST = new Set<string>([
 
   // §A.7 — useActiveLivePath: resolves the toolbar's "Open live page" deep
   //   link. A Visual Component is never independently routable/publishable
-  //   (no slug, no permalink — see PreviewOverlay's §A.4, the same "VCs are
+  //   (no slug, no permalink — the same "VCs are
   //   embedded in pages, not standalone routes" reasoning). `activePageId`
   //   is deliberately NOT cleared when entering VC
   //   edit mode (see uiSlice.ts's `setActiveDocument`/`previousActivePageId`),
@@ -160,7 +145,7 @@ describe('Canvas-aware selector gate — selectActivePage not imported in editor
       if (SELECT_ACTIVE_PAGE_ALLOWLIST.has(rel)) continue
 
       let src: string
-      try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
+      try { src = stripComments(readSource(file)) } catch { continue }
 
       if (!IMPORT_RE.test(src)) continue
 
@@ -218,7 +203,7 @@ describe('Canvas-aware selector gate — no raw pages.find in VC-aware panel dir
     for (const dir of VC_AWARE_PANEL_DIRS) {
       for (const file of collectTs(dir)) {
         let src: string
-        try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
+        try { src = stripComments(readSource(file)) } catch { continue }
 
         if (!PAGES_FIND_RE.test(src)) continue
 

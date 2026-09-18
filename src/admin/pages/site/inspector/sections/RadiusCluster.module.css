@@ -1,0 +1,25 @@
+/*
+ * RadiusCluster — the corner-radius row inside Penpot's Measures section
+ * (`STATE.md` `panel-25`, P3 item 3). Formerly `AppearanceSection.module.css`
+ * — opacity/blend/visibility moved to `LayerSection` first. `ExpandableFieldCluster`
+ * fills the row at 100% width whether collapsed (one field) or expanded (a
+ * 2x2 grid).
+ */
+
+.row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--inspector-field-gap);
+    width: 100%;
+}
+
+.radiusCell {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Each expanded corner field sits in its own box so a refused shorthand can
+ * hang its reason on a `title` without the field losing the cell's width. */
+.cornerField {
+    min-width: 0;
+}

@@ -5,8 +5,20 @@ import type {
   CanvasDropCandidate,
   CanvasRect,
 } from './canvasDnd'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
+
+/**
+ * Bridge-mode drop-candidate enumeration is a genuinely separate, larger
+ * design question `measureCanvasDropCandidates` below does NOT attempt:
+ * unlike a single-node measurement (`adapter.measure([{nodeId}])`), "every
+ * draggable node's rect, for drop-target scoring" has no adapter method
+ * shaped for it yet — it would mean calling `adapter.measure` for every node
+ * id in the tree, a fundamentally more expensive operation than one DOM scan,
+ * not a drop-in replacement. Named here as the concrete blocker, not
+ * silently unsupported (`live-05`, STATE.md).
+ */
 
 export function getViewportLocalPoint(
   viewport: HTMLElement,
@@ -109,7 +121,7 @@ export function measureCanvasDropCandidates(
   iframe?: HTMLIFrameElement | null,
 ): CanvasDropCandidate[] {
   const depths = buildDepthMap(tree)
-  const queryScope: ParentNode = iframe?.contentDocument ?? viewport
+  const queryScope: ParentNode = resolvePortalDocument(iframe) ?? viewport
   const wrappers = Array.from(queryScope.querySelectorAll<HTMLElement>(CANVAS_NODE_SELECTOR))
   const iframeRect = iframe?.getBoundingClientRect() ?? null
   // Inner rects come back unscaled (iframe document is its own viewport);

@@ -1,16 +1,18 @@
 /**
  * Node mutation actions for the active document tree.
  *
- * The 11 named tree-mutation actions (`insertNode`, `deleteNode`,
+ * The 13 named tree-mutation actions (`insertNode`, `deleteNode`,
  * `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`,
- * `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`,
- * `duplicateNode`, `wrapNode`) all delegate to `mutateActiveTree(fn)` and
+ * `renameNode`, `setNodesLocked`, `setNodesHidden`, `moveNode`,
+ * `duplicateNode`, `wrapNode`, and K3's `groupNodes`/`ungroupNode` — the last
+ * two in `groupActions.ts`) all delegate to `mutateActiveTree(fn)` and
  * MUST NOT contain their own `kind === 'visualComponent'` branch — that
  * routing is the sole job of `mutateActiveTree`. Gated by
  * `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`.
  *
  * `struct-01` — the STRUCTURAL actions (`insertNode`, `deleteNode(s)`,
- * `moveNode(s)`, `duplicateNode(s)`, `wrapNode(s)`) additionally consult
+ * `moveNode(s)`, `duplicateNode(s)`, `wrapNode(s)`, `groupNodes`,
+ * `ungroupNode`) additionally consult
  * `structuralSourceEdits.ts` before mutating, so that on a studio-imported
  * tree they either write the user's `.tsx` or refuse with a readable reason.
  * They never do neither, which is what they used to do.
@@ -26,25 +28,28 @@ import {
   setBreakpointOverride,
   clearBreakpointOverride,
   renameNode,
-  toggleNodeLocked,
-  toggleNodeHidden,
   moveNodes,
   wrapNode,
   wrapNodes,
   reindexNodeParents,
   isPropPatchWritableToSource,
   isPropWritableToSource,
-  isStylePatchWritableToSource,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@site/studio/studioStructuralCommits'
+import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
+import { createGroupActions } from './groupActions'
+import { createTransplantActions } from './transplantActions'
+import { createImageDropActions } from './imageDropActions'
+import { createInlineStyleActions } from './inlineStyleActions'
+import { createVisibilityActions } from './visibilityActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, toastStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
@@ -58,6 +63,7 @@ type NodeActions = Pick<
   | 'insertNode'
   | 'insertComponentRef'
   | 'insertImportedNodes'
+  | 'refuseImportedNodesInto'
   | 'deleteNode'
   | 'deleteNodes'
   | 'updateNodeProps'
@@ -70,14 +76,19 @@ type NodeActions = Pick<
   | 'setBreakpointOverride'
   | 'clearBreakpointOverride'
   | 'renameNode'
-  | 'toggleNodeLocked'
-  | 'toggleNodeHidden'
+  | 'setNodesLocked'
+  | 'setNodesHidden'
   | 'moveNode'
   | 'moveNodes'
   | 'duplicateNode'
   | 'duplicateNodes'
+  | 'duplicateNodesTo'
   | 'wrapNode'
   | 'wrapNodes'
+  | 'groupNodes'
+  | 'ungroupNode'
+  | 'transplantNodes'
+  | 'insertImageIntoPage'
 >
 
 function recordPatchChanges(
@@ -85,40 +96,6 @@ function recordPatchChanges(
   patch: Record<string, unknown>,
 ): boolean {
   return Object.entries(patch).some(([key, value]) => !Object.is(current[key], value))
-}
-
-/**
- * Merge one inline-style patch into `node.inlineStyles`, honouring the storage
- * model the rest of the panel assumes: `null` / `undefined` / `''` CLEARS a
- * property, and a bag that empties is dropped entirely so the node carries no
- * `style` attribute at all. Returns whether anything actually changed.
- *
- * Shared by `setNodeInlineStyles` (one node) and `setNodesInlineStyles` (the
- * W8-3 multi-selection bulk edit) so the two can never drift on what "clear
- * this property" means — the single-node path is what every existing test and
- * the publisher already encode.
- */
-function applyInlineStylePatch(
-  node: PageNode,
-  patch: Record<string, string | number | null | undefined>,
-): boolean {
-  const next: Record<string, unknown> = { ...(node.inlineStyles ?? {}) }
-  let changed = false
-  for (const [key, value] of Object.entries(patch)) {
-    if (value === null || value === undefined || value === '') {
-      if (key in next) {
-        delete next[key]
-        changed = true
-      }
-    } else if (!Object.is(next[key], value)) {
-      next[key] = value
-      changed = true
-    }
-  }
-  if (!changed) return false
-  if (Object.keys(next).length > 0) node.inlineStyles = next
-  else delete node.inlineStyles
-  return true
 }
 
 /**
@@ -146,19 +123,29 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
    */
   const readTree = (): NodeTree<PageNode> | null => resolveActiveTreeTarget(get())?.tree ?? null
 
-  const { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource } =
-    createStudioSourceWrites(helpers, readTree)
+  const sourceWrites = createStudioSourceWrites(helpers, readTree)
+  const {
+    refuseInsertInto,
+    refuseImportedNodesInto,
+    writeInsertToSource,
+    writeDuplicateToSource,
+    writeWrapToSource,
+  } = sourceWrites
 
   const actions: NodeActions = {
-    insertNode: (moduleId, defaults, parentId, index) => {
+    insertNode: (moduleId, defaults, parentId, index, inlineStyles) => {
       // On a studio-imported tree the insert is a SOURCE write, not a tree
       // mutation — see `writeInsertToSource`. It returns true for both of its
       // outcomes (written, or refused out loud); either way nothing is minted
       // here, so there is no id to hand back.
-      if (writeInsertToSource(moduleId, defaults, parentId, index)) return ''
+      if (writeInsertToSource(moduleId, defaults, parentId, index, inlineStyles)) return ''
       const mod = registry.get(moduleId)
       const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
       const newNode = createNode(moduleId, resolvedDefaults)
+      // Set BEFORE the node enters the tree, so the insert is one mutation and
+      // therefore one undo step — the same reason `pasteNode` restores classes
+      // inside its own recipe rather than after it.
+      if (inlineStyles && Object.keys(inlineStyles).length > 0) newNode.inlineStyles = { ...inlineStyles }
       let inserted = false
       let blockedByOutlet = false
       mutateActiveTree((tree) => {
@@ -186,9 +173,19 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return inserted ? newNode.id : ''
     },
 
+    // `mcp-21` — the same guard `insertImportedNodes` runs, asked on its own by
+    // the one caller that must destroy something before it can insert. See
+    // `SiteSlice.refuseImportedNodesInto`.
+    refuseImportedNodesInto: (parentId) => refuseImportedNodesInto(parentId),
+
     insertImportedNodes: (parentId, fragment, opts) => {
-      if (fragment.rootIds.length === 0) return []
-      if (refuseInsertInto(parentId)) return []
+      if (fragment.rootIds.length === 0) return { ok: false, message: 'That HTML carried no elements to insert.' }
+      // `mcp-21` — the studio-tree refusal rides the SAME guard as the
+      // container check, so both reasons reach the caller as one sentence.
+      const refusal = refuseImportedNodesInto(parentId, (newParentId) => {
+        actions.insertImportedNodes(newParentId, fragment, opts)
+      })
+      if (refusal) return { ok: false, message: refusal }
       const insertedRootIds: string[] = []
       mutateActiveTreeAndSite((tree, site) => {
         const parent = tree.nodes[parentId]
@@ -249,12 +246,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         reindexNodeParents(tree.nodes)
         return true
       })
-      return insertedRootIds
+      return insertedRootIds.length > 0
+        ? { ok: true, rootIds: insertedRootIds }
+        : { ok: false, message: 'That container does not accept children.' }
     },
 
     insertComponentRef: (parentId, componentId, index) => {
       if (!componentId) return null
-      if (refuseInsertInto(parentId)) return null
+      if (refuseInsertInto(parentId, (newParentId) => { actions.insertComponentRef(newParentId, componentId, index) })) {
+        return null
+      }
 
       const { activeDocument, site } = get()
 
@@ -305,7 +306,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // take never removes the element from the canvas either.
       const plan = planSourceDelete([readTree()?.nodes[nodeId]])
       if (!plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, get)
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
+          nodeId: plan.nodeId,
+          // Only `detach`/`extract` ever fire this (see `presentStructuralRefusal`'s
+          // doc) — a re-issued delete just calls this same action again, against
+          // whatever node replaced the shared-component instance.
+          retry: (newNodeId) => actions.deleteNode(newNodeId),
+          getState: get,
+          set,
+        })
         return
       }
       const deleted = mutateActiveTree((tree) => {
@@ -313,7 +322,14 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         deleteNode(tree, nodeId)
         return true
       })
-      if (deleted && plan.commit) void commitStudioDelete(plan.commit)
+      if (deleted && plan.commit) {
+        void commitStudioDelete(plan.commit)
+        // `live-07` — same-tick paint for a live (bridge) frame; portal
+        // frames already got theirs from the tree mutation above.
+        // `planSourceDelete([single node])` only ever pushes one id for a
+        // single-node call — see that function's own loop.
+        broadcastOptimisticDelete(plan.commit[0]!)
+      }
       // Drop the deleted node (and any descendants swept with it) from the
       // canvas selection so no phantom selection ring survives. Pruning by
       // tree-membership also clears `selectedNodeIds`, not just the anchor.
@@ -376,83 +392,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       )
     },
 
-    setNodeInlineStyles: (nodeId, patch) => {
-      mutateActiveTree((tree) => {
-        const node = tree.nodes[nodeId]
-        if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-        // Same per-property rule as `updateNodeProps` above — a `style={{}}`
-        // entry authored as a literal is writable; one resolved from an
-        // expression (`width: `${pct}%``) is not.
-        if (!isStylePatchWritableToSource(node, patch)) return false
-        return applyInlineStylePatch(node, patch)
-      })
-    },
-
-    setNodesInlineStyles: (nodeIds, patch) => {
-      if (nodeIds.length === 0) return
-      // `mutateTreesForNodeIds` wraps every touched page in ONE
-      // `runHistoricMutation` transaction, so an inspector edit across an
-      // N-node selection is a single undo step — the same contract
-      // `deleteNodes` / `wrapNodes` already ship (WS-7.3).
-      mutateTreesForNodeIds(nodeIds, (tree, idsOnThisTree) => {
-        let changedAny = false
-        for (const nodeId of idsOnThisTree) {
-          const node = tree.nodes[nodeId]
-          // A bulk edit never aborts halfway. An id that has gone stale
-          // underneath the selection, or a node whose own source refuses this
-          // property (`isStylePatchWritableToSource` — a `style:<prop>`
-          // resolved from an expression), is skipped INDIVIDUALLY so the rest
-          // of the selection still receives the write. Throwing here, as the
-          // single-node path does for a missing id, would leave N-1 nodes
-          // half-written.
-          if (!node) continue
-          if (!isStylePatchWritableToSource(node, patch)) continue
-          if (applyInlineStylePatch(node, patch)) changedAny = true
-        }
-        return changedAny
-      })
-    },
-
-    setNodesInlineStylesPerNode: (patches, opts) => {
-      if (patches.length === 0) return
-      const patchByNodeId = new Map(patches.map((entry) => [entry.nodeId, entry.patch]))
-      const nodeIds = patches.map((entry) => entry.nodeId)
-      // Same one-transaction contract as `setNodesInlineStyles`; the only
-      // difference is that each node gets its OWN patch. Selection colours
-      // needs that: one layer's `color` and another's `borderTopColor` are the
-      // same swatch to the user and must move (and undo) together.
-      mutateTreesForNodeIds(
-        nodeIds,
-        (tree, idsOnThisTree) => {
-          let changedAny = false
-          for (const nodeId of idsOnThisTree) {
-            const node = tree.nodes[nodeId]
-            const patch = patchByNodeId.get(nodeId)
-            if (!node || !patch) continue
-            // Per-node all-or-nothing, exactly as the single-node path: a
-            // half-applied patch is a canvas that disagrees with the file it
-            // mirrors.
-            if (!isStylePatchWritableToSource(node, patch)) continue
-            if (applyInlineStylePatch(node, patch)) changedAny = true
-          }
-          return changedAny
-        },
-        opts,
-      )
-    },
-
-    removeNodeInlineStyleProperty: (nodeId, propKey) => {
-      actions.setNodeInlineStyles(nodeId, { [propKey]: null })
-    },
-
-    clearNodeInlineStyles: (nodeId) => {
-      mutateActiveTree((tree) => {
-        const node = tree.nodes[nodeId]
-        if (!node?.inlineStyles) return false
-        delete node.inlineStyles
-        return true
-      })
-    },
+    ...createInlineStyleActions(helpers),
 
     setBreakpointOverride: (nodeId, breakpointId, patch) => {
       mutateActiveTree(
@@ -489,19 +429,11 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       })
     },
 
-    toggleNodeLocked: (nodeId) => {
-      mutateActiveTree((tree) => {
-        toggleNodeLocked(tree, nodeId)
-        return true
-      })
-    },
-
-    toggleNodeHidden: (nodeId) => {
-      mutateActiveTree((tree) => {
-        toggleNodeHidden(tree, nodeId)
-        return true
-      })
-    },
+    // `panel-40` — hide/lock fan out over a whole selection in ONE history
+    // entry. Their own module for the reason `inlineStyleActions.ts` has one:
+    // they write a node that already exists and touch no tree structure and no
+    // source file. See `visibilityActions.ts`.
+    ...createVisibilityActions(helpers),
 
     moveNode: (nodeId, newParentId, newIndex) => {
       actions.moveNodes([nodeId], newParentId, newIndex)
@@ -515,7 +447,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       const tree = readTree()
       const plan = tree ? planSourceMove(tree, nodeIds, newParentId, newIndex) : null
       if (plan && !plan.ok) {
-        toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, get)
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, {
+          nodeId: plan.nodeId,
+          // The refused node in a move plan is always `nodeIds[0]`
+          // (`previewStructuralMove` resolves the commit off it) — re-issue
+          // the same move with that one id swapped for its replacement.
+          retry: (newNodeId) => actions.moveNodes([newNodeId, ...nodeIds.slice(1)], newParentId, newIndex),
+          getState: get,
+          set,
+        })
         return
       }
       // `store-08` — where the node is NOW, captured before the mutation, is
@@ -525,10 +465,15 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // undo has to be able to re-issue.
       const primaryId = nodeIds[0]!
       const origin = tree ? captureMoveOrigin(tree, primaryId) : null
-      mutateActiveTree((draft) => {
+      const moved = mutateActiveTree((draft) => {
         moveNodes(draft, nodeIds, newParentId, newIndex)
         return true
       })
+      // `live-07` — same-tick paint for a live (bridge) frame; portal frames
+      // already got theirs from the tree mutation above. One call covers
+      // both the reparent and same-parent-move branches below (identical DOM
+      // effect) — do not duplicate this into either of them.
+      if (moved) broadcastOptimisticMove(primaryId, newParentId, newIndex)
       const commit = plan?.commit
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo
@@ -608,6 +553,17 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return newIds
     },
 
+    // K2 — Alt+drag's commit; contract in `types.ts`. The in-memory fallback
+    // is deliberately "duplicate, then move": `duplicateNodes` already owns
+    // scoped-class cloning and the one-outlet guard.
+    duplicateNodesTo: (nodeIds, newParentId, newIndex) => {
+      if (nodeIds.length === 0) return []
+      if (writeDuplicateToSource(nodeIds, { parentId: newParentId, index: newIndex })) return []
+      const newIds = actions.duplicateNodes(nodeIds)
+      if (newIds.length > 0) actions.moveNodes(newIds, newParentId, newIndex)
+      return newIds
+    },
+
     deleteNodes: createDeleteNodesAction(helpers),
 
     wrapNode: (nodeId, containerModuleId, defaults = {}) => {
@@ -648,6 +604,22 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return wrapperId
     },
 
+    // K3 — ⌘G / ⌘⇧G. Their own module for the reason `deleteNodes` has one:
+    // "this selection becomes one container" is a job of its own, with a
+    // stricter source rule than `wrapNodes`. See `groupActions.ts`.
+    ...createGroupActions(helpers, sourceWrites),
+
+    // D2 G3 — a drop that crossed a frame boundary. Its own module because it
+    // is the one structural gesture with TWO trees and TWO files, and none of
+    // this module's `mutateActiveTree` machinery reaches the second one. See
+    // `transplantActions.ts`.
+    ...createTransplantActions(helpers),
+
+    // D2 G15 — an image file dropped from the OS onto a frame. Its own module
+    // for `transplantActions.ts`'s reason: it writes into a page named by the
+    // GESTURE rather than into the active tree, so none of this module's
+    // `mutateActiveTree` machinery applies. See `imageDropActions.ts`.
+    ...createImageDropActions(helpers),
   }
 
   return actions

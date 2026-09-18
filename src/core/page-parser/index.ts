@@ -42,8 +42,14 @@ export {
   isPrototypeShellPath,
   listWorkspaceFiles,
 } from './workspaceFiles'
+export {
+  PROJECT_DESIGN_SYSTEM_DIR,
+  designSystemImportSpecifier,
+  isDesignSystemPath,
+} from './designSystemDir'
 export { createWorkspaceProject, resolveComponentSources, resolveExportedDeclaration } from './componentSources'
 export type { ComponentSource } from './componentSources'
+export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export {
   findNamedComponentDeclaration,
   inlineLocalComponents,

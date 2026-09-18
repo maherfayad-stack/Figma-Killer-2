@@ -1,0 +1,30 @@
+/* TextSection — Penpot's Text section (`STATE.md` `panel-25`, P3 item 9).
+   Row 4 (text align + vertical align + the settings ⚙) is bespoke — two
+   SegmentedControl groups plus a trailing icon button, a shape
+   StackedPropertyGrid's full-width/paired layout can't express. Everything
+   else in this file is just vertical rhythm between the StackedPropertyGrid
+   mount and this row. Ported from the pre-migration
+   `panels/PropertiesPanel/TypographySection.module.css` — the tokens it used
+   (`--inspector-group-gap` / `--inspector-field-gap`) were already correct
+   after Step 0's global geometry fix, so this is a straight relocation, not
+   a redesign. */
+
+.section {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-group-gap);
+}
+
+.alignRow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--inspector-field-gap);
+}
+
+.alignGroups {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+    min-width: 0;
+}

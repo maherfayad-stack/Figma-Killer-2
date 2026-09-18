@@ -53,7 +53,8 @@ import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { NodeRenderer } from './NodeRenderer'
 import { resolveEditorWrapperTemplates } from './canvasComposition'
-import { CanvasDocumentContext, CanvasTemplateContext } from './CanvasContexts'
+import { CanvasFrameAdapterContext, CanvasTemplateContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { applyIframeBodyPresentation } from './iframeBodyPresentation'
 
 const NO_WRAPPERS: Page[] = []
@@ -132,6 +133,18 @@ export function CanvasComposedTree({ page }: CanvasComposedTreeProps) {
  * mounted (and restore it on unmount). The frame supplies its final srcDoc
  * through context, so this owner contributes no editor-only body child. Only
  * used in the wrapped case, where no `base.body` editor runs to own the body.
+ *
+ * Portal-mode only (`live-05`, STATE.md): `applyIframeBodyPresentation`
+ * imperatively mutates the real `<body>` element's `className`/inline
+ * `style`/attributes and returns a restore closure — there is no
+ * `FrameDocumentAdapter` method shaped for "hand me a mutable body element",
+ * and there shouldn't be one, since a cross-origin bridge frame can't expose
+ * a live `HTMLElement` across the origin boundary. Reached via the sanctioned
+ * `isPortalFrameAdapter`/`getPortalWindow()` escape hatch instead of the
+ * removed `CanvasDocumentContext`. A bridge-mode Tier 2 frame simply renders
+ * the wrapper template body's presentation as authored server-side (its own
+ * `<body>` in the dev server's real document), so this owner is a no-op there
+ * — not a gap, since bridge mode has no editor-owned body to override.
  */
 function IframeBodyPresentationOwner({
   className,
@@ -142,16 +155,17 @@ function IframeBodyPresentationOwner({
   inlineStyles?: BaseNode['inlineStyles']
   htmlAttributes?: unknown
 }) {
-  const iframeDocument = use(CanvasDocumentContext)
+  const adapter = use(CanvasFrameAdapterContext)
   const style = useResponsiveBackgroundStyle(inlineStyles)
   useEffect(() => {
-    const body = iframeDocument?.body
+    if (!adapter || !isPortalFrameAdapter(adapter)) return
+    const body = adapter.getPortalWindow()?.document.body
     if (!body) return
     return applyIframeBodyPresentation(body, {
       className,
       style,
       attributes: htmlAttributesForReact(htmlAttributes),
     })
-  }, [className, htmlAttributes, iframeDocument, style])
+  }, [adapter, className, htmlAttributes, style])
   return null
 }

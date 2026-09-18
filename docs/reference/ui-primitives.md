@@ -355,7 +355,17 @@ pushToast({
 
 Toasts auto-dismiss after a few seconds. Errors stay longer. Each kind picks the matching semantic token (`--success-*`, `--danger-*`, etc.).
 
-For inline page-level errors, prefer `role="alert"` content over a toast — toasts are for **transient** feedback.
+**Toasts de-duplicate by default.** A push whose `kind` + `title` + `body` match a toast already on the stack collapses onto it: same id, same position, refreshed countdown, and a visible `×N` counter next to the title. One root cause can therefore never produce N identical cards. Three ways to control it:
+
+| `dedupeKey` | Behaviour |
+|---|---|
+| omitted (default) | key derived from `kind + title + body` — identical copy collapses |
+| a string | explicit identity, e.g. `` `structural-refusal:${reason}` `` — collapses repeats whose copy varies but whose cause does not |
+| `false` | opt out — stack every push, for genuinely distinct events that happen to share copy (two uploads failing the same way) |
+
+Gated by `toast-dedupe-default.test.ts`.
+
+For inline page-level errors, prefer `role="alert"` content over a toast — toasts are for **transient** feedback. A render-time crash is not a toast at all: `<ErrorBoundary>` renders its fallback in place (see [error-boundaries.md](error-boundaries.md)).
 
 ---
 

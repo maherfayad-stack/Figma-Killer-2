@@ -1,109 +1,75 @@
 /**
- * StyleSurface — unified properties editor surface.
+ * StyleSurface — unified properties editor surface (Track P, P1 rewrite; P4
+ * rewires it onto `SelectionModel`/the section manifest, `STATE.md`
+ * `panel-23`).
  *
- * Layout: one continuous scrollable column with a sticky icon-rail on the
- * right and a sticky search bar pinned to the top.
+ * `STUDIO-LIVE-CANVAS-PLAN.md` §P1 names three things "gone from day one":
+ * the module-settings accordion, the inline/class composers drawn as CSS
+ * property LISTS, and the sticky search bar + icon rail chrome around them.
+ * All three are gone from this file. What survives, unchanged in shape, is
+ * the SECTION CONTENT — `StyleSectionsEditor` and everything under it
+ * (`docs/features/inspector-disclosure.md`'s laws, the field model, token
+ * autocomplete, provenance) — now called exactly ONCE per selection, over
+ * one collapsed style bag (`../../inspector/collapsedStyleBag.ts`) instead
+ * of two independent Element/Class renders.
  *
- * All sections render together in one scroll:
- *   1. Module settings — wrapped in a Section accordion, always first.
- *   2. CSS area — Element (inline) and Class composers, shown TOGETHER when
- *      both are reachable (Track F1 / S6 — see below), or a locked preview.
+ * P4 replaced this file's own 9-prop `WriteTargetStyleComposer` call with the
+ * section manifest (`../../inspector/sections`): this component no longer
+ * computes `inlineWritable`/`classChain`/`computedValues`/
+ * `provenanceByProperty`/`classLockInfo`/`writableClasses`/`writeTargetChips`
+ * itself — it reads `useSelectionModel()` once for those facts and renders
+ * `designPrimarySections(model)`, each a bare, prop-less `<Component />` that
+ * reads the same model/commit hooks itself. This is the mount mechanism P3
+ * (the section-by-section re-skin) consumes — growing `INSPECTOR_SECTIONS`
+ * never needs to touch this file again.
  *
- * The search bar is bound to the active editable class and filters across
- * module settings (by prop key/label) and the class's CSS properties
- * simultaneously. It is hidden when there is no active class (locked
- * preview) or when the active class is a locked generated utility — neither
- * state has editable CSS rows to search.
+ * ## The one More disclosure (S5 — the 900px budget)
  *
- * Rail icons are scroll-anchor shortcuts; the active icon is derived from
- * scroll position.
+ * `designMoreSections(model)` is the SAME mount loop, run a second time
+ * inside a single collapsed `Section title="More"` at the very end of the
+ * tab. Four Studio-extras sections live there (Transform, Animations,
+ * Interaction, Custom properties) — see `inspector/sections/index.ts`'s own
+ * `designGroup` doc for why those four and no others, and
+ * `docs/features/inspector.md` §6 for the budget this buys back. Nothing
+ * about a section changes by being in the group: same component, same
+ * `data-section-id` wrapper, same order.
  *
- * Global selector mode (definition === null):
- *   Module section and Module rail button are hidden.
+ * ## What this file still owns
  *
- * ## Track F1 / S6 — inline and class are no longer exclusive
+ *   - The Module section (no longer an accordion — a fixed block, matching
+ *     P2 rule 2's "everything is at rest"). Export (P3 item 10) is no longer
+ *     mounted here — it moved to its own `INSPECTOR_SECTIONS` manifest entry
+ *     (`inspector/sections/ExportSection.tsx`), gated by its own `appliesTo`
+ *     rather than the bespoke `studioSession`/`activePageId` conditional this
+ *     file used to compute for it.
+ *   - The one full-column notice for the genuine "nothing here is writable"
+ *     case — role permission, or every reachable target locked.
  *
- * Before this pass, `activeClassId` and `inlineStyleEditing` were mutually
- * exclusive by STORE INVARIANT (`uiStateActions.ts`) — picking a class
- * force-cleared inline-edit mode, and vice versa, so a user had to delete a
- * class just to see whether the element also carried inline styles. That
- * invariant was the audit's S6 finding stated as a user-visible bug: "as
- * close to Figma's right panel as possible" — Figma edits one object;
- * Studio has two live style layers on ONE element (a `style=""` attribute
- * AND however many classes), and hiding one to show the other actively lied
- * about what the element renders.
+ * ## Each section is its own failure domain
  *
- * The store no longer couples the two flags (see `uiStateActions.ts`'s
- * updated `setActiveClass`/`setInlineStyleEditing`). This component renders
- * the Element (inline) block and the Class block as INDEPENDENT sections —
- * both visible whenever both are reachable — instead of an if/else chain
- * that could only ever show one. `StyleTargetChip` (now a small write-target
- * menu, not an exclusive toggle) states each target's honest disk outcome;
- * `stylePropertyProvenance.ts` computes, per curated CSS property, which of
- * the element's declared sources (every assigned class, plus inline) is
- * actually winning on the canvas — struck-through for the ones that lose.
- *
- * ## Track F1 — the frame is the source of truth, not a spec-default table
- *
- * `useFrameComputedStyleValues` reads the SAME real `getComputedStyle` the
- * (read-only, left-sidebar) Inspect panel already reads — this component
- * folds it in as the base layer beneath each composer's own stored values
- * (`StyleRuleComposer`/`InlineStyleComposer`'s `currentStyles`), so an unset
- * row's placeholder is the element's actual rendered value, not a guess from
- * `getCSSPropertyDefaultValue`'s hand-written table. `null` (no canvas frame
- * mounted — every existing panel test, or a not-yet-rendered node) degrades
- * to exactly the pre-F1 behaviour.
- *
- * ## Pre-flight writability — a control must not accept an edit it cannot save
- *
- * `resolveClassCssEditability` (now `classCssWritability.ts`) fed exactly one
- * consumer: the target chip's tooltip. That EXPLAINED the outcome without
- * acting on it — every property row of a compiled/unmapped class stayed fully
- * editable, and the user learned the truth from a toast ~2 s after autosave
- * ran, by which point the value was on the canvas and nowhere else.
- *
- * The same verdict now also produces `classWriteLockReason`, provided through
- * `StyleWriteLockContext` around the CLASS block only. `ClassPropertyRow`
- * reads it and renders disabled; `ClassCssLockedNotice` states the reason at
- * the top of the block and offers the Element target — the remedy the chip's
- * tooltip and the save toast both recommend and neither ever offered.
+ * `panel-40` — `MountedSections` wraps every entry in a `PanelBoundary`
+ * (`frame="section"`), so a section that throws during render leaves the other
+ * fifteen, the tab strip, the canvas and the layers tree untouched and renders
+ * its own header plus one line in place. See `ui/PanelBoundary`'s own doc for
+ * why the nearest boundary used to be the whole editor body.
  */
 
-import { useState, useRef, type ReactNode } from 'react'
-import { useEditorStore, selectActiveCanvasPage, selectSelectedNode } from '@site/store/store'
-import type { AnyModuleDefinition } from '@core/module-engine'
-import type { StyleRule, CSSPropertyBag } from '@core/page-tree'
-import { canWriteInlineStyleForModule, isGeneratedClassLocked, isStudioPageRootId, styleRuleSelector, styleRuleDisplayName } from '@core/page-tree'
+import type { ReactNode } from 'react'
+import type { StyleRule } from '@core/page-tree'
+import { isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
-import { SearchBar } from '@ui/components/SearchBar'
-import { Section } from '@ui/components/Section'
-import { StyleRuleComposer } from './StyleRuleComposer'
-import { InlineStyleComposer } from './InlineStyleComposer'
-import { ClassPropertyRow } from './ClassPropertyRow'
-import { StyleCategoryRail, MODULE_CATEGORY_ID } from './StyleCategoryRail'
-import { StyleTargetChip, type ClassCssEditability } from './StyleTargetChip'
-import { ClassCssLockedNotice } from './ClassCssLockedNotice'
-import { ExportSection } from './ExportSection'
-import { classCssWriteLockReason, resolveClassCssEditability } from './classCssWritability'
-import { blockedStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockContext'
-import { useScrollSpy } from './useScrollSpy'
-import { ALL_CURATED_CSS_PROPERTIES, getCSSPropertyDefaultValue } from './cssControlTypes'
-import { CLASS_STYLE_SECTIONS, getClassStyleSectionSetCounts, getActiveStyleTab } from './classStyleSections'
-import { isTextNode } from './styleSectionOrder'
-import {
-  buildClassChain,
-  buildStableProvenanceMap,
-  resolvePropertyProvenance,
-  type PropertyProvenance,
-} from './stylePropertyProvenance'
-import { useFrameComputedStyleValues } from '@site/panels/InspectPanel/useInspectComputedStyle'
-import { useMutableBox } from '@site/hooks/useMutableBox'
-import { TokenCatalogProvider } from '@site/property-controls/TokenCatalogProvider'
-import { useEditorPreference } from '@site/preferences/editorPreferences'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
+import { Section } from '@ui/components/Section'
+import { PanelBoundary } from '@site/ui/PanelBoundary'
+import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
+import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
+import {
+  designMoreSections,
+  designPrimarySections,
+  type InspectorSectionDefinition,
+} from '@site/inspector/sections'
 import styles from './StyleSurface.module.css'
-import sectionStyles from '@ui/components/Section/Section.module.css'
 
 // ---------------------------------------------------------------------------
 // Public exports
@@ -116,53 +82,9 @@ export { GeneratedUtilityLockedState }
 // ---------------------------------------------------------------------------
 
 interface StyleSurfaceProps {
-  definition?: AnyModuleDefinition | null
-  activeClass: StyleRule | null
-  activeClassId: string | null
-  /**
-   * Track F1 — EVERY class assigned to the node (not just `activeClass`),
-   * in `classIds` order. Needed to compute per-property provenance across
-   * every declared source, not just the one class currently open for
-   * editing. See `usePropertiesPanelData.ts`.
-   */
-  assignedClassRules: StyleRule[]
-  activeBreakpointId: string | undefined
-  /** Node id — triggers scroll reset when it changes. */
-  nodeId: string | null
-  /**
-   * The selected node's inline styles (`node.inlineStyles`). Shown in its
-   * own Element block whenever inline-editing is toggled on — see this
-   * file's module doc (Track F1 / S6) for why this is no longer exclusive
-   * with a class.
-   */
-  inlineStyles?: Record<string, unknown>
-  /**
-   * `PageNode.lockReason` when the selected node is source-locked. Inline styles
-   * on such a node are unwritable — `setNodeInlineStyles` returns early — so the
-   * inline composer must not be offered. Classes are NOT affected: assigning one
-   * writes `node.classIds`, which the lock does not gate.
-   */
-  sourceLockReason?: string
-  /**
-   * `PageNode.moduleId`. `canWriteInlineStyleForModule` gates the inline
-   * composer on it: a `pkg.*`/`alm.*`/`studio.instance` node's `style=""` (if
-   * any) is written by its OWN source, not this page's, so
-   * `fsCodemodAdapter.saveSite` never emits a `kind:'style'` edit for it — the
-   * inline editor must say so instead of quietly discarding every keystroke
-   * (finding S4). Optional because global-selector mode has no node at all.
-   */
-  nodeModuleId?: string
-  /**
-   * `PageNode.codeProps` — forwarded to `InlineStyleComposer` so it can flag
-   * the individual `style:<prop>` entries that resolved from an expression
-   * (see that component's doc comment). Not consulted here beyond threading;
-   * the whole-node/whole-module locks above are the only ones this surface
-   * itself branches on.
-   */
-  codeProps?: string[]
-  /** Pre-rendered module prop rows shown in the Module section. */
+  /** The module's whole block — header and rows (`ModuleBlock`), or `null`. */
   moduleContent?: ReactNode
-  /** Called when 'Add class' is clicked in the locked preview. */
+  /** Called when 'Add class' is clicked in the fully-locked notice. */
   onFocusClassPicker?: () => void
 }
 
@@ -170,487 +92,183 @@ interface StyleSurfaceProps {
 // StyleSurface
 // ---------------------------------------------------------------------------
 
-export function StyleSurface({
-  definition,
-  activeClass,
-  activeClassId,
-  assignedClassRules,
-  activeBreakpointId,
-  nodeId,
-  inlineStyles,
-  sourceLockReason,
-  nodeModuleId,
-  codeProps,
-  moduleContent,
-  onFocusClassPicker,
-}: StyleSurfaceProps) {
-  // scrollRef → outer grid which is also the scroll container
-  const scrollRef = useRef<HTMLDivElement>(null)
-  const [styleQuery, setStyleQuery] = useState('')
-
-  // Active section + click-to-scroll behaviour (shared with SelectorInspector).
-  // The Module anchor is both the initial active section and the "scroll to
-  // absolute top" target (so the sticky search bar above it is revealed); the
-  // active anchor resets to it whenever the selected node changes.
-  const { activeId: activeAnchorId, scrollTo: handleSectionClick } = useScrollSpy(scrollRef, {
-    initialId: MODULE_CATEGORY_ID,
-    scrollTopId: MODULE_CATEGORY_ID,
-    resetKey: nodeId,
-  })
-
-  // Reset search query when active class changes (no state leak between pills).
-  const [lastActiveClassId, setLastActiveClassId] = useState<string | null>(null)
-  if (lastActiveClassId !== activeClassId) {
-    setLastActiveClassId(activeClassId)
-    if (styleQuery !== '') setStyleQuery('')
-  }
-
-  // Track F1 / S6 — independent flags now (see module doc): which class is
-  // open for editing, and whether the Element (inline) block is expanded.
-  const inlineIntent = useEditorStore((s) => s.inlineStyleEditing)
-  const setInlineStyleEditing = useEditorStore((s) => s.setInlineStyleEditing)
-
-  // Default open/closed state for every property section (Module + CSS), driven
-  // by the `propertiesSectionsExpanded` preference. Read once here; the CSS
-  // sections receive it through StyleRuleComposer → StyleSectionsEditor.
-  const sectionsExpanded = useEditorPreference('propertiesSectionsExpanded')
-
-  const clearStyleQuery = () => setStyleQuery('')
-
-  // Rail dot badges from stored styles at the active editing context. The
-  // context switcher (canvas toolbar) can target a custom condition, which
-  // wins over the viewport breakpoint; otherwise we fall back to the
-  // base/breakpoint resolved by the active viewport.
-  const activeTab = getActiveStyleTab(activeBreakpointId)
-  // Validated active condition id (or null) — stale ids fall back to viewport.
-  const activeConditionId = useEditorStore((s) => {
-    const id = s.activeConditionId
-    if (id === null) return null
-    const cs = s.site?.conditions
-    return cs && cs.some((c) => c.id === id) ? id : null
-  })
-  const activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab : null)
+export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurfaceProps) {
+  const model = useSelectionModel()
+  const { selectedNodeId: nodeId, assignedClassRules, writableClasses, inlineWritable, inlineLockReason } = model
 
   const permissions = useEditorPermissions()
   const canEditStyleHere = permissions.canEditStyle
 
-  // S4 — a `pkg.*`/`alm.*`/`studio.instance` node's `style=""` is written by
-  // its OWN source, so `fsCodemodAdapter.saveSite` never emits a write for
-  // it here. Undefined `nodeModuleId` (global-selector mode has no node)
-  // reads as writable — this gate only narrows the node-editing case.
-  const inlineModuleUnwritable =
-    nodeModuleId !== undefined && !canWriteInlineStyleForModule(nodeModuleId)
+  const reachableClasses = writableClasses.filter((entry) => entry.lockReason === null)
+  const nothingWritable = !inlineWritable && reachableClasses.length === 0
 
-  // Track F1 / S6 — reachability of the Element target no longer depends on
-  // whether a class is also assigned (the old `activeClass == null` gate is
-  // gone). It depends only on role permission, having a node at all, and the
-  // module actually owning its own `style=""` attribute.
-  const canToggleElement = canEditStyleHere && nodeId != null && !inlineModuleUnwritable
-  const showInlineComposer = canToggleElement && inlineIntent && sourceLockReason === undefined
-  const showInlineModuleLockedNotice = canEditStyleHere && nodeId != null && inlineIntent && inlineModuleUnwritable
-  const showInlineSourceLockedNotice = canToggleElement && inlineIntent && sourceLockReason !== undefined
-  // Whichever of the three above is showing — used by the target chip's
-  // pressed state and by the rail's `editingInline` prop.
-  const elementBlockVisible = canEditStyleHere && nodeId != null && inlineIntent
-
-  const showClassBlock = activeClass != null
-
-  // Track F1 — every declared source for per-property provenance (winner +
-  // struck-through losers). `assignedClassRules` is the WHOLE list the node
-  // carries, not just `activeClass` — the bug this fixes: only one active
-  // class was ever consulted before (`usePropertiesPanelData.ts`'s old
-  // single-class `activeClass` derivation).
-  const classChain = buildClassChain(assignedClassRules, activeContextId)
-
-  /*
-   * Target for the section-header STYLE buttons. This is the one place that
-   * knows both facts a style-apply needs — which node is selected, and what is
-   * already on it — so it is assembled here and threaded down rather than
-   * re-derived from the store inside each menu. `null` in global-selector
-   * mode (no node at all), which is what hides the buttons there.
-   */
-  const styleTarget = nodeId
-    ? { nodeId, assignedClassIds: assignedClassRules.map((rule) => rule.id) }
-    : undefined
-  const computedValues = useFrameComputedStyleValues(
-    nodeId,
-    activeBreakpointId ?? 'desktop',
-    ALL_CURATED_CSS_PROPERTIES,
-  )
-  // Reference-stabilized against the PREVIOUS render's map: a keystroke that
-  // edits one property still recomputes provenance for all ~101 curated
-  // properties (cheap — a short array filter per property, not the DOM read
-  // above), but reuses the SAME object for every property whose result is
-  // unchanged rather than handing every `ClassPropertyRow` a new-but-identical
-  // object every render. See `buildStableProvenanceMap`'s doc for why the box
-  // read/write lives in that plain helper rather than inline here, and why
-  // this is what lets React Compiler's own memoization of the downstream
-  // per-row JSX/placeholder computations actually take effect.
-  const previousProvenanceBox = useMutableBox<Map<string, PropertyProvenance>>()
-  const provenanceByProperty = buildStableProvenanceMap(
-    previousProvenanceBox,
-    ALL_CURATED_CSS_PROPERTIES,
-    (prop) =>
-      resolvePropertyProvenance(prop as keyof CSSPropertyBag, {
-        classChain,
-        inlineStyles: inlineStyles ?? {},
-        computedValue: computedValues?.[prop],
-      }),
-  )
-
-  // `panel-02` / Track B1/B1b (WS-6.3) — whether the active class's
-  // declarations reach disk on save, and if not yet, whether they WOULD on
-  // the first edit. `getStudioStyleRuleSources()` is `{}` outside Studio
-  // (the DB-backed CMS editor never populates it), so this correctly falls
-  // back to `unmapped` there — unchanged from this chip's pre-F1 default.
-  const classCssEditability: ClassCssEditability | undefined = activeClass
-    ? resolveClassCssEditability(activeClass)
-    : undefined
-
-  // Pre-flight write lock. Outside Studio there is no `.css` file on disk for
-  // a class to fail to reach — every class resolves `unmapped` there and
-  // saves normally — so the lock is gated on the active page actually being a
-  // parsed Studio page. See `classCssWritability.ts`'s "Why the lock is gated
-  // on a Studio session".
-  const studioSession = useEditorStore((s) => {
-    const page = selectActiveCanvasPage(s)
-    return page != null && isStudioPageRootId(page.rootNodeId)
-  })
-  const classWriteLockReason = classCssWriteLockReason(classCssEditability, { studioSession })
-
-  // W8-4's Export block needs two facts no other part of this surface does:
-  // the node itself (its label, and the `props.svg`/`props.src` the SVG
-  // decision reads) and which page it sits on (the screen the capture
-  // photographs). Both are null in global-selector mode, where the section
-  // does not render at all.
-  const selectedNode = useEditorStore(selectSelectedNode)
-  const activePageId = useEditorStore((s) => s.activePageId)
-
-  // Select a heading and every edit is a type edit, so Typography leads —
-  // here and in the rail (`styleSectionOrder`). Read from the selected NODE,
-  // not the style bag: a text layer with nothing declared yet is exactly the
-  // case that needs the section at the top.
-  const textFirst = selectedNode != null && isTextNode(selectedNode)
-
-  // Rail dot badges reflect the UNION of what's actually set across every
-  // block currently visible — a property set via the class OR via inline
-  // both count as "this section has content".
-  const classStoredStyles: Record<string, unknown> =
-    showClassBlock && !isGeneratedClassLocked(activeClass!)
-      ? (activeContextId ? (activeClass!.contextStyles[activeContextId] ?? {}) : activeClass!.styles)
-      : {}
-  const inlineStoredStyles: Record<string, unknown> = showInlineComposer ? (inlineStyles ?? {}) : {}
-  const sectionSetCounts = getClassStyleSectionSetCounts({ ...classStoredStyles, ...inlineStoredStyles })
-
-  // Module section visibility: always visible unless search has no match.
-  const hasModuleContent = definition != null && moduleContent != null
-  const moduleVisible = hasModuleContent && (!styleQuery || moduleMatchesQuery(styleQuery, definition!))
-
-  // The search bar is bound to the active class — both its placeholder and
-  // the rows it filters belong to that class. It only renders when the class
-  // exists and is editable.
-  //   - no active class selected → LockedStylePreview teaser is shown instead
-  //   - active class is a locked generated utility → GeneratedUtilityLockedState
-  //     is shown instead (no editable CSS rows to search)
-  const searchableClass = activeClass != null && !isGeneratedClassLocked(activeClass)
-    ? activeClass
-    : null
-
-  // ── Element (inline) block ────────────────────────────────────────────
-  let elementBlock: ReactNode = null
-  if (showInlineModuleLockedNotice) {
-    elementBlock = (
-      <div className={styles.lockedContent}>
-        <EmptyState
-          variant="centered"
-          title="Inline styles come from this component's own source"
-          description={`This element is a ${nodeModuleId} component. Its style="" attribute (if any) is written in that component's own file, not this page's — nothing typed here would save. Assign a CSS class above to style it from this page instead.`}
-        />
-      </div>
-    )
-  } else if (showInlineSourceLockedNotice) {
-    elementBlock = (
-      <div className={styles.lockedContent}>
-        <EmptyState
-          variant="centered"
-          title="Inline styles come from the source file"
-          description={`This element is ${sourceLockReason}, so its style="" layer is written in code. Assign a CSS class above to style it from here.`}
-        />
-      </div>
-    )
-  } else if (showInlineComposer) {
-    elementBlock = (
-      <InlineStyleComposer
-        key={`${nodeId}-inline`}
-        nodeId={nodeId!}
-        inlineStyles={inlineStyles}
-        styleQuery={styleQuery}
-        codeProps={codeProps}
-        computedValues={computedValues}
-        provenanceByProperty={provenanceByProperty}
-        styleTarget={styleTarget}
-        textFirst={textFirst}
-      />
-    )
-  }
-
-  // ── Class block ──────────────────────────────────────────────────────
-  let classBlock: ReactNode = null
-  if (showClassBlock) {
-    classBlock = isGeneratedClassLocked(activeClass!) ? (
-      <div className={styles.lockedContent}>
-        <GeneratedUtilityLockedState cls={activeClass!} />
-      </div>
-    ) : (
-      // The lock is provided around the CLASS composer only — the Element
-      // block below has its own, unrelated per-property `codeProps` story and
-      // must not inherit a class's verdict. Every `ClassPropertyRow` beneath
-      // this reads it through `useStyleWriteLock()` and renders disabled.
-      //
-      // Known, deliberate gap (the same one `InlineStyleComposer`'s doc
-      // records for its own per-property locks): the bespoke visual controls
-      // the Layout/Size/Spacing/Fill sections own do not route through
-      // `ClassPropertyRow` and stay live. The banner above them states the
-      // fact for the whole class; disabling each of those widgets is the
-      // full typed-constraint model (Track F / `editConstraint.ts`), not a
-      // second copy of this predicate scattered across seven sections.
-      <StyleWriteLockContext.Provider value={blockedStyleWriteLock(classWriteLockReason)}>
-        {classWriteLockReason && (
-          <ClassCssLockedNotice
-            selector={styleRuleSelector(activeClass!)}
-            reason={classWriteLockReason}
-            onStyleElement={canToggleElement ? () => setInlineStyleEditing(true) : undefined}
-          />
-        )}
-        <StyleRuleComposer
-          key={`${activeClassId}-${activeTab}`}
-          classId={activeClassId!}
-          cls={activeClass!}
-          styleQuery={styleQuery}
-          computedValues={computedValues}
-          provenanceByProperty={provenanceByProperty}
-          styleTarget={styleTarget}
-          textFirst={textFirst}
-        />
-      </StyleWriteLockContext.Provider>
-    )
-  }
-
-  // CSS area — Element block, Class block, both (Track F1 / S6), or the
-  // locked/empty states when neither has anything to show.
-  let cssContent: ReactNode
-  if (!canEditStyleHere) {
-    cssContent = (
-      <div className={styles.lockedContent}>
-        <EmptyState
-          variant="centered"
-          title="Styles are read-only for your role"
-          description="Your role can edit page copy but not classes or style overrides. Ask an editor to make visual changes."
-        />
-      </div>
-    )
-  } else if (elementBlock || classBlock) {
-    cssContent = (
-      <>
-        {elementBlock && (
-          <div className={styles.targetBlock} data-testid="style-target-block-element">
-            <div className={styles.targetBlockLabel}>Element</div>
-            {elementBlock}
-          </div>
-        )}
-        {classBlock && (
-          <div
-            className={styles.targetBlock}
-            data-testid="style-target-block-class"
-            data-write-locked={classWriteLockReason ? 'true' : 'false'}
-          >
-            <div className={styles.targetBlockLabel}>{styleRuleSelector(activeClass!)}</div>
-            {classBlock}
-          </div>
-        )}
-      </>
-    )
-  } else {
-    cssContent = (
-      <LockedStylePreview
-        onFocusClassPicker={onFocusClassPicker ?? noop}
-        onStyleInline={canToggleElement ? () => setInlineStyleEditing(true) : undefined}
-      />
-    )
-  }
-
-  // definition.icon is an IconComponent — must assign to PascalCase var.
-  const ModuleIcon = definition?.icon
+  // A node whose ENTIRE assigned-class story is generated utility classes
+  // (framework color/spacing tokens, …) gets the same "not meant to be
+  // edited" notice `SelectorInspector`'s global surface shows for one —
+  // still ABOVE the mounted sections, not instead of them, because the
+  // element's inline layer is a real, separate, still-editable target.
+  const soleGeneratedUtility =
+    assignedClassRules.length > 0 && assignedClassRules.every((cls) => isGeneratedClassLocked(cls))
+      ? assignedClassRules[0]
+      : null
 
   return (
-    // TokenCatalogProvider computes the spacing/typography token catalogs
-    // ONCE for this whole render pass — see that module's doc for why every
-    // `ClassPropertyRow` reading them via `useTokenCatalog()` instead of
-    // calling the raw hooks itself matters on the keystroke path.
-    <TokenCatalogProvider>
-      <div ref={scrollRef} className={styles.surface}>
-        {/* ── Left column: search + module section + CSS area ─────────── */}
-        <div className={styles.surfaceContent}>
+    // `data-testid` is additive/queryable-only — no visual or behavioral
+    // change. `.surface` is "THE scroll container" (this file's own CSS
+    // comment); the e2e measurement gate
+    // (`tests/e2e/inspector-panel-measurement.e2e.ts`) needs a stable real-
+    // DOM handle on it since CSS Module class names are hashed in a real
+    // build.
+    <div className={styles.surface} data-testid="properties-panel-scroll">
+      <div className={styles.surfaceContent}>
+        {/* A multi-selection's write target is a CHOICE with a blast radius,
+            so it gets its own interactive chip + gate here. A SINGLE
+            selection's targets are stated once, on `ClassPicker`'s own pills
+            (panel-41) — this file used to draw a second, read-only
+            `WriteTargetRow` listing the same selectors 40px below that
+            stack, which is the panel's own copy of the ambiguity WS-6.2
+            exists to fix. */}
+        {model.isMultiSelect && <MultiSelectTargetBar model={model} />}
 
-          {/* Track F1 — write-target menu. Node mode only (nodeId != null); the
-              global selector surface (SelectorInspector) always edits a class
-              and has no "Element" concept to switch to. */}
-          {nodeId != null && (
-            <StyleTargetChip
-              elementVisible={elementBlockVisible}
-              classSelector={activeClass ? styleRuleSelector(activeClass) : undefined}
-              classCssEditability={classCssEditability}
-              onToggleElement={canToggleElement ? () => setInlineStyleEditing(!inlineIntent) : undefined}
+        {/* Module section — P2 rule 2 ("everything is at rest"): a fixed
+            block, not an accordion. `moduleContent` is the whole block
+            (`ModuleBlock`, built by `renderModuleTabContent`), header
+            included; this file mounts it and nothing more. It is `null` when
+            there is genuinely nothing to show (global selector mode), and is
+            not mounted at all for a multi-selection, whose module props
+            belong to one call site each (`commitApi.ts`). */}
+        {moduleContent != null && !model.isMultiSelect && (
+          // `data-section-id` as well as `data-style-section`: this block is
+          // not an `INSPECTOR_SECTIONS` entry, which is exactly why it went
+          // unbudgeted until panel-37 measured it at 158px on a text node and
+          // 252px on an image. The measured artefact
+          // (`docs/audits/penpot-inspector-baseline/05-section-heights.json`)
+          // keys off `data-section-id`, so carrying one puts the Module block
+          // in the same table as every real section and makes it impossible
+          // to grow it again without the number showing up.
+          <div key={nodeId} data-style-section="module" data-section-id="module">
+            {moduleContent}
+          </div>
+        )}
+
+        {!canEditStyleHere ? (
+          <div className={styles.lockedContent}>
+            <EmptyState
+              variant="centered"
+              title="Styles are read-only for your role"
+              description="Your role can edit page copy but not classes or style overrides. Ask an editor to make visual changes."
             />
-          )}
-
-          {/* Search bar — sticky at the top, searches both module and CSS.
-              Hidden when no class is selected or the active class is a locked
-              generated utility (no CSS rows to search in either state). */}
-          {searchableClass && (
-            <div className={styles.searchBarRow}>
-              <SearchBar
-                value={styleQuery}
-                onValueChange={setStyleQuery}
-                onClear={clearStyleQuery}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape') {
-                    e.preventDefault()
-                    clearStyleQuery()
-                  }
-                }}
-                placeholder={`Search styles in ${styleRuleSelector(searchableClass)}...`}
-                aria-label="Search class style properties to add"
-              />
-            </div>
-          )}
-
-          {/* Module section — same Section accordion as CSS sections */}
-          {moduleVisible && (
-            <div data-style-section={MODULE_CATEGORY_ID}>
-              <Section
-                title={definition!.name}
-                icon={ModuleIcon}
-                defaultOpen={sectionsExpanded}
-                flush
-              >
-                {/* sectionBody gives the same display:grid + gap as CSS sections.
-                    key={nodeId} remounts on node change (replaces the old div wrapper). */}
-                <div key={nodeId} className={sectionStyles.sectionBody}>
-                  {moduleContent}
-                </div>
-              </Section>
-            </div>
-          )}
-
-          {/* CSS area — Element block, Class block, locked preview, or generated lock */}
-          {cssContent}
-
-          {/* Export (W8-4) — the last block in the column, Figma's position for
-              it. Node-level, not a style-target section: see
-              `ExportSection.tsx`'s doc for why it is NOT registered in
-              `classStyleSections.ts`. Keyed by node so the rows a user
-              configured for one element never carry over to the next; gated on
-              a Studio session because both of its server verbs (photograph
-              this page, read this node's JSX) address a project on disk. */}
-          {nodeId != null && selectedNode != null && activePageId != null && studioSession && (
-            <ExportSection
-              key={nodeId}
-              nodeId={nodeId}
-              pageId={activePageId}
-              node={selectedNode}
-              properties={ALL_CURATED_CSS_PROPERTIES}
-              provenanceByProperty={provenanceByProperty}
-              classSelectors={assignedClassRules.map((rule) => styleRuleSelector(rule))}
-            />
-          )}
-        </div>
-
-        {/* ── Right column: sticky rail ────────────────────────────── */}
-        <div className={styles.railSticky}>
-          <StyleCategoryRail
-            activeAnchorId={activeAnchorId}
-            sectionSetCounts={sectionSetCounts}
-            onSectionClick={handleSectionClick}
-            definition={definition ?? null}
-            activeClass={activeClass}
-            editingInline={elementBlockVisible}
-            textFirst={textFirst}
-          />
-        </div>
-      </div>
-    </TokenCatalogProvider>
-  )
-}
-
-// ---------------------------------------------------------------------------
-// LockedStylePreview — teaser shown when no class is set on the element
-// ---------------------------------------------------------------------------
-
-interface LockedStylePreviewProps {
-  onFocusClassPicker: () => void
-  /** When provided, shows a "Style inline" button that edits the node's
-   *  `style=""` layer directly (no class). Omitted in selector/global mode. */
-  onStyleInline?: () => void
-}
-
-const TEASER_SECTION = CLASS_STYLE_SECTIONS.find((s) => s.id === 'layout')!
-
-function LockedStylePreview({ onFocusClassPicker, onStyleInline }: LockedStylePreviewProps) {
-  const noopChange = () => {}
-  const noopRemove = () => {}
-
-  return (
-    <div className={styles.lockedPreview}>
-      {/* Teaser wrapper: capped height with gradient fade */}
-      <div className={styles.lockedPreviewTeaserWrapper} aria-hidden="true">
-        <div className={styles.lockedPreviewTeaser}>
-          {TEASER_SECTION.properties.map((prop) => (
-            <ClassPropertyRow
-              key={String(prop)}
-              property={prop}
-              value={undefined}
-              placeholder={getCSSPropertyDefaultValue(prop)}
-              isSet={false}
-              onChange={noopChange as (p: keyof CSSPropertyBag, v: string | number | undefined) => void}
-              onRemove={noopRemove as (p: keyof CSSPropertyBag) => void}
-            />
-          ))}
-        </div>
-        <div className={styles.lockedPreviewGradient} aria-hidden="true" />
-      </div>
-
-      {/* CTA — always visible below the teaser */}
-      <div className={styles.lockedPreviewCta}>
-        <p className={styles.lockedPreviewCtaText}>
-          Add a class to start styling this element
-        </p>
-        <div className={styles.lockedPreviewCtaActions}>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={onFocusClassPicker}
-          >
-            Add class
-          </Button>
-          {onStyleInline && (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={onStyleInline}
-              tooltip="Style just this element with an inline style attribute (no reusable class)"
-            >
-              Style inline
-            </Button>
-          )}
-        </div>
+          </div>
+        ) : nodeId == null ? null : nothingWritable ? (
+          <NothingWritableNotice reason={inlineLockReason} onFocusClassPicker={onFocusClassPicker} />
+        ) : (
+          <>
+            {soleGeneratedUtility && (
+              <div className={styles.lockedContent}>
+                <GeneratedUtilityLockedState cls={soleGeneratedUtility} />
+              </div>
+            )}
+            <MountedSections sections={designPrimarySections(model)} />
+            <MoreDisclosure model={model} />
+          </>
+        )}
       </div>
     </div>
   )
 }
 
 // ---------------------------------------------------------------------------
-// GeneratedUtilityLockedState
+// MountedSections — the ONE mount loop, used by both the continuous scroll
+// and the More disclosure so a section's wrapper/keying can never differ
+// between the two groups.
+//
+// `data-section-id` is additive/queryable-only — no visual or behavioral
+// change. It gives Playwright a stable per-section root
+// (`tests/e2e/inspector-panel-measurement.e2e.ts`,
+// `tests/e2e/inspector-height.e2e.ts`) since this loop otherwise has no
+// wrapper around each section.
+// ---------------------------------------------------------------------------
+
+function MountedSections({ sections }: { sections: ReadonlyArray<InspectorSectionDefinition> }) {
+  return (
+    <>
+      {sections.map((section) => (
+        <div data-section-id={section.id} key={section.id}>
+          {/* `panel-40` — one section is one failure domain. The boundary sits
+              INSIDE the `data-section-id` wrapper so a crashed section still
+              answers every existing per-section query (the measurement
+              artefact, the height gate), and its fallback occupies the
+              section's own geometry rather than collapsing the scroll around
+              it. No `resetKeys`: a section that throws on every node must not
+              be cleared silently by the next canvas click — the fallback's own
+              "Reload this panel" is the way back. */}
+          <PanelBoundary id={section.id} label={section.label} frame="section">
+            <section.Component />
+          </PanelBoundary>
+        </div>
+      ))}
+    </>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// MoreDisclosure — the single collapsed group holding every `designGroup:
+// 'more'` section. Renders nothing at all when the selection mounts none of
+// them, rather than an empty "More" header that discloses nothing (Law 1,
+// `docs/features/inspector.md` §1).
+// ---------------------------------------------------------------------------
+
+function MoreDisclosure({ model }: { model: SelectionModel }) {
+  const sections = designMoreSections(model)
+  if (sections.length === 0) return null
+  return (
+    <div data-section-id="more" data-testid="inspector-more-disclosure">
+      <Section title="More" flush>
+        <MountedSections sections={sections} />
+      </Section>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// NothingWritableNotice — the one full-column notice left in this file: no
+// class is writable AND inline is unreachable. Rare (most nodes reach the
+// mounted sections above) but genuinely different from every other state.
+// ---------------------------------------------------------------------------
+
+function NothingWritableNotice({
+  reason,
+  onFocusClassPicker,
+}: {
+  /** The specific reason inline is unreachable, when there is one — module
+   *  ownership, role permission, or a structural lock. Falls back to a
+   *  generic "nothing writable" sentence when there isn't (no class, no
+   *  node-specific reason — e.g. global-selector mode never reaches here). */
+  reason?: string | null
+  onFocusClassPicker?: () => void
+}) {
+  return (
+    <div className={styles.lockedPreview}>
+      <div className={styles.lockedPreviewCta}>
+        <p className={styles.lockedPreviewCtaText}>
+          {reason ?? 'Nothing on this element can be saved from here — add a class Studio can write to.'}
+        </p>
+        {onFocusClassPicker && (
+          <div className={styles.lockedPreviewCtaActions}>
+            <Button variant="secondary" size="sm" onClick={onFocusClassPicker}>
+              Add class
+            </Button>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// GeneratedUtilityLockedState — kept for `SelectorInspector.tsx`'s global
+// (ambient/class) editing surface, which still shows exactly ONE class at a
+// time and has no merged bag to fold this into.
 // ---------------------------------------------------------------------------
 
 function GeneratedUtilityLockedState({ cls }: { cls: StyleRule }) {
@@ -677,23 +295,3 @@ function GeneratedUtilityLockedState({ cls }: { cls: StyleRule }) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Returns true if the search query matches the module definition name or any
- * of its schema prop keys / labels. Used to show/hide the module section.
- */
-function moduleMatchesQuery(query: string, definition: AnyModuleDefinition): boolean {
-  const q = query.trim().toLowerCase()
-  if (!q) return true
-  if (definition.name.toLowerCase().includes(q)) return true
-  return Object.keys(definition.schema).some((key) => {
-    const label = key.replace(/([A-Z])/g, ' $1').trim().toLowerCase()
-    return key.toLowerCase().includes(q) || label.includes(q)
-  })
-}
-
-function noop() {}

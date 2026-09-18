@@ -441,6 +441,32 @@ describe('probeProject — design systems', () => {
     const { designSystems } = probeProject(tmpDir)
     expect(designSystems).toEqual([])
   })
+
+  /**
+   * DS-3 — Studio's built-in design system is declared by the folder Studio
+   * writes, never by a dependency.
+   */
+  it("reports the built-in design system for a project carrying Studio's folder", () => {
+    write('design-system/index.js', 'export {}\n')
+    const { designSystems } = probeProject(tmpDir)
+    expect(designSystems).toEqual([{ name: 'alm', source: 'builtin', root: 'design-system' }])
+  })
+
+  /**
+   * The folder is Studio's, not the user's app: forty component `.jsx` files
+   * that each export JSX otherwise score as the best pages directory in the
+   * project, and every one of them would arrive on the board as a page.
+   */
+  it('never picks the design-system folder as the pages directory', () => {
+    write('design-system/index.js', 'export {}\n')
+    for (const name of ['Button', 'Chip', 'Cell', 'Navbar']) {
+      write(`design-system/components/${name}.jsx`, `export default function ${name}() { return <div /> }\n`)
+    }
+    write('screens/Home.jsx', 'export default function Home() { return <main /> }\n')
+
+    const { pagesDir } = probeProject(tmpDir)
+    expect(pagesDir).toBe('screens')
+  })
 })
 
 // ---------------------------------------------------------------------------

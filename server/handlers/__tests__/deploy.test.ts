@@ -25,10 +25,12 @@
 import { afterAll, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
-import { projectsRootDir } from '../studioProjects'
+import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioDeploy } from '../studio/deploy'
 import { detectDeployProviders, parseAuthProbe, parsePreviewUrl, mentionsUnlinkedProject } from '../studio/deployProviders'
+import { clientSafeDeployOutput } from '../studio/deployRunner'
 import { resolveDeployJob, startDeployJob } from '../studio/deployJobs'
+import { resolveAppRoot } from '../studio/appRoot'
 import { readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../studio/subprocessRunner'
 
@@ -45,6 +47,23 @@ function makeProjectDir(): string {
   created.push(dir)
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'deploy-fixture', version: '0.0.0' }))
   return dir
+}
+
+/**
+ * A monorepo import: the real `package.json` is at `<project>/apps/web`, and
+ * the project directory itself has none. `detectAppRoot` resolves the app root
+ * to `apps/web`, so `resolveAppRoot(dir) !== dir` — the shape that made every
+ * app-root-keyed read of `.studio/meta.json` answer Tier 0 forever (`sec-12`).
+ */
+function makeMonorepoProjectDir(): { dir: string; appRoot: string } {
+  const root = projectsRootDir()
+  fs.mkdirSync(root, { recursive: true })
+  const dir = fs.mkdtempSync(path.join(root, '__deploy_mono_'))
+  created.push(dir)
+  const appRoot = path.join(dir, 'apps', 'web')
+  fs.mkdirSync(appRoot, { recursive: true })
+  fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'mono-web', version: '0.0.0' }))
+  return { dir, appRoot }
 }
 
 afterAll(() => {
@@ -80,10 +99,12 @@ interface FakeResponse {
  * that was actually run. Everything before `Bun.spawn` is the real code path —
  * env construction, the byte cap, the timeout race, the output parsing.
  */
-function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnFn; calls: string[][] } {
+function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnFn; calls: string[][]; cwds: string[] } {
   const calls: string[][] = []
-  const spawn: SubprocessSpawnFn = (argv) => {
+  const cwds: string[] = []
+  const spawn: SubprocessSpawnFn = (argv, options) => {
     calls.push([...argv])
+    cwds.push(options.cwd)
     const response = table[argv.join(' ')] ?? { code: 127, stderr: `unexpected argv: ${argv.join(' ')}` }
     const proc: SpawnedProcessLike = {
       stdout: streamOf(response.stdout ?? ''),
@@ -95,7 +116,7 @@ function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnF
     }
     return proc
   }
-  return { spawn, calls }
+  return { spawn, calls, cwds }
 }
 
 async function waitForJob(id: string, dir: string) {
@@ -267,6 +288,83 @@ describe('auth probe parsing', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 2b — the same transcripts, on a Windows CLI (CRLF)
+//
+// `vercel`/`netlify` are Node CLIs; on Windows their stdout is CRLF. Every
+// read below is anchored with `/m` or cut into lines, and both were previously
+// a bare `'\n'`/`$` away from carrying a `\r` into a URL, an account name, or a
+// line of the log the panel shows. The rule is now `toLf`/`splitLines` at the
+// read, and these assert the transcripts agree.
+// ---------------------------------------------------------------------------
+
+/** LF → CRLF, the way a Windows CLI writes the same output. */
+function asCrlf(text: string): string {
+  return text.replace(/\n/g, '\r\n')
+}
+
+describe('a CRLF CLI transcript is read exactly like its LF twin', () => {
+  it('finds the same Vercel preview URL', () => {
+    expect(parsePreviewUrl('vercel', '', asCrlf(VERCEL_DEPLOY_OUTPUT))).toBe(
+      parsePreviewUrl('vercel', '', VERCEL_DEPLOY_OUTPUT),
+    )
+    expect(parsePreviewUrl('vercel', '', asCrlf(VERCEL_DEPLOY_OUTPUT))).toBe(
+      'https://preview-fixture-8kqvj2s1-studio.vercel.app',
+    )
+  })
+
+  it('finds the same bare-URL Vercel fallback, whose pattern is anchored at end of line', () => {
+    const bare = 'https://preview-fixture-8kqvj2s1-studio.vercel.app\n'
+    expect(parsePreviewUrl('vercel', asCrlf(bare), '')).toBe(parsePreviewUrl('vercel', bare, ''))
+  })
+
+  it('finds the same Netlify draft URL', () => {
+    expect(parsePreviewUrl('netlify', asCrlf(NETLIFY_DEPLOY_OUTPUT), '')).toBe(
+      parsePreviewUrl('netlify', NETLIFY_DEPLOY_OUTPUT, ''),
+    )
+  })
+
+  it('still refuses to invent a URL', () => {
+    expect(parsePreviewUrl('vercel', asCrlf('Error: build failed\n'), '')).toBeNull()
+    expect(parsePreviewUrl('netlify', asCrlf('Build logs: https://app.netlify.com/sites/x/deploys/1\n'), '')).toBeNull()
+  })
+
+  it('reads the same Vercel account off whoami — the account IS the whole line', () => {
+    expect(parseAuthProbe('vercel', { stdout: 'studio-tester\r\n', stderr: '> 0.1s\r\n', exitCode: 0 })).toEqual({
+      authenticated: true,
+      account: 'studio-tester',
+    })
+  })
+
+  it('reads the same Netlify account off the Email: row', () => {
+    expect(parseAuthProbe('netlify', { stdout: asCrlf(NETLIFY_STATUS_OUTPUT), stderr: '', exitCode: 0 })).toEqual(
+      parseAuthProbe('netlify', { stdout: NETLIFY_STATUS_OUTPUT, stderr: '', exitCode: 0 }),
+    )
+  })
+
+  it('still reads a signed-out CLI that exits 0', () => {
+    expect(
+      parseAuthProbe('netlify', {
+        stdout: "You are not currently logged in. Please log in with `netlify login`.\r\n",
+        stderr: '',
+        exitCode: 0,
+      }),
+    ).toEqual({ authenticated: false, account: null })
+  })
+
+  it('redacts the workspace root out of a CRLF log, and hands back LF', () => {
+    const root = projectsRootDir()
+    const raw = `Deploy path: ${root}\\preview-fixture\\dist\nDone`
+    const safe = clientSafeDeployOutput(
+      { stdout: asCrlf(raw), stderr: '', stdoutTruncated: false, stderrTruncated: false, exitCode: 0, timedOut: false, ok: true, notInstalled: false },
+      'Deploy failed',
+    )
+    expect(safe).not.toContain(root)
+    expect(safe).toContain('<workspace>')
+    expect(safe).not.toContain('\r')
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 3 — the capability gate
 // ---------------------------------------------------------------------------
 
@@ -309,6 +407,75 @@ describe('the trust-tier gate', () => {
 })
 
 // ---------------------------------------------------------------------------
+// 3b — the gate reads the PROJECT directory, never the app root (`sec-12`)
+// ---------------------------------------------------------------------------
+
+describe('the trust-tier gate on a monorepo import (app root !== project dir)', () => {
+  it('lets a Tier-2 monorepo project deploy — the tier is read where .studio/ actually is', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    expect(resolveAppRoot(dir)).toBe(appRoot)
+    // The promotion writes the ONE sidecar, at the project directory.
+    writeStudioMeta(dir, { trust: 'run-project' })
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
+
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(200)
+    const body = (await res!.json()) as { jobId: string }
+    expect(typeof body.jobId).toBe('string')
+  })
+
+  it('still refuses that same monorepo project at Tier 1 — the fix did not widen the gate', async () => {
+    const { dir } = makeMonorepoProjectDir()
+    writeStudioMeta(dir, { trust: 'render-packages' })
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(409)
+    const body = (await res!.json()) as { code: string; error: string }
+    expect(body.code).toBe('trust-tier-required')
+  })
+
+  it('and at Tier 0, with no .studio/meta.json at all', async () => {
+    const { dir } = makeMonorepoProjectDir()
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(409)
+  })
+
+  it('reports canDeploy: true for a Tier-2 monorepo on the status route', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    fs.writeFileSync(path.join(appRoot, 'vercel.json'), '{}')
+    writeStudioMeta(dir, { trust: 'run-project' })
+
+    const res = await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(dir)}`)
+    expect(res?.status).toBe(200)
+    const body = (await res!.json()) as { trust: string; canDeploy: boolean; detection: { detected: string | null } }
+    expect(body.trust).toBe('run-project')
+    expect(body.canDeploy).toBe(true)
+    // The detection still reads the APP ROOT — that half was never wrong.
+    expect(body.detection.detected).toBe('vercel')
+  })
+
+  it('runs the CLI in the app root but records lastDeploy in the project’s own .studio/', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    writeStudioMeta(dir, { trust: 'run-project' })
+
+    const { spawn, cwds } = fakeCli({
+      'vercel whoami': { stdout: 'studio-tester\n' },
+      'vercel build': { stdout: 'Build Completed in .vercel/output\n' },
+      'vercel deploy --prebuilt': { stderr: VERCEL_DEPLOY_OUTPUT },
+    })
+
+    const id = await startDeployJob(dir, 'vercel', { spawn })
+    const job = await waitForJob(id, dir)
+    expect(job.status).toBe('succeeded')
+
+    // Every subprocess ran where package.json is…
+    expect(new Set(cwds)).toEqual(new Set([appRoot]))
+    // …and the record landed where every other reader of the sidecar looks.
+    expect(readStudioMeta(dir).lastDeploy?.id).toBe(id)
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
 // 4 — route validation
 // ---------------------------------------------------------------------------
 
@@ -321,12 +488,30 @@ describe('route validation', () => {
     expect((await call('/admin/api/studio/deploy', post({ dir, provider: 'heroku', confirm: true })))?.status).toBe(400)
   })
 
-  it('404s a dir outside the workspace, and the workspace root itself', async () => {
+  it('refuses a dir outside the workspace, and 404s the workspace root itself', async () => {
+    // Two DIFFERENT refusals, deliberately:
+    //
+    // A dir outside the workspace root is `ProjectDirOutsideWorkspaceError`,
+    // and this handler re-throws it on purpose (`rethrowProjectDirRefusal`) so
+    // that `server/router.ts` answers it with the one flat 404 the whole
+    // Studio surface shares — see `rethrowProjectDirRefusal`'s own doc: "each
+    // route would flatten the refusal into its own 404-or-500, which is how
+    // one refusal, one answer quietly becomes thirty slightly different
+    // answers." These assertions used to expect a 404 from the handler, which
+    // is the router's answer, not this layer's; they only ever passed on a
+    // platform where `path.join(root, '..', '..')` happened to stay inside the
+    // containment check.
     const outside = path.join(projectsRootDir(), '..', '..')
-    expect((await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(outside)}`))?.status).toBe(404)
-    expect(
-      (await call('/admin/api/studio/deploy', post({ dir: outside, provider: 'vercel', confirm: true })))?.status,
-    ).toBe(404)
+    await expect(
+      call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(outside)}`),
+    ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+    await expect(
+      call('/admin/api/studio/deploy', post({ dir: outside, provider: 'vercel', confirm: true })),
+    ).rejects.toThrow(ProjectDirOutsideWorkspaceError)
+
+    // The workspace ROOT is inside itself, so it passes containment and is
+    // refused one level later by `assertDeployableProject` — a plain 404 from
+    // this handler, exactly as before.
     expect(
       (await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(projectsRootDir())}`))?.status,
     ).toBe(404)

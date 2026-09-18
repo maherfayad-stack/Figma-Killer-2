@@ -83,7 +83,7 @@ describe('deleteStudioPage', () => {
   })
 
   it('never deletes a stylesheet that came from a package', () => {
-    writePage('Home.tsx', "import '@alm-design/design-system/styles.css'\nexport default function Home() { return <div /> }\n")
+    writePage('Home.tsx', "import 'some-ui-kit/styles.css'\nexport default function Home() { return <div /> }\n")
 
     const result = deleteStudioPage(tmpDir, 'home')
 

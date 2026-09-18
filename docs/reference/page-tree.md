@@ -68,7 +68,7 @@ export const BaseNodeSchema = Type.Object({
 The rules:
 
 - **`children` is the structural source of truth; `parentId` is a derived cache of it.** The two must always agree: for every `parent.children` entry `childId`, `nodes[childId].parentId === parent.id`.
-- **Always fully consistent — never half-populated.** Every parentage-changing mutation maintains it inline (`insertNode`, `deleteNode`, `moveNode`/`moveNodes`, `duplicateNode`, `wrapNode`/`wrapNodes`, `pasteSubtree`, `addPage`, `duplicatePage`, slot materialization). The invariant is enforced after every mutation (and after undo/redo) by `src/__tests__/page-tree/parentIndex.test.ts`.
+- **Always fully consistent — never half-populated.** Every parentage-changing mutation maintains it inline (`insertNode`, `deleteNode`, `moveNode`/`moveNodes`, `duplicateNode`, `wrapNode`/`wrapNodes`, `unwrapNode`, `pasteSubtree`, `addPage`, `duplicatePage`, slot materialization). The invariant is enforced after every mutation (and after undo/redo) by `src/__tests__/page-tree/parentIndex.test.ts`.
 - **Derived on entry, stored value never trusted.** `reindexNodeParents(nodes)` recomputes `parentId` for a whole flat map purely from the `children` arrays. It runs at every boundary where a tree enters the system — `parsePage`, `parseVisualComponent`, `parsePageNodeTree`, the editor store's `loadSite`/`createSite`, `composeTemplateChain`, the HTML-import bulk-merge paths, and runtime VC-tree construction. This is the backfill: data persisted before `parentId` existed is healed on load, and a stored `parentId` is always overwritten from the children arrays. (`parentId` IS persisted on save — it's a redundant-but-harmless cache that is recomputed, not relied upon, on the next load.)
 - **Optional at the schema level** so persisted data predating the field and transient detached nodes still validate. The runtime invariant guarantees full population for any tree that has entered the system, so `getParent` reads the pointer directly with no scan fallback.
 
@@ -92,7 +92,7 @@ There is no separate `pages` table, no `page_versions` table. Everything content
 
 The canonical TypeBox schemas for tree mutation RPCs live with the tree engine:
 
-- `TreeOperationSchema` validates the 11 `applyTreeOperation` variants. Insert operations require a complete `PageNode`.
+- `TreeOperationSchema` validates the 13 `applyTreeOperation` variants. Insert operations require a complete `PageNode`.
   `applyTreeOperation` itself lives in `src/core/page-tree/treeOperations.ts` (split from `mutations.ts` in `struct-01`: the primitives are one module, the dispatcher — which carries a policy — is another). Its STRUCTURAL branches call `refuseStructuralEdit` (`sourceStructure.ts`) and throw `SourceStructureError` when the operation could never be written back to a studio-imported `.tsx`, so a plugin or an agent gets the same reason a person does instead of a mutation that vanishes on the next parse. Ordinary CMS trees (nanoid ids) are unaffected — the rule gates itself on the studio id grammar.
 - `TreeMutateResultSchema` validates the `{ tree, affectedNodeIds }` response shape.
 - `parsePageNodeTree(value)` validates a `NodeTree` payload and then checks tree invariants that JSON Schema cannot express: `rootNodeId` must exist, node-map keys must match each node's `id`, child IDs must resolve, and the reachable tree must be acyclic.
@@ -116,14 +116,17 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 | `setBreakpointOverride(tree, nodeId, breakpointId, patch)`        | Shallow-merge `patch` into the node's breakpoint overrides for `breakpointId` |
 | `clearBreakpointOverride(tree, nodeId, breakpointId)`             | Remove ALL overrides for `breakpointId` on that node       |
 | `renameNode(tree, nodeId, label)`                                 | Set the user-facing `label`                                 |
-| `toggleNodeLocked(tree, nodeId)`                                  | Flip `locked`                                               |
-| `toggleNodeHidden(tree, nodeId)`                                  | Flip `hidden`                                               |
+| `setNodeLocked(tree, nodeId, locked)`                             | Set `locked` to an absolute value                           |
+| `setNodeHidden(tree, nodeId, hidden)`                             | Set `hidden` to an absolute value                           |
+| `toggleNodeLocked(tree, nodeId)`                                  | Flip `locked` (the `applyTreeOperation` op kind)            |
+| `toggleNodeHidden(tree, nodeId)`                                  | Flip `hidden` (the `applyTreeOperation` op kind)            |
 | `moveNode(tree, nodeId, newParentId, newIndex)`                   | Re-parent + re-order                                        |
 | `moveNodes(tree, nodeIds, newParentId, newIndex)`                 | Same, multi-select                                          |
 | `buildSubtreeNodeIdMap(rootNodeId, nodes)`                        | Build a `Map<oldId, newId>` for all nodes reachable from `rootNodeId`. Used by callers that need the id map before pasting (e.g. to remap scoped class `scope.nodeId`). |
 | `duplicateNode(tree, nodeId, ...)`                                | Deep-clone with fresh ids, place after the original         |
-| `wrapNode(tree, nodeId, wrapperModuleId)`                         | Wrap a node in a new container                              |
-| `wrapNodes(tree, nodeIds, wrapperModuleId)`                       | Same, multi-select                                          |
+| `wrapNode(tree, nodeId, wrapperModuleId)`                         | Wrap a node in a new container (`wrapMutations.ts`)         |
+| `wrapNodes(tree, nodeIds, wrapperModuleId)`                       | Same, multi-select, closest-common-ancestor semantics        |
+| `unwrapNode(tree, nodeId)`                                        | Dissolve a container: its children take its place at its own index. Returns whether anything changed (`false` for the root, an unknown id, or a node with no parent) |
 | `pasteSubtree(tree, subtree, parentId, index?)`                   | Insert a previously-copied subtree with new ids             |
 | `deleteSubtree(nodes, rootId, options?)`                          | THE single subtree-deletion primitive. Removes `rootId` and all its descendants from a flat node map. `options.unlinkParent` (default `true`) controls whether the root is also spliced from its parent's `children[]` — slot-sync passes `false` because it overwrites the parent's children array wholesale afterwards. Takes `Record<string, BaseNode>` directly. Works on both Mutative drafts and plain object maps. |
 | `removeNodeSubtrees(nodes, rootNodeIds)`                          | Cascade-delete multiple root nodes and their entire subtrees. Calls `deleteSubtree(..., { unlinkParent: true })` for each root. Used to splice every `base.visual-component-ref` pointing at a deleted VC (plus all its slot-instance children and user content) from page trees and VC definition trees. Takes `Record<string, BaseNode>` directly. |
@@ -184,14 +187,23 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 
 ## Routing mutations from the editor store
 
-The editor store at `src/admin/pages/site/store/` has 11 named tree-mutation actions:
+The editor store at `src/admin/pages/site/store/` has 13 named tree-mutation actions:
 
 ```text
 insertNode, deleteNode, updateNodeProps,
 setBreakpointOverride, clearBreakpointOverride,
-renameNode, toggleNodeLocked, toggleNodeHidden,
-moveNode, duplicateNode, wrapNode
+renameNode, setNodesLocked, setNodesHidden,
+moveNode, duplicateNode, wrapNode,
+groupNodes, ungroupNode
 ```
+
+`groupNodes`/`ungroupNode` (K3 — ⌘G / ⌘⇧G) live in
+`site/groupActions.ts` rather than `site/nodeActions.ts`, the same split
+`deleteNodes` already has, and `setNodesLocked`/`setNodesHidden` live in
+`site/visibilityActions.ts`. Those two take an absolute value over N ids in
+ONE history entry; the per-node `toggleNode*` core mutations remain, but only
+as the `applyTreeOperation` op kinds plugins dispatch (`panel-40`). A named action's HOME is not the invariant;
+delegating to `mutateActiveTree` instead of branching on the document kind is.
 
 Every one of them is a **one-liner** that delegates to `mutateActiveTree(fn)`, which routes via `resolveActiveTreeTarget` — the sole implementation of the page-mode vs. VC-mode branch:
 
@@ -205,16 +217,16 @@ function mutateActiveTree(fn: (tree: NodeTree<PageNode>) => void): void {
   fn(resolveActiveTreeTarget(draft))
 }
 
-// All 11 actions follow this shape:
+// All 13 actions follow this shape:
 insertNode: (node, parentId, index) =>
   set((s) => mutateActiveTree((tree) => insertNode(tree, node, parentId, index))),
 ```
 
-Gated by `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`: any of the 11 store actions that introduces a `kind === 'visualComponent'` branch fails the build.
+Gated by `src/__tests__/architecture/no-vc-mode-branches-in-mutations.test.ts`: any of the 13 store actions that introduces a `kind === 'visualComponent'` branch fails the build.
 
 ### Why this is correct
 
-`PageNode` adds `dynamicBindings` to `BaseNode`. `VCNode === BaseNode`. The 11 mutations only touch fields that exist on the base — they never read `dynamicBindings`, so the cast in VC-mode is safe.
+`PageNode` adds `dynamicBindings` to `BaseNode`. `VCNode === BaseNode`. The 13 mutations only touch fields that exist on the base — they never read `dynamicBindings`, so the cast in VC-mode is safe.
 
 ---
 

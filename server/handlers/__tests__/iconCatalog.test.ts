@@ -14,8 +14,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import * as os from 'node:os'
 import { projectsRootDir } from '../studioProjects'
-import { tryServeStudioIcons } from '../studio/iconCatalog'
+import { collectStudioIcons, tryServeStudioIcons } from '../studio/iconCatalog'
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -102,6 +103,47 @@ describe('tryServeStudioIcons', () => {
   it('yields an empty catalogue for a project whose packages ship no icons', async () => {
     installComponentPackage('@fixture/ds')
     expect(await getIcons()).toEqual([])
+  })
+
+  /**
+   * DS-3 — the BUILT-IN design system's icons come from Studio's own vendored
+   * copy, not from the project. The project's `design-system/` folder
+   * deliberately carries only the handful of SVGs its components import, so
+   * reading it would offer twenty icons out of 568 and present that as the
+   * catalogue. The fixture stands in for `vendor/alm-design-system/`.
+   */
+  it("reads the built-in design system's icons from Studio's own copy, for a DS-backed project", () => {
+    const builtinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-ds-'))
+    try {
+      fs.mkdirSync(path.join(builtinDir, 'src', 'icons', 'line-icons'), { recursive: true })
+      fs.writeFileSync(path.join(builtinDir, 'src', 'icons', 'line-icons', 'bed.svg'), GLYPH)
+      fs.writeFileSync(path.join(builtinDir, 'src', 'icons', 'line-icons', 'passport.svg'), GLYPH)
+      // The project carries the folder (that is what "DS-backed" means) but
+      // only one of the icons — which must NOT be what the catalogue reports.
+      write('design-system/index.js', 'export {}\n')
+      write('design-system/icons/line-icons/bed.svg', GLYPH)
+
+      const icons = collectStudioIcons(wsDir, builtinDir)
+      expect(icons.map((i) => i.name).sort()).toEqual(['bed', 'passport'])
+      expect(icons[0]!.pkg).toBe('alm')
+      expect(icons[0]!.id).toBe('alm:line-icons/bed.svg')
+      expect(icons[0]!.markup).toContain('<path')
+    } finally {
+      fs.rmSync(builtinDir, { recursive: true, force: true })
+    }
+  })
+
+  it('offers no built-in icons to a project that does not carry the design system', () => {
+    const builtinDir = fs.mkdtempSync(path.join(os.tmpdir(), 'builtin-ds-'))
+    try {
+      fs.mkdirSync(path.join(builtinDir, 'src', 'icons', 'line-icons'), { recursive: true })
+      fs.writeFileSync(path.join(builtinDir, 'src', 'icons', 'line-icons', 'bed.svg'), GLYPH)
+      // No `design-system/index.js` — an imported GitHub repo, say. Offering
+      // it icons it has no way to import would be the wrong kind of helpful.
+      expect(collectStudioIcons(wsDir, builtinDir)).toEqual([])
+    } finally {
+      fs.rmSync(builtinDir, { recursive: true, force: true })
+    }
   })
 
   it('ignores non-SVG files sitting in an icon directory', async () => {

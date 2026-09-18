@@ -52,25 +52,55 @@
  * Every frame, both interaction modes. A live/preview frame's runtime errors
  * are as real as a design frame's, and collecting costs nothing until something
  * actually fails.
+ *
+ * Portal mode only, and now honestly so (`live-05`, STATE.md, Batch 5): a
+ * bridge-mode (Tier 2) frame's runtime is cross-origin, so this component
+ * cannot reach into it at all. That frame installs the SAME four taps on its
+ * own side — `@core/studio-runtime`'s `runtime.ts`, Z5 — and posts what it
+ * finds over the wire as the outbound `error` message, which
+ * `useBridgeFrameDiagnostics` records into the same buffer this one writes to.
+ * The classification predicates the two share (which tags are resources, which
+ * messages mean a module did not resolve, how to render an arbitrary thrown
+ * value as one line) live in `@core/studio-runtime`'s `runtimeErrorRules.ts` —
+ * ONE implementation, exactly like hover suppression and scroll unroll, so a
+ * live frame and a design frame cannot classify the same exception
+ * differently.
+ *
+ * Known gap, stated rather than implied: the bridge half carries no `nodeId`
+ * on a resource failure. `runtime.ts` speaks stamped ids, not canonical ones,
+ * and the wire message deliberately carries no id at all — so a Tier-2
+ * `asset-load-failed` answers with a URL where a Tier-0 one also answers with
+ * a source position.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
+import {
+  asErrorEventLike,
+  describeErrorValue,
+  errorStackOf,
+  isElementTarget,
+  isModuleResolutionMessage,
+  requestUrlOf,
+  resourceElementUrl,
+  RESOURCE_ERROR_TAGS,
+} from '@core/studio-runtime'
 import {
   disposeFrameDiagnostics,
   ensureFrameDiagnostics,
   recordFrameDiagnostic,
 } from './canvasDiagnosticsBuffer'
+import { CanvasDiagnosticsScopeContext, CanvasFrameAdapterContext } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 
-interface CanvasDiagnosticsInjectorProps {
-  /** The iframe document whose runtime is observed. */
-  targetDocument: Document
-}
+export function CanvasDiagnosticsInjector() {
+  const adapter = useContext(CanvasFrameAdapterContext)
+  const scopeKey = useContext(CanvasDiagnosticsScopeContext)
 
-export function CanvasDiagnosticsInjector({ targetDocument }: CanvasDiagnosticsInjectorProps) {
   useEffect(() => {
-    const view = targetDocument.defaultView
+    if (!isPortalFrameAdapter(adapter)) return
+    const view = adapter.getPortalWindow()
     if (!view) return
-    ensureFrameDiagnostics(view)
+    ensureFrameDiagnostics(view, scopeKey ?? undefined)
 
     const onError = (event: Event) => recordErrorEvent(view, event)
     const onRejection = (event: Event) => recordRejectionEvent(view, event)
@@ -88,7 +118,7 @@ export function CanvasDiagnosticsInjector({ targetDocument }: CanvasDiagnosticsI
       restoreFetch?.()
       disposeFrameDiagnostics(view)
     }
-  }, [targetDocument])
+  }, [adapter, scopeKey])
 
   return null
 }
@@ -97,44 +127,12 @@ export function CanvasDiagnosticsInjector({ targetDocument }: CanvasDiagnosticsI
 // Classification
 // ---------------------------------------------------------------------------
 
-/**
- * Messages every major engine uses for a specifier that could not be resolved
- * or fetched. Matched case-insensitively against the exception text; a miss
- * only means the finding is reported as a plain runtime error, never that it
- * is dropped.
- */
-const MODULE_RESOLUTION_PATTERNS: readonly RegExp[] = [
-  /failed to resolve module specifier/i,
-  /failed to fetch dynamically imported module/i,
-  /error resolving module specifier/i,
-  /cannot find module/i,
-  /module not found/i,
-  /does not provide an export named/i,
-  /unable to resolve/i,
-]
-
-function isModuleResolutionMessage(message: string): boolean {
-  return MODULE_RESOLUTION_PATTERNS.some((pattern) => pattern.test(message))
-}
-
-/** Elements whose failed load is a missing ASSET rather than a script fault. */
-const RESOURCE_TAGS = new Set(['IMG', 'SCRIPT', 'LINK', 'SOURCE', 'VIDEO', 'AUDIO', 'TRACK', 'IFRAME'])
-
-function resourceUrl(el: Element): string {
-  const raw =
-    el.getAttribute('src') ??
-    el.getAttribute('href') ??
-    el.getAttribute('srcset') ??
-    ''
-  return raw.slice(0, 300)
-}
-
 function recordErrorEvent(view: Window, event: Event): void {
   const target = event.target
   // A resource error's target is the failing ELEMENT and the event carries no
   // message. Checked first: an ErrorEvent's target is the window itself.
-  if (target && target !== view && isElement(target) && RESOURCE_TAGS.has(target.tagName)) {
-    const url = resourceUrl(target)
+  if (target && target !== view && isElementTarget(target) && RESOURCE_ERROR_TAGS.has(target.tagName)) {
+    const url = resourceElementUrl(target)
     const tagName = target.tagName.toLowerCase()
     // A module `<script>` that fails to load is a resolution failure, not a
     // missing picture — same code the thrown-specifier case uses, so both
@@ -159,8 +157,8 @@ function recordErrorEvent(view: Window, event: Event): void {
     return
   }
 
-  const errorEvent = asErrorEvent(event)
-  const message = errorEvent?.message || describeUnknown(errorEvent?.error) || 'Uncaught error (no message reported).'
+  const errorEvent = asErrorEventLike(event)
+  const message = errorEvent?.message || describeErrorValue(errorEvent?.error) || 'Uncaught error (no message reported).'
   recordFrameDiagnostic(view, {
     kind: 'uncaughtError',
     code: isModuleResolutionMessage(message)
@@ -170,20 +168,20 @@ function recordErrorEvent(view: Window, event: Event): void {
     ...(errorEvent?.filename ? { url: errorEvent.filename } : {}),
     ...(typeof errorEvent?.lineno === 'number' && errorEvent.lineno > 0 ? { line: errorEvent.lineno } : {}),
     ...(typeof errorEvent?.colno === 'number' && errorEvent.colno > 0 ? { column: errorEvent.colno } : {}),
-    ...(stackOf(errorEvent?.error) ? { stack: stackOf(errorEvent?.error) } : {}),
+    ...(errorStackOf(errorEvent?.error) ? { stack: errorStackOf(errorEvent?.error) } : {}),
   })
 }
 
 function recordRejectionEvent(view: Window, event: Event): void {
   const reason = (event as { reason?: unknown }).reason
-  const message = describeUnknown(reason) || 'Unhandled promise rejection (no reason reported).'
+  const message = describeErrorValue(reason) || 'Unhandled promise rejection (no reason reported).'
   recordFrameDiagnostic(view, {
     kind: 'unhandledRejection',
     code: isModuleResolutionMessage(message)
       ? 'module-resolution-failed'
       : 'runtime-unhandled-rejection',
     message,
-    ...(stackOf(reason) ? { stack: stackOf(reason) } : {}),
+    ...(errorStackOf(reason) ? { stack: errorStackOf(reason) } : {}),
   })
 }
 
@@ -193,7 +191,7 @@ function recordRejectionEvent(view: Window, event: Event): void {
 // Both live in plain functions rather than inline in the effect, for the same
 // reason `CanvasAnimationInjector.patchReducedMotionMatchMedia` does: a direct
 // `view.x = …` assignment inside the component body reads to the React
-// Compiler as mutating something reachable from the `targetDocument` prop.
+// Compiler as mutating something reachable from `adapter`.
 // Both restore the EXACT original reference on cleanup.
 // ---------------------------------------------------------------------------
 
@@ -206,7 +204,7 @@ function patchConsoleError(view: Window & typeof globalThis): (() => void) | und
       recordFrameDiagnostic(view, {
         kind: 'consoleError',
         code: 'runtime-console-error',
-        message: args.map(describeUnknown).filter(Boolean).join(' ') || 'console.error called with no arguments.',
+        message: args.map(describeErrorValue).filter(Boolean).join(' ') || 'console.error called with no arguments.',
       })
     } catch (_err) {
       // Recording must never be able to break the frame's own logging — a
@@ -224,7 +222,7 @@ function patchFetch(view: Window): (() => void) | undefined {
   const nativeFetch = view.fetch
   if (typeof nativeFetch !== 'function') return undefined
   const wrapped = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
-    const url = requestUrl(input)
+    const url = requestUrlOf(input)
     try {
       const response = await nativeFetch.call(view, input as RequestInfo, init)
       if (!response.ok) {
@@ -241,7 +239,7 @@ function patchFetch(view: Window): (() => void) | undefined {
       recordFrameDiagnostic(view, {
         kind: 'network',
         code: 'network-request-failed',
-        message: `fetch ${url} failed: ${describeUnknown(err) || 'network error'}`,
+        message: `fetch ${url} failed: ${describeErrorValue(err) || 'network error'}`,
         url,
       })
       // Rethrown unchanged — observing a failure must not change how the
@@ -253,49 +251,4 @@ function patchFetch(view: Window): (() => void) | undefined {
   return () => {
     view.fetch = nativeFetch
   }
-}
-
-// ---------------------------------------------------------------------------
-// Value description
-// ---------------------------------------------------------------------------
-
-function isElement(target: EventTarget): target is Element {
-  return typeof (target as Element).tagName === 'string'
-}
-
-/** `ErrorEvent`-shaped or not — cross-realm `instanceof` is unreliable, so this duck-types the fields it reads. */
-function asErrorEvent(event: Event): Partial<ErrorEvent> | null {
-  const candidate = event as Partial<ErrorEvent>
-  return typeof candidate.message === 'string' || candidate.error !== undefined ? candidate : null
-}
-
-function stackOf(value: unknown): string | undefined {
-  const stack = (value as { stack?: unknown } | null | undefined)?.stack
-  return typeof stack === 'string' && stack.length > 0 ? stack : undefined
-}
-
-/** A one-line, never-throwing rendering of an arbitrary console/rejection argument. */
-function describeUnknown(value: unknown): string {
-  if (value === undefined || value === null) return ''
-  if (typeof value === 'string') return value
-  if (typeof value === 'number' || typeof value === 'boolean') return String(value)
-  const message = (value as { message?: unknown }).message
-  if (typeof message === 'string') {
-    const name = (value as { name?: unknown }).name
-    return typeof name === 'string' && name.length > 0 ? `${name}: ${message}` : message
-  }
-  try {
-    return JSON.stringify(value) ?? String(value)
-  } catch (_err) {
-    // Circular structures and exotic proxies both land here; the constructor
-    // name is still more useful than dropping the argument entirely.
-    return `[${typeof value}]`
-  }
-}
-
-function requestUrl(input: RequestInfo | URL): string {
-  if (typeof input === 'string') return input.slice(0, 300)
-  const url = (input as { url?: unknown }).url
-  if (typeof url === 'string') return url.slice(0, 300)
-  return String(input).slice(0, 300)
 }

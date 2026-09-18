@@ -24,6 +24,7 @@ import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
 import { refuseStructuralUndo, reissueStructuralMove } from './structuralHistory'
+import { reissueStructuralSourceEdits } from './structuralSourceHistory'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralHistory } from './types'
 
 type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
@@ -47,7 +48,7 @@ function runStructuralStep(
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
 ): boolean {
-  if (structural.gesture !== 'move') {
+  if (structural.gesture === 'delete') {
     refuseStructuralUndo(structural.gesture)
     return true
   }
@@ -61,9 +62,18 @@ function runStructuralStep(
   const fromBefore = [...get()[from]]
   const toBefore = [...get()[to]]
 
-  if (!reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)) {
-    return true
-  }
+  // `store-14` — a SOURCE gesture (duplicate/wrap/group/ungroup/paste/
+  // transplant/image-drop) mutated no tree, so there is no gesture to
+  // re-issue through a store action: its inverse is a WRITE, posted through
+  // the same `/save` route the gesture used. It pushes no entry of its own
+  // (the commit carries `reissue`, which `recordStructuralSourceWrite` reads
+  // as "refresh, do not push"), so the stack bookkeeping below is still the
+  // only thing that moves it.
+  const performed =
+    structural.gesture === 'source'
+      ? reissueStructuralSourceEdits(get, set, structural, direction)
+      : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
+  if (!performed) return true
 
   set((state) => {
     state[from] = fromBefore.slice(0, -1)

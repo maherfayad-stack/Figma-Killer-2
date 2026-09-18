@@ -1,0 +1,49 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Logos">
+<g id="Flag">
+<g id="Country=Australia">
+<g id="Australia" clip-path="url(#clip0_29_409)">
+<path id="bground" d="M0 3H24V21H0V3Z" fill="#012169"/>
+<g id="union-jack" clip-path="url(#clip1_29_409)">
+<path id="Vector" d="M0 3L12 12L0 3ZM12 3L0 12L12 3Z" fill="black"/>
+<path id="Vector (Stroke)" fill-rule="evenodd" clip-rule="evenodd" d="M4.65838 7.50005L-0.268311 3.80504L0.268346 2.19507L6.00002 6.49382L11.7317 2.19507L12.2683 3.80504L7.34166 7.50005L12.2683 11.1951L11.7317 12.805L6.00002 8.50628L0.268346 12.805L-0.268311 11.1951L4.65838 7.50005Z" fill="white"/>
+<g id="Clip path group">
+<mask id="mask0_29_409" style="mask-type:luminance" maskUnits="userSpaceOnUse" x="0" y="3" width="14" height="11">
+<g id="b">
+<path id="Vector_2" d="M0 3V7.5H14V12H12L0 3ZM12 3H6V13.5H0V12L12 3Z" fill="white"/>
+</g>
+</mask>
+<g mask="url(#mask0_29_409)">
+<path id="Vector_3" d="M0 3L12 12L0 3ZM12 3L0 12L12 3Z" fill="black"/>
+<path id="Vector (Stroke)_2" fill-rule="evenodd" clip-rule="evenodd" d="M5.1055 7.50016L-0.178955 3.53681L0.178816 2.4635L5.99993 6.82934L11.821 2.4635L12.1788 3.53681L6.89436 7.50016L12.1788 11.4635L11.821 12.5368L5.99993 8.17098L0.178816 12.5368L-0.178955 11.4635L5.1055 7.50016Z" fill="#C8102E"/>
+</g>
+</g>
+<path id="Vector_4" d="M6 3V13.5V3ZM0 7.5H14H0Z" fill="black"/>
+<path id="Vector (Stroke)_3" fill-rule="evenodd" clip-rule="evenodd" d="M5 6V3H7V6H14V9H7V13.5H5V9H0V6H5Z" fill="white"/>
+<path id="Vector_5" d="M6 3V13.5V3ZM0 7.5H14H0Z" fill="black"/>
+<path id="Vector (Stroke)_4" fill-rule="evenodd" clip-rule="evenodd" d="M5.4 6.6V3H6.6V6.6H14V8.4H6.6V13.5H5.4V8.4H0V6.6H5.4Z" fill="#C8102E"/>
+<path id="Vector_6" d="M0 12H12V3H16V15H0V12Z" fill="#012169"/>
+</g>
+<g id="stars">
+<path id="Vector_7" d="M6.04998 13.9999L6.59392 15.7346L8.25531 15.0892L7.27222 16.607L8.79999 17.5369L7.03014 17.6949L7.27385 19.4999L6.04998 18.179L4.82612 19.4999L5.06984 17.6949L3.29999 17.537L4.82777 16.607L3.84466 15.0892L5.50605 15.7346L6.04998 13.9999Z" fill="white"/>
+<g id="group">
+<path id="Vector_8" d="M18.1412 15.7228L18.3627 16.4116L19.0394 16.1553L18.639 16.758L19.2613 17.1273L18.5404 17.19L18.6397 17.9068L18.1412 17.3823L17.6427 17.9068L17.742 17.19L17.0211 17.1273L17.6434 16.758L17.243 16.1553L17.9197 16.4116L18.1412 15.7228Z" fill="white"/>
+<path id="Vector_9" d="M14.1201 9.35608L14.3416 10.0449L15.0183 9.78865L14.6179 10.3913L15.2402 10.7606L14.5193 10.8233L14.6186 11.5401L14.1201 11.0156L13.6216 11.5401L13.7209 10.8233L13 10.7606L13.6223 10.3913L13.2218 9.78865L13.8985 10.0449L14.1201 9.35608Z" fill="white"/>
+<path id="Vector_10" d="M18.1412 4.99988L18.3627 5.68872L19.0394 5.43245L18.639 6.03514L19.2613 6.40441L18.5404 6.46713L18.6397 7.18387L18.1412 6.65938L17.6427 7.18388L17.742 6.46713L17.0211 6.40442L17.6434 6.03514L17.243 5.43245L17.9197 5.68872L18.1412 4.99988Z" fill="white"/>
+<path id="Vector_11" d="M21.7156 8.28369L21.9371 8.97253L22.6138 8.71626L22.2134 9.31896L22.8357 9.68823L22.1148 9.75094L22.2141 10.4677L21.7156 9.94319L21.2171 10.4677L21.3164 9.75094L20.5955 9.68823L21.2178 9.31896L20.8174 8.71626L21.4941 8.97253L21.7156 8.28369Z" fill="white"/>
+<path id="Vector_12" d="M19.7496 11.5103L19.9246 11.9395L20.3869 11.9733L20.0328 12.2725L20.1435 12.7226L19.7496 12.4783L19.3556 12.7226L19.4663 12.2725L19.1122 11.9733L19.5745 11.9395L19.7496 11.5103Z" fill="white"/>
+</g>
+</g>
+</g>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_29_409">
+<rect width="24" height="18" fill="white" transform="translate(0 3)"/>
+</clipPath>
+<clipPath id="clip1_29_409">
+<rect width="12" height="9" fill="white" transform="translate(0 3)"/>
+</clipPath>
+</defs>
+</svg>

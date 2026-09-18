@@ -1,0 +1,488 @@
+/**
+ * messages — the postMessage wire contract between the parent editor and the
+ * in-frame live runtime (`runtime.ts`), TypeBox-validated in both
+ * directions (L2's decision doc, STUDIO-LIVE-CANVAS-PLAN.md §1.1: a live
+ * frame is cross-origin by construction, so `postMessage` is the only
+ * channel, and both ends validate what crosses it).
+ *
+ * Imports `@sinclair/typebox` directly rather than `@core/utils/typeboxHelpers`
+ * — this file ships inside the runtime bundle served to a real browser from
+ * the live origin, and stays intentionally free of the compiled-validator
+ * cache machinery that helper pulls in. `Value.Check` (imported by callers
+ * from `@sinclair/typebox/value`) is enough for a message-sized payload.
+ *
+ * ## Envelope
+ *
+ * Every message is wrapped in {@link RuntimeEnvelopeSchema} before it is
+ * posted: a `source` tag (so a stray `postMessage` from React DevTools, a
+ * browser extension, or Vite's own HMR client is never mistaken for one of
+ * ours) and a `direction` tag (so a frame that somehow received its own
+ * outbound echo — e.g. a misconfigured relay — refuses to act on it as if it
+ * were inbound). Both ends check `event.origin` against the expected origin
+ * BEFORE even attempting to parse the envelope — that check lives in
+ * `runtime.ts` / the (L5) parent-side adapter, not here, because only the
+ * caller knows which origin to expect.
+ *
+ * ## Two additions beyond the plan's literal message table
+ *
+ *   - `setMode` (inbound) — the runtime has no other way to know whether to
+ *     run hover-suppression / scroll-unroll / animation-freeze / rings at
+ *     all. A live Tier-2 frame is mounted for BOTH the still design board
+ *     (`'design'`) and the real-size live/preview view (`'live'`) — exactly
+ *     the same two `CanvasInteractionContext` values a Tier-0 portal frame
+ *     already carries (`docs/agent-refs/canvas-internals.md` → "Interaction
+ *     modes"). Without an explicit mode message the runtime cannot tell
+ *     which column of that table it is rendering into.
+ *   - `measure:result` (outbound) — a `measure` request with no reply is
+ *     unimplementable; the inspector's prefill needs the answer, not just
+ *     the ask.
+ *
+ * ## `optimistic.insert` never carries HTML
+ *
+ * `tagName`/`text` are structured fields, not a raw HTML string, precisely so
+ * there is no `innerHTML` injection surface for what is, in the end, a
+ * placeholder HMR replaces within milliseconds. `runtime.ts`'s handler uses
+ * `document.createElement` + `Node.textContent`, never `innerHTML`.
+ *
+ * ## `occurrenceIndex` (L5) — every node-naming message carries one
+ *
+ * `runtime.ts`'s `findByNodeId` finds the FIRST DOM element matching a bare
+ * stamped `data-node-id` — silently wrong for row 2+ of any `.map()`, since
+ * every row's element shares the identical stamp (`idStamp.ts` has no
+ * per-iteration information to mint a unique one with; see
+ * `liveNodeResolve.ts`'s module doc for the full picture). Every message
+ * below that names a node — inbound (`select`'s `refs`, `hover`, `measure`,
+ * the four `optimistic.*`) and outbound (`pointer`, `text:edit`,
+ * `measure:result`'s echoed-back measurements) — pairs the stamp id with a
+ * 0-based `occurrenceIndex`: "the Nth element sharing this stamp, in
+ * document order" (`nodeIdIndexing.ts`'s `findNthNodeById`/
+ * `occurrenceIndexOf`, the ONE implementation of that count, shared with
+ * `hmrState.ts`). Defaults to `0` — the common non-`.map()` case, and safe
+ * for a sender that doesn't yet know about the sibling-index problem.
+ *
+ * The stamp id itself is never a canonical tree node id — only
+ * `BridgeFrameAdapter` (the L5 parent-side caller) ever sees a bare stamp;
+ * every message here already speaks the frame's own stamped-id vocabulary,
+ * which `runtime.ts` (in-frame) reads and writes directly.
+ */
+import { Type, type Static } from '@sinclair/typebox'
+
+/** The `source` every envelope carries, so unrelated `postMessage` traffic is ignored outright. */
+export const RUNTIME_MESSAGE_SOURCE = 'studio-live-runtime'
+
+// ---------------------------------------------------------------------------
+// Shared leaf schemas
+// ---------------------------------------------------------------------------
+
+const DirectionSchema = Type.Union([Type.Literal('ltr'), Type.Literal('rtl')])
+const ColorSchemeSchema = Type.Union([Type.Literal('light'), Type.Literal('dark')])
+
+/** The two `CanvasInteractionContext` values a frame can be rendering into. See {@link SetModeMessageSchema}. */
+export const RuntimeModeSchema = Type.Union([Type.Literal('design'), Type.Literal('live')])
+export type RuntimeMode = Static<typeof RuntimeModeSchema>
+
+const NodeRectSchema = Type.Object({
+  x: Type.Number(),
+  y: Type.Number(),
+  width: Type.Number(),
+  height: Type.Number(),
+})
+export type NodeRect = Static<typeof NodeRectSchema>
+
+const PointerModifiersSchema = Type.Object({
+  shiftKey: Type.Boolean(),
+  altKey: Type.Boolean(),
+  ctrlKey: Type.Boolean(),
+  metaKey: Type.Boolean(),
+})
+
+// ---------------------------------------------------------------------------
+// Inbound — parent -> frame
+// ---------------------------------------------------------------------------
+
+/**
+ * The stylesheet an injector used to append to `<head>` in the portal world
+ * (`EditorChrome`, `ClassStyle`, `CanvasAnimation`, `ScrollUnroll`,
+ * `HoverSuppression`, selection ring CSS): the parent computes the CSS text
+ * (reusing the SAME rule modules the portal injectors use) and the runtime
+ * mounts/updates a `<style id={id}>` with it verbatim. Generic on purpose —
+ * the runtime does not need to know what each `id` MEANS to manage it.
+ */
+export const ApplyOverlayMessageSchema = Type.Object({
+  type: Type.Literal('applyOverlay'),
+  id: Type.String({ minLength: 1 }),
+  css: Type.String(),
+})
+
+export const RemoveOverlayMessageSchema = Type.Object({
+  type: Type.Literal('removeOverlay'),
+  id: Type.String({ minLength: 1 }),
+})
+
+/** A stamp id paired with which same-stamp DOM occurrence it addresses — see "occurrenceIndex" in the module doc. */
+const NodeRefSchema = Type.Object({
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+})
+
+/** Sets the `data-*` attributes the ring CSS keys on, and shows/positions the selection ring(s). */
+export const SelectMessageSchema = Type.Object({
+  type: Type.Literal('select'),
+  refs: Type.Array(NodeRefSchema),
+})
+
+/** Same, for the hover ring — `null` clears it. */
+export const HoverMessageSchema = Type.Object({
+  type: Type.Literal('hover'),
+  nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+})
+
+/**
+ * Requests rects + a bounded set of computed-style properties for the
+ * inspector's prefill. `properties` is explicit and optional (default: a
+ * small, documented set — see `runtime.ts`'s `DEFAULT_MEASURED_PROPERTIES`)
+ * rather than "every computed property", which would make the reply payload
+ * unbounded.
+ */
+export const MeasureMessageSchema = Type.Object({
+  type: Type.Literal('measure'),
+  requestId: Type.String({ minLength: 1 }),
+  refs: Type.Array(NodeRefSchema),
+  properties: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
+})
+
+/**
+ * The render-time preview axes (`docs/agent-refs/canvas-internals.md` →
+ * "Preview axes"), applied as attributes on `document.documentElement`. Only
+ * `direction`/`colorScheme`/`locale` cross the wire — `locale` here is inert
+ * metadata (Studio's `locale` axis is PARSE-time, i.e. it changes which page
+ * variant is loaded server-side, not an attribute a live frame's own
+ * document can apply to itself).
+ */
+export const SetAxesMessageSchema = Type.Object({
+  type: Type.Literal('setAxes'),
+  axes: Type.Object({
+    direction: DirectionSchema,
+    colorScheme: ColorSchemeSchema,
+    locale: Type.Optional(Type.String({ minLength: 1 })),
+  }),
+})
+
+/** See "Two additions" in the module docblock. */
+export const SetModeMessageSchema = Type.Object({
+  type: Type.Literal('setMode'),
+  mode: RuntimeModeSchema,
+})
+
+/**
+ * `tagName`/`text` only — see "optimistic.insert never carries HTML" above.
+ * `parentNodeId`/`index` place it exactly where the eventual writeback will;
+ * HMR reconciles the placeholder with the real component once the file
+ * write lands.
+ */
+/**
+ * Bare alphanumeric tag names only. This regex is case-SENSITIVE (TypeBox's
+ * `pattern` compiles to a plain `new RegExp(pattern)` with no flags, and
+ * ECMAScript regex has no inline case-insensitive modifier), so it cannot
+ * itself be the guard against a dangerous element name typed in a different
+ * case (`SCRIPT`, `IFrame`, ...) — `document.createElement` normalizes case
+ * for HTML tags regardless of how it was spelled. The case-insensitive
+ * denylist against `DANGEROUS_TAG_NAMES` lives in `runtime.ts`'s
+ * `handleOptimisticInsert`, right next to the `createElement` call it
+ * protects, using a plain `.toLowerCase()` comparison instead.
+ */
+export const OptimisticInsertMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.insert'),
+  nodeId: Type.String({ minLength: 1 }),
+  parentNodeId: Type.String({ minLength: 1 }),
+  parentOccurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  index: Type.Number({ minimum: 0 }),
+  tagName: Type.String({ minLength: 1, maxLength: 32, pattern: '^[a-zA-Z][a-zA-Z0-9-]*$' }),
+  text: Type.Optional(Type.String()),
+})
+
+/**
+ * Elements that can execute code or load external documents/subresources by
+ * merely being connected to the DOM (`<script>`, `<iframe>`, `<embed>`,
+ * `<object>`, `<link>`, `<base>`) or that would silently reinterpret this
+ * frame's own chrome (`<style>`) — never a legitimate `optimistic.insert`
+ * target. The origin+source+envelope checks in `runtime.ts` already make
+ * this message unreachable from anything but the trusted parent, so this is
+ * defense-in-depth, not the only guard — but it is a single, cheap place to
+ * hold the line if that assumption is ever wrong (a future looser
+ * parent-side caller, a bug upstream of this schema). Compared
+ * case-insensitively — see the module doc on `OptimisticInsertMessageSchema`.
+ */
+export const DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES = new Set([
+  'script',
+  'iframe',
+  'embed',
+  'object',
+  'link',
+  'base',
+  'style',
+  'frame',
+  'frameset',
+])
+
+export const OptimisticDeleteMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.delete'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+})
+
+export const OptimisticMoveMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.move'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  parentNodeId: Type.String({ minLength: 1 }),
+  parentOccurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  index: Type.Number({ minimum: 0 }),
+})
+
+/** Sets `textContent`, never `innerHTML` — see the module docblock. */
+export const OptimisticTextMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.text'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  text: Type.String(),
+})
+
+export const OptimisticMessageSchema = Type.Union([
+  OptimisticInsertMessageSchema,
+  OptimisticDeleteMessageSchema,
+  OptimisticMoveMessageSchema,
+  OptimisticTextMessageSchema,
+])
+export type OptimisticMessage = Static<typeof OptimisticMessageSchema>
+
+export const InboundRuntimeMessageSchema = Type.Union([
+  ApplyOverlayMessageSchema,
+  RemoveOverlayMessageSchema,
+  SelectMessageSchema,
+  HoverMessageSchema,
+  MeasureMessageSchema,
+  SetAxesMessageSchema,
+  SetModeMessageSchema,
+  OptimisticInsertMessageSchema,
+  OptimisticDeleteMessageSchema,
+  OptimisticMoveMessageSchema,
+  OptimisticTextMessageSchema,
+])
+export type InboundRuntimeMessage = Static<typeof InboundRuntimeMessageSchema>
+
+// ---------------------------------------------------------------------------
+// Outbound — frame -> parent
+// ---------------------------------------------------------------------------
+
+/** Posted once after boot — the parent holds selection/measurement requests until this arrives. */
+export const ReadyMessageSchema = Type.Object({
+  type: Type.Literal('ready'),
+})
+
+/** Vite's `vite:beforeUpdate` — the parent may want to hold selection across the coming DOM change. */
+export const HmrBeforeMessageSchema = Type.Object({
+  type: Type.Literal('hmr:before'),
+})
+
+/** Vite's `vite:afterUpdate` — the parent re-measures whatever it was holding. */
+export const HmrAfterMessageSchema = Type.Object({
+  type: Type.Literal('hmr:after'),
+})
+
+const PointerPhaseSchema = Type.Union([
+  Type.Literal('down'),
+  Type.Literal('move'),
+  Type.Literal('up'),
+  Type.Literal('click'),
+])
+
+/** Feeds `canvasDnd`, marquee selection, and the prototype Player — see L5. */
+export const PointerMessageSchema = Type.Object({
+  type: Type.Literal('pointer'),
+  phase: PointerPhaseSchema,
+  nodeId: Type.Union([Type.String({ minLength: 1 }), Type.Null()]),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  rect: Type.Union([NodeRectSchema, Type.Null()]),
+  clientX: Type.Number(),
+  clientY: Type.Number(),
+  modifiers: PointerModifiersSchema,
+})
+
+/** Routed by the parent to the existing `textOrigin` writeback (L7) — carries the CURRENT text, not a diff. */
+export const TextEditMessageSchema = Type.Object({
+  type: Type.Literal('text:edit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  text: Type.String(),
+})
+
+const NodeMeasurementSchema = Type.Object({
+  nodeId: Type.String({ minLength: 1 }),
+  /** Echoes back the `occurrenceIndex` from the matching {@link NodeRefSchema} this measurement was requested for. */
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  rect: Type.Union([NodeRectSchema, Type.Null()]),
+  computedStyle: Type.Record(Type.String(), Type.String()),
+})
+export type NodeMeasurement = Static<typeof NodeMeasurementSchema>
+
+/** The reply to {@link MeasureMessageSchema}, correlated by `requestId`. */
+export const MeasureResultMessageSchema = Type.Object({
+  type: Type.Literal('measure:result'),
+  requestId: Type.String({ minLength: 1 }),
+  measurements: Type.Array(NodeMeasurementSchema),
+})
+
+/**
+ * Posted whenever the frame's own `documentElement` content height changes —
+ * the cross-origin replacement for portal mode's `ResizeObserver` on the
+ * iframe's own `contentWindow` (impossible by construction for a bridge
+ * frame; see `frameFitRules.ts`'s module doc and `live-05`'s STATE.md entry,
+ * "The frame-height gap L4 did not cover"). Throttled to one post per
+ * animation frame in `runtime.ts`, the same rAF-coalescing shape as
+ * `scheduleReposition` there.
+ *
+ * `maximum` is a defense-in-depth bound, not a real content ceiling — an
+ * honest `runtime.ts` never reports anywhere near it (`frameFitRules.ts`'s
+ * own `MAX_FRAME_FIT_HEIGHT` caps the fit PIN at 20000, and real page
+ * content is finite). It exists because `sec-06`'s "same-realm spoofing"
+ * finding applies to THIS message too: a script co-resident with `runtime.ts`
+ * in the live frame's document can forge a `frame:resize` postMessage
+ * directly, bypassing the honest sender entirely. `minimum`/`Type.Number`
+ * already reject `NaN`/`Infinity`; this additionally rejects an absurd but
+ * finite forged value (e.g. `1e20`) from ever reaching
+ * `useIframeFrameAutoHeight.ts`'s arithmetic and being written as the outer
+ * `<iframe>` element's height on the trusted parent canvas.
+ */
+export const FrameResizeMessageSchema = Type.Object({
+  type: Type.Literal('frame:resize'),
+  height: Type.Number({ minimum: 0, maximum: 1_000_000 }),
+})
+
+/**
+ * Upper bounds on the three free-text fields {@link ErrorMessageSchema}
+ * carries. They match `canvasDiagnosticsBuffer.ts`'s own `MAX_MESSAGE_LENGTH`/
+ * `MAX_STACK_LENGTH` deliberately: a value that passes validation here is
+ * stored verbatim on the parent rather than truncated a second time to a
+ * different length, so what the badge shows and what
+ * `studio_page_diagnostics` returns are the same string.
+ *
+ * They are also the `sec-06` bound. The honest sender (`runtime.ts`) already
+ * truncates to exactly these, so the schema never rejects a real message — the
+ * `maxLength` exists for the FORGED one. `sec-06`'s "same-realm spoofing"
+ * finding applies here with more force than to any other outbound message: a
+ * script co-resident with `runtime.ts` in the live frame's document can post a
+ * `to-parent` envelope directly, and this message's whole payload is
+ * attacker-chosen text that the parent then renders in its own trusted
+ * document. Unbounded, that is a memory-exhaustion and UI-wrecking primitive.
+ * Bounded, the worst case is 1.3 KB of nonsense in a popover.
+ */
+export const RUNTIME_ERROR_MESSAGE_MAX = 400
+export const RUNTIME_ERROR_STACK_MAX = 600
+export const RUNTIME_ERROR_SOURCE_MAX = 300
+
+/**
+ * Which tap produced an {@link ErrorMessageSchema}. One literal per tap
+ * `runtime.ts` installs, matching the four `CanvasDiagnosticsInjector.tsx`
+ * has always installed for portal mode, plus `network`:
+ *
+ *   - `exception`          — an `ErrorEvent` reached `window.onerror`.
+ *   - `unhandledrejection` — an async failure that never reaches `onerror`.
+ *   - `resource`           — an `<img>`/`<script>`/`<link>`/… failed to load.
+ *   - `console`            — `console.error`, which is the ONLY channel React
+ *                            reports a failed render/invalid hook call/
+ *                            hydration mismatch through.
+ *   - `network`            — a `fetch()` from inside the frame rejected or
+ *                            answered non-2xx.
+ *
+ * `network` is deliberately its own kind rather than folded into `resource`,
+ * even though both are "something did not load": the parent maps these
+ * one-to-one onto the FROZEN `PageDiagnosticCode` vocabulary
+ * (`@core/ai`'s `pageDiagnostics.ts`), where `asset-load-failed` and
+ * `network-request-failed` are separate codes with separate severities and
+ * separate fixes. Collapsing them on the wire would mean a Tier-2 frame's
+ * findings could never reach `network-request-failed` at all, while a Tier-0
+ * frame's do — the same failure classified differently depending on which
+ * canvas mode you happened to be in.
+ */
+export const RuntimeErrorKindSchema = Type.Union([
+  Type.Literal('exception'),
+  Type.Literal('unhandledrejection'),
+  Type.Literal('resource'),
+  Type.Literal('console'),
+  Type.Literal('network'),
+])
+export type RuntimeErrorKind = Static<typeof RuntimeErrorKindSchema>
+
+/**
+ * Z5 — something went wrong inside the live frame, reported once, passively.
+ *
+ * A crash in a Tier-2 frame used to reach nothing in Studio: the frame painted
+ * a blank rectangle, its own console said exactly what happened to nobody, and
+ * the board offered no way to tell "this screen is empty" from "this screen
+ * threw". This message is the channel that was missing. The parent routes it
+ * into `canvasDiagnosticsBuffer.ts` (so `studio_page_diagnostics` sees Tier-2
+ * frames, not only portal ones) and into a passive per-frame badge. **Never a
+ * toast** — a render loop emits the same error hundreds of times a second, and
+ * the whole point of the buffer is that a repeated failure is one entry with a
+ * count.
+ *
+ * `message`/`stack`/`source` are the only payload, all `maxLength`-bounded
+ * above. Deliberately NO node id: `runtime.ts` speaks stamped ids and the
+ * parent would have to translate, and a stack with a `file:line` already
+ * answers "where" for every kind here. Deliberately no HTTP status either —
+ * the status is in the `message` text, and one fewer structured field is one
+ * fewer thing a forged message can lie about in a way the parent branches on.
+ *
+ * Capped and rate-limited at the SENDER (`runtime.ts`: 10 posts/second, 50 per
+ * document) rather than only at the receiver, because the cost being bounded is
+ * the postMessage traffic itself, not the storage.
+ */
+export const ErrorMessageSchema = Type.Object({
+  type: Type.Literal('error'),
+  kind: RuntimeErrorKindSchema,
+  message: Type.String({ minLength: 1, maxLength: RUNTIME_ERROR_MESSAGE_MAX }),
+  /** First frames of a stack, when the thrown/rejected value carried one. */
+  stack: Type.Optional(Type.String({ maxLength: RUNTIME_ERROR_STACK_MAX })),
+  /** Where it came from: a script `file:line:col` for an exception, the requested URL for a resource/network failure. */
+  source: Type.Optional(Type.String({ maxLength: RUNTIME_ERROR_SOURCE_MAX })),
+})
+
+export const OutboundRuntimeMessageSchema = Type.Union([
+  ReadyMessageSchema,
+  HmrBeforeMessageSchema,
+  HmrAfterMessageSchema,
+  PointerMessageSchema,
+  TextEditMessageSchema,
+  MeasureResultMessageSchema,
+  FrameResizeMessageSchema,
+  ErrorMessageSchema,
+])
+export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
+
+// ---------------------------------------------------------------------------
+// Envelopes
+// ---------------------------------------------------------------------------
+
+export const InboundEnvelopeSchema = Type.Object({
+  source: Type.Literal(RUNTIME_MESSAGE_SOURCE),
+  direction: Type.Literal('to-frame'),
+  message: InboundRuntimeMessageSchema,
+})
+export type InboundEnvelope = Static<typeof InboundEnvelopeSchema>
+
+export const OutboundEnvelopeSchema = Type.Object({
+  source: Type.Literal(RUNTIME_MESSAGE_SOURCE),
+  direction: Type.Literal('to-parent'),
+  message: OutboundRuntimeMessageSchema,
+})
+export type OutboundEnvelope = Static<typeof OutboundEnvelopeSchema>
+
+export function toInboundEnvelope(message: InboundRuntimeMessage): InboundEnvelope {
+  return { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-frame', message }
+}
+
+export function toOutboundEnvelope(message: OutboundRuntimeMessage): OutboundEnvelope {
+  return { source: RUNTIME_MESSAGE_SOURCE, direction: 'to-parent', message }
+}

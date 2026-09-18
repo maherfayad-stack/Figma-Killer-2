@@ -63,7 +63,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
   one <iframe> per frame              IframeFrameSurface.tsx
         │
         │  user edits a prop / text / style / class / tag, or inserts,
-        │  reorders, reparents, duplicates, wraps or deletes an element
+        │  reorders, reparents, duplicates, wraps, groups, ungroups or
+        │  deletes an element
         ▼
   Typed StudioEdit batch              POST /admin/api/studio/save
         │
@@ -72,7 +73,8 @@ studio-workspace/<project>/          ← a real React repo. THE source of truth.
         │                              setJsxClassName, setStringLiteral,
         │                              setJsxTagName, insertJsxElement,
         │                              moveJsxElement, deleteJsxElement,
-        │                              duplicateJsxElement, wrapJsxElement)
+        │                              duplicateJsxElement, wrapJsxElement,
+        │                              wrapJsxElements, unwrapJsxElement)
         │
         └──▶ postcss CST codemods     src/core/css-codemods/
              rewrite the user's .css  (setDeclaration, insertRule — routed by
@@ -95,8 +97,20 @@ never silently no-ops.
    toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
    package components are bundled and rendered in the canvas
    (`componentBundle.ts`). **The parse itself never executes anything at any
-   tier**, and Tier 2 (`run-project`) is a defined value that no gate yet
-   distinguishes from Tier 1 — both read as `trust !== 'static'`.
+   tier**, and Tier 2 (`run-project`) is genuinely distinct from Tier 1: the
+   dev-server manager, the preview deploy, and the agent's
+   `studio_render_reference` all demand `trust === 'run-project'` exactly, via
+   `server/handlers/studio/trustGate.ts` — not the looser `trust !== 'static'`
+   that Tier-1 consumers read. There is **one narrow automatic promotion, the
+   owner's call on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2): a
+   Vite project with a lockfile is promoted to `run-project` on first open —
+   once per project, ever, with a notice and an **Undo** in the board chrome,
+   the origin recorded on disk, and every condition re-checked server-side in
+   `trustTier.ts`. Read that promotion for what it is: **Tier 2 for a Vite
+   project is a product default, not a consent boundary** (`sec-12`). Anything
+   that needs a human to have agreed must ask at the point of use. Tier-1
+   promotion is still always an explicit click, and a non-Vite project is never
+   promoted by Studio at all.
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -112,13 +126,37 @@ never silently no-ops.
 | Base branch for PRs | `main` (protected — never push to it). Branch per change, `<type>/<kebab>` |
 | Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
 | Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
+| **Active plan** | [`STUDIO-FIGMA-FEEL-PLAN.md`](STUDIO-FIGMA-FEEL-PLAN.md) — **the plan currently being executed** (opened 2026-09-17). Tracks Z (zero noise, a barrier before everything else), S (snappy), K (keys and hands), P (panels/prototype/preview), A (agent), G (GitHub), V (verification). Its §0 lists what is already true, §6 the owner's seven decisions, §7 the defects found in the audit that opened it |
+| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — **landed**: Tier 2 live runtime frames (L1–L8), refusals-as-choices (R1–R3) and the Penpot-measured inspector rebuild (P0–P6) are all in the tree. L9 is the only unstarted work order, and no project has ever been promoted to Tier 2, so Track L is code-verified rather than user-verified |
+| Built-in design system | [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) — **shipped (DS-1…DS-9)**, 2026-09-17. The `@alm-design/design-system` npm is retired: the design system is vendored at `vendor/alm-design-system/`, projects carry their own `design-system/` folder, the insert dialog is an **Assets** panel of live previews, and the toolbar `+` is **Add page**. Only DS-4b (drag a card to the canvas) is open |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
-| Test projects on disk | `studio-workspace/` — `test`, `esim-journey`, `my-workspace`, `untitled*` |
+| Test projects on disk | `studio-workspace/` — whatever folders are there on your checkout (`test4` and `test4 copy` on this one). **User data: never `rm -rf` one, and never assume a given project exists.** |
 
 ### What works today (do not rebuild)
 
-- GitHub zipball import with path-traversal / zip-bomb guards
+- GitHub zipball import with path-traversal / zip-bomb guards, plus a
+  **Keep history (clone)** alternative (`POST git/clone`) that lands the repo
+  with its history and `origin` set — target derived server-side, refuses an
+  existing project rather than clearing it
+- **Sign in to GitHub** (device flow + paste-a-PAT), token stored encrypted per
+  user in `git_credentials` and handed to git through a 0600 one-shot
+  `GIT_ASKPASS` script — never an env var, never a URL. Connect a repository
+  (`git/remotes`, `git/remote`) with a two-shape URL allowlist. See
+  [`docs/features/studio-git.md`](docs/features/studio-git.md)
+- **The whole git publish sentence in the Version control panel**: a branch
+  *dropdown* (list / create-from-current / commit-and-switch — never a stash),
+  fetch, `--ff-only` pull with an explicit rebase-or-merge choice on divergence,
+  per-file conflict resolution (*Keep mine / Keep theirs / Open in code* →
+  *Continue*, with `mine`/`theirs` translated server-side because git's
+  `--ours`/`--theirs` invert during a rebase), push disabled while behind, and
+  **Open PR** with base/title/body defaulted from the repository. The same five
+  verbs are MCP tools behind `studio.git.write` (`studio_git_status` is a read)
+- **One write lock per project** (`server/handlers/studio/projectWriteLock.ts`):
+  saves, page scaffolds, dependency installs and every mutating git verb take
+  an async mutex keyed by the real project path, so a canvas save can no longer
+  land between a `git add` and its `git commit`. A git verb waiting more than
+  5 s answers `409 { code: 'busy' }`; a save waits
 - Multi-file page discovery + `.studio/meta.json` (`displayName`, `pagesDir`, `previewAxes` — `direction`/`colorScheme`/`locale`)
 - ts-morph parse, local-component inlining through barrels, tsconfig `paths` aliases
 - Static value resolution Tiers A/B/C, `.map` expansion, multi-return/ternary/`&&`
@@ -140,20 +178,62 @@ never silently no-ops.
   `static` (Tier 0, the never-auto-promoted default), `render-packages`
   (Tier 1), `run-project` (Tier 2) — read/written by
   `server/handlers/studio/trustTier.ts` and driven from the client by
-  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion is an
-  explicit user click, never a side effect of loading a page.
+  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion to
+  **Tier 1** is an explicit user click. Promotion to **Tier 2 has one narrow
+  exception the owner called on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6
+  decision 2): a **Vite project with a lockfile** is auto-promoted to
+  `run-project` on first open — once, ever — with a notice and an **Undo** in
+  the board chrome (`canvas/LiveAutoPromoteNotice/`). The origin and the
+  once-latch live on disk (`trustAutoPromoted`/`trustAutoPromotedAt`), and
+  `trustTier.ts` re-checks every condition server-side. A non-Vite project is
+  never touched — the canvas pill reads "Live needs Vite" (§6 decision 5,
+  deferred). Tier 2
+  (`run-project`) now has a real gated consumer beyond the MCP visual-audit
+  tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
+  (Track L, `live-01`) — one reused, idle-timed subprocess per project,
+  exposed as a polled `status`/`start`/`stop` route family and prewarmed the
+  instant a Tier-2 project's canvas mounts.
+  **A Tier-2 action needs two independent gates, and the tier is the one that
+  cannot be delegated.** The `studio.run.project` capability (now held by
+  Owner *and* Admin, A10) says a caller may run project code at all; the
+  project's own tier says *this* project may be run. Every Tier-2 entry point
+  checks both through the one shared helper — `requireTrustTier` for an HTTP
+  route, `checkTrustTier` for an agent tool — in
+  `server/handlers/studio/trustGate.ts`. Until A10 the MCP tool
+  `studio_render_reference` checked only the capability, which made it
+  strictly weaker than the route performing the identical spawn (`sec-05`
+  finding 1); the trap to avoid is adding a Tier-2 tool that leans on the
+  capability alone.
+- **A built-in design system, and an Assets panel to insert from**
+  (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
+  design system is **vendored into Studio** at `vendor/alm-design-system/` and
+  registered as the `alm.*` pack (`src/modules/alm/register.tsx`) — it renders
+  at **Tier 0**, with no npm, no install and no promotion, because it is
+  Studio's own code. A DS-backed project carries a Studio-written
+  `<project>/design-system/` folder (`designSystemFiles.ts`) and imports it
+  relatively, so the downloaded repository builds with react + vite and nothing
+  else; the parser treats that folder as a black box
+  (`src/core/page-parser/designSystemDir.ts`). A project that still imports the
+  retired npm gets a board banner offering a one-click source rewrite
+  (`designSystemMigrate.ts`) — never automatic. The left rail's **Assets**
+  panel (`src/admin/pages/site/panels/AssetsPanel/`) replaced the full-screen
+  insert dialog: design-system components grouped by purpose, elements,
+  layouts, saved components and icons, **every card a live render of the real
+  component** inside a shadow root, searched by name, description and purpose
+  keywords (`rankAssets.ts`). The toolbar / notch `+` is now **Add page**
+  (`AddPagePicker.tsx`).
 - npm package components (`pkg-01`/`pkg-02`/E4): manifest → bundle → register
-  → render is wired end to end for **any** installed package, not just
-  `@alm-design/design-system` — `server/handlers/studio/componentBundle.ts`
+  → render is wired end to end for **any** installed package —
+  `server/handlers/studio/componentBundle.ts`
   (`tryServeStudioComponentBundle`),
   `src/admin/pages/site/studio/registerProjectModules.ts`
   (`useRegisterProjectModules`). Registration fires on every project-dir /
   trust-tier transition and is **not** gated on the board already containing a
   `pkg.*` node, so a package with zero call sites in the imported source is
-  still draggable from the picker. Rendering stays gated on trust tier ≥ 1 —
+  still listed in Assets. Rendering stays gated on trust tier ≥ 1 —
   Tier 0 gets `PackageComponentPlaceholder`'s "promote this project" surface
-  and the picker's own "N components need this project promoted" notice, never
-  a silent empty palette, and never a fetch or an execution.
+  and the Assets panel's own "N components need this project promoted" notice,
+  never a silent empty palette, and never a fetch or an execution.
 - **Dependency install** (E3): the Dependencies panel's Add/Remove run a real
   `bun add`/`bun remove` (or the project's own detected package manager)
   against the on-disk project, as a polled job —
@@ -209,11 +289,16 @@ never silently no-ops.
   - `op: 'set'` — change a value on a rule the parser mapped to a real
     hand-authored `.css` file (`setDeclaration`).
   - `op: 'insert'` — a rule the user created in the editor that has no source
-    yet, written into the project's one editable stylesheet (`insertRule`).
-    `resolveCssInsertDestination` refuses by name when the destination is
-    ambiguous rather than guessing.
+    yet, written into the stylesheet co-located with its anchor page, or the
+    project's one editable stylesheet (`insertRule`). The anchor page is the
+    class's own page, or — for a class that is on no element yet — the page
+    the user has OPEN (Z8, `resolveOpenPageFile`). With several candidates and
+    none co-located, `resolveCssInsertDestination` still refuses rather than
+    guessing, but the refusal is a **choice**: a `RefusalDialog` with one
+    `choose-stylesheet` remedy per candidate file, which pins the destination
+    and re-runs the insert. Never a toast.
   - `op: 'create'` — no editable stylesheet exists at all: the server invents
-    one co-located with the page, wires the page's `import`
+    one co-located with the anchor page, wires the page's `import`
     (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
     client-side), and writes the rule into it.
 
@@ -236,9 +321,12 @@ never silently no-ops.
   element *and* its `import` — and the board re-reads the file, so what lands is
   a real parsed node with a real `rel:line:col`. What cannot be written refuses
   out loud (`refuseStructuralEdit`)
-- Creating a new page, in four shapes: the `+` button (`NewPageButton.tsx`)
-  offers **Screen**, **Popup**, **Bottom sheet — small** and **Bottom sheet —
-  big** (MCP `studio_create_page` takes the same `kind`). Each writes a
+- Creating a new page, in four shapes: the `+` picker (`AddPagePicker.tsx`, one
+  popover mounted at the canvas notch, the Explorer *Pages* header and the
+  board empty state) offers **Screen**, **Popup**, **Bottom sheet — small** and
+  **Bottom sheet — big** under *New page*, and every page already on disk but
+  not on this board under *From files* (MCP `studio_create_page` takes the same
+  `kind`). Each writes a
   canonical starter component + stylesheet and auto-places its board frame, end
   to end — `server/handlers/studio/pageScaffold.ts` (`createScaffoldedPage`),
   templates in `pageTemplates.ts`, the shared vocabulary in
@@ -262,6 +350,35 @@ never silently no-ops.
   `studio_measure_reference`, `studio_render_reference`), the catalog reads
   (`studio_list_components`, `studio_find_component`), `studio_typecheck`,
   `studio_install_deps` and `studio_create_page`
+
+**Landed in the Figma-feel plan's waves 2 and 3** (2026-09-18 — the plan is closed; its
+"Wave 2 — landed" and "Wave 3 — landed" tables map each item to its PR and STATE entry):
+
+- **Every `/admin/api/studio/*` route is declared, not guarded.** One gate at dispatch reads
+  `server/handlers/studio/routeCapabilities.ts`: an undeclared path is a 404, a state-changing
+  method without an acceptable `Origin` is a 403, then the capability the declaration names.
+  Exact entries per verb — no prefix namespaces — and an architecture gate that scans the real
+  dispatches, so a new route that forgets its row fails the build.
+- **Structural gestures queue, keep their selection, and undo in one step.** A burst of ⌘D
+  writes every copy instead of refusing after the first; a write reports the node ids it created
+  and relocated, so the new element is selected after the resync; insert, duplicate, wrap, group,
+  ungroup, paste, cross-frame move and image drop each record an inverse and take one ⌘Z —
+  including the two-file case.
+- **⌘G can no longer write invalid markup.** The wrapper tag follows the HTML content model, so
+  grouping inline elements inside a `<p>` writes a `<span>`; a wrapper that could not be legal
+  anywhere is refused with the container named.
+- **A panel that throws takes out that panel only.** `PanelBoundary` wraps every editor panel,
+  inspector tab and inspector section with an in-place fallback and a reload button; the canvas,
+  the layer tree and the toolbar stay up, and no toast fires.
+- **CRLF is handled end to end** — the user's repository (parse and every codemod preserve the
+  file's own endings) and every line-wise read of subprocess output.
+- **The e2e stack starts itself on Windows** and runs against a throwaway copy of the workspace,
+  so a run leaves `git status` clean. The Phase 0 exit dogfood
+  (`tests/e2e/studio-feel-phase0.e2e.ts`) is seven cases, all asserting and all green. G8 is
+  driven against a real private GitHub repository (`github-sync.e2e.ts`), and one real agent turn
+  is wall-clocked (`agent-turn.e2e.ts`); both self-skip and say why when their preconditions are
+  absent. **The full cold suite is NOT green** — 64 specs are still untriaged, see the plan's
+  "What is still open after three waves".
 
 ### What does NOT work today
 
@@ -305,19 +422,35 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
 - **Cross-FILE reparent refuses** — `refuseStructuralEdit` in
   `src/core/page-tree/sourceStructure.ts`. Every structural verb now writes
   within one file (W4-1: duplicate, wrap and same-file reparent joined reorder,
-  delete and insert), but moving markup into another module would land it where
-  the values it reads do not exist. A same-file move whose subtree captures a
-  binding that is not in scope at the destination refuses too, naming the
-  binding.
+  delete and insert; K3: group and ungroup), but moving markup into another
+  module would land it where the values it reads do not exist. A same-file move
+  whose subtree captures a binding that is not in scope at the destination
+  refuses too, naming the binding.
+- **⌘G groups a CONTIGUOUS RUN of siblings, and only that** (K3). One container
+  around one span (`wrapJsxElements`); a selection that crosses parents or has
+  a gap in it refuses with `multi-select` — "select siblings next to each
+  other" — because the wrapper would otherwise land around elements the user
+  never selected. ⌘G on one element is the existing single-element `wrap`.
+  **The container's tag follows the HTML content model** (`struct-11`,
+  `@core/utils/htmlContentModel.ts`): `<span>` in phrasing content, `<div>` in
+  flow content, and a REFUSAL (`content-model`) where neither would be valid —
+  inside a `<ul>`/`<tr>`/`<select>`, or around an `<li>`/`<td>`/`<figcaption>`.
+  It used to be a hard-coded `<div>`, which put a `<div>` inside a `<p>` in a
+  real project and made React report a hydration error in the user's own app.
+  **⌘⇧G refuses to dissolve a container that is doing anything but holding its
+  children** (`has-behaviour`): a handler, a `ref`, a `key`, a spread, or a
+  component tag rather than an intrinsic element. Only
+  `className`/`style`/`id`/`data-*` are inert enough to drop.
 - **JS-driven animation does not freeze.** `CanvasAnimationInjector` handles
   CSS animations/transitions, smooth scroll and media; it makes no attempt to
   intercept `requestAnimationFrame`, so framer-motion and GSAP keep running on
   the canvas.
-- **The insert picker is not seeded from the component catalog.**
-  `ModuleInserterDialog.tsx` / `ModulePicker.tsx` list `registry.list()` — the
-  module registry, i.e. first-party modules plus registered package
-  components. The project's own local components (which E1's catalog knows
-  about, and which the *swap* picker already uses) have no picker rows.
+- **The Assets panel does not list the project's own local components.** It
+  lists `registry.list()` — the `alm.*` built-in design system, the `base.*`
+  elements, registered `pkg.*` package components — plus saved layouts, Visual
+  Components and the icon catalog. A component the user wrote in their own
+  `components/` folder (which E1's catalog knows about, and which the *swap*
+  picker already uses) still has no card.
 - **A package-sourced instance cannot be detached** —
   `detachComponent.ts` refuses with `package-component` and points at the
   extract-a-copy action instead.
@@ -419,11 +552,57 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     that is exactly how the `frameId` branch slipped past the first fix.
     `src/__tests__/store/selectCanvasPageFor.test.ts` is the gate.
 12. **`studio-workspace/*` is user data.** Never `rm -rf` a project directory, and
-    never write outside a workspace root without a containment guard.
+    never write outside a workspace root without a containment guard. It is also
+    **gitignored** except for a named sample list (`__canonical-fixture/`,
+    `test4/`) — see the block in `.gitignore`. Adding a project to that list
+    means committing someone's repository into this one.
 13. **Do not run browser/e2e tests to validate UI changes.** The human dogfoods
     UI. Run static gates (`bun test`, `bun run build`, `bun run lint`) and hand
     off with a "needs human dogfood" note.
 14. **Bun, not Node/npm/pnpm/yarn.** Lockfile is `bun.lock`.
+15. **Generated artefacts are compared byte-for-byte, so line endings matter.**
+    `.gitattributes` forces LF for `vendor/`, the ALM manifest, the
+    studio-runtime bundles and the QuickJS bootstrap. Without it a Windows CRLF
+    checkout makes all four `*:check` gates permanently red, and `bun run
+    alm:sync` *overwrites* the real design-system manifest with 39 propless
+    components — `vendorDocs.ts` matches headings with `/^(#{1,6})\s+(.*)$/`,
+    and JavaScript's `.` does not match `\r`. Never add a `-text` or CRLF rule
+    for those paths. **The USER's repo is the other half of this**, and it is
+    not `.gitattributes`-fixable: `parser-13` put the one seam in
+    `EolPreservingFileSystem` (`src/core/page-parser/eolFileSystem.ts`) — every
+    disk-backed ts-morph `Project` reads LF-only and writes the file's own
+    ending back, and anything reading a user file line-wise uses `splitLines`
+    from `@core/utils/lineEndings`, never `text.split('\n')`. See
+    `docs/features/studio-import.md` → "Line endings".
+16. **A Studio route that is not in the capability table does not exist.**
+    Every `/admin/api/studio/*` request passes `gateStudioRequest`
+    (`server/handlers/studio/routeGate.ts`) before any sub-router: the path
+    must be declared in `server/handlers/studio/routeCapabilities.ts`, a
+    state-changing method must pass the CSRF `Origin` check, and the caller
+    must hold the capability that declaration names for this method class.
+    An undeclared path answers **404** — so adding a route without adding a
+    table line produces a dead route, not an open one, and
+    `studio-routes-capability-declared.test.ts` fails the build for it. The
+    gate resolves the `AuthUser` once and hands it to the session sub-routers
+    in `StudioSessionRuntime`; **never add a `requireCapability` call inside a
+    Studio sub-router** — a second policy is a policy that drifts. Capabilities
+    map by effect: `site.read` to read, `studio.write` for the project's files,
+    `studio.run.project` for anything that runs somebody's code (dev server,
+    deploy, trust promotion), `site.structure.edit` for git history and the
+    GitHub credential, `site.content.edit` for comments and shares.
+    `studio.git.write` is NOT a route capability — it gates the agent tool, and
+    fusing the two would force a role to hand its agent commit rights just to
+    give a human the Version control panel. This closed `sec-05` finding 2; the
+    posture is still single-operator by default (the Owner role holds every
+    capability in the table), so it is a real gate, not a login flow.
+    **Every entry is an EXACT path, per verb** — there are no namespaces, so
+    `git/<new-action>` and `dev-server/restart` 404 rather than inheriting
+    `site.read` (`sec-16`'s hole, closed by `sec-18`). The one dynamic shape
+    is `jobId` on `install`/`deploy`, matched against the UUID those
+    registries mint. Adding a verb without a table row fails the build, and so
+    does adding a METHOD to an existing route whose table row declares that
+    method class `null`. Full write-up: `docs/server.md` → "Per-request
+    capability gating on the Studio routes".
 
 ---
 
@@ -436,12 +615,73 @@ bun run build          # tsc -b && vite build   ← type errors fail this
 bun test               # unit + architecture gates
 bun run lint           # eslint incl. react-compiler rules
 bun test src/__tests__/architecture   # gates only, fast
+bun run test:e2e       # Playwright — the fourth gate, for canvas/panel work
 bun run bench          # perf benchmarks
+bun run bench:studio-board   # canvas budgets, via Playwright's Node runner
 ```
+
+`bun run dev` preflights itself (`scripts/lib/devPreflight.ts`): it installs when
+`node_modules/` is missing a `file:` dependency or `bun.lock` moved, and reports
+any stale generated artefact with the `bun run <x>:sync` that fixes it — in the
+background, so it never delays the server.
 
 **Verification is an end-of-task gate, not a per-edit ritual.** Run the three
 (`build`, `test`, `lint`) once, at the end. Pre-existing failures from parallel
 sessions are not yours — triage with `git status` / `git diff` and say so.
+
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run
+`bun run test:e2e` too — it is the fourth gate, not an optional extra.**
+`standing-02` says why: happy-dom has no layout engine, so a unit test on
+those surfaces structurally cannot fail on the thing it is named after (WS-8.2
+shipped a real frame-height bug behind a green one). Assert on *computed*
+layout — measured rects, `scrollHeight`, computed styles after layout.
+
+The budget slice of that suite — `studio-board-perf`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — also runs
+in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`). Locally it is
+cheaper to run just those four by path than the whole suite.
+
+`bun run test:e2e` **starts its own stack**; do not hand-start one first. It
+resets a disposable database, copies `studio-workspace/` to `.tmp/e2e-workspace`
+and points the servers there (so a run leaves `git status` clean), and
+supervises Vite's boot rather than letting a stuck one expire as a bare
+timeout. `E2E_REUSE_SERVER=1` against a stack you started yourself still works
+for iteration. All four budget specs measure tracked corpora:
+`studio-board-perf.e2e.ts` runs against the committed twelve-frame
+`studio-workspace/__board-perf-fixture` (nine frames is the floor — below that
+the mount pool keeps every frame mounted and there is no mount to measure), and
+`studio-feel.e2e.ts` against `studio-workspace/test4`.
+
+### What watches what in `bun run dev`
+
+The two dev processes watch on opposite principles. Knowing which is which is
+the difference between debugging a phantom and debugging a real restart.
+
+| Process | Watcher | Scope | Reacts to a `studio-workspace/` write? |
+|---|---|---|---|
+| cms (`bun --watch server/index.ts`) | Bun, **module-graph**, per file | exactly the 630 modules `server/index.ts` transitively imports — 567 `server/`, 55 `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2 `src/core/persistence` | **No.** Nothing under `studio-workspace/`, `uploads/`, `.tmp/`, `.data/` or `dist/` is in that graph, and nothing in it is a test file. |
+| vite | chokidar, **directory tree**, rooted at the repo root | everything under the root except `server.watch.ignored` (`.tmp`, `uploads`, `dist`, `studio-workspace`) and Vite's own defaults | **No — since the `studio-workspace` ignore was added.** Before that it did: Vite full-reloads on any watched `.html` change that maps to no module, and every React app Studio imports ships a root `index.html`. |
+
+Measured 2026-09-17 (`dev-04`), not inferred. Bun's `--watch` restarts **only**
+for files in the entry's module graph: a new file in a sibling directory, a
+modified file in a sibling directory, 300 files written into a `studio-workspace/`
+under the cwd, and an unimported file dropped into the very directory holding an
+imported module all produced zero restarts; touching the imported module
+restarted every time. Bun holds no OS handle on a directory containing no graph
+module, so the Windows `EBUSY` watcher panic in `server-14` cannot come from a
+workspace write.
+
+Consequences:
+
+- **Do not replace `--watch` with a hand-maintained directory allowlist.** Any
+  such list drifts from the real graph the moment an import changes — a plausible
+  guess at it (`server/**`, `src/core/**`, `vendor/**`) was already wrong in two
+  directions: it misses all 55 `src/modules/base` modules and watches `vendor/`,
+  of which the server imports none.
+- **When you add a runtime-written directory at the repo root, add it to
+  `vite.config.ts` `server.watch.ignored`** in the same change.
+  `src/__tests__/devWorkflow.test.ts` is the gate.
+- `bun run dev:server` runs the server alone, same watcher.
 
 ---
 
@@ -454,4 +694,6 @@ sessions are not yours — triage with `git status` / `git diff` and say so.
 - [ ] Docs updated in the same change (`docs/features/*` or `docs/agent-refs/*`).
 - [ ] If a structural rule moved, its gate test in `src/__tests__/architecture/` moved too.
 - [ ] `bun run build && bun test && bun run lint` pass for the files you touched.
+- [ ] If the change touched canvas / frames / overlays / geometry / panel height,
+      `bun run test:e2e` ran too (`standing-02` — happy-dom cannot answer those).
 - [ ] **`STATE.md` updated with a handoff entry** — see `handoff-protocol.md`.

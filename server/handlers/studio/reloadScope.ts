@@ -83,15 +83,18 @@
  * `files` round-trips through the client (it read them off the `/save`
  * response's `touchedFiles`), so each entry is re-validated here with the
  * SAME adversarial-path guard `studioWriteback.ts` applies to a node id's
- * decoded location (`isWritableSourceRel`, exported from there for exactly
+ * decoded location (`canonicalSourceRel`, exported from there for exactly
  * this reuse) before it is ever joined onto `dir`. Anything that fails is
  * treated as unmappable — narrows nothing, never widens the search, never
- * touches the filesystem with an unvalidated path.
+ * touches the filesystem with an unvalidated path. It also canonicalises, so
+ * a case or symlink alias of a file this project already knows about maps onto
+ * the SAME absolute path the parse cache recorded, rather than missing every
+ * dependency set and falling back to a full reload.
  */
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { isWritableSourceRel } from '../studioWriteback'
+import { canonicalSourceRel } from '../studioWriteback'
 import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
 import { readStudioMeta, type StudioMeta } from './studioMeta'
@@ -187,8 +190,9 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   const pageIds = new Set<string>()
   for (const relToDir of filesRelToDir) {
     // Never trust an unvalidated path into `join` — see this module's doc.
-    if (!isWritableSourceRel(relToDir)) return null
-    const absFile = join(dir, ...relToDir.split(/[\\/]+/))
+    const rel = canonicalSourceRel(dir, relToDir)
+    if (rel === null) return null
+    const absFile = join(dir, ...rel.split('/'))
     // Rule 2b — editing a story file can remove its frame entirely.
     if (storyAbsFiles.has(absFile)) return null
     let dependents = 0

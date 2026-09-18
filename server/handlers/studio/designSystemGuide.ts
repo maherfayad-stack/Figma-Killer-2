@@ -34,13 +34,31 @@
  * contributes nothing rather than producing a confidently empty reference.
  */
 import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { splitLines, toLf } from '@core/utils/lineEndings'
 import { join } from 'node:path'
 
 /** Package docs are big by nature; this is a sanity ceiling, not a budget — the whole point is that we keep only a fraction of what we read. */
 const MAX_DOC_BYTES = 2_000_000
 
+/**
+ * How a project writes an import for this design system — the one fact the
+ * generated prose must never invent, because an agent follows it literally.
+ *
+ *   - `package` — a bare npm specifier, the same everywhere in the project.
+ *   - `folder` — Studio's BUILT-IN design system, which a project reaches
+ *     through its own Studio-written folder. The real specifier is RELATIVE to
+ *     the importing file, so the guide teaches the rule and shows the form a
+ *     page uses, rather than printing one string that is wrong for half the
+ *     files in the repo.
+ */
+export type DesignSystemImportStyle =
+  | { readonly kind: 'package'; readonly specifier: string }
+  | { readonly kind: 'folder'; readonly dirName: string }
+
 export interface DesignSystemGuide {
   readonly packageName: string
+  /** See {@link DesignSystemImportStyle}. */
+  readonly importStyle: DesignSystemImportStyle
   /** The "I want to… -> use X" table, verbatim. Inlined into `CLAUDE.md`. */
   readonly decisionMap?: string
   /** How to import the package — built from its real name and its own `exports` map, never copied from its docs. */
@@ -79,10 +97,20 @@ interface Section {
   readonly body: string
 }
 
+/**
+ * Normalised to LF on the way in. This markdown comes out of the USER's
+ * `node_modules`, and a Windows checkout of a design-system package is CRLF —
+ * in which case `/^(#{1,6})\s+(.*)$/` below matches NOT ONE heading (a JS `.`
+ * does not match `\r`, and a non-`m` `$` only matches end-of-input), the guide
+ * silently loses every section, and the agent is told the package documents
+ * nothing. That exact failure emptied Studio's own vendored manifest once —
+ * `STATE.md` `server-24`. `splitSections`/`firstProseLine` split with
+ * `splitLines` as well, so the parse does not depend on who read the file.
+ */
 function readDoc(pkgDir: string, file: string): string | undefined {
   try {
     const text = readFileSync(join(pkgDir, file), 'utf8')
-    return text.length > MAX_DOC_BYTES ? undefined : text
+    return text.length > MAX_DOC_BYTES ? undefined : toLf(text)
   } catch {
     return undefined
   }
@@ -97,7 +125,7 @@ function splitSections(markdown: string): Section[] {
   const sections: Section[] = []
   let current: { level: number; title: string; lines: string[] } | null = null
   let inFence = false
-  for (const line of markdown.split('\n')) {
+  for (const line of splitLines(markdown)) {
     if (line.startsWith('```')) inFence = !inFence
     const heading = inFence ? null : /^(#{1,6})\s+(.*)$/.exec(line)
     if (heading) {
@@ -131,7 +159,7 @@ function firstFencedBlock(body: string): string | undefined {
  */
 function firstProseLine(body: string): string | undefined {
   let inFence = false
-  for (const raw of body.split('\n')) {
+  for (const raw of splitLines(body)) {
     const line = raw.trim()
     if (line.startsWith('```')) {
       inFence = !inFence
@@ -150,7 +178,11 @@ function firstProseLine(body: string): string | undefined {
  * package with no documentation contributes nothing rather than an empty
  * reference file that reads as "this design system has no components".
  */
-export function buildDesignSystemGuide(pkgDir: string, packageName: string): DesignSystemGuide | undefined {
+export function buildDesignSystemGuide(
+  pkgDir: string,
+  packageName: string,
+  importStyle: DesignSystemImportStyle = { kind: 'package', specifier: packageName },
+): DesignSystemGuide | undefined {
   const apiDoc = readDoc(pkgDir, 'CLAUDE.md')
   const intentDoc = readDoc(pkgDir, 'design.md')
   if (apiDoc === undefined && intentDoc === undefined) return undefined
@@ -180,10 +212,11 @@ export function buildDesignSystemGuide(pkgDir: string, packageName: string): Des
   }
 
   if (!decisionMap && components.length === 0) return undefined
-  const importContract = buildImportContract(pkgDir, packageName, components)
+  const importContract = buildImportContract(pkgDir, importStyle, components)
   const icons = buildIconSurface(pkgDir)
   return {
     packageName,
+    importStyle,
     ...(decisionMap ? { decisionMap } : {}),
     ...(importContract ? { importContract } : {}),
     components,
@@ -285,10 +318,34 @@ function readIconCatalogs(pkgDir: string): IconCatalog[] {
  * `.css` entry; a package that bundles its styles into the JS gets no line
  * rather than an invented one.
  */
-function buildImportContract(pkgDir: string, packageName: string, components: readonly ComponentApi[]): string | undefined {
+function buildImportContract(
+  pkgDir: string,
+  importStyle: DesignSystemImportStyle,
+  components: readonly ComponentApi[],
+): string | undefined {
   if (components.length === 0) return undefined
-  const cssExport = resolveCssExport(pkgDir)
   const sample = components.slice(0, 8).map((c) => c.name).join(', ')
+
+  // The BUILT-IN design system is not a package and has no specifier that is
+  // true everywhere: it lives in a folder at the project root, so every file
+  // spells it by its own distance from there. Printing one string would teach
+  // an import that resolves to nothing from half the repo — and the retired
+  // npm name, which this generator used to print, now resolves to nothing from
+  // anywhere at all.
+  if (importStyle.kind === 'folder') {
+    return [
+      '```jsx',
+      `import { ${sample} } from '../${importStyle.dirName}'`,
+      '```',
+      '',
+      `The design system lives in this project at \`${importStyle.dirName}/\`, at the repository root, and is imported by RELATIVE PATH — \`'../${importStyle.dirName}'\` from a file in \`pages/\`, \`'../../${importStyle.dirName}'\` from one nested a level deeper. There is no package to install and no package name to write: an import of any npm design-system package will not resolve. Import components by name from the folder's own index; never deep-import a component file. The index loads every token and component stylesheet itself, so there is no separate CSS import.`,
+      '',
+      `\`${importStyle.dirName}/\` is written and re-synced by Studio — read it freely, never hand-edit it.`,
+    ].join('\n')
+  }
+
+  const packageName = importStyle.specifier
+  const cssExport = resolveCssExport(pkgDir)
   const lines = [
     '```jsx',
     `import { ${sample} } from '${packageName}'`,
@@ -360,12 +417,15 @@ export function renderIconReference(guide: DesignSystemGuide): string | undefine
     '',
   ]
 
+  const iconImportSpecifier =
+    guide.importStyle.kind === 'folder' ? `../${guide.importStyle.dirName}` : guide.packageName
+
   if (icons.components.length > 0) {
     lines.push(
       `## Icon components (${icons.components.length}) — import by name`,
       '',
       '```jsx',
-      `import { ${icons.components.slice(0, 4).join(', ')} } from '${guide.packageName}'`,
+      `import { ${icons.components.slice(0, 4).join(', ')} } from '${iconImportSpecifier}'`,
       '```',
       '',
       'They take `className` and inherit colour from `currentColor`, so size and',
@@ -374,6 +434,29 @@ export function renderIconReference(guide: DesignSystemGuide): string | undefine
       icons.components.map((n) => `\`${n}\``).join(' · '),
       '',
     )
+  }
+
+  // The BUILT-IN design system's raw SVG catalog is Studio's, not the
+  // project's: the project's folder carries only the handful of files the
+  // components themselves import, so printing hundreds of names as importable
+  // paths would be an instruction that fails on almost every one of them. The
+  // markup is reachable — through the icon picker, which INLINES it — so this
+  // says that instead of a path.
+  if (guide.importStyle.kind === 'folder') {
+    const total = icons.catalogs.reduce((sum, catalog) => sum + catalog.names.length, 0)
+    if (total > 0) {
+      lines.push(
+        `## Icon files (${total}) — inline them, do not import them`,
+        '',
+        `Studio ships ${total} SVGs with this design system, but the project's own \`${guide.importStyle.dirName}/\` folder carries only the few the components themselves use — so there is no file path to import for the rest.`,
+        '',
+        'Use the icon picker (a slot whose prop name reads as an icon offers it) or GET /admin/api/studio/icons, both of which INLINE the markup into your JSX as a real `<svg>`. An inline `<svg>` inherits `currentColor`, which is what you want anyway.',
+        '',
+        `Names, for searching: ${icons.catalogs.map((catalog) => catalog.names.join(', ')).join(', ')}`,
+        '',
+      )
+    }
+    return lines.join('\n')
   }
 
   for (const catalog of icons.catalogs) {
@@ -410,7 +493,7 @@ export function renderComponentReference(guide: DesignSystemGuide): string {
     '',
     'Generated from the package\'s own docs on every chat turn. Do not hand-edit.',
     '',
-    `Every component below is a real named export of \`${guide.packageName}\`. Import it — do not re-implement it, and do not substitute a raw HTML element, an emoji, or a text glyph for one.`,
+    `Every component below is a real named export of ${guide.importStyle.kind === 'folder' ? `this project's \`${guide.importStyle.dirName}/\` folder` : `\`${guide.packageName}\``}. Import it — do not re-implement it, and do not substitute a raw HTML element, an emoji, or a text glyph for one.`,
     '',
   ]
   if (guide.importContract) {

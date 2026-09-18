@@ -21,6 +21,15 @@
  *   3. A REAL style change still produces a fresh, correct read — the cache
  *      never returns stale data.
  *
+ * P5 (STATE.md `panel-26`): both hooks now return `{ value, isLoading }`.
+ * Every test below asserts `isLoading: false` on top of its existing
+ * assertions — this IS the "Tier 0/1 boards take zero new code paths" proof
+ * the work order asked for, not a claim in prose: no test here ever
+ * registers a `BridgeFrameAdapter`, only `PortalFrameAdapter`s, so
+ * `hasBridgeFrameFor` is false for every one of them and the portal branch
+ * (byte-identical internals — same cache, same `stabilizeRecord`, same
+ * synchronous `getComputedStyle` read) is the only one ever exercised here.
+ *
  * What this does NOT prove (needs a browser profile, not a unit test): the
  * millisecond cost of `getComputedStyle`'s own forced layout, or how many
  * fewer milliseconds a real keystroke now costs. `getComputedStyle` is
@@ -34,19 +43,38 @@ import {
   useInspectComputedStyle,
   useFrameComputedStyleValues,
 } from '@site/panels/InspectPanel/useInspectComputedStyle'
+import { registerFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+
+let frameAdapters: PortalFrameAdapter[] = []
 
 afterEach(() => {
   cleanup()
   document.body.innerHTML = ''
+  for (const adapter of frameAdapters) adapter.dispose()
+  frameAdapters = []
 })
 
-/** A canvas breakpoint frame with one styled node, plus a spy counting the
- *  cross-document `[data-node-id]` queries made against its document. */
+/**
+ * A canvas breakpoint frame with one styled node, plus a spy counting the
+ * cross-document `[data-node-id]` queries made against its document.
+ *
+ * Registers a `PortalFrameAdapter` for the frame — since `live-05`
+ * (STATE.md, the architect's Batch 4 resolution), both hooks under test
+ * resolve elements only through registered frames
+ * (`canvasFrameAdapterRegistry.ts`), not every iframe carrying
+ * `data-breakpoint-id`.
+ */
 function setUpCanvasFrame(nodeId: string, breakpointId = 'bp-desktop') {
   const frame = document.createElement('iframe')
   document.body.appendChild(frame)
   const frameDoc = frame.contentDocument!
   frameDoc.body.setAttribute('data-breakpoint-id', breakpointId)
+  // The outer iframe element's own copy (P5, STATE.md `panel-26`) — not
+  // exercised by the portal path under test here, but kept in sync with
+  // production so a future test added to this file doesn't have to remember
+  // to add it separately.
+  frame.setAttribute('data-breakpoint-id', breakpointId)
 
   const node = frameDoc.createElement('div')
   node.setAttribute('data-node-id', nodeId)
@@ -63,6 +91,10 @@ function setUpCanvasFrame(nodeId: string, breakpointId = 'bp-desktop') {
     return originalQuerySelector(selector)
   }) as typeof frameDoc.querySelector
 
+  const adapter = new PortalFrameAdapter(frameDoc)
+  frameAdapters.push(adapter)
+  registerFrameAdapter(frame, adapter)
+
   return { frame, node, queries: () => queries }
 }
 
@@ -76,7 +108,8 @@ describe('useFrameComputedStyleValues — element lookup caching', () => {
       { initialProps: { nodeId: 'n1' } },
     )
 
-    expect(result.current).toEqual({ color: 'red', width: '100px' })
+    expect(result.current.value).toEqual({ color: 'red', width: '100px' })
+    expect(result.current.isLoading).toBe(false)
     expect(queries()).toBe(1)
 
     // Ten more renders of the SAME node — the old, uncached code path would
@@ -93,7 +126,8 @@ describe('useFrameComputedStyleValues — element lookup caching', () => {
     const { result, rerender } = renderHook(() =>
       useFrameComputedStyleValues('n1', 'bp-desktop', ['color']),
     )
-    expect(result.current?.color).toBe('red')
+    expect(result.current.value?.color).toBe('red')
+    expect(result.current.isLoading).toBe(false)
     expect(queries()).toBe(1)
 
     // A real re-render inside the canvas app: the old element is gone,
@@ -106,7 +140,8 @@ describe('useFrameComputedStyleValues — element lookup caching', () => {
     frameDoc.body.appendChild(replacement)
 
     rerender()
-    expect(result.current?.color).toBe('blue')
+    expect(result.current.value?.color).toBe('blue')
+    expect(result.current.isLoading).toBe(false)
   })
 })
 
@@ -125,7 +160,8 @@ describe('useFrameComputedStyleValues — reference stability', () => {
     rerender()
     const second = result.current
 
-    expect(second).toBe(first)
+    expect(second.value).toBe(first.value)
+    expect(second.isLoading).toBe(false)
   })
 
   it('returns a NEW object with the updated value when the style actually changed', () => {
@@ -140,11 +176,12 @@ describe('useFrameComputedStyleValues — reference stability', () => {
     rerender()
     const second = result.current
 
-    expect(second).not.toBe(first)
-    expect(second).toEqual({ color: 'blue', width: '100px' })
+    expect(second.value).not.toBe(first.value)
+    expect(second.value).toEqual({ color: 'blue', width: '100px' })
+    expect(second.isLoading).toBe(false)
   })
 
-  it('returns null, not a stale snapshot, once the node has no rendered element', () => {
+  it('returns value: null, not a stale snapshot, once the node has no rendered element', () => {
     setUpCanvasFrame('n1')
 
     const { result, rerender } = renderHook(
@@ -152,10 +189,11 @@ describe('useFrameComputedStyleValues — reference stability', () => {
         useFrameComputedStyleValues(nodeId, 'bp-desktop', ['color']),
       { initialProps: { nodeId: 'n1' as string | null } },
     )
-    expect(result.current).not.toBeNull()
+    expect(result.current.value).not.toBeNull()
 
     rerender({ nodeId: null })
-    expect(result.current).toBeNull()
+    expect(result.current.value).toBeNull()
+    expect(result.current.isLoading).toBe(false)
   })
 })
 
@@ -168,19 +206,22 @@ describe('useInspectComputedStyle — same caching + stability contract', () => 
       { initialProps: { node: { rev: 1 } } },
     )
     const first = result.current
-    expect(first?.color).toBe('red')
+    expect(first.value?.color).toBe('red')
+    expect(first.isLoading).toBe(false)
     expect(queries()).toBe(1)
 
     // `node` object identity changing is what the real caller does on every
     // keystroke (see the hook's own doc) — the style on the canvas element
     // itself hasn't changed, so the snapshot should be the SAME reference.
     rerender({ node: { rev: 2 } })
-    expect(result.current).toBe(first)
+    expect(result.current.value).toBe(first.value)
+    expect(result.current.isLoading).toBe(false)
     expect(queries()).toBe(1)
 
     node.style.color = 'green'
     rerender({ node: { rev: 3 } })
-    expect(result.current).not.toBe(first)
-    expect(result.current?.color).toBe('green')
+    expect(result.current.value).not.toBe(first.value)
+    expect(result.current.value?.color).toBe('green')
+    expect(result.current.isLoading).toBe(false)
   })
 })

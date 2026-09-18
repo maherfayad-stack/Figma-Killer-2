@@ -22,8 +22,8 @@
  * edit engine stays where it is genuinely better than a text edit: the canvas
  * panels' own writeback path (`studioWriteback.ts`), which is not agent code.
  *
- * What bounds a native write is the process, not the tool list: the subprocess
- * is spawned with `cwd` set to the validated project directory
+ * What bounds a native write OUTWARD is the process, not the tool list: the
+ * subprocess is spawned with `cwd` set to the validated project directory
  * (`resolveClaudeCliWorkspaceCwd` — containment-checked against
  * `projectsRoot`), and the CLI's own path permission check refuses a
  * `Write`/`Edit` outside `cwd` plus whatever `--add-dir` pre-authorises (this
@@ -31,6 +31,14 @@
  * the user's real project data with no other copy; the containment that
  * matters is that the process cannot reach outside the one project it was
  * pointed at.
+ *
+ * `cwd` is NOT the whole boundary, because three directories inside it are
+ * not the user's source: `.studio/` (the trust tier and the MCP-server
+ * approvals), `.claude/` (the generated settings that wire these very hooks)
+ * and `.git/` (whose hooks run on the user's next commit). Writing any of
+ * them is how a native write turns into a permission nobody granted, so the
+ * generated `PreToolUse` hook refuses them — `handlers/studio/agentWriteScope.ts`
+ * owns that predicate and the full reasoning.
  *
  * `--tools` (confirmed real via `claude --help`, and already the exact
  * mechanism `claudeCliVerify.ts`'s `--tools ''` uses to strip a verification

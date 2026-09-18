@@ -32,7 +32,7 @@
  * behaviour for a project that never calls these tools.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   DESIGN_VARIABLE_LABEL_MAX_LENGTH,
@@ -162,9 +162,9 @@ const ingestDesignVariablesTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
 
     if (referenceId !== undefined && !getDesignReference(dir, referenceId)) {
-      return aiToolError(
-        `No design reference "${referenceId}" is registered for this project — call studio_list_design_references to see what is, register it first with studio_register_design_reference, or omit referenceId to scope this table by pageId or project-wide instead.`,
-      )
+      return toolRefusal('no-such-reference', `No design reference "${referenceId}" is registered for this project.`, {
+        remedy: 'Call studio_list_design_references to see what is, register it first with studio_register_design_reference, or omit referenceId to scope this table by pageId or project-wide instead.',
+      })
     }
 
     const result = ingestDesignVariables(dir, toRawDesignVariableEntries(variables), { source, pageId, referenceId, label })
@@ -268,7 +268,9 @@ const readDesignVariableSetTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
     const set = getDesignVariableSet(dir, setId)
     if (!set) {
-      return aiToolError(`No design-variable set "${setId}" found for this project — call studio_list_design_variables to see what is ingested.`)
+      return toolRefusal('no-such-variable-set', `No design-variable set "${setId}" found for this project.`, {
+        remedy: 'Call studio_list_design_variables to see what is ingested.',
+      })
     }
 
     const needle = nameContains?.toLowerCase()

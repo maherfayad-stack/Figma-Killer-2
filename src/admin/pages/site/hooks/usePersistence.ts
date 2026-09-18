@@ -19,6 +19,12 @@
  *     writeback feels immediate. See `resolveAutoSaveDelayMs` below.
  *  3. MANUAL SAVE    — returned as a stable callback for toolbar Save and used
  *     by Cmd+S / Ctrl+S. Resets the unsaved-changes flag.
+ *  4. RETRY LADDER   — a failed save restores its dirty snapshot (nothing is
+ *     lost) and schedules up to three automatic retries on a 2s/4s/8s backoff
+ *     through the same single-flight queue, reporting `retrying` on the status
+ *     so the toolbar chip can say "Saving…" rather than "Unsaved" while the
+ *     ladder runs. No toast at any point — see `SAVE_RETRY_BACKOFF_MS` and
+ *     `toolbar/SaveStatusChip.tsx`.
  *
  * Constraint #230: raw adapter data is validated via `validateSite` before
  * being passed to `store.loadSite()`.
@@ -59,6 +65,7 @@ import {
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import { registerEditorSave } from './editorSaveRef'
 
 /**
@@ -82,7 +89,28 @@ export interface PersistenceSaveStatus {
   state: 'loading' | 'saved' | 'unsaved' | 'saving' | 'error'
   message?: string
   lastSavedAt?: number
+  /**
+   * Only meaningful for `state: 'error'` — true while the automatic retry
+   * ladder (see `SAVE_RETRY_BACKOFF_MS`) still has a rung left. The toolbar's
+   * save-status chip reads "Saving…" while it is true and only admits
+   * "Unsaved — retry" once it is false, so a dev server that takes six
+   * seconds to come back never makes the editor claim work was lost.
+   */
+  retrying?: boolean
 }
+
+/**
+ * Delays before automatic save retry 1, 2 and 3; the length is the budget.
+ *
+ * A save fails for two reasons in practice — the dev server is restarting, or
+ * the target file is momentarily locked — and both usually clear inside ten
+ * seconds. Past three attempts the failure is not transient and the user has
+ * to be told, which is what "Unsaved — retry" is for. The ladder lives here
+ * rather than in the chip because retrying a save is the persistence layer's
+ * job: it already owns the single-flight queue and the dirty snapshot that a
+ * retry re-ships.
+ */
+export const SAVE_RETRY_BACKOFF_MS = [2000, 4000, 8000] as const
 
 interface PersistenceController {
   saveSite: () => Promise<void>
@@ -124,6 +152,42 @@ function applyDefaultBreakpointPreference(
   const preferredId = readEditorSelectPreference('defaultBreakpoint')
   if (!breakpoints.some((bp) => bp.id === preferredId)) return
   useEditorStore.getState().setActiveBreakpoint(preferredId)
+}
+
+/**
+ * `store-13`/`store-14` — apply what the structural source write that just
+ * landed means, now that the board has read it back: put the selection on what
+ * it made or moved, and give the gesture its undo entry.
+ *
+ * Runs at both ends of the re-read: the narrow `patchPages` path and the full
+ * `loadSite()` one. Both halves come from `pendingStructuralOutcome.ts`, which
+ * the commit filled before triggering either — see that module for why the
+ * handoff is a box rather than a callback, and why the two answers share one
+ * slot.
+ *
+ * Every id is checked against `_nodeIdToPageIds` (O(1) per id, the WS-5.2
+ * index) before the SELECTION uses it, and a write whose elements did not come
+ * back selects nothing at all rather than part of itself: a half-applied
+ * selection points the inspector at one of several things the user just made,
+ * which reads as the gesture having half-failed. The history entry is recorded
+ * either way — a gesture whose result the board cannot point at was still
+ * written to the file, and ⌘Z has to be able to take it back.
+ *
+ * Exported as a test seam, the same way `resolveAutoSaveDelayMs` is: the two
+ * callers are inside effects, and the behaviour worth pinning — "the gesture's
+ * result is what the board points at once the resync lands, and one ⌘Z undoes
+ * it" — is otherwise only reachable by mounting the whole hook.
+ */
+export function applyStructuralWriteOutcome(): void {
+  const outcome = takePendingStructuralOutcome()
+  if (!outcome) return
+  const state = useEditorStore.getState()
+  if (outcome.history) state.recordStructuralSourceWrite(outcome.history)
+  const { selectNodeIds } = outcome
+  if (selectNodeIds.length === 0) return
+  if (!selectNodeIds.every((id) => state._nodeIdToPageIds.has(id))) return
+  if (selectNodeIds.length === 1) state.selectNode(selectNodeIds[0]!)
+  else state.selectMany([...selectNodeIds])
 }
 
 /**
@@ -188,6 +252,17 @@ export function usePersistence(
   const inFlightSaveRef = useRef<Promise<void> | null>(null)
   /** The single queued follow-up save every mid-flight trigger coalesces into. */
   const queuedSaveRef = useRef<Promise<void> | null>(null)
+  /** Consecutive failed saves; reset by the first success. Drives the ladder. */
+  const consecutiveFailuresRef = useRef(0)
+  /** The armed automatic retry, so a success (or unmount) can cancel it. */
+  const retryTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  /**
+   * Indirection so `runSave`'s failure path can re-enter the single-flight
+   * queue without `runSave` depending on `saveCurrentSite`, which depends on
+   * it. A retry MUST go through the queue — firing `runSave` directly would
+   * be the one place two saves could interleave on the wire.
+   */
+  const saveCurrentSiteRef = useRef<(() => Promise<void>) | null>(null)
 
   // Exception #1: referenced in the useCallback dep array of saveCurrentSite,
   // so exhaustive-deps requires a stable identity here.
@@ -210,10 +285,28 @@ export function usePersistence(
       // queued follow-up save would be skipped, dropping the edit until the
       // next mutation re-set the flag).
       if (useEditorStore.getState().site === site) setHasUnsavedChanges(false)
+      // The ladder is per failure streak, not per session: one success means
+      // whatever was wrong has cleared, and the next failure starts at 2s.
+      consecutiveFailuresRef.current = 0
+      clearTimeout(retryTimerRef.current)
       setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
     } catch (err) {
       restoreDirtySaveSnapshot(dirty)
-      setSaveStatus({ state: 'error', message: errorMessage(err, 'Save failed') })
+      // The retry ladder. Silent by design — the toolbar chip renders
+      // `retrying`, and a toast per failed attempt is exactly the noise a
+      // restarting dev server used to produce.
+      consecutiveFailuresRef.current += 1
+      const failures = consecutiveFailuresRef.current
+      const retrying = failures <= SAVE_RETRY_BACKOFF_MS.length
+      setSaveStatus({ state: 'error', message: errorMessage(err, 'Save failed'), retrying })
+      if (retrying) {
+        clearTimeout(retryTimerRef.current)
+        retryTimerRef.current = setTimeout(() => {
+          void saveCurrentSiteRef.current?.().catch((retryErr) => {
+            console.error('[persistence] Automatic save retry failed:', retryErr)
+          })
+        }, SAVE_RETRY_BACKOFF_MS[failures - 1])
+      }
       throw err
     }
   }, [])
@@ -260,6 +353,19 @@ export function usePersistence(
   // Expose the save to the MCP editor-bridge so a write tool relayed from an
   // external agent can flush to the DB before a follow-up headless read.
   useEffect(() => registerEditorSave(saveCurrentSite), [saveCurrentSite])
+
+  // The retry ladder's re-entry point.
+  useEffect(() => {
+    saveCurrentSiteRef.current = saveCurrentSite
+  }, [saveCurrentSite])
+
+  // Unmount only: an armed retry must not fire into an unmounted editor.
+  // Deliberately NOT keyed on `saveCurrentSite` — that would cancel a live
+  // ladder rung on an identity change rather than on a real teardown.
+  useEffect(() => () => {
+    saveCurrentSiteRef.current = null
+    clearTimeout(retryTimerRef.current)
+  }, [])
 
   // ─── 1. Load site document on mount ────────────────────────────────────────
   useEffect(() => {
@@ -385,6 +491,7 @@ export function usePersistence(
         // The site doc on disk is now authoritative; clear the unsaved flag so
         // the auto-save loop doesn't immediately overwrite it back.
         setHasUnsavedChanges(false)
+        applyStructuralWriteOutcome()
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
@@ -421,6 +528,7 @@ export function usePersistence(
         styleRules: detail.styleRules,
         conditions: detail.conditions,
       })
+      applyStructuralWriteOutcome()
     }
 
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)

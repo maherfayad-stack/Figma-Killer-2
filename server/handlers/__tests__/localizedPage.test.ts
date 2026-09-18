@@ -158,4 +158,44 @@ describe('loadStudioPageInLocale', () => {
     expect(arNode.classIds).toEqual(defaultNode.classIds)
     expect(arNode.classIds.length).toBeGreaterThan(0)
   })
+
+  // Regression for the bug the two tests above did NOT catch: a plain `.css`
+  // import already carries its own `relFile`, so `loadStudioStyles` resolves
+  // `source.file` directly and never needs `moduleClassMaps` to agree with
+  // the full load. A CSS-Modules import is different — the compiled rule's
+  // selector is a RENAMED class, and only `moduleClassMaps` (fed to
+  // `cssModuleSource` in `studioCss.ts`) lets it resolve back to the file
+  // half of `styleRuleId`'s hash. `loadStudioPageInLocale` once omitted that
+  // argument, so its scoped scan silently re-minted a DIFFERENT id for the
+  // same rule than the full `loadStudioPages` load — the client keeps the
+  // full load's `site.styleRules` and only patches in the locale page's
+  // tree/`classIds`, so the mismatch resolved to no class at all and the
+  // frame rendered completely unstyled.
+  it('a CSS-Modules class resolves to the SAME classIds via the locale-scoped load as the full-project load', async () => {
+    writeLanguageFixture()
+    write('pages/Home.module.css', '.header { color: red; }\n')
+    write(
+      'pages/Home.jsx',
+      [
+        "import { useLanguage } from '../i18n/LanguageContext'",
+        "import styles from './Home.module.css'",
+        'export default function Home() {',
+        '  const { t } = useLanguage()',
+        '  return <h1 className={styles.header}>{t.greeting}</h1>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+    const { pages } = await loadStudioPages(tmpDir)
+    const pageId = pages[0]!.id
+    const defaultNode = Object.values(pages[0]!.nodes).find((n) => n.props.customTag === 'h1' || n.props.tag === 'h1')!
+
+    const arPage = await loadStudioPageInLocale(tmpDir, pageId, 'ar')
+    const arNode = Object.values(arPage!.nodes).find((n) => n.props.customTag === 'h1' || n.props.tag === 'h1')!
+
+    // Cross-path equality, not a specific hash value — this must keep
+    // holding even if `styleRuleId`'s scheme changes.
+    expect(defaultNode.classIds.length).toBeGreaterThan(0)
+    expect(arNode.classIds).toEqual(defaultNode.classIds)
+  })
 })

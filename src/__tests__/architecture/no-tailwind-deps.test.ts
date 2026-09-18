@@ -15,8 +15,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
@@ -24,20 +25,7 @@ const SRC_ROOT = join(import.meta.dir, '../../')
 // File walkers
 // ---------------------------------------------------------------------------
 
-function collectFiles(dir: string, exts: string[]): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts: string[]): string[] => walkSourceTree(dir, exts)
 
 function collectTsFiles(): string[] {
   // Scan all source dirs that contain production code.
@@ -113,7 +101,7 @@ describe('No Tailwind / shadcn / clsx dependencies in production source', () => 
       for (const f of allFiles) {
         let src: string
         try {
-          src = readFileSync(f, 'utf8')
+          src = readSource(f)
         } catch {
           continue
         }
@@ -145,7 +133,7 @@ describe('No Tailwind / shadcn / clsx dependencies in production source', () => 
     for (const f of allCssFiles) {
       let src: string
       try {
-        src = readFileSync(f, 'utf8')
+        src = readSource(f)
       } catch {
         continue
       }

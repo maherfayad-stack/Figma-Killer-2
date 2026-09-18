@@ -42,6 +42,12 @@
 import { getChildren } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { nodeVisualRect, type CanvasRectSource, type ClientRectLike } from './canvasDomGeometry'
+import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { NodeRect } from './frameAdapter/FrameDocumentAdapter'
+import { escapeCssAttributeValue } from './escapeCssAttributeValue'
+
+export { escapeCssAttributeValue }
 
 /**
  * How deep the fragment walk descends past a node with no element of its own
@@ -51,11 +57,6 @@ import { nodeVisualRect, type CanvasRectSource, type ClientRectLike } from './ca
  * Four covers real nesting while keeping the walk a small constant.
  */
 const MAX_FRAGMENT_DESCENT = 4
-
-/** Escape a value for safe interpolation into a `[attr="…"]` CSS selector. */
-export function escapeCssAttributeValue(value: string): string {
-  return value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
-}
 
 /**
  * The element a node renders AS, or `null` when it has none of its own.
@@ -246,63 +247,148 @@ function unionVisualRects(elements: readonly Element[]): ClientRectLike {
   }
 }
 
-export function findRenderedCanvasNodeElement(
-  nodeId: string,
-  root: Document = document,
-): HTMLElement | null {
-  return findRenderedCanvasNodes(nodeId, root)[0]?.element ?? null
+/**
+ * Portal-mode-only ("Class A", `live-05`/STATE.md — the architect's Batch 4
+ * resolution) — the element `nodeId` renders as, in the FIRST registered
+ * PORTAL frame that has it. Genuinely portal-only, not a scoping shortcut:
+ * its real callers (`useClassPickerDerivedState.ts`'s `Element.matches()`
+ * selector-affinity check, the plugin SDK's `useCanvasNodeRect`'s
+ * `getBoundingClientRect()`) need an ACTUAL live `Element` to call a DOM
+ * method on — something that cannot exist for a cross-origin bridge frame
+ * under any adapter design (`adapter.measure()` hands back a rect/computed-
+ * style SNAPSHOT, never a node). A bridge-registered frame is silently
+ * skipped here, never attempted. See `findRenderedCanvasNodes` below for the
+ * cross-mode sibling that only needs rect/computed-style values, which
+ * bridge mode genuinely CAN answer.
+ */
+export function findRenderedCanvasNodeElement(nodeId: string): HTMLElement | null {
+  return findRenderedCanvasElements(nodeId)[0]?.element ?? null
 }
 
-/** A rendered canvas node together with the breakpoint iframe hosting it. */
-export interface RenderedCanvasNode {
+/** A rendered canvas node's real element (portal-mode only — see `findRenderedCanvasNodeElement`'s doc), paired with the breakpoint iframe hosting it. */
+export interface RenderedCanvasElement {
   element: HTMLElement
   frame: HTMLIFrameElement
 }
 
 /**
- * Every canvas frame's rendered element for a node, in frame order — one per
- * breakpoint frame that has mounted the node, paired with its hosting iframe
- * (geometry callers need the frame for zoom/coordinate translation, and
- * `defaultView.frameElement` is not reliable in every environment).
+ * Every PORTAL canvas frame's rendered element for a node, in adapter-
+ * registration order (`canvasFrameAdapterRegistry.ts`) — the direct
+ * replacement for the old `findRenderedCanvasNodes`'s "which element"
+ * question, now explicitly scoped to the mode that can actually answer it.
  */
-export function findRenderedCanvasNodes(
-  nodeId: string,
-  root: Document = document,
-): RenderedCanvasNode[] {
-  const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
-  const nodes: RenderedCanvasNode[] = []
-  for (const { doc, frame } of canvasFrameDocuments(root)) {
-    const element = doc.querySelector<HTMLElement>(selector)
-    if (element) nodes.push({ element, frame })
+export function findRenderedCanvasElements(nodeId: string): RenderedCanvasElement[] {
+  const results: RenderedCanvasElement[] = []
+  for (const [frame, adapter] of listFrameAdapters()) {
+    if (!isPortalFrameAdapter(adapter)) continue
+    const doc = adapter.getPortalWindow()?.document
+    const element = doc ? ownElementForNode(doc, nodeId) : null
+    if (element) results.push({ element, frame })
   }
-  return nodes
+  return results
 }
 
-/** A canvas frame's document, paired with the iframe hosting it. */
+/**
+ * A rendered canvas node's measured geometry/computed-style — NOT a live
+ * element (see `findRenderedCanvasNodeElement` for the portal-only sibling
+ * that hands back one of those instead) — paired with the frame that
+ * rendered it.
+ */
+export interface RenderedCanvasNode {
+  rect: NodeRect
+  computedStyle: Record<string, string>
+  frame: HTMLIFrameElement
+}
+
+/**
+ * Every mounted canvas frame's measured rect/computed-style for a node, in
+ * adapter-registration order — the CROSS-MODE ("Class B") answer to "which
+ * frames render this node, and where" (`live-05`, STATE.md, the architect's
+ * Batch 4 resolution). Works identically for a same-origin portal frame and
+ * a cross-origin bridge frame through `adapter.measure` — this function
+ * never knows or cares which kind of adapter it's talking to. Genuinely
+ * async even in portal mode (bundles every frame's measurement into one
+ * `Promise.all`, rather than pretending the multi-frame case is
+ * synchronous just because any ONE portal measurement happens to resolve
+ * synchronously under the hood).
+ */
+export async function findRenderedCanvasNodes(
+  nodeId: string,
+  properties?: string[],
+): Promise<RenderedCanvasNode[]> {
+  const entries = Array.from(listFrameAdapters())
+  const measured = await Promise.all(
+    entries.map(async ([frame, adapter]): Promise<RenderedCanvasNode | null> => {
+      const [result] = await adapter.measure([{ nodeId }], properties)
+      if (!result?.rect) return null
+      return { rect: result.rect, computedStyle: result.computedStyle, frame }
+    }),
+  )
+  return measured.filter((entry): entry is RenderedCanvasNode => entry !== null)
+}
+
+/**
+ * `findRenderedCanvasNodes`'s result narrowed to the frame matching
+ * `preferredBreakpointId` (its OWN `data-breakpoint-id`, stamped directly on
+ * the `<iframe>` element by `IframeFrameSurface` in both `documentMode`
+ * branches — NOT its `contentDocument`'s `<body>`, which is unreachable
+ * cross-origin for a bridge frame), falling back to the first result when
+ * none match. `null` when no registered frame (portal or bridge) renders
+ * `nodeId` at all.
+ *
+ * The cross-mode counterpart to `useInspectComputedStyle.ts`'s portal-only
+ * `pickPreferredElement` — same "prefer the active breakpoint, else the
+ * first match" rule, expressed against `RenderedCanvasNode`s instead of live
+ * elements so it works identically for a same-origin portal frame and a
+ * cross-origin bridge frame (P5, STATE.md `panel-26`).
+ */
+export async function preferredRenderedCanvasNode(
+  nodeId: string,
+  preferredBreakpointId: string,
+  properties?: string[],
+): Promise<RenderedCanvasNode | null> {
+  const results = await findRenderedCanvasNodes(nodeId, properties)
+  if (results.length === 0) return null
+  const preferred = results.find(
+    (entry) => entry.frame.getAttribute('data-breakpoint-id') === preferredBreakpointId,
+  )
+  return preferred ?? results[0]!
+}
+
+/**
+ * A canvas frame's document, paired with the iframe hosting it.
+ *
+ * Portal-only, and NOT yet migrated off a direct `Document` reach-in —
+ * deliberately deferred (`live-05`, STATE.md) alongside `findCanvasNodeRectSource`
+ * below, since their one real caller (`usePrototypeEndpoints.ts`) is Batch
+ * 7's own territory (capture/agent/prototype tooling), not this pass's.
+ * Redesigning this pair in isolation, ahead of their actual caller, would
+ * risk guessing at a shape Batch 7 then has to redo.
+ */
 export interface CanvasFrameDocument {
   doc: Document
   frame: HTMLIFrameElement
 }
 
 /**
- * Every mounted canvas frame document, in frame order.
+ * Every mounted, portal-mode canvas frame document, in registration order.
  *
- * The `data-breakpoint-id` check on `<body>` is what distinguishes a canvas
- * frame from any other iframe in the admin shell (a plugin surface, a preview,
- * a dev tool). Shared so every lookup here agrees on what counts as a canvas
- * frame instead of re-deciding it.
+ * Registry-based (`live-05`, STATE.md, Batch 7) instead of a
+ * `document.querySelectorAll('iframe')` scan + raw `frame.contentDocument`
+ * reach-in — `listFrameAdapters()` (`canvasFrameAdapterRegistry.ts`) is
+ * already the shared answer to "what counts as a canvas frame" for every
+ * other Class B lookup in this module, so this one now agrees with them
+ * instead of re-deciding it via a DOM scan.
+ *
+ * Portal-mode only: a bridge-registered adapter has no `Document` to return,
+ * so a Tier 2 frame contributes nothing here (`findCanvasNodeRectSource`'s
+ * `BoardPrototypeLayer` callers don't have a bridge-mode story yet either).
  */
-export function canvasFrameDocuments(root: Document = document): CanvasFrameDocument[] {
+export function canvasFrameDocuments(): CanvasFrameDocument[] {
   const docs: CanvasFrameDocument[] = []
-  for (const frame of root.querySelectorAll('iframe')) {
-    let frameDoc: Document | null
-    try {
-      // Throws for cross-origin frames (a plugin or dev tool may add one to
-      // the admin shell); may be null before the frame has loaded.
-      frameDoc = frame.contentDocument
-    } catch (_err) {
-      frameDoc = null
-    }
+  for (const [frame, adapter] of listFrameAdapters()) {
+    if (!isPortalFrameAdapter(adapter)) continue
+    const frameDoc = adapter.getPortalWindow()?.document ?? null
     if (!frameDoc?.body?.hasAttribute('data-breakpoint-id')) continue
     docs.push({ doc: frameDoc, frame })
   }
@@ -330,10 +416,9 @@ export interface CanvasNodeRectSource {
 export function findCanvasNodeRectSource(
   nodeId: string,
   tree?: NodeTree<PageNode> | null,
-  root: Document = document,
 ): CanvasNodeRectSource | null {
   const selector = `[data-node-id="${escapeCssAttributeValue(nodeId)}"]`
-  for (const { doc, frame } of canvasFrameDocuments(root)) {
+  for (const { doc, frame } of canvasFrameDocuments()) {
     const element = doc.querySelector<HTMLElement>(selector)
     if (element) return { source: element, frame, doc }
     const fragment = tree ? fragmentNodeRectSource(doc, tree, nodeId) : null
@@ -343,19 +428,29 @@ export function findCanvasNodeRectSource(
 }
 
 /**
- * Per-caller cache of nodeId → every canvas frame currently rendering it
- * (`findRenderedCanvasNodes`'s own result, cached).
+ * Per-caller cache of nodeId → every PORTAL canvas frame currently rendering
+ * it (`findRenderedCanvasElements`'s own result, cached).
  *
- * Written for the properties/inspect panels' computed-style readers
- * (`useInspectComputedStyle.ts`), which re-run this lookup on every render —
- * for the Properties panel, that means once per KEYSTROKE that edits the
- * selected node's style, since `StyleSurface` re-renders to show what was
- * just typed. Before this cache, that was an uncached
- * `document.querySelectorAll('iframe')` over the whole admin document
- * followed by a cross-document `frameDoc.querySelector('[data-node-id=…]')`
- * INSIDE each breakpoint iframe's own (arbitrarily large, user-authored)
- * page — on every character typed, fanned out across every open breakpoint
- * frame (commonly 3+).
+ * Portal-mode only (`live-05`, STATE.md, the architect's Batch 4
+ * resolution) — same reason `findRenderedCanvasNodeElement` is: this
+ * class's actual real callers (`useClassPickerDerivedState.ts`,
+ * `useInspectComputedStyle.ts`'s PORTAL branch) need a real `Element`, which
+ * only exists for a portal frame. A cheap, live `.isConnected` validity
+ * check (below) is exactly the thing that stops being possible once the
+ * cached value is a rect/computed-style SNAPSHOT instead of an element
+ * reference — `findRenderedCanvasNodes`'s async, cross-mode sibling has no
+ * equivalent cache; its callers (bridge mode) re-fetch on their own trigger
+ * list instead (see `useInspectComputedStyle.ts`'s bridge branch).
+ *
+ * Written for the properties/inspect panels' computed-style readers, which
+ * re-run this lookup on every render — for the Properties panel, that means
+ * once per KEYSTROKE that edits the selected node's style, since
+ * `StyleSurface` re-renders to show what was just typed. Before this cache,
+ * that was an uncached `document.querySelectorAll('iframe')` over the whole
+ * admin document followed by a cross-document
+ * `frameDoc.querySelector('[data-node-id=…]')` INSIDE each breakpoint
+ * iframe's own (arbitrarily large, user-authored) page — on every character
+ * typed, fanned out across every open breakpoint frame (commonly 3+).
  *
  * `CanvasNodeElementCache` above is NOT reusable here directly: it caches
  * exactly one element per nodeId, keyed by nodeId alone, because its caller
@@ -363,11 +458,11 @@ export function findCanvasNodeRectSource(
  * asking about and calls `resolve(doc, nodeId)` once per frame in its own
  * loop. This cache's callers don't have that per-frame loop — they need
  * "every frame that renders this node" in one shot, exactly what
- * `findRenderedCanvasNodes` returns — so caching would need one cache slot
- * per (frame, nodeId) pair, not one per nodeId. Same validate-on-read design
- * as `CanvasNodeElementCache` (`isConnected`, not blind TTL), extended with a
- * frame-count check so a frame being added or removed (a new breakpoint
- * preview opened/closed) isn't missed the way a single element's
+ * `findRenderedCanvasElements` returns — so caching would need one cache
+ * slot per (frame, nodeId) pair, not one per nodeId. Same validate-on-read
+ * design as `CanvasNodeElementCache` (`isConnected`, not blind TTL),
+ * extended with a frame-count check so a frame being added or removed (a new
+ * breakpoint preview opened/closed) isn't missed the way a single element's
  * `isConnected` flip would.
  *
  * Correctness: a cached entry is trusted only when EVERY element in it is
@@ -375,17 +470,17 @@ export function findCanvasNodeRectSource(
  * canvas iframes re-render the whole app on a style/prop edit, but stable
  * elements keep the SAME node, e.g. a `style=""` attribute mutation — so
  * this both keeps the fast path for in-place updates and self-heals on an
- * actual remount) AND the live count of canvas iframes under `root` hasn't
+ * actual remount) AND the live count of registered portal frames hasn't
  * changed since the entry was built. Both checks failing forces a fresh
- * `findRenderedCanvasNodes` scan, which repopulates the cache — never a
+ * `findRenderedCanvasElements` scan, which repopulates the cache — never a
  * stale read.
  */
 export class RenderedCanvasNodeCache {
-  private entries = new Map<string, RenderedCanvasNode[]>()
+  private entries = new Map<string, RenderedCanvasElement[]>()
   private frameCountAtLastScan = -1
 
-  resolve(nodeId: string, root: Document = document): RenderedCanvasNode[] {
-    const liveFrameCount = root.querySelectorAll('iframe').length
+  resolve(nodeId: string): RenderedCanvasElement[] {
+    const liveFrameCount = listFrameAdapters().size
     const cached = this.entries.get(nodeId)
     const cacheIsValid =
       cached !== undefined &&
@@ -393,7 +488,7 @@ export class RenderedCanvasNodeCache {
       cached.every((entry) => entry.element.isConnected && entry.frame.isConnected)
     if (cacheIsValid) return cached
 
-    const fresh = findRenderedCanvasNodes(nodeId, root)
+    const fresh = findRenderedCanvasElements(nodeId)
     this.entries.set(nodeId, fresh)
     this.frameCountAtLastScan = liveFrameCount
     return fresh

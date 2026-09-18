@@ -1,0 +1,44 @@
+/*
+ * LayerSection — Penpot's unlabeled first content row (`02-measurements.md`'s
+ * opacity/blend row at y=132, directly below the tab strip, no section
+ * header above it). One `--inspector-row-h` row; icon buttons pack with the
+ * within-group step (`--inspector-space-2xs`) — this is one row's own
+ * controls, not a boundary between groups.
+ */
+
+.layerRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-2xs);
+    height: var(--inspector-row-h);
+    padding: 0 var(--inspector-pad-x);
+}
+
+.opacityField {
+    position: relative;
+    display: inline-flex;
+    flex: 0 0 auto;
+    width: 64px;
+}
+
+/* A locked field keeps its own small mark instead of losing the "why" once
+   disabled — the row-level notice this replaces (`StyleSectionsComposer`'s
+   banner) doesn't exist per-section here. */
+.lockBadge {
+    position: absolute;
+    top: 2px;
+    right: 2px;
+    color: var(--text-subtle);
+    pointer-events: none;
+}
+
+/* De-emphasized per rule 3 ("rare options live in a popover on the field
+   they modify") — visually smaller and quieter than the row's primary
+   controls, never competing with the structural eye for attention. */
+.cssVisibilityToggle {
+    opacity: 0.6;
+}
+
+.cssVisibilityToggle:hover {
+    opacity: 1;
+}

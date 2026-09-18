@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateStudioProjectGuide } from './projectGuide'
 import { buildDesignSystemGuide, renderComponentReference, renderIconReference } from './designSystemGuide'
+import { readStudioMeta } from './studioMeta'
 
 function write(root: string, relPath: string, contents: string): void {
   const full = join(root, ...relPath.split('/'))
@@ -57,6 +58,21 @@ describe('generateStudioProjectGuide', () => {
       const stop = settings.hooks.Stop[0]!
       expect(stop.hooks[0]!.command).toContain(process.execPath)
       expect(stop.hooks[0]!.command).toContain('stopGateCheck.ts')
+    })
+
+    it('wires the PreToolUse(Write|Edit) control-plane refusal — the security-load-bearing one (sec-12)', () => {
+      // Without this hook the agent's native Write reaches `.studio/meta.json`
+      // and can promote its own project to Tier 2, which is exactly the
+      // consent A10's second gate reads. See `agentWriteScope.ts`.
+      generateStudioProjectGuide(dir)
+      const settings = JSON.parse(read(dir, '.claude/settings.local.json')) as {
+        hooks: { PreToolUse?: Array<{ matcher: string; hooks: Array<{ command: string }> }> }
+      }
+      const preToolUse = settings.hooks.PreToolUse?.[0]
+      expect(preToolUse, 'no PreToolUse hook — nothing stops a native write into .studio/').toBeDefined()
+      expect(preToolUse!.matcher).toBe('Write|Edit')
+      expect(preToolUse!.hooks[0]!.command).toContain(process.execPath)
+      expect(preToolUse!.hooks[0]!.command).toContain('denyControlPlaneWrite.ts')
     })
 
     it('never overwrites a hand-edited settings.local.json — same never-clobber manifest as CLAUDE.md', () => {
@@ -210,17 +226,25 @@ describe('generateStudioProjectGuide', () => {
   it('heals a project that has no design system at all, not just newly created ones', () => {
     // Seeding at project creation only ever helps projects created after the
     // seed existed. Every older project — and any project whose contents were
-    // cleared — stayed permanently empty: no `componentPackages`, so
+    // cleared — stayed permanently empty: no design system on disk, so
     // `design-system-components.md` never generated, while `CLAUDE.md` told
     // the agent to read it. Observed exactly that way, twice.
+    //
+    // DS-2 changed WHAT the heal writes: a `package.json` with no
+    // design-system dependency, plus the `designSystem: 'alm'` mark that makes
+    // Studio maintain the project's own `design-system/` folder from here on.
+    // The folder itself needs Studio's vendored copy, which DS-1 adds — so on
+    // a checkout without `vendor/alm-design-system/` the mark is written and
+    // the folder is not, which is exactly the degrade-honestly behaviour
+    // `ensureDesignSystemFiles` promises.
     rmSync(join(dir, 'package.json'))
     expect(existsSync(join(dir, 'package.json'))).toBe(false)
 
-    const result = generateStudioProjectGuide(dir)
+    generateStudioProjectGuide(dir)
 
     expect(existsSync(join(dir, 'package.json'))).toBe(true)
-    expect(result.written).toContain('.claude/design-system-components.md')
-    expect(read(dir, '.claude/design-system-components.md')).toContain("from '@alm-design/design-system'")
+    expect(read(dir, 'package.json')).not.toContain('alm-design')
+    expect(readStudioMeta(dir).designSystem).toBe('alm')
   })
 
   it('leaves a project that has its own package.json alone', () => {
@@ -327,6 +351,41 @@ describe('buildDesignSystemGuide', () => {
 
     writeFileSync(join(pkgDir, 'package.json'), JSON.stringify({ name: '@scope/ds', exports: { '.': './dist/index.js' } }), 'utf8')
     expect(buildDesignSystemGuide(pkgDir, '@scope/ds')!.importContract).not.toContain('.css')
+  })
+
+  /**
+   * DS-3 — the BUILT-IN design system is not a package and has no specifier
+   * that is true everywhere: it lives in a folder at the project root, so each
+   * file spells it by its own distance from there. The generator used to print
+   * the npm name, which now resolves to nothing from anywhere — and an agent
+   * follows a generated import line literally.
+   */
+  it('teaches a RELATIVE folder import for the built-in design system, never a package name', () => {
+    const contract = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!.importContract!
+    expect(contract).toContain("from '../design-system'")
+    expect(contract).toContain("'../../design-system'") // the rule, not just one example
+    expect(contract).not.toContain("from '@scope/ds'")
+    expect(contract).not.toContain("from 'alm'")
+    // The folder's index loads its own token CSS — no separate import to write.
+    expect(contract).not.toContain("import '")
+  })
+
+  it('tells the agent the folder is Studio-managed, so it is read but never hand-edited', () => {
+    const contract = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!.importContract!
+    expect(contract).toContain('never hand-edit')
+  })
+
+  it('does not hand out per-file icon paths for the built-in system, because the project has only a few of them', () => {
+    // Studio ships 568 SVGs; a project's copy carries the ~20 its own
+    // components import. Printing all of them as importable paths would be an
+    // instruction that fails on almost every one.
+    mkdirSync(join(pkgDir, 'src', 'icons', 'line-icons'), { recursive: true })
+    writeFileSync(join(pkgDir, 'src', 'icons', 'line-icons', 'wifi.svg'), '<svg/>', 'utf8')
+    const guide = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!
+    const rendered = renderIconReference(guide)!
+    expect(rendered).toContain('inline them, do not import them')
+    expect(rendered).toContain('wifi')
+    expect(rendered).not.toContain('?raw')
   })
 
   it('contributes nothing at all for a package that ships no docs', () => {
@@ -567,5 +626,74 @@ describe('generateStudioProjectGuide — design-system knowledge for a non-ALM p
     expect(guide).toContain('bundled-only-kit')
     expect(guide).toContain('could not be generated')
     expect(guide).toContain('studio_list_components')
+  })
+})
+
+/**
+ * `parser-13` — the design system a user installed can be a CRLF checkout, and
+ * a heading regex anchored with `$` matches NOTHING in one. That exact failure
+ * emptied Studio's OWN vendored manifest (`STATE.md` `server-24`); this is the
+ * same bug one directory over, in a package Studio does not control.
+ *
+ * The doc's bytes are written by the test, LF twin and CRLF twin, because this
+ * repository's working tree is CRLF-converted by Git on checkout.
+ */
+describe('buildDesignSystemGuide against a CRLF-checked-out package', () => {
+  const CLAUDE_MD_LINES = [
+    '# Kit',
+    '',
+    '## Components',
+    '',
+    '### Panel',
+    '',
+    '```jsx',
+    '<Panel tone="quiet" />',
+    '```',
+    '',
+    '### Ribbon',
+    '',
+    '```jsx',
+    '<Ribbon label="New" />',
+    '```',
+  ]
+  const DESIGN_MD_LINES = [
+    '# Kit intent',
+    '',
+    '## Component Decision Map',
+    '',
+    '| I want to… | Use |',
+    '|---|---|',
+    '| Group related controls | `Panel` |',
+    '',
+    '## Panel',
+    '',
+    'Panels group related controls.',
+  ]
+
+  function buildPackage(eol: string): string {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-ds-eol-'))
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: '@scope/kit', main: './dist/index.js' }), 'utf8')
+    writeFileSync(join(dir, 'CLAUDE.md'), CLAUDE_MD_LINES.join(eol), 'utf8')
+    writeFileSync(join(dir, 'design.md'), DESIGN_MD_LINES.join(eol), 'utf8')
+    return dir
+  }
+
+  it('reads the same guide out of a CRLF package as out of its LF twin', () => {
+    const lfDir = buildPackage('\n')
+    const crlfDir = buildPackage('\r\n')
+    try {
+      const lf = buildDesignSystemGuide(lfDir, '@scope/kit')!
+      const crlf = buildDesignSystemGuide(crlfDir, '@scope/kit')!
+
+      expect(crlf.components.map((c) => c.name)).toEqual(['Panel', 'Ribbon'])
+      expect(crlf.components.map((c) => c.name)).toEqual(lf.components.map((c) => c.name))
+      expect(crlf.components[0]!.summary).toBe('Panels group related controls.')
+      expect(crlf.decisionMap).toContain('`Panel`')
+      // No `\r` may survive into text the agent is shown.
+      expect(JSON.stringify(crlf)).not.toContain('\\r')
+    } finally {
+      rmSync(lfDir, { recursive: true, force: true })
+      rmSync(crlfDir, { recursive: true, force: true })
+    }
   })
 })

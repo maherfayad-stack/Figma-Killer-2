@@ -44,6 +44,7 @@ import { ProjectProfileSchema } from './projectProfileSchema'
 import { LastDeploySchema } from './deploySchema'
 import { RegisteredMcpServerSchema } from '@core/ai'
 import { FIDELITY_MODES, type FidelityMode } from './fidelityMode'
+import { DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 
 /**
  * The three trust tiers §0 of the V2 plan declares per project. Default:
@@ -71,14 +72,18 @@ const FrameDefaultsSchema = Type.Object({
 
 const FidelityModeSchema = Type.Union(FIDELITY_MODES.map((m) => Type.Literal(m)))
 
+/** A12's second axis — design-system adherence. Persisted exactly like fidelity mode, for the same reason: it cannot widen what the agent may do, only how hard its own source is graded. */
+const DesignPolicySchema = Type.Union(DESIGN_POLICIES.map((p) => Type.Literal(p)))
+
 const AgentEffortSchema = Type.Union([
   Type.Literal('low'), Type.Literal('medium'), Type.Literal('high'), Type.Literal('xhigh'), Type.Literal('max'),
 ])
 
-/** One account's session controls for this project. Two fields today — reasoning effort and W9-2's fidelity mode — and the shape any future per-user control arrives into. */
+/** One account's session controls for this project. Three fields today — reasoning effort, W9-2's fidelity mode and A12's design policy — and the shape any future per-user control arrives into. */
 const AgentSessionForUserSchema = Type.Object({
   effort: Type.Optional(AgentEffortSchema),
   fidelityMode: Type.Optional(FidelityModeSchema),
+  designPolicy: Type.Optional(DesignPolicySchema),
 })
 
 /**
@@ -108,6 +113,8 @@ const AgentSessionSchema = Type.Object({
   effort: Type.Optional(AgentEffortSchema),
   /** W9-2's per-project fidelity default, project-wide. Read as the fallback for an account with no `byUser` entry, exactly as the bare `effort` above is. */
   fidelityMode: Type.Optional(FidelityModeSchema),
+  /** A12's per-project design policy, same project-wide fallback role as `fidelityMode` above. */
+  designPolicy: Type.Optional(DesignPolicySchema),
   byUser: Type.Optional(Type.Record(Type.String(), AgentSessionForUserSchema)),
 })
 export type AgentSession = Static<typeof AgentSessionSchema>
@@ -136,6 +143,21 @@ export function readAgentSessionFidelityMode(meta: StudioMeta, userKey: string):
 }
 
 /**
+ * This account's persisted design policy for a project — tier 3 of
+ * `resolveDesignPolicy`'s precedence. Same own-entry-then-project-wide fold
+ * the two readers above use; `null` means the project has no saved default
+ * and `DEFAULT_DESIGN_POLICY` (`balanced`) answers instead.
+ *
+ * Safe to persist for the same reason fidelity mode is: clearing it lands on
+ * `balanced`, which asks for MORE design-system discipline than `free`, never
+ * less. No reset can hand a user a looser bar than the one they chose.
+ */
+export function readAgentSessionDesignPolicy(meta: StudioMeta, userKey: string): DesignPolicy | null {
+  const session = meta.agentSession
+  return session?.byUser?.[userKey]?.designPolicy ?? session?.designPolicy ?? null
+}
+
+/**
  * The `agentSession` patch that records ONE account's session controls,
  * preserving every other account's entry AND every control this call does not
  * mention. `mergeStudioMeta` merges shallowly (by design — it is one
@@ -150,7 +172,7 @@ export function readAgentSessionFidelityMode(meta: StudioMeta, userKey: string):
 export function withAgentSessionControls(
   meta: StudioMeta,
   userKey: string,
-  patch: { effort?: AgentSessionEffort | null; fidelityMode?: FidelityMode | null },
+  patch: { effort?: AgentSessionEffort | null; fidelityMode?: FidelityMode | null; designPolicy?: DesignPolicy | null },
 ): AgentSession {
   const session = meta.agentSession ?? {}
   const byUser = { ...(session.byUser ?? {}) }
@@ -163,6 +185,10 @@ export function withAgentSessionControls(
   if ('fidelityMode' in patch) {
     if (patch.fidelityMode) next.fidelityMode = patch.fidelityMode
     else delete next.fidelityMode
+  }
+  if ('designPolicy' in patch) {
+    if (patch.designPolicy) next.designPolicy = patch.designPolicy
+    else delete next.designPolicy
   }
   // An account that has cleared every control keeps no entry at all — an
   // empty object on disk claims a choice nobody made.
@@ -233,6 +259,25 @@ export const StudioMetaSchema = Type.Object({
   previewLocale: Type.Optional(Type.String({ minLength: 1 })),
   trust: Type.Optional(TrustTierSchema),
   /**
+   * DS-2 — this project is backed by Studio's built-in design system, so
+   * Studio maintains a `<project>/design-system/` folder in it
+   * (`./designSystemFiles.ts`). The WRITE-side authority: "New project" sets
+   * it, so does the retired-package migration, and nothing else ever does —
+   * which is what keeps an imported GitHub repository from having 600 KB of
+   * someone else's `.jsx` appear inside it on open.
+   *
+   * The READ-side check is `isDesignSystemBacked(dir)` (the folder is there),
+   * because "can a page import it" is a question about the folder, not about
+   * a flag. The two are deliberately different questions: a project can be
+   * flagged a moment before the folder exists, and a downloaded-then-reopened
+   * project can carry the folder with a meta that was never copied.
+   *
+   * One value today. A union rather than a boolean because the field names
+   * WHICH design system, and a second built-in would be a second literal
+   * rather than a second field.
+   */
+  designSystem: Type.Optional(Type.Literal('alm')),
+  /**
    * WS-2.1 consent — the user answered "not now" to the board's
    * `StyleCompileConsentBanner`, the first-run prompt that offers to run this
    * project's own Sass/PostCSS/Tailwind compiler (see
@@ -249,6 +294,31 @@ export const StudioMetaSchema = Type.Object({
    * question is about THIS repository, so the answer belongs beside it.
    */
   styleCompilePromptDismissed: Type.Optional(Type.Boolean()),
+  /**
+   * P8 / §6 decision 2 — Studio promoted this project to Tier 2
+   * (`run-project`) BY ITSELF, on first open, because it is a Vite project
+   * with a lockfile. The owner overrode the "promotion is always an explicit
+   * click" rule for exactly that case on 2026-09-17; see `CLAUDE.md`'s
+   * invariant 1 and `PROJECT-BRIEF.md` §2.
+   *
+   * Two fields rather than one, and both load-bearing:
+   *
+   *   - `trustAutoPromoted` records that the promotion's ORIGIN was Studio,
+   *     not a person. `trust` alone cannot answer "who decided this", and an
+   *     audit of a machine that runs a user's code has to be able to.
+   *   - `trustAutoPromotedAt` is the ONCE latch. Auto-promotion is offered
+   *     exactly once per project, ever: the notice's "Undo" writes `trust`
+   *     back to `static` and deliberately leaves BOTH of these in place, so
+   *     the next open sees a project that has already had its one automatic
+   *     promotion and leaves it alone. Clearing them on undo would re-promote
+   *     on the next load and make the undo a no-op with extra steps.
+   *
+   * Never written for an explicit user click — that stays a bare `trust`
+   * write, which is how the two origins stay distinguishable on disk.
+   */
+  trustAutoPromoted: Type.Optional(Type.Boolean()),
+  /** Epoch ms of the one automatic promotion. Presence is the latch — see {@link StudioMetaSchema}'s `trustAutoPromoted`. */
+  trustAutoPromotedAt: Type.Optional(Type.Number()),
   /**
    * Cached `ProjectProfile` probe result. A cache that no longer matches the
    * schema (an older profile shape, a hand-mangled file) fails validation and

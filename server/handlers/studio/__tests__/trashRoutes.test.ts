@@ -11,6 +11,11 @@
  * `STUDIO_WORKSPACE_DIR` points `projectsRootDir()` at a temp directory for
  * the duration of each case, exactly as the containment guards' own tests do,
  * so nothing here can see or move a real project.
+ *
+ * The auth half now runs where it actually runs in production: this module
+ * carries no `requireCapability` call of its own any more, so the two refusal
+ * cases drive `gateStudioRequest` — the dispatch gate `tryServeStudio` runs
+ * before any sub-router — and then assert the filesystem is untouched.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
@@ -20,14 +25,16 @@ import type { DbClient } from '../../../db/client'
 import { PROJECTS_TRASH_DIR_NAME } from '../projectDirGuard'
 import { trashStudioProject } from '../projectTrash'
 import { tryServeStudioTrashRoutes } from '../trashRoutes'
+import { gateStudioRequest } from '../routeGate'
 
 let root: string
 let previousWorkspaceDir: string | undefined
 
 /**
- * The gated routes reject an unauthenticated request inside
- * `requireAuthenticatedUser` before the `DbClient` is ever consulted, so a
- * stub that throws on use proves the gate ran rather than merely passing one.
+ * The gate rejects an unauthenticated request inside `requireAuthenticatedUser`
+ * before the `DbClient` is ever consulted (no session cookie → no hash → no
+ * lookup), so a stub that throws on use proves the refusal happened without a
+ * database round trip rather than merely passing one.
  */
 const unusedDb = new Proxy({} as DbClient, {
   get() {
@@ -54,17 +61,28 @@ function makeProject(folder: string): string {
   return dir
 }
 
-function serve(method: 'GET' | 'POST', pathname: string, body?: unknown) {
+function buildRequest(method: 'GET' | 'POST', pathname: string, body?: unknown): Request {
   const url = new URL(`http://localhost${pathname}`)
-  const req =
-    method === 'GET'
-      ? new Request(url)
-      : new Request(url, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify(body ?? {}),
-        })
-  return tryServeStudioTrashRoutes(req, { db: unusedDb }, url, url.pathname)
+  return method === 'GET'
+    ? new Request(url)
+    : new Request(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body ?? {}),
+      })
+}
+
+/** The route itself, past the gate — what `tryServeStudio` calls once a request is allowed. */
+function serve(method: 'GET' | 'POST', pathname: string, body?: unknown) {
+  const req = buildRequest(method, pathname, body)
+  const url = new URL(req.url)
+  return tryServeStudioTrashRoutes(req, url, url.pathname)
+}
+
+/** The gate, with a database that throws if anything touches it. */
+function gate(method: 'GET' | 'POST', pathname: string, body?: unknown) {
+  const req = buildRequest(method, pathname, body)
+  return gateStudioRequest(req, unusedDb, new URL(req.url).pathname)
 }
 
 describe('GET /admin/api/studio/trash', () => {
@@ -103,9 +121,10 @@ describe('the capability gate on the write routes', () => {
   it('refuses an unauthenticated restore without moving the project out of the trash', async () => {
     const entry = path.basename(trashStudioProject(root, makeProject('acme')))
 
-    const res = await serve('POST', '/admin/api/studio/trash/restore', { entry })
+    const res = await gate('POST', '/admin/api/studio/trash/restore', { entry })
 
-    expect(res!.status).toBe(401)
+    expect(res).toBeInstanceOf(Response)
+    expect((res as Response).status).toBe(401)
     expect(fs.existsSync(path.join(root, PROJECTS_TRASH_DIR_NAME, entry))).toBe(true)
     expect(fs.existsSync(path.join(root, 'acme'))).toBe(false)
   })
@@ -113,9 +132,10 @@ describe('the capability gate on the write routes', () => {
   it('refuses an unauthenticated purge without erasing anything', async () => {
     const entry = path.basename(trashStudioProject(root, makeProject('acme')))
 
-    const res = await serve('POST', '/admin/api/studio/trash/purge', { entry })
+    const res = await gate('POST', '/admin/api/studio/trash/purge', { entry })
 
-    expect(res!.status).toBe(401)
+    expect(res).toBeInstanceOf(Response)
+    expect((res as Response).status).toBe(401)
     expect(fs.existsSync(path.join(root, PROJECTS_TRASH_DIR_NAME, entry, 'pages', 'Home.tsx'))).toBe(true)
   })
 })

@@ -15,8 +15,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { existsSync } from 'fs'
 import { join } from 'path'
+import { readSource as readCachedSource, walkSourceTree } from './helpers/sourceTree'
 
 const ROOT = join(import.meta.dir, '../..')
 
@@ -25,7 +26,7 @@ function readSource(relative: string): string {
   if (!existsSync(path)) {
     throw new Error(`[arch] expected file does not exist: ${relative}`)
   }
-  return readFileSync(path, 'utf8')
+  return readCachedSource(path)
 }
 
 /** Recursively concatenate every `.module.css` in a folder (for token-usage gates). */
@@ -34,17 +35,10 @@ function readAllModuleCss(relativeDir: string): string {
   if (!existsSync(root)) {
     throw new Error(`[arch] expected directory does not exist: ${relativeDir}`)
   }
-  let combined = ''
-  function walk(dir: string) {
-    for (const entry of readdirSync(dir)) {
-      const full = join(dir, entry)
-      const st = statSync(full)
-      if (st.isDirectory()) walk(full)
-      else if (entry.endsWith('.module.css')) combined += readFileSync(full, 'utf8') + '\n'
-    }
-  }
-  walk(root)
-  return combined
+  return walkSourceTree(root, ['.css'])
+    .filter((file) => file.endsWith('.module.css'))
+    .map((file) => readCachedSource(file) + '\n')
+    .join('')
 }
 
 describe('architecture — framework typography & spacing engine', () => {

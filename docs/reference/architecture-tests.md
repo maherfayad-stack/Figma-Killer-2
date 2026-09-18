@@ -6,7 +6,7 @@ Catalog of every test in `src/__tests__/architecture/`. These are structural gat
 
 ## TL;DR
 
-- 105 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, Studio agent/MCP tools, router, content storage, boundary validation, module size, AI, auth, error handling, canvas/store performance, etc.
+- 107 gate files across structural domains: SQL, JSON columns, migrations, CSS, icons, primitives, page tree, sandbox, agent, Studio agent/MCP tools, router, content storage, boundary validation, module size, AI, auth, error handling, canvas/store performance, etc.
 - Naming convention: `<topic>.test.ts` (kebab-case) or `<group>-<topic>.test.ts`. A few legacy `task<N>-*` ids remain for live invariants; new gates should use topic names.
 - Run them all: `bun test src/__tests__/architecture/`.
 - Most are **import / source scans** — they parse the files in scope and assert / reject patterns. Some are unit-style (a small in-test database, a synthesized page tree).
@@ -46,7 +46,7 @@ See [docs/reference/database-dialects.md](database-dialects.md).
 
 | Test                                          | What it enforces                                                                 |
 |-----------------------------------------------|----------------------------------------------------------------------------------|
-| `no-vc-mode-branches-in-mutations.test.ts`    | The 11 store actions don't branch on `kind === 'visualComponent'`. Routing happens in `mutateActiveTree`. |
+| `no-vc-mode-branches-in-mutations.test.ts`    | The 13 named store actions don't branch on `kind === 'visualComponent'`. Routing happens in `mutateActiveTree`. `ACTION_PATHS` maps the ones that live outside `nodeActions.ts` (`groupActions.ts`, `visibilityActions.ts`). |
 | `visual-components-mutation-contract.test.ts` | VC tree mutations preserve the slot-instance / slot-outlet invariants.           |
 | `centralized-site-mutation-history.test.ts`   | Every mutation flows through one entry-point so undo / redo stays consistent.    |
 | `no-vc-in-site-shell.test.ts`                 | `SiteShellSchema` does not declare `visualComponents` / `pages`. They live in `data_rows`. |
@@ -103,10 +103,14 @@ See [docs/design.md](../design.md), [docs/reference/design-tokens.md](design-tok
 | `button-primitive-usage.test.ts`              | Bare `<button>` in `src/admin/` goes through the allowlist (with §8 justifications). |
 | `ui-primitives-location.test.ts`              | Primitives live in `src/ui/components/<Name>/`. Don't scatter them.              |
 | `no-native-browser-dialogs.test.ts`           | No `alert()`, `confirm()`, `prompt()`. Use `Dialog` / Toast.                     |
+| `toast-dedupe-default.test.ts`                | `pushToast` collapses by default: two pushes with the same `kind` + `title` + `body` and no `dedupeKey` are one toast with `repeatCount: 2`, rendered as `×N`. `dedupeKey: false` is the opt-out. Source-scans `resolveCollapseKey` so the default cannot silently revert to opt-in. |
 | `no-native-title-tooltips.test.ts`            | No `title=` for hover hints. Use `<Tooltip>`.                                    |
 | `no-third-party-icons.test.ts`                | No `lucide-react`, `heroicons`, etc. Only `pixel-art-icons`.                     |
 | `direct-icon-imports.test.ts`                 | Icons imported deep (`pixel-art-icons/icons/<name>`), not from the package root. |
 | `vendor-icons-fresh.test.ts`                  | The vendored icon set is up-to-date (run `bun run icons:sync`).                  |
+| `alm-design-system-fresh.test.ts`             | The vendored design system's committed artefacts match `vendor/alm-design-system/src/` (run `bun run alm:sync`). `dist/` is compared through `dist/BUILD_HASH`; `dist/tokens.generated.json` and `src/modules/alm/manifest.generated.json` byte-for-byte. |
+| `no-alm-npm-specifier.test.ts`                | The `@alm-design/design-system` npm is retired. Four rules: nothing under `src/`/`server/`/`scripts/` imports an `@alm-design/*` specifier; no manifest or `bun.lock` declares one; outside a comment only `server/handlers/studio/designSystemMigrate.ts` spells it (the migration that rewrites it); no live doc shows it as an import or a dependency entry. The string itself is NOT banned — ~50 files name it honestly in prose or in a fixture for an unmigrated project. |
+| `assets-search-coverage.test.ts`              | Every palette-visible `alm.*`/`base.*` module has a non-placeholder `description` and ≥ 3 `keywords`, every manifest component has a `group`, and a query→module probe table resolves unambiguously (`header` → `alm.Navbar`, `pill` → `alm.Chip`, …). |
 | `icon-catalog-integrity.test.ts`              | Every icon import resolves; the vendored package's index is consistent.          |
 | `close-icon-correctness.test.ts`              | Close affordances use the standard close icon glyph.                             |
 | `no-plugin-tab-shells.test.ts`                | `role="tablist"` is only allowed inside `src/ui/components/Tabs/` and a small §T-allowlisted set of pre-existing custom controls. Every other tablist in `src/admin/` or `src/editor/` must use `<Tabs>` / `<TabList>` from `@ui/components/Tabs`. |
@@ -125,7 +129,7 @@ See [docs/reference/ui-primitives.md](ui-primitives.md).
 | `component-system-placement.test.ts`          | Every VC insertion flow (toolbar picker, context menu) routes through `insertComponentRef`; Site Explorer must not expose a component-to-canvas drag source, and direct `insertNode`/`addNodeToVc` with `'base.visual-component-ref'` is forbidden in placement files. |
 | `task414-wrap-to-container.test.ts`           | Wrap-to-container action creates defaulted wrappers and preserves tree structure. |
 | `task427-preview-class-css.test.ts`           | Preview-class CSS injection matches publisher output.                            |
-| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag. |
+| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag, and every Studio panel / inspector tab / inspector section mounts a `PanelBoundary` (`panel-40`). |
 | `canvas-overlay-pointerdown.test.ts`          | No canvas overlay (comment popover, etc.) calls `event.stopPropagation()` in `onPointerDown`. `@use-gesture`'s `filterTaps` suppresses the following `click` for anything it classifies as a drag, at the React root — an overlay that swallows `pointerdown` first leaves use-gesture's tap state stale and it then eats every subsequent click in the canvas. Guard by target instead. |
 | `single-drag-mechanism.test.ts`               | `@dnd-kit/core` and native HTML5 `dataTransfer` DnD are each pinned to an explicit allowlist of the files that already use them (D2, `STUDIO-FIGMA-PARITY-PLAN.md`) — a new surface reaching for either fails the gate. Not yet a "one mechanism" assertion; see [docs/reference/canvas-dnd.md](canvas-dnd.md). |
 | `comment-selector-stability.test.ts`          | Every exported `select*` in `commentSelectors.ts` returns a stored reference or primitive, never a value built in the selector body (source scan for array-builder calls, plus a behavioural `===` re-invocation check) — a selector that mints a new array every read loops Zustand/React into "Maximum update depth exceeded". |
@@ -190,10 +194,12 @@ Studio's own in-canvas agent (`server/ai/tools/studio/`) and the `studio_*` MCP 
 | `ai-tool-schema-ssot.test.ts`                 | Site write-tool input schemas live once in `src/core/ai/toolSchemas.ts` (re-exported from `@core/ai`). Every registered tool's `inputSchema` is the exact object from `@core/ai` (referential identity check); consumer modules (`writeTools.ts`, `executor.ts`, `tokenRunners.ts`) import from `@core/ai` and do not redeclare local copies. |
 | `ai-driver-isolation.test.ts`                 | Provider SDKs (`@anthropic-ai/claude-agent-sdk`, `@openai/agents`, `@openrouter/agent`), `zod`, and `@anthropic-ai/sdk` are banned repo-wide with no allowed callers. `@modelcontextprotocol/sdk` is **scoped**: allowed only under `server/ai/mcp/` (the MCP server), banned everywhere else (drivers + browser). Drivers talk directly to each provider's REST API over HTTP/SSE and pass TypeBox schemas through as JSON Schema. `src/` and `server/` are both scanned. |
 | `ai-mcp-connectors-never-leak.test.ts`        | The MCP connector wire projection (`toConnectorView`) and `McpConnectorViewSchema` never expose the token or its hash. Mirrors `ai-credentials-never-leak.test.ts`. |
+| `no-unbounded-tool-loop.test.ts`              | Every file under `server/ai/drivers/` containing a `for (;;)` or `while (true)` names one of the two turn ceilings — `MAX_TOOL_ROUNDS` (`http/toolLoop.ts`) or `TOTAL_TURN_CAP_MS` (`claudeCliSpawn.ts`) — or is listed in the test's `STREAM_DRAIN_ALLOWLIST` with the reason it cannot run away (a `ReadableStream` drained to `done` re-issues no work). Also asserts both constants are still `export const` declarations, not merely mentioned in a comment. |
 | `ai-driver-shared-helpers.test.ts`            | Two cross-provider helpers must have exactly one source: (1) `parseToolArguments` is exported only from `server/ai/drivers/http/toolArgs.ts` — every driver imports it; private copies (`parseJsonOrEmpty`, etc.) are banned. (2) `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` is declared only in `server/ai/runtime/types.ts` — prompt builders and drivers import it. Divergent copies silently produce different error handling or break prompt caching per provider. |
 | `ai-handlers-capability-gated.test.ts`        | Every handler under `server/ai/handlers/` calls `requireCapability` or `requireAnyCapability` before doing work. Prevents unauthenticated access to AI endpoints. |
 | `ai-credentials-never-leak.test.ts`           | AI handler response bodies do not contain credential ciphertext or raw `apiKey` fields. Handlers must project through `toCredentialView()` before serialising a `CredentialRecord`. |
 | `ai-tools-typebox-only.test.ts`               | Every file under `server/ai/tools/` defines schemas with TypeBox, not Zod. Tool files satisfy the gate either by using TypeBox directly or by importing from `@core/ai` (the shared schema leaf). |
+| `failed-tool-result-drops-data.test.ts`       | All four renderers that hand a tool result to a model (`anthropic.ts`, `http/chatCompletions.ts`, `responses-shared.ts`, `mcp/server.ts`) reduce a FAILED result to `output.error` and drop `output.data`. That premise is what makes `duplicateCallOutput`'s and `toolRefusal`'s deliberate double-carry correct rather than redundant; when it stops holding, the failure names the serialised copy to delete. |
 
 See [docs/features/agent.md](../features/agent.md).
 

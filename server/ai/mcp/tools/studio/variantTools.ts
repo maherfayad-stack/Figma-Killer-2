@@ -34,12 +34,15 @@
  * stronger.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError } from '@core/ai'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
+import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET } from '../../../../handlers/studio/variantSeeds'
+import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
+import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import { getVariantSet, listVariantSets, recordVariantSet } from '../../../../handlers/studio/variantStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
@@ -87,6 +90,8 @@ const planVariantsTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   mutates: true,
+  headlessOnly:
+    'Nothing in the editor plans variants. The only thing this writes is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER agent turn can edit variant B\'s recorded density instead of re-rolling the set. The editor\'s own equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all, so there is no canvas action for this to be parity WITH.',
   requiredCapabilities: ['studio.write'],
   description:
     'Turn ONE brief into N genuinely different screens instead of one screen with a different accent colour. Returns a style seed per variant — type contrast, spacing density, corner family, accent — each value taken from a token THIS project already declares, and each axis assigned without replacement so the variants differ structurally rather than by chance. Use it whenever you are about to build a from-scratch screen and the brief has room for more than one idea: a model given the same brief three times returns the same composition three times, because nothing in the second prompt differs from the first; this is where the difference comes from. Each variant comes back with a `pageName` (Home -> HomeA/HomeB/HomeC) and a self-contained `directive` — send that directive VERBATIM as the subagent prompt for that variant, since a subagent sees only the text it is given. This tool PLANS: you still create the pages and place them on the board yourself (that is the orchestrator\'s job under the parallel-work rules, not a subagent\'s), then fan out one subagent per variant. The set is recorded in .studio/variants.json with its seed, so "make B but tighter" is an edit to B\'s recorded density rather than a re-roll that loses everything the user liked — read it back with studio_list_variant_sets. Type contrast never goes below the same 1.6 ratio studio_quality_check\'s flat-type-hierarchy rule grades against, so a seed can never propose a screen its own audit would then fail.',
@@ -102,8 +107,10 @@ const planVariantsTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
 
     if (!PAGE_BASE_NAME_RE.test(baseName)) {
-      return aiToolError(
-        `"${baseName}" is not usable as a page base name — it becomes a real .tsx file name, so it must start with a letter and contain only letters and digits (no spaces, dashes, dots or extension). Pass "Home", not "home page" or "Home.tsx".`,
+      return toolRefusal(
+        'invalid-input',
+        `"${baseName}" is not usable as a page base name — it becomes a real .tsx file name, so it must start with a letter and contain only letters and digits (no spaces, dashes, dots or extension).`,
+        { remedy: 'Pass "Home", not "home page" or "Home.tsx".' },
       )
     }
 
@@ -115,13 +122,18 @@ const planVariantsTool: AiTool = {
     try {
       const profile = resolveProjectProfile(dir)
       const compiled = await compileProjectStyles(dir, profile)
-      tokens = buildProjectTokenIndex(compiled.styles.vendorCss, compiled.styles.css)
+      tokens = buildProjectTokenIndex(builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css)
     } catch (err) {
       console.error('[studio_plan_variants] could not resolve the project profile / compile project styles:', err)
     }
 
     const seed = rngSeed ?? Math.floor(Math.random() * 0x7fffffff)
-    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed })
+    // A12 — the same policy the prompt block was built from, resolved through
+    // the same chain: this turn's value, else the project's persisted default,
+    // else `balanced`. Under `free` the seeds draw from an extended pool; under
+    // everything else they stay inside the project's own token space.
+    const designPolicy = ctx.designPolicy ?? resolveProjectDesignPolicy(dir, studioAgentUserKey(ctx.userId))
+    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed, designPolicy })
     const set = recordVariantSet(dir, { baseName, brief, rngSeed: seed, variants })
 
     return {
@@ -130,6 +142,7 @@ const planVariantsTool: AiTool = {
       setId: set.id,
       rngSeed: seed,
       baseName,
+      designPolicy,
       variants: set.variants,
       tokensIndexed: { colorCount: tokens.colors.length, sizeCount: tokens.fontSizes.length + tokens.lengths.length },
       note:
@@ -167,11 +180,11 @@ const listVariantSetsTool: AiTool = {
       const set = getVariantSet(dir, setId)
       if (!set) {
         const known = listVariantSets(dir).map((s) => `${s.id} (${s.baseName})`).slice(0, MAX_SETS_RETURNED)
-        return aiToolError(
-          known.length > 0
-            ? `No variant set "${setId}" is recorded for this project. Recorded sets: ${known.join(', ')}.`
-            : `No variant set "${setId}" is recorded for this project, and no set has been recorded at all yet — call studio_plan_variants first.`,
-        )
+        return toolRefusal('no-such-variant-set', `No variant set "${setId}" is recorded for this project.`, {
+          remedy: known.length > 0
+            ? `Recorded sets: ${known.join(', ')}.`
+            : 'No set has been recorded at all yet — call studio_plan_variants first.',
+        })
       }
       return { ok: true, dir, sets: [set] }
     }

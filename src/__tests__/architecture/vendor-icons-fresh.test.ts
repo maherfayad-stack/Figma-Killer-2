@@ -26,9 +26,10 @@
  */
 
 import { describe, it, expect } from 'bun:test'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
 import { spawnSync } from 'child_process'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join } from 'path'
+import { existsSync, readdirSync } from 'fs'
+import { join } from 'path'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const SRC_DIR = join(PROJECT_ROOT, 'src')
@@ -50,21 +51,12 @@ const VENDOR_PACKAGE_JSON = join(
 const SCAN_EXTS = new Set(['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs'])
 const IMPORT_RE = /from\s+["']pixel-art-icons\/icons\/([a-z0-9-]+)["']/g
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) walk(full, out)
-    else if (SCAN_EXTS.has(extname(entry))) out.push(full)
-  }
-  return out
-}
+const walk = (dir: string): string[] => walkSourceTree(dir, [...SCAN_EXTS])
 
 function collectImportedIcons(): Set<string> {
   const names = new Set<string>()
   for (const file of walk(SRC_DIR)) {
-    const source = readFileSync(file, 'utf8')
+    const source = readSource(file)
     if (!source.includes('pixel-art-icons/icons/')) continue
     let m: RegExpExecArray | null
     IMPORT_RE.lastIndex = 0

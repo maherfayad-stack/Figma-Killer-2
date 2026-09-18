@@ -19,10 +19,11 @@ import type { TemplateRenderDataContext } from '@core/templates/dynamicBindings'
 import { CanvasComposedTree } from './CanvasComposedTree'
 import {
   CanvasBreakpointContext,
-  CanvasDocumentContext,
+  CanvasFrameAdapterContext,
   CanvasFrameElementContext,
   CanvasTemplateContext,
 } from './CanvasContexts'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { IframeFrameSurface } from './IframeFrameSurface'
 import {
   CanvasPreviewReadinessContext,
@@ -84,7 +85,19 @@ export function AgentSnapshotFrame({
   )
 }
 
-/** Marks the host iframe after async preview data, fonts, and DOM settle. */
+/**
+ * Marks the host iframe after async preview data, fonts, and DOM settle.
+ *
+ * Portal-mode only: `settleCaptureDocument` needs a real `Document` (fonts,
+ * image loads, a DOM-settle `MutationObserver`) — reached through
+ * `CanvasFrameAdapterContext`'s `isPortalFrameAdapter`/`getPortalWindow()`
+ * escape hatch instead of the removed `CanvasDocumentContext` (`live-05`,
+ * STATE.md, Batch 7). `AgentSnapshotFrame` is an offscreen capture frame
+ * `CanvasRoot` always mounts in portal mode (no `documentMode` prop is ever
+ * passed), so this is not a new bridge-mode gap — snapshot capture of a
+ * cross-origin Tier 2 dev-server frame is a distinct, larger design question
+ * the MCP capture/agent-tooling work names but does not attempt here.
+ */
 function AgentSnapshotReadyMarker({
   requestId,
   previewReadiness,
@@ -92,8 +105,10 @@ function AgentSnapshotReadyMarker({
   requestId: string
   previewReadiness: CanvasPreviewReadiness
 }) {
-  const iframeDocument = use(CanvasDocumentContext)
+  const adapter = use(CanvasFrameAdapterContext)
   const iframe = use(CanvasFrameElementContext)
+  const iframeDocument =
+    adapter && isPortalFrameAdapter(adapter) ? (adapter.getPortalWindow()?.document ?? null) : null
 
   useEffect(() => {
     if (!iframeDocument || !iframe) return

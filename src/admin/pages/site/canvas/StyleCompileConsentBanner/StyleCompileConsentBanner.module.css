@@ -1,11 +1,7 @@
 /**
- * StyleCompileConsentBanner — bottom-centre floating consent card, untransformed
- * (viewport-anchored) canvas chrome.
- *
- * Bottom CENTRE is the one free slot on the board: top-left is CanvasModeToggle,
- * top-centre is CanvasNotch, bottom-left is BoardNotesToolbar. Same stacking tier
- * (53) as all three, so it sits above the transform layer and the selection
- * overlays and below floating panels and dialogs.
+ * StyleCompileConsentBanner — one card in the board's bottom-centre banner
+ * stack (`../BoardBanners/`), which owns the positioning and the stacking
+ * tier. This file owns only what the card looks like.
  *
  * `--warning` carries the meaning it carries everywhere else in this codebase
  * (see globals.css's canvas-comment-pin-stale note): not broken, but do not
@@ -13,10 +9,6 @@
  * toolchain is in.
  */
 .banner {
-    position: absolute;
-    bottom: var(--space-2xl);
-    left: 50%;
-    z-index: 53;
     display: flex;
     align-items: flex-start;
     gap: var(--space-s);
@@ -26,7 +18,7 @@
     border-radius: var(--panel-radius);
     background: var(--bg-surface);
     box-shadow: 0 6px 18px var(--scrim-30);
-    transform: translateX(-50%);
+    pointer-events: auto;
 }
 
 .icon {

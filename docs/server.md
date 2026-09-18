@@ -2,7 +2,9 @@
 
 Deep dive on the server-side of Studio — the Bun process, the router, the handlers, the auth model, the DB adapter, and how a request becomes a response.
 
-The server is a single `Bun.serve` process that boots the DB, runs migrations, activates installed plugins, then accepts HTTP requests and dispatches them through an ordered route table. There are no separate service processes or message queues. The runtime entrypoint is `server/index.ts`; CPU-heavy image variants and plugin server code run in `Bun.Worker`s owned by this process.
+The server is a single OS process, `server/index.ts`, that boots the DB, runs migrations, activates installed plugins, then accepts HTTP requests and dispatches them through an ordered route table on the admin `Bun.serve` listener. There are no separate service processes or message queues. CPU-heavy image variants and plugin server code run in `Bun.Worker`s owned by this process.
+
+That same process also starts a SECOND, independent `Bun.serve` listener — the live origin (`server/liveOrigin.ts`, on `LIVE_PORT`) — which proxies `/p/<projectKey>/*` (HTTP + WebSocket) to a Tier 2 project's own dev server. It is not a sub-router of the admin listener: no shared code path, no cookies in either direction, its own CSP. See "The live origin" below.
 
 ---
 
@@ -12,7 +14,7 @@ The server is a single `Bun.serve` process that boots the DB, runs migrations, a
 - **Router:** `server/router.ts` — ordered route table, first-match wins. Each route is a `tryServeX(req, runtime, url, pathname)` function returning `Response | null`.
 - **Studio's own server half** lives at `server/handlers/studio/` (~120 files: parse, filesystem writeback, git, trust tiers, capture) plus a handful of top-level `server/handlers/studio*.ts` entries, matched early via `tryServeStudio` (`/studio/*`). It is separate from the inherited CMS handlers below. The MCP server endpoint (`tryServeMcp`, `/_studio/mcp`) and headless agent capture (`tryServeAgentCaptureRoute`, `/admin/agent-capture` + `/admin/api/agent-capture/*`) are also matched early, each with its own non-session auth.
 - **CMS API:** every `/admin/api/cms/*` request goes through `server/handlers/cms/index.ts`, which runs a CSRF origin check and dispatches to per-resource handler groups.
-- **Auth:** session cookie (`SESSION_COOKIE_NAME`) → `findUserBySessionHash` → `requireCapability(req, db, 'site.read')`. Every state-changing handler starts with one of these guards.
+- **Auth:** session cookie (`SESSION_COOKIE_NAME`) → `findUserBySessionHash` → `requireCapability(req, db, 'site.read')`. Every state-changing CMS, AI, and plugin handler starts with one of these guards. The Studio namespace gates the same way but in one place rather than per handler — see "Per-request capability gating on the Studio routes".
 - **DB:** one `DbClient` interface (`server/db/client.ts`) — tagged-template callable returning `{ rows, rowCount }`. Two adapters: `postgres.ts` (via `Bun.sql`) and `sqlite.ts` (via `bun:sqlite`). Selected by `DATABASE_URL`.
 - **Repositories** (`server/repositories/`) hold all SQL. Handlers never write SQL directly.
 - **Plugins:** `server/plugins/runtime.ts` activates installed plugins at boot. Server entrypoints run in per-plugin Bun workers that host QuickJS-WASM (`server/plugins/pluginWorker.ts`, `server/plugins/host/workerPool.ts`, `server/plugins/quickjs/vm.ts`); module packs use `server/plugins/modulePackVm.ts` for server-side evaluation.
@@ -357,6 +359,81 @@ This is what keeps a capability-gated sensitive write to one session lookup: the
 
 Step-up is required by default with a 15-minute window, can be configured per user from Account -> Security, and can be disabled per user. The expiry lives on the session row as `step_up_expires_at` and is refreshed by `POST /admin/api/cms/auth/step-up`.
 
+### Per-request capability gating on the Studio routes
+
+**Every `/admin/api/studio/*` request passes one gate before any sub-router sees it.** That gate is `gateStudioRequest` in `server/handlers/studio/routeGate.ts`, called as the first statement of `tryServeStudio`. It answers four questions, in this order:
+
+1. **Is this a Studio path?** No → `null`, and the router continues down its table exactly as before.
+2. **Is the route declared?** `server/handlers/studio/routeCapabilities.ts` is the only place a Studio route exists. An undeclared path under `/admin/api/studio/` answers **404** here — before a sub-router runs, before `resolveProjectDir` touches the filesystem.
+3. **CSRF.** A state-changing method must carry an acceptable `Origin` (`originAllowed`), the same check `handleCmsRequest` and the AI dispatcher run. It runs **before** the session lookup, so a forged cross-origin POST costs a header comparison rather than a database round trip.
+4. **Capability.** `requireCapability` with the capability the declaration names for this method class.
+
+The `AuthUser` the gate resolves is handed to `STUDIO_SESSION_SUB_ROUTERS` in `StudioSessionRuntime`. **No Studio sub-router calls an auth helper of its own** — one policy, one place. A second `requireCapability` inside a handler is a second policy, and two policies drift.
+
+`tryServeStudio` also ends in a 404 rather than `null`: the gate has already proved the path is a declared Studio route, so falling through means no sub-router claimed that exact (path, method) pair, and letting an API path continue down the router table ends at `tryServeAdminApp` handing an API caller the admin SPA's HTML.
+
+#### The capability table
+
+`STUDIO_ROUTE_CAPABILITIES` declares two capabilities per route, chosen by method class rather than by path: `read` answers for GET/HEAD/OPTIONS, `mutate` for POST/PUT/PATCH/DELETE. `null` on either side means the route has no method of that class — the gate answers 404, which is what the sub-router would have done by falling through, only sooner.
+
+| Capability | Routes | Why |
+|---|---|---|
+| `site.read` | every read; plus `reload-scope` and the two `node-{png,jsx}` exports, which are POST-shaped reads | A Studio project's source is the document, and `site.read` means "may see the document" |
+| `studio.write` | `save`, `boards`, `framework`, `frame-defaults`, project create/rename/duplicate/delete/sample, `page`, `pages-dir`, trash restore/purge, `install`, both imports, the uploads, `extract-component`, `i18n-setup`, `translations`, `tokens`, `stories`, `prototype`, `design-system/migrate`, `preview-axes`, `component-bundle` | Changes the project's files |
+| `studio.run.project` | `dev-server/{start,stop}`, `deploy` (the POST that starts one), `trust-tier`, `style-compile-consent` | Makes Studio execute somebody's code — or hands out the right to. Trust promotion sits here deliberately |
+| `site.structure.edit` | every mutating `git/<action>`, plus `github/device/start`, `github/token`, and the GET `github/device/poll` | Rewriting the repository's history, and the GitHub credential the network verbs need |
+| `site.content.edit` | `comments`, `shares` | Collaboration about a design rather than a change to it — the **Client** role holds this and is meant to |
+
+##### Every entry is an exact path
+
+There are no namespace entries. `sec-14` shipped six (`git/`, `github/`, `install/`, `deploy/`, `dev-server/`, `prototype/`) on the premise that inheriting a namespace's capability fails closed, since the namespace's capability is the stricter one. `sec-16` showed that is **false for a GET**: an undeclared sub-path inherited `read`, which for all six was `site.read` — the capability the **Client** role holds. A future `GET dev-server/restart` or `GET deploy/run` would have let a read-only reviewer spawn a dev server or a build on a project already at the `run-project` tier, with no table edit for anyone to review. `sec-18` removed the mechanism: every reachable path is named, per verb class, and `/admin/api/studio/git/brand-new-verb` now 404s.
+
+The one shape an exact path cannot express is a job id, and it is declared explicitly. `jobId: { read, mutate }` on the `install` and `deploy` entries answers for `${path}/<id>` — matched **only** against the `crypto.randomUUID()` shape both registries mint, so `deploy/<uuid>` resolves and `deploy/run` does not.
+
+##### Two reads that spawn, and one GET that writes
+
+- `GET /admin/api/studio/load` runs the project's own style toolchain in a capped subprocess at Tier 1 (`styleCompileTier1.ts`), and writes two Studio-owned sidecars (`recordProjectOpened`, `syncStoryBoardFrames`). The boundary is a capability — a `studio.run.project` holder got this project off Tier 0 — and **not** a human consent, because a Vite project auto-promotes. See `docs/reference/capabilities.md` → "Two reads that spawn" for the full reasoning and what it deliberately does not claim.
+- `GET /admin/api/studio/component-bundle` does **not** spawn: it serves an already-built `.studio/cache/bundle-<hash>.js`. The `Bun.build` subprocess is on the **POST**, which is `studio.write`. (`sec-16` recorded this route as spawning at `site.read`; per-verb entries showed it was one verb off.)
+- `GET /admin/api/studio/github/device/poll` **writes a credential** — on `status === 'authorized'` it calls `storeToken`. It therefore declares `read: 'site.structure.edit'`, the same capability as the `device/start` that must precede it. Under the old `github/` namespace it took `site.read`.
+
+**Git is deliberately not gated on `studio.git.write`.** That capability gates the AGENT tool `studio_git_commit` and is withheld from the Admin role on purpose (see `docs/reference/capabilities.md`): a human clicking Commit performs their own act, while an agent committing is a *delegation* of that identity. Gating these routes on it would fuse the two — every Admin would lose the Version control panel, and the only way to give it back would be to grant the role the capability that also hands its agent commit rights.
+
+#### Adding a route
+
+Add the line to `STUDIO_ROUTE_CAPABILITIES`. There is nothing else to remember, and forgetting is not silent:
+
+- at runtime, an undeclared path 404s — the route is dead, not open;
+- at build time, `src/__tests__/architecture/studio-routes-capability-declared.test.ts` fails, naming the path and the dispatch site. It scans route MATCHES, not just path literals — `pathname === '<literal>'`, `pathname === CONST`, `` pathname === `${CONST}/suffix` ``, `action === '<literal>'` against the file's own prefix constant, and the job-id `` pathname.startsWith(`${CONST}/`) `` — because `gitSyncRoutes.ts` dispatches on `action === 'conflict/resolve'` and no `/admin/api/studio/…` literal for that path exists anywhere. It also fails on a declaration no handler serves, on a `jobId` marker with no matching dispatch, and on a **method class** the tree dispatches on that the table declares `null`.
+
+`server/handlers/__tests__/studioRouteGate.test.ts` then walks the real table and asserts, for every declared route, that an unauthenticated caller gets 401, an under-privileged session gets 403 `{ error: 'Forbidden' }`, and a cross-origin `text/plain` form POST gets 403 `{ error: 'Forbidden: invalid origin' }`. A new route is covered the moment its declaration lands.
+
+#### The posture is still single-operator
+
+Closing `sec-05` finding 2 was not the addition of a login flow. The **Owner** role holds every capability in the table — asserted by a test — so a default installation behaves exactly as it did. What changed is that an unauthenticated request no longer reaches the filesystem, and a cross-origin form POST no longer reaches a Studio write.
+
+Two things still protect a route below the gate, and both still matter:
+
+| Protection | Where | What it stops |
+|---|---|---|
+| Path containment | `resolveProjectDir` → `isRealpathContainedAllowingMissing` (`server/handlers/studioProjects.ts`); `ProjectDirOutsideWorkspaceError` becomes one 404 in the router's top-level catch (`server/router.ts`) | Reading or writing any path outside `studio-workspace/` |
+| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts`), called by `deploy.ts` and `devServer.ts`; `checkTrustTier` is its transport-free half, used by `deploy.ts`'s status route and by `studio_render_reference` | Running the user's project below `trust === 'run-project'` — a 409, not a 401. The capability answers "may this operator run project code"; the tier answers "may THIS project be run". Neither is sufficient alone |
+
+**The trust tier is read off the PROJECT directory, always.** `.studio/` is a
+project-directory sidecar — it is created where `resolveProjectDir` lands, it
+is in `EXCLUDED_WORKSPACE_DIR_NAMES`, and all ~60 `readStudioMeta` call sites
+key on it. A monorepo import whose real `package.json` sits at
+`<project>/apps/web` has `resolveAppRoot(dir) !== dir`, and
+`<project>/apps/web/.studio/meta.json` does not exist — so a gate keyed on the
+app root answers Tier 0 forever and the project can never be deployed. That was
+a live defect in `deploy.ts` (`sec-12`), fixed by giving `checkTrustTier` /
+`requireTrustTier` a `projectDir` parameter and moving `deployJobs.ts`'s
+`lastDeploy` record back to the project directory. The app root remains correct
+for everything that touches the project's **code** — the install cwd,
+`node_modules`, `vercel.json`/`netlify.toml` detection, the provider CLI's
+working directory — and is never correct for Studio's own sidecar.
+
+One related weakness is **not** closed by this work: `studio_render_reference` (`server/ai/mcp/tools/studio/referenceRender.ts`) reaches the dev server through the MCP tool surface, which has its own connector-capability model rather than this gate.
+
 ---
 
 ## Repositories
@@ -588,6 +665,111 @@ Three static handlers, in order:
 
 ---
 
+## The live origin
+
+`server/liveOrigin.ts` is a SECOND, independent `Bun.serve` listener, started from `server/index.ts` right after the admin listener boots (`startLiveOriginServer(config)`, on `LIVE_PORT`/`config.livePort`). It proxies `/p/<projectKey>/*` (HTTP + WebSocket) to a Tier 2 project's own dev server so a live-running project can be framed on the canvas without ever exposing the admin session to that project's code.
+
+It is deliberately **not** a route on the admin `Bun.serve` — a same-origin proxy would attach the admin session cookie to every request the user's own dependencies make. The live origin is a different TCP socket with its own header policy:
+
+- `Cookie` is stripped from every inbound request before it reaches the upstream dev server; `Set-Cookie` is stripped from every upstream response before it reaches the client. Unconditional, not upstream-behavior-dependent — `stripHopByHopAndCookies` / `stripSetCookie`.
+- `Host` is rewritten to the upstream dev server's own authority (never the client's `Host`), because Vite 7 rejects a Host it doesn't recognize.
+- Every response carries `Content-Security-Policy: frame-ancestors <PUBLIC_ORIGIN...>; frame-src 'none'` (or `'none'` if `PUBLIC_ORIGIN` is unconfigured — fails closed) and `X-Content-Type-Options: nosniff`. No `X-Frame-Options` (no multi-origin form).
+- `projectKey` is looked up against `server/handlers/studio/devServer.ts`'s `getDevServerStatus(projectKey)` (an in-memory, per-process registry L1 owns — see that file). An unknown key is a `404 { code: 'unknown-project' }`; a project whose dev server isn't `phase: 'ready'` is a `503 { code: 'not-ready', phase }`, checked on every proxied request (and re-checked immediately before a WebSocket upgrade) — not once per page load. Trust-tier gating (`trust === 'run-project'`) happens in L1's `ensureDevServer`; the live origin trusts a `ready` phase as sufficient authorization and does not re-read `.studio/meta.json` itself.
+- WebSocket/HMR traffic is terminated and bridged, not tunneled: Bun can't forward a WS handshake through `fetch`, so the live origin calls `server.upgrade` on the browser's socket and opens its own outbound `WebSocket` to the upstream, relaying messages both ways.
+
+`GET /admin/api/studio/live-origin` (`server/handlers/studio/liveOriginInfo.ts`, admin-origin, no project param) returns `{ liveOrigin: string | null }` — the origin the client should target for the frame `src` / postMessage checks, `null` if the listener failed to bind at boot.
+
+Architecture gate: `src/__tests__/architecture/live-origin-isolation.test.ts` asserts `server/liveOrigin.ts` never imports `server/router.ts` or `server/auth/security.ts`, never writes `Set-Cookie`, and that `startLiveOriginServer` has exactly one production call site.
+
+Env vars: `LIVE_PORT` (default `port + 1`) and `LIVE_ORIGIN` (default `http://localhost:${LIVE_PORT}`; self-hosted/tunneled deployments must set it explicitly, exactly like `PUBLIC_ORIGIN` — see `docs/deployment/README.md`).
+
+---
+
+## The project's design-system folder
+
+Studio's design system is **not an npm dependency of the user's project**. Every DS-backed project carries a Studio-written `<project>/design-system/` folder, and its pages import it relatively (`import { Button } from '../design-system'`). That is what makes "Download the code" honest: `node_modules/` never ships, so a synthesized `package.json` naming a design-system package produced a zip that could not `bun install`. With the folder, the export builds with `react`, `react-dom`, `vite` and `@vitejs/plugin-react` and nothing else.
+
+- `server/handlers/studio/builtinDesignSystem.ts` — the three shared declarations: `BUILTIN_DESIGN_SYSTEM_DIR` (Studio's own vendored copy at `vendor/alm-design-system/`), `PROJECT_DESIGN_SYSTEM_DIR` (`'design-system'`), and `isDesignSystemBacked(dir)` — the READ-side check every consumer uses (the folder has an `index.js`).
+- `server/handlers/studio/designSystemFiles.ts` — `ensureDesignSystemFiles(dir)`, called from `loadStudioPages` beside `ensurePrototypeShell` and from `buildStudioDownloadResponse`. Writes the vendored `src/` into the folder, including **only** the `icons/**/*.svg` a component or `LineIcons.jsx` actually imports (≈20 of 568, read statically with a regex — nothing is executed at any trust tier). Idempotent by a SHA-256 of the whole source set recorded in `.studio/design-system.json` (`{ version, hash, files }`); a matching hash writes nothing, a differing one rewrites in place and removes the files that left the source set. Nothing outside `<project>/design-system/` and that one sidecar is ever touched, the delete list is the manifest's own `files` array, and every read and write is containment-checked on its **real** path. Never throws.
+- The WRITE-side authority is `.studio/meta.json`'s `designSystem: 'alm'` — set by `POST /admin/api/studio/create` (via `projectSeed.ts`) and by the migration route, never by a GitHub import. An imported repository does not get 600 KB of someone else's `.jsx` because it was opened.
+
+### `GET/POST /admin/api/studio/design-system/migrate`
+
+`server/handlers/studio/designSystemMigrate.ts` — moving a project that still imports the retired `@alm-design/design-system` npm.
+
+| | |
+|---|---|
+| `GET ?dir=<abs>` | `{ declaresDependency, hasInstalledCopy, importsRetiredPackage, designSystemBacked }`. Two cheap reads (the manifest, one `existsSync`) because the board asks on every open — deliberately not a walk of every source file. |
+| `POST { dir? }` | `{ filesRewritten, importsRewritten, removedDependency }`. Marks the meta → writes the folder → rewrites every import with `rewriteImportSpecifier` (formatting-preserving ts-morph) → drops the dependency from `package.json` keeping its formatting and every other key → deletes `node_modules/@alm-design/design-system` and its now-empty scope directory. |
+
+The delete is the one in this feature, and its guard is stated where it happens: the path is derived server-side, must pass `isRealpathContained(target, dir)` (containment after every symlink in the chain resolves), and a target that is itself a symlink is refused rather than followed. Failures use the `{ error }` envelope; a `dir` outside `studio-workspace/` is the router's 404 via `resolveProjectDir`.
+
+**POST never runs on load.** The board offers it through `DesignSystemMigrateBanner` and the user clicks — a rewrite of someone's source is a user action, the same rule trust promotion follows.
+
+---
+
+## Landing an image the user dropped on the canvas
+
+`POST /admin/api/studio/asset-drop` (`server/handlers/studio/assetDrop.ts`) —
+D2 G15's write. It is the second of two routes that put an image byte buffer
+into a project, and the difference between them is worth stating precisely
+because it is NOT a security difference:
+
+| | `asset-upload` (WS-8.3) | `asset-drop` (D2 G15) |
+|---|---|---|
+| Who says where the file goes | the caller, via `targetDir` | the SERVER, always `public/` |
+| What reads it afterwards | an `import heroImg from '…'` the caller is about to repoint | a literal `<img src="/photo.png">` Studio is about to write |
+| Traversal surface | a client string, guarded by `resolveAssetWriteDir` | none — the directory is a constant |
+
+Everything else is one shared pipeline and is not duplicated: the body is
+capped by **streamed byte count** (`readFormDataWithLimit`, so a spoofed
+`content-length` cannot bypass it), the **bytes** decide the format and the
+written extension (`sniffImageExtension` — never the filename or the declared
+MIME), SVG is sanitised before it touches disk, the filename is derived rather
+than trusted, a collision gets a numeric suffix rather than clobbering, and
+containment is checked on the **real** path of the nearest existing ancestor.
+All of it lives in `assetLanding.ts`.
+
+**Why `public/` is the only answer.** It is the one directory every framework
+the probe recognises (Vite, CRA, both Next routers, Remix, Astro) serves
+verbatim from the site root, so the file is reachable at `/<name>` in dev and
+in a production build alike — one literal, one honest target, no import.
+`src/assets/` cannot be used here: under every one of those bundlers a file
+there is only reachable through an `import` the bundler rewrites to a hashed
+URL, so a literal path works in `vite dev` and 404s in production, and
+`<img src={photo}>` would be TWO edits in two places. A missing `public/` is
+created only for a project whose framework declares the convention; for
+`framework: 'unknown'` the route answers **409** with the remedy
+("create a public/ folder") rather than guessing.
+
+Response: `{ ok: true, relPath, src }` — `relPath` is workspace-relative
+(`public/photo.png`, or `apps/web/public/photo.png` in a monorepo) and `src` is
+the literal the `<img>` gets (`/photo.png` in both cases: the app root is where
+the app lives on disk and the browser never sees it).
+
+**Who may ask** (`sec-17`, `sec-14`). One line in `routeCapabilities.ts` —
+`{ path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' }`
+— and nothing in the handler. `gateStudioRequest` therefore answers both
+questions **before the body is read**, which is the point: an unauthorised
+caller must not cost 25 MB of server memory, and a forged request must not
+reach the filesystem at all.
+
+- **CSRF.** A multipart POST is a shape a plain cross-origin `<form>` can send
+  with no JavaScript and no preflight, so without it any page the user has open
+  in another tab could land a file of its choosing in the project they are
+  editing. A bare **403** that names nothing on disk.
+- **`studio.write`** — the capability `/delete`, `/duplicate` and the trash
+  writes carry. **401** with no session, **403** without the capability.
+
+`sec-17` found this route unauthenticated and added an inline `originAllowed` +
+`requireCapability` pair, because the base it reviewed had no table to declare
+into; integration replaced that pair with the declaration and moved the
+sub-router back onto the plain `STUDIO_SUB_ROUTERS` list, since it no longer
+needs the `DbClient`. `asset-upload` and `/save` are declarations in the same
+table now, so the asymmetry `sec-17` recorded is gone.
+
+---
+
 ## Adding a new endpoint
 
 1. **Pick the right layer.**
@@ -626,6 +808,50 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
 
 ---
 
+## Line endings — subprocess output
+
+Studio runs other people's command-line tools on the user's machine: `git`,
+`bun`/`npm`/`pnpm`, `tsc`, `vercel`, `netlify`, the project's own dev server,
+the `claude` CLI. **On Windows those tools print CRLF.** A `text.split('\n')`
+leaves a `\r` glued to the end of every line, and the damage lands on whatever
+the LAST field of that line happens to be — which is silent: no throw, no log,
+just a value that compares unequal to the one it should equal.
+
+Three real instances, all fixed:
+
+| Read | What the `\r` did |
+|---|---|
+| `for-each-ref` `%(HEAD)` (`parseGitBranchRefs`) | `head === '*'` false for every branch → the panel reports no current branch |
+| `log --format=…%x1e` (`parseGitLogRecords`) | the record separator's own newline is `\r\n`, `/^\n/` misses it, every sha after the first is 41 characters |
+| `tsc --pretty false` (`parseTscDiagnostics`) | the header pattern ends `(.*)$`, and `.` does not match `\r` |
+
+**The rule:** any file under `server/` that reads captured subprocess output
+cuts it with `splitLines` — or normalises it with `toLf` before an `/m`-anchored
+regex — from `@core/utils/lineEndings`, the same pure-string leaf the parser
+uses for the user's source files. Never a bare `'\n'` split, and never a
+hand-rolled `.replace(/\r$/, '')` at one call site. Gated by
+`src/__tests__/architecture/subprocess-output-line-endings.test.ts`, which
+scans every file that imports a subprocess runner plus the named pure parsers
+(`gitOutputParse.ts`, `tscDiagnostics.ts`, `deployProviders.ts`).
+
+Two things the rule deliberately does not cover:
+
+- **Incremental NDJSON framing over a live stream** (`claudeCliSpawn.ts`,
+  `claudeCliWarmSession.ts`, which frame on `buffer.indexOf('\n')`). You cannot
+  `splitLines` a stream that has not finished arriving, and both hand each
+  framed line to `JSON.parse`, for which a trailing `\r` is legal whitespace.
+- **`devServer.ts`'s URL discovery**, which matches `URL_PATTERN` against raw
+  CHUNKS rather than lines. Its tail is `[^\s"'<>]*` and `\r` is `\s`, so the
+  carriage return can never be swallowed into the host. Asserted by a CRLF
+  transcript test rather than assumed.
+
+Writing `'\n'` is untouched — Studio emits LF, always. Only reads are
+constrained. Line endings inside the USER's own source files are a different
+(and larger) contract: see
+[docs/features/studio-import.md](features/studio-import.md).
+
+---
+
 ## Related
 
 - [docs/architecture.md](architecture.md) — system overview
@@ -638,6 +864,8 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
   - `server/router.ts` — request dispatch
   - `server/handlers/studio/` — Studio's own server half (parse, writeback, git, trust tiers, capture)
   - `server/handlers/studio/trustTier.ts` — reads/writes `.studio/meta.json`'s `trust` field (`static` | `render-packages` | `run-project`)
+  - `server/handlers/studio/designSystemFiles.ts` — writes `<project>/design-system/` from Studio's vendored copy; `designSystemMigrate.ts` — `GET/POST /admin/api/studio/design-system/migrate`
+  - `server/handlers/studio/devServer.ts` — Tier-2-gated dev-server process manager (`/admin/api/studio/dev-server/{status,start,stop}`), one reused idle-timed subprocess per project, shared by the MCP `studio_render_reference` tool and the client prewarm hook (Track L, `live-01`)
   - `server/ai/mcp/capture/captureRoute.ts` — headless agent capture (`/admin/agent-capture`, `/admin/api/agent-capture/*`)
   - `server/ai/mcp/` — the `/_studio/mcp` MCP server endpoint for external AI clients
   - `server/http.ts` — JSON / error HTTP helpers

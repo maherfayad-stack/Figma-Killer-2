@@ -23,7 +23,7 @@
  */
 import { existsSync, readdirSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { findSandboxLiterals } from '@core/plugins/sandboxScan'
 import { parsePluginManifest } from '@core/plugins/manifest'
 import { readPluginDefinition } from './build'
@@ -47,6 +47,19 @@ export interface LintResult {
 }
 
 const SANDBOXED_ENTRYPOINTS: ReadonlyArray<'server' | 'modules'> = ['server', 'modules']
+
+/**
+ * `file` relative to the plugin source root, always with `/` separators.
+ *
+ * Plugin paths are POSIX by definition — the manifest declares `server/index.ts`,
+ * `frontend/panel.js` and so on, and every other `LintFinding.file` in this
+ * module is a POSIX literal. Only the source scan built its value by slicing an
+ * OS path, so on win32 it reported `server\index.ts` into a finding a plugin
+ * author reads.
+ */
+function toPosixRelative(file: string, root: string): string {
+  return relative(root, file).split(sep).join('/')
+}
 
 /**
  * Run all lint checks for a plugin source directory. Throws on a corrupt
@@ -258,7 +271,12 @@ export async function lintPlugin(sourceDir: string): Promise<LintResult> {
           severity: 'error',
           scope: `source:${kind}`,
           message: `references forbidden sandbox literal \`${offender.literal}\` — plugin code can't reach Node/Bun runtime APIs. Use the SDK instead.`,
-          file: file.slice(absoluteSource.length + 1),
+          // POSIX, like every other `file` this module reports (the manifest's
+          // own `script`/`style`/entrypoint paths, `dist/<kind>/index.js`,
+          // `studio-plugin.config.ts`). A bare slice of an OS path leaked
+          // win32's `\` into a finding a plugin author reads and into the
+          // manifest's own path vocabulary, which is `/` everywhere else.
+          file: toPosixRelative(file, absoluteSource),
         })
       }
     }

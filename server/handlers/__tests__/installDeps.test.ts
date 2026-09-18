@@ -17,7 +17,6 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import {
-  detectPackageManager,
   getInstallJob,
   probeInstallStatus,
   resolveInstallJobStatus,
@@ -27,9 +26,12 @@ import {
   type InstallSpawnedProcess,
   type PublicInstallJob,
 } from '../studio/installDeps'
+import { detectPackageManager } from '../studio/packageManager'
+import { readStudioMeta } from '../studio/studioMeta'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
+import { isProjectWriteLocked } from '../studio/projectWriteLock'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
 
 // ---------------------------------------------------------------------------
@@ -589,8 +591,35 @@ describe('install job durability (.studio/install-job.json)', () => {
     expect(doneRecord?.log).toContain('ok')
   })
 
+  it('writes the sidecar at the PROJECT root on a monorepo, never inside the app it installs in', async () => {
+    // `sec-15`'s informational, closed. `resolveAppRoot` walks to the nested
+    // `package.json`, so the install SPAWNS in `<project>/apps/web` — and
+    // before `sec-18` that is where the record went, creating a second
+    // `.studio/` directory inside the user's own git-tracked application.
+    const appRoot = path.join(tmpDir, 'apps', 'web')
+    fs.mkdirSync(appRoot, { recursive: true })
+    fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'web' }), 'utf8')
+
+    const { spawn } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0, stdout: 'ok' }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+    await waitForSettle(jobId)
+
+    // Neither the job record NOR the post-install profile re-probe may put a
+    // `.studio/` inside the user's own application.
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
+    expect(readStudioMeta(tmpDir).profile).toBeDefined()
+    const record = readInstallJobFile(tmpDir)
+    expect(record?.id).toBe(jobId)
+    // The record still NAMES the app root — that is where the package manager
+    // ran, and it is what a poller asked about.
+    expect(record?.dir).toBe(path.resolve(appRoot))
+    // …and the route's own by-id fallback finds it from the PROJECT dir.
+    expect(resolveInstallJobStatus(jobId, path.resolve(tmpDir))?.id).toBe(jobId)
+  })
+
   it('resolveInstallJobStatus resolves an orphaned persisted "running" record — no matching in-memory job, simulating a server restart — to "interrupted", never a phantom "running"', () => {
-    writeInstallJobFile(orphanRecord({ pid: 424242 }))
+    writeInstallJobFile(tmpDir, orphanRecord({ pid: 424242 }))
 
     const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
     expect(resolved?.status).toBe('interrupted')
@@ -602,7 +631,7 @@ describe('install job durability (.studio/install-job.json)', () => {
   })
 
   it('resolveInstallJobStatus leaves an already-terminal persisted record untouched', () => {
-    writeInstallJobFile(orphanRecord({ status: 'done', exitCode: 0, finishedAt: Date.now(), warnings: ['pre-existing'] }))
+    writeInstallJobFile(tmpDir, orphanRecord({ status: 'done', exitCode: 0, finishedAt: Date.now(), warnings: ['pre-existing'] }))
 
     const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
     expect(resolved?.status).toBe('done')
@@ -610,12 +639,12 @@ describe('install job durability (.studio/install-job.json)', () => {
   })
 
   it('resolveInstallJobStatus returns null when the id matches neither memory nor what is persisted at dir', () => {
-    writeInstallJobFile(orphanRecord({ id: 'some-other-job', status: 'done' }))
+    writeInstallJobFile(tmpDir, orphanRecord({ id: 'some-other-job', status: 'done' }))
     expect(resolveInstallJobStatus('completely-unknown-id', path.resolve(tmpDir))).toBeNull()
   })
 
   it('probeInstallStatus surfaces the persisted job, resolving an orphaned "running" record honestly', () => {
-    writeInstallJobFile(orphanRecord({ packageManager: 'npm', log: 'installing…' }))
+    writeInstallJobFile(tmpDir, orphanRecord({ packageManager: 'npm', log: 'installing…' }))
 
     const status = probeInstallStatus(tmpDir)
     expect(status.job?.id).toBe('orphan-job-id')
@@ -703,7 +732,7 @@ describe('tryServeStudioInstall', () => {
     fs.mkdirSync(root, { recursive: true })
     const insideDir = fs.mkdtempSync(path.join(root, '__installdeps_test_durable_'))
     try {
-      writeInstallJobFile({
+      writeInstallJobFile(insideDir, {
         id: 'restart-sim-job',
         dir: path.resolve(insideDir),
         packageManager: 'bun',
@@ -736,5 +765,66 @@ describe('tryServeStudioInstall', () => {
     const res = await tryServeStudioInstall(req, url, pathname)
     expect(res).not.toBeNull()
     expect(res!.status).toBe(404)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// The project write lock (G7)
+// ---------------------------------------------------------------------------
+
+describe('startInstallJob — the project write lock', () => {
+  let projectDir: string
+
+  beforeEach(() => {
+    const root = projectsRootDir()
+    fs.mkdirSync(root, { recursive: true })
+    projectDir = fs.mkdtempSync(path.join(root, '__installdeps_lock_test_'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(projectDir, { recursive: true, force: true })
+  })
+
+  it('holds the lock for the duration of the subprocess, and releases it after', async () => {
+    fs.writeFileSync(path.join(projectDir, 'package.json'), '{"name":"flat"}')
+    const { proc } = makeFakeProcess({ hangUntilKilled: true })
+    const { spawn } = makeSpawnSpy(() => proc)
+
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
+    const jobId = startInstallJob(projectDir, { spawn, ...makeInertTimer() })
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+    expect(isProjectWriteLocked(projectDir)).toBe(true)
+
+    proc.kill()
+    await waitForSettle(jobId)
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
+  })
+
+  /**
+   * The app root is where the package manager RUNS; the project directory is
+   * what every other writer — a canvas save, a page scaffold, a git verb —
+   * locks on. For a monorepo those are different directories, so keying the
+   * install on the app root would give it a lock of its own and serialize it
+   * against nothing, leaving the `git add` → install → `git commit` race wide
+   * open on exactly the projects whose installs take longest.
+   */
+  it('locks the PROJECT even when the app root is a subdirectory of it', async () => {
+    const appRoot = path.join(projectDir, 'apps', 'web')
+    fs.mkdirSync(appRoot, { recursive: true })
+    fs.writeFileSync(path.join(appRoot, 'package.json'), '{"name":"web"}')
+
+    const { proc } = makeFakeProcess({ hangUntilKilled: true })
+    const { spawn, calls } = makeSpawnSpy(() => proc)
+    const jobId = startInstallJob(projectDir, { spawn, ...makeInertTimer() })
+    for (let i = 0; i < 20; i++) await Promise.resolve()
+
+    // The subprocess really did run in the nested app root — otherwise this
+    // test would pass for the wrong reason.
+    expect(normalize(calls[0]!.cwd)).toBe(normalize(appRoot))
+    expect(isProjectWriteLocked(projectDir)).toBe(true)
+
+    proc.kill()
+    await waitForSettle(jobId)
+    expect(isProjectWriteLocked(projectDir)).toBe(false)
   })
 })

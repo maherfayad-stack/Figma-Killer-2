@@ -47,6 +47,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { isStructuralEditKind, StructuralEditSchemas } from './studioStructuralWriteback'
+import type { CreatedJsxLocation } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -317,6 +318,38 @@ export interface StudioEditApplyOutcome {
   createdStylesheet?: { file: string }
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
+  /**
+   * `store-13` — the tag-name `line:col` of the element this edit brought into
+   * existence (`insert`/`duplicate`/`wrap`/`group`), measured against the file
+   * as it stands the moment that edit finished. Absent for every kind that
+   * creates nothing, and `null` when the codemod wrote but could not confirm
+   * the position. A LOCATION, not a node id: minting the id needs the
+   * workspace-relative path and the batch's final line count, and both are
+   * `applyStudioEditBatch`'s to know — see `StudioEditBatchResult.createdNodeIds`.
+   */
+  created?: CreatedJsxLocation | null
+  /**
+   * Which node id's FILE `created` is measured against, when that is not this
+   * edit's own. Only `transplant` (D2 G3) sets it: the element it creates
+   * lands in the DESTINATION's file, so minting the id off `edit.nodeId` — the
+   * origin — would name a position in the file the markup just LEFT.
+   */
+  createdIn?: string
+  /**
+   * `store-14` — the tag-name `line:col` of every element this edit MOVED,
+   * measured the same way `created` is. A relocation creates nothing, so it
+   * has no `created`; but `move`/`reparent`/`ungroup` are exactly the kinds
+   * whose node ids change, which is why the board used to lose its selection
+   * across one and why their own undo has nothing to address without this.
+   * An `ungroup` reports several — its children all move at once.
+   */
+  relocated?: readonly CreatedJsxLocation[]
+  /**
+   * Which node id's FILE `relocated` is measured against, when that is not
+   * this edit's own. Only `transplant` sets it, for `createdIn`'s reason: a
+   * MOVE across frames lands in the destination's file.
+   */
+  relocatedIn?: string
 }
 
 /**
@@ -334,6 +367,17 @@ export interface StudioEditRefusal {
     | 'move'
     | 'delete'
     | 'insert'
+    | 'duplicate'
+    | 'wrap'
+    | 'reparent'
+    // D2 G3 — the cross-file move. Refuses for two reasons only the AST can
+    // see (`captured-scope`, `binding-conflict`) on top of everything a
+    // same-file reparent can.
+    | 'transplant'
+    // K3 — ⌘G on a run of siblings, and ⌘⇧G. Both refuse for reasons only the
+    // AST can see (`not-contiguous`, `mixed-indentation`, `has-behaviour`).
+    | 'group'
+    | 'ungroup'
     | 'css'
     | 'class'
     | 'style'
@@ -448,4 +492,38 @@ export interface StudioEditBatchResult {
    * not a bug.
    */
   touchedFiles: string[]
+  /**
+   * `store-13` — the node id of every element this batch CREATED
+   * (`insert`/`duplicate`/`wrap`/`group`), in the order the batch wrote them.
+   * The plain `rel:line:col` shape the parser will mint for the same element
+   * on the next read, so the editor can select what a structural gesture just
+   * made once the board has re-synced (`keys-01`'s K7 follow-up: until this
+   * existed, ⌘D on a source-backed project left the ORIGINAL selected, because
+   * the copy had no id the client could name).
+   *
+   * Empty when nothing was created, and an edit whose position could not be
+   * confirmed against the re-parsed file contributes nothing rather than a
+   * guess — a wrong id would select, and then let the user edit, an element
+   * they never made.
+   */
+  createdNodeIds: string[]
+  /**
+   * `store-14` — the node id every element this batch MOVED now has
+   * (`move`/`reparent`/`ungroup`, and a `transplant` that moved rather than
+   * copied), in the order the batch wrote them, in the same plain
+   * `rel:line:col` shape as `createdNodeIds`.
+   *
+   * The counterpart `store-13` left open: a relocation creates nothing, so it
+   * reports no `createdNodeIds`, and until this existed the board dropped its
+   * selection every time a drag reordered or reparented an element — the moved
+   * node's own id had changed and nothing said what it became. It is also what
+   * the family's undo addresses: the inverse of an ungroup is a group around
+   * the children it released, and the inverse of a cross-frame move is a
+   * transplant of the element back.
+   *
+   * Empty when nothing moved; an edit whose new position could not be
+   * confirmed against the re-parsed file contributes nothing rather than a
+   * guess, exactly as `createdNodeIds` does.
+   */
+  relocatedNodeIds: string[]
 }

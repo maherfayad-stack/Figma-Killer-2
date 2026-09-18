@@ -26,6 +26,8 @@ export {
   persistStudioAgentEffort,
   fetchStudioAgentFidelityMode,
   persistStudioAgentFidelityMode,
+  fetchStudioAgentDesignPolicy,
+  persistStudioAgentDesignPolicy,
 } from './agentApi'
 
 // Site-specific snapshot builder — emits the raw authoritative tree the server

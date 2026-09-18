@@ -75,6 +75,7 @@ import type { Page } from '@core/page-tree'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
+import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
@@ -573,6 +574,13 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   // skipped exactly when the boards it reads have changed. It never throws and
   // writes nothing when nothing changed.
   ensurePrototypeShell(dir)
+  // And the design system this project carries a copy of, for the same reason
+  // and in the same place: a project whose `design-system/` folder is stale
+  // relative to Studio's own vendored copy is one whose canvas and whose
+  // `npm run dev` disagree. A no-op unless `.studio/meta.json` says this
+  // project is design-system-backed AND the content hash has moved; never
+  // throws. See `./studio/designSystemFiles.ts`.
+  ensureDesignSystemFiles(dir)
 
   const fingerprint = workspaceLoadFingerprint(dir)
   const memoized = getMemoizedStudioLoad(dir, fingerprint)
@@ -604,8 +612,16 @@ function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] |
  * Reuses the site-wide COMPILED CSS (cached) but computes `classIdsByName`
  * scoped to just this route — locale never changes which stylesheets a page
  * imports, only which dictionary branch a TEXT prop reads. `styleRuleId` is
- * content-hash deterministic (not sequential), so a narrower scan's ids are
- * byte-identical to the site-wide registry's — no second registry to merge.
+ * content-hash deterministic (not sequential) over `kind|name|file`, so a
+ * narrower scan's ids are byte-identical to the site-wide registry's — but
+ * ONLY if it's given the SAME `moduleClassMaps` the full load used, because
+ * that map is what lets a compiled CSS-Modules rule resolve back to the
+ * `file` half of that hash (see `loadStudioStyles`'s call below, and
+ * `cssModuleSource` in `studioCss.ts`). Drop the map and every such rule
+ * hashes on `''` instead of its real path — a DIFFERENT id from the one the
+ * client's already-loaded `site.styleRules` used, so the frame renders
+ * completely unstyled. That exact regression shipped once; keep the two
+ * `loadStudioStyles` call sites' 5th argument in sync.
  *
  * Known limitation, not solved here: a `.map()` array whose LENGTH differs
  * by locale would give the variant a different expanded-node COUNT than the
@@ -639,14 +655,25 @@ export async function loadStudioPageInLocale(dir: string, pageId: string, locale
   if (!entry) return null
   const { expanded, componentSources } = entry
 
-  // Scoped (this route only) style resolution — see this function's own doc
-  // for why a narrower scan here still produces ids consistent with the
-  // client's already-loaded site-wide `site.styleRules`.
+  // Scoped (this route only) style resolution. `styleRuleId` bakes the
+  // AUTHORING FILE into the id (see its own doc), so a CSS-Modules rule's id
+  // is only consistent with the full-load registry if this call passes the
+  // SAME `moduleClassMaps` the full load does — that map is what lets
+  // `cssModuleSource` attribute a compiled class back to the `.module.css`
+  // it was renamed from. Omit it and `cssModuleSource` can't resolve a file,
+  // so every such rule silently re-mints under `''` instead of its real path
+  // — a DIFFERENT id than the one the client's already-loaded site-wide
+  // `site.styleRules` used. The client keeps `site.styleRules` from the full
+  // load and only patches this call's tree + `classIdsByName` in
+  // (`ensureLocalizedPage`), so an id mismatch here doesn't error — it just
+  // fails to resolve any class name, and the frame renders completely
+  // unstyled (this was a real, reproduced bug, not a hypothetical).
   const { classIdsByName } = await loadStudioStyles(
     [{ parsed: expanded, relFile: entry.relFile }],
     project,
     dir,
     cssInJsExtraCss(compiledStyles.css, cssInJsTemplatesOf([entry])),
+    compiledStyles.moduleClassMaps,
   )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 

@@ -25,17 +25,15 @@
  *
  * ## The capability split
  *
- * Restore and purge are gated on `studio.write`, alongside `/delete` and
- * `/duplicate`: one moves a whole repository back into the workspace, the
- * other erases one permanently. The listing is NOT gated, matching
- * `GET /admin/api/studio/projects` — it reads names and sizes out of a
- * directory the projects listing already exposes the siblings of, and gating
- * only the reads would leave the launcher unable to tell the user their
- * deleted work still exists.
+ * Declared in `routeCapabilities.ts`, not here: restore and purge require
+ * `studio.write`, alongside `/delete` and `/duplicate` — one moves a whole
+ * repository back into the workspace, the other erases one permanently. The
+ * listing requires only `site.read`, matching `GET /admin/api/studio/projects`:
+ * it reads names and sizes out of a directory whose siblings the projects
+ * listing already exposes, and holding it to the write capability would leave
+ * a read-only reviewer unable to see that deleted work still exists.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import type { DbClient } from '../../db/client'
-import { requireCapability } from '../../auth/authz'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { projectsRootDir, studioProjectSummary } from '../studioProjects'
 import {
@@ -57,14 +55,13 @@ function trashErrorResponse(err: ProjectTrashError): Response {
 }
 
 /**
- * `runtime` is here for the two write routes' capability checks, which is why
- * this rides `STUDIO_SESSION_SUB_ROUTERS` rather than the plain
- * `(req, url, pathname)` loop — the same list `tryServeStudioProjectRoutes`
- * is on, for the same reason.
+ * Plain `(req, url, pathname)` — this module needs neither the database nor
+ * the signed-in user. It used to ride `STUDIO_SESSION_SUB_ROUTERS` solely to
+ * run its own `requireCapability` calls; `routeGate.ts` runs those now, for
+ * every Studio route at once.
  */
 export async function tryServeStudioTrashRoutes(
   req: Request,
-  runtime: { db: DbClient },
   _url: URL,
   pathname: string,
 ): Promise<Response | null> {
@@ -78,8 +75,6 @@ export async function tryServeStudioTrashRoutes(
   }
 
   if (pathname === '/admin/api/studio/trash/restore' && req.method === 'POST') {
-    const user = await requireCapability(req, runtime.db, 'studio.write')
-    if (user instanceof Response) return user
     try {
       const body = await readValidatedBody(req, TrashEntryBodySchema)
       if (!body) return badRequest('invalid restore body')
@@ -99,8 +94,6 @@ export async function tryServeStudioTrashRoutes(
   }
 
   if (pathname === '/admin/api/studio/trash/purge' && req.method === 'POST') {
-    const user = await requireCapability(req, runtime.db, 'studio.write')
-    if (user instanceof Response) return user
     try {
       const body = await readValidatedBody(req, TrashEntryBodySchema)
       if (!body) return badRequest('invalid purge body')

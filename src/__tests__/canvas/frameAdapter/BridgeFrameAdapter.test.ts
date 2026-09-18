@@ -1,0 +1,296 @@
+/**
+ * BridgeFrameAdapter — tested against a STUBBED message channel (a fake
+ * `{ postMessage, addEventListener, removeEventListener }` triple this file
+ * drives directly), never a real `MessageEvent`-with-real-`WindowProxy`-
+ * source: `live-04`'s own landmine already documents that happy-dom's
+ * `MessageEvent` constructor cannot carry a real cross-window `source`, so a
+ * real cross-origin postMessage round trip is dogfood-only (see `STATE.md`'s
+ * `live-05` entry, "Verification strategy"). This proves the ADAPTER's own
+ * logic — message shapes, the canonical<->wire `occurrenceIndex`
+ * translation, the `measure` request/response/timeout lifecycle, `dispose()`
+ * rejecting in-flight promises — is correct in isolation.
+ */
+import { afterEach, describe, expect, it } from 'bun:test'
+import { toOutboundEnvelope, type InboundEnvelope, type OutboundEnvelope } from '@core/studio-runtime'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from '@site/canvas/frameAdapter/BridgeFrameAdapter'
+import { runFrameDocumentAdapterContract } from './frameDocumentAdapter.contract'
+
+const FRAME_ORIGIN = 'https://live.studio.test'
+
+interface StubChannel {
+  channel: BridgeFrameChannel
+  posted: InboundEnvelope[]
+  /** Dispatches a raw `MessageEvent`-shaped object to whatever handler `addEventListener` captured. */
+  dispatch(data: unknown, origin?: string, source?: unknown): void
+}
+
+/** `autoReplyMeasure`: immediately (next microtask) answers every posted `measure` with a `measure:result` echoing back each ref's own `nodeId`/`occurrenceIndex` and a fixed rect — enough for the shared contract suite's "measure resolves" assertion without a real frame. */
+function makeStubChannel(options: { autoReplyMeasure?: boolean } = {}): StubChannel {
+  let handler: ((ev: MessageEvent) => void) | null = null
+  const posted: InboundEnvelope[] = []
+  const channel: BridgeFrameChannel = {
+    postMessage: (message, _targetOrigin) => {
+      const envelope = message as InboundEnvelope
+      posted.push(envelope)
+      if (options.autoReplyMeasure && envelope.message.type === 'measure') {
+        const { requestId, refs } = envelope.message
+        const reply = toOutboundEnvelope({
+          type: 'measure:result',
+          requestId,
+          measurements: refs.map((ref) => ({
+            nodeId: ref.nodeId,
+            occurrenceIndex: ref.occurrenceIndex,
+            rect: { x: 0, y: 0, width: 10, height: 10 },
+            computedStyle: {},
+          })),
+        })
+        queueMicrotask(() => handler?.({ origin: FRAME_ORIGIN, source: undefined, data: reply } as MessageEvent))
+      }
+    },
+    addEventListener: (type, h) => {
+      if (type === 'message') handler = h
+    },
+    removeEventListener: (type, h) => {
+      if (type === 'message' && handler === h) handler = null
+    },
+  }
+  return {
+    channel,
+    posted,
+    dispatch: (data, origin = FRAME_ORIGIN, source = undefined) => handler?.({ origin, source, data } as MessageEvent),
+  }
+}
+
+let adapters: BridgeFrameAdapter[] = []
+
+afterEach(() => {
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
+})
+
+runFrameDocumentAdapterContract('BridgeFrameAdapter', () => {
+  const stub = makeStubChannel({ autoReplyMeasure: true })
+  const adapter = new BridgeFrameAdapter({
+    channel: stub.channel,
+    frameOrigin: FRAME_ORIGIN,
+    nodeIdsInTreeOrder: ['n1'],
+  })
+  adapters.push(adapter)
+  return { adapter, existingRef: { nodeId: 'n1' }, cleanup: () => adapter.dispose() }
+})
+
+describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation', () => {
+  it('pairs a .map()-repeated canonical id with its own tree-order index when posting select', () => {
+    const stub = makeStubChannel()
+    // Three canonical ids sharing one stamp (`row:1:1#0`, `#1`, `#2` -> stamp `row:1:1`).
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1', 'row:1:1#2'],
+    })
+    adapters.push(adapter)
+
+    adapter.select([{ nodeId: 'row:1:1#1' }])
+
+    const last = stub.posted.at(-1)!.message
+    expect(last.type).toBe('select')
+    if (last.type !== 'select') throw new Error('unreachable')
+    expect(last.refs).toEqual([{ nodeId: 'row:1:1', occurrenceIndex: 1 }])
+  })
+
+  it('resolves an inbound pointer event back to the correct canonical row, not always row 0', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1', 'row:1:1#2'],
+    })
+    adapters.push(adapter)
+
+    const received: Array<string | null> = []
+    adapter.on('pointer', (msg) => received.push(msg.nodeId))
+
+    const envelope: OutboundEnvelope = toOutboundEnvelope({
+      type: 'pointer',
+      phase: 'click',
+      nodeId: 'row:1:1',
+      occurrenceIndex: 2,
+      rect: null,
+      clientX: 0,
+      clientY: 0,
+      modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    })
+    stub.dispatch(envelope)
+
+    expect(received).toEqual(['row:1:1#2'])
+  })
+
+  it('falls back to the bare stamp id, unresolved, for an occurrence index with no tree-order candidate', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['x:1:1'] })
+    adapters.push(adapter)
+
+    const received: Array<string | null> = []
+    adapter.on('pointer', (msg) => received.push(msg.nodeId))
+
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'pointer',
+        phase: 'click',
+        nodeId: 'x:1:1',
+        occurrenceIndex: 5,
+        rect: null,
+        clientX: 0,
+        clientY: 0,
+        modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      }),
+    )
+
+    expect(received).toEqual(['x:1:1'])
+  })
+
+  it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0'] })
+    adapters.push(adapter)
+
+    adapter.setNodeIds(['row:1:1#0', 'row:1:1#1'])
+    adapter.select([{ nodeId: 'row:1:1#1' }])
+
+    const last = stub.posted.at(-1)!.message
+    if (last.type !== 'select') throw new Error('unreachable')
+    expect(last.refs).toEqual([{ nodeId: 'row:1:1', occurrenceIndex: 1 }])
+  })
+})
+
+describe('BridgeFrameAdapter — measure lifecycle', () => {
+  it('resolves with the requested measurements once measure:result arrives', async () => {
+    const stub = makeStubChannel({ autoReplyMeasure: true })
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const [measurement] = await adapter.measure([{ nodeId: 'n1' }])
+    expect(measurement!.nodeId).toBe('n1')
+    expect(measurement!.rect).toEqual({ x: 0, y: 0, width: 10, height: 10 })
+  })
+
+  it('rejects if the timeout elapses with no reply', async () => {
+    const stub = makeStubChannel() // no auto-reply
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['n1'],
+      measureTimeoutMs: 5,
+    })
+    adapters.push(adapter)
+
+    await expect(adapter.measure([{ nodeId: 'n1' }])).rejects.toThrow()
+  })
+
+  it('dispose() rejects any in-flight measure promise', async () => {
+    const stub = makeStubChannel() // no auto-reply
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['n1'],
+      measureTimeoutMs: 60_000,
+    })
+
+    const pending = adapter.measure([{ nodeId: 'n1' }])
+    adapter.dispose()
+
+    await expect(pending).rejects.toThrow()
+  })
+})
+
+describe('BridgeFrameAdapter — origin/source checks', () => {
+  it('ignores an inbound message from the wrong origin', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const received: unknown[] = []
+    adapter.on('ready', (msg) => received.push(msg))
+
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }), 'https://attacker.test')
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('ignores an inbound message from a source other than the expected one', () => {
+    const stub = makeStubChannel()
+    const expectedSource = { marker: 'real-frame' }
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      expectedSource,
+      nodeIdsInTreeOrder: ['n1'],
+    })
+    adapters.push(adapter)
+
+    const received: unknown[] = []
+    adapter.on('ready', (msg) => received.push(msg))
+
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }), FRAME_ORIGIN, { marker: 'attacker' })
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('ignores a malformed payload without throwing', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    expect(() => stub.dispatch('not an object')).not.toThrow()
+    expect(() => stub.dispatch({ direction: 'to-parent' })).not.toThrow()
+  })
+
+  it('ignores a same-shaped message missing the envelope source tag (a stray postMessage sender, not the runtime)', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const received: unknown[] = []
+    adapter.on('ready', (msg) => received.push(msg))
+
+    // Same `direction`/`message` shape as a real envelope, but no `source`
+    // tag — e.g. React DevTools, a browser extension, or a forged message
+    // from a co-resident script that doesn't know the exact tag value.
+    stub.dispatch({ direction: 'to-parent', message: { type: 'ready' } })
+
+    expect(received).toHaveLength(0)
+  })
+
+  it('ignores an outbound message whose payload fails TypeBox validation, even with a correct source/direction tag', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const heights: number[] = []
+    adapter.on('frame:resize', (msg) => heights.push(msg.height))
+
+    // A same-realm co-resident script (sec-06's "same-realm spoofing" note)
+    // can forge the envelope tags exactly, but the payload itself must still
+    // pass schema validation before any handler reads a field off it.
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'frame:resize', height: 'not-a-number' } })
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'frame:resize', height: -1 } })
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'not-a-real-message-type' } })
+
+    expect(heights).toHaveLength(0)
+  })
+})
+
+describe('BridgeFrameAdapter — frame:resize', () => {
+  it('forwards an inbound frame:resize event to on() subscribers', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const heights: number[] = []
+    adapter.on('frame:resize', (msg) => heights.push(msg.height))
+
+    stub.dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 842 }))
+
+    expect(heights).toEqual([842])
+  })
+})

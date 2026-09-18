@@ -25,7 +25,7 @@ Catalog of every `localStorage` / `sessionStorage` key the admin app writes, and
 | `studio-class-usage`                          | Recently-used classes in the ClassPicker autocomplete                 | `src/admin/pages/site/preferences/classUsage.ts` → `CLASS_USAGE_STORAGE_KEY` |
 | `studio-data-grid-primary-widths-v1`          | Orphaned: the standalone Data workspace's `DataGrid` component was deleted along with the workspace. No code reads or writes this key. | — |
 | `studio-media-page-view-mode`                 | View mode (grid / list / large thumbs) for `MediaCanvas`, now rendered inside `MediaPickerModal` (the media picker dialog) rather than a standalone Media workspace | `src/admin/shared/media/components/MediaCanvas/MediaCanvas.tsx` → `VIEW_MODE_STORAGE_KEY` |
-| `studio-module-inserter-v1`                   | Module inserter view mode and recent inserts | `src/admin/pages/site/module-picker/moduleInserterPrefs.ts`      |
+| `studio-assets-v1`                            | Assets panel recent inserts | `src/admin/pages/site/panels/AssetsPanel/assetsPrefs.ts`         |
 | `spotlight:recent-commands`               | Spotlight recents — last N executed command ids                       | `src/admin/spotlight/recentStore.ts`                            |
 | `spotlight:telemetry:v1`                  | Local Spotlight telemetry (command frequency)                         | `src/admin/spotlight/telemetry.ts`                              |
 
@@ -52,7 +52,7 @@ Stored in the `user_preferences` table — one row per `(user_id, key)`. Keys ar
 | Key                                       | Owner                                                                 | Source-of-truth file                                            |
 |-------------------------------------------|-----------------------------------------------------------------------|-----------------------------------------------------------------|
 | `dashboard-layout`                        | Orphaned: schema still whitelisted, but its only consumer (the dormant CMS dashboard widget-grid) was deleted. No code reads or writes this key. | `src/core/persistence/userPreferences.ts` → `USER_PREFERENCE_SCHEMAS['dashboard-layout']` |
-| `module-inserter`                         | Module inserter notch favorites: ordered `{ kind, id }` refs for modules, layouts, and Visual Components | `src/admin/pages/site/module-picker/useModuleInserterPreference.ts` |
+| `module-inserter`                         | Notch favorites: ordered `{ kind, id }` refs for modules, layouts, and Visual Components, pinned from the Assets panel | `src/admin/pages/site/panels/AssetsPanel/assetsPrefs.ts` |
 
 ### Endpoint
 

@@ -22,6 +22,9 @@
  *     that file in the code panel, through the caller's `openSource`
  *   - `detach` / `extract` → the real `studio.instance` codemods the
  *     Properties panel's Component section already dispatches
+ *   - `choose-stylesheet` (Z8) → pins the destination the user picked for one
+ *     brand-new class and asks for an immediate save, which re-issues the
+ *     insert that refused, now against a file they named
  *
  * Deliberately NOT wired: `select-container` (three different refusals share
  * that kind and only one of them means "select something"), `promote-tier1`
@@ -39,7 +42,9 @@
 import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
+import { requestEditorSave } from '@admin/state/adminEvents'
 import { detachInstance, extractInstanceCopy } from '@site/studio/studioSaveRequests'
+import { pinCssInsertDestination } from '@site/studio/styleRuleWriteback'
 import type { SourceOrigin } from './openSourceFile'
 
 /** What a runnable action needs beyond the action itself. */
@@ -55,6 +60,49 @@ export interface ConstraintActionContext {
    * — the same honesty rule as every other unwireable kind.
    */
   openSource?: (origin: SourceOrigin) => void
+  /**
+   * Fired once an action has run to completion — `detach`/`extract` call it
+   * `true`/`false` once their codemod actually settles; a target-carrying
+   * action (`jump-to-source`, `edit-array`, `edit-component`) calls it `true`
+   * right after opening the file, since it has nothing async to await. An
+   * action with no runnable handler at all (rendered as plain advice text,
+   * never a button) never fires this — there is no click to settle.
+   *
+   * `RefusalDialog` (R2, `store-10`) is the one caller that needs this: for
+   * `detach`/`extract` it has to know WHEN the async codemod finishes to
+   * start (and later stop) waiting for the board reload that follows a
+   * success, so it can re-issue the gesture the codemod's own refusal
+   * blocked; for every other action kind it just dismisses the dialog once
+   * the click has done its job. Every existing caller (`ConstraintNotice`,
+   * `SourceConstraintNotice`, `CodeValueControl`) omits this field and is
+   * completely unaffected.
+   */
+  onSettled?: (ok: boolean) => void
+  /**
+   * K6 — how to write `position: relative` onto the container a
+   * `static-parent` refusal names.
+   *
+   * Injected, exactly like `openSource`, and for the same reason: this module
+   * sits INSIDE the store's own import graph (`structuralSourceEdits.ts`
+   * reaches it), so it may not import the composed store back
+   * (`no-circular-dependencies.test.ts`). The surface that renders the button
+   * — `ConstraintActionButtons`, an ordinary component — can, and does.
+   * Absent means the action stays un-runnable and renders as plain advice
+   * text, the same honesty rule every other unwireable kind follows.
+   */
+  makeParentRelative?: (nodeId: string) => void
+  /**
+   * D2 G3 — run the refused cross-frame drop again as a COPY.
+   *
+   * Unlike every other injected handler this one takes NO arguments, because
+   * there is no argument that would name the gesture: a drop is a destination
+   * (page, container, index) the drag session no longer holds. The store
+   * action that refused closes over it and hands the closure to the dialog on
+   * its state; `RefusalDialog` passes it back down here. Absent means the
+   * action stays un-runnable and renders as plain advice text, the same
+   * honesty rule every other unwireable kind follows.
+   */
+  duplicateIntoFrame?: () => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -75,15 +123,64 @@ export function resolveConstraintAction(
   const openSource = context.openSource
   if (action.target && openSource) {
     const target = action.target
-    return () => openSource(target)
+    // `RefusalDialog` (R2, `store-10`) is the one caller that supplies
+    // `onSettled` and needs to know when a synchronous, always-succeeds
+    // action like this one has "settled" — it dismisses the dialog on any
+    // non-detach/extract action once it fires. Every other caller
+    // (`ConstraintNotice`, `SourceConstraintNotice`, `CodeValueButtons`)
+    // omits `onSettled`, so this stays a no-op for them.
+    const onSettled = context.onSettled
+    return () => {
+      openSource(target)
+      onSettled?.(true)
+    }
   }
   if (action.kind === 'detach' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Detach', () => detachInstance(nodeId), onSettled)
   }
   if (action.kind === 'extract' && context.nodeId !== undefined) {
     const nodeId = context.nodeId
-    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId))
+    const onSettled = context.onSettled
+    return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
+  }
+  // Z8 — the user answering "which stylesheet?". Pinning is all it takes: the
+  // refused rule's diff baseline was never advanced (nothing reached disk), so
+  // the immediate save below re-diffs the very same declarations and
+  // `resolveCssInsertDestination` now returns the file they named. No codemod
+  // runs here and no value is invented — the choice is a destination, and the
+  // write is the one that already refused.
+  if (action.kind === 'choose-stylesheet' && action.stylesheet) {
+    const { ruleId, file } = action.stylesheet
+    const onSettled = context.onSettled
+    return () => {
+      pinCssInsertDestination(ruleId, file)
+      requestEditorSave()
+      onSettled?.(true)
+    }
+  }
+  // K6 — `context.nodeId` is the CONTAINER here, not the dragged element: the
+  // refusal is about the parent, and so is the remedy.
+  if (action.kind === 'position-parent-relative' && context.nodeId !== undefined && context.makeParentRelative) {
+    const nodeId = context.nodeId
+    const run = context.makeParentRelative
+    const onSettled = context.onSettled
+    return () => {
+      run(nodeId)
+      onSettled?.(true)
+    }
+  }
+  // D2 G3 — the refused cross-frame drop, re-issued with Alt's meaning. The
+  // handler IS the store action that refused, so the copy rides the identical
+  // gate and lands the identical single toast.
+  if (action.kind === 'duplicate-into-frame' && context.duplicateIntoFrame) {
+    const run = context.duplicateIntoFrame
+    const onSettled = context.onSettled
+    return () => {
+      run()
+      onSettled?.(true)
+    }
   }
   return null
 }
@@ -134,6 +231,7 @@ export function constraintToastBody(
 async function runInstanceCodemod(
   gesture: 'Detach' | 'Duplicate',
   run: () => Promise<{ ok: boolean; message?: string }>,
+  onSettled?: (ok: boolean) => void,
 ): Promise<void> {
   try {
     const result = await run()
@@ -146,6 +244,7 @@ async function runInstanceCodemod(
         durationMs: null,
       })
     }
+    onSettled?.(result.ok)
   } catch (err) {
     console.error(`[ConstraintNotice] ${gesture} failed:`, err)
     pushToast({
@@ -153,5 +252,6 @@ async function runInstanceCodemod(
       title: `${gesture} failed`,
       body: getErrorMessage(err, `Unknown ${gesture.toLowerCase()} error`),
     })
+    onSettled?.(false)
   }
 }

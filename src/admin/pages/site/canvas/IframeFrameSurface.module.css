@@ -44,8 +44,13 @@
   background: var(--canvas-frame-paper-dark);
 }
 
+/* While the canvas is panning, a frame must not eat the drag. Three sources
+ * say "panning" (Space in the editor document, Space inside a frame, and `K4`'s
+ * latched hand tool) and all three mean the same thing here — see
+ * `canvasPanInput.ts`. */
 :global(html[data-studio-canvas-parent-space-pan='1']) .iframe:not(.iframeLive),
-:global(html[data-studio-canvas-iframe-space-pan='1']) .iframe:not(.iframeLive) {
+:global(html[data-studio-canvas-iframe-space-pan='1']) .iframe:not(.iframeLive),
+:global(html[data-studio-canvas-hand-tool='1']) .iframe:not(.iframeLive) {
   pointer-events: none;
 }
 

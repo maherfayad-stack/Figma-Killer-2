@@ -31,6 +31,15 @@
  * event types to the parent (using the original drag's pointerId so the
  * parent's session-id assumptions still line up).
  *
+ * OS file drop
+ * ────────────
+ * D2 G15. A `dragover`/`drop` carrying files from the desktop is re-dispatched
+ * on the iframe element so the board's own handler sees it. EVERY drag in a
+ * design frame's document is cancelled there — files or not — so the browser
+ * cannot navigate that document to whatever was dropped on it. The rule and
+ * its reasoning live in `canvasFrameDragRelay.ts`; this file owns only when
+ * it is installed.
+ *
  * Keyboard
  * ────────
  * Clicking a node to select it focuses the iframe, so subsequent keystrokes go
@@ -38,18 +47,43 @@
  * shortcut listeners can see them. They are cloned onto the parent `document`
  * instead. See `onKeyDown` for the inline-edit stand-down that makes this safe.
  *
- * All of it is canvas-only: live frames pan nothing, host no cross-frame drag,
- * and scroll natively.
+ * All of that is canvas-only: live frames pan nothing, host no cross-frame
+ * drag, and scroll natively.
+ *
+ * Prototype `key` triggers
+ * ────────────────────────
+ * The one thing a LIVE frame forwards, and by direct call rather than by a
+ * clone — see the effect's own comment. A running prototype's form fields are
+ * real, and cloning what the user types in them onto the parent document would
+ * hand every keystroke to the editor's shortcut layer.
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's native
+ * `Document` through `PortalFrameAdapter`'s escape hatch (`getPortalWindow`).
+ * Bridge mode is a documented, real gap, not a silent one: the pointer half
+ * has a genuine analog in `runtime.ts`'s outbound `pointer` message, but
+ * there is no wire message for keyboard forwarding at all today, and the
+ * space-held / cross-frame-drag flags this file reads/writes on the PARENT
+ * `<html>` dataset have no bridge-mode equivalent either — building either
+ * would mean designing and security-reviewing new `messages.ts` traffic
+ * (mirroring the `occurrenceIndex`/`frame:resize` additions already flagged
+ * for a second `security-guard` look), which is real, separate work, not a
+ * mechanical prop-to-adapter swap. A Tier 2 design-board frame therefore
+ * does not yet pan/keyboard-forward through this hook; flag this to whoever
+ * wires up `documentMode==='bridge'` for real.
  */
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
+import { installFrameDragRelay } from './canvasFrameDragRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
+import { followPrototypeKeyFromFrame } from './usePrototypePlayTriggers'
 
 export function useIframeEventForwarding(
   iframeRef: RefObject<HTMLIFrameElement | null>,
-  iframeDoc: Document | null,
+  adapter: FrameDocumentAdapter | null,
   isLive: boolean,
 ): void {
   // ── Forward wheel events to the canvas gesture layer ─────────────────
@@ -64,6 +98,8 @@ export function useIframeEventForwarding(
   useEffect(() => {
     // Live frames scroll natively — no pan to forward to.
     if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -102,7 +138,28 @@ export function useIframeEventForwarding(
     return () => {
       iframeDoc.removeEventListener('wheel', onWheel)
     }
-  }, [iframeDoc, iframeRef, isLive])
+  }, [adapter, iframeRef, isLive])
+
+  // ── Forward an OS FILE drag/drop to the board (D2 G15) ────────────────
+  // A native `dragover`/`drop` does not cross the iframe boundary, and a
+  // frame is exactly where an image dropped from the desktop is meant to
+  // land. `useCanvasFileDrop` listens on the parent `window`, so the pair is
+  // re-dispatched on the iframe ELEMENT there and bubbles up to it.
+  //
+  // The rule itself — cancel EVERY drop's default so the browser cannot
+  // navigate the frame's document away, relay only the file-carrying ones —
+  // lives in `canvasFrameDragRelay.ts`, which is where its reasoning and its
+  // test are. This effect is only its lifecycle.
+  useEffect(() => {
+    // Live frames belong to the running app: a drop there is the app's.
+    if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    const iframe = iframeRef.current
+    if (!iframe) return
+    return installFrameDragRelay(iframeDoc, iframe)
+  }, [adapter, iframeRef, isLive])
 
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────
   // The canvas pan gesture (useCanvas via @use-gesture) and the canvas
@@ -133,6 +190,8 @@ export function useIframeEventForwarding(
     // Pan-gesture / parent-doc canvas-drag relay is canvas-only. Live frames
     // neither pan nor host the cross-frame canvas drag.
     if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
     const iframe = iframeRef.current
     if (!iframe) return
@@ -312,5 +371,28 @@ export function useIframeEventForwarding(
       iframeDoc.removeEventListener('pointerup', maybeForward)
       iframeDoc.removeEventListener('pointercancel', maybeForward)
     }
-  }, [iframeDoc, iframeRef, isLive])
+  }, [adapter, iframeRef, isLive])
+
+  // ── A `key` prototype trigger, raised inside a LIVE frame ────────────────
+  //
+  // The only keyboard this hook carries into a live frame, and it is
+  // deliberately NOT the clone-onto-the-parent-document mechanism the design
+  // canvas uses above. A live frame is the page as a visitor gets it: the user
+  // may well be typing into an authored form field, and cloning those
+  // keystrokes onto `document` would hand every one of them to the editor's
+  // undo, save, spotlight and panel-rail shortcuts.
+  //
+  // So the keystroke is offered to exactly one consumer, by direct call.
+  // `followPrototypeKeyFromFrame` stands down unless the player is armed, the
+  // event carries no modifier, and the target is not a text input — so an
+  // unarmed live frame pays one function call per keystroke and nothing else.
+  useEffect(() => {
+    if (!isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    const onKeyDown = (e: KeyboardEvent) => followPrototypeKeyFromFrame(e)
+    iframeDoc.addEventListener('keydown', onKeyDown)
+    return () => iframeDoc.removeEventListener('keydown', onKeyDown)
+  }, [adapter, isLive])
 }

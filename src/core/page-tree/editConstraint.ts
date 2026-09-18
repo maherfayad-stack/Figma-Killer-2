@@ -23,8 +23,12 @@
  * **The §2 invariant this whole module exists to enforce:** every edit
  * surface either WRITES, REFUSES with a reason and a way forward, or IS NOT
  * OFFERED. A refusal with an empty `actions` array is still honest — some
- * reasons (`route-chrome`, `code-placed`, `no-sibling-anchor`) truly have no
- * way forward yet — but it must be a deliberate empty array, not a missing one.
+ * reasons (`reparent` with no destination, `duplicate`, `wrap`,
+ * `no-sibling-anchor`, `multi-select`, `insert`) truly have no way forward
+ * beyond the sentence — but it must be a deliberate empty array, not a
+ * missing one. `route-chrome`/`code-placed` used to be in this list too;
+ * R1 gave both a jump-to-source action, since "go look at the file that
+ * decided this" is always true for them.
  *
  * W4-1 retired one of this module's own entries rather than reword it:
  * `explainInstanceDuplicateConstraint` existed because duplicate refused every
@@ -36,35 +40,11 @@
  */
 import { isPropWritableToSource, isStyleWritableToSource, styleValueKey, type SourceWritableNode } from './sourceWritability'
 import {
-  refuseMintedNodeInsert,
   refusePlacement,
-  refuseStructuralEdit,
-  type SourceStructureNode,
-  type StructuralEditKind,
-  type StructuralMovePreview,
-  type StructuralRefusal,
   type StructuralRefusalReason,
 } from './sourceStructure'
-import { decodeSourceNodeId, hasWritableSourceLocation } from './sourceNodeId'
+import { bestEffortRowLocation, hasWritableSourceLocation } from './sourceNodeId'
 
-/**
- * Best-effort location for a `.map`-row id (`…:70:21#2`). `decodeSourceNodeId`
- * deliberately refuses to match this shape at all (`hasWritableSourceLocation`
- * is what that non-match means — see `sourceNodeId.ts`'s own doc), because
- * there is no SINGLE honest writeback target for the row. But there IS a real
- * `rel:line:col` sitting right there in the id — the row's own rendered
- * position, one syntactic hop from the `.map()` call the taxonomy names as
- * the real edit target. Not precise enough to claim as `origin` (this module
- * only sets `origin` when a location is the honest single truth), but precise
- * enough to open the right FILE near the right LINE — the R8 fix for a
- * refusal family the audit otherwise correctly says has no jump-to-source at
- * all today.
- */
-function bestEffortRowLocation(nodeId: string): { rel: string; line: number; col: number } | undefined {
-  const target = nodeId.split('~').pop() ?? nodeId
-  const match = /^(.+):(\d+):(\d+)(?:#\d+)+$/.exec(target)
-  return match ? { rel: match[1]!, line: Number(match[2]), col: Number(match[3]) } : undefined
-}
 
 // ---------------------------------------------------------------------------
 // The discriminated union — the taxonomy's 30 rows, absorbed rather than
@@ -157,6 +137,10 @@ export type ConstraintReason =
   | 'unsupported-call'
   | 'unsupported-expression'
   | 'spread-attribute'
+  // K6 — a ⌘-drag asked to place an element by coordinates inside a
+  // `position: static` container. Not a source-writability question (the file
+  // would take the write); a CSS one. See `explainStaticParentConstraint`.
+  | 'static-parent'
 
 /** A way forward out of a refusal — the thing that turns a dead end into progress. */
 export interface EditConstraintAction {
@@ -165,12 +149,38 @@ export interface EditConstraintAction {
   kind:
     | 'jump-to-source'
     | 'edit-array'
+    | 'edit-component'
     | 'detach'
     | 'extract'
     | 'select-container'
     | 'promote-tier1'
     | 'style-inline-instead'
     | 'preview-branch'
+    | 'choose-stylesheet'
+    /**
+     * K6 — write `position: relative` onto the container the refusal names, so
+     * a ⌘-drag can place its child by coordinates. The only action kind whose
+     * handler is a WRITE rather than a navigation, which is why the engine
+     * cannot run it: the handler is supplied by the surface that renders the
+     * button (`ConstraintActionButtons`), the same way `jump-to-source`'s
+     * `openSource` already is.
+     */
+    | 'position-parent-relative'
+    /**
+     * D2 G3 — re-issue the cross-frame drop that just refused as a COPY.
+     *
+     * Offered only when the same gesture with `copy: true` passes the same
+     * gate — `planSourceTransplant` re-asks `previewStructuralTransplant` to
+     * find out — so it is never a button that leads straight back to the
+     * refusal it was offered for. The second action kind whose handler is a
+     * WRITE rather than a navigation, and injected for the same reason
+     * `position-parent-relative` is; the difference is that the closure it
+     * needs carries a whole DESTINATION (which page, which container, which
+     * index), which only the store action that refused still holds — so it
+     * travels on `StructuralRefusalDialogState` instead of being rebuilt from
+     * a node id.
+     */
+    | 'duplicate-into-frame'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.
@@ -179,6 +189,16 @@ export interface EditConstraintAction {
    * (`detach`/`extract`/`preview-branch` all mutate editor state).
    */
   target?: { rel: string; line: number; col: number }
+  /**
+   * For `choose-stylesheet` (Z8) — the destination this remedy picks.
+   *
+   * A separate field from `target` because it is a FILE, not a position: an
+   * `ambiguous-stylesheet` refusal knows which stylesheets exist but nothing
+   * about where in them a rule would land (that is postcss's answer at write
+   * time, server-side), and inventing a `1:1` to fit `target`'s shape would
+   * claim a location this module cannot honestly name.
+   */
+  stylesheet?: { ruleId: string; file: string }
 }
 
 export interface EditConstraint {
@@ -319,147 +339,17 @@ export function explainStyleConstraint(node: ConstraintPropSource, property: str
         ? `Reads \`${resolved.source}\` — ${resolved.note}.`
         : `Reads \`${resolved.source}\` from code.`
       : 'Set in code.',
-    actions: [],
+    // Unlike the mirror-image prop-scope branch above (`explainPropConstraint`'s
+    // `resolved-expression`, which can NEVER reach this point with a populated
+    // `origin` — `isPropWritableToSource` returns early whenever one exists),
+    // `isStyleWritableToSource` hardcodes `false` for every `style:`-prefixed
+    // `codeProps` entry WITHOUT consulting `origin` at all (see that
+    // predicate's own doc comment for why: one element's `color: ACCENT_COLOR`
+    // must not silently repaint every other element reading the same const).
+    // So a style property genuinely CAN reach here with a real `origin` — this
+    // is the one honest way forward for that case, previously discarded.
+    actions: resolved?.origin ? [{ label: 'Open it in code', kind: 'jump-to-source', target: resolved.origin }] : [],
   }
-}
-
-// ---------------------------------------------------------------------------
-// Structural / gesture scope — rows 7-18, plus the drag-preview seam (D2).
-// ---------------------------------------------------------------------------
-
-/**
- * Which `EditConstraintAction`s make sense for a given structural reason — one
- * small, honest table.
- *
- * `node` is optional because a refusal does not always name one: the store
- * synthesises a handful of `insert` refusals about a CONTAINER it could not
- * resolve at all ("this page has several top-level elements…"), which have a
- * reason and a sentence but no element to point at.
- */
-function structuralActions(
-  reason: StructuralRefusalReason,
-  node?: SourceStructureNode,
-): EditConstraintAction[] {
-  switch (reason) {
-    case 'list-row': {
-      if (!node) return []
-      // Row 3/7 — "edit the array it maps over", made actionable: jump to the
-      // row's own source position (best-effort — `decodeSourceNodeId` cannot
-      // match a `.map`-row id at all, see `bestEffortRowLocation`), which
-      // sits inside or immediately beside the `.map()` call the taxonomy
-      // names as the real target.
-      const rowLocation = bestEffortRowLocation(node.id)
-      return rowLocation ? [{ label: 'Open the array in code', kind: 'edit-array', target: rowLocation }] : []
-    }
-    case 'shared-component':
-      // Row 8 — the real escape hatch lives in `InstanceCallSiteView`
-      // (Detach/Swap/Duplicate), which this pure module cannot dispatch to
-      // (it would need editor-store access). Named here as an action KIND so
-      // the caller (which DOES have store access) can wire the `run` handler.
-      return [{ label: 'Detach or edit the component definition', kind: 'detach' }]
-    case 'multi-select':
-      return [{ label: 'Do them one at a time', kind: 'select-container' }]
-    case 'insert':
-      return [{ label: 'Select the container to insert into', kind: 'select-container' }]
-    case 'cross-file':
-      // W4-1 — a reparent refused for crossing files, or a reorder whose anchor
-      // is in another file. The one useful next step is to look at where the
-      // element actually lives, which `origin` already names.
-      return node && decodeSourceNodeId(node.id)
-        ? [{ label: 'Open it in code', kind: 'jump-to-source', target: decodeSourceNodeId(node.id)! }]
-        : []
-    // `route-chrome`, `code-placed`, `no-sibling-anchor`, and the residual
-    // `reparent`/`duplicate`/`wrap` (W4-1 lifted those three for ordinary
-    // elements; what still refuses under those names is a gesture with no
-    // second location to write against) genuinely have no way forward today.
-    // An empty array here is the honest answer, not a gap.
-    default:
-      return []
-  }
-}
-
-/**
- * Dresses a refusal SOMEONE ELSE already computed — `refuseStructuralEdit`'s
- * own return value, `previewStructuralMove`'s in-flight verdict, or one of the
- * store's synthesised `insert` refusals — as the `EditConstraint` every
- * surface renders. The single place `origin` and `actions` are derived, so a
- * refusal reaching the UI through a plan object and one reaching it through a
- * direct `explain*` call cannot disagree about the way forward.
- *
- * Deliberately takes the refusal rather than re-asking for it: the plan
- * functions in `structuralSourceEdits.ts` do real work (simulating a reorder,
- * resolving an anchor) to reach theirs, and re-deriving it here would be a
- * second copy of that rule — exactly what this module's doc forbids.
- */
-export function describeStructuralRefusal(input: {
-  refusal: StructuralRefusal
-  /** The element the refusal is about, when there is one. Supplies `origin`. */
-  node?: SourceStructureNode
-  /** `'gesture'` for a drag still in flight; `'node'` (the default) for a committed gesture. */
-  scope?: 'node' | 'gesture'
-}): EditConstraint {
-  const decoded = input.node ? decodeSourceNodeId(input.node.id) : null
-  return {
-    reason: input.refusal.reason,
-    scope: input.scope ?? 'node',
-    explanation: input.refusal.message,
-    ...(decoded ? { origin: { rel: decoded.rel, line: decoded.line, col: decoded.col } } : {}),
-    actions: structuralActions(input.refusal.reason, input.node),
-  }
-}
-
-/**
- * Explains a refused STRUCTURAL gesture (reorder/reparent/delete/insert/
- * duplicate/wrap), or `null` when it may proceed. Thin wrapper over
- * `refuseStructuralEdit` — same input shape, same refusal, now carrying an
- * explanation + actions instead of a bare `{reason, message}`.
- */
-export function explainStructuralConstraint(input: {
-  kind: StructuralEditKind
-  node: SourceStructureNode
-  anchor?: SourceStructureNode | null
-  multi?: boolean
-}): EditConstraint | null {
-  const refusal = refuseStructuralEdit(input)
-  if (!refusal) return null
-  return describeStructuralRefusal({ refusal, node: input.node })
-}
-
-/**
- * Explains dropping an already-minted (canvas-only) node into a source-backed
- * container — row 18's insert family, `refuseMintedNodeInsert`'s own case.
- */
-export function explainMintedInsertConstraint(input: {
-  parent: SourceStructureNode
-  studioPageRoot: boolean
-}): EditConstraint | null {
-  const refusal = refuseMintedNodeInsert(input)
-  if (!refusal) return null
-  return {
-    reason: refusal.reason,
-    scope: 'node',
-    explanation: refusal.message,
-    actions: [{ label: 'Add from the picker instead', kind: 'select-container' }],
-  }
-}
-
-/**
- * `scope: 'gesture'` — the drag-in-progress preview D2's `previewStructuralMove`
- * (`sourceStructure.ts`, published contract D2 → F2, see that function's own
- * doc) computes WHILE THE POINTER IS STILL DOWN. This wrapper is the typed
- * seam this track owns: translate `StructuralMovePreview`'s refusal into the
- * same `EditConstraint` shape every other structural refusal uses, so a drop
- * indicator and a context-menu item read one type.
- *
- * `previewStructuralMove` is D2's published export (`@core/page-tree`) — this
- * track does not edit `sourceStructure.ts` and did not need to: the function
- * already lands with the exact signature this wrapper expects. If a future
- * change to that signature breaks this file, `tsc` catches it at the call
- * site below, not silently.
- */
-export function explainGestureConstraint(preview: StructuralMovePreview, node: SourceStructureNode): EditConstraint | null {
-  if (preview.ok) return null
-  return describeStructuralRefusal({ refusal: preview.refusal, node, scope: 'gesture' })
 }
 
 // ---------------------------------------------------------------------------
@@ -535,16 +425,38 @@ export function explainClassNameConstraint(reason: string, message: string): Edi
 /**
  * Explains a CSS rule/breakpoint-override save-time refusal — B1/B1b's
  * `classifyStylesheetEditability` vocabulary, passed through by value.
+ *
+ * Z8 — `ambiguous-stylesheet` is the one refusal in this family that is a
+ * QUESTION: N hand-editable stylesheets exist, every one of them is a real
+ * write target, and Studio refuses to pick. Given the candidate list (and the
+ * rule to write), it becomes one runnable remedy per file: the user names the
+ * destination and the same write is re-issued against it. Without them the
+ * function is unchanged and still offers only the inline hatch — a caller that
+ * cannot supply a rule id (the `StyleTargetChip` preview, which is explaining
+ * a class nobody has asked to write yet) gets exactly what it got before.
  */
-export function explainCssRuleConstraint(reason: string, message: string): EditConstraint {
+export function explainCssRuleConstraint(
+  reason: string,
+  message: string,
+  destination?: { ruleId: string; candidates: readonly string[] },
+): EditConstraint {
+  const chooseActions: EditConstraintAction[] =
+    reason === 'ambiguous-stylesheet' && destination
+      ? destination.candidates.map((file) => ({
+          label: `Write it into ${file}`,
+          kind: 'choose-stylesheet' as const,
+          stylesheet: { ruleId: destination.ruleId, file },
+        }))
+      : []
+  const inlineHatch: EditConstraintAction[] =
+    reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
+      ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
+      : []
   return {
     reason: reason as ConstraintReason,
     scope: 'node',
     explanation: message,
-    actions:
-      reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
-        ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
-        : [],
+    actions: [...chooseActions, ...inlineHatch],
   }
 }
 

@@ -38,6 +38,25 @@ interface AgentSnapshotCaptureRequest {
  */
 type CanvasView = 'design' | 'live'
 
+/**
+ * `K4` — the latched canvas tool, Figma's H / K / V trio minus the shapes.
+ *
+ * - 'move'  — the default. Click selects, drag reorders.
+ * - 'hand'  — a LATCHED space-pan: drag anywhere pans the board. It reuses the
+ *   exact space-held machinery (`setCanvasSpacePanActive`, a third source on
+ *   the same `data-*` flag) rather than a parallel pan path, so the cursor, the
+ *   pointer gating and the iframe relay all behave identically to holding
+ *   Space — there is one definition of "the canvas is panning".
+ * - 'scale' — arms the selection's existing resize handles with a proportional
+ *   lock; a drag then keeps the element's aspect ratio and writes BOTH `width`
+ *   and `height`.
+ *
+ * Deliberately NOT merged with `commentToolActive`: commenting is available to
+ * a read-only reviewer and is a different kind of arming (it consumes the next
+ * click), while these three change what an ordinary drag means.
+ */
+export type CanvasTool = 'move' | 'hand' | 'scale'
+
 interface CanvasSlice {
   zoom: number
   panX: number
@@ -64,6 +83,8 @@ interface CanvasSlice {
   canvasMode: CanvasMode
   /** Current canvas render mode — 'design' (multi-breakpoint canvas) or 'live' (single real-size editable frame) */
   canvasView: CanvasView
+  /** Latched tool: what a plain drag on the canvas means right now. See `CanvasTool`. */
+  canvasTool: CanvasTool
   /**
    * When true, the site's runtime scripts are bundled and injected into the
    * editable canvas iframes (both 'design' and 'live' views), so authored
@@ -127,6 +148,8 @@ interface CanvasSlice {
   setActivePage: (pageId: string) => void
   setCanvasMode: (mode: CanvasMode) => void
   setCanvasView: (view: CanvasView) => void
+  /** Latch a tool. Pass 'move' to put the current one away. */
+  setCanvasTool: (tool: CanvasTool) => void
   /** Toggle (or set) whether runtime scripts run inside the editable iframes. */
   setRunScripts: (run: boolean) => void
   /** Toggle whether a breakpoint's design-canvas frame is collapsed to its slim header. */
@@ -170,6 +193,7 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   previousActivePageId: null,
   canvasMode: 'select',
   canvasView: 'design',
+  canvasTool: 'move',
   runScripts: false,
   collapsedBreakpointIds: [],
   agentSnapshotCaptureRequest: null,
@@ -222,7 +246,14 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
     // Through the player's own action rather than a second copy of it here:
     // disarming also has to reset the screen stack, and that is its job.
     get().setPlayMode(view === 'live')
+    // A latched tool belongs to the design board. Live mode has no pan and no
+    // resize handles, so leaving 'hand' armed across the switch would put the
+    // user back on a board that swallows clicks for a reason they can no
+    // longer see.
+    if (view === 'live') set({ canvasTool: 'move' })
   },
+
+  setCanvasTool: (canvasTool) => set({ canvasTool }),
 
   setRunScripts: (run) => set({ runScripts: run }),
 

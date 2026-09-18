@@ -13,7 +13,9 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { cleanup, render, waitFor } from '@testing-library/react'
 import { CanvasScrollUnrollInjector } from '@site/canvas/CanvasScrollUnrollInjector'
-import { SCROLL_UNROLL_ATTR, SCROLL_UNROLL_MIN_HEIGHT_VAR } from '@site/canvas/canvasScrollUnroll'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+import { SCROLL_UNROLL_ATTR, SCROLL_UNROLL_MIN_HEIGHT_VAR } from '@core/studio-runtime'
 
 const STYLE_TAG_ID = 'studio-canvas-scroll-unroll'
 
@@ -22,8 +24,22 @@ function stubClipping(el: HTMLElement, { scrollHeight, clientHeight }: { scrollH
   Object.defineProperty(el, 'clientHeight', { value: clientHeight, configurable: true })
 }
 
+let adapters: PortalFrameAdapter[] = []
+
+function makeAdapter(): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(document)
+  adapters.push(adapter)
+  return adapter
+}
+
+function overlayStyleEl(): Element | null {
+  return document.getElementById(STYLE_TAG_ID)
+}
+
 afterEach(() => {
   cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
   document.getElementById(STYLE_TAG_ID)?.remove()
   for (const el of document.querySelectorAll(`[${SCROLL_UNROLL_ATTR}]`)) {
     el.removeAttribute(SCROLL_UNROLL_ATTR)
@@ -45,39 +61,44 @@ afterEach(() => {
  */
 describe('CanvasScrollUnrollInjector — stylesheet', () => {
   it('injects a stylesheet by default (enabled defaults on)', () => {
-    render(<CanvasScrollUnrollInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
 
-    const styleEl = document.getElementById(STYLE_TAG_ID)
+    const styleEl = overlayStyleEl()
     expect(styleEl).not.toBeNull()
     expect(styleEl?.tagName).toBe('STYLE')
     expect(styleEl?.getAttribute('data-source')).toBe('CanvasScrollUnrollInjector')
   })
 
   it('does not inject a stylesheet when enabled=false', () => {
-    render(<CanvasScrollUnrollInjector targetDocument={document} enabled={false} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector enabled={false} /></CanvasFrameAdapterContext.Provider>)
 
-    expect(document.getElementById(STYLE_TAG_ID)).toBeNull()
+    expect(overlayStyleEl()).toBeNull()
   })
 
   it('removes the stylesheet when toggled from enabled to disabled', () => {
-    const view = render(<CanvasScrollUnrollInjector targetDocument={document} enabled={true} />)
-    expect(document.getElementById(STYLE_TAG_ID)).not.toBeNull()
+    const adapter = makeAdapter()
+    const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector enabled={true} /></CanvasFrameAdapterContext.Provider>)
+    expect(overlayStyleEl()).not.toBeNull()
 
-    view.rerender(<CanvasScrollUnrollInjector targetDocument={document} enabled={false} />)
+    view.rerender(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector enabled={false} /></CanvasFrameAdapterContext.Provider>)
 
-    expect(document.getElementById(STYLE_TAG_ID)).toBeNull()
+    expect(overlayStyleEl()).toBeNull()
   })
 
   it('removes the stylesheet on unmount', () => {
-    const view = render(<CanvasScrollUnrollInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
     view.unmount()
 
-    expect(document.getElementById(STYLE_TAG_ID)).toBeNull()
+    expect(overlayStyleEl()).toBeNull()
   })
 
   it('does not stack duplicate style elements when re-rendered', () => {
-    const view = render(<CanvasScrollUnrollInjector targetDocument={document} />)
-    view.rerender(<CanvasScrollUnrollInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
+    view.rerender(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
 
     expect(document.querySelectorAll(`#${STYLE_TAG_ID}`)).toHaveLength(1)
   })
@@ -85,12 +106,13 @@ describe('CanvasScrollUnrollInjector — stylesheet', () => {
 
 describe('CanvasScrollUnrollInjector — tagging pass', () => {
   it('tags a position:fixed element "fixed"', async () => {
+    const adapter = makeAdapter()
     const nav = document.createElement('div')
     nav.style.position = 'fixed'
     document.body.appendChild(nav)
 
     try {
-      render(<CanvasScrollUnrollInjector targetDocument={document} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
 
       await waitFor(() => {
         expect(nav.getAttribute(SCROLL_UNROLL_ATTR)).toBe('fixed')
@@ -101,6 +123,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
   })
 
   it('tags a clipping element "explicit-height" and floors it at its true content extent (scrollHeight), not its currently-clipped clientHeight', async () => {
+    const adapter = makeAdapter()
     // Regression coverage for a real browser-verified bug (canvas-06):
     // `runUnrollPass` used to re-read `el.clientHeight` AFTER calling
     // `el.setAttribute(SCROLL_UNROLL_ATTR, 'explicit-height')`, which
@@ -127,7 +150,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
     document.body.appendChild(panel)
 
     try {
-      render(<CanvasScrollUnrollInjector targetDocument={document} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
 
       await waitFor(() => {
         expect(panel.getAttribute(SCROLL_UNROLL_ATTR)).toBe('explicit-height')
@@ -139,6 +162,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
   })
 
   it('does not tag an element with no clipping and static position', async () => {
+    const adapter = makeAdapter()
     // A known-fixed sibling proves the pass actually ran (rather than racing
     // an arbitrary timeout to prove a negative) — once IT is tagged, the
     // scan has visited every element in this body, including `el`.
@@ -150,7 +174,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
     document.body.appendChild(el)
 
     try {
-      render(<CanvasScrollUnrollInjector targetDocument={document} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
       await waitFor(() => {
         expect(witness.getAttribute(SCROLL_UNROLL_ATTR)).toBe('fixed')
       })
@@ -162,6 +186,7 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
   })
 
   it('does not run the tagging pass when enabled=false', () => {
+    const adapter = makeAdapter()
     const nav = document.createElement('div')
     nav.style.position = 'fixed'
     document.body.appendChild(nav)
@@ -169,21 +194,22 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
     try {
       // enabled=false short-circuits before scheduling any rAF pass, so
       // there is nothing async to wait for.
-      render(<CanvasScrollUnrollInjector targetDocument={document} enabled={false} />)
+      render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector enabled={false} /></CanvasFrameAdapterContext.Provider>)
       expect(nav.hasAttribute(SCROLL_UNROLL_ATTR)).toBe(false)
-      expect(document.getElementById(STYLE_TAG_ID)).toBeNull()
+      expect(overlayStyleEl()).toBeNull()
     } finally {
       nav.remove()
     }
   })
 
   it('clears tags on unmount so a disabled/removed injector leaves no residue', async () => {
+    const adapter = makeAdapter()
     const nav = document.createElement('div')
     nav.style.position = 'fixed'
     document.body.appendChild(nav)
 
     try {
-      const view = render(<CanvasScrollUnrollInjector targetDocument={document} />)
+      const view = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
       await waitFor(() => {
         expect(nav.getAttribute(SCROLL_UNROLL_ATTR)).toBe('fixed')
       })
@@ -197,11 +223,12 @@ describe('CanvasScrollUnrollInjector — tagging pass', () => {
   })
 
   it('tags an element inserted AFTER the initial settle — the MutationObserver path', async () => {
-    render(<CanvasScrollUnrollInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasScrollUnrollInjector /></CanvasFrameAdapterContext.Provider>)
     // Let the initial (empty-body) pass settle first, so this specifically
     // exercises the mutation-triggered re-schedule, not the mount pass.
     await waitFor(() => {
-      expect(document.getElementById(STYLE_TAG_ID)).not.toBeNull()
+      expect(overlayStyleEl()).not.toBeNull()
     })
 
     const nav = document.createElement('div')

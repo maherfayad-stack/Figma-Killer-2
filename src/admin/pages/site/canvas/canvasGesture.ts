@@ -39,6 +39,17 @@ let activeToken: symbol | null = null
 /** Callbacks that need to run ONCE when the page settles after a gesture. */
 const settleListeners = new Set<() => void>()
 
+/**
+ * Callbacks that need to know a gesture STARTED, not only that one finished.
+ *
+ * `onCanvasGestureSettle` was enough while every consumer of this module was
+ * already running continuously and only needed to be told when to recompute.
+ * `S4`'s selection-overlay pump is the opposite shape: it is idle by default
+ * and an element resize is one of the few things that genuinely does need a
+ * per-frame loop, so it has to learn about the begin edge as well.
+ */
+const changeListeners = new Set<(active: boolean) => void>()
+
 /** Whether a page-mutating pointer gesture is currently in flight. */
 export function isCanvasGestureActive(): boolean {
   return activeToken !== null
@@ -52,7 +63,11 @@ export function isCanvasGestureActive(): boolean {
  * torn down mid-drag) must not be able to freeze geometry forever.
  */
 export function beginCanvasGesture(): symbol {
+  const wasActive = activeToken !== null
   activeToken = Symbol('canvas-gesture')
+  // Only the null→active EDGE is an event. A `begin` that replaces a stale
+  // token (see above) is still one continuous gesture to every consumer.
+  if (!wasActive) for (const listener of changeListeners) listener(true)
   return activeToken
 }
 
@@ -68,7 +83,18 @@ export function beginCanvasGesture(): symbol {
 export function endCanvasGesture(token: symbol): void {
   if (activeToken !== token) return
   activeToken = null
+  // Change listeners first: a settle listener may measure, and it should do so
+  // with every consumer already agreeing the gesture is over.
+  for (const listener of changeListeners) listener(false)
   for (const listener of settleListeners) listener()
+}
+
+/** Register a callback for the gesture's begin/end edges. Returns an unsubscribe. */
+export function onCanvasGestureChange(listener: (active: boolean) => void): () => void {
+  changeListeners.add(listener)
+  return () => {
+    changeListeners.delete(listener)
+  }
 }
 
 /** Register a callback to run when a gesture ends. Returns an unsubscribe. */

@@ -13,7 +13,10 @@ const SELECTION_OVERLAY_CSS = new URL(
   import.meta.url,
 )
 const TOOLBAR = new URL('../../admin/pages/site/toolbar/Toolbar.tsx', import.meta.url)
-const MODULE_PICKER = new URL('../../admin/pages/site/toolbar/ModulePickerDropdown.tsx', import.meta.url)
+const ADD_PAGE_PICKER = new URL(
+  '../../admin/pages/site/canvas/BoardFramesLayer/AddPagePicker.tsx',
+  import.meta.url,
+)
 
 function cssRule(css: string, selector: string): string {
   return css.match(new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*\\{[\\s\\S]*?\\}`))?.[0] ?? ''
@@ -34,7 +37,7 @@ describe('CanvasNotch', () => {
     expect(src).toContain('floatingControl=')
   })
 
-  it('resolves quick insert actions from module inserter favorites', () => {
+  it('resolves quick insert actions from the Assets panel favourites', () => {
     const src = readFileSync(CANVAS_NOTCH, 'utf-8')
 
     // Icons come from each module's own declaration via the shared ModuleIcon
@@ -45,9 +48,9 @@ describe('CanvasNotch', () => {
     expect(src).not.toContain('pixel-art-icons/icons/image-solid')
 
     expect(src).not.toContain('QUICK_ACTION_MODULE_IDS')
-    expect(src).toContain('useModuleInserterPreference')
-    expect(src).toContain('DEFAULT_MODULE_INSERTER_FAVORITES')
-    expect(src).toContain('resolveInserterRefs')
+    expect(src).toContain('useAssetFavorites')
+    expect(src).toContain('DEFAULT_ASSET_FAVORITES')
+    expect(src).toContain('resolveAssetRefs')
 
     expect(src).toContain('canvas-notch-add-btn')
   })
@@ -79,10 +82,10 @@ describe('CanvasNotch', () => {
     expect(modeToggleZIndex).toBeGreaterThan(treeLadderZIndex)
   })
 
-  it('moves the Add picker out of the top toolbar', () => {
+  it('keeps the Add picker out of the top toolbar', () => {
     const src = readFileSync(TOOLBAR, 'utf-8')
 
-    expect(src).not.toContain('ModulePickerDropdown')
+    expect(src).not.toContain('AddPagePicker')
     expect(src).not.toContain('toolbar-add-module-btn')
   })
 
@@ -101,17 +104,19 @@ describe('CanvasNotch', () => {
     expect(toolbar).not.toContain('UndoRedoButtons')
   })
 
-  it('moves the Add picker trigger to an icon-only chip (no "Add" label text)', () => {
-    const picker = readFileSync(MODULE_PICKER, 'utf-8')
+  it('renders the notch Add trigger as an icon-only Add page chip', () => {
+    const notch = readFileSync(CANVAS_NOTCH, 'utf-8')
+    const picker = readFileSync(ADD_PAGE_PICKER, 'utf-8')
 
-    // The trigger is icon-only — only the AppGridPlusGlyphIcon is rendered
-    // (the same icon used by the "Insert module here" right-click submenu, so
-    // the two affordances read as the same action).
-    expect(picker).toContain('iconOnly')
-    expect(picker).toContain('<AppGridPlusGlyphIcon size={13} />')
-    // The literal "Add" text inside the trigger button is gone. The aria-label
-    // and tooltip describe the dialog action for screen readers.
-    expect(picker).toContain('aria-label="Add to canvas"')
-    expect(picker).not.toMatch(/<AppGridPlusGlyphIcon[^>]*\/>\s*Add\s*<\/Button>/)
+    // The notch "+" is Add page (DS-8) — the same AppGridPlusGlyphIcon it has
+    // always worn, now opening the one page picker instead of the deleted
+    // module-inserter dialog.
+    expect(notch).toContain('AddPagePicker')
+    expect(notch).toContain('iconOnly')
+    expect(picker).toContain('AppGridPlusGlyphIcon')
+    // Icon-only in the notch: the label renders only for the roomy variants
+    // (the board empty state, where the button carries its text).
+    expect(picker).toContain('{!iconOnly && <span>{label}</span>}')
+    expect(picker).toContain("label = 'Add page'")
   })
 })

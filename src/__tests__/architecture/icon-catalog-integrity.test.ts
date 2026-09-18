@@ -30,8 +30,10 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, existsSync, statSync } from 'fs'
-import { join, extname } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync, readFileSync } from 'fs'
+import { join } from 'path'
+import { toPosixPath } from './pathHelpers'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const EDITOR_DIR   = join(PROJECT_ROOT, 'src/admin/pages/site')
@@ -45,19 +47,7 @@ const ICON_FILE_EXT = '.js'
 // ─── helpers ─────────────────────────────────────────────────────────────────
 
 /** Recursively collect .tsx / .ts files under a directory. */
-function collectFiles(dir: string, exts = ['.tsx', '.ts']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.tsx', '.ts']): string[] => walkSourceTree(dir, exts)
 
 /**
  * Convert a kebab-case icon name to the PascalCase component name used in the
@@ -105,7 +95,7 @@ describe('Gate 1 — All direct icon imports exist in the icon catalog', () => {
   const allRefs: IconRef[] = []
 
   for (const filePath of editorFiles) {
-    const source = readFileSync(filePath, 'utf8')
+    const source = readSource(filePath)
     if (!source.includes('pixel-art-icons/icons/')) continue
     const names = extractIconNames(source)
     for (const name of names) {
@@ -158,6 +148,14 @@ describe('Gate 2 — Catalog files export the expected PascalCase component name
   // won't be present in the vendored pixel-art-icons subset shipped with the
   // public CMS repo. (Constraint #451 forbids `XIcon` as a close glyph, so
   // `x` is intentionally NOT in this list.)
+  //
+  // `chevron-left` used to sit in this list and had stopped being imported
+  // anywhere in `src/`, so `bun run icons:sync` (which vendors only what is
+  // actually imported) rightly stopped shipping it — and this gate went red
+  // on every checkout for years, blaming the catalog for a stale sample. The
+  // "every sampled icon is a real import" test below now enforces the
+  // precondition this comment always claimed, so the list cannot rot silently
+  // again.
   const SAMPLED_ICONS = [
     'eye-solid',
     'undo',
@@ -171,18 +169,49 @@ describe('Gate 2 — Catalog files export the expected PascalCase component name
     'laptop-solid',
     'tablet-solid',
     'chevron-right',
-    'chevron-left',
     'folder-glyph',
     'package-solid',
     'search-solid',
     'plus',
   ]
 
+  it('every sampled icon is actually imported somewhere in src/ (the list cannot rot)', () => {
+    // Scanned outside `src/__tests__/` so this file's own SAMPLED_ICONS array
+    // never satisfies the check it exists to make.
+    const productionSrc = collectFiles(join(PROJECT_ROOT, 'src')).filter(
+      (f) => !toPosixPath(f).includes('/src/__tests__/'),
+    )
+    const imported = new Set<string>()
+    for (const file of productionSrc) {
+      const source = readSource(file)
+      if (!source.includes('pixel-art-icons/icons/')) continue
+      for (const name of extractIconNames(source)) imported.add(name)
+    }
+
+    const unused = SAMPLED_ICONS.filter((name) => !imported.has(name))
+    if (unused.length > 0) {
+      throw new Error(
+        `[Gate 2] ${unused.length} sampled icon(s) are no longer imported anywhere in src/:\n` +
+          unused.map((n) => `  - ${n}`).join('\n') +
+          `\n\n` +
+          `\`bun run icons:sync\` vendors only the icons that src/ actually imports, so an\n` +
+          `unused name is guaranteed to be absent from vendor/pixel-art-icons/dist/icons/\n` +
+          `and this gate would fail for a reason that has nothing to do with the catalog.\n\n` +
+          `FIX: remove the name from SAMPLED_ICONS above (it is a sample, not a contract),\n` +
+          `or — if the icon should be in use — import it from 'pixel-art-icons/icons/<name>'\n` +
+          `in the component that needs it and run \`bun run icons:sync\`.`,
+      )
+    }
+    expect(unused).toEqual([])
+  })
+
   for (const name of SAMPLED_ICONS) {
     it(`pixel-art-icons/dist/icons/${name}.js exports "${toComponentName(name)}"`, () => {
       const filePath = join(ICONS_DIR, `${name}${ICON_FILE_EXT}`)
       expect(existsSync(filePath)).toBe(true)
 
+      // node_modules, not repository source — the shared tree cache does not
+      // (and must not) walk it, so this one read stays on node:fs.
       const source = readFileSync(filePath, 'utf8')
       const expected = toComponentName(name)
       const hasExport =
@@ -219,7 +248,7 @@ describe('Gate 3 — No inline <svg JSX in src/admin/pages/site/ (Constraint #34
     const violations: string[] = []
 
     for (const filePath of editorFiles) {
-      const source = readFileSync(filePath, 'utf8')
+      const source = readSource(filePath)
       if (source.includes(ALLOWED_NON_ICON_MARKER)) continue
       if (INLINE_SVG_PATTERN.test(source)) {
         violations.push(filePath.replace(PROJECT_ROOT, ''))
@@ -274,7 +303,7 @@ describe('Gate 5 — No X/Twitter logo used as close/dismiss button (Constraint 
 
       let source: string
       try {
-        source = readFileSync(filePath, 'utf8')
+        source = readSource(filePath)
       } catch {
         continue
       }
@@ -364,7 +393,7 @@ describe('Gate 4 — No Unicode/emoji characters used as visual icons (user dire
       const violations: string[] = []
 
       for (const filePath of allFiles) {
-        const source = readFileSync(filePath, 'utf8')
+        const source = readSource(filePath)
 
         // Look for the character inside JSX text content or string literals.
         // We scan for the character appearing on a non-comment line.

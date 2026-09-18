@@ -1,36 +1,36 @@
 /**
- * classStyleSections — the Properties panel's section registry.
+ * classStyleSections — the (now-retired) Properties panel section registry.
  *
- * Split out of `cssControlTypes.ts`, which had grown to hold two unrelated
- * things: how a single CSS property is CONTROLLED (its control type, enum
- * options, token source, default) and how the panel is DIVIDED INTO SECTIONS.
- * They change for different reasons — adding a control type is not adding a
- * section — and together they pushed the file past the 700-line ceiling.
+ * P3 (`STATE.md` `panel-25`) is complete as of item 11 (Studio extras):
+ * every CSS category this file used to divide the panel into
+ * (Spacing/Layout/Position/Size/Typography/Appearance/Fill/Interaction/
+ * Effects/Animations/Border, plus the last three Studio-only additions —
+ * Transform/Animations/Interaction) has migrated to its own
+ * `INSPECTOR_SECTIONS` manifest entry (`src/admin/pages/site/inspector/
+ * sections/index.ts`, ids `layer` through `customProperties`). This file's
+ * central export, `CLASS_STYLE_SECTIONS`, is now permanently `[]` — kept
+ * alive, not deleted, because two out-of-scope surfaces still import from
+ * this module:
  *
- * This file owns the second half: the section shape, the ordered section list,
- * and the two helpers that read it. `cssControlTypes.ts` imports the list back
- * to derive which properties are "curated".
+ * - `StyleCategoryRail.tsx` — the ambient/global-selector rail's "one button
+ *   per CSS category" loop. With `CLASS_STYLE_SECTIONS` empty, it renders no
+ *   CSS-category buttons; this is a disclosed, by-construction behaviour
+ *   change (see `STATE.md` `panel-25`'s Section 11 work order), not a bug —
+ *   `StyleCategoryRail.tsx` itself is not touched by this migration.
+ * - `cssControlTypes.ts` — imports `MIGRATED_SECTION_PROPERTIES` (below) to
+ *   derive `ALL_CURATED_CSS_PROPERTIES`/`isCuratedProperty`, so every
+ *   property that ever had a curated control keeps reading as curated
+ *   instead of leaking into the generic Custom Properties editor.
  *
- * Each section's `properties` array is load-bearing beyond layout: it drives
- * the style search, the "N set" indicator, and (post-G1) whether a
- * `collapsedWhenEmpty` section may collapse at all. A property edited by a
- * section's controls but missing from this array is invisible to all three.
+ * `ClassStyleSectionDefinition`, `getClassStyleSectionSetCounts`, and
+ * `getActiveStyleTab` all stay exported for the same two callers. Do not
+ * delete this file or repopulate `CLASS_STYLE_SECTIONS` — the panel's
+ * section list lives in `inspector/sections/index.ts` now.
  */
 
 import type { CSSPropertyBag } from '@core/page-tree'
 import type { IconComponent } from 'pixel-art-icons/types'
-import { CornerRadiusIcon } from '@ui/components/InspectorIcons'
 import { hasStyleValue } from './styleValueUtils'
-import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
-import { MoveIcon } from 'pixel-art-icons/icons/move'
-import { ProportionsSolidIcon } from 'pixel-art-icons/icons/proportions-solid'
-import { RulerDimensionSolidIcon } from 'pixel-art-icons/icons/ruler-dimension-solid'
-import { TextStartTIcon } from 'pixel-art-icons/icons/text-start-t'
-import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
-import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
-import { SparklesSolidIcon } from 'pixel-art-icons/icons/sparkles-solid'
-import { PointerSolidIcon } from 'pixel-art-icons/icons/pointer-solid'
-import { VideoSolidIcon } from 'pixel-art-icons/icons/video-solid'
 
 // ---------------------------------------------------------------------------
 // Class style inspector sections
@@ -52,286 +52,233 @@ export interface ClassStyleSectionDefinition {
    * line with a "+", not its full property grid. `StyleSectionGroup` in
    * `StyleSectionsEditor.tsx` is what reads this flag.
    *
-   * Left unset on `position`, `size`, `layout`, `spacing` and `appearance` —
-   * Figma's always-present blocks (F1, F3, F10) — which keep their controls
-   * resident even at rest.
+   * `layout`/`spacing`/`position`/`size`/`appearance`/`fill`/`border`/
+   * `effects`/`typography` used to be in this registry; all nine migrated
+   * out to their own `INSPECTOR_SECTIONS` manifest entries (`LayerSection`/
+   * `AlignSection`/`MeasuresSection`/`LayoutSection.tsx`/`FillSection.tsx`/
+   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx`/
+   * `TextSection.tsx` — `STATE.md` `panel-25`, P3 items 1-9). `FillSection.tsx`/
+   * `StrokeSection.tsx`/`ShadowSection.tsx`/`BlurSection.tsx` keep their own
+   * Law-1 empty-header/`forceOpen` disclosure locally (their own
+   * `setAnywhere` check + `Section`'s `empty` prop), same as `LayerSection`/
+   * `AlignSection`/`MeasuresSection`/`TextSection` — none of the nine has a
+   * `collapsedWhenEmpty` concept of its own here anymore; see
+   * `LayoutSection.tsx`'s own doc for why IT stays always-open instead, and
+   * `TextSection.tsx`'s own doc for why a text layer has no genuinely empty
+   * state to collapse to in the first place.
    */
   collapsedWhenEmpty?: boolean
   properties: ReadonlyArray<keyof CSSPropertyBag>
 }
 
 // ---------------------------------------------------------------------------
-// Section order — WS-6.1's Figma-shaped top-to-bottom flow, extended by
-// docs/features/inspector-disclosure.md §4 G5: Position → Size → Auto layout →
-// Spacing → Appearance → Fill → Stroke → Effects → Typography → Animations →
-// Interaction. The last two are Studio's own additions — Figma has no
-// CSS-cursor/pointer-events concept, and its motion lives in prototyping
-// rather than in the style panel at all — so both stay at the end rather than
-// displacing anything Figma-native. Animations (W5-5) sits between them
-// because it is still a statement about the ELEMENT (how it behaves over
-// time), where Interaction is a statement about the pointer.
-// Order is read by consumers via array iteration (`StyleCategoryRail`'s rail
-// buttons, `StyleSectionsEditor`'s scroll order) — changing it changes both
-// at once, deliberately, since they're meant to stay in lockstep.
+// Section order — P3 is complete. `Transform`/`Animations`/`Interaction`,
+// this registry's last three entries, migrated to their own
+// `INSPECTOR_SECTIONS` manifest entries (`TransformSection.tsx`/
+// `AnimationsSection.tsx`/`InteractionSection.tsx` under `inspector/
+// sections/`) in P3 item 11 (`STATE.md` `panel-25`), the same way every
+// other CSS category migrated out in items 1-9. `CLASS_STYLE_SECTIONS` is
+// now permanently `[]` — see this file's own top-of-file doc for who still
+// reads it and why it isn't deleted.
 // ---------------------------------------------------------------------------
 
-export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = [
-  {
-    id: 'position',
-    title: 'Position',
-    icon: MoveIcon,
-    properties: [
-      'position',
-      'top',
-      'right',
-      'bottom',
-      'left',
-      'zIndex',
-      // F1's third row (G10): the standalone individual-transform properties
-      // the rotation field and the flip pair write (`RotationRow.tsx`).
-      // Claimed here so a style search finds them and the section's "N set"
-      // dot counts them — a property the panel edits must not read as
-      // "custom".
-      'rotate',
-      'scale',
-    ],
-  },
-  {
-    id: 'size',
-    title: 'Size',
-    icon: ProportionsSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'width',
-      'height',
-      'minWidth',
-      'maxWidth',
-      'minHeight',
-      'maxHeight',
-      'aspectRatio',
-      'boxSizing',
-    ],
-  },
-  {
-    id: 'layout',
-    title: 'Layout',
-    icon: LayoutSolidIcon,
-    defaultOpen: true,
-    properties: [
-      'display',
-      'flexDirection',
-      'flexWrap',
-      'alignItems',
-      'justifyContent',
-      'justifyItems',
-      'alignSelf',
-      'justifySelf',
-      'flex',
-      'gap',
-      'rowGap',
-      'columnGap',
-      'gridTemplateColumns',
-      'gridTemplateRows',
-      'gridColumn',
-      'gridRow',
-      'overflow',
-      'overflowX',
-      'overflowY',
-      // Padding lives in the Layout cluster now (G4 / Figma F4): it is a
-      // layout property of a container. Margin stays in Spacing, because it
-      // is a relationship with siblings rather than a property of this box.
-      'paddingTop',
-      'paddingRight',
-      'paddingBottom',
-      'paddingLeft',
-    ],
-  },
-  {
-    id: 'spacing',
-    title: 'Spacing',
-    icon: RulerDimensionSolidIcon,
-    defaultOpen: true,
-    collapsedWhenEmpty: true,
-    properties: [
-      'marginTop',
-      'marginRight',
-      'marginBottom',
-      'marginLeft',
-    ],
-  },
-  {
-    id: 'appearance',
-    title: 'Appearance',
-    icon: CornerRadiusIcon,
-    defaultOpen: true,
-    properties: [
-      'opacity',
-      'borderTopLeftRadius',
-      'borderTopRightRadius',
-      'borderBottomRightRadius',
-      'borderBottomLeftRadius',
-      'visibility',
-      'mixBlendMode',
-    ],
-  },
-  {
-    id: 'fill',
-    title: 'Fill',
-    icon: PaintBucketSolidIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      // G9's completion: a text node's `color` IS its fill, and Figma shows
-      // it in Fill, not in the type block. It sits first because it is the
-      // topmost paint — text renders over the box's own background.
-      'color',
-      'backgroundColor',
-      'background',
-      'backgroundImage',
-      // The per-layer satellites of `background-image` (G6.5). They never draw
-      // a top-level row — each one is edited inside its own layer's popover —
-      // but they are claimed here because this array drives the section's
-      // "N set" dot and the style search, and a property claimed by no section
-      // is unreachable by both.
-      'backgroundSize',
-      'backgroundPosition',
-      'backgroundRepeat',
-      'backgroundAttachment',
-      'backgroundOrigin',
-      'backgroundClip',
-      'backgroundBlendMode',
-      // The element's own replaced content, not a background layer.
-      'objectFit',
-      'objectPosition',
-    ],
-  },
-  {
-    id: 'border',
-    title: 'Border',
-    icon: BoxSolidIcon,
-    collapsedWhenEmpty: true,
-    // Drives the section "N set" dot + search filtering. The visual
-    // BorderControl edits the per-side longhands + outline; the shorthand
-    // props (border / borderTop / …) live in the section's Advanced
-    // disclosure and are listed here too so a search for "border" still
-    // surfaces the section. Per-corner radius moved to the `appearance`
-    // section (docs/features/inspector-disclosure.md §4 G5) — `borderRadius`
-    // (the shorthand) stays here in Advanced for the raw-string power case.
-    properties: [
-      // Per-side longhands (canonical, edited by BorderControl)
-      'borderTopWidth', 'borderTopStyle', 'borderTopColor',
-      'borderRightWidth', 'borderRightStyle', 'borderRightColor',
-      'borderBottomWidth', 'borderBottomStyle', 'borderBottomColor',
-      'borderLeftWidth', 'borderLeftStyle', 'borderLeftColor',
-      // Outline
-      'outline',
-      'outlineOffset',
-      // Shorthands (Advanced disclosure)
-      'border',
-      'borderTop',
-      'borderRight',
-      'borderBottom',
-      'borderLeft',
-      'borderWidth',
-      'borderStyle',
-      'borderColor',
-      'borderRadius',
-      'appearance',
-    ],
-  },
-  {
-    id: 'effects',
-    title: 'Effects',
-    icon: SparklesSolidIcon,
-    collapsedWhenEmpty: true,
-    // `opacity` moved to the `appearance` section (docs/features/inspector-disclosure.md §4 G5).
-    // `transition`/`animation` moved to the `animations` section below (W5-5):
-    // they are motion, not effects, and a property may only be claimed by one
-    // section — this array drives the "N set" count and the style search, so a
-    // property listed twice would be counted twice and shown twice.
-    properties: [
-      'boxShadow',
-      // G9's completion: a text shadow is a shadow. It was resident on
-      // Typography's own rows only because Effects did not exist yet when
-      // that section shipped.
-      'textShadow',
-      'filter',
-      'backdropFilter',
-      'transform',
-      'transformOrigin',
-    ],
-  },
-  {
-    id: 'animations',
-    title: 'Animations',
-    icon: VideoSolidIcon,
-    // Law 1 in full: an element with no motion costs exactly one header line.
-    // This section is the most expensive one to render (it resolves keyframes
-    // against the whole rule registry), so collapsing when empty is not just
-    // the visual convention here — it is also what keeps that work off the
-    // panel for the overwhelming majority of elements.
-    collapsedWhenEmpty: true,
-    properties: [
-      'animation',
-      'animationName',
-      'animationDuration',
-      'animationTimingFunction',
-      'animationDelay',
-      'animationIterationCount',
-      'animationDirection',
-      'animationFillMode',
-      'animationPlayState',
-      'transition',
-    ],
-  },
-  {
-    id: 'typography',
-    title: 'Typography',
-    icon: TextStartTIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      'fontFamily',
-      'fontSize',
-      'fontWeight',
-      'fontStyle',
-      'lineHeight',
-      'letterSpacing',
-      'textAlign',
-      'textDecoration',
-      'textTransform',
-      'whiteSpace',
-      // `color` moved to `fill` and `textShadow` to `effects` — G9's target
-      // shape, finished once those two sections existed to receive them
-      // (docs/features/inspector-disclosure.md §4 G9). A property is claimed
-      // by exactly ONE section: this array drives the "N set" count and the
-      // style search, so leaving either listed here as well would count it
-      // twice and show it twice.
-      // Reached through the section's settings popover (G9 / Figma F25-F27),
-      // not as resident rows. Listed here so a style search still finds them
-      // and so they count toward the section's "N set" indicator — a property
-      // the user has set must never be invisible to the section that owns it.
-      'textOverflow',
-      'textIndent',
-      'marginBlock',
-      'fontVariantNumeric',
-      'fontFeatureSettings',
-      'hangingPunctuation',
-      'fontKerning',
-      'fontVariationSettings',
-    ],
-  },
-  {
-    id: 'interaction',
-    title: 'Interaction',
-    icon: PointerSolidIcon,
-    collapsedWhenEmpty: true,
-    properties: [
-      'cursor',
-      'pointerEvents',
-      'userSelect',
-      'scrollBehavior',
-    ],
-  },
+/**
+ * Properties claimed by a P3 (`STATE.md` `panel-25`) manifest section that
+ * has migrated OUT of this legacy registry entirely — not folded into any
+ * `ClassStyleSectionDefinition` here, because `StyleSectionsEditor`'s
+ * generic per-property fallback (its final `section.properties.map(...)`
+ * branch) would then render a SECOND, uncoordinated copy of the same
+ * property next to the new section's own control — exactly the "two
+ * components racing to write opacity" hazard Layer's own design flags.
+ *
+ * `isCuratedProperty`/`ALL_CURATED_CSS_PROPERTIES` (`cssControlTypes.ts`)
+ * still need these keys "claimed" — so they stay out of the generic Custom
+ * Properties editor, and so `useFrameComputedStyleValues` still fetches
+ * their real computed value for the new section's own prefill — so they are
+ * unioned in there, without ever being iterated by
+ * `getVisibleStyleSections`/`getClassStyleSectionSetCounts`.
+ */
+export const MIGRATED_SECTION_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
+  // Layer (P3 item 1) — src/admin/pages/site/inspector/sections/LayerSection.tsx
+  'opacity',
+  'mixBlendMode',
+  'visibility',
+  // Measures (P3 item 3) — src/admin/pages/site/inspector/sections/MeasuresSection.tsx.
+  // Absorbs the old `position` + `size` + `appearance` (radius-only remainder)
+  // entries wholesale — every property those three used to claim, unioned
+  // here in one step rather than split by their old section identity, since
+  // Measures is now the SINGLE section rendering all of them.
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'zIndex',
+  'rotate',
+  'scale',
+  'width',
+  'height',
+  'minWidth',
+  'maxWidth',
+  'minHeight',
+  'maxHeight',
+  'aspectRatio',
+  'boxSizing',
+  'borderTopLeftRadius',
+  'borderTopRightRadius',
+  'borderBottomRightRadius',
+  'borderBottomLeftRadius',
+  // Layout (P3 item 4) — src/admin/pages/site/inspector/sections/LayoutSection.tsx.
+  // Absorbs the old `layout` + `spacing` entries wholesale, unioned here in
+  // one step, same pattern Measures established for `position`/`size`/
+  // `appearance`. `alignSelf`/`justifySelf` are credited to Align (item 2,
+  // `AlignSection.tsx`), which claimed sole ownership of them once Layout's
+  // own `LayoutSettingsButton` dropped its (now-duplicate) copy — see that
+  // file's own doc for why. `gap` stays claimed even though no resident
+  // Layout field writes it directly anymore (superseded by the `rowGap`/
+  // `columnGap` split, `GapRow.tsx`'s own doc) — a value set from raw source
+  // must still read as curated, not leak into Custom Properties.
+  'display',
+  'flexDirection',
+  'flexWrap',
+  'alignItems',
+  'justifyContent',
+  'justifyItems',
+  'alignSelf',
+  'justifySelf',
+  'flex',
+  'gap',
+  'rowGap',
+  'columnGap',
+  'gridTemplateColumns',
+  'gridTemplateRows',
+  'gridColumn',
+  'gridRow',
+  'overflow',
+  'overflowX',
+  'overflowY',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+  'marginTop',
+  'marginRight',
+  'marginBottom',
+  'marginLeft',
+  // Fill (P3 item 5) — src/admin/pages/site/inspector/sections/FillSection.tsx.
+  // Text colour / solid fill / background-image layers (+ its six per-layer
+  // satellites, none of which ever drew a top-level row even in the old
+  // registry) / content fit, unioned here in one step, same pattern
+  // Measures/Layout established.
+  'color',
+  'backgroundColor',
+  'background',
+  'backgroundImage',
+  'backgroundSize',
+  'backgroundPosition',
+  'backgroundRepeat',
+  'backgroundAttachment',
+  'backgroundOrigin',
+  'backgroundClip',
+  'backgroundBlendMode',
+  'objectFit',
+  'objectPosition',
+  // Stroke (P3 item 6) — src/admin/pages/site/inspector/sections/StrokeSection.tsx.
+  // The per-side `border*Width/Style/Color` longhands (colour/style fanned
+  // to all four sides, weight per-side), `outline`/`outlineOffset`, and the
+  // raw shorthand escape hatches (reachable via Stroke's own ⚙ settings
+  // popover, `StackedPropertyGrid` — Law 2 turns an in-panel disclosure into
+  // a popover, it does not delete the capability behind it) — every property
+  // the old `border` entry used to claim, unioned here in one step, same
+  // pattern every migrated section established.
+  'borderTopWidth',
+  'borderTopStyle',
+  'borderTopColor',
+  'borderRightWidth',
+  'borderRightStyle',
+  'borderRightColor',
+  'borderBottomWidth',
+  'borderBottomStyle',
+  'borderBottomColor',
+  'borderLeftWidth',
+  'borderLeftStyle',
+  'borderLeftColor',
+  'outline',
+  'outlineOffset',
+  'border',
+  'borderTop',
+  'borderRight',
+  'borderBottom',
+  'borderLeft',
+  'borderWidth',
+  'borderStyle',
+  'borderColor',
+  'borderRadius',
+  'appearance',
+  // Shadow (P3 item 7) — src/admin/pages/site/inspector/sections/ShadowSection.tsx.
+  // Text shadow moved onto the same section as box shadow in G9's completion
+  // (a text shadow is a shadow) — unioned here in one step, same pattern
+  // every migrated section established.
+  'boxShadow',
+  'textShadow',
+  // Blur (P3 item 8) — src/admin/pages/site/inspector/sections/BlurSection.tsx.
+  // `filter: blur()` ("Layer blur") + `backdrop-filter: blur()` ("Background
+  // blur") — the other half of the old `effects` entry's claim.
+  'filter',
+  'backdropFilter',
+  // Text (P3 item 9) — src/admin/pages/site/inspector/sections/TextSection.tsx.
+  // Every property the old `typography` entry claimed, unioned here in one
+  // step, same pattern every migrated section established. `color`/
+  // `textShadow` stay claimed by Fill/Shadow (G9.4, W8-1) — this section
+  // doesn't touch either. `alignItems` (the vertical-align convenience
+  // write TextSection's own doc describes) stays credited to Layout below,
+  // NOT unioned here — a property is claimed by exactly one section.
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'fontStyle',
+  'lineHeight',
+  'letterSpacing',
+  'textAlign',
+  'textDecoration',
+  'textTransform',
+  'whiteSpace',
+  'textOverflow',
+  'textIndent',
+  'marginBlock',
+  'fontVariantNumeric',
+  'fontFeatureSettings',
+  'hangingPunctuation',
+  'fontKerning',
+  'fontVariationSettings',
+  // Transform (P3 item 11) — src/admin/pages/site/inspector/sections/TransformSection.tsx.
+  'transform',
+  'transformOrigin',
+  // Animations (P3 item 11) — src/admin/pages/site/inspector/sections/AnimationsSection.tsx.
+  'animation',
+  'animationName',
+  'animationDuration',
+  'animationTimingFunction',
+  'animationDelay',
+  'animationIterationCount',
+  'animationDirection',
+  'animationFillMode',
+  'animationPlayState',
+  'transition',
+  // Interaction (P3 item 11) — src/admin/pages/site/inspector/sections/InteractionSection.tsx.
+  'cursor',
+  'pointerEvents',
+  'userSelect',
+  'scrollBehavior',
 ]
+
+/**
+ * P3 is complete — every CSS category this registry used to divide the panel
+ * into has migrated to its own `INSPECTOR_SECTIONS` manifest entry. This
+ * array is permanently empty; see this file's own top-of-file doc for why it
+ * still exists.
+ */
+export const CLASS_STYLE_SECTIONS: ReadonlyArray<ClassStyleSectionDefinition> = []
 
 // ---------------------------------------------------------------------------
 // Style tab utilities

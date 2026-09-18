@@ -1,24 +1,55 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import {
+  BUDGET_ZOOM_MEAN_FRAME_MS,
+  BUDGET_ZOOM_WORST_FRAME_MS,
+  profileGesture,
+  readBoardCounts,
+} from './helpers/canvasPerf'
 
 /**
  * Real-browser perf measurement for `perf-01` (WS-5.3 / WS-5.4).
  *
- * `scripts/bench/studioBoard.bench.ts` is the synthetic 50-frame gate, but it
- * **cannot run on this platform**: Playwright drives Chromium over
- * `--remote-debugging-pipe`, and Bun on Windows does not wire the extra
- * stdio fds that transport needs, so `chromium.launch()` hangs until its
- * timeout (verified: the identical launch returns in 72 ms under Node,
- * hangs for 180 s under Bun; `connectOverCDP` over a TCP port hangs in
- * Bun's WebSocket client too). The bench then took its own "skip
- * gracefully" branch and reported success — a perf gate that structurally
- * could not fail. See `scripts/bench/lib/browser.ts` and the `perf-01`
- * `STATE.md` entry.
+ * **This file owns the canvas budgets.** `bun run bench:studio-board`
+ * (`scripts/bench/studioBoard.bench.ts`) does not measure anything of its own
+ * any more — it spawns Playwright's Node runner on THIS spec and republishes
+ * the `perf` annotations below, so a budget ratcheted here is the only place
+ * it needs ratcheting. It used to drive a synthetic 50-frame board in-process
+ * under Bun, which could never work: Playwright talks to Chromium over
+ * `--remote-debugging-pipe`, and Bun on Windows does not wire the extra stdio
+ * fds that transport needs, so `chromium.launch()` hung until its timeout
+ * (verified: the identical launch returns in 72 ms under Node, hangs for 180 s
+ * under Bun; `connectOverCDP` over a TCP port hangs in Bun's WebSocket client
+ * too). The bench caught the hang, reported `skipped`, and passed — a perf
+ * gate that structurally could not fail. See `scripts/bench/lib/browser.ts`
+ * and the `perf-01` `STATE.md` entry.
  *
- * The Playwright **test runner** spawns Node, not Bun, so this file is the
- * one place in the repo that can actually measure canvas frame time. It runs
- * against the REAL corpus (`studio-workspace/maherfayad-stack-eSIM`, 15
- * pages / ~803 nodes) and read-only — it pans, zooms and counts, and never
- * writes to the project.
+ * The Playwright **test runner** spawns Node, not Bun, so this file is where
+ * canvas frame time is actually measurable.
+ *
+ * ## The corpus, and why it changed
+ *
+ * This spec used to measure `studio-workspace/maherfayad-stack-eSIM`, which is
+ * **not tracked by git** — so on every CI run and every machine but the one it
+ * was written on, it called `test.skip` and measured nothing (`verify-01`
+ * finding 1). It now runs against `studio-workspace/__board-perf-fixture`, a
+ * committed twelve-frame board whose own README explains its shape, and it
+ * **fails rather than skips** when that board is missing: a perf gate that can
+ * silently opt out is not a gate.
+ *
+ * Twelve frames is the floor, not a preference. `frameMountPool.ts` keeps
+ * `max(8, onScreen + 4)` frames mounted, so a board of eight or fewer has every
+ * frame mounted at all times and a zoom across a virtualization boundary mounts
+ * nothing — which is exactly the trap `studio-feel.e2e.ts` falls into on the
+ * three-frame `test4` (see `BUDGET_ZOOM_WORST_FRAME_MS`'s docblock).
+ *
+ * Read-only against the project: it pans, zooms and counts, and never writes.
+ * The run's whole workspace is a throwaway copy in any case
+ * (`tests/e2e/helpers/constants.ts`'s `WORKSPACE_ROOT`).
+ *
+ * The frame-timing instrumentation (`profileGesture`, `readBoardCounts`) AND
+ * the zoom budgets live in `helpers/canvasPerf.ts`, so `studio-feel.e2e.ts`
+ * measures a zoom the same way this spec does and ratchets against the same
+ * number. Read `BUDGET_ZOOM_WORST_FRAME_MS` there before loosening it.
  *
  * What each assertion is actually evidence of:
  *
@@ -38,7 +69,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
  *   silently no-op.
  */
 
-const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
+const PROJECT_FOLDER_NAME = '__board-perf-fixture'
 
 /**
  * Budgets, every one of them derived from a real run of this spec against
@@ -53,19 +84,12 @@ const BUDGET_PAN_WORST_FRAME_MS = 40
 const BUDGET_PAN_LAYER_MUTATIONS = 10
 
 /**
- * **This one records a known defect, and is a ratchet rather than a target.**
- *
- * A zoom-out that crosses virtualization boundaries mounts live iframes, and
- * a single board-frame mount on this corpus costs ~100-140 ms of synchronous
- * work (iframe + `srcDoc` + injector chain + node tree). Measured worst frame
- * for a 6 → 15 mount sweep: **290 ms**. Two fixes were tried and neither
- * helped — see the `perf-01` `STATE.md` entry for both, and for why the real
- * fix is making an individual mount cheaper, not rescheduling the batch.
- *
- * So this number is deliberately NOT 40 ms. It is set where it is so the
- * defect cannot silently get worse while the honest fix is outstanding.
+ * How long the board is left alone so `framePosterQueue` can drain all twelve
+ * frames before the poster pan. Not a budget and not a guess — see the comment
+ * at its one use for the arithmetic it comes from.
  */
-const BUDGET_ZOOM_WORST_FRAME_MS = 600
+const POSTER_QUEUE_DRAIN_MS = 4_000
+
 
 interface StudioProjectSummary {
   dir: string
@@ -82,7 +106,7 @@ async function findProjectDir(page: Page, folderName: string): Promise<string | 
   return match?.dir ?? null
 }
 
-async function openEsimBoard(page: Page, projectDir: string): Promise<Locator> {
+async function openPerfBoard(page: Page, projectDir: string): Promise<Locator> {
   await page.addInitScript((dir: string) => {
     window.localStorage.setItem('studio:studio:dir', dir)
     window.localStorage.setItem('studio:studio', '1')
@@ -118,115 +142,6 @@ async function readFrameStates(page: Page): Promise<Record<string, FrameState>> 
       else states[id] = 'empty'
     }
     return states
-  })
-}
-
-/** Live (mounted) canvas iframes, board frames on the board, and rendered posters. */
-async function readBoardCounts(page: Page): Promise<{
-  liveIframes: number
-  boardFrames: number
-  posters: number
-  placeholders: number
-  domNodes: number
-}> {
-  return page.evaluate(() => ({
-    liveIframes: document.querySelectorAll('iframe[title^="Canvas frame"]').length,
-    boardFrames: document.querySelectorAll('[data-testid="board-frame-body"]').length,
-    posters: document.querySelectorAll('[data-testid="board-frame-poster"]').length,
-    placeholders: document.querySelectorAll('[data-testid="board-frame-placeholder"]').length,
-    domNodes: document.getElementsByTagName('*').length,
-  }))
-}
-
-interface GestureProfile {
-  frames: number
-  worstFrameMs: number
-  meanFrameMs: number
-  framesOver20ms: number
-  /** Mutations observed INSIDE the frames layer — the React re-render signal. */
-  layerMutations: number
-  /** `style` writes on the transform layer — the intended rAF transform commits. */
-  transformWrites: number
-}
-
-/**
- * Samples `requestAnimationFrame` intervals and DOM mutations while
- * `gesture` runs. Both observers are installed in the page, the gesture is
- * driven from the test side with real `page.mouse` input, then the sample is
- * read back and torn down.
- */
-async function profileGesture(page: Page, gesture: () => Promise<void>): Promise<GestureProfile> {
-  await page.evaluate(() => {
-    const layer = document.querySelector('[data-testid="board-frames-layer"]')
-    const transformLayer = document.querySelector('[data-testid="canvas-transform-layer"]')
-    const state = {
-      intervals: [] as number[],
-      layerMutations: 0,
-      transformWrites: 0,
-      rafHandle: 0,
-      last: performance.now(),
-      layerObserver: null as MutationObserver | null,
-      transformObserver: null as MutationObserver | null,
-    }
-    window.__studioPerfSample = state
-
-    const tick = () => {
-      const now = performance.now()
-      state.intervals.push(now - state.last)
-      state.last = now
-      state.rafHandle = requestAnimationFrame(tick)
-    }
-    state.rafHandle = requestAnimationFrame(tick)
-
-    if (layer) {
-      state.layerObserver = new MutationObserver((records) => {
-        state.layerMutations += records.length
-      })
-      state.layerObserver.observe(layer, {
-        subtree: true,
-        childList: true,
-        attributes: true,
-        characterData: false,
-      })
-    }
-    if (transformLayer) {
-      state.transformObserver = new MutationObserver((records) => {
-        state.transformWrites += records.length
-      })
-      // Attributes on the transform layer ITSELF only (no subtree) — this is
-      // the `style.transform` write `useCanvas.ts` makes once per rAF.
-      state.transformObserver.observe(transformLayer, {
-        subtree: false,
-        childList: false,
-        attributes: true,
-        attributeFilter: ['style'],
-      })
-    }
-  })
-
-  await gesture()
-
-  return page.evaluate(() => {
-    const state = window.__studioPerfSample
-    if (!state) throw new Error('perf sample was never installed')
-    cancelAnimationFrame(state.rafHandle)
-    state.layerObserver?.disconnect()
-    state.transformObserver?.disconnect()
-    delete window.__studioPerfSample
-
-    // Drop the first interval: it spans the gap between installing the
-    // sampler and the gesture's first input, which is idle time, not a
-    // rendered frame.
-    const intervals = state.intervals.slice(1)
-    const total = intervals.reduce((sum, n) => sum + n, 0)
-    return {
-      frames: intervals.length,
-      worstFrameMs: intervals.length > 0 ? Math.max(...intervals) : 0,
-      meanFrameMs: intervals.length > 0 ? total / intervals.length : 0,
-      framesOver20ms: intervals.filter((n) => n > 20).length,
-      layerMutations: state.layerMutations,
-      transformWrites: state.transformWrites,
-    }
   })
 }
 
@@ -266,12 +181,19 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     page,
   }) => {
     const projectDir = await findProjectDir(page, PROJECT_FOLDER_NAME)
-    if (!projectDir) {
-      test.skip(true, `studio-workspace/${PROJECT_FOLDER_NAME} is not present on disk for this run`)
-      return
-    }
+    // Deliberately NOT `test.skip`. The corpus is committed to this repository
+    // now, so "it is not on disk" means the fixture was deleted or the server
+    // is reading a different workspace root — both of which must fail loudly.
+    // The previous skip is why this file measured nothing for seven weeks.
+    expect(
+      projectDir,
+      `studio-workspace/${PROJECT_FOLDER_NAME} was not listed by /admin/api/studio/projects. ` +
+        'That fixture is tracked by git and is the whole corpus of this gate — restore it, or ' +
+        'check that the e2e stack is pointed at a workspace root that contains it ' +
+        '(STUDIO_WORKSPACE_DIR, set by scripts/e2e-dev.ts).',
+    ).not.toBeNull()
 
-    const canvasRoot = await openEsimBoard(page, projectDir)
+    const canvasRoot = await openPerfBoard(page, projectDir!)
     // Posters capture on a settle timer (`useFramePosterCapture.ts`), and the
     // board's initial mount churn has to finish before "at rest" means
     // anything. One settle window covers both.
@@ -342,8 +264,10 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       }
       await page.keyboard.up('Control')
     })
-    // Frames are admitted a few per animation frame (`useStaggeredFrameMounts`),
-    // so the live set finishes filling shortly after the gesture stops.
+    // A frame's node tree lands one commit after its injectors (S1's staged
+    // mount, `IframeFrameSurface`), so the live set finishes filling shortly
+    // after the gesture stops. (This used to credit a `useStaggeredFrameMounts`
+    // that `perf-01` reverted and never existed in the tree afterwards.)
     await page.waitForTimeout(800)
     const liveAfterZoom = (await readBoardCounts(page)).liveIframes
     annotate('live iframes across zoom', `${liveBeforeZoom} -> ${liveAfterZoom}`)
@@ -358,11 +282,28 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     expect(zoom.transformWrites).toBeGreaterThan(0)
     // Ratchet on a known defect — see BUDGET_ZOOM_WORST_FRAME_MS's docblock.
     expect(zoom.worstFrameMs).toBeLessThan(BUDGET_ZOOM_WORST_FRAME_MS)
+    // The frames that are NOT paying for a mount. Asserted here as well as in
+    // `studio-feel.e2e.ts` on purpose: this is the board where the gesture
+    // really does mount frames, so the mean is the honest "everything else
+    // stayed smooth while it did" number.
+    expect(zoom.meanFrameMs).toBeLessThan(BUDGET_ZOOM_MEAN_FRAME_MS)
 
     // ── WS-5.3 — the frozen poster ─────────────────────────────────────────
     // A frame the user has already looked at must NOT come back as an empty
     // box once it leaves the viewport. Pan hard until at least one
     // previously-live frame goes offscreen, then look at what it renders.
+    //
+    // First, let the poster queue actually run. `framePosterQueue` waits
+    // `QUIET_PERIOD_MS` (700 ms) after the last arrival or input event, then
+    // drains SERIALLY — one `html-to-image` rasterization per macrotask, each
+    // measured at ~85 ms, plus a 32 ms gap. Twelve frames is therefore about
+    // 700 + 12 × 117 ≈ 2.1 s of quiet before the last poster is cached, and a
+    // frame that leaves the viewport before its turn has its request WITHDRAWN
+    // (the `cancelFramePoster` cleanup in `useFramePosterCapture`). Waiting too
+    // little here does not make the assertion below flaky — it makes it
+    // impossible, which is exactly what it did at 800 ms on this board: 0/4.
+    await page.waitForTimeout(POSTER_QUEUE_DRAIN_MS)
+
     const liveBefore = Object.entries(await readFrameStates(page))
       .filter(([, state]) => state === 'live')
       .map(([id]) => id)
@@ -381,12 +322,24 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
       departed.map((id) => `${id}=${afterPan[id]}`).join(', ') || '(none departed)',
     )
 
-    if (departed.length > 0) {
-      const withPoster = departed.filter((id) => afterPan[id] === 'poster')
-      annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
-      // The WS-5.3 acceptance criterion.
-      expect(withPoster.length).toBeGreaterThan(0)
-    }
+    // Posters are rasterized by `framePosterQueue`, which holds every capture
+    // until the board has been quiet — the pan above is exactly the kind of
+    // gesture it refuses to work under, so the wait has to outlast its quiet
+    // period plus a serial capture or two.
+    await page.waitForTimeout(3000)
+    const afterSettle = await readFrameStates(page)
+    // Unconditional, not `if (departed.length > 0)`. On the committed
+    // twelve-frame fixture this pan always pushes frames out of the pool, so a
+    // run where nothing departed means the pan stopped working — and the old
+    // guard turned exactly that into a silent pass.
+    expect(
+      departed.length,
+      'the poster pan pushed no previously-live frame offscreen, so the poster criterion was never exercised',
+    ).toBeGreaterThan(0)
+    const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
+    annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
+    // The WS-5.3 acceptance criterion.
+    expect(withPoster.length).toBeGreaterThan(0)
 
     // ── The "before" state, measured rather than assumed ───────────────────
     // Reset the view (Ctrl+0 → `useCanvas.ts`'s `resetCanvasView`) so the
@@ -428,17 +381,3 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     annotate('pan frames-layer mutations @ all mounted', String(panAllMounted.layerMutations))
   })
 })
-
-declare global {
-  interface Window {
-    __studioPerfSample?: {
-      intervals: number[]
-      layerMutations: number
-      transformWrites: number
-      rafHandle: number
-      last: number
-      layerObserver: MutationObserver | null
-      transformObserver: MutationObserver | null
-    }
-  }
-}

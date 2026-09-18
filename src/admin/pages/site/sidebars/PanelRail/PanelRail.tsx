@@ -4,10 +4,10 @@ import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
 import type { IconComponent } from 'pixel-art-icons/types'
 import { CommentBubbleIcon } from '@ui/components/InspectorIcons'
 import { AiSettingsSolidIcon } from 'pixel-art-icons/icons/ai-settings-solid'
+import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { DatabaseSolidIcon } from 'pixel-art-icons/icons/database-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { ColorsSwatchSolidIcon } from 'pixel-art-icons/icons/colors-swatch-solid'
-import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { GlobeSolidIcon } from 'pixel-art-icons/icons/globe-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { Button } from '@ui/components/Button'
@@ -48,7 +48,7 @@ interface RailItem {
 /**
  * The rail, in order. Each item's `group` is the whole of its colour rule —
  * Framework and Classes are both `style`, so they are both mint, and the rail
- * reads as "navigate / style / inspect / content" instead of a rainbow.
+ * reads as "navigate / style / content" instead of a rainbow.
  */
 const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
   {
@@ -56,6 +56,15 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     label: 'Explorer',
     icon: DatabaseSolidIcon,
     iconName: 'database-solid',
+    group: 'navigate',
+  },
+  // Assets — the library you insert FROM, next to the explorer you navigate
+  // with. Both are "find the thing", which is why they share the accent.
+  {
+    id: 'assets',
+    label: 'Assets',
+    icon: BoxStackSolidIcon,
+    iconName: 'box-stack-solid',
     group: 'navigate',
   },
   {
@@ -71,13 +80,6 @@ const PRIMARY_RAIL_ITEMS: PrimaryRailItem[] = [
     icon: PaintBucketSolidIcon,
     iconName: 'paint-bucket',
     group: 'style',
-  },
-  {
-    id: 'inspect',
-    label: 'Inspect',
-    icon: EyeSolidIcon,
-    iconName: 'eye-solid',
-    group: 'inspect',
   },
   {
     id: 'content',
@@ -127,10 +129,10 @@ export function PanelRail({
   railOnly = false,
 }: PanelRailProps) {
   const explorerOpen = useEditorStore((s) => s.explorerPanelOpen)
+  const assetsOpen = useEditorStore((s) => s.assetsPanelOpen)
   const selectorsOpen = useEditorStore((s) => s.selectorsPanelOpen)
   const frameworkOpen = useEditorStore((s) => s.frameworkPanelOpen)
   const dependenciesOpen = useEditorStore((s) => s.dependenciesPanelOpen)
-  const inspectOpen = useEditorStore((s) => s.inspectPanelOpen)
   const contentOpen = useEditorStore((s) => s.contentPanelOpen)
   const gitOpen = useEditorStore((s) => s.gitPanelOpen)
   const agentOpen = useEditorStore((s) => s.isAgentOpen)
@@ -155,11 +157,11 @@ export function PanelRail({
 
   const panelOpenById = {
     explorer: explorerOpen,
+    assets: assetsOpen,
     agent: agentOpen,
     selectors: selectorsOpen,
     framework: frameworkOpen,
     dependencies: dependenciesOpen,
-    inspect: inspectOpen,
     content: contentOpen,
     git: gitOpen,
   } satisfies Record<LeftSidebarPanelId, boolean>
@@ -168,7 +170,7 @@ export function PanelRail({
   // Layers / Pages / Media navigation surfaces). Style/runtime editing panels
   // only appear when the user can edit structure. The AI assistant follows
   // `ai.chat`, independent of editability.
-  const READ_ONLY_RAIL_IDS = new Set<LeftSidebarPanelId>(['explorer', 'inspect'])
+  const READ_ONLY_RAIL_IDS = new Set<LeftSidebarPanelId>(['explorer'])
   const visiblePrimaryItems = editable
     ? PRIMARY_RAIL_ITEMS
     : PRIMARY_RAIL_ITEMS.filter((item) => READ_ONLY_RAIL_IDS.has(item.id))

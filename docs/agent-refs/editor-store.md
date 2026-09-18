@@ -84,13 +84,18 @@ for a `for (const page of X.pages)` loop.
 Every mutation in `src/core/page-tree/mutations.ts` takes a `NodeTree<TNode>` and
 is **tree-agnostic** — it knows nothing about pages vs Visual Components.
 
-The 11 named store actions are one-liners over `mutateActiveTree`:
+The 13 named store actions are one-liners over `mutateActiveTree`:
 
 ```
 insertNode · deleteNode · updateNodeProps · setBreakpointOverride ·
-clearBreakpointOverride · renameNode · toggleNodeLocked · toggleNodeHidden ·
-moveNode · duplicateNode · wrapNode
+clearBreakpointOverride · renameNode · setNodesLocked · setNodesHidden ·
+moveNode · duplicateNode · wrapNode · groupNodes · ungroupNode
 ```
+
+`setNodesLocked`/`setNodesHidden` (`site/visibilityActions.ts`) take an
+ABSOLUTE value over N ids, not a toggle: a selection that disagrees has no
+honest toggle, and a caller that loops one pushes N history entries for one
+gesture (`panel-40`).
 
 **They must not contain a `kind === 'visualComponent'` branch.**
 Gate: `no-vc-mode-branches-in-mutations.test.ts`.
@@ -113,14 +118,49 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 never both nothing and nothing said, which is what they used to do.
 
 A refused plan carries the full `EditConstraint`, not the rule's bare
-`{reason, message}`: only the planner still holds the NODE, and the node is
-where the refusal's `origin` comes from. `toastStructuralRefusal` renders it as
-a **persistent** toast (`durationMs: null` — a refusal explains why the canvas
-did not change, and a 6-second window was not enough to read one), **deduped**
-by gesture + reason + sentence so a repeated attempt counts up on the card
-already showing instead of stacking, and carrying the constraint's first
-runnable action (or a jump to its source) as the toast button. See
-`studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`".
+`{reason, message}` — plus, since `store-10` (R2), the plan's own `nodeId`
+(optional: `planSourceInsert`'s container-resolution failure genuinely has no
+node yet). Only the planner still holds the NODE, and the node is where the
+refusal's `origin`/`nodeId` come from. `presentStructuralRefusal` (renamed
+from `toastStructuralRefusal`) renders ONE of two things depending on whether
+`constraint.actions` is empty:
+
+- **empty** (the 6 R1 reasons with no remedy — `reparent`, plain `insert`,
+  `duplicate`, `wrap`, `multi-select`, `no-sibling-anchor`) → the same
+  **persistent** toast as before (`durationMs: null` — a refusal explains why
+  the canvas did not change, and a 6-second window was not enough to read
+  one), **deduped** by gesture + reason + sentence so a repeated attempt
+  counts up on the card already showing instead of stacking, and carrying the
+  constraint's first runnable action (or a jump to its source) as the toast
+  button.
+- **non-empty** (`shared-component`, `list-row`, `route-chrome`,
+  `code-placed`, `cross-file`) → a modal `RefusalDialog`, via a new
+  `structuralRefusalDialog` field on `uiSlice`, with real buttons for every
+  action `ConstraintActionButtons` can resolve. `detach`/`extract` — the two
+  remedies whose codemod triggers a full board reload that re-mints the
+  refused node's own id — additionally carry a `retry: (newNodeId) => void`
+  closure, built at each of the 9 structural-commit call sites
+  (`nodeActions.ts`, `deleteNodesAction.ts`, `studioSourceWrites.ts`), so a
+  successful Detach/Extract silently re-issues the ORIGINAL gesture against
+  whatever node now occupies the same call-site position
+  (`callSitePosition`/`matchesCallSitePosition`, `@core/page-tree`) once the
+  reload lands — the user's delete/move/duplicate/wrap actually happens, not
+  just the detach alone.
+
+A **second** closure now rides that field: `duplicateIntoFrame`, for D2 G3's
+`duplicate-into-frame` remedy. It takes no arguments, because there is no
+argument that would name the gesture — a cross-frame drop is a destination
+(page, container, index) the drag session no longer holds once `pointerup` has
+run, so `transplantActions.ts` closes over it and hands the closure to the
+dialog. `RefusalDialog` passes it down to `ConstraintActionButtons`, which
+supplies it to `resolveConstraintAction` exactly the way it supplies
+`makeParentRelative`. Pressing the button calls the SAME `transplantNodes` the
+drag called, with `copy: true` — same gate, same concurrency guard, one toast.
+`planSourceTransplant` only attaches the action when re-asking
+`previewStructuralTransplant` with `copy: true` comes back `ok`, so the remedy
+cannot bounce back to the refusal it was offered under.
+
+See `studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`".
 
 **`insertNode` does not mutate a studio tree at all.** It plans the write
 (`planSourceInsert` — which resolves the synthetic page root to the page's
@@ -129,6 +169,69 @@ commits it, and returns `''`. The new node arrives via the reload, with a real
 source id. The success toast is therefore pushed by `commitStudioInsert`, not by
 the inserter: until the write lands there is nothing to report. Announced, not silent: unlike a
 value refusal, the gesture is always a deliberate one a person just made.
+
+**A structural write reports what it created, and the board selects it
+(`store-13`).** `insert`, `duplicate`, `wrap` and `group` create markup that has
+no node id until the board re-reads the file, which is why `keys-01`'s K7 could
+select a duplicate only on the in-memory path — on a source-backed project ⌘D
+left the ORIGINAL selected. Now each of the four codemods returns the created
+element's own tag-name `line:col` (`createdJsxLocation.ts`, verified against the
+re-parsed file — an unconfirmable position reports `null`, never a guess),
+`applyStudioEditBatch` turns them into `StudioEditBatchResult.createdNodeIds`
+(the plain `rel:line:col` ids the parser will mint for the same elements), and
+`commitStructural` parks them in `pendingStructuralOutcome.ts`.
+`usePersistence.ts` claims them on BOTH re-read paths — the narrow `patchPages`
+and the full `loadSite` — and selects them, checking every id against the O(1)
+`_nodeIdToPageIds` index first. A write whose elements did not all come back
+selects nothing rather than part of itself.
+
+**And what it MOVED (`store-14`).** `StudioEditBatchResult` gains
+`relocatedNodeIds`, the counterpart `store-13` left open. `moveJsxElement` and
+`unwrapJsxElement` now report where they put what they moved (an ungroup reports
+several — its children all move at once), and a `transplant` that MOVES reports
+through `relocated` while a COPY still reports `created`, because their undos
+differ. The board selects created ∪ relocated, so a reorder, a reparent and an
+ungroup all end pointing at what the user just moved instead of dropping the
+selection. **One wire fix went with it:** `POST /admin/api/studio/save` had never
+actually forwarded `createdNodeIds`, so `store-13`'s selection worked in its unit
+test and nowhere else.
+
+*Two details worth knowing.* The handoff is a one-slot, expiring BOX rather
+than a callback because `studioStructuralCommits.ts` sits inside the store's own
+build graph, where importing `useEditorStore` closes the cycle `adminEvents.ts`
+exists to break. And the batch pins each created element to its distance from
+the END of its file, not to an absolute line: a batch applies bottom-to-top, so
+a later edit sits above an element an earlier one created and pushes it down —
+recording the line is stale for every created element but the last, which a
+multi-selection ⌘D reaches immediately.
+
+**⌘V is a source write too (`store-13`).** `pasteNode` used to be the one
+structural gesture that never asked: it restored the clipboard SNAPSHOT as
+nanoid nodes, `saveSite` diffs values only, and the next parse deleted them
+without a word. On a studio-imported tree a paste is now committed as a
+`duplicate` of the clipboard's own roots into the destination container
+(`writePasteToSource`, `studioSourceWrites.ts`), so the pasted element arrives
+as an ordinary parsed node and is selected by the same created-id path above. A
+clipboard whose roots are no longer elements in this file — copied from another
+project, another page, or a session before the file changed — refuses by name
+instead of minting an orphan.
+
+**An HTML import refuses on a studio tree (`mcp-21`).** `insertImportedNodes`
+had the same defect and a worse blast radius: `site_insert_html` /
+`site_replace_node_html` reach it through the editor bridge, so an external MCP
+client with `ai.tools.write` could merge nanoid nodes into a real repository's
+board. It now refuses the whole fragment (`refuseImportedNodesInto`). There is
+no source write to route to instead: the importer's rule table maps HTML onto
+~15 base modules and exactly two — `base.container` and `base.text` — can spell
+themselves in a user's repo (`ModuleDefinition.sourceIntrinsic`); the `<style>`
+half of the payload belongs in a stylesheet rather than the markup; and the
+tool's own answer (the ids it created, so the caller can address them) cannot be
+produced by a write whose ids do not exist until the resync. The action returns
+`ImportedNodesResult` so the reason travels to the modal and to the tool
+instead of an invented sentence about containers. `refuseImportedNodesInto` is
+also exposed as a store action, for the one caller that must destroy before it
+inserts — `site_replace_node_html` deletes the target's children first, so a
+refusal discovered at insert time emptied the node and wrote nothing.
 
 **`updateNodeProps` and `setNodeInlineStyles` refuse a patch if *any* key is
 code-valued** — all-or-nothing, because a half-applied patch is a canvas that
@@ -222,7 +325,7 @@ steps. The Properties panel's single multi-property write channel is
 `onChangeMany(patch)` (`StyleSectionsEditor`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
 pushes an entry that reverts nothing visible. Both rules:
-[`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+[`docs/features/inspector.md`](../features/inspector.md)
 §10. Who owns the ⌘Z keystroke:
 [`docs/reference/editor-history.md`](../reference/editor-history.md) → "Who
 owns Ctrl/⌘+Z".
@@ -236,6 +339,44 @@ back to it; `deleteNodes` tags its entry `gesture: 'delete'` and `undo`
 REFUSES with a toast, because no writeback kind can put a subtree's source text
 back. Tagging happens only when a source write was actually issued — a CMS or
 Visual Component tree keeps plain patch replay.
+
+**Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
+(D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —
+an image file dropped from the OS) both take their page id as an argument
+instead of using `activePageId`, and neither goes through `mutateActiveTree`.
+A cross-frame drag ACTIVATES the destination frame on the way
+(`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
+active page is the wrong end of the gesture; a dropped file was never preceded
+by a pointerdown at all, so the frame under it was never activated. They are
+therefore NOT among the named tree-mutation actions the
+`no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
+
+Both join the `insert`/`duplicate`/`wrap`/`group` family in the other respect
+too: **nothing is shown optimistically**, because the node that appears
+afterwards is a freshly parsed one whose id is the `rel:line:col` the write
+produced. Both ride the same `structuralCommitQueue.ts` the rest of that family
+does.
+
+**The whole family is undoable (`store-14`).** It used to record nothing at all,
+so ⌘Z after a ⌘D, a ⌘G, a cross-frame drag or a file drop undid whatever came
+before it. Each gesture now records a patch-free history entry carrying its
+inverse, expressed in edit kinds that already exist — `delete` for
+insert/duplicate/paste/image-drop, `ungroup` for wrap/group, `group` for
+ungroup, `transplant` back for a cross-frame move — and ⌘Z posts it through the
+same `/save` route the gesture used. Full contract, including the two refusals
+that are deliberate and the LIFO property absolute ids rest on:
+`docs/reference/editor-history.md` → "The `source` gesture".
+
+**A gesture fired mid-commit QUEUES (`store-14`).** `store-11`'s guard refused
+it ("Still writing your last change") and `verify-3` measured the result: five
+⌘D presses inside 300 ms wrote ONE copy. The serialization — which is what
+closes the original double-write race — stays; the refusal is gone.
+`structuralCommitQueue.ts` parks the gesture as a THUNK and re-runs it the
+moment the wire is clear, so it re-reads the tree the previous resync left
+behind and re-plans from scratch rather than posting a plan built against
+stale ids. Five presses are five writes, one collapsed toast, the last copy
+selected, five undo steps. The queue holds 20; overflowing it is reported, not
+dropped.
 
 **A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
 wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the
@@ -336,13 +477,13 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiInlineStyleComposer`), and each row states how far its own edit
+  (`MultiSelectTargetBar`), and each row states how far its own edit
   reaches ("writes to 3 of 5") through the three-state
   `StyleWriteLockContext`. A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See
-  [`docs/features/inspector-disclosure.md`](../features/inspector-disclosure.md)
+  [`docs/features/inspector.md`](../features/inspector.md)
   §9.
 - **Per-node bulk inline-style edit (W8-3 phase 3, G6.4):**
   `setNodesInlineStylesPerNode(patches, { coalesceKey })` takes a DIFFERENT

@@ -13,6 +13,16 @@
  *   - plugin-editor-panel   — third-party plugin editor sidebar panel
  *   - plugin-canvas-overlay — third-party plugin canvas overlay slot
  *
+ * Plus the per-PANEL and per-SECTION seams `panel-40` added, all of them
+ * mounted through one component (`src/admin/pages/site/ui/PanelBoundary/`)
+ * whose `location` is built at runtime (`panel:<id>` / `inspector:<id>`), so
+ * they are gated by their MOUNT SITES rather than by a literal location
+ * string — see the `PanelBoundary` block at the bottom of this file. Before
+ * them, the nearest boundary above every editor panel was
+ * `LazyChunkBoundary location="site-editor-body"`, which wraps the canvas and
+ * every panel together: one section throwing replaced the whole editor body
+ * (`verify-3` case 5).
+ *
  * Plus the React 19 root-level error callbacks on the single `createRoot`
  * call in `src/admin/main.tsx`:
  *
@@ -22,7 +32,12 @@
  * a location string, or removes a root callback), this gate fails CI loudly
  * with a single fix instruction.
  *
+ * It also gates the Track Z rule that boundaries **render in place instead of
+ * toasting**: `silentToast` defaults to true, `admin-shell` is the one seam
+ * that opts back in, and no seam carries a redundant explicit `silentToast`.
+ *
  * @see CLAUDE.md "Error handling" — boundary + tagged logging conventions
+ * @see STUDIO-FIGMA-FEEL-PLAN.md — Z2
  */
 
 import { describe, it, expect } from 'bun:test'
@@ -127,10 +142,60 @@ describe('Error boundary coverage gate', () => {
     expect(missing).toEqual([])
   })
 
-  it('admin/main.tsx mounts the single ToastProvider so boundaries can publish errors', () => {
+  it('admin/main.tsx mounts the single ToastProvider so the root callbacks can publish errors', () => {
     const source = read('admin/main.tsx')
     expect(source).toMatch(/from\s+['"]@ui\/components\/Toast['"]/)
     expect(source).toMatch(/<ToastProvider\s*\/>/)
+  })
+
+  // ── Z2: boundaries render in place, they do not toast ─────────────────────
+  //
+  // A boundary is mounted per seam AND per canvas node, so a toast-by-default
+  // boundary turns one bad module into one identical red card per node. The
+  // crash already has an honest place to render: the hole it left. Only
+  // `admin-shell` opts back in, because its catch leaves nothing else on
+  // screen to read.
+
+  it('the boundary is silent by default — only an explicit silentToast={false} toasts', () => {
+    const source = read('ui/components/ErrorBoundary/ErrorBoundary.tsx')
+    // The push must be gated on the EXPLICIT opt-out. `if (!this.props.silentToast)`
+    // is the opt-in default this assertion exists to prevent coming back.
+    expect(source).toMatch(/if\s*\(this\.props\.silentToast\s*===\s*false\)/)
+    expect(source).not.toMatch(/if\s*\(!this\.props\.silentToast\)/)
+  })
+
+  it('admin-shell is the only seam that opts into the toast', () => {
+    const optIns: string[] = []
+    for (const { file } of REQUIRED_BOUNDARIES) {
+      const source = read(file)
+      if (/silentToast\s*=\s*\{\s*false\s*\}/.test(source)) optIns.push(file)
+    }
+    expect(optIns).toEqual(['admin/main.tsx'])
+  })
+
+  it('no seam carries a redundant silentToast — it is the default', () => {
+    const redundant: string[] = []
+    for (const { file } of REQUIRED_BOUNDARIES) {
+      const source = read(file)
+      if (/silentToast(\s*=\s*\{\s*true\s*\})?(\s*\/?>|\s*\n\s*>)/.test(source)) {
+        redundant.push(file)
+      }
+    }
+    if (redundant.length > 0) {
+      throw new Error(
+        `[Error boundary coverage] silentToast is the default — drop it from:\n` +
+          redundant.map((f) => `  - ${f}`).join('\n'),
+      )
+    }
+    expect(redundant).toEqual([])
+  })
+
+  it('the default fallback renders in place with a reset action', () => {
+    const source = read('ui/components/ErrorBoundary/ErrorBoundary.tsx')
+    expect(source).toMatch(/Reload this panel/)
+    expect(source).toMatch(/onClick=\{reset\}/)
+    const css = read('ui/components/ErrorBoundary/ErrorBoundary.module.css')
+    expect(css).toMatch(/background:\s*var\(--bg-surface-2\)/)
   })
 
   it('the ErrorBoundary primitive lives in src/ui/components/ErrorBoundary/', () => {
@@ -155,5 +220,100 @@ describe('Error boundary coverage gate', () => {
     const source = readFileSync(MAIN_FILE, 'utf8')
     expect(source).toMatch(/logErrorChain/)
     expect(source).toMatch(/flattenErrorChain/)
+  })
+})
+
+// ── panel-40: every editor panel and every inspector section is its own seam ─
+//
+// `PanelBoundary` is the single mount point. Its `location` is composed at
+// runtime, so these assertions gate the MOUNT SITES and the component's own
+// contract instead of a literal `location="..."` string.
+
+const PANEL_BOUNDARY_PATH = 'admin/pages/site/ui/PanelBoundary/PanelBoundary.tsx'
+
+/** Every file that must mount at least one `<PanelBoundary>`, and why. */
+const PANEL_BOUNDARY_MOUNTS: Array<{ file: string; why: string }> = [
+  {
+    file: 'admin/pages/site/inspector/InspectorShell.tsx',
+    why: 'one boundary per inspector tab — Design, Prototype, Inspect',
+  },
+  {
+    file: 'admin/pages/site/panels/PropertiesPanel/StyleSurface.tsx',
+    why: 'one boundary per mounted INSPECTOR_SECTIONS entry',
+  },
+  {
+    file: 'admin/pages/site/sidebars/LeftSidebar/LeftSidebar.tsx',
+    why: 'one boundary per left-sidebar panel mount (layers, assets, git, …)',
+  },
+  {
+    file: 'admin/pages/site/sidebars/RightSidebar/RightSidebar.tsx',
+    why: 'the docked Properties panel and the Comments panel',
+  },
+  {
+    file: 'admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx',
+    why: 'the undocked (floating) Properties panel',
+  },
+]
+
+describe('panel-40 — per-panel and per-section boundaries', () => {
+  it('every panel seam mounts a PanelBoundary', () => {
+    const failures: string[] = []
+    for (const { file, why } of PANEL_BOUNDARY_MOUNTS) {
+      const source = read(file)
+      if (!/<PanelBoundary[\s>]/.test(source)) {
+        failures.push(`${file} — no <PanelBoundary> (${why})`)
+      }
+      if (!/from\s+['"][^'"]*ui\/PanelBoundary['"]/.test(source)) {
+        failures.push(`${file} — does not import PanelBoundary from its barrel`)
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        '[Error boundary coverage] a panel seam lost its boundary:\n' +
+          failures.map((f) => `  - ${f}`).join('\n') +
+          '\n\nA panel without one falls back to LazyChunkBoundary ' +
+          '("site-editor-body"), which takes the canvas down with it.',
+      )
+    }
+    expect(failures).toEqual([])
+  })
+
+  it('InspectorShell wraps all three tabs, not just Design', () => {
+    const source = read('admin/pages/site/inspector/InspectorShell.tsx')
+    for (const id of ['design', 'prototype', 'inspect']) {
+      expect(source).toMatch(new RegExp(`<PanelBoundary\\s+id="${id}"`))
+    }
+  })
+
+  it('PanelBoundary builds on the shared primitive and never toasts', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/from\s+['"]@ui\/components\/ErrorBoundary['"]/)
+    expect(source).toMatch(/<ErrorBoundary/)
+    // Silence is the default (Z2). An explicit opt-out here would turn one
+    // crashed section into a red card in the corner as well as the fallback.
+    expect(source).not.toMatch(/silentToast/)
+  })
+
+  it('PanelBoundary renders in place, names the seam, and offers a reset', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/role="alert"/)
+    expect(source).toMatch(/data-error-location=\{location\}/)
+    expect(source).toMatch(/Reload this panel/)
+    expect(source).toMatch(/onClick=\{onReset\}/)
+  })
+
+  it('the crash probe is mounted only behind import.meta.env.DEV', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/import\.meta\.env\.DEV\s*&&\s*<PanelCrashProbe/)
+  })
+
+  it('every INSPECTOR_SECTIONS entry carries the label a fallback needs', () => {
+    const source = read('admin/pages/site/inspector/sections/index.ts')
+    const ids = [...source.matchAll(/\bid:\s*'([^']+)'/g)].map((m) => m[1])
+    const labelled = [...source.matchAll(/\blabel:\s*'([^']+)'/g)].length
+    expect(ids.length).toBeGreaterThan(0)
+    // A section's own component is exactly what is NOT running when the
+    // boundary has to name it, so the label lives in the manifest.
+    expect(labelled).toBe(ids.length)
   })
 })

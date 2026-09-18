@@ -12,9 +12,19 @@ import { OWNER } from './constants'
  * addressed by role/label.
  */
 
-/** The editor is ready once the canvas surface and its insert notch are shown. */
+/**
+ * The editor is ready once the canvas surface and its insert notch are shown.
+ *
+ * 60s, not 20s: the FIRST navigation to `/admin/site` in a run makes the dev
+ * server compile the editor chunk on demand, and until it lands the app shows
+ * its own "The dev server has not delivered the editor chunk yet — Retry"
+ * state. Observed taking longer than 20s on a cold Vite, which failed
+ * `auth.setup.ts` and therefore the entire suite before a single spec ran.
+ * This is a readiness WAIT, not an assertion about behaviour — an editor that
+ * is genuinely broken never shows `canvas-root` at any timeout.
+ */
 export async function expectEditorReady(page: Page): Promise<void> {
-  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 20_000 })
+  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
   await expect(page.getByTestId('canvas-notch')).toBeVisible()
 }
 
@@ -58,20 +68,39 @@ export async function insertNotchModule(
 }
 
 /**
- * Insert any registered module through the full module picker dialog. Modules
- * that are not notch favourites (button, link, …) go through here. The dialog
- * items carry a stable `data-module-id`, so we pick by module id rather than by
- * the localized item label.
+ * Open the left rail's **Assets** panel — the library every insert comes from
+ * since the full-screen inserter dialog was deleted. Idempotent: the rail
+ * button TOGGLES, so clicking it while the panel is open would close it.
+ */
+export async function openAssetsPanel(page: Page): Promise<void> {
+  const panel = page.getByTestId('assets-panel')
+  if (!(await panel.isVisible().catch(() => false))) {
+    await page.getByTestId('panel-rail-assets').click()
+  }
+  await expect(panel).toBeVisible()
+}
+
+/**
+ * Insert any registered module from the Assets panel. Modules that are not
+ * notch favourites (button, link, …) go through here. Cards carry a stable
+ * `data-asset-id` (the module id), so we pick by id rather than by the
+ * localized card label.
+ *
+ * Note for whoever runs this in a browser next: the panel is DOCKED, not a
+ * modal — it stays open after an insert, so there is no "dialog is hidden"
+ * assertion to make here any more. The insert is observed where it lands (the
+ * canvas or the layers tree), which is what every caller already does.
  */
 export async function insertModuleViaPicker(
   page: Page,
   moduleId: string,
 ): Promise<void> {
-  await page.getByTestId('canvas-notch-add-btn').click()
-  const dialog = page.getByRole('dialog', { name: 'Add to canvas' })
-  await expect(dialog).toBeVisible()
-  await dialog.locator(`[data-module-id="${moduleId}"]`).first().click()
-  await expect(dialog).toBeHidden()
+  await openAssetsPanel(page)
+  await page
+    .getByTestId('assets-panel')
+    .locator(`[data-asset-id="${moduleId}"]`)
+    .first()
+    .click()
 }
 
 /**

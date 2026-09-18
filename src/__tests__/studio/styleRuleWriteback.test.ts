@@ -22,6 +22,7 @@ import {
   recordCreatedStylesheet,
   resolveCssInsertDestination,
   ruleIdFromCssCreateNodeId,
+  setOpenPageFile,
   setStudioStyleRuleSources,
 } from '@site/studio/styleRuleWriteback'
 
@@ -46,6 +47,10 @@ const SOURCES = { [RULE_ID]: { file: 'pages/Home.css', selector: '.hero-title' }
 
 beforeEach(() => {
   setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+  // Z8's open-page anchor is module state (see `cssInsertDestination.ts`), so
+  // every case below states the world it wants: no page open unless it says
+  // so. `cssInsertDestinationOpenPage.test.ts` owns the anchor's own cases.
+  setOpenPageFile(null)
 })
 
 describe('collectStyleRuleEdits — the studio context is the base declaration set', () => {
@@ -202,9 +207,15 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     const plan = collectStyleRuleEdits({ [NEW_RULE_ID]: edited })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped).toHaveLength(1)
-    expect(plan.unmapped[0]!.label).toBe('.new-class')
-    expect(plan.unmapped[0]!.reason).toContain('could not find a hand-editable .css file')
+    // Z8 — a destination refusal is NOT `unmapped`. `unmapped` means "no
+    // hand-authored stylesheet exists for this class, ever"; this class has
+    // no home YET, which is a different fact with a different surface.
+    expect(plan.unmapped).toEqual([])
+    expect(plan.destinationRefusals).toHaveLength(1)
+    expect(plan.destinationRefusals[0]!.label).toBe('.new-class')
+    expect(plan.destinationRefusals[0]!.reason).toBe('no-editable-stylesheet')
+    expect(plan.destinationRefusals[0]!.candidates).toEqual([])
+    expect(plan.destinationRefusals[0]!.message).toContain('could not find a hand-editable .css file')
   })
 
   it('emits a create edit, naming the page, when zero stylesheets exist but the rule is node-scoped to a real page', () => {
@@ -248,9 +259,12 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     const plan = collectStyleRuleEdits({ [NEW_RULE_ID]: edited })
 
     expect(plan.edits).toHaveLength(0)
-    expect(plan.unmapped[0]!.label).toBe('.new-class')
-    expect(plan.unmapped[0]!.reason).toContain('pages/Home.css')
-    expect(plan.unmapped[0]!.reason).toContain('pages/Other.css')
+    expect(plan.destinationRefusals[0]!.label).toBe('.new-class')
+    expect(plan.destinationRefusals[0]!.message).toContain('pages/Home.css')
+    expect(plan.destinationRefusals[0]!.message).toContain('pages/Other.css')
+    // Z8 — the candidates are carried as DATA, not just named in a sentence:
+    // that list is what `RefusalDialog` turns into one remedy per file.
+    expect(plan.destinationRefusals[0]!.candidates).toEqual(['pages/Home.css', 'pages/Other.css'])
   })
 
   it('writes into the stylesheet co-located with the rule\'s own page instead of refusing', () => {

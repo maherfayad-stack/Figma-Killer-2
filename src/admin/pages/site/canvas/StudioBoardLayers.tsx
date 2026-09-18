@@ -20,8 +20,8 @@
  *
  * Imports the layers by their concrete file paths rather than through each
  * folder's barrel, so this lazy boundary doesn't accidentally pull in
- * sibling barrel exports (`BoardNotesToolbar`, `AddFramePicker`,
- * `NewPageButton`) that have their own, separate eager/lazy story.
+ * sibling barrel exports (`BoardNotesToolbar`, `AddPagePicker`) that have
+ * their own, separate eager/lazy story.
  *
  * `RulerGuidesLayer` (D1 — PERSISTED ruler guides, not to be confused with
  * `BoardGuidesLayer`'s transient snap guides, see that file's doc) mounts

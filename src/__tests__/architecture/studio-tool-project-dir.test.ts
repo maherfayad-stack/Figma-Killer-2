@@ -132,7 +132,14 @@ describe('resolveProjectDir containment', () => {
     try {
       expect(() => resolveProjectDir(link)).toThrow(ProjectDirOutsideWorkspaceError)
     } finally {
-      rmSync(link, { force: true })
+      // `recursive: true` is load-bearing on win32 and ONLY there: a DIRECTORY
+      // symlink is removed with `rmdir`, not `unlink`, so the plain
+      // `rmSync(link, { force: true })` this used to call threw
+      // `EFAULT: bad address in system call argument` and failed the test in
+      // its `finally` — after the assertion above had already passed. `fs.rm`
+      // never follows a symlink, so this removes the link, not `escapeTarget`
+      // (which its own `rmSync` below then removes for real).
+      rmSync(link, { recursive: true, force: true })
       rmSync(escapeTarget, { recursive: true, force: true })
     }
   })

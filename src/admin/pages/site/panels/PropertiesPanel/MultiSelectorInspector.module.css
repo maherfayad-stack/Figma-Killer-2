@@ -14,7 +14,7 @@
 }
 
 .actionBar {
-  padding: var(--inspector-space-xl);
+  padding: var(--inspector-space-xl) var(--inspector-pad-x);
   border-bottom: 1px solid var(--border-subtle);
   display: flex;
   flex-direction: column;
@@ -41,7 +41,7 @@
 }
 
 .listHeader {
-  padding: var(--inspector-space-3xs) var(--inspector-space-xl) var(--inspector-space-s);
+  padding: var(--inspector-space-3xs) var(--inspector-pad-x) var(--inspector-space-s);
   font-size: var(--text-2xs);
   text-transform: uppercase;
   letter-spacing: 0.06em;

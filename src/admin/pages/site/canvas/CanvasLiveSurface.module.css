@@ -159,6 +159,26 @@
     pointer-events: none;
 }
 
+/*
+ * Where a smart animate's ghosts fly (`smartAnimateFlip.ts`).
+ *
+ * In the PARENT document, over both screen slots and inside neither: a matched
+ * pair spans two iframes, and neither of them contains the travel between them.
+ * Nothing is ever inserted into a user frame for this — the ghosts are boxes
+ * painted from the source element's computed style, positioned in this layer's
+ * own coordinates.
+ *
+ * Under the overlay (`z-index: 2`) and over the front screen (`z-index: 1`):
+ * a sheet presented on top of an arriving screen is in front of everything,
+ * including the travel that brought that screen in.
+ */
+.smartAnimateLayer {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+}
+
 /* The overlay sits over the screen it was opened from, which stays mounted. */
 .prototypeOverlay {
     position: absolute;

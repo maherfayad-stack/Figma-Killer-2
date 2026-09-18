@@ -95,7 +95,6 @@ import { serveStaticFile } from '../../static'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isRealpathContained } from './workspacePackageResolve'
 import { resolveAppRoot } from './appRoot'
-import { ALM_DESIGN_PACKAGE_SPECIFIER } from './designSystemDetect'
 import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } from './packageManifest'
 import type { ComponentSpec } from './packageManifestSchema'
 import { resolveProjectProfile } from './projectProbe'
@@ -127,21 +126,15 @@ export type BundledComponentSpec = ComponentSpec & { pkg: string }
 
 function componentPackageDemand(dir: string): string[] {
   const profile = resolveProjectProfile(dir)
-  // ALM is served by the BUILT-IN module pack, so this route must not be asked
-  // for it. `studioPageLoad.ts` (its `ALM_DESIGN_PACKAGE_SPECIFIER` carve-out)
-  // never assigns a `pkg.*` module id to a component from that package — they
-  // resolve to `alm.<Name>` and are registered by `src/modules/alm/register.tsx`
-  // from a committed, build-time manifest that already carries every component
-  // with real prop names.
-  //
-  // Leaving it in the demand list meant bundling a package whose output nothing
-  // consumes, and — because the published tarball ships no `.d.ts`, a MINIFIED
-  // `dist/index.js`, and a `src/index.js` whose `./components/*` re-export
-  // targets are not published at all — the extraction could only ever come back
-  // empty. That produced a `no-components-found` refusal, surfaced to the
-  // author as a warning, about a design system that was in fact fully
-  // available on the canvas the whole time.
-  return [...profile.componentPackages].filter((pkg) => pkg !== ALM_DESIGN_PACKAGE_SPECIFIER).sort()
+  // Every declared component package, with no carve-out. DS-3 removed the one
+  // there used to be: Studio's built-in design system is no longer a package
+  // at all (a project reaches it through its own `design-system/` folder,
+  // which `componentSources.ts` classifies as its own source kind and
+  // `moduleMapping.ts` sends to `alm.*` — this route is never asked for it).
+  // An UNMIGRATED project that still declares the retired npm is just a
+  // package like any other here: it bundles, or it honestly reports why it
+  // could not.
+  return [...profile.componentPackages].sort()
 }
 
 // ---------------------------------------------------------------------------

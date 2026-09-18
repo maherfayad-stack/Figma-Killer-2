@@ -64,7 +64,7 @@ import { useShallow } from 'zustand/react/shallow'
 import { registry } from '@core/module-engine'
 import { useInsertModule } from '@site/hooks/useInsertModule'
 import { resolveInsertLocation } from '@site/store/insertLocation'
-import { ModulePicker } from '@site/module-picker'
+import { ModulePicker } from '@site/panels/AssetsPanel'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
@@ -332,13 +332,10 @@ export function LayerNodeContextMenu({
   }
 
   const dispatchToggleHidden = () => {
-    const { toggleNodeHidden } = useEditorStore.getState()
-    for (const id of hideActionTargetIds) {
-      const currentHidden = Boolean(activePage?.nodes[id]?.hidden)
-      if (currentHidden !== shouldHideSelection) {
-        toggleNodeHidden(id)
-      }
-    }
+    // `panel-40` — one absolute write over the whole selection, so hiding six
+    // layers is ONE undo step. This used to loop a per-node toggle, which
+    // pushed one history entry (and one dirty mark) per layer.
+    useEditorStore.getState().setNodesHidden(hideActionTargetIds, shouldHideSelection)
     onClose()
   }
 

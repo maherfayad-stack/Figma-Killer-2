@@ -1,10 +1,12 @@
-import type { CSSProperties } from 'react'
+import { registry } from '@core/module-engine'
+import { getNodeDisplayName, getNodeHtmlTag, type Page } from '@core/page-tree'
+import type { VisualComponent } from '@core/visualComponents'
 import type {
   CanvasOverlayRect,
 } from './canvasOverlayGeometry'
 import type {
+  CanvasDragPaintTarget,
   CanvasDropAxis,
-  CanvasDropTarget,
   CanvasRect,
 } from './canvasDnd'
 
@@ -366,6 +368,25 @@ interface AppliedBadgePlacement {
 const appliedBadgePlacements = new WeakMap<HTMLElement, AppliedBadgePlacement | 'hidden'>()
 
 /**
+ * What the node-name badge SAYS — the node's tag, falling back to its display
+ * name; the same fallback order the Alt-hover tree ladder rows use
+ * (`CanvasTreeLadderRowButton`). `null` for a node this frame's page does not
+ * contain, which hides the badge. Lives next to `positionNodeBadge` rather than
+ * in the overlay component: "what the badge reads" and "where the badge goes"
+ * are one concern, and the component is at its module-size ceiling.
+ */
+export function resolveNodeBadgeLabel(
+  page: Page | null,
+  nodeId: string,
+  visualComponents: ReadonlyArray<VisualComponent>,
+): string | null {
+  const node = page?.nodes[nodeId]
+  if (!node) return null
+  const definition = registry.get(node.moduleId)
+  return getNodeHtmlTag(node, definition) || getNodeDisplayName(node, definition, visualComponents) || null
+}
+
+/**
  * Position the node-name badge (WS-5.1) just above its ring's top-left
  * corner, Figma-style — or just below when there's no room above (the ring
  * sits at the very top of the frame). `ringRect` is iframe-local (the SAME
@@ -409,7 +430,16 @@ export function positionNodeBadge(
   appliedBadgePlacements.set(badge, { x: ringRect.x, y: ringRect.y, label })
 }
 
-export function dropIndicatorStyle(target: CanvasDropTarget): CSSProperties {
+/**
+ * The `--canvas-drop-*` custom-property bag a drop indicator is positioned
+ * by. A plain string map rather than a React `CSSProperties`: since S2 the
+ * only consumer is `canvasDragPainter.ts`, which writes these through
+ * `style.setProperty` on elements React never owns — and a custom property
+ * is not expressible in `CSSProperties` without a cast anyway.
+ */
+export type CanvasDropVars = Record<string, string>
+
+export function dropIndicatorStyle(target: CanvasDragPaintTarget): CanvasDropVars {
   if (target.position === 'inside') return rectStyle(target.rect)
   return lineStyle(target.rect, target.position, target.axis)
 }
@@ -418,7 +448,7 @@ function lineStyle(
   rect: CanvasRect,
   position: 'before' | 'after',
   axis: CanvasDropAxis,
-): CSSProperties {
+): CanvasDropVars {
   if (axis === 'horizontal') {
     const x = position === 'before' ? rect.left : rect.right
     return indicatorVars(x, rect.top, 2, rect.height)
@@ -428,15 +458,24 @@ function lineStyle(
   return indicatorVars(rect.left, y, rect.width, 2)
 }
 
-export function rectStyle(rect: CanvasRect): CSSProperties {
+export function rectStyle(rect: CanvasRect): CanvasDropVars {
   return indicatorVars(rect.left, rect.top, rect.width, rect.height)
 }
 
-function indicatorVars(x: number, y: number, width: number, height: number): CSSProperties {
+/**
+ * The drag GHOST's anchor — a zero-size point its label hangs off, so it
+ * carries only x/y. Same property channel as the indicators, so one painter
+ * writes all four without branching on which shape it is holding.
+ */
+export function pointStyle(x: number, y: number): CanvasDropVars {
+  return { '--canvas-drop-x': `${x}px`, '--canvas-drop-y': `${y}px` }
+}
+
+function indicatorVars(x: number, y: number, width: number, height: number): CanvasDropVars {
   return {
     '--canvas-drop-x': `${x}px`,
     '--canvas-drop-y': `${y}px`,
     '--canvas-drop-w': `${width}px`,
     '--canvas-drop-h': `${height}px`,
-  } as CSSProperties
+  }
 }

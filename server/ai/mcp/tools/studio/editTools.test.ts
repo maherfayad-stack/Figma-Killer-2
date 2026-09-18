@@ -186,9 +186,12 @@ describe('studio_codemod', () => {
     const result = (await tool('studio_codemod').handler!(
       { dir: tmpDir, verb: 'detach', nodeId: 'pages/Home.tsx:3:11' },
       {} as never,
-    )) as { ok: boolean; code: string; reason: string }
+    )) as { ok: boolean; code: string; reason: string; retryable: boolean }
     expect(result.ok).toBe(false)
-    expect(result.code).toBe('refused')
+    // A14: one code for every codemod refusal, with the codemod's own vocabulary
+    // riding along as `reason` — a refusal here is never worth retrying unchanged.
+    expect(result.code).toBe('codemod-refused')
+    expect(result.retryable).toBe(false)
     expect(result.reason).toBe('uses-hooks')
   })
 
@@ -293,7 +296,7 @@ describe('studio_codemod', () => {
       {} as never,
     )) as { ok: boolean; code: string; reason: string }
     expect(result.ok).toBe(false)
-    expect(result.code).toBe('refused')
+    expect(result.code).toBe('codemod-refused')
     expect(result.reason).toBe('name-shadow')
   })
 })

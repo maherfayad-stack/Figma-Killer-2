@@ -20,14 +20,20 @@ export { PageNodeSchema, parsePageNode } from './pageNode'
 export {
   INLINE_ID_SEPARATOR,
   LOOP_ID_SEPARATOR,
+  buildSourceNodeId,
+  callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  matchesCallSitePosition,
+  toRuntimeStampId,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
+export { classifyJsxTagKind } from './jsxTagKind'
+export type { JsxTagKind } from './jsxTagKind'
 export {
   isPropWritableToSource,
   isPropPatchWritableToSource,
@@ -45,35 +51,59 @@ export {
   refuseMintedNodeInsert,
   refuseStructuralEdit,
   refusePlacement,
-  previewStructuralMove,
-  resolveContainerAnchor,
-  resolveSourceContainer,
 } from './sourceStructure'
 export type {
   SourceStructureNode,
   StructuralEditKind,
   StructuralRefusal,
   StructuralRefusalReason,
+} from './sourceStructure'
+// The same rule asked of a live tree: which sibling a move lands beside, which
+// element "inside the page" means, and whether a selection is one run (K3).
+export {
+  previewStructuralGroup,
+  previewStructuralMove,
+  resolveContainerAnchor,
+  resolveSourceContainer,
+} from './sourceStructurePreview'
+export type {
+  StructuralGroupPreview,
   StructuralMoveCommit,
   StructuralMovePreview,
-} from './sourceStructure'
+} from './sourceStructurePreview'
+// D2 G3 — the same rule asked across TWO trees: may this element leave the
+// page it is written in and land in a container on another one?
+export {
+  isTransplantDestinationTree,
+  previewStructuralTransplant,
+} from './sourceStructureTransplant'
+export type {
+  StructuralTransplantCommit,
+  StructuralTransplantInput,
+  StructuralTransplantPreview,
+} from './sourceStructureTransplant'
 // Track F2 — the refusal model. Wraps the two predicates above (plus B2/B1's
 // className/CSS vocabularies and Detach's) into one typed shape every refusal
 // surface renders: reason + human explanation + a way forward. See the
 // module's own doc for why this stays a read-only translation layer.
 export {
-  describeStructuralRefusal,
   explainClassNameConstraint,
   explainCssRuleConstraint,
   explainDetachConstraint,
-  explainGestureConstraint,
-  explainMintedInsertConstraint,
   explainPropConstraint,
-  explainStructuralConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
   explainUnexplainedSkip,
 } from './editConstraint'
+// The structural half of the same translation layer — see
+// `structuralConstraint.ts`'s own doc for why it is a separate module.
+export {
+  describeStructuralRefusal,
+  explainGestureConstraint,
+  explainStaticParentConstraint,
+  explainMintedInsertConstraint,
+  explainStructuralConstraint,
+} from './structuralConstraint'
 export type {
   ConstraintPropSource,
   ConstraintReason,
@@ -191,6 +221,8 @@ export {
   setBreakpointOverride,
   clearBreakpointOverride,
   renameNode,
+  setNodeLocked,
+  setNodeHidden,
   toggleNodeLocked,
   toggleNodeHidden,
   moveNode,
@@ -198,9 +230,9 @@ export {
   duplicateNode,
   buildSubtreeNodeIdMap,
   pasteSubtree,
-  wrapNode,
-  wrapNodes,
 } from './mutations'
+// Nesting mutations — wrap one, wrap a selection, dissolve a container (K3).
+export { wrapNode, wrapNodes, unwrapNode } from './wrapMutations'
 export { applyTreeOperation } from './treeOperations'
 
 export {

@@ -5,6 +5,17 @@
  * on the axes + capability, never through `srcDoc` or a `key` (risk §7.1: a
  * frame remount here would cost ~100-140ms per frame — see `perf-01` in
  * `STATE.md` — for every toggle across the whole board).
+ *
+ * Since `live-05` (STATE.md, Batch 5), `useApplyPreviewAxes` calls
+ * `adapter.setAxes(axes)` instead of reaching `applyPreviewAxesToFrameDocument`
+ * directly — `PortalFrameAdapter.setAxes` (built in Batch 1) already wraps
+ * this exact function, reading the SAME `getColorSchemeCapability()` global
+ * internally instead of taking it as a parameter, so the call produces
+ * byte-identical behavior. `applyPreviewAxesToFrameDocument` itself stays
+ * exported: `PortalFrameAdapter.setAxes` is its one remaining caller, and
+ * a future `BridgeFrameAdapter.setAxes` implementation (a `setAxes` wire
+ * message to `runtime.ts`, not built yet) would need the same underlying
+ * attribute-writing logic on the in-frame side.
  */
 import { createContext, useContext, useEffect, useSyncExternalStore } from 'react'
 import { useEditorStore } from '@site/store/store'
@@ -15,6 +26,7 @@ import {
   type ColorSchemeCapability,
 } from '@site/studio/previewAxesCapability'
 import { DARK_SCHEME_ATTR } from './darkSchemeCssTransform'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 /**
  * A generic RTL-representative language for Phase 1's `lang` companion to
@@ -176,17 +188,22 @@ export function useResolvedFrameAxes(axesOverride?: Partial<PreviewAxes>): Previ
  * `previewAxes` from the store + the color-scheme capability from its
  * external store (`previewAxesCapability.ts` — per-project, refreshed on
  * project open, so every frame reads the SAME probe result without prop
- * drilling), and applies them via `applyPreviewAxesToFrameDocument` in a
- * plain `useEffect` keyed on the frame document + both inputs. See this
- * module's top doc for why that has to be an attribute effect, never
- * `srcDoc`/a `key`.
+ * drilling), and applies them via `adapter.setAxes` in a plain `useEffect`
+ * keyed on the adapter + both inputs. See this module's top doc for why that
+ * has to be an attribute effect, never `srcDoc`/a `key`.
+ *
+ * Still subscribes to `colorSchemeCapability` via `useSyncExternalStore`
+ * even though it no longer threads the value into the call itself
+ * (`adapter.setAxes` reads it internally, same as `PortalFrameAdapter.setAxes`
+ * always has) — this hook still needs to know WHEN the capability changes so
+ * the effect re-fires and re-applies the (now possibly different) axes.
  *
  * Returns the frame's EFFECTIVE axes so the caller can publish them on
  * {@link FramePreviewAxesContext} — one resolution of the board/override
  * merge, feeding both the DOM attributes and the React tree.
  */
 export function useApplyPreviewAxes(
-  iframeDoc: Document | null,
+  adapter: FrameDocumentAdapter | null,
   axesOverride?: Partial<PreviewAxes>,
 ): PreviewAxes {
   const boardAxes = useEditorStore((s) => s.previewAxes)
@@ -197,18 +214,14 @@ export function useApplyPreviewAxes(
   )
   const effectiveAxes = resolveFrameAxes(boardAxes, axesOverride)
   useEffect(() => {
-    if (!iframeDoc?.documentElement) return
+    if (!adapter) return
     // Re-resolved inside the effect rather than closing over `effectiveAxes`
     // so the dependency array names the two ACTUAL inputs. Depending on the
     // merged object instead makes `react-hooks/exhaustive-deps` warn about a
     // conditionally-constructed value it cannot prove stable — and the fix it
     // asks for (`useMemo`) is exactly the manual memoization this repo's
     // React Compiler setup bans.
-    applyPreviewAxesToFrameDocument(
-      iframeDoc.documentElement,
-      resolveFrameAxes(boardAxes, axesOverride),
-      colorSchemeCapability,
-    )
-  }, [iframeDoc, boardAxes, axesOverride, colorSchemeCapability])
+    adapter.setAxes(resolveFrameAxes(boardAxes, axesOverride))
+  }, [adapter, boardAxes, axesOverride, colorSchemeCapability])
   return effectiveAxes
 }

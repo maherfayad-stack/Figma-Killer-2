@@ -31,6 +31,30 @@
  * Abort: `req.signal` is passed straight to `fetch`. On abort (or an
  * `AbortError` mid-stream) the generator returns cleanly with no `error`
  * event — matching the prior SDK behaviour.
+ *
+ * ## The loop has two ceilings (Z3)
+ *
+ * It used to be a bare `for (;;)` whose only exits were "the model stopped",
+ * "the transport died", and abort. A model that kept issuing tool calls kept
+ * the turn running, and a model that issued the SAME write over and over
+ * executed it over and over — the observed shape being one gesture the user
+ * asked for arriving in the file four times. Two bounds close that, and they
+ * are deliberately different in kind:
+ *
+ *   - {@link MAX_TOOL_ROUNDS} (= `AGENT_TURN_ROUND_BUDGET`) caps how many provider rounds one turn may
+ *     spend. Reaching it ends the turn with a single `error` event that names
+ *     the last tool the model was on, so the transcript says what it was
+ *     looping on rather than just stopping.
+ *   - A per-turn fingerprint set suppresses a REPEATED MUTATING call. The
+ *     second identical `(toolName, canonical args)` pair in one turn is not
+ *     executed; it is answered with a structured
+ *     `{ code: 'duplicate-call', priorResult }` result carrying the first
+ *     call's own outcome, so the model learns the write already happened
+ *     instead of being told nothing and trying again.
+ *
+ * Read-only tools are exempt from the fingerprint rule on purpose: re-reading
+ * a document after a write is how the model checks its own work, and that
+ * second read is a different question with the same arguments.
  */
 
 import type {
@@ -44,9 +68,21 @@ import type { AiStreamRequest } from '../types'
 import { parseSseStream, type SseFrame } from './sse'
 import { executeAiTool } from './execTool'
 import { isAbortError, classifyHttpFailure } from './errors'
+import {
+  DUPLICATE_CALL_CODE,
+  MAX_TOOL_ROUNDS,
+  duplicateCallOutput,
+  toolCallFingerprint,
+  toolRoundCapMessage,
+} from './toolLoopBounds'
+
+// Re-exported because this module is the front door callers already use,
+// and the bounds' own doc explains why they live one file over.
+export { DUPLICATE_CALL_CODE, MAX_TOOL_ROUNDS, toolCallFingerprint }
 
 export const PROVIDER_RETRY_IMAGE_OMITTED =
   '[Earlier attached images omitted after the provider rejected the full conversation context.]'
+
 
 /** A resolved tool call the model issued this turn. */
 export interface TurnToolCall {
@@ -170,8 +206,26 @@ export async function* runToolLoop<TMessage>(
     cacheCreationTokens: cacheCreationTokens || undefined,
   })
 
+  // The two ceilings — see the module doc. `seenMutatingCalls` is per TURN,
+  // not per conversation: a write the user asks for again in their next
+  // message is a new instruction and must run.
+  const maxRounds = req.maxToolRounds ?? MAX_TOOL_ROUNDS
+  const seenMutatingCalls = new Map<string, AiToolOutput>()
+  let round = 0
+  let lastToolName = ''
+
   for (;;) {
     if (req.signal.aborted) return
+
+    round += 1
+    if (round > maxRounds) {
+      // The provider has already billed every round that got us here, so the
+      // totals are persisted before the terminal error — same ordering as the
+      // dead-bridge path below.
+      yield aggregateUsageEvent()
+      yield { type: 'error', message: toolRoundCapMessage(maxRounds, lastToolName) }
+      return
+    }
 
     const requestMessages = projectHeavyElision(history, heavyMessages, adapter)
     let res: Response
@@ -265,9 +319,10 @@ export async function* runToolLoop<TMessage>(
     const results: TurnToolResult[] = []
     for (const group of groupToolCalls(turn.toolCalls, toolsByName)) {
       const settled = await Promise.all(
-        group.map((call) => executeOneCall(call, toolsByName, req)),
+        group.map((call) => executeOneCall(call, toolsByName, req, seenMutatingCalls)),
       )
       if (req.signal.aborted) return
+      lastToolName = group[group.length - 1]?.name ?? lastToolName
 
       // Emission stays in the model's own call order regardless of which tool
       // finished first, so the transcript reads the way the turn was written.
@@ -402,17 +457,33 @@ function groupToolCalls(
  * Run one tool call to a settled outcome. Never throws: a rejected browser
  * bridge is returned as `{ output: null, error }` so the caller can emit every
  * result of the group in the model's own call order before terminating on it.
+ *
+ * `seenMutatingCalls` is the turn's write fingerprint set. A mutating call
+ * whose fingerprint is already in it is NOT executed — it is answered from the
+ * first call's own result. Only `mutates === true` tools are fingerprinted:
+ * `groupToolCalls` above already treats that flag as the read/write boundary,
+ * and re-reading is a legitimate thing for a model to do twice.
  */
 async function executeOneCall(
   call: TurnToolCall,
   toolsByName: ReadonlyMap<string, AiTool>,
   req: AiStreamRequest,
+  seenMutatingCalls: Map<string, AiToolOutput>,
 ): Promise<ExecutedCall> {
   const tool = toolsByName.get(call.name)
+  const fingerprint = tool?.mutates === true ? toolCallFingerprint(call.name, call.input) : null
+  if (fingerprint !== null) {
+    const prior = seenMutatingCalls.get(fingerprint)
+    if (prior !== undefined) return { call, output: duplicateCallOutput(call.name, prior), error: '' }
+  }
   try {
     const output = tool
       ? await executeAiTool(tool, prepareToolInput(call, req), req.bridge, req.signal, req.toolContextBase)
       : { ok: false, error: `Unknown tool: ${call.name}` }
+    // Recorded on EVERY outcome, including a failure: a write that refused for
+    // a reason in its own error text refuses identically the second time, and
+    // re-running it is exactly the loop this bound exists to stop.
+    if (fingerprint !== null) seenMutatingCalls.set(fingerprint, output)
     return { call, output, error: '' }
   } catch (err) {
     return { call, output: null, error: err instanceof Error ? err.message : String(err) }

@@ -309,19 +309,23 @@ export function removeGuide(board: Board, guideId: string): Board {
 }
 
 /**
- * WS-10 Phase 2 (§4.3-§4.4) — "duplicate as variant": a new frame of the
- * SAME page (`sourceFrameId`'s `pageId`, size), its OWN `id` (caller-
- * supplied — this module stays a pure function, no `crypto.randomUUID()`
- * inside it, matching how `boardSlice.ts` already mints every other id),
- * positioned at `x`/`y` and carrying `axes` as its preview override. `null`
- * when `sourceFrameId` doesn't exist. Never touches the source frame, never
- * writes to the user's source (`studio-workspace/*` is user data, trap #12 —
- * this is purely a `boards.json` object).
+ * WS-10 Phase 2 (§4.3-§4.4) — a new frame of the SAME page (`sourceFrameId`'s
+ * `pageId`, size), its OWN `id` (caller-supplied — this module stays a pure
+ * function, no `crypto.randomUUID()` inside it, matching how `boardSlice.ts`
+ * already mints every other id), positioned at `x`/`y`. `null` when
+ * `sourceFrameId` doesn't exist. Never touches the source frame, never writes
+ * to the user's source (`studio-workspace/*` is user data, trap #12 — this is
+ * purely a `boards.json` object).
+ *
+ * `axes` is the "duplicate as VARIANT" half: it replaces the copy's preview
+ * override. Omit it and the copy keeps the source's own axes, which is what a
+ * plain copy of a frame means — K2's Alt+drag, where the user is duplicating
+ * the frame they are looking at, not asking for a different rendering of it.
  */
 export function duplicateFrame(
   board: Board,
   sourceFrameId: string,
-  next: { id: string; x: number; y: number; axes: Partial<PreviewAxes> },
+  next: { id: string; x: number; y: number; axes?: Partial<PreviewAxes> },
 ): Board | null {
   const source = board.frames.find((f) => f.id === sourceFrameId)
   if (!source) return null
@@ -330,7 +334,7 @@ export function duplicateFrame(
     id: next.id,
     x: next.x,
     y: next.y,
-    axes: next.axes,
+    ...(next.axes ? { axes: next.axes } : {}),
   }
   return { ...board, frames: [...board.frames, frame] }
 }

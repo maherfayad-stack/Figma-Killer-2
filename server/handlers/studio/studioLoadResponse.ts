@@ -127,6 +127,8 @@ export async function* studioLoadStreamLines(
     dir: string
     projectName: string
     trust: unknown
+    /** L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` live-origin routing key, `null` below Tier 2. See `studioLoadStreamSchema.ts`'s matching field doc. */
+    projectKey: string | null
     paletteHiddenModuleIds: string[]
     missingPageIds: string[] | undefined
   },

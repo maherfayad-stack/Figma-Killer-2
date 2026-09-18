@@ -14,6 +14,8 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, render } from '@testing-library/react'
 import { CanvasAnimationInjector } from '@site/canvas/CanvasAnimationInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import {
   clearCanvasAnimationScrub,
   getCanvasAnimationScrub,
@@ -23,8 +25,18 @@ import {
 
 const STYLE_TAG_ID = 'studio-canvas-animation'
 
+let adapters: PortalFrameAdapter[] = []
+
+function makeAdapter(): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(document)
+  adapters.push(adapter)
+  return adapter
+}
+
 afterEach(() => {
   cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
   clearCanvasAnimationScrub()
   document.getElementById(STYLE_TAG_ID)?.remove()
 })
@@ -35,14 +47,16 @@ function injectedCss(): string {
 
 describe('freezePoint as an axis', () => {
   it('0 shows what `start` shows — a paused animation', () => {
-    render(<CanvasAnimationInjector targetDocument={document} freezePoint={0} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint={0} /></CanvasFrameAdapterContext.Provider>)
     const css = injectedCss()
     expect(css).toContain('animation-play-state: paused !important')
     expect(css).toContain('animation-delay: -0s !important')
   })
 
   it('a fraction becomes a negative delay against a normalised duration', () => {
-    render(<CanvasAnimationInjector targetDocument={document} freezePoint={0.4} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint={0.4} /></CanvasFrameAdapterContext.Provider>)
     const css = injectedCss()
     // Both halves matter: without the forced duration, -0.4s is 40% of a 1s
     // animation and 20% of a 2s one.
@@ -52,25 +66,28 @@ describe('freezePoint as an axis', () => {
   })
 
   it('holds the scrubbed frame rather than filling forwards past it', () => {
-    render(<CanvasAnimationInjector targetDocument={document} freezePoint={0.4} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint={0.4} /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-fill-mode: both !important')
   })
 
   it('clamps out-of-range values instead of emitting a positive delay', () => {
-    const { rerender } = render(<CanvasAnimationInjector targetDocument={document} freezePoint={5} />)
+    const adapter = makeAdapter()
+    const { rerender } = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint={5} /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-delay: -1s !important')
 
-    rerender(<CanvasAnimationInjector targetDocument={document} freezePoint={-3} />)
+    rerender(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint={-3} /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-delay: -0s !important')
   })
 
   it('keeps the two keyword forms exactly as they were', () => {
-    const { rerender } = render(<CanvasAnimationInjector targetDocument={document} freezePoint="end" />)
+    const adapter = makeAdapter()
+    const { rerender } = render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="end" /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-iteration-count: 1 !important')
     expect(injectedCss()).toContain('animation-fill-mode: forwards !important')
     expect(injectedCss()).not.toContain('animation-delay')
 
-    rerender(<CanvasAnimationInjector targetDocument={document} freezePoint="start" />)
+    rerender(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="start" /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-play-state: paused !important')
     expect(injectedCss()).not.toContain('animation-duration')
   })
@@ -78,7 +95,8 @@ describe('freezePoint as an axis', () => {
 
 describe('the scrub store overrides the frame’s own freeze point', () => {
   it('a scrub wins over `freezePoint`, and releasing it gives the frame back', () => {
-    render(<CanvasAnimationInjector targetDocument={document} freezePoint="end" />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector freezePoint="end" /></CanvasFrameAdapterContext.Provider>)
     expect(injectedCss()).toContain('animation-fill-mode: forwards !important')
 
     act(() => setCanvasAnimationScrub(0.25))
@@ -90,6 +108,7 @@ describe('the scrub store overrides the frame’s own freeze point', () => {
   })
 
   it('clamps at the store boundary too, so no caller can push it out of range', () => {
+    const adapter = makeAdapter()
     act(() => setCanvasAnimationScrub(2))
     expect(getCanvasAnimationScrub().progress).toBe(1)
     act(() => setCanvasAnimationScrub(-1))
@@ -99,7 +118,8 @@ describe('the scrub store overrides the frame’s own freeze point', () => {
 
 describe('play once', () => {
   it('strips animation entirely for the reset phase, so the replay starts from the first keyframe', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     act(() => playCanvasAnimationsOnce())
 
     expect(getCanvasAnimationScrub().phase).toBe('reset')
@@ -107,7 +127,8 @@ describe('play once', () => {
   })
 
   it('runs each animation once and lets it settle, and does not suppress transitions while it plays', async () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     act(() => playCanvasAnimationsOnce())
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 40))
@@ -124,7 +145,8 @@ describe('play once', () => {
   })
 
   it('a scrub mid-playback cancels the replay rather than fighting it', async () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     act(() => playCanvasAnimationsOnce())
     act(() => setCanvasAnimationScrub(0.6))
 
@@ -137,7 +159,8 @@ describe('play once', () => {
   })
 
   it('the resting state still suppresses transitions and smooth scroll', () => {
-    render(<CanvasAnimationInjector targetDocument={document} />)
+    const adapter = makeAdapter()
+    render(<CanvasFrameAdapterContext.Provider value={adapter}><CanvasAnimationInjector /></CanvasFrameAdapterContext.Provider>)
     const css = injectedCss()
     expect(css).toContain('transition: none !important')
     expect(css).toContain('scroll-behavior: auto !important')

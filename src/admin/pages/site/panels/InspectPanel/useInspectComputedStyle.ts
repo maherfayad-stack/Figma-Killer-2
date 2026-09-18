@@ -2,9 +2,39 @@
  * useInspectComputedStyle — resolves the selected node's REAL rendered
  * element inside a canvas iframe and reads its computed style.
  *
- * Deliberately a synchronous, render-time read (no `useEffect` + `useState`,
- * no RAF loop, no polling) — mirroring the existing
- * `useClassPickerDerivedState` pattern (`findRenderedCanvasNodeElement`
+ * ## Bimodal read (P5, STATE.md `panel-26`) — what actually shipped
+ *
+ * Both exported hooks below return `{ value: T | null; isLoading: boolean }`.
+ * Portal mode (Tier 0/1) is 100% unchanged internally — same
+ * `RenderedCanvasNodeCache`, same `stabilizeRecord`, same synchronous
+ * `getComputedStyle` read straight from render — only the return statement's
+ * wrapper is new, and `isLoading` is a hardcoded `false` literal on that
+ * path. Bridge mode (Tier 2, `documentMode='bridge'`) is a genuinely async
+ * `postMessage` round trip through `useBridgeComputedValues.ts`
+ * (`findRenderedCanvasNodes`/`preferredRenderedCanvasNode` in
+ * `canvasNodeLookup.ts` — the mode-agnostic "Class B" primitive that already
+ * existed, unused by any Properties Panel caller, before this ticket).
+ *
+ * Both `useBridgeComputedValues(...)` calls below run UNCONDITIONALLY
+ * (Rules of Hooks) — `hasBridgeFrameFor(activeBreakpointId)` is a plain
+ * boolean, not a hook, computed fresh every render. For every Tier 0/1
+ * render that boolean is `false` forever (no `BridgeFrameAdapter` is ever
+ * registered outside a `documentMode='bridge'` frame), so the bridge hook's
+ * own effect no-ops immediately and this file's portal branch is exercised
+ * exactly as it always was — see `useInspectComputedStyle.test.tsx`'s own
+ * pinned assertions for the proof, not a claim in prose.
+ *
+ * Real total scope for this ticket: `selectionModel.ts`, `AlignSection.tsx`,
+ * `ConstraintsDiagram.tsx`, `useSizingParentLayout.ts`, `InspectPanel.tsx`,
+ * and this file — the 6 files with a direct hook-invocation call site. Zero
+ * files two hops downstream needed a shape-change edit: `SelectionModel`
+ * (P4) already unwraps the new shape back into its own unchanged
+ * `computedValues: Record<string,string> | null` field, plus one new,
+ * additive `computedValuesLoading: boolean` field.
+ *
+ * Deliberately a synchronous, render-time read on the PORTAL path (no
+ * `useEffect` + `useState`, no RAF loop, no polling) — mirroring the
+ * existing `useClassPickerDerivedState` pattern (`findRenderedCanvasNodeElement`
  * called straight from render). `getComputedStyle` is a pure read with no
  * side effects, so there's nothing to defer to an effect for.
  *
@@ -70,9 +100,55 @@
  * proved by test vs. what still needs one).
  */
 import { useState } from 'react'
-import { RenderedCanvasNodeCache, type RenderedCanvasNode } from '@site/canvas/canvasNodeLookup'
+import { RenderedCanvasNodeCache, type RenderedCanvasElement } from '@site/canvas/canvasNodeLookup'
 import { useMutableBox } from '@site/hooks/useMutableBox'
+import { hasBridgeFrameFor, useBridgeComputedValues } from './useBridgeComputedValues'
 import type { ComputedStyleSnapshot } from './inspectModel'
+
+/** The `{ value, isLoading }` wrapper both exported hooks below return — see the module doc's "Bimodal read" section. */
+export interface ComputedStyleResult<T> {
+  value: T | null
+  isLoading: boolean
+}
+
+/**
+ * `ComputedStyleSnapshot`'s own field list, in the camelCase vocabulary
+ * `useBridgeComputedValues` expects (it converts to the wire's kebab-case
+ * internally) — this is the fixed property set the bridge branch of
+ * `useInspectComputedStyle` requests, mirroring exactly what
+ * `readComputedStyleSnapshot` reads off the portal branch's element.
+ */
+const COMPUTED_STYLE_SNAPSHOT_PROPERTIES = [
+  'color',
+  'backgroundColor',
+  'borderTopColor',
+  'borderRightColor',
+  'borderBottomColor',
+  'borderLeftColor',
+  'borderTopWidth',
+  'borderRightWidth',
+  'borderBottomWidth',
+  'borderLeftWidth',
+  'borderTopStyle',
+  'borderRightStyle',
+  'borderBottomStyle',
+  'borderLeftStyle',
+  'fontFamily',
+  'fontSize',
+  'fontWeight',
+  'lineHeight',
+  'letterSpacing',
+  'width',
+  'height',
+  'marginTop',
+  'marginRight',
+  'marginBottom',
+  'marginLeft',
+  'paddingTop',
+  'paddingRight',
+  'paddingBottom',
+  'paddingLeft',
+] as const satisfies ReadonlyArray<keyof ComputedStyleSnapshot>
 
 function frameBodyElement(frame: HTMLIFrameElement): HTMLElement | null {
   try {
@@ -84,7 +160,7 @@ function frameBodyElement(frame: HTMLIFrameElement): HTMLElement | null {
 }
 
 function pickPreferredElement(
-  rendered: readonly RenderedCanvasNode[],
+  rendered: readonly RenderedCanvasElement[],
   activeBreakpointId: string,
 ): HTMLElement | null {
   if (rendered.length === 0) return null
@@ -194,12 +270,16 @@ function readComputedStyleSnapshot(element: HTMLElement): ComputedStyleSnapshot 
  * `node` is accepted only to document the recompute contract (see module
  * doc) — the caller passing a fresh reference on relevant changes is what
  * makes this re-run; the value's fields aren't read here.
+ *
+ * `useBridgeComputedValues` is called UNCONDITIONALLY (Rules of Hooks) even
+ * on the portal path, where it is a permanent no-op — see the module doc's
+ * "Bimodal read" section.
  */
 export function useInspectComputedStyle(
   nodeId: string | null,
   node: unknown,
   activeBreakpointId: string,
-): ComputedStyleSnapshot | null {
+): ComputedStyleResult<ComputedStyleSnapshot> {
   void node
   const cache = useRenderedCanvasNodeCache()
   // Held as the widened `Record<string, string>` shape `stabilizeRecord`
@@ -209,11 +289,26 @@ export function useInspectComputedStyle(
   // below; every value stored here was produced by `readComputedStyleSnapshot`,
   // which always returns a real `ComputedStyleSnapshot`.
   const snapshotBox = useMutableBox<Record<string, string>>()
-  if (!nodeId) return null
+  const bridge = hasBridgeFrameFor(activeBreakpointId)
+  const bridgeResult = useBridgeComputedValues(
+    nodeId,
+    activeBreakpointId,
+    COMPUTED_STYLE_SNAPSHOT_PROPERTIES,
+    bridge,
+  )
+
+  if (bridge) {
+    // Safe to widen: COMPUTED_STYLE_SNAPSHOT_PROPERTIES is exactly
+    // ComputedStyleSnapshot's own field list, so the bridge hook's Record
+    // always carries (or, as `null`, entirely omits) precisely those keys.
+    return { value: bridgeResult.value as unknown as ComputedStyleSnapshot | null, isLoading: bridgeResult.isLoading }
+  }
+
+  if (!nodeId) return { value: null, isLoading: false }
   const element = resolveElement(cache, nodeId, activeBreakpointId)
-  if (!element) return null
+  if (!element) return { value: null, isLoading: false }
   const snapshot = readComputedStyleSnapshot(element)
-  if (!snapshot) return null
+  if (!snapshot) return { value: null, isLoading: false }
   // `stabilizeRecord`'s box parameter is invariant in `T` (it both reads AND
   // writes `box.current`), so TS can't unify a fixed-key interface with the
   // `Record<string, string>` box declared above through generic inference
@@ -222,7 +317,7 @@ export function useInspectComputedStyle(
   // is the only producer of a value stored here, and it always returns a real
   // `ComputedStyleSnapshot`.
   const stabilized = stabilizeRecord(snapshotBox, snapshot as unknown as Record<string, string>)
-  return stabilized as unknown as ComputedStyleSnapshot
+  return { value: stabilized as unknown as ComputedStyleSnapshot, isLoading: false }
 }
 
 /**
@@ -249,28 +344,36 @@ export function useInspectComputedStyle(
  * narrow slice driving it, same discipline the C3 track's narrow-slice fix
  * used for whole-`site` selectors.
  *
- * Returns `null` when the node has no rendered element yet (no canvas
+ * `value` is `null` when the node has no rendered element yet (no canvas
  * mounted — e.g. every existing panel test, which render `PropertiesPanel`
- * with no live iframe). Callers must treat `null` as "no frame truth
- * available" and fall back to the existing spec-default table, not as
- * "everything is unset."
+ * with no live iframe) OR, on the bridge path, while no measurement has
+ * resolved yet. Callers must treat `null` as "no frame truth available" and
+ * fall back to the existing spec-default table, not as "everything is
+ * unset." `useBridgeComputedValues` is called UNCONDITIONALLY (Rules of
+ * Hooks) even on the portal path, where it is a permanent no-op — see the
+ * module doc's "Bimodal read" section.
  */
 export function useFrameComputedStyleValues(
   nodeId: string | null,
   activeBreakpointId: string,
   properties: ReadonlyArray<string>,
-): Record<string, string> | null {
+): ComputedStyleResult<Record<string, string>> {
   const cache = useRenderedCanvasNodeCache()
   const valuesBox = useMutableBox<Record<string, string>>()
-  if (!nodeId) return null
+  const bridge = hasBridgeFrameFor(activeBreakpointId)
+  const bridgeResult = useBridgeComputedValues(nodeId, activeBreakpointId, properties, bridge)
+
+  if (bridge) return bridgeResult
+
+  if (!nodeId) return { value: null, isLoading: false }
   const element = resolveElement(cache, nodeId, activeBreakpointId)
-  if (!element) return null
+  if (!element) return { value: null, isLoading: false }
   const view = element.ownerDocument.defaultView
-  if (!view) return null
+  if (!view) return { value: null, isLoading: false }
   const cs = view.getComputedStyle(element) as unknown as Record<string, string>
   const values: Record<string, string> = {}
   for (const prop of properties) {
     values[prop] = cs[prop] ?? ''
   }
-  return stabilizeRecord(valuesBox, values)
+  return { value: stabilizeRecord(valuesBox, values), isLoading: false }
 }

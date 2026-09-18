@@ -46,31 +46,3 @@
     align-items: center;
     gap: var(--space-2xs);
 }
-
-/* Ways forward read as inline links inside the notice's own prose rather than
-   as chrome buttons: they are part of the sentence, not a toolbar. Mirrors
-   `SharedComponentNotice.module.css`'s `jumpToSourceButton`. */
-.action {
-    height: auto;
-    min-height: 0;
-    padding: 0;
-    gap: var(--space-3xs);
-    background: transparent;
-    color: inherit;
-    font-size: var(--text-2xs);
-    font-weight: 500;
-    text-decoration: underline;
-    text-underline-offset: 2px;
-}
-
-.action:hover {
-    background: transparent;
-    color: var(--text-bright);
-}
-
-/* An action the editor cannot run for the user — advice, so no affordance. */
-.hint {
-    font-size: var(--text-2xs);
-    line-height: 1.4;
-    color: var(--text-muted);
-}

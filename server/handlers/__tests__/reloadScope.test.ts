@@ -11,9 +11,8 @@
  * loads the project before it can edit it), and the ONE piece of state this
  * route's safety check actually depends on.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
 import { clearPageParseCache } from '../studio/pageParseCache'
 import { probeProject } from '../studio/projectProbe'
@@ -21,9 +20,29 @@ import { mergeStudioMeta } from '../studio/studioMeta'
 import { projectsRootDir } from '../studioProjects'
 import { loadStudioPages } from '../studioPageLoad'
 import { tryServeStudioReloadScope } from '../studio/reloadScope'
-import { tryServeStudio } from '../studio'
+import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
 import { withOutsideWorkspaceDir } from './outsideWorkspaceDir'
+
+/**
+ * Every Studio route is capability-gated at dispatch, so these tests drive the
+ * surface as the signed-in Owner. See `helpers/studioRouteHarness.ts`.
+ */
+let studioRoutes: StudioRouteTestHarness
+
+beforeAll(async () => {
+  studioRoutes = await createStudioRouteTestHarness()
+})
+
+afterAll(async () => {
+  await studioRoutes.cleanup()
+})
+
+/** `tryServeStudio` with the Owner's session cookie attached. */
+function serveStudio(req: Request, url: URL): Promise<Response | null> {
+  return studioRoutes.serve(req, url)
+}
+
 
 function makeRequest(pathAndQuery: string, init?: RequestInit): { req: Request; url: URL; pathname: string } {
   const url = new URL(`http://localhost${pathAndQuery}`)
@@ -274,11 +293,11 @@ describe('tryServeStudioReloadScope', () => {
     expect(scope.body).toEqual({ ok: true, narrow: true, pageIds: ['home'] })
 
     const narrowUrl = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(wsDir)}&pageIds=home`)
-    const narrowRes = await tryServeStudio(new Request(narrowUrl), undefined, narrowUrl, narrowUrl.pathname)
+    const narrowRes = await serveStudio(new Request(narrowUrl), narrowUrl)
     const narrowBody = (await narrowRes!.json()) as { pages: Array<{ id: string; nodes: Record<string, { props: Record<string, unknown> }> }> }
 
     const fullUrl = new URL(`http://localhost/admin/api/studio/load?dir=${encodeURIComponent(wsDir)}`)
-    const fullRes = await tryServeStudio(new Request(fullUrl), undefined, fullUrl, fullUrl.pathname)
+    const fullRes = await serveStudio(new Request(fullUrl), fullUrl)
     const fullBody = (await fullRes!.json()) as { pages: Array<{ id: string; nodes: Record<string, { props: Record<string, unknown> }> }> }
 
     expect(narrowBody.pages).toHaveLength(1)

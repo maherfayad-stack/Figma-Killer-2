@@ -20,7 +20,15 @@ import {
 } from './canvasTreeLadder'
 import { escapeCssAttributeValue } from './canvasNodeLookup'
 import { measureCanvasElementRect } from './canvasOverlayGeometry'
+import { measurementWinsOverTreeLadder } from './canvasMeasureGeometry'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import styles from './BreakpointSelectionOverlay.module.css'
+
+// Alt-hover tree-ladder inspection has no bridge-mode equivalent yet (`live-05`,
+// STATE.md) — `resolvePortalDocument` resolves `null` for a bridge-registered
+// iframe (a real DOM `mousemove`/`keydown` inside a cross-origin frame document
+// isn't reachable this way), the same class of gap `useIframeEventForwarding.ts`'s
+// keyboard-forwarding already flags. Disclosed, not silently unsupported.
 
 const EMPTY_STYLE_RULES: StyleRuleRegistry = {}
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
@@ -41,6 +49,13 @@ interface UseCanvasTreeLadderOverlayArgs {
   show: boolean
   hoveredNodeId: string | null
   hoveredBreakpointOrigin: string | null
+  /**
+   * This frame's selection. Used for ONE thing: deciding whether the OTHER
+   * Alt-hover gesture — K5's `MeasureLayer` — owns this hold instead. See
+   * `measurementWinsOverTreeLadder` for the rule and why it lives in one
+   * place rather than being re-derived here.
+   */
+  selectedNodeIds: readonly string[]
 }
 
 interface CanvasTreeLadderOverlayResult {
@@ -57,6 +72,7 @@ export function useCanvasTreeLadderOverlay({
   show,
   hoveredNodeId,
   hoveredBreakpointOrigin,
+  selectedNodeIds,
 }: UseCanvasTreeLadderOverlayArgs): CanvasTreeLadderOverlayResult {
   const activePage = useEditorStore(selectActiveCanvasPage)
   const styleRules = useEditorStore((s) => s.site?.styleRules ?? EMPTY_STYLE_RULES)
@@ -69,8 +85,14 @@ export function useCanvasTreeLadderOverlay({
 
   const treeLadderRows = buildCanvasTreeLadderRows(activePage, inspectAnchorNodeId)
   const treeLadderKey = treeLadderRows.map((row) => `${row.nodeId}:${row.depth}:${row.relation}`).join('|')
+  // K5: Alt+hover over a node OUTSIDE the selection is a measurement, not a
+  // ladder. Suppressing (rather than just hiding) matters — with the ladder
+  // off, releasing Alt commits nothing, so measuring can never reselect the
+  // thing being measured against.
+  const measurementOwnsAlt = measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)
   const showTreeLadder =
     show &&
+    !measurementOwnsAlt &&
     inspectActive &&
     !inspectSuppressed &&
     Boolean(inspectAnchorNodeId) &&
@@ -145,7 +167,7 @@ export function useCanvasTreeLadderOverlay({
 
     const attach = () => {
       if (iframeDoc) return
-      const nextDoc = iframeElement?.contentDocument ?? null
+      const nextDoc = resolvePortalDocument(iframeElement)
       if (!nextDoc) {
         frame = requestAnimationFrame(attach)
         return
@@ -240,7 +262,7 @@ export function useCanvasTreeLadderOverlay({
     let frame = 0
     const attachIframeDocument = () => {
       if (iframeDoc) return
-      const nextDoc = iframeElement?.contentDocument ?? null
+      const nextDoc = resolvePortalDocument(iframeElement)
       if (!nextDoc) {
         frame = requestAnimationFrame(attachIframeDocument)
         return
@@ -349,7 +371,7 @@ function positionTreeLadder(
     return
   }
 
-  const iframeDoc = iframe.contentDocument
+  const iframeDoc = resolvePortalDocument(iframe)
   if (!iframeDoc) {
     ladder.style.display = 'none'
     return

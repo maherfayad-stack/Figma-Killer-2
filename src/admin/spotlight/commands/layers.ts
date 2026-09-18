@@ -12,6 +12,7 @@
  *   - Lock / Unlock layer
  *   - Hide / Show layer
  *   - Wrap in container
+ *   - Group / Ungroup (K3)
  *   - Move up / Move down
  *   - Select parent / first child / next sibling / previous sibling
  *   - Convert selection to Visual Component
@@ -169,7 +170,11 @@ export function getLayersCommands(): Command[] {
         if (!nodeId) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().pasteNode(nodeId)
+          // `K7` — 'after', matching ⌘V: this command acts on the SELECTION,
+          // so the paste belongs beside it. `'auto'` (paste into a container
+          // target) is the right answer only for the right-click "Paste here"
+          // menus, which name a container rather than the selection.
+          useEditorStore.getState().pasteNode(nodeId, 'after')
         } catch (err) {
           console.error('[spotlight] pasteNode failed:', err)
         }
@@ -214,7 +219,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.toggleLock',
       title: 'Toggle layer lock',
-      subtitle: 'Lock or unlock the selected layer',
+      subtitle: 'Lock or unlock every selected layer',
       group: 'editor',
       iconName: 'lock-solid',
       keywords: ['layer', 'lock', 'unlock', 'protect'],
@@ -223,13 +228,20 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // `panel-40` — the whole selection, not just the anchor, and one
+        // absolute write so a selection that disagrees converges instead of
+        // swapping halves. "Any still unlocked" wins, the same rule the
+        // Layers context menu and the inspector's Layer row use.
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().toggleNodeLocked(nodeId)
+          const state = useEditorStore.getState()
+          const page = state.site?.pages.find((p) => p.id === state.activePageId)
+          const lock = nodeIds.some((id) => !page?.nodes[id]?.locked)
+          state.setNodesLocked([...nodeIds], lock)
         } catch (err) {
-          console.error('[spotlight] toggleNodeLocked failed:', err)
+          console.error('[spotlight] setNodesLocked failed:', err)
         }
       },
     },
@@ -238,7 +250,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.toggleVisibility',
       title: 'Toggle layer visibility',
-      subtitle: 'Hide or show the selected layer',
+      subtitle: 'Hide or show every selected layer',
       group: 'editor',
       iconName: 'eye-solid',
       keywords: ['layer', 'hide', 'show', 'visibility', 'visible', 'invisible'],
@@ -247,13 +259,17 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // `panel-40` — see `layers.toggleLock` above. "Any still visible" wins.
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().toggleNodeHidden(nodeId)
+          const state = useEditorStore.getState()
+          const page = state.site?.pages.find((p) => p.id === state.activePageId)
+          const hide = nodeIds.some((id) => !page?.nodes[id]?.hidden)
+          state.setNodesHidden([...nodeIds], hide)
         } catch (err) {
-          console.error('[spotlight] toggleNodeHidden failed:', err)
+          console.error('[spotlight] setNodesHidden failed:', err)
         }
       },
     },
@@ -278,6 +294,63 @@ export function getLayersCommands(): Command[] {
           useEditorStore.getState().wrapNode(nodeId, 'base.container')
         } catch (err) {
           console.error('[spotlight] wrapNode failed:', err)
+        }
+      },
+    },
+
+    // ── Group (K3) ───────────────────────────────────────────────────────────
+    // Distinct from "Wrap layer in container" above: wrap is the container
+    // PICKER's verb and writes one wrapper around ONE element; group is ⌘G and
+    // writes one container around the whole selection, which on imported code
+    // requires the selection to be a contiguous run of siblings. The store
+    // refuses out loud when it is not.
+    {
+      id: 'layers.group',
+      title: 'Group selection',
+      subtitle: 'Put the selected layers inside one container',
+      group: 'editor',
+      iconName: 'container-solid',
+      keywords: ['layer', 'group', 'container', 'frame', 'combine'],
+      workspaces: ['site'],
+      capability: 'site.structure.edit',
+      when: hasSelection,
+      run: async (ctx) => {
+        ctx.closeSpotlight()
+        const ids = ctx.editor?.selectedNodeIds ?? []
+        if (ids.length === 0) return
+        try {
+          const { useEditorStore } = await import('@site/store/store')
+          useEditorStore.getState().groupNodes([...ids])
+        } catch (err) {
+          console.error('[spotlight] groupNodes failed:', err)
+        }
+      },
+    },
+
+    // ── Ungroup (K3) ─────────────────────────────────────────────────────────
+    {
+      id: 'layers.ungroup',
+      title: 'Ungroup selection',
+      subtitle: 'Dissolve the selected container, keeping what is inside it',
+      group: 'editor',
+      iconName: 'container-solid',
+      keywords: ['layer', 'ungroup', 'unwrap', 'dissolve', 'flatten'],
+      workspaces: ['site'],
+      capability: 'site.structure.edit',
+      when: hasSelection,
+      run: async (ctx) => {
+        ctx.closeSpotlight()
+        // One container at a time: each ungroup shifts the source position of
+        // everything below it, so a multi-selection would plan its second
+        // write against lines the first already moved. The anchor of the
+        // selection is the one the user is looking at.
+        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
+        if (!nodeId) return
+        try {
+          const { useEditorStore } = await import('@site/store/store')
+          useEditorStore.getState().ungroupNode(nodeId)
+        } catch (err) {
+          console.error('[spotlight] ungroupNode failed:', err)
         }
       },
     },

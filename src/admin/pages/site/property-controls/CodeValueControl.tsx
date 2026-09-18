@@ -25,15 +25,23 @@
  *
  * Track F2 / R1-R2's "per-field design" — the WHY used to be a permanent
  * inline `· set in code` string appended to the value, eating row width on
- * every code-valued prop. `hint` (built by `propLockReason`, which now names
- * this PROP's own resolved source — R2 — rather than a generic node-level
- * fallback) moves into a lock glyph's tooltip instead: the fact is still one
- * hover away, but the row reads as "value, plus a small badge" rather than
- * "value, plus a paragraph".
+ * every code-valued prop. The lock glyph moved that fact one hover away first
+ * (a passive tooltip); R3 (`STUDIO-LIVE-CANVAS-PLAN.md` Track R) goes one step
+ * further: the glyph is now a real, click-to-open `InspectorPopover` (the same
+ * primitive `LayoutSettingsButton` uses), because a hover tooltip has no room
+ * for a remedy BUTTON — and `explainPropConstraint`'s `list-row` case has a
+ * real one (`edit-array`, via `ConstraintActionButtons` — the identical
+ * renderer the layers-context-menu footer and the structural lock banner use).
+ * The trigger keeps a static `aria-label` naming the reason, so the fact is
+ * still discoverable without opening the popover.
  */
+import { useRef, useState } from 'react'
+import type { EditConstraint } from '@core/page-tree'
 import type { ControlProps } from './shared'
 import { ControlRow } from '@ui/components/ControlRow'
 import { Button } from '@ui/components/Button'
+import { InspectorPopover } from '@ui/components/InspectorPopover'
+import { ConstraintActionButtons } from '@site/ui/ConstraintNotice'
 import { LockSolidIcon } from 'pixel-art-icons/icons/lock-solid'
 import styles from './controls.module.css'
 
@@ -64,10 +72,13 @@ function summariseValue(value: unknown): string {
 
 interface CodeValueControlProps extends ControlProps<unknown> {
   /**
-   * Why this value cannot be edited, shown after the value itself. Defaults to
-   * the structured-value case, which needs no node-level explanation.
+   * Why this value cannot be edited, and any real way forward.
+   * `explainPropConstraint` builds this; absent for the one case that carries
+   * no `EditConstraint` at all — a writable-but-structured value (see
+   * `PropertyControlRenderer`'s `isStructuredValue` gate) — which falls back
+   * to the generic "Set in code." below.
    */
-  hint?: string
+  constraint?: EditConstraint
 }
 
 export function CodeValueControl({
@@ -76,22 +87,41 @@ export function CodeValueControl({
   label,
   isOverride,
   layout,
-  hint = 'set in code',
+  constraint,
 }: CodeValueControlProps) {
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  const [open, setOpen] = useState(false)
+  const explanation = constraint?.explanation ?? 'Set in code.'
+
   return (
     <ControlRow propKey={propKey} label={label} layout={layout} isOverride={isOverride} disabled>
       <span className={styles.codeValue} data-testid={`code-value-${propKey}`}>
         <span className={styles.codeValueText}>{summariseValue(value)}</span>
         <Button
+          ref={triggerRef}
           variant="ghost"
           size="micro"
           iconOnly
-          tooltip={hint}
-          aria-label={`Why this value is read-only: ${hint}`}
+          aria-haspopup="dialog"
+          aria-expanded={open}
+          aria-label={`Why this value is read-only: ${explanation}`}
           className={styles.codeValueGlyph}
+          onClick={() => setOpen((o) => !o)}
         >
           <LockSolidIcon size={11} />
         </Button>
+        {open && (
+          <InspectorPopover
+            id={`code-value-${propKey}`}
+            anchorRef={triggerRef}
+            onClose={() => setOpen(false)}
+            title="Read-only"
+            width={220}
+          >
+            <p className={styles.codeValueHint}>{explanation}</p>
+            {constraint && <ConstraintActionButtons constraint={constraint} />}
+          </InspectorPopover>
+        )}
       </span>
     </ControlRow>
   )

@@ -6,9 +6,13 @@
  *                  (relative import, or a tsconfig path alias pointing
  *                  inside the workspace); the resolved workspace-relative
  *                  POSIX file path is recorded.
- *   - **package** — a bare/unresolvable specifier (an npm dependency, e.g.
- *                  `@alm-design/design-system`), which stays a read-only
- *                  prop surface this slice.
+ *   - **package** — a bare/unresolvable specifier (an npm dependency), which
+ *                  stays a read-only prop surface this slice.
+ *   - **design-system** — it resolves to a real file inside the workspace,
+ *                  but inside `<root>/design-system/`: Studio's OWN copy of
+ *                  the built-in design system, written into the project so it
+ *                  builds standalone. A black box, never a local component —
+ *                  see `./designSystemDir`.
  *
  * This slice only RESOLVES and CLASSIFIES local components — it does not
  * parse a local component's own file into an editable tree (deferred; see
@@ -27,13 +31,23 @@
  */
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
-import { Node, Project, type SourceFile } from 'ts-morph'
+import { NewLineKind, Node, Project, type SourceFile } from 'ts-morph'
 import type { ParsedPage } from './types'
+import { isDesignSystemPath } from './designSystemDir'
+import { EolPreservingFileSystem } from './eolFileSystem'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
 
 export type ComponentSource =
   | { kind: 'local'; file: string }
   | { kind: 'package'; specifier: string }
+  /**
+   * Studio's built-in design system, reached through the project's own
+   * `design-system/` folder. `name` is the component's PUBLIC EXPORT name
+   * (`Button`), not the local binding — `import { Button as Btn }` still
+   * resolves to the `alm.Button` module, and a member-access tag
+   * (`<DS.Button/>`) resolves to its trailing segment.
+   */
+  | { kind: 'design-system'; name: string }
 
 /**
  * Builds one ts-morph `Project` covering every `.ts`/`.tsx`/`.js`/`.jsx` file
@@ -62,6 +76,15 @@ export function createWorkspaceProject(workspaceRoot: string): Project {
     useInMemoryFileSystem: false,
     skipAddingFilesFromTsConfig: true,
     compilerOptions: { allowJs: true },
+    // The user's repo may be a CRLF checkout. `EolPreservingFileSystem` hands
+    // ts-morph LF-only text so a page tree cannot depend on which way Git
+    // checked the repo out, and puts each file's own ending back at the one
+    // moment bytes reach the disk. See `./eolFileSystem`.
+    fileSystem: new EolPreservingFileSystem(),
+    // Codemods write through this project too; pin the printer to the same
+    // LF the file system normalises to, so the single place a line ending is
+    // decided stays the file system.
+    manipulationSettings: { newLineKind: NewLineKind.LineFeed },
     ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
   })
 
@@ -104,7 +127,13 @@ export function resolveComponentSources(
     // leading identifier ("Foo") — that's what's actually in scope.
     const identifier = node.name.split('.')[0]!
     const source = importMap[identifier] ?? declaredInSameFile(sourceFile, identifier, root)
-    if (source) result[node.id] = source
+    if (!source) continue
+    // `<DS.Button/>` off `import * as DS from '../design-system'` is bound
+    // under "DS", so the map's `name` is the namespace, not the component.
+    // The trailing segment is the one that names a real `alm.*` module.
+    const memberName = node.name.includes('.') ? node.name.split('.').pop() : undefined
+    result[node.id] =
+      source.kind === 'design-system' && memberName ? { kind: 'design-system', name: memberName } : source
   }
 
   return result
@@ -117,13 +146,16 @@ function buildImportIdentifierMap(sourceFile: SourceFile, workspaceRoot: string)
   for (const declaration of sourceFile.getImportDeclarations()) {
     const specifier = declaration.getModuleSpecifierValue()
     const target = declaration.getModuleSpecifierSourceFile()
-    const source = classifyImport(target, workspaceRoot, specifier)
 
     const defaultImport = declaration.getDefaultImport()
-    if (defaultImport) map[defaultImport.getText()] = source
+    if (defaultImport) {
+      map[defaultImport.getText()] = classifyImport(target, workspaceRoot, specifier, defaultImport.getText())
+    }
 
     const namespaceImport = declaration.getNamespaceImport()
-    if (namespaceImport) map[namespaceImport.getText()] = source
+    if (namespaceImport) {
+      map[namespaceImport.getText()] = classifyImport(target, workspaceRoot, specifier, namespaceImport.getText())
+    }
 
     for (const named of declaration.getNamedImports()) {
       const importedName = named.getNameNode().getText()
@@ -134,8 +166,19 @@ function buildImportIdentifierMap(sourceFile: SourceFile, workspaceRoot: string)
       // component in it, so inlining bailed and the node stayed an opaque box.
       // A barrel between a page and its components is one of the most common
       // layouts there is.
+      //
+      // `importedName`, never `declaring.name`, is what a design-system
+      // classification carries: the barrel's PUBLIC export name is what the
+      // `alm.<Name>` module id is minted from, and a vendored component whose
+      // internal declaration is named something else (`export { ButtonBase as
+      // Button }`) must still resolve to `alm.Button`.
       const declaring = resolveExportedDeclaration(target, importedName)
-      map[localName] = declaring ? classifyImport(declaring.sourceFile, workspaceRoot, specifier) : source
+      map[localName] = classifyImport(
+        declaring ? declaring.sourceFile : target,
+        workspaceRoot,
+        specifier,
+        importedName,
+      )
     }
   }
 
@@ -189,18 +232,32 @@ const exportedDeclarationCache = new WeakMap<
   Map<string, { sourceFile: SourceFile; name: string } | undefined>
 >()
 
-/** local = resolves to a real file inside `workspaceRoot`, outside any `node_modules`. */
+/**
+ * local = resolves to a real file inside `workspaceRoot`, outside any
+ * `node_modules` AND outside Studio's own `design-system/` folder.
+ *
+ * `exportName` is the component's public name at THIS import — used only by
+ * the `design-system` branch, where the module id (`alm.<Name>`) is minted
+ * from the name rather than from a file path.
+ */
 function classifyImport(
   resolved: SourceFile | undefined,
   workspaceRoot: string,
   specifier: string,
+  exportName: string,
 ): ComponentSource {
   if (resolved) {
     const relFromRoot = path.relative(workspaceRoot, path.resolve(resolved.getFilePath()))
     const insideRoot = relFromRoot.length > 0 && !relFromRoot.startsWith('..') && !path.isAbsolute(relFromRoot)
     const insideNodeModules = relFromRoot.split(path.sep).includes('node_modules')
     if (insideRoot && !insideNodeModules) {
-      return { kind: 'local', file: relFromRoot.split(path.sep).join('/') }
+      const relPosix = relFromRoot.split(path.sep).join('/')
+      // Checked on the RESOLVED file, not on the specifier: the barrel
+      // (`../design-system`), a deep import (`../design-system/components/…`)
+      // and a tsconfig alias all land in the same folder, and only the
+      // resolved path says so.
+      if (isDesignSystemPath(relPosix)) return { kind: 'design-system', name: exportName }
+      return { kind: 'local', file: relPosix }
     }
   }
   return { kind: 'package', specifier }

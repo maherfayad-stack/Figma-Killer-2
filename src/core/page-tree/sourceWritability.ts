@@ -155,11 +155,12 @@ export function isStylePatchWritableToSource(node: SourceWritableNode, patch: Re
  *
  * ## `alm.*` — the call site forwards to the component's root
  *
- * These are call sites of `@alm-design/design-system` components in the user's
- * own JSX, so `<Button style={{ width: '170px' }} />` is one honest target: one
- * source location, one rendered element, no other call site affected. It works
- * because every component in that package destructures its named props and
- * spreads the REST onto its root element
+ * These are call sites of the BUILT-IN design system's components in the user's
+ * own JSX — imported from the project's own `design-system/` folder — so
+ * `<Button style={{ width: '170px' }} />` is one honest target: one source
+ * location, one rendered element, no other call site affected. It works
+ * because every component in that design system destructures its named props
+ * and spreads the REST onto its root element
  * (`function Button({ variant, size, label, className = '', ...rest })` →
  * `<button className={…} {...rest}>`), which is also the bet Studio's own
  * renderer already makes: `src/modules/alm/register.tsx` pulls `style` out of

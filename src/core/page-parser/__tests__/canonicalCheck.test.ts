@@ -358,6 +358,21 @@ describe('canonicalCheck — rule 8 (static-svg), synthetic negative', () => {
 describe('canonicalCheck — doc parity', () => {
   const DOC_PATH = path.join(import.meta.dir, '..', '..', '..', '..', 'docs', 'reference', 'canonical-jsx.md')
 
+  /**
+   * The doc, with its checkout line endings normalised away.
+   *
+   * `extractDocRuleTiers` below anchors the `**Tier:**` line to the heading
+   * immediately above it with a literal blank line (`\n\n` in its pattern).
+   * On a checkout whose working-tree files hold CRLF (`core.autocrlf=true` is
+   * the Git-for-Windows default) the doc has `\r\n\r\n` there, so that pattern
+   * matched NOTHING and every rule read as "no documented tier" — a
+   * doc/registry parity failure that had nothing to do with either the doc or
+   * the registry.
+   */
+  function readDoc(): string {
+    return fs.readFileSync(DOC_PATH, 'utf8').replace(/\r\n/g, '\n')
+  }
+
   function extractDocRuleIds(doc: string): Set<string> {
     const ids = new Set<string>()
     for (const match of doc.matchAll(/^### \d+\. `([a-z-]+)`/gm)) {
@@ -387,7 +402,7 @@ describe('canonicalCheck — doc parity', () => {
   })
 
   it('every registered rule id has a numbered section in the doc', () => {
-    const doc = fs.readFileSync(DOC_PATH, 'utf8')
+    const doc = readDoc()
     const docIds = extractDocRuleIds(doc)
     for (const rule of CANONICAL_JSX_RULES) {
       expect(docIds.has(rule.id)).toBe(true)
@@ -395,7 +410,7 @@ describe('canonicalCheck — doc parity', () => {
   })
 
   it('every numbered rule heading in the doc is a registered rule id', () => {
-    const doc = fs.readFileSync(DOC_PATH, 'utf8')
+    const doc = readDoc()
     const docIds = extractDocRuleIds(doc)
     const registered = new Set(CANONICAL_JSX_RULES.map((r) => r.id))
     for (const id of docIds) {
@@ -404,7 +419,7 @@ describe('canonicalCheck — doc parity', () => {
   })
 
   it('every registered rule states its tier in the doc, and the two agree', () => {
-    const doc = fs.readFileSync(DOC_PATH, 'utf8')
+    const doc = readDoc()
     const docTiers = extractDocRuleTiers(doc)
     for (const rule of CANONICAL_JSX_RULES) {
       expect(docTiers.has(rule.id)).toBe(true)

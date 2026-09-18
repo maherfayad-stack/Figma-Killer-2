@@ -78,9 +78,12 @@ describe('useEditorStore permission gate', () => {
     // No editor state leaked; the panel body shows the boundary fallback
     // instead of the plugin subtree.
     expect(screen.queryByText('breakpoint:desktop')).toBeNull()
-    expect(
-      (document.body.textContent ?? '').includes('failed to load'),
-    ).toBe(true)
+    // Asserted on the boundary's ROLE and its one action, not on a sentence:
+    // Z2 (#145) rewrote the default fallback to a compact in-place panel and
+    // this assertion pinned the old copy. What the test is actually named
+    // after is that a boundary caught the throw and offered a way back.
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getByText('Reload this panel')).toBeTruthy()
   })
 
   it('the thrown error names the plugin and the missing permission', () => {

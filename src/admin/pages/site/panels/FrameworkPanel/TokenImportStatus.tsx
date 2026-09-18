@@ -25,9 +25,12 @@ import {
 import styles from './TokenImportStatus.module.css'
 
 const SOURCE_LABEL: Record<TokenExtractionStatus['source'], string> = {
+  'builtin-design-system': 'the built-in design system',
   'project-css': "this project's own CSS",
   'tailwind-theme': 'the Tailwind theme config',
   'vendor-css': 'an installed design-system package',
+  'scss-vars': "this project's Sass variables",
+  'js-theme': "this project's theme file",
   none: 'no source',
 }
 

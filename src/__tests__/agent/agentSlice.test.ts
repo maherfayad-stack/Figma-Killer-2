@@ -357,7 +357,7 @@ describe('processStreamEvent — toolRequest dispatches to executor', () => {
     expect(intercept.calls).toHaveLength(1)
     const body = JSON.parse(intercept.calls[0].body) as { result: { ok: boolean; error?: string } }
     expect(body.result.ok).toBe(false)
-    expect(body.result.error).toContain('not found')
+    expect(body.result.error).toContain('no longer on the board')
   })
 
   it('retains every image returned by a browser tool for the conversation gallery', async () => {

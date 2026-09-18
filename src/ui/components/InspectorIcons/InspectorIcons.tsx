@@ -163,6 +163,23 @@ export function FlowColumnReverseIcon(props: IconProps) {
 }
 
 // ---------------------------------------------------------------------------
+// Flex wrap — the mark is which line an overflow item lands on. `wrap` and
+// `wrap-reverse` are the same shape mirrored top-to-bottom, matching the
+// Flow-row/Flow-row-reverse pairing above: three items fit the first line,
+// a fourth overflows to a second line below (`wrap`) or above (`wrap-
+// reverse`, since the reverse direction only flips which side the NEW line
+// appears on).
+// ---------------------------------------------------------------------------
+
+export function WrapIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 4h4v6H4V4Zm6 0h4v6h-4V4Zm6 0h4v6h-4V4ZM4 14h4v6H4v-6Z" />
+}
+
+export function WrapReverseIcon(props: IconProps) {
+  return <Glyph {...props} d="M4 4h4v6H4V4ZM4 14h4v6H4v-6Zm6 0h4v6h-4v-6Zm6 0h4v6h-4v-6Z" />
+}
+
+// ---------------------------------------------------------------------------
 // Display — the three that earn a mark. `inline`, `inline-block` and the long
 // tail keep words; a picture for them would be a puzzle, not a label.
 // ---------------------------------------------------------------------------
@@ -370,6 +387,26 @@ export function FlipVerticalIcon(props: IconProps) {
     <Glyph
       {...props}
       d="M3 11h2v2H3v-2Zm4 0h2v2H7v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2Zm4 0h2v2h-2v-2ZM5 8h14v2H5V8ZM7 6h10v2H7V6ZM9 4h6v2H9V4Zm-4 10h14v2H5v-2Zm2 2h10v2H7v-2Zm2 2h6v2H9v-2Z"
+    />
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Unlocked — the Layer section's lock toggle (`STATE.md` `panel-25`).
+// `pixel-art-icons` vendors `lock-solid` (the closed padlock) but has no
+// unlocked/open counterpart — the structural lock had ZERO existing UI call
+// sites before this section, so there was never a prior "open" glyph to
+// reuse. Same body footprint as `lock-solid` (so the pair reads as one
+// control swapping state, not two unrelated icons); the shackle is drawn
+// open instead of closed — anchored on the right, its hook swung up and to
+// the left, not reaching back down into the case.
+// ---------------------------------------------------------------------------
+
+export function UnlockedIcon(props: IconProps) {
+  return (
+    <Glyph
+      {...props}
+      d="M3 10h18v10h-2v2H5v-2H3V10ZM15 4h2v4h-2V4ZM7 2h6v2H9v2H7V2Z"
     />
   )
 }

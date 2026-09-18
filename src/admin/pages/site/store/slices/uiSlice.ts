@@ -1,3 +1,4 @@
+import type { StructuralRefusalDialogState } from './structuralRefusalDialogState'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { clearCanvasSelectionDraft } from './selectionSlice'
 import {
@@ -9,10 +10,10 @@ export type FocusedPanel = 'canvas' | 'domTree' | 'properties' | null
 type FormPreviewState = 'default' | 'submitting' | 'success' | 'error'
 export type LeftSidebarPanelId =
   | 'explorer'
+  | 'assets'
   | 'selectors'
   | 'framework'
   | 'dependencies'
-  | 'inspect'
   | 'content'
   | 'git'
   | 'agent'
@@ -107,15 +108,8 @@ interface UiSlice {
   // but the duplication was vestigial. Use `state.isSettingsOpen` /
   // `state.activeSection` / `state.openSettings` / `state.closeSettings`.
 
-  // Preview overlay — toggle from toolbar (Phase 7)
-  previewOpen: boolean
-
   // Editor-only form state preview, keyed by base.form node id.
   formPreviewStates: Record<string, FormPreviewState>
-
-  // Module insert picker
-  insertPickerOpen: boolean
-  insertPickerParentId: string | null
 
   // Inline Visual Component extraction editor in the Properties panel.
   componentizeEditorRequest: ComponentizeEditorRequest | null
@@ -131,6 +125,7 @@ interface UiSlice {
   // tabs: the Site / Code / Media tabs (and the SiteExplorerPanel /
   // MediaExplorerPanel bodies behind them) were CMS-only surfaces and are gone.
   explorerPanelOpen: boolean
+  assetsPanelOpen: boolean
   selectorsPanelOpen: boolean
   frameworkPanelOpen: boolean
   /** Active tab inside the consolidated Framework panel. */
@@ -138,9 +133,6 @@ interface UiSlice {
   /** Whether the Manage Core Framework dialog is open. */
   frameworkManagerOpen: boolean
   dependenciesPanelOpen: boolean
-  /** Read-only "what actually rendered" panel — computed colors/typography/
-   *  box model/CSS for the selected node (Phase 6C). */
-  inspectPanelOpen: boolean
   /** Bilingual content panel — the project's own locale dictionary as an editable en/ar table. */
   contentPanelOpen: boolean
   /**
@@ -180,13 +172,8 @@ interface UiSlice {
   setFocusedPanel: (panel: FocusedPanel) => void
   cycleFocusedPanel: () => void
 
-
-  openPreview: () => void
-  closePreview: () => void
   setFormPreviewState: (formNodeId: string, state: FormPreviewState) => void
 
-  openInsertPicker: (parentId: string) => void
-  closeInsertPicker: () => void
   openComponentizeEditor: (nodeId: string) => void
   clearComponentizeEditorRequest: (requestId: number) => void
   openLayoutNameDialog: (request: LayoutNameDialogRequest) => void
@@ -198,7 +185,6 @@ interface UiSlice {
   setFrameworkPanelTab: (tab: FrameworkPanelTab) => void
   setFrameworkManagerOpen: (open: boolean) => void
   setDependenciesPanelOpen: (open: boolean) => void
-  setInspectPanelOpen: (open: boolean) => void
   setContentPanelOpen: (open: boolean) => void
   setGitPanelOpen: (open: boolean) => void
   setLeftSidebarPanel: (panel: LeftSidebarPanelId | null) => void
@@ -299,6 +285,23 @@ interface UiSlice {
   /** Close the Import HTML modal and clear its transient state. */
   closeImportHtmlModal: () => void
 
+  /**
+   * The refused structural gesture `RefusalDialog` is currently showing, or
+   * `null` when no such dialog is open. `presentStructuralRefusal` sets this
+   * instead of toasting whenever the refused `EditConstraint` has a runnable
+   * action; every terminal refusal (`actions: []`) still only ever toasts and
+   * never touches this field.
+   */
+  structuralRefusalDialog: StructuralRefusalDialogState | null
+  /**
+   * Open `RefusalDialog` on a refusal raised OUTSIDE the store's own
+   * structural gate — Z8's CSS destination question, reported from the save
+   * loop, which holds no `set` of its own the way `presentStructuralRefusal` does.
+   */
+  presentRefusalDialog: (dialog: StructuralRefusalDialogState) => void
+  /** Dismiss the open `RefusalDialog` without running its `retry`, if any. */
+  dismissStructuralRefusalDialog: () => void
+
 }
 
 const PANEL_FOCUS_ORDER: FocusedPanel[] = ['canvas', 'domTree', 'properties']
@@ -316,10 +319,10 @@ function getActiveLeftSidebarPanel(state: EditorStore): LeftSidebarPanelId | nul
   // panel is opened, so short-circuit here too.
   if (state.activePluginPanelId !== null) return null
   if (state.explorerPanelOpen) return 'explorer'
+  if (state.assetsPanelOpen) return 'assets'
   if (state.selectorsPanelOpen) return 'selectors'
   if (state.frameworkPanelOpen) return 'framework'
   if (state.dependenciesPanelOpen) return 'dependencies'
-  if (state.inspectPanelOpen) return 'inspect'
   if (state.contentPanelOpen) return 'content'
   if (state.gitPanelOpen) return 'git'
   if (state.isAgentOpen) return 'agent'
@@ -339,19 +342,16 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   propertiesPanelAutoOpenSuppressed: false,
   leftSidebarWidth: LEFT_SIDEBAR_DEFAULT_WIDTH,
   focusedPanel: 'canvas',
-  previewOpen: false,
   formPreviewStates: {},
-  insertPickerOpen: false,
-  insertPickerParentId: null,
   componentizeEditorRequest: null,
   layoutNameDialogRequest: null,
   explorerPanelOpen: true,
+  assetsPanelOpen: false,
   selectorsPanelOpen: false,
   frameworkPanelOpen: false,
   frameworkPanelTab: 'home',
   frameworkManagerOpen: false,
   dependenciesPanelOpen: false,
-  inspectPanelOpen: false,
   contentPanelOpen: false,
   gitPanelOpen: false,
   activePluginPanelId: null,
@@ -366,6 +366,7 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   importHtmlModalOpen: false,
   importHtmlModalParentId: null,
   importHtmlModalPrefill: '',
+  structuralRefusalDialog: null,
 
   setPropertiesPanel: (partial) => {
     // Guard: skip the set() call entirely when every supplied field already
@@ -423,9 +424,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
     set({ focusedPanel: next })
   },
 
-  openPreview: () => set({ previewOpen: true }),
-  closePreview: () => set({ previewOpen: false }),
-
   setFormPreviewState: (formNodeId, previewState) =>
     set((state) => {
       if (previewState === 'default') {
@@ -434,12 +432,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
       }
       state.formPreviewStates[formNodeId] = previewState
     }),
-
-  openInsertPicker: (parentId) =>
-    set({ insertPickerOpen: true, insertPickerParentId: parentId }),
-
-  closeInsertPicker: () =>
-    set({ insertPickerOpen: false, insertPickerParentId: null }),
 
   openComponentizeEditor: (nodeId) => {
     const current = get()
@@ -479,8 +471,6 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   setDependenciesPanelOpen: (open) => set({ dependenciesPanelOpen: open }),
 
-  setInspectPanelOpen: (open) => set({ inspectPanelOpen: open }),
-
   setContentPanelOpen: (open) => set({ contentPanelOpen: open }),
 
   setGitPanelOpen: (open) => set({ gitPanelOpen: open }),
@@ -488,10 +478,10 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   setLeftSidebarPanel: (panel) =>
     set((state) => {
       state.explorerPanelOpen = panel === 'explorer'
+      state.assetsPanelOpen = panel === 'assets'
       state.selectorsPanelOpen = panel === 'selectors'
       state.frameworkPanelOpen = panel === 'framework'
       state.dependenciesPanelOpen = panel === 'dependencies'
-      state.inspectPanelOpen = panel === 'inspect'
       state.contentPanelOpen = panel === 'content'
       state.gitPanelOpen = panel === 'git'
       state.isAgentOpen = panel === 'agent'
@@ -514,10 +504,10 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
   setActivePluginPanel: (panelId) =>
     set((state) => {
       state.explorerPanelOpen = false
+      state.assetsPanelOpen = false
       state.selectorsPanelOpen = false
       state.frameworkPanelOpen = false
       state.dependenciesPanelOpen = false
-      state.inspectPanelOpen = false
       state.contentPanelOpen = false
       state.gitPanelOpen = false
       state.isAgentOpen = false
@@ -642,6 +632,10 @@ export const createUiSlice: EditorStoreSliceCreator<UiSlice> = (set, get) => ({
 
   closeImportHtmlModal: () =>
     set({ importHtmlModalOpen: false, importHtmlModalParentId: null, importHtmlModalPrefill: '' }),
+
+  presentRefusalDialog: (dialog) => set({ structuralRefusalDialog: dialog }),
+
+  dismissStructuralRefusalDialog: () => set({ structuralRefusalDialog: null }),
 
   openPageInCanvas: (pageId) =>
     // Atomic: clear VC mode + switch to the target page in one store write.

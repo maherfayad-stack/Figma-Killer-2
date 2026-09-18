@@ -47,31 +47,156 @@ in the agent-run protocol.
 Run the automated suite with:
 
 ```sh
-bun run test:e2e:install
-bun run test:e2e
+bun run test:e2e:install   # once, to install Chromium
+bun run test:e2e           # starts its own stack — do not hand-start one first
 ```
 
-The Playwright config starts a disposable local stack by default:
+### `bun run test:e2e` is the fourth gate
 
-- Admin UI: `http://127.0.0.1:5174`
-- CMS/public site: `http://127.0.0.1:3002`
-- Database: `.tmp/e2e-agent.db`
-- Uploads: `.tmp/e2e-uploads`
+`build`, `test`, and `lint` are the three gates every change runs. **A change
+that touches the canvas, a frame, an overlay, geometry, or a panel's height
+runs `bun run test:e2e` as well** — it is the fourth gate, not an optional
+extra. `standing-02` says why: happy-dom has no layout engine, so a unit test
+on those surfaces structurally cannot fail on the thing it is named after
+(WS-8.2 shipped a real frame-height defect behind a green one). Assert on
+*computed* layout — measured rects, `scrollHeight`, computed styles after
+layout.
 
-`scripts/e2e-dev.ts` resets only those `.tmp/e2e-*` paths, then runs the same
-Vite + Bun CMS stack a developer uses — with one deliberate difference: the CMS
-runs **without** `bun --watch`. A regression suite needs a stable server, and
-under watch the publish pipeline writing baked HTML (and the SQLite DB churning)
-can reload the server mid-test and drop in-memory state. Vite is likewise told to
-ignore the runtime-written paths (`.tmp`, `uploads`, `dist` in `vite.config.ts`),
-so publishing never reloads the admin app mid-test. The Vite dev proxy follows
-the configured CMS `PORT`, keeping the Playwright admin UI pointed at the
-disposable CMS instead of any regular dev server on port 3001.
+Running the four budget specs by path is usually enough and takes a few
+minutes:
 
-For debugging against a server you started yourself, set
-`E2E_REUSE_SERVER=1` and override `E2E_ADMIN_BASE_URL` /
-`E2E_PUBLIC_BASE_URL` as needed. Do not use reuse mode for CI or for
-regression runs that need a clean database.
+```sh
+npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
+```
+
+### In CI
+
+**Two jobs, and they are separate on purpose.**
+
+`e2e` runs the **whole suite** — no path list, for the same reason the `test`
+job has no path filter: a spec that has to be named in `ci.yml` to run is a
+spec that will be forgotten. Its ceiling is 90 minutes against a measured ~53
+minute cold Windows run, so a timeout there means a hung stack, not a slow
+suite.
+
+That job could not exist until the suite's result meant something. The first
+cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
+64 failed / 13 skipped** with nothing to diff the 64 against — see
+"The full-suite baseline" below for what those 64 turned out to be.
+
+`e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
+those four measure **computed layout and frame time**, the one class of
+question happy-dom structurally cannot answer (`standing-02`). It stays its own
+job so a 40 ms regression is visible in ten minutes instead of at the end of an
+hour-long run, and so the two kinds of failure get the triage they each need.
+
+Both let `playwright.config.ts`'s `webServer` block start the stack,
+deliberately: CI is the only place that proves that path works on Linux, and a
+job which bypassed it would let the bypass rot into the only thing that works —
+the exact shape that hid the Windows boot bug for seven weeks. The budget job
+passes only the spec paths that exist, so a spec that has not landed yet costs
+coverage instead of failing the job for the wrong reason.
+
+Each job uploads its own report artifact (`playwright-report-full`,
+`playwright-report-budgets`). One upload step each, not two: there used to be
+an `if: failure()` step and an `if: always()` step sharing the artifact name
+`playwright-report`, and since `actions/upload-artifact@v4` rejects a duplicate
+name, the one run where the report mattered was the one run where the upload
+errored.
+
+`bun run bench:studio-board` runs `studio-board-perf.e2e.ts` through the same
+Playwright Node runner from the bench harness and republishes its `perf`
+annotations — see `scripts/bench/README.md`.
+
+### The disposable stack
+
+The Playwright config starts one by default:
+
+| | |
+|---|---|
+| Admin UI | `http://127.0.0.1:5174` (`E2E_VITE_PORT`) |
+| CMS / public site | `http://127.0.0.1:3002` (`E2E_CMS_PORT`) |
+| Database | `.tmp/e2e-agent.db` |
+| Uploads | `.tmp/e2e-uploads` |
+| Studio workspace | `.tmp/e2e-workspace` (`E2E_WORKSPACE_DIR`) |
+| Per-child logs | `.tmp/e2e-cms.log`, `.tmp/e2e-vite.log` |
+
+Those five names live in one place, `scripts/lib/e2eStack.ts`, which the
+config, the stack script, and `tests/e2e/helpers/constants.ts` all read — so
+moving a run to another port is one variable, not three edits.
+
+`scripts/e2e-dev.ts` resets every one of those paths, then runs the same Vite +
+Bun CMS stack a developer uses, with three deliberate differences.
+
+**The CMS runs without `bun --watch`.** A regression suite needs a stable
+server, and under watch the publish pipeline writing baked HTML (and the SQLite
+DB churning) can reload the server mid-test and drop in-memory state. Vite is
+likewise told to ignore the runtime-written paths (`.tmp`, `uploads`, `dist`,
+`studio-workspace` in `vite.config.ts`), so publishing never reloads the admin
+app mid-test. The Vite dev proxy follows the configured CMS `PORT`, keeping the
+Playwright admin UI pointed at the disposable CMS instead of any regular dev
+server on port 3001.
+
+**The Studio workspace is a throwaway copy.** `studio-workspace/` is tracked by
+git and is a user's real React project everywhere else, so the stack copies it
+to `.tmp/e2e-workspace` and exports `STUDIO_WORKSPACE_DIR`, which
+`projectsRootDir()` reads per call. Everything a run writes — `auth.setup.ts`
+stamping `lastOpenedAt`, the shell scaffolder writing `index.html` and
+`prototype/*` and rewriting `package.json`, the framework compiler dropping a
+`.studio/framework.json` — lands in the copy. **`git status --porcelain
+studio-workspace/` is empty after a run**; it was not before (`verify-01`
+finding 4). A spec that puts a fixture project on disk must therefore join onto
+`WORKSPACE_ROOT` from `tests/e2e/helpers/constants.ts` and never onto
+`process.cwd() + 'studio-workspace'` — a project outside the root the server
+resolved fails `resolveProjectDir`'s containment check and the route answers
+404.
+
+**That includes an OS temp directory**, and three specs learned it the
+expensive way. `css-writeback`, `structural-writeback` and
+`design-system-insert` each built their fixture with
+`fs.mkdtempSync(os.tmpdir())` and opened it by absolute path, reasoning that a
+temp dir is the safest place for a spec that writes. It is outside the
+containment root, so the board 404'd and all six cases failed on a timeout that
+read exactly like a product bug. `createAuthoredFixtureProject(name, files)` in
+`helpers/studioFixtureProject.ts` is the correct form of that instinct: it
+authors the fixture under `WORKSPACE_ROOT`, which for a run IS a throwaway
+directory. Its sibling `createFixtureProject(source, name)` copies an existing
+tracked project instead.
+
+**Tracked fixture projects.** Four projects under `studio-workspace/` are
+committed, each with a `.gitignore` negation line naming its consumer:
+`__canonical-fixture` (the parser corpus), `__board-perf-fixture` (the canvas
+budget corpus), `test4` (the Phase 0 dogfood target), and
+`__vite-live-fixture` — the smallest project `resolveLiveCapability` answers
+`{ capable: true }` for, which is what phase 0 case 8 needs to drive the
+automatic Tier 2 promotion. Adding a fifth means committing someone's
+repository into this one, so each has to earn its line. Two rules when you do:
+the negation line is mandatory (without it the project is invisible to
+`git status`), and `listStudioProjects` sorts by `displayName` while
+`defaultProjectDir` takes the first — so a new fixture's display name decides
+whether it becomes the project a fresh Studio opens.
+
+**Vite's boot is supervised.** Handed a pipe for stdout — which is exactly what
+Playwright's `webServer` gives it — Vite intermittently binds its port, prints
+nothing, and answers nothing, because it is blocked inside a write. Measured at
+3/10 successful boots. Two changes fix it, both in the stack script and its
+`scripts/lib/stackChild.ts` helper, which carry the numbers: each child writes
+to a log FILE that the supervisor tails (a file write cannot block on a reader),
+and the supervisor then waits for Vite to answer `/admin`, killing and
+respawning it if it does not. A stack that genuinely cannot start now says so
+instead of expiring as a bare "Timed out waiting …".
+
+The readiness probe asks for `/admin`, never `/`: `vite.config.ts` proxies `/`
+into the CMS's public-site renderer, which on a just-created database takes
+seconds and depends on state the stack has no opinion about.
+
+For debugging against a server you started yourself, set `E2E_REUSE_SERVER=1`.
+That path still works and is still the fastest way to iterate on one spec — but
+nothing in `webServer.env` reaches it, so export `VITE_ALLOWED_ORIGIN` (and any
+port overrides) in that shell yourself, or stay on the defaults, which need
+nothing. Do not use reuse mode for CI or for regression runs that need a clean
+database.
 
 Local trace and video capture are opt-in because a complete run keeps many SSE
 connections in one worker and can otherwise accumulate gigabytes of temporary
@@ -165,7 +290,178 @@ work that was never folded into that matrix at all — each spec below cites the
 | `lock-01` | A node whose VALUE the evaluator resolved is no longer locked | `resolved-value-not-locked.e2e.ts` |
 | `struct-01` | A move/delete/insert/duplicate/wrap writes back to the real `.tsx`, or refuses with an `EditConstraint` | `structural-writeback.e2e.ts` |
 | *(no `STATE.md` id — no docblock)* | An authored background-image prop uses optimized media variants in both the editor and the published CSS | `background-image-smoke.e2e.ts` |
-| `perf-01` (WS-5.3/5.4) | Board pan/selection perf against a synthetic 50-frame board and the real eSIM corpus | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
+| `perf-01` (WS-5.3/5.4) | Board pan/zoom frame time and iframe virtualization against the real eSIM corpus. **Self-skips on a clean checkout** — `studio-workspace/maherfayad-stack-eSIM` is not tracked by git | `studio-board-perf.e2e.ts`; `_perf-diagnostic-studioboard.e2e.ts` is the underlying diagnostic, explicitly not a permanent spec |
+| V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
+| Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
+| G8 dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §3 G8, `git-21`/`git-22`) | The twelve claims no local bare repository can settle: paste-a-token sign-in, *Keep history* clone of a PRIVATE repo, branching over a dirty tree, commit + push landing on GitHub, a real pull request, `1↓` → Pull, `1↑ 1↓` → rebase-or-merge, a same-line conflict, Abort, the write lock's `busy` refusal, commit-and-switch, and sign-out actually deleting the credential. **Self-skips without `gh auth token`** | `github-sync.e2e.ts` (+ `helpers/githubScratchRepo.ts`) |
+
+| A9 (`STUDIO-FIGMA-FEEL-PLAN.md`, `mcp-25`) | **ONE real agent turn**, wall-clocked: the warm `claude` CLI on a throwaway copy of `__canonical-fixture`, `balanced` fidelity — one write batch, zero tool refusals, the activity line on screen, telemetry in `.studio/agent-turns.jsonl`, and every changed file the hero's own. **Self-skips** without the `claude` binary, without Studio's CLI probe answering, or without a `claudeCli` credential on the account | `agent-turn.e2e.ts` |
+
+#### `github-sync.e2e.ts` refuses to run unless it can clean up
+
+It creates a real private repository on the signed-in account, so it needs two
+things, not one: `gh auth token` must succeed AND the token must carry the
+`delete_repo` scope. A `repo`-scoped token can create the repository and cannot
+remove it — the spec archives it as a fallback and it stays on the account for
+good. That is not hypothetical: twenty-two archived `studio-g8-scratch-*`
+repositories accumulated on this machine's account before the scope was made a
+precondition. The skip reason names the one command that fixes it:
+
+```sh
+gh auth refresh -h github.com -s delete_repo
+```
+
+#### `agent-turn.e2e.ts` costs real tokens, and says so when it does not run
+
+It is the only spec in this directory that spends money: it drives the
+`claudeCli` driver, which spawns a real `claude` subprocess against the
+operator's own subscription. Three preconditions gate it, and each one names
+itself in the skip reason rather than reporting a silent pass — the binary on
+PATH, `GET /admin/api/ai/providers/claude-cli/status` not answering
+`not-installed`/`unsupported`, and a `claudeCli` credential on the signed-in
+account. Studio's L1 terminal login stores no credential row on purpose, so a
+host login alone is not enough; add the value `claude setup-token` prints under
+Settings → AI → Providers.
+
+There is a **fourth**, discovered late rather than early: if every failed tool
+call is capture-family (`studio_screenshot` / `studio_compare` /
+`studio_computed_styles` / `studio_export_frames`) and the transcript shows the
+capture browser could not run, the case skips with that reason instead of
+failing. On this Windows box `playwright-core`'s `chrome-headless-shell` hangs
+for its full 180 s launch timeout when launched from a Bun process, while the
+same binary serves the Playwright RUNNER fine — a machine, not a product
+defect, and neither a pass nor a red belongs to it.
+
+It also carries one `test.fail()`: the agent panel's fidelity control is not
+clickable at the panel's default width, because the model/effort picker's label
+overlaps it and takes the click. See `STATE.md` `mcp-25`.
+
+Every run appends what it measured to `.tmp/agent-turn-measurement.json` — wall
+ms, tool rounds, writeback POSTs, telemetry lines, failed tool labels and the
+changed-file set. That file is how `AGENT_TURN_WALL_MS` gets re-calibrated:
+three runs, budget is 1.5x the worst.
+| §6 decision 2 (`sec-10`, `sec-12`) | The ONE place the trust tier moves without a human clicking anything: a Vite project with a lockfile promotes itself to `run-project` on first open, says so, and **Undo takes it back without clearing the once-only latch** — so a project whose owner said no is never auto-promoted again. Case 8 of the phase-0 spec, on `studio-workspace/__vite-live-fixture` | `studio-feel-phase0.e2e.ts` |
+| `sec-17` landmine 6 | The frame drag relay's **FILE** branch, which no suite could reach: happy-dom implements neither `DragEvent` nor `DataTransfer`, so `src/__tests__/canvas/canvasFrameDragRelay.test.ts` can only assert the cancel. A real `DataTransfer` built in the frame's own realm must put the PNG in `public/` and an `<img>` in the `.tsx`; a `text/uri-list` drop must leave the frame exactly where it was | `frame-file-drop.e2e.ts` |
+
+#### The expected-failure convention
+
+A spec that asserts what the product was PROMISED to do, on a tree where it does
+not yet, marks the case `test.fail()` and names the defect and its owning
+`STATE.md` entry in a docblock directly above it. Playwright then fails the run
+if such a case starts **passing**, which is the whole point: a fix cannot land
+silently and the annotation cannot rot into a lie.
+
+Two rules go with it. **Never use `test.skip()` for a known defect** — a skip is
+invisible in a summary and nothing tells you when it is fixed. And **never
+weaken the assertion instead**; the annotation is the honest record, a softened
+`expect` is not.
+
+#### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
+#### `studio-feel-phase0.e2e.ts` — the plan's exit dogfood, now fully green
+
+This spec asserts what the product was promised to do, not what it currently
+does, so for two waves most of it ran as expected failures. **As of wave 3 all
+seven cases assert and pass, and none carries `test.fail()`.** It took four
+entries to get there and they are worth naming, because each closed a defect a
+different layer owned: `panel-40` (a panel that throws no longer takes the
+editor with it — case 5), `struct-11` (the ⌘G wrapper follows the HTML content
+model, so Studio stopped writing `<div>` into a `<p>` in the user's own file —
+case 4, and the two React errors that kept case 7 red), `store-13` + `store-14`
+(created ids reach the client, structural gestures queue instead of refusing,
+and the family has a real undo — cases 1 and 4).
+
+Playwright fails a run in which a `test.fail()` case starts **passing**, so a
+fix cannot land silently and an annotation cannot rot. Read the `[phase0] …`
+annotations for the measurements; case 7 is the file's backstop, and any NEW
+console error from any case fails there. Case 5's probe event names the
+boundary's own `location` (`detail: 'panel:design'`), not a bare panel word.
+
+It also writes to a project's real `.tsx`, so `helpers/studioFixtureProject.ts`
+copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each
+case** and removes it afterwards. Per-case, not per-file: a shared copy made
+case 4 group whatever case 3 had left behind, and the defect it finds appeared
+and disappeared between runs because of it.
+
+### `github-sync.e2e.ts` — the G8 dogfood, against a REAL GitHub repository
+
+The only spec in this suite that talks to a third party. It exists because the
+whole git track (G1–G7, `git-21`/`git-22`) is otherwise covered by unit tests
+that use a **local bare repository** — correctly, since those must not need the
+network, and just as certainly unable to answer the questions G8 asks: is the
+branch on GitHub, is that a real pull request, is the file on disk after Pull
+the one GitHub has.
+
+It drives the Version control panel through `git-22`'s twelve-step script and
+checks every claim twice — once in the UI, once against GitHub (`gh api`, or a
+fresh `git clone` into a temp dir) or against the `.git` on disk.
+
+**What it needs, and what happens without it.** A `gh` CLI signed in with a
+`repo`-scoped token (`gh auth login`). The spec calls `gh auth token` at
+collection time and **skips itself, annotated**, when that fails — no
+credential, no run, and the skip says so rather than reporting green coverage
+that did not happen. Nothing else is configured: `GITHUB_OAUTH_CLIENT_ID` is
+not required, because step 1 deliberately exercises the **paste-a-token**
+sign-in fallback, which is the path an install with no OAuth App has.
+
+**The token never leaves `gh`.** Every authenticated call is made by `gh`
+itself; git's network verbs borrow gh's credential for one invocation with
+`-c credential.helper='!gh auth git-credential'`. The single place it exists in
+the spec's own process is `readGithubTokenForSignIn()` → `locator.fill()` —
+step 1 typing it into Studio's sign-in field — and that function **refuses to
+run under `E2E_TRACE=1` or `E2E_VIDEO=1`**, because a Playwright trace records
+the value of every `fill()`. The field is `type="password"`, which is what keeps
+the always-on failure screenshot harmless.
+
+**The cleanup guarantee.** `beforeAll` creates a private
+`studio-g8-scratch-<unix-ms>`; `afterAll` destroys it, and deals with the
+REMOTE first — the local directories are throwaways inside `.tmp/e2e-workspace`,
+the repository is the only thing that outlives the run. Nothing in that hook
+throws (a Windows `EPERM` on a read-only git pack file once skipped the delete
+and left a private repository behind).
+
+`gh repo delete` needs the **`delete_repo`** scope, which a plain `repo` token
+does not have and which `gh auth refresh -s delete_repo` can only grant
+interactively. When the delete is refused the repository is **archived** — so a
+later run cannot push into it — and the name is printed as an annotation on the
+last case, with the exact command to finish the job:
+
+```sh
+gh repo delete <owner>/studio-g8-scratch-<unix-ms> --yes
+```
+
+Grant `delete_repo` once (`gh auth refresh -h github.com -s delete_repo`) and
+teardown completes on its own.
+
+#### Three of its cases are EXPECTED to fail
+
+Same convention as `studio-feel-phase0.e2e.ts`: `test.fail()` with the defect
+named in a docblock, so Playwright fails the run if one starts passing. All
+three are one defect — **`proto-01`**: `loadStudioPages` calls
+`ensurePrototypeShell(dir)` on every board open, which writes Studio's own
+preview shell (`prototype/`, `index.html`, `vite.config.js`, `package.json`)
+into the user's working tree, where none of those paths is in git's excluded
+set.
+
+| Case | What it measures |
+|---|---|
+| `2b` | Opening a freshly cloned project dirties 16 paths the user never touched — and Studio refuses to pull or switch branches over a dirty tree |
+| `6b` | The board reload that FOLLOWS a pull re-dirties it, so the second pull of a session refuses too |
+| `8` | Everything through *Keep mine* holds; `Continue` cannot finish, because `git rebase --continue` refuses while any tracked file has unstaged changes and Studio has just written one |
+
+The steps after each of those commit the scaffolding first
+(`absorbStudioScaffolding`) — a workaround, labelled as one, because without it
+none of G8's remaining steps can be measured at all. How much it had to absorb,
+and when, is reported as `proto-01 — Studio rewrote the project` annotations on
+the last case.
+
+Run it alone (it is not in the `e2e-budgets` CI slice, and it needs a
+credential CI does not have):
+
+```sh
+bun run test:e2e tests/e2e/github-sync.e2e.ts
+# or, on an isolated stack alongside other agents:
+E2E_VITE_PORT=5223 E2E_CMS_PORT=3223 bun run test:e2e tests/e2e/github-sync.e2e.ts
+```
 
 ### Intentionally left agent-run only
 

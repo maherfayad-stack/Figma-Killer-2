@@ -24,6 +24,7 @@ import { bindConnectorRegistries, mintConnectorOrNull, type MintConnector, type 
 import { buildClaudeCliArgv, buildMcpConfig } from './claudeCliArgv'
 import { cleanupMcpConfigFile, tryWriteMcpConfigFile } from './claudeCliMcpConfigFile'
 import { translateClaudeCliStream } from './claudeCliEvents'
+import { TOTAL_TURN_CAP_MS } from './claudeCliSpawn'
 import { ClaudeCliWarmSession, ClaudeCliWarmSessionDeadError } from './claudeCliWarmSession'
 import {
   acquireWarmSession,
@@ -106,7 +107,9 @@ export async function* runWarmTurn(
         ? `${STUDIO_STATE_PREAMBLE}\n${changedState}\n\n${ctx.prompt}`
         : ctx.prompt
 
-    yield* translateClaudeCliStream(lease.session.runTurn(prompt, req.signal))
+    // Z3 — the cap is per TURN and rides the request, so a pooled process
+    // started under one cap is still bounded by whatever this turn asked for.
+    yield* translateClaudeCliStream(lease.session.runTurn(prompt, req.signal, req.turnCapMs ?? TOTAL_TURN_CAP_MS))
     return true
   } catch (err) {
     if (!(err instanceof ClaudeCliWarmSessionDeadError)) throw err
@@ -176,7 +179,7 @@ async function createWarmSession(
     ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
   })
   const mcpConfigFile = connector
-    ? tryWriteMcpConfigFile(buildMcpConfig(connector, options.serverPort, ctx.projectServers, ctx.registeredServers))
+    ? await tryWriteMcpConfigFile(buildMcpConfig(connector, options.serverPort, ctx.projectServers, ctx.registeredServers))
     : null
 
   let session: ClaudeCliWarmSession

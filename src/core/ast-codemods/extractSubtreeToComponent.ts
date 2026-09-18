@@ -97,7 +97,7 @@ import * as path from 'node:path'
 import { existsSync } from 'node:fs'
 import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, refusePlacement, type StructuralRefusalReason } from '@core/page-tree'
-import { createWorkspaceProject } from '@core/page-parser'
+import { createWorkspaceProject, eolFileSystemOf } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
 import { addReconciledImports, relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
 import { analyzeFreeVariables, type FreeVariable } from './subtreeFreeVariables'
@@ -432,6 +432,11 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
 
   // --- Emit the new component file --------------------------------------
   const newSourceFile = project.createSourceFile(newPath, '', { overwrite: false })
+  // A file that has never been read has no line ending to preserve, so the
+  // extracted component takes the page's. Landing an LF file in a CRLF
+  // repository is exactly the "a tool wrote this" tell this codemod's own
+  // contract rules out.
+  eolFileSystemOf(project)?.inheritLineEnding(file, newPath)
   addReconciledImports(newSourceFile, pageFile, moduleScopeNames)
 
   const needsComponentType = propVariables.some((v) => v.isComponentTag)

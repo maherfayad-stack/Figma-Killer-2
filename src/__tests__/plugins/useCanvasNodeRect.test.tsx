@@ -13,10 +13,16 @@
 import { describe, it, expect, afterEach } from 'bun:test'
 import { renderHook, cleanup } from '@testing-library/react'
 import { useCanvasNodeRect } from '@admin/plugin-host-hooks'
+import { registerFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+
+let adapters: PortalFrameAdapter[] = []
 
 afterEach(() => {
   cleanup()
   document.body.innerHTML = ''
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
 })
 
 function stubRect(el: Element, rect: { left: number; top: number; width: number; height: number }) {
@@ -52,6 +58,14 @@ function setUpCanvas(nodeId: string) {
   node.setAttribute('data-node-id', nodeId)
   frameDoc.body.appendChild(node)
   stubRect(node, { left: 40, top: 20, width: 100, height: 60 })
+
+  // Since `live-05` (STATE.md), `findRenderedCanvasNodeElement` resolves
+  // elements only through registered frame adapters, not by scanning
+  // `document.querySelectorAll('iframe')` — an unregistered frame is
+  // invisible to it even with `data-breakpoint-id` set.
+  const adapter = new PortalFrameAdapter(frameDoc)
+  adapters.push(adapter)
+  registerFrameAdapter(frame, adapter)
 
   return { layer, frame, node }
 }

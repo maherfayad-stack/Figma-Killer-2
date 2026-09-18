@@ -9,6 +9,12 @@
  * the contents of a file in the user's repository. An unauthenticated caller
  * must not reach either.
  *
+ * Since `routeGate.ts` landed, that session check is not in
+ * `nodeExportRoutes.ts` at all: `tryServeStudio` runs `gateStudioRequest`
+ * before any sub-router and hands this module an already-authenticated
+ * `AuthUser`. So the refusal is asserted against the gate, and path/verb
+ * ownership against the module.
+ *
  * The db is a throwing stub — with no session cookie the auth path
  * short-circuits before it queries, so a test that reaches the database has
  * already failed the thing it is testing.
@@ -20,6 +26,8 @@
 import { describe, expect, it } from 'bun:test'
 import { safeParseValue } from '@core/utils/typeboxHelpers'
 import type { DbClient } from '../../db/client'
+import type { AuthUser } from '../../repositories/users'
+import { gateStudioRequest } from './routeGate'
 import { NodeJsxBodySchema, NodePngBodySchema, tryServeStudioNodeExport } from './nodeExportRoutes'
 
 const PNG_ROUTE = '/admin/api/studio/node-png'
@@ -29,9 +37,17 @@ const db = (() => {
   throw new Error('an unauthenticated export request must never reach the database')
 }) as unknown as DbClient
 
+/** A user object the routing cases never read a field of. */
+const user = { id: 'never-used' } as AuthUser
+
 function call(pathname: string, init?: RequestInit): Promise<Response | null> {
   const url = new URL(`http://localhost${pathname}`)
-  return tryServeStudioNodeExport(new Request(url, init), { db }, url, url.pathname)
+  return tryServeStudioNodeExport(new Request(url, init), { db, user }, url, url.pathname)
+}
+
+function gate(pathname: string, init?: RequestInit) {
+  const url = new URL(`http://localhost${pathname}`)
+  return gateStudioRequest(new Request(url, init), db, url.pathname)
 }
 
 describe('tryServeStudioNodeExport — routing and auth', () => {
@@ -48,8 +64,9 @@ describe('tryServeStudioNodeExport — routing and auth', () => {
 
   it('requires a session before it looks at the body', async () => {
     for (const route of [PNG_ROUTE, JSX_ROUTE]) {
-      const res = await call(route, { method: 'POST', body: '{}' })
-      expect(res?.status).toBe(401)
+      const res = await gate(route, { method: 'POST', body: '{}' })
+      expect(res).toBeInstanceOf(Response)
+      expect((res as Response).status).toBe(401)
     }
   })
 })

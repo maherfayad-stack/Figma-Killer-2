@@ -101,4 +101,33 @@ describe('parseTscDiagnostics', () => {
     expect(diagnostics).toHaveLength(1)
     expect(diagnostics[0].message).toBe("Type 'string' is not assignable to type 'number'.")
   })
+
+  /**
+   * `tsc` on Windows prints CRLF, and the header pattern ends in `(.*)$` — `.`
+   * does not match `\r`, and `$` without `m` is end-of-input, so the `\r` had
+   * to be dealt with before the match rather than after. The single-line case
+   * above has always covered the header; this covers the two shapes it did
+   * not: a folded continuation block, and a summary trailer.
+   */
+  it('parses a whole CRLF transcript to exactly what its LF twin produces', () => {
+    const lines = [
+      "src/screens/StockRoom.tsx(3,7): error TS2322: Type 'Shelf' is not assignable to type 'Bay'.",
+      "  Types of property 'capacity' are incompatible.",
+      "    Type 'string' is not assignable to type 'number'.",
+      'src/screens/StockRoom.tsx(9,1): warning TS6133: Unused local.',
+      'Found 1 error in src/screens/StockRoom.tsx:3',
+      '',
+    ]
+    const lf = parseTscDiagnostics(lines.join('\n'))
+    const crlf = parseTscDiagnostics(lines.join('\r\n'))
+
+    expect(crlf).toEqual(lf)
+    expect(lf).toHaveLength(2)
+    // Stated separately, because it is the symptom: a trailing `\r` ends up
+    // INSIDE the message capture, and the folded detail lines carry one each.
+    expect(crlf[0].message).toBe(
+      "Type 'Shelf' is not assignable to type 'Bay'. Types of property 'capacity' are incompatible. Type 'string' is not assignable to type 'number'.",
+    )
+    expect(crlf[1].severity).toBe('warning')
+  })
 })

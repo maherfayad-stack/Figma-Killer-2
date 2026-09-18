@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, mock } from 'bun:test'
-import { cleanup, render, screen, within } from '@testing-library/react'
+import { cleanup, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { useEditorStore } from '@site/store/store'
 import { CanvasNotch } from '@site/canvas/CanvasNotch'
-import { __resetModuleInserterPreferenceForTests } from '@site/module-picker/useModuleInserterPreference'
+import { __resetAssetFavoritesForTests } from '@site/panels/AssetsPanel/assetsPrefs'
 import '@modules/base/index'
 import '@modules/alm/register'
 
@@ -18,7 +18,7 @@ function jsonResponse(body: unknown, status = 200): Response {
 
 beforeEach(() => {
   localStorage.clear()
-  __resetModuleInserterPreferenceForTests()
+  __resetAssetFavoritesForTests()
   globalThis.fetch = mock(async () => jsonResponse({ value: null })) as typeof fetch
   useEditorStore.setState({
     site: null,
@@ -57,21 +57,6 @@ describe('CanvasNotch insertion events', () => {
     renderInsideCanvasClickBoundary()
 
     await user.click(screen.getByTestId('canvas-notch-text-btn'))
-
-    const state = useEditorStore.getState()
-    expect(state.selectedNodeId).toBeTruthy()
-    expect(state.propertiesPanel.collapsed).toBe(false)
-  })
-
-  it('keeps dialog-inserted modules selected when the canvas listens for background clicks', async () => {
-    const user = userEvent.setup()
-    renderInsideCanvasClickBoundary()
-
-    await user.click(screen.getByTestId('canvas-notch-add-btn'))
-    // ModuleInserterDialog is lazy-loaded (LazyModuleInserterDialog) — its
-    // chunk resolves asynchronously even in tests.
-    const dialog = await screen.findByRole('dialog', { name: 'Add to canvas' })
-    await user.click(within(dialog).getByRole('button', { name: /^Text\b/ }))
 
     const state = useEditorStore.getState()
     expect(state.selectedNodeId).toBeTruthy()

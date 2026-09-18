@@ -33,11 +33,12 @@ import {
   type CanvasTransform,
 } from '@site/canvas/math'
 import { panToCenterBreakpointFrame } from '@site/canvas/canvasDomGeometry'
-import { computeZoomToFitTransform, DEFAULT_ZOOM_FIT_PADDING_PX, type CanvasFitRect, type ZoomFitMode } from '@site/canvas/canvasZoomFit'
-import { measureCanvasFrameRects, measureCanvasSelectionRects } from '@site/canvas/canvasViewportCommands'
+import { useCanvasZoomToFit } from './useCanvasZoomToFit'
+import { markCanvasViewportActivity } from '@site/canvas/canvasViewportActivity'
 import {
   CANVAS_DRAG_PAN_BUTTONS,
   isCanvasPointerPanActive,
+  isCanvasSpacePanActive,
   isMiddleMousePointerPan,
   panDeltaFromWheel,
   setCanvasSpacePanActive,
@@ -131,7 +132,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   const commitTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const animatingTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const willChangeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const spaceActiveRef = useRef(false)
   const isDraggingRef = useRef(false)
   const lastPinchMovementRef = useRef(1)
 
@@ -182,6 +182,15 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       // attribute so wheel/pinch/drag updates land instantly.
       el.removeAttribute('data-animating')
     }
+
+    // S4 — publish "the viewport is moving" to the consumers that cannot poll
+    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
+    // debounced store commit: today the selection overlay's measurement pump,
+    // which is otherwise event-driven and idle. This is the ONE funnel every
+    // transform write goes through, gesture and animated alike. An animated
+    // write keeps painting for `ANIMATED_TRANSFORM_MS` after this call returns,
+    // so it holds the flag for that long instead of the default idle window.
+    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
 
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
@@ -314,71 +323,35 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     [canvasRootRef, transformLayerRef, applyTransformToDOM, setCanvasTransform],
   )
 
-  /**
-   * Zoom/pan so `targetRects` (screen-space, relative to the canvas root) are
-   * entirely visible (`contain`) or fill the viewport (`cover`), centered.
-   * Shared by `zoomToFit`, `zoomToFill` and `zoomToSelection` — the only
-   * differences between the three are which rects they measure and the mode.
-   * Returns `false` when there was nothing to fit (empty or fully-degenerate
-   * rect list — see `computeZoomToFitTransform`).
-   */
-  const applyZoomToFitRects = useCallback(
-    (targetRects: readonly CanvasFitRect[], mode: ZoomFitMode = 'contain'): boolean => {
-      const root = canvasRootRef.current
-      if (!root) return false
-      const rootRect = root.getBoundingClientRect()
-      const next = computeZoomToFitTransform(
-        { width: rootRect.width, height: rootRect.height },
-        targetRects,
-        transformRef.current,
-        DEFAULT_ZOOM_FIT_PADDING_PX,
-        mode,
-      )
-      if (!next) return false
+  // The ref moves BEFORE the store commit, so the store subscription below
+  // sees the values already match and skips its own (animated) DOM write —
+  // the fit gesture owns the animation.
+  //
+  // Exception #1: `useCanvasZoomToFit` lists this in the dep arrays of the
+  // three fit gestures it returns, and `CanvasRoot` in turn PUBLISHES those
+  // three to the store as `canvasViewportCommands`. Written inline at the
+  // call site it was a fresh closure on every render of this hook, so all
+  // three changed identity on every render, so that publish effect retracted
+  // (`null`) and re-published on every render — measured as two extra store
+  // notifications during a single agent snapshot capture, with the toolbar's
+  // zoom menu momentarily disabled between them.
+  const commitTransform = useCallback(
+    (next: CanvasTransform, animated: boolean) => {
       transformRef.current = next
-      applyTransformToDOM(next, true)
+      applyTransformToDOM(next, animated)
       setCanvasTransform(next.zoom, next.panX, next.panY)
-      return true
     },
-    [canvasRootRef, applyTransformToDOM, setCanvasTransform],
+    [applyTransformToDOM, setCanvasTransform],
   )
 
-  /**
-   * `Shift+1` (`canvas.zoomToFit`) — fit every visible breakpoint frame on
-   * the board (or every viewport context frame outside board mode) into the
-   * viewport at once. D3, `STUDIO-FIGMA-PARITY-PLAN.md`: this used to be a
-   * "reset to 100%" alias; it is now the real Figma-style fit.
-   */
-  const zoomToFit = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    const layer = transformLayerRef.current
-    if (!root || !layer) return false
-    return applyZoomToFitRects(measureCanvasFrameRects(root, layer))
-  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
-
-  /**
-   * The toolbar zoom menu's "Fill" (viewport-01) — same frames as `zoomToFit`,
-   * scaled to COVER the viewport instead of fitting inside it. Keyboard-free
-   * on purpose: Figma has no default key for it either, and the registry only
-   * carries keys that exist.
-   */
-  const zoomToFill = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    const layer = transformLayerRef.current
-    if (!root || !layer) return false
-    return applyZoomToFitRects(measureCanvasFrameRects(root, layer), 'cover')
-  }, [canvasRootRef, transformLayerRef, applyZoomToFitRects])
-
-  /**
-   * `Shift+2` (`canvas.zoomToSelection`) — fit the current selection, measured
-   * from the live selection rings (see `measureCanvasSelectionRects`).
-   * No-ops (`false`) when nothing is selected.
-   */
-  const zoomToSelection = useCallback((): boolean => {
-    const root = canvasRootRef.current
-    if (!root) return false
-    return applyZoomToFitRects(measureCanvasSelectionRects(root))
-  }, [canvasRootRef, applyZoomToFitRects])
+  // The three fit gestures and the transform they share — see
+  // `useCanvasZoomToFit`. They measure; the write stays on this hook.
+  const { zoomToFit, zoomToFill, zoomToSelection } = useCanvasZoomToFit({
+    canvasRootRef,
+    transformLayerRef,
+    transformRef,
+    commitTransform,
+  })
 
   // ─── Spacebar tracking (for Space+drag pan) ───────────────────────────────
 
@@ -395,13 +368,11 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
           target.isContentEditable
         ) return
         e.preventDefault()
-        spaceActiveRef.current = true
         setCanvasSpacePanActive(document, 'parentDocument', true)
       }
     }
     function onKeyUp(e: KeyboardEvent) {
       if (e.code === 'Space') {
-        spaceActiveRef.current = false
         setCanvasSpacePanActive(document, 'parentDocument', false)
       }
     }
@@ -452,6 +423,12 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    // `K1` — load-bearing: a React synthetic event crosses the iframe boundary
+    // through the fiber tree even though a native one does not, and the target
+    // check below can't see it (the event is retargeted at the iframe element,
+    // whose `isContentEditable` is false). `-` typed mid-edit would zoom out.
+    if (useEditorStore.getState().activeInlineEdit) return
+
     // Don't intercept typing — let inputs and contenteditables consume keys.
     const target = e.target as HTMLElement | null
     if (
@@ -570,9 +547,12 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     {
       onDrag: ({ delta: [dx, dy], buttons, first, last, event }) => {
         if (first) {
+          // `isCanvasSpacePanActive`, not a private ref: three sources say
+          // "panning" — Space here, Space in a frame, `K4`'s hand tool — and
+          // all write one `data-*` flag. A ref saw only the first.
           isDraggingRef.current = isCanvasPointerPanActive(
             { buttons },
-            { spaceHeld: spaceActiveRef.current },
+            { spaceHeld: isCanvasSpacePanActive(document) },
           )
           if (isDraggingRef.current && isMiddleMousePointerPan({ buttons }) && event.cancelable) {
             event.preventDefault()

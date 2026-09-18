@@ -58,25 +58,117 @@ export function setStudioTrustTier(next: TrustTier): void {
 }
 
 /**
- * The explicit consent action behind `NodeRenderer`'s "promote this project"
- * placeholder (`PackageComponentPlaceholder.tsx`) — `meta-03` decision 1's
- * promote affordance, now with somewhere to actually land
- * (`server/handlers/studio/trustTier.ts`, which did not exist before WS-3.3).
- * Persists `render-packages` (Tier 1) to `.studio/meta.json`, then re-reads
- * the tier into the external store above so `useRegisterProjectModules`'s
- * effect re-runs and fetches the bundle — no full page reload needed.
+ * L8 Phase A (`perf-06`, STATE.md) — the `/load` response's `projectKey`
+ * (`null` below Tier 2): the `/p/<projectKey>` path segment
+ * `server/liveOrigin.ts` (L2) routes on, which `LiveBoardFrame` joins onto
+ * `useLiveOrigin`'s bare server-topology origin to build a real
+ * `LiveFrameSource.liveOrigin`. A sibling external store to `trustTier`
+ * above, not a field on it — same "ephemeral per-load client state" reason,
+ * and the two are written by the SAME `loadSite` call but read by different
+ * consumers (`registerProjectModules.ts` vs. `LiveBoardFrame.tsx`).
  */
-export async function promoteProjectToTier1(dir: string): Promise<void> {
-  await apiRequest('/admin/api/studio/trust-tier', {
-    method: 'POST',
-    body: { dir, trust: 'render-packages' },
-    schema: Type.Object({ ok: Type.Boolean(), trust: Type.String() }),
-  })
-  const { trust } = await apiRequest('/admin/api/studio/trust-tier', {
-    schema: Type.Object({ trust: TrustTierSchema }),
+let projectKey: string | null = null
+const projectKeyListeners = new Set<() => void>()
+
+export function getStudioProjectKey(): string | null {
+  return projectKey
+}
+
+export function subscribeStudioProjectKey(listener: () => void): () => void {
+  projectKeyListeners.add(listener)
+  return () => projectKeyListeners.delete(listener)
+}
+
+/** Called by `fsCodemodAdapter.ts`'s `loadSite` with the key the `/load` response carried, right alongside `setStudioTrustTier`. */
+export function setStudioProjectKey(next: string | null): void {
+  if (next === projectKey) return
+  projectKey = next
+  for (const listener of projectKeyListeners) listener()
+}
+
+/**
+ * Whether this project's REAL app could be run at all, decided server-side
+ * (`server/handlers/studio/liveCapability.ts`) and reported so the
+ * `Static · Live` pill can say which runtime is showing and, when it is the
+ * static one, whether "Run the real app" is even on the table.
+ *
+ * Mirrors the wire shape only — the decision itself is never made here, for
+ * the same reason `trustTier.ts` re-checks it before auto-promoting: a
+ * capability the client asserts and the server trusts is not a gate.
+ */
+export const LiveCapabilitySchema = Type.Object({
+  capable: Type.Boolean(),
+  reason: Type.Optional(Type.Union([Type.Literal('not-vite'), Type.Literal('no-lockfile')])),
+})
+export type LiveCapability = Static<typeof LiveCapabilitySchema>
+
+export const StudioTrustStatusSchema = Type.Object({
+  trust: TrustTierSchema,
+  live: LiveCapabilitySchema,
+  /**
+   * This project has already had its ONE automatic promotion (§6 decision 2).
+   * A latch, not a current state: it stays true for a project whose owner
+   * clicked Undo, which is precisely what stops the next open re-promoting it
+   * and making that Undo a no-op with extra steps.
+   */
+  autoPromoted: Type.Boolean(),
+})
+export type StudioTrustStatus = Static<typeof StudioTrustStatusSchema>
+
+/** `GET /admin/api/studio/trust-tier` — the tier and the live capability in one round trip. */
+export async function fetchStudioTrustStatus(dir: string): Promise<StudioTrustStatus> {
+  return apiRequest('/admin/api/studio/trust-tier', {
+    schema: StudioTrustStatusSchema,
     query: { dir },
   })
-  setStudioTrustTier(trust)
+}
+
+/**
+ * The ONE write path to `.studio/meta.json`'s `trust` field. Every promote and
+ * every demote in the client goes through here — a second way to reach a tier
+ * would be a second place for that boundary to be got wrong.
+ *
+ * Re-reads the tier afterwards (rather than assuming the POST landed what it
+ * asked for) and pushes it into the external store above, so
+ * `useRegisterProjectModules`'s effect and `BoardFrameView`'s tier fork both
+ * see it without a full page reload.
+ */
+export async function setStudioProjectTrust(dir: string, trust: TrustTier): Promise<void> {
+  await apiRequest('/admin/api/studio/trust-tier', {
+    method: 'POST',
+    body: { dir, trust },
+    schema: Type.Object({ ok: Type.Boolean(), trust: TrustTierSchema }),
+  })
+  const status = await fetchStudioTrustStatus(dir)
+  setStudioTrustTier(status.trust)
+}
+
+/**
+ * The explicit consent action behind `NodeRenderer`'s "promote this project"
+ * placeholder (`PackageComponentPlaceholder.tsx`) and the board's style-compile
+ * banner — `meta-03` decision 1's promote affordance. Persists
+ * `render-packages` (Tier 1) through the one write path above.
+ */
+export async function promoteProjectToTier1(dir: string): Promise<void> {
+  await setStudioProjectTrust(dir, 'render-packages')
+}
+
+/**
+ * §6 decision 2 — Studio's own one-time promotion of a Vite project to Tier 2
+ * on first open. Separate from {@link setStudioProjectTrust} because it is a
+ * genuinely different act with a different origin, recorded differently on
+ * disk, and because the server REFUSES it (409) unless every condition of the
+ * owner's override still holds. Nothing here decides anything: the caller
+ * says "I believe this project qualifies", and the server checks.
+ */
+export async function autoPromoteProjectToTier2(dir: string): Promise<void> {
+  await apiRequest('/admin/api/studio/trust-tier', {
+    method: 'POST',
+    body: { dir, trust: 'run-project', autoPromoted: true },
+    schema: Type.Object({ ok: Type.Boolean(), trust: TrustTierSchema }),
+  })
+  const status = await fetchStudioTrustStatus(dir)
+  setStudioTrustTier(status.trust)
 }
 
 /**

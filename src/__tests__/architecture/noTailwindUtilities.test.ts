@@ -4,8 +4,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const SCAN_DIRS = [
@@ -23,26 +24,7 @@ const CLASS_EXPR_RE = /className\s*=\s*\{([\s\S]*?)\}/g
 const RAW_CLASS_CONCAT_RE = /className\s*=\s*\{\s*["']([^"']+)["']\s*\+/g
 const STRING_LITERAL_RE = /["']([^"']+)["']/g
 
-function collectFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-
-  for (const entry of readdirSync(dir)) {
-    const fullPath = join(dir, entry)
-    const info = statSync(fullPath)
-
-    if (info.isDirectory()) {
-      results.push(...collectFiles(fullPath))
-      continue
-    }
-
-    if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(fullPath)
-    }
-  }
-
-  return results
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function findLineNumber(source: string, index: number): number {
   return source.slice(0, index).split('\n').length
@@ -58,7 +40,7 @@ describe('No Tailwind-style utility class strings in runtime UI code', () => {
 
     for (const dir of SCAN_DIRS) {
       for (const filePath of collectFiles(dir)) {
-        const source = readFileSync(filePath, 'utf8')
+        const source = readSource(filePath)
         const relPath = `src/${relative(SRC_ROOT, filePath)}`
 
         for (const match of source.matchAll(CLASS_ATTR_RE)) {
@@ -112,7 +94,7 @@ describe('No Tailwind-style utility class strings in runtime UI code', () => {
 
     for (const dir of SCAN_DIRS) {
       for (const filePath of collectFiles(dir)) {
-        const source = readFileSync(filePath, 'utf8')
+        const source = readSource(filePath)
         const relPath = `src/${relative(SRC_ROOT, filePath)}`
 
         for (const match of source.matchAll(CLASS_ATTR_RE)) {

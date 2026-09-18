@@ -266,7 +266,7 @@ export default function Page() {
       node: { name: 'Icon', importSpecifier: DS },
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     const written = fs.readFileSync(file, 'utf8')
     expect(written).toContain('<Sheet title="Where to?">')
     expect(written).toContain('<Icon />')
@@ -291,7 +291,7 @@ export default function Page() {
       propName: 'children',
       node: { name: 'span' },
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toContain('<Sheet title="Where to?">\n      <span />\n    </Sheet>')
   })
 

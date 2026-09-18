@@ -20,13 +20,19 @@
  *
  * ## Shape
  *
- * `execution: 'server'` and relayed, the same arrangement `studio_screenshot`
- * uses and for the same reason: the SERVER half resolves screen NAMES to page
+ * `execution: 'bridge'` WITH a server handler — the one combination that means
+ * "dispatched in-process, but the board is genuinely required"
+ * (`runtime/toolExecution.ts`). The server half resolves screen NAMES to page
  * ids (the agent knows it wrote `Checkout.tsx`, not that Studio calls it
  * `checkout`) and owns the "no board is connected" message, while the actual
  * read happens in the browser (`src/admin/pages/site/agent/studioPageDiagnostics.ts`)
  * because that is where the frames are. Batch by construction — one call covers
  * every screen the turn just wrote.
+ *
+ * It is NOT `server-with-bridge-fallback` like `studio_screenshot`: there is no
+ * headless path to fall back FROM. A frame's console exists only where the
+ * frame is mounted, so with no board this tool has no answer at all — which is
+ * exactly what the prompt's live-tab sentence is generated from.
  *
  * It is a pure READ: no `mutates`, no `requiredCapabilities`, same posture as
  * every other Studio read tool. It deliberately does NOT sync board frames from
@@ -43,7 +49,7 @@
  * `pageDiagnostics.test.ts`.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { PAGE_DIAGNOSTIC_CODES, type PageDiagnosticCode } from '@core/ai'
+import { PAGE_DIAGNOSTIC_CODES, toolRefusal, type PageDiagnosticCode } from '@core/ai'
 import { decodeSourceNodeId } from '@core/page-tree'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
@@ -115,7 +121,7 @@ function enrichFinding(finding: RawFinding): Record<string, unknown> {
 export const studioPageDiagnosticsTool: AiTool = {
   name: 'studio_page_diagnostics',
   scope: 'shared',
-  execution: 'server',
+  execution: 'bridge',
   description:
     'Read what a screen\'s RUNTIME reported since it loaded: uncaught exceptions, unhandled promise rejections, console.error output (this is how React reports a failed render, an invalid hook call and a hydration mismatch), assets that failed to load, module specifiers that did not resolve, and fetches that failed. Call this the moment a screenshot looks blank, half-empty, or unchanged after a write — a frame whose component threw photographs as an empty rectangle, and no amount of CSS editing fixes a page that never executed. Batch: name several screens in one call. Each finding carries a stable code, a count of how many times it happened, a suggested fix, and — for a failure on a real element — the file:line its node id decodes to. A screen with NO live board frame is reported as such (status "no-frame"), never as clean.',
   inputSchema: PageDiagnosticsInputSchema,
@@ -129,22 +135,28 @@ export const studioPageDiagnosticsTool: AiTool = {
 
     const bridge = await awaitEditorBridgeForUser(ctx.userId, editorBridgeScope(dir), ctx.signal)
     if (!bridge) {
-      return {
-        ok: false,
-        error: 'No Studio board is connected. Runtime diagnostics are collected inside the live canvas frames, so this needs the project open in a Studio browser tab. If it IS open, the tab reconnects on its own within a few seconds — just call this again once.',
-      }
+      // The one `retryable: true` refusal an agent meets in practice: the
+      // condition that fixes it is outside its arguments entirely (a tab
+      // reconnecting, or a human opening one), so calling again unchanged is
+      // the correct move here and is the wrong move for every other code.
+      return toolRefusal(
+        'no-board-connected',
+        'No Studio board is connected. Runtime diagnostics are collected inside the live canvas frames, so this needs the project open in a Studio browser tab.',
+        { remedy: 'If it IS open, the tab reconnects on its own within a few seconds — call this again once. If it is not, ask the user to open it; do not write files you have no way to verify.' },
+      )
     }
 
     const { pages } = await loadStudioPages(dir)
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_BATCH_PAGES)
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return {
-        ok: false,
-        error: unmatched.length > 0
-          ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : 'This project has no screens to read diagnostics for yet.',
-      }
+      return unmatched.length > 0
+        ? toolRefusal('no-such-page', `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}.`, {
+            remedy: `This project has: ${known}.`,
+          })
+        : toolRefusal('no-such-page', 'This project has no screens to read diagnostics for yet.', {
+            remedy: 'Create one with studio_create_page first.',
+          })
     }
 
     const relayed = await bridge.callBrowser('studio_page_diagnostics', {

@@ -1,6 +1,7 @@
 /**
  * The structural gestures that, on a studio-imported tree, are a SOURCE WRITE
- * rather than a tree mutation: insert, duplicate and wrap.
+ * rather than a tree mutation: insert, duplicate, wrap, (K3) group and
+ * ungroup, and (`store-13`) paste.
  *
  * `struct-02` shipped the first one and W4-1 added the other two, at which
  * point they stopped being a detail of `nodeActions.ts` and became a thing of
@@ -21,39 +22,81 @@
  * Step 4 is why these return `true` for both outcomes — written and refused.
  * Either way the caller must not mint anything.
  *
+ * `store-13` — the new element is nonetheless SELECTED once it arrives. The
+ * save route reports the ids it created and `commitStructural` leaves them in
+ * `pendingStructuralOutcome.ts` for the resync to claim, so "no id to return
+ * here" no longer means "the gesture's result is never pointed at".
+ *
  * The wrapper/element spelling comes from the MODULE REGISTRY
  * (`sourceImport` / `sourceIntrinsic`), never from a hardcoded design system,
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
-import { commitStudioDuplicate, commitStudioInsert, commitStudioWrap } from '@site/studio/studioStructuralCommits'
+import { describeStructuralRefusal, isSourceDerivedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
+import {
+  commitStudioDuplicate,
+  commitStudioGroup,
+  commitStudioInsert,
+  commitStudioUngroup,
+  commitStudioWrap,
+} from '@site/studio/studioStructuralCommits'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import {
   STRUCTURAL_REFUSAL_TITLE,
   planSourceDuplicate,
+  planSourceDuplicateTo,
+  planSourceGroup,
   planSourceInsert,
+  planSourceUngroup,
   planSourceWrap,
-  toastStructuralRefusal,
+  presentStructuralRefusal,
 } from './structuralSourceEdits'
 import { insertableJsxProps } from './insertablePropValues'
+import { createStudioSourceRefusals, type StudioSourceRefusals } from './studioSourceRefusals'
 import type { SiteSliceHelpers } from './types'
 
-export interface StudioSourceWrites {
-  /** True when an insert into this container is refused — the caller must stop. */
-  refuseInsertInto: (parentId: string) => boolean
+/**
+ * The writers, plus the two pre-write questions `studioSourceRefusals.ts`
+ * answers — one front door, so no call site had to learn about the split.
+ */
+export interface StudioSourceWrites extends StudioSourceRefusals {
   /** True when the caller must stop: the element was written to source, or the write was refused out loud. */
   writeInsertToSource: (
     moduleId: string,
     defaults: Record<string, unknown> | undefined,
     parentId: string,
     index?: number,
+    /** React-style inline styles written into the new element's own `style={{ … }}`. */
+    inlineStyles?: Record<string, string>,
   ) => boolean
-  writeDuplicateToSource: (nodeIds: readonly string[]) => boolean
+  /**
+   * `destination` (K2 — Alt+drag) puts the copy INSIDE a container instead of
+   * beside the original. Omitted for ⌘D and the toolbar button.
+   */
+  writeDuplicateToSource: (
+    nodeIds: readonly string[],
+    destination?: { parentId: string; index: number },
+  ) => boolean
   writeWrapToSource: (
     nodeIds: readonly string[],
     containerModuleId: string,
     defaults: Record<string, unknown>,
   ) => boolean
+  /** K3 - Cmd+G: one container around a contiguous run of siblings (or the single-element `wrap`). */
+  writeGroupToSource: (
+    nodeIds: readonly string[],
+    containerModuleId: string,
+    defaults: Record<string, unknown>,
+  ) => boolean
+  /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
+  writeUngroupToSource: (nodeId: string) => boolean
+  /**
+   * `store-13` — ⌘V. True when the caller must stop: the paste was written to
+   * source, or refused out loud. `false` only for an ordinary CMS tree, which
+   * takes the clipboard-snapshot path unchanged.
+   */
+  writePasteToSource: (clipboardRootIds: readonly string[], parentId: string, index?: number) => boolean
 }
 
 /**
@@ -67,21 +110,8 @@ export function createStudioSourceWrites(
   helpers: SiteSliceHelpers,
   readTree: () => NodeTree<PageNode> | null,
 ): StudioSourceWrites {
-  const { get } = helpers
-
-  /**
-   * `struct-01` — refuse a structural gesture that cannot be written back to
-   * a studio-imported `.tsx`. Returns true when the caller must stop.
-   * A `null` tree (no site loaded) is not this guard's business.
-   */
-  const refuseInsertInto = (parentId: string): boolean => {
-    const tree = readTree()
-    if (!tree) return false
-    const plan = planSourceInsert(tree, parentId)
-    if (plan.ok) return false
-    toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
-    return true
-  }
+  const { get, set } = helpers
+  const refusals = createStudioSourceRefusals(helpers, readTree)
 
   /**
    * Adds a module to a studio-imported tree by writing it to the user's source
@@ -95,12 +125,36 @@ export function createStudioSourceWrites(
    * "one-shot commit, then re-sync with disk" shape `move`/`delete` use, minus
    * the optimistic mutation they can afford and this cannot.
    */
-  const writeInsertToSource = (moduleId: string, defaults: Record<string, unknown> | undefined, parentId: string, index?: number): boolean => {
+  const writeInsertToSource = (
+    moduleId: string,
+    defaults: Record<string, unknown> | undefined,
+    parentId: string,
+    index?: number,
+    inlineStyles?: Record<string, string>,
+  ): boolean => {
+    // `store-14` — a second structural gesture fired while a prior one is
+    // still being written+resynced runs NEXT rather than being refused. It is
+    // parked as a thunk and re-planned against the tree that commit's resync
+    // leaves behind; see `structuralCommitQueue.ts`.
+    if (
+      deferWhileStructuralCommitInFlight(() => {
+        writeInsertToSource(moduleId, defaults, parentId, index, inlineStyles)
+      })
+    ) {
+      return true
+    }
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceInsert(tree, parentId, index)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, get)
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+        nodeId: plan.nodeId,
+        // The refused node here is the CONTAINER (`parentId`) — re-issue the
+        // same insert against whatever replaces it once detach/extract lands.
+        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index, inlineStyles),
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -110,10 +164,25 @@ export function createStudioSourceWrites(
     const sourceImport = mod?.sourceImport
 
     if (sourceImport) {
+      // `live-07` — same-tick ghost paint for a live (bridge) frame: there is
+      // no real node id yet (the element doesn't exist until the codemod
+      // writes it), so a throwaway placeholder id stands in purely as the
+      // ghost's own `data-node-id`. Safe because `BridgeFrameAdapter.optimistic
+      // .insert` never looks the id up, and `runtime.ts`'s ghost sweep removes
+      // it wholesale on the next Fast Refresh. `'div'` is the least-disruptive
+      // generic placeholder tag — a design-system component's real root tag
+      // is unknowable without executing it.
+      broadcastOptimisticInsert(`optimistic:${crypto.randomUUID()}`, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, 'div')
       void commitStudioInsert({
         ...plan.commit,
         name: sourceImport.name,
-        importSpecifier: sourceImport.specifier,
+        // The two spellings a registered component can have: a package names
+        // its specifier, the built-in design system names only itself and the
+        // SERVER computes the path relative to the file being written (the
+        // editor does not know where that file sits — see `sourceImport`).
+        ...(sourceImport.kind === 'package'
+          ? { importSpecifier: sourceImport.specifier }
+          : { designSystemImport: true as const }),
         props: insertableJsxProps(props),
       })
       return true
@@ -124,10 +193,25 @@ export function createStudioSourceWrites(
     // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
     const intrinsic = mod?.sourceIntrinsic?.(props)
     if (intrinsic) {
+      // `live-07` — same as above, but an honest tag match: `intrinsic.tag`
+      // is exactly what the codemod is about to write.
+      broadcastOptimisticInsert(
+        `optimistic:${crypto.randomUUID()}`,
+        plan.commit.parentNodeId,
+        index ?? Number.MAX_SAFE_INTEGER,
+        intrinsic.tag,
+        intrinsic.text,
+      )
       void commitStudioInsert({
         ...plan.commit,
         name: intrinsic.tag,
-        props: {},
+        // `K4` — a caller-supplied inline-style bag is written as part of THIS
+        // element, not as a follow-up edit: the node does not exist until the
+        // codemod runs, and its id is the `line:col` that write produces, so
+        // there is nothing to style afterwards until the resync lands. Keys
+        // are React-style camelCase (`borderRadius`), which is the spelling
+        // `renderJsxNode` emits into `style={{ … }}` and the parser reads back.
+        props: inlineStyles && Object.keys(inlineStyles).length > 0 ? { style: { ...inlineStyles } } : {},
         ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
       })
       return true
@@ -135,7 +219,8 @@ export function createStudioSourceWrites(
 
     // Everything else is an editor construct with no spelling in a user's repo;
     // the picker hides those in studio mode, so this is the programmatic path.
-    toastStructuralRefusal(
+    // Always `actions: []` — always the toast, never the dialog.
+    presentStructuralRefusal(
       STRUCTURAL_REFUSAL_TITLE.insert,
       describeStructuralRefusal({
         refusal: {
@@ -143,7 +228,7 @@ export function createStudioSourceWrites(
           message: `"${mod?.name ?? moduleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write to the file. Add a design-system component instead.`,
         },
       }),
-      get,
+      { getState: get, set },
     )
     return true
   }
@@ -156,12 +241,61 @@ export function createStudioSourceWrites(
    * caller must stop — written, or refused out loud; either way nothing is
    * minted here. Same shape as `writeInsertToSource`.
    */
-  const writeDuplicateToSource = (nodeIds: readonly string[]): boolean => {
+  const writeDuplicateToSource = (
+    nodeIds: readonly string[],
+    destination?: { parentId: string; index: number },
+  ): boolean => {
+    // `store-11`/`store-14` — this is the exact gesture the race was found on:
+    // a rapid double-click/keypress on Duplicate before the first click's
+    // resync lands used to plan a SECOND duplicate against the still-unshifted
+    // original, writing two real copies for one gesture. Serializing is still
+    // what closes that; what changed is that the second press is QUEUED rather
+    // than refused, and re-plans against the resynced tree when it runs — five
+    // ⌘D presses are five copies, not one. K2's Alt+drag rides the identical
+    // queue, for the identical reason.
+    if (deferWhileStructuralCommitInFlight(() => { writeDuplicateToSource(nodeIds, destination) })) return true
     const tree = readTree()
     if (!tree) return false
+
+    const retryOn = (refusedNodeId: string | undefined) =>
+      refusedNodeId
+        ? (newNodeId: string) => {
+            void writeDuplicateToSource(
+              nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
+              destination,
+            )
+          }
+        : undefined
+
+    // K2 — Alt+drag: the copy lands INSIDE a container the user pointed at,
+    // which is a second question (`planSourceDuplicateTo`) rather than a flag
+    // on the first. See that function for why the anchor is an insert's, not
+    // a move's.
+    if (destination) {
+      const plan = planSourceDuplicateTo(tree, nodeIds, destination.parentId, destination.index)
+      if (!plan.ok) {
+        presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
+          nodeId: plan.nodeId,
+          retry: retryOn(plan.nodeId),
+          getState: get,
+          set,
+        })
+        return true
+      }
+      if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+      const { nodeId, ...where } = plan.commit
+      void commitStudioDuplicate([nodeId], where)
+      return true
+    }
+
     const plan = planSourceDuplicate(tree, nodeIds)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, get)
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
+        nodeId: plan.nodeId,
+        retry: retryOn(plan.nodeId),
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
@@ -177,39 +311,315 @@ export function createStudioSourceWrites(
    * block with no form in a user's repo, which refuses by saying exactly that.
    */
   const writeWrapToSource = (nodeIds: readonly string[], containerModuleId: string, defaults: Record<string, unknown>): boolean => {
+    // `store-14` — same queue as `writeDuplicateToSource`.
+    if (
+      deferWhileStructuralCommitInFlight(() => {
+        writeWrapToSource(nodeIds, containerModuleId, defaults)
+      })
+    ) {
+      return true
+    }
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceWrap(tree, nodeIds)
     if (!plan.ok) {
-      toastStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, get)
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              void writeWrapToSource(
+                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
+                containerModuleId,
+                defaults,
+              )
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
 
-    const mod = registry.get(containerModuleId)
-    const props = { ...(mod?.defaults ?? {}), ...defaults }
-    const sourceImport = mod?.sourceImport
-    if (sourceImport) {
-      void commitStudioWrap({ nodeId: plan.commit, name: sourceImport.name, importSpecifier: sourceImport.specifier })
+    const container = resolveContainerTag(containerModuleId, defaults)
+    if (container) {
+      void commitStudioWrap({ nodeId: plan.commit, ...container })
       return true
     }
-    const intrinsic = mod?.sourceIntrinsic?.(props)
-    if (intrinsic) {
-      void commitStudioWrap({ nodeId: plan.commit, name: intrinsic.tag })
-      return true
-    }
-    toastStructuralRefusal(
+    // Always `actions: []` — always the toast, never the dialog.
+    presentStructuralRefusal(
       STRUCTURAL_REFUSAL_TITLE.wrap,
       describeStructuralRefusal({
         refusal: {
           reason: 'wrap',
-          message: `"${mod?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around this element. Wrap it in a container instead.`,
+          message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around this element. Wrap it in a container instead.`,
         },
       }),
-      get,
+      { getState: get, set },
     )
     return true
   }
 
-  return { refuseInsertInto, writeInsertToSource, writeDuplicateToSource, writeWrapToSource }
+  /**
+   * K3 — Cmd+G. The same shape as every other writer here, with one branch
+   * the others do not have: a run of ONE is committed as the existing `wrap`
+   * (`wrapJsxElement`, one element's own range) and a run of several as
+   * `group` (`wrapJsxElements`, one container around one span). The two are
+   * different writes, and the wire says which is meant rather than leaving the
+   * server to infer it from the length of a list.
+   *
+   * The container is spelled from the MODULE REGISTRY exactly as `wrap` spells
+   * it, so a project with its own component library groups into its own
+   * component.
+   */
+  const writeGroupToSource = (
+    nodeIds: readonly string[],
+    containerModuleId: string,
+    defaults: Record<string, unknown>,
+  ): boolean => {
+    if (nodeIds.length === 0) return false
+    // `store-14` — same queue as `writeDuplicateToSource`: a held Cmd+G must
+    // not plan a second group against the still-unshifted original, but it
+    // must not be thrown away either.
+    if (
+      deferWhileStructuralCommitInFlight(() => {
+        writeGroupToSource(nodeIds, containerModuleId, defaults)
+      })
+    ) {
+      return true
+    }
+    const tree = readTree()
+    if (!tree) return false
+    const plan = planSourceGroup(tree, nodeIds)
+    if (!plan.ok) {
+      const refusedNodeId = plan.nodeId
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
+        nodeId: refusedNodeId,
+        retry: refusedNodeId
+          ? (newNodeId) => {
+              void writeGroupToSource(
+                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
+                containerModuleId,
+                defaults,
+              )
+            }
+          : undefined,
+        getState: get,
+        set,
+      })
+      return true
+    }
+    if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+
+    const container = resolveContainerTag(containerModuleId, defaults)
+    if (!container) {
+      // Always `actions: []` — always the toast, never the dialog.
+      presentStructuralRefusal(
+        STRUCTURAL_REFUSAL_TITLE.group,
+        describeStructuralRefusal({
+          refusal: {
+            reason: 'group',
+            message: `"${registry.get(containerModuleId)?.name ?? containerModuleId}" is an editor building block, not a component in your project's code, so there is nothing Studio could write around these elements. Group them in a container instead.`,
+          },
+        }),
+        { getState: get, set },
+      )
+      return true
+    }
+
+    const only = plan.commit.length === 1 ? plan.commit[0] : undefined
+    if (only !== undefined) void commitStudioWrap({ nodeId: only, ...container })
+    else void commitStudioGroup({ nodeIds: plan.commit, ...container })
+    return true
+  }
+
+  /**
+   * K3 — Cmd+Shift+G. Nothing is mutated on the canvas first: an ungroup
+   * re-parents every child, and the ids those children get afterwards are the
+   * `line:col`s the write produces, so the commit's own resync is what brings
+   * them in.
+   */
+  const writeUngroupToSource = (nodeId: string): boolean => {
+    // `store-14` — same queue as the other source writers.
+    if (deferWhileStructuralCommitInFlight(() => { writeUngroupToSource(nodeId) })) return true
+    const tree = readTree()
+    if (!tree) return false
+    const plan = planSourceUngroup(tree, nodeId)
+    if (!plan.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.ungroup, plan.constraint, {
+        nodeId: plan.nodeId,
+        retry: plan.nodeId ? (newNodeId) => { void writeUngroupToSource(newNodeId) } : undefined,
+        getState: get,
+        set,
+      })
+      return true
+    }
+    if (!plan.commit) return false // an ordinary CMS tree — nothing to write
+    void commitStudioUngroup(plan.commit, restorableContainerSpelling(tree.nodes[plan.commit]))
+    return true
+  }
+
+  /**
+   * `store-13` — ⌘V on a studio-imported tree is a SOURCE write, for the same
+   * reason every other gesture in this module is.
+   *
+   * Paste was the one structural gesture that never asked. It restored the
+   * clipboard SNAPSHOT — a set of nodes carrying nanoid ids — straight into
+   * the tree, and `saveSite` diffs values only, so nothing about the new
+   * elements ever reached the `.tsx`. The board showed them until the next
+   * parse and then silently did not, which is precisely the failure
+   * `struct-01` removed for move and delete and `struct-02` for insert.
+   *
+   * The honest write is a DUPLICATE-TO: the clipboard's roots are elements
+   * that exist (or existed) in this project's code, and `duplicateJsxElement`
+   * can copy their own source text into the destination container. So this
+   * asks the same two questions in the same order every other writer here
+   * asks, then commits through the identical path — which is also how a
+   * pasted element ends up selected after the resync
+   * (`pendingCreatedSelection.ts`).
+   *
+   * What it will NOT do is fall back to the snapshot path on a studio tree.
+   * A clipboard entry whose roots are no longer elements in this file — copied
+   * from another project, from another page, or from a session before the file
+   * changed — has no source text to copy, and restoring the snapshot anyway is
+   * the orphan this function exists to stop. That refuses, by name.
+   */
+  const writePasteToSource = (
+    clipboardRootIds: readonly string[],
+    parentId: string,
+    index?: number,
+  ): boolean => {
+    if (clipboardRootIds.length === 0) return false
+    const tree = readTree()
+    if (!tree) return false
+
+    // Is this a studio-imported tree at all? `planSourceInsert` answers with
+    // `commit: null` for an ordinary CMS container, and that is the ONLY
+    // outcome that may take the snapshot path.
+    const container = planSourceInsert(tree, parentId, index)
+    if (container.ok && !container.commit) return false
+
+    // `store-14` — a paste is as much a real write as a duplicate is, and two
+    // in flight would plan against the same unshifted source. Queued, not
+    // refused: ⌘V held down pastes N times.
+    if (
+      deferWhileStructuralCommitInFlight(() => {
+        writePasteToSource(clipboardRootIds, parentId, index)
+      })
+    ) {
+      return true
+    }
+
+    if (!container.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, container.constraint, {
+        nodeId: container.nodeId,
+        retry: (newParentId) => { writePasteToSource(clipboardRootIds, newParentId, index) },
+        getState: get,
+        set,
+      })
+      return true
+    }
+
+    const orphaned = clipboardRootIds.filter((id) => !isSourceDerivedNodeId(id) || !tree.nodes[id])
+    if (orphaned.length > 0) {
+      // Always `actions: []` — always the toast, never the dialog: there is no
+      // node left to offer a remedy against.
+      presentStructuralRefusal(
+        STRUCTURAL_REFUSAL_TITLE.insert,
+        describeStructuralRefusal({
+          refusal: {
+            reason: 'insert',
+            message:
+              'What you copied is not part of this page’s code any more, so Studio has no source to copy from — pasting it would put elements on the canvas that the files do not contain. Copy the element again from this page and paste it.',
+          },
+        }),
+        { getState: get, set },
+      )
+      return true
+    }
+
+    const plan = planSourceDuplicateTo(tree, clipboardRootIds, parentId, index ?? Number.MAX_SAFE_INTEGER)
+    if (!plan.ok) {
+      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
+        nodeId: plan.nodeId,
+        getState: get,
+        set,
+      })
+      return true
+    }
+    // `commit: null` here would mean "not a source-derived tree", which the
+    // container check above already ruled out — but a stale root is also
+    // reported that way, and there is nothing to write either way.
+    if (!plan.commit) return true
+    const { nodeId, ...where } = plan.commit
+    void commitStudioDuplicate([nodeId], where)
+    return true
+  }
+
+  return {
+    ...refusals,
+    writeInsertToSource,
+    writeDuplicateToSource,
+    writeWrapToSource,
+    writeGroupToSource,
+    writeUngroupToSource,
+    writePasteToSource,
+  }
+}
+
+/**
+ * `store-14` — how to write this container back around its children, or `null`
+ * when a re-wrap would not restore it.
+ *
+ * ⌘⇧G's undo is a ⌘G, and `wrapJsxElement`/`wrapJsxElements` write a BARE tag:
+ * no `className`, no `style`, no `id`. So a wrapper carrying any of those
+ * three is honestly un-undoable from the canvas — re-grouping would produce a
+ * container that has quietly lost what the user put on it, which is the
+ * half-applied write this store refuses everywhere else. The undo says so by
+ * name instead (see `commitStudioUngroup`). Closing it needs `props` on the
+ * `wrap`/`group` edit, which is the wrap codemod's own surface.
+ *
+ * `unwrapJsxElement` already refuses a COMPONENT wrapper (`has-behaviour`), so
+ * everything that reaches here is an intrinsic tag the module registry can
+ * spell from the node's own props — `base.container`'s `tag`/`customTag`.
+ */
+function restorableContainerSpelling(
+  node: PageNode | undefined,
+): { name: string; importSpecifier?: string; designSystemImport?: true } | null {
+  if (!node) return null
+  const carriesStyling =
+    node.classIds.length > 0 ||
+    Object.keys(node.inlineStyles ?? {}).length > 0 ||
+    (typeof node.props.id === 'string' && node.props.id !== '')
+  if (carriesStyling) return null
+  return resolveContainerTag(node.moduleId, node.props)
+}
+
+/**
+ * How a registered module spells itself as a WRITTEN TAG — a package component
+ * names its specifier, the built-in design system names only the SYSTEM (the
+ * server computes the path relative to the file being written), and an
+ * intrinsic module is just its tag.
+ *
+ * `null` for an editor building block with no form in a user's repository,
+ * which is a refusal rather than a guess. Shared by `wrap` and `group` so the
+ * two cannot disagree about what a container is.
+ */
+function resolveContainerTag(
+  containerModuleId: string,
+  defaults: Record<string, unknown>,
+): { name: string; importSpecifier?: string; designSystemImport?: true } | null {
+  const mod = registry.get(containerModuleId)
+  const sourceImport = mod?.sourceImport
+  if (sourceImport) {
+    return {
+      name: sourceImport.name,
+      ...(sourceImport.kind === 'package'
+        ? { importSpecifier: sourceImport.specifier }
+        : { designSystemImport: true as const }),
+    }
+  }
+  const intrinsic = mod?.sourceIntrinsic?.({ ...(mod?.defaults ?? {}), ...defaults })
+  return intrinsic ? { name: intrinsic.tag } : null
 }

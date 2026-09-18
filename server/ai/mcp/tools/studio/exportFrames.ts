@@ -3,7 +3,7 @@
  * half of requirement 10.
  *
  * **Server-executed since W4-2A, not browser-bridged.** It used to be
- * `execution: 'browser'`: a bare declaration whose whole implementation lived
+ * `execution: 'bridge'`: a bare declaration whose whole implementation lived
  * client-side in `src/admin/pages/site/agent/studioExportFrames.ts`, relayed
  * to the connector owner's open Site workspace. That made every export
  * conditional on a browser tab being open, cost a canvas pan + frame mount +
@@ -54,7 +54,7 @@ const ExportFramesInputSchema = Type.Composite([
 export const exportFramesTool: AiTool = {
   name: 'studio_export_frames',
   scope: 'shared',
-  execution: 'server',
+  execution: 'server-with-bridge-fallback',
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:

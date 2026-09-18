@@ -11,7 +11,7 @@
   display: flex;
   align-items: center;
   gap: var(--inspector-space-xs);
-  padding: var(--inspector-space-s) var(--inspector-space-l);
+  padding: var(--inspector-space-s) var(--inspector-pad-x);
   border-bottom: 1px solid var(--border);
 }
 

@@ -57,6 +57,7 @@ export const VideoModule: ModuleDefinition<VideoProps> = {
   id: 'base.video',
   name: 'Video',
   description: 'Embed an uploaded video, an external video URL, or a YouTube link.',
+  keywords: ['media', 'mp4', 'youtube', 'player', 'embed', 'clip'],
   category: 'Media',
   version: '4.0.0',
   icon: VideoSolidIcon,

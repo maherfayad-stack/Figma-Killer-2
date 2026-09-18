@@ -1,0 +1,19 @@
+<svg width="24" height="24" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g id="Logos">
+<g id="Flag">
+<g id="Country=Cuba">
+<g id="Cuba" clip-path="url(#clip0_29_409)">
+<path id="Blue stripes" fill-rule="evenodd" clip-rule="evenodd" d="M24 3H0V6.6H24V3ZM0 10.2H24V13.8H0V10.2ZM0 17.4H24V21H0V17.4Z" fill="#002A8F"/>
+<path id="White stripes" fill-rule="evenodd" clip-rule="evenodd" d="M24 6.6001H0V10.2001H24V6.6001ZM24 13.8H0V17.4H24V13.8Z" fill="white"/>
+<path id="Vector" d="M16.5 12L-5.5 24V0L16.5 12Z" fill="#CF142B"/>
+<path id="Star 2" d="M5.5 8.5L6.2858 10.9184H8.8287L6.77145 12.4131L7.55725 14.8316L5.5 13.3369L3.44275 14.8316L4.22855 12.4131L2.1713 10.9184H4.7142L5.5 8.5Z" fill="white"/>
+</g>
+</g>
+</g>
+</g>
+<defs>
+<clipPath id="clip0_29_409">
+<rect width="24" height="18" fill="white" transform="translate(0 3)"/>
+</clipPath>
+</defs>
+</svg>

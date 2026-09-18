@@ -34,8 +34,10 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const SCAN_ROOT = join(SRC_ROOT, 'admin')
@@ -102,24 +104,31 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   // walk it feeds. The only reason native DnD is used at all here: dnd-kit
   // cannot see a dropped folder's contents.
   'admin/pages/site/studio/droppedFolderWalk.ts',
+  // D2 G15 — the board's own drop target for an image file dragged in from
+  // the OPERATING SYSTEM. Native by necessity and not by preference, for the
+  // same reason `LauncherDropZone` is: a file that originates outside the
+  // browser is only ever delivered through `DataTransfer.files`. There is no
+  // pointer-event form of this gesture to migrate to, so neither of these two
+  // is work D2's unification will ever reclaim — the DECISION half of the
+  // gesture (which frame, which position, which refusal) deliberately lives
+  // in `canvasFileDrop.ts`, which touches no DnD API at all and is therefore
+  // not on this list.
+  'admin/pages/site/canvas/useCanvasFileDrop.ts',
+  // The same gesture's iframe relay: a native `dragover`/`drop` does not
+  // cross the iframe boundary, so it is re-dispatched on the iframe element.
+  // `sec-17` lifted the RULE out of `useIframeEventForwarding.ts` (which is
+  // therefore no longer on this list — it now owns only the lifecycle) so it
+  // could be driven directly: cancel every drag's default inside a design
+  // frame, because the browser's default is to navigate the portal's document
+  // away and a dropped LINK is as destructive there as a dropped file; relay
+  // only the file-carrying ones.
+  'admin/pages/site/canvas/canvasFrameDragRelay.ts',
 ])
 
 // ─── File collection ─────────────────────────────────────────────────────────
 
-function collectSourceFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    if (entry === '__tests__') continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectSourceFiles(full))
-    } else if (extname(entry) === '.ts' || extname(entry) === '.tsx') {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 function relPath(file: string): string {
   return relative(SRC_ROOT, file).split('\\').join('/')
@@ -135,7 +144,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
     for (const file of files) {
       const rel = relPath(file)
       if (DND_KIT_ALLOWLIST.has(rel)) continue
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (/from ['"]@dnd-kit\/core['"]/.test(source)) {
         violations.push(rel)
       }
@@ -161,7 +170,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
         stale.push(`${rel} (file no longer exists)`)
         continue
       }
-      const source = readFileSync(full, 'utf8')
+      const source = readSource(full)
       if (!/from ['"]@dnd-kit\/core['"]/.test(source)) {
         stale.push(`${rel} (no longer imports @dnd-kit/core — remove from the allowlist)`)
       }
@@ -176,7 +185,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
     for (const file of files) {
       const rel = relPath(file)
       if (NATIVE_HTML5_DND_ALLOWLIST.has(rel)) continue
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (/\bdataTransfer\b|\bDragEvent</.test(source)) {
         violations.push(rel)
       }
@@ -202,7 +211,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
         stale.push(`${rel} (file no longer exists)`)
         continue
       }
-      const source = readFileSync(full, 'utf8')
+      const source = readSource(full)
       if (!/\bdataTransfer\b|\bDragEvent</.test(source)) {
         stale.push(`${rel} (no longer uses dataTransfer — remove from the allowlist)`)
       }

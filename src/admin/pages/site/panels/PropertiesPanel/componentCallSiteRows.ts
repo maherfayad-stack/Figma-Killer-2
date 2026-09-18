@@ -18,7 +18,7 @@
  */
 import type { PropertyControl } from '@core/module-engine'
 import { studioSlotNodeId } from '@core/utils/studioSlotSentinel'
-import { controlForPropKind, type LocalComponentSpec } from '@site/property-controls/componentPropKind'
+import { controlForPropKind, type LocalComponentSpec, type PropSpec } from '@site/property-controls/componentPropKind'
 
 export interface ComponentCallSiteRow {
   key: string
@@ -52,6 +52,7 @@ export function buildComponentCallSiteRows(
   for (const prop of spec?.props ?? []) {
     const control = controlForPropKind(prop.name, prop.kind)
     if (!control) continue
+    if (!propAppliesToCallSite(prop, callSiteProps)) continue
     declaredKeys.add(prop.name)
     declaredRows.push({ key: prop.name, control, value: callSiteProps[prop.name] })
   }
@@ -68,4 +69,23 @@ export function buildComponentCallSiteRows(
   }
 
   return [...declaredRows, ...extraRows]
+}
+
+/**
+ * Whether a declared prop's row belongs in the set for THIS call site — see
+ * `PropSpec.appliesWhen`'s own doc for what populates the gate and why it is
+ * a separate fact from structural writability (`isPropWritableToSource`).
+ *
+ * A set value always outranks a gate: if the call site already writes this
+ * prop, the row stays even when the gating prop's current value says it
+ * shouldn't apply. A real, live value a keystroke could touch must never go
+ * missing from the panel — hiding it would make it silently un-editable and
+ * un-discoverable, which is a worse failure than one always-visible row that
+ * occasionally does nothing.
+ */
+function propAppliesToCallSite(prop: PropSpec, callSiteProps: Record<string, unknown>): boolean {
+  const gate = prop.appliesWhen
+  if (!gate) return true
+  if (callSiteProps[prop.name] !== undefined) return true
+  return gate.values.includes(callSiteProps[gate.prop] as string)
 }

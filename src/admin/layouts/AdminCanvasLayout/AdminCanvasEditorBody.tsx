@@ -11,6 +11,7 @@ import { CodeEditorPanel, CodeEditorSkeleton } from '@admin/pages/site/code-edit
 import { useActiveLivePath } from '@admin/pages/site/hooks/useActiveLivePath'
 import { useAutoResolveDependencies } from '@admin/pages/site/hooks/useAutoResolveDependencies'
 import { useRegisterProjectModules } from '@admin/pages/site/studio/canvasModuleSet'
+import { useDevServerPrewarm } from '@admin/pages/site/studio/useDevServerPrewarm'
 import { usePreviewAxesHydration } from '@admin/pages/site/studio/usePreviewAxesHydration'
 import { useStudioCommentsLoad } from '@admin/pages/site/studio/useStudioCommentsLoad'
 import { useStudioPrototypeLoad } from '@admin/pages/site/studio/useStudioPrototypeLoad'
@@ -18,6 +19,7 @@ import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
 import { RightSidebar } from '@admin/pages/site/sidebars/RightSidebar'
+import { PanelBoundary } from '@admin/pages/site/ui/PanelBoundary'
 import { selectRightSidebarExpanded, useEditorStore } from '@admin/pages/site/store/store'
 import { useNarrowEditorChrome } from '@site/layout/responsiveChrome'
 import { ConfirmDeleteProvider } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -61,6 +63,10 @@ export function AdminCanvasEditorBody({
   // (part of the shared module set, kept per `standing-07`) to any npm package
   // a project actually imports, not just `@alm-design/design-system`.
   useRegisterProjectModules()
+  // Track L (`live-01`) — prewarms a Tier-2 project's dev server the instant
+  // its canvas mounts, so the cold boot is already underway before anything
+  // (a live-runtime frame, an agent's reference render) needs it.
+  useDevServerPrewarm()
   // WS-10 Phase 1 — loads the project's persisted preview axes + dark-mode
   // capability probe on open. See its own doc.
   usePreviewAxesHydration()
@@ -128,7 +134,14 @@ export function AdminCanvasEditorBody({
                   <CanvasRoot editable={canEditDraftSite} />
                 )}
                 {/* Properties can be unpinned into the floating draggable overlay. */}
-                {canSaveSite && propertiesPanelMode === 'floating' && <PropertiesPanel variant="floating" />}
+                {canSaveSite && propertiesPanelMode === 'floating' && (
+                  // `panel-40` — same seam as the docked mount in
+                  // `RightSidebar`: an undocked inspector that throws must not
+                  // take the canvas underneath it down.
+                  <PanelBoundary id="properties-floating" label="Properties" frame="panel">
+                    <PropertiesPanel variant="floating" />
+                  </PanelBoundary>
+                )}
               </div>
             </div>
             {/* `mode` tells the RightSidebar which expansion model to use:

@@ -23,6 +23,7 @@ export const SvgModule: ModuleDefinition<SvgStoredProps> = {
   id: 'base.svg',
   name: 'SVG',
   description: 'Inline vector graphic (logo or icon).',
+  keywords: ['vector', 'icon', 'logo', 'graphic', 'glyph'],
   category: 'Media',
   version: '1.0.0',
   icon: ImageSolidIcon,

@@ -1,9 +1,9 @@
-import { useRef, useState, type CSSProperties, type ChangeEvent, type FocusEvent, type KeyboardEvent } from 'react'
+import { useRef, useState, type CSSProperties, type ChangeEvent, type FocusEvent, type KeyboardEvent, type ReactNode } from 'react'
 import { generateFrameworkColorVariableSets } from '@core/framework'
 import { contrastLevel, contrastRatio, cssColorToRgb, type WcagContrastLevel } from '@core/design-tokens'
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
-import { ColorPickerPopover, isColorToken, type ColorPickerToken } from '@ui/components/ColorPickerPopover'
+import { ColorPickerPopover, isColorToken, resolveSwatchColor, type ColorPickerToken } from '@ui/components/ColorPickerPopover'
 import { Input } from '@ui/components/Input'
 import { COLOR_VARIABLE_KINDS, useVariableAffordance } from '@ui/components/VariableField'
 import { cn } from '@ui/cn'
@@ -45,6 +45,24 @@ interface TokenizedColorFieldProps {
    * yet — the badge simply doesn't render; nothing else changes.
    */
   contrastAgainst?: string
+  /**
+   * The frame's own `getComputedStyle` truth for this field's property
+   * (`STATE.md` panel-33) — the ONLY honest source for what a `var(--token)`
+   * value actually paints, since the admin's own document has no access to
+   * a custom property declared inside the project's canvas iframe. Used
+   * ONLY as a fallback, when `value` itself is neither a literal colour this
+   * module already parses nor a token this field's own catalogue resolves —
+   * never re-implements a variable lookup or guesses at a token table. Omit
+   * when the caller has no live computed value to offer (the swatch then
+   * falls back to today's behaviour: blank for an unresolved token).
+   */
+  resolvedValue?: string
+  /**
+   * An optional informational banner threaded straight through to
+   * `ColorPickerPopover`'s own `notice` slot — see that component's doc.
+   * Opaque to this field; it never inspects or composes the content.
+   */
+  notice?: ReactNode
 }
 
 /** `AA 7.2` / `AAA 12.1` / `2.3:1` (below AA — the ratio itself, not a false pass label) — one line, computed from `contrastAgainst`. */
@@ -75,6 +93,8 @@ export function TokenizedColorField({
   onTokenPreview,
   onTokenPreviewClear,
   contrastAgainst,
+  resolvedValue,
+  notice,
 }: TokenizedColorFieldProps) {
   const colorSettings = useEditorStore((state) => state.site?.settings.framework?.colors)
   const [open, setOpen] = useState(false)
@@ -85,7 +105,14 @@ export function TokenizedColorField({
     .filter((variable) => variable.tokenId !== excludeTokenId)
   const filteredVariables = computeFilteredVariables(value, variables)
   const appliedVariable = resolveTokenReferenceVariable(value, variables)
-  const swatchValue = appliedVariable?.value ?? value
+  // `appliedVariable` (a real match in the FRAMEWORK's own generated colour
+  // catalogue) is authoritative when it exists. Otherwise `resolveSwatchColor`
+  // decides: paint `value` verbatim when this module can already parse it, or
+  // fall back to `resolvedValue` — the frame's own computed truth — for a
+  // reference (a project CSS variable outside Studio's token catalogue) that
+  // resolves to nothing in the admin's own document. See `resolvedValue`'s
+  // own doc for why this is never a guessed table lookup.
+  const swatchValue = appliedVariable?.value ?? resolveSwatchColor(value, resolvedValue)
   const menuId = id ? `${id}-token-menu` : undefined
   const showMenu = open && !disabled && filteredVariables.length > 0
 
@@ -270,6 +297,7 @@ export function TokenizedColorField({
             tokens={pickerTokens}
             recentColors={recentColors}
             contrastAgainst={contrastAgainst}
+            notice={notice}
           />
         )}
         <Input

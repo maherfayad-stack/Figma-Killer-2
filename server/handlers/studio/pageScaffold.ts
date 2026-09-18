@@ -33,8 +33,8 @@
  * anywhere would be a second source of truth that drifts from the file.
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { parsePageFile } from '@core/page-parser'
+import { join, relative, sep } from 'node:path'
+import { designSystemImportSpecifier, parsePageFile } from '@core/page-parser'
 import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
 import {
   discoverPageFiles,
@@ -43,8 +43,9 @@ import {
   projectPagesDir,
 } from '../studioProjects'
 import { autoPlaceBoardFrame } from './boardFrames'
+import { withProjectWriteLock } from './projectWriteLock'
+
 import { detectPageTemplateKit, pageNameBase, starterPage } from './pageTemplates'
-import { resolveAppRoot } from './appRoot'
 import { pageIdFromRelPath } from '../studioPageIds'
 
 /**
@@ -79,10 +80,15 @@ export function createScaffoldedPage(
   const file = join(pagesDir, relPath)
   if (existsSync(file)) return { ok: false, conflict: `A page named "${componentName}" already exists.` }
   mkdirSync(pagesDir, { recursive: true })
-  // The project's own dialect — an installed design system means the overlay
-  // kinds scaffold its real `BottomSheet`/`Dialog` instead of a hand-rolled
-  // copy. Same posture as `detectPageFileExtension` above.
-  const starter = starterPage(componentName, kind, detectPageTemplateKit(resolveAppRoot(dir)))
+  // The project's own dialect — a project carrying the built-in design system
+  // (`<project>/design-system/`) means the overlay kinds scaffold its real
+  // `BottomSheet`/`Dialog` instead of a hand-rolled copy, imported by the
+  // relative path from THIS page's directory. Same posture as
+  // `detectPageFileExtension` above.
+  const starter = starterPage(componentName, kind, {
+    kit: detectPageTemplateKit(dir),
+    designSystemImport: designSystemImportSpecifier(relative(dir, file).split(sep).join('/')),
+  })
   writeFileSync(file, starter.component)
   // Written alongside the component, never lazily: the component imports it by
   // name, so a missing stylesheet is a broken page, not a deferred nicety. A
@@ -99,6 +105,27 @@ export function createScaffoldedPage(
   // Node ids are source locations (trap #2) — read the root by parsing the
   // file just written, never constructed from the name/path.
   return { ok: true, relPath, pageId, title: componentName, rootNodeId: scaffoldedPageRootNodeId(dir, file) }
+}
+
+/**
+ * {@link createScaffoldedPage}, serialized against every other writer of this
+ * project — **the entry every production caller uses** (`POST
+ * /admin/api/studio/page` and the MCP `studio_create_page` tool). The
+ * synchronous function above stays exported for tests, which drive it against
+ * a temp directory with nothing else running.
+ *
+ * Scaffolding writes two files and `.studio/boards.json`; a git verb holding
+ * the lock across `add` + `commit` must not see half of that. No `waitMs` —
+ * creating a page waits rather than failing, for the same reason a save does.
+ * See `projectWriteLock.ts`.
+ */
+export function scaffoldPageLocked(
+  dir: string,
+  nameInput: string,
+  kind: PageKind = DEFAULT_PAGE_KIND,
+  boardId?: string,
+): Promise<ScaffoldPageResult> {
+  return withProjectWriteLock(dir, () => createScaffoldedPage(dir, nameInput, kind, boardId))
 }
 
 /**

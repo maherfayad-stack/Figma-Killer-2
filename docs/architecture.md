@@ -205,7 +205,7 @@ type NodeTree<TNode> = {
 
 Defined in `src/core/page-tree/treeSchema.ts` (single source of truth). Mutations operate on any `NodeTree` generically via `src/core/page-tree/mutations.ts`.
 
-Routing to the active tree (page vs. VC mode) is the **sole** job of `mutateActiveTree(fn)` in `src/admin/pages/site/store/slices/site/helpers.ts`. The 11 named tree-mutation store actions in `src/admin/pages/site/store/slices/site/nodeActions.ts` (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`, `duplicateNode`, `wrapNode`) are one-liners that call `mutateActiveTree`. They must not contain their own `kind === 'visualComponent'` routing branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
+Routing to the active tree (page vs. VC mode) is the **sole** job of `mutateActiveTree(fn)` in `src/admin/pages/site/store/slices/site/helpers.ts`. The 13 named tree-mutation store actions (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `setNodesLocked`, `setNodesHidden`, `moveNode`, `duplicateNode`, `wrapNode`, `groupNodes`, `ungroupNode`) are one-liners that call `mutateActiveTree`. Most live in `src/admin/pages/site/store/slices/site/nodeActions.ts`; `groupNodes`/`ungroupNode` are in `groupActions.ts` and `setNodesLocked`/`setNodesHidden` in `visibilityActions.ts`. They must not contain their own `kind === 'visualComponent'` routing branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
 
 See [docs/reference/page-tree.md](reference/page-tree.md) for the type shape and mutation cookbook.
 
@@ -417,6 +417,15 @@ bun run test:e2e          # run specs in tests/e2e/*.e2e.ts
 ```
 
 `bun run build` runs both `tsc -b` and `vite build` — a change that runs in dev but fails `tsc` is not done. Verification is an end-of-task gate, not a per-edit ritual; see `CLAUDE.md` for the rules around pre-existing failures from parallel sessions.
+
+### `bun run dev` preflights the checkout
+
+`scripts/dev.ts` calls `runDevPreflight` (`scripts/lib/devPreflight.ts`) before it spawns anything. It does two things, both of which used to fail while pointing at the wrong culprit:
+
+- **Installs when the checkout needs it.** Two runtime dependencies are `file:` links into `vendor/` (`alm-design-system`, `pixel-art-icons`). Without `bun install` they are absent, and the symptom is `vite build` reporting that `src/modules/alm/register.tsx` cannot resolve `alm-design-system` — a resolution error for a package that is sitting in the tree. The preflight re-installs when a `file:` dependency is unlinked, when `node_modules/` is gone, or when `bun.lock` is newer than `node_modules/.studio-install-stamp` (written after each successful install), and prints one line naming which.
+- **Reports drifted generated artefacts.** `alm:check`, `studio-runtime:check`, `icons:check` and `bootstrap:check` run in parallel; each that fails prints its one-line `bun run <x>:sync` fix. This never blocks dev — the four cost ~20 s cold, so they run concurrently with the server and Vite. Silence means fresh.
+
+A `.gitattributes` rule forces LF in the working tree for `vendor/`, `src/modules/alm/manifest.generated.json`, `src/core/studio-runtime/generated/` and the QuickJS bootstrap. All four of those checks compare bytes, and `src/core/design-system-manifest/vendorDocs.ts` parses the vendored markdown with `/^(#{1,6})\s+(.*)$/` — JavaScript's `.` does not match `\r`, so on a Windows CRLF checkout not one heading matched and `bun run alm:sync` would overwrite the real manifest with 39 components carrying `props: []`.
 
 ### Run the suite as `bun run test`, never as bare `bun test`
 

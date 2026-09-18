@@ -33,6 +33,7 @@
  */
 import postcss, { type AtRule, type Container, type Root } from 'postcss'
 import { findRule } from './setDeclaration'
+import { preservingLineEndings } from './preserveLineEndings'
 
 export interface RemoveDeclarationResult {
   /** The rewritten stylesheet text — identical to the input when `changed` is `false`. */
@@ -67,35 +68,37 @@ export function removeDeclaration(
   property: string,
   options: { atMedia?: string } = {},
 ): RemoveDeclarationResult {
-  const root: Root = postcss.parse(cssText)
+  return preservingLineEndings(cssText, (source) => {
+    const root: Root = postcss.parse(source)
 
-  let container: Container = root
-  let mediaAtRule: AtRule | undefined
-  if (options.atMedia) {
-    mediaAtRule = findMediaAtRule(root, options.atMedia)
-    if (!mediaAtRule) return { css: cssText, changed: false } // no such block — nothing to remove
-    container = mediaAtRule
-  }
-
-  const rule = findRule(container, selector)
-  if (!rule) return { css: cssText, changed: false }
-
-  const propLower = property.toLowerCase()
-  let removed = false
-  rule.each((node) => {
-    if (node.type === 'decl' && node.prop.toLowerCase() === propLower) {
-      node.remove()
-      removed = true
-      return false
+    let container: Container = root
+    let mediaAtRule: AtRule | undefined
+    if (options.atMedia) {
+      mediaAtRule = findMediaAtRule(root, options.atMedia)
+      if (!mediaAtRule) return { css: source, changed: false } // no such block — nothing to remove
+      container = mediaAtRule
     }
-    return undefined
+
+    const rule = findRule(container, selector)
+    if (!rule) return { css: source, changed: false }
+
+    const propLower = property.toLowerCase()
+    let removed = false
+    rule.each((node) => {
+      if (node.type === 'decl' && node.prop.toLowerCase() === propLower) {
+        node.remove()
+        removed = true
+        return false
+      }
+      return undefined
+    })
+    if (!removed) return { css: source, changed: false }
+
+    if (rule.nodes.length === 0) {
+      rule.remove()
+      if (mediaAtRule && (mediaAtRule.nodes?.length ?? 0) === 0) mediaAtRule.remove()
+    }
+
+    return { css: root.toString(), changed: true }
   })
-  if (!removed) return { css: cssText, changed: false }
-
-  if (rule.nodes.length === 0) {
-    rule.remove()
-    if (mediaAtRule && (mediaAtRule.nodes?.length ?? 0) === 0) mediaAtRule.remove()
-  }
-
-  return { css: root.toString(), changed: true }
 }

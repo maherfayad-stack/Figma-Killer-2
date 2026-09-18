@@ -17,9 +17,15 @@
  *     dismiss imperatively (e.g. when the boundary resets).
  *   - The provider is the single source of truth for visibility and timing —
  *     this module only stores the canonical list.
- *   - Identity is the caller's choice: an optional `dedupeKey` collapses a
- *     repeat onto the toast already showing it (see `pushToast`), which is
- *     what keeps a repeated refusal one persistent card instead of a stack.
+ *   - **Collapsing is the default, not an opt-in.** Two pushes that would
+ *     render the same card (same `kind` + `title` + `body`) are the same
+ *     event as far as the reader is concerned, so the second one bumps a
+ *     `×N` counter on the card already on screen instead of stacking a
+ *     duplicate. One root cause can no longer mean N identical red boxes —
+ *     the "noisy errors" failure this bus used to produce with 139 call
+ *     sites and three of them passing a `dedupeKey`.
+ *     A caller with genuinely distinct events that happen to share copy
+ *     (two uploads of different files, say) passes `dedupeKey: false`.
  */
 
 export type ToastKind = 'info' | 'success' | 'warning' | 'error'
@@ -48,16 +54,23 @@ export interface ToastInput {
    */
   action?: ToastAction
   /**
-   * Collapse key. A push whose `dedupeKey` matches a toast already on the bus
-   * REPLACES that toast in place — same id, same stack position, refreshed
-   * content, `repeatCount` incremented — instead of stacking a second copy.
+   * Collapse key. A push whose resolved key matches a toast already on the
+   * bus REPLACES that toast in place — same id, same stack position,
+   * refreshed content, `repeatCount` incremented — instead of stacking a
+   * second copy.
    *
-   * Written for refusals: a user who drags the same locked element three times
-   * gets one persistent explanation that counts the attempts, not three
-   * identical cards pushing the rest of the stack off screen. Ordinary
-   * one-shot toasts leave this unset and stack as they always did.
+   * Three values:
+   *   - **omitted (the default)** — the key is derived from
+   *     `kind + title + body`. Two pushes that read identically to the user
+   *     ARE the same notification, so the second bumps `×2` on the first.
+   *   - **a string** — an explicit identity, for repeats whose copy varies
+   *     but whose cause does not (`structural-refusal:<reason>`), or to
+   *     deliberately collapse a family of related messages onto one card.
+   *   - **`false`** — opt out. For genuinely distinct events that share
+   *     copy, e.g. "Upload failed" for two different files, where counting
+   *     them as one would hide the second file's failure.
    */
-  dedupeKey?: string
+  dedupeKey?: string | false
 }
 
 interface ToastAction {
@@ -75,11 +88,19 @@ export interface Toast extends ToastInput {
   /** ms-since-epoch the toast was published — used for stable ordering. */
   createdAt: number
   /**
-   * How many times this toast has been pushed, counting the first. Only ever
-   * above 1 for a `dedupeKey`ed toast that collapsed a repeat; the provider
-   * renders it so a repeated refusal still reads as new feedback.
+   * How many times this toast has been pushed, counting the first. Above 1
+   * whenever a repeat collapsed onto this card; the provider renders it as
+   * `×N` so a repeated refusal still reads as new feedback.
    */
   repeatCount: number
+  /**
+   * The RESOLVED collapse key — the caller's `dedupeKey` string, the derived
+   * `kind + title + body` key, or `null` when the caller opted out with
+   * `dedupeKey: false`. Stored separately from the input field so the lookup
+   * never has to re-derive it, and so `null` (opted out) can never
+   * accidentally match another opted-out toast.
+   */
+  collapseKey: string | null
 }
 
 type Listener = (toasts: ReadonlyArray<Toast>) => void
@@ -99,14 +120,29 @@ function notify(): void {
 }
 
 /**
+ * The collapse identity of a push.
+ *
+ * `\u0000` joins the parts because it cannot appear in UI copy, so a title
+ * ending in the separator can never be confused with a body starting with it.
+ * `location` and `action` are deliberately NOT part of the key: the user
+ * reads the card, and two cards that read the same are one event to them.
+ */
+function resolveCollapseKey(input: ToastInput): string | null {
+  if (input.dedupeKey === false) return null
+  if (input.dedupeKey !== undefined) return input.dedupeKey
+  return `auto\u0000${input.kind}\u0000${input.title}\u0000${input.body ?? ''}`
+}
+
+/**
  * Push a new toast onto the queue. Returns the assigned id so the caller can
- * dismiss it imperatively if needed — for a `dedupeKey` push that collapsed
- * onto an existing toast, that is the EXISTING id.
+ * dismiss it imperatively if needed — for a push that collapsed onto an
+ * existing toast, that is the EXISTING id.
  */
 export function pushToast(input: ToastInput): string {
-  const existing = input.dedupeKey === undefined
+  const collapseKey = resolveCollapseKey(input)
+  const existing = collapseKey === null
     ? -1
-    : toasts.findIndex((t) => t.dedupeKey === input.dedupeKey)
+    : toasts.findIndex((t) => t.collapseKey === collapseKey)
   if (existing !== -1) {
     const previous = toasts[existing]!
     toasts[existing] = {
@@ -114,12 +150,13 @@ export function pushToast(input: ToastInput): string {
       id: previous.id,
       createdAt: Date.now(),
       repeatCount: previous.repeatCount + 1,
+      collapseKey,
     }
     notify()
     return previous.id
   }
   const id = nextId()
-  toasts.push({ ...input, id, createdAt: Date.now(), repeatCount: 1 })
+  toasts.push({ ...input, id, createdAt: Date.now(), repeatCount: 1, collapseKey })
   notify()
   return id
 }

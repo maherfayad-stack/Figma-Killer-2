@@ -18,8 +18,7 @@ moment, not assumed.
 > the WS-numbered vocabulary that the source, the agent definitions and
 > `docs/agent-refs/handoff-protocol.md` all route by.
 >
-> Still genuinely open here: WS-3.3's `src/modules/alm/` deletion (deliberately
-> deferred — `STATE.md`'s `standing-07`), WS-4.4's package-instance detach,
+> Still genuinely open here: WS-4.4's package-instance detach,
 > WS-8.1's `runScripts` default for freezing JS animation, and WS-5.6's bench,
 > whose budgets are uncalibrated and which has never run.
 
@@ -341,11 +340,13 @@ Generalized `AlmDesignSystemCssInjector` into `ProjectCssInjector`
   regardless of DOM/mount order. Added to the injector table in
   `docs/features/canvas-iframe-per-frame.md`.
 - `ProjectCssInjector` carries TWO sources into the same bucket: the open
-  project's own vendor CSS above, plus `@alm-design/design-system`'s own
-  bundled stylesheet (Studio's OWN dependency, `?inline`-imported at build
-  time — what the single-purpose Alm injector used to inject alone). Kept per
-  `standing-07` until the generic package-component pipeline (WS-3) is proven
-  to render the eSIM board equivalently.
+  project's own vendor CSS above, plus the BUILT-IN design system's bundled
+  stylesheet (Studio's own vendored `vendor/alm-design-system/dist/index.css`,
+  `?inline`-imported at build time — what the single-purpose Alm injector used
+  to inject alone). **Superseded:** WS-3.3's "delete `src/modules/alm/`" is
+  closed by `STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md` — the pack is Studio's own
+  built-in design system now, not a carve-out for one npm, and the generic
+  `pkg.*` pipeline serves genuinely third-party packages.
 
 #### 2.4 Computed `className` — close the biggest fidelity hole
 

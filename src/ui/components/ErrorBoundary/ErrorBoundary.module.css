@@ -1,37 +1,30 @@
-/* ── Fallback panel ──────────────────────────────────────────────────────── */
+/* ── In-place fallback panel ─────────────────────────────────────────────── */
 /*
- * Boundaries in dev mode render a panel that shows the failed location,
- * error chain, component stack, and reset/copy actions. In prod the same
- * panel appears with shortened copy.
+ * Rendered where the crashed subtree was, NOT in a corner of the screen.
+ * It has to survive landing in a 240px inspector section as readily as in a
+ * full route, so it is a single row that wraps: icon, one line of copy, and
+ * the reset action. Nothing here has a min-width or a fixed max-width.
  *
  * Tokens:
- *   - achromatic surface (panel-bg / panel-border)
- *   - --danger* for the leading icon and title accent
- *   - --radius for outer corners (matches button + section radii)
+ *   - --bg-surface-2 so the panel reads as a lifted tile inside whatever
+ *     surface it replaced
+ *   - --danger* for the leading icon and the left edge (state, not decoration)
+ *   - --radius, matching the default editor control radius
  */
 
 .fallback {
     box-sizing: border-box;
     display: flex;
-    flex-direction: column;
-    gap: var(--space-l);
-    padding: var(--space-2xl) var(--space-3xl);
-    background: var(--bg-surface);
-    border: 1px solid var(--overlay-10);
-    border-left: 3px solid var(--danger);
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: var(--space-s) var(--space-m);
+    padding: var(--space-m) var(--space-l);
+    background: var(--bg-surface-2);
+    border-left: 2px solid var(--danger);
     border-radius: var(--radius);
     color: var(--text);
     font-size: var(--text-s);
     line-height: 1.4;
-    max-width: 720px;
-    margin: var(--space-2xl) auto;
-    overflow: hidden;
-}
-
-.head {
-    display: flex;
-    gap: var(--space-m);
-    align-items: flex-start;
 }
 
 .icon {
@@ -39,56 +32,53 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 20px;
-    height: 20px;
+    width: 16px;
+    height: 16px;
+    margin-top: var(--space-px);
     color: var(--danger-light);
 }
 
-.headText {
-    flex: 1 1 auto;
+.content {
+    flex: 1 1 200px;
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: var(--space-3xs);
-}
-
-.title {
-    margin: 0;
-    color: var(--text-bright);
-    font-size: var(--text-l);
-    font-weight: 600;
-    line-height: 1.3;
+    gap: var(--space-2xs);
 }
 
 .message {
     margin: 0;
-    color: var(--text-muted);
+    color: var(--text-bright);
     font-size: var(--text-s);
     line-height: 1.45;
     overflow-wrap: anywhere;
 }
 
-.message code {
-    font-family:
-        ui-monospace,
-        SFMono-Regular,
-        SF Mono,
-        Menlo,
-        Consolas,
-        "Liberation Mono",
-        monospace;
+/* ── Dev disclosure: cause chain + component stack ───────────────────────── */
+/*
+ * Collapsed by default so the panel stays one line tall at rest — the whole
+ * point of rendering in place is that the surrounding layout barely moves.
+ */
+
+.details {
+    color: var(--text-muted);
     font-size: var(--text-xs);
-    color: var(--text-bright);
-    padding: var(--space-px) var(--space-3xs);
-    background: var(--bg-surface);
-    border-radius: var(--radius-sm);
 }
 
-/* ── Cause chain ─────────────────────────────────────────────────────────── */
+.details summary {
+    cursor: pointer;
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.details summary:focus-visible {
+    outline: 2px solid var(--overlay);
+    outline-offset: 2px;
+}
 
 .causeChain {
-    margin: 0;
-    padding-left: var(--space-3xl);
+    margin: var(--space-2xs) 0 0;
+    padding-left: var(--space-xl);
     color: var(--text-muted);
     font-size: var(--text-xs);
     line-height: 1.45;
@@ -111,30 +101,8 @@
     color: var(--text);
 }
 
-/* ── Component stack ─────────────────────────────────────────────────────── */
-
-.details {
-    background: var(--bg-surface);
-    border: 1px solid var(--border);
-    border-radius: var(--radius-sm);
-    padding: var(--space-s) var(--space-m);
-    color: var(--text-muted);
-    font-size: var(--text-xs);
-}
-
-.details summary {
-    cursor: pointer;
-    color: var(--text);
-    font-weight: 500;
-}
-
-.details summary:focus-visible {
-    outline: 2px solid var(--overlay);
-    outline-offset: 2px;
-}
-
 .stack {
-    margin: var(--space-s) 0 0;
+    margin: var(--space-2xs) 0 0;
     padding: var(--space-s);
     background: var(--bg-body);
     border-radius: var(--radius-sm);
@@ -157,7 +125,8 @@
 /* ── Actions ─────────────────────────────────────────────────────────────── */
 
 .actions {
+    flex: 0 0 auto;
     display: inline-flex;
     align-items: center;
-    gap: var(--space-s);
+    gap: var(--space-3xs);
 }

@@ -8,23 +8,37 @@
  * one session can leave the previous project's page tree on screen under the
  * new project's path (the same trap `DashboardPage.openProject` documents).
  */
-import { afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
+import { afterAll, afterEach, describe, expect, it, mock, spyOn } from 'bun:test'
 import type { CommandContext, CommandRunContext } from '../types'
 
 const reloadCalls: string[] = []
 const workspaceDirCalls: string[] = []
 
-const adminEvents = await import('@admin/state/adminEvents')
+// `mock.module` is PROCESS-WIDE and PERMANENT — `mock.restore()` below does
+// NOT undo it, and `bun test --parallel=4` gives each worker a process, not a
+// file. Without the `afterAll` restore, every later file in this worker got
+// this file's no-op `requestCmsSiteReload`, so a real save never dispatched
+// `CMS_SITE_RELOAD_EVENT` and eight assertions in `studioSaveRequests` /
+// `saveNarrowResync` / `fsCodemodAdapter` counted zero reloads. All of them
+// passed on their own. Snapshot the real namespaces as plain objects first
+// (the namespace object itself is live and gets rewritten by `mock.module`).
+// Gated by `mock-module-must-restore.test.ts`.
+const adminEvents = { ...(await import('@admin/state/adminEvents')) }
 mock.module('@admin/state/adminEvents', () => ({
   ...adminEvents,
   requestCmsSiteReload: () => reloadCalls.push('reload'),
 }))
 
-const workspaceDir = await import('@site/studio/studioWorkspaceDir')
+const workspaceDir = { ...(await import('@site/studio/studioWorkspaceDir')) }
 mock.module('@site/studio/studioWorkspaceDir', () => ({
   ...workspaceDir,
   setStudioWorkspaceDir: (dir: string) => workspaceDirCalls.push(dir),
 }))
+
+afterAll(() => {
+  mock.module('@admin/state/adminEvents', () => adminEvents)
+  mock.module('@site/studio/studioWorkspaceDir', () => workspaceDir)
+})
 
 const { projectsProvider } = await import('../providers/projectsProvider')
 

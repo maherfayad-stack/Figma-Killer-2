@@ -8,11 +8,13 @@
  *
  * Multi-document support
  * ──────────────────────
- * Each breakpoint frame in the canvas is its own iframe, with its own document.
- * `IframeFrameSurface` mounts one of these injectors per frame, targeting the
- * iframe's document. When no `targetDocument` prop is passed, the injector
- * falls back to the editor's main document — used by code paths that aren't
- * inside an iframe (none right now, but kept as a safe default).
+ * Each breakpoint frame in the canvas is its own iframe, with its own
+ * document. `IframeFrameSurface` mounts one of these injectors per frame;
+ * this component reads the frame's `FrameDocumentAdapter` from
+ * `CanvasFrameAdapterContext` rather than a `Document` prop, so it works
+ * unchanged whether the frame's DOM is a same-origin portal or a future
+ * cross-origin bridge (`live-05`, STATE.md). A `null` adapter (no context
+ * provider above this component) is a no-op.
  *
  * Architecture:
  * - One <style> tag per target document, kept in sync on every class
@@ -59,12 +61,13 @@
  * doesn't).
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { styleRuleSelector, type ConditionDef, type StyleRule } from '@core/page-tree'
 import { collectBackgroundImagePaths } from '@core/publisher'
 import { useResponsiveEditorMediaAssets } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { selectorStatePseudo } from '@site/cssStatePseudo'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
 import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
@@ -72,12 +75,6 @@ import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
 import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
 
 interface ClassStyleInjectorProps {
-  /**
-   * Document to inject the <style> tag into. Defaults to the editor's main
-   * document. Pass an iframe's `contentDocument` to scope the injection to
-   * a single breakpoint frame.
-   */
-  targetDocument?: Document
   /**
    * Frame viewport used to resolve CSS viewport units (`vh`/`vw`/…) in class
    * styles to fixed px so they don't feed the iframe's grow-to-content height
@@ -113,7 +110,8 @@ const EMPTY_CONDITIONS: ConditionDef[] = []
  */
 const EMPTY_STYLE_RULES: Record<string, StyleRule> = {}
 
-export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjectorProps = {}) {
+export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
+  const adapter = useContext(CanvasFrameAdapterContext)
   // Subscribe to class registry — shallow equality so we only re-run when
   // the classes object reference changes (Mutative always creates a new ref on mutation)
   const classes = useEditorStore((s) => s.site?.styleRules ?? null)
@@ -137,15 +135,7 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
   } = useResponsiveEditorMediaAssets(backgroundPaths)
 
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
-    // Get or create the <style> element inside the target document.
-    let styleEl = targetDoc.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = targetDoc.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'ClassStyleInjector')
-      targetDoc.head.appendChild(styleEl)
-    }
+    if (!adapter) return
 
     // Pin viewport units to the frame viewport (canvas-only) so class styles
     // using `vh`/`vmax`/… don't feed the iframe's grow-to-content height loop.
@@ -175,11 +165,14 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     // browser renders, which is exactly the "did I actually style this" case
     // a user is most likely to be checking.
     const css = rewritePrefersColorScheme(forCanvas(generated))
-    styleEl.textContent = css
-      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n/* no classes */`
+    adapter.applyOverlay(
+      STYLE_TAG_ID,
+      css
+        ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+        : `${CANVAS_CSS_LAYER_ORDER}\n/* no classes */`,
+    )
   }, [
-    targetDocument,
+    adapter,
     viewport,
     classes,
     breakpoints,
@@ -198,23 +191,16 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
   // dropdown). Lives in its own <style> tag so it can be toggled cleanly
   // without re-running the main class-CSS generation.
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
-    let previewEl = targetDoc.getElementById(PREVIEW_STYLE_TAG_ID) as HTMLStyleElement | null
+    if (!adapter) return
     if (!previewClassStyles) {
-      if (previewEl) previewEl.textContent = ''
+      adapter.applyOverlay(PREVIEW_STYLE_TAG_ID, '')
       return
-    }
-    if (!previewEl) {
-      previewEl = targetDoc.createElement('style')
-      previewEl.id = PREVIEW_STYLE_TAG_ID
-      previewEl.setAttribute('data-source', 'ClassStyleInjector:preview')
-      targetDoc.head.appendChild(previewEl)
     }
     const cls = classes?.[previewClassStyles.classId]
     // State-pseudo rules are handled by the forced-state preview below — their
     // real `:hover`-style selector would never match here anyway.
     if (!cls || (cls.kind === 'ambient' && selectorStatePseudo(styleRuleSelector(cls)) !== null)) {
-      previewEl.textContent = ''
+      adapter.applyOverlay(PREVIEW_STYLE_TAG_ID, '')
       return
     }
     const previewCss = generatePreviewClassCSS(cls, {
@@ -229,10 +215,11 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     // need to repeat CANVAS_CSS_LAYER_ORDER here — the main effect above
     // always runs first (same component, earlier useEffect) and already
     // declares it.
-    previewEl.textContent = resolvedPreviewCss
-      ? `@layer ${USER_AUTHORED_LAYER} {\n${resolvedPreviewCss}\n}`
-      : ''
-  }, [targetDocument, viewport, classes, previewClassStyles, responsiveMediaAssets])
+    adapter.applyOverlay(
+      PREVIEW_STYLE_TAG_ID,
+      resolvedPreviewCss ? `@layer ${USER_AUTHORED_LAYER} {\n${resolvedPreviewCss}\n}` : '',
+    )
+  }, [adapter, viewport, classes, previewClassStyles, responsiveMediaAssets])
 
   // Forced state preview — when a state-pseudo selector (`.btn:hover`, …) is the
   // active selector, paint its declarations onto the selected node so the state
@@ -241,20 +228,13 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
   // non-state ambients already match directly. In-flight edits to the same rule
   // are overlaid so dragging a control updates the preview live.
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
-    let forceEl = targetDoc.getElementById(FORCE_STATE_STYLE_TAG_ID) as HTMLStyleElement | null
+    if (!adapter) return
     const rule = activeClassId ? classes?.[activeClassId] : null
     const isStateRule = !!rule && rule.kind === 'ambient' && selectorStatePseudo(styleRuleSelector(rule)) !== null
 
     if (!rule || !isStateRule || !selectedNodeId) {
-      if (forceEl) forceEl.textContent = ''
+      adapter.applyOverlay(FORCE_STATE_STYLE_TAG_ID, '')
       return
-    }
-    if (!forceEl) {
-      forceEl = targetDoc.createElement('style')
-      forceEl.id = FORCE_STATE_STYLE_TAG_ID
-      forceEl.setAttribute('data-source', 'ClassStyleInjector:force-state')
-      targetDoc.head.appendChild(forceEl)
     }
 
     // Overlay an in-flight edit to the same rule into the context it targets so
@@ -273,9 +253,9 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     const resolved = rewritePrefersColorScheme(
       viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss,
     )
-    forceEl.textContent = resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : ''
+    adapter.applyOverlay(FORCE_STATE_STYLE_TAG_ID, resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : '')
   }, [
-    targetDocument,
+    adapter,
     viewport,
     classes,
     breakpoints,
@@ -286,17 +266,15 @@ export function ClassStyleInjector({ targetDocument, viewport }: ClassStyleInjec
     responsiveMediaAssets,
   ])
 
-  // Cleanup: remove the style elements when the component unmounts. We
-  // capture `targetDocument` into the effect so cleanup targets the same
-  // document the effect installed to, even if the prop later changed.
+  // Cleanup: remove the overlays when the component unmounts or the adapter
+  // instance changes (a fresh frame document).
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
     return () => {
-      targetDoc.getElementById(STYLE_TAG_ID)?.remove()
-      targetDoc.getElementById(PREVIEW_STYLE_TAG_ID)?.remove()
-      targetDoc.getElementById(FORCE_STATE_STYLE_TAG_ID)?.remove()
+      adapter?.removeOverlay(STYLE_TAG_ID)
+      adapter?.removeOverlay(PREVIEW_STYLE_TAG_ID)
+      adapter?.removeOverlay(FORCE_STATE_STYLE_TAG_ID)
     }
-  }, [targetDocument])
+  }, [adapter])
 
   return null
 }

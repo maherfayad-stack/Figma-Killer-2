@@ -6,6 +6,13 @@ import type { AnyModuleDefinition } from '@core/module-engine'
 interface InsertModuleOptions {
   preservePropertiesPanelCollapse?: boolean
   defaults?: Record<string, unknown>
+  /**
+   * React-style inline styles (`{ borderRadius: '50%' }`) written onto the new
+   * node as part of the insert itself — see `insertNode`'s own doc for why
+   * this cannot be a follow-up `setNodeInlineStyles` call on a studio tree.
+   * `K4`'s `O` (ellipse) is the caller.
+   */
+  inlineStyles?: Record<string, string>
 }
 
 /**
@@ -51,7 +58,13 @@ export function useInsertModule() {
           )
     if (!location) return null
 
-    const nodeId = insertNode(mod.id, options.defaults ?? mod.defaults, location.parentId, location.index)
+    const nodeId = insertNode(
+      mod.id,
+      options.defaults ?? mod.defaults,
+      location.parentId,
+      location.index,
+      options.inlineStyles,
+    )
     // The store refuses invariant-breaking inserts (e.g. a second base.outlet)
     // and surfaces its own toast — an empty id means nothing was inserted.
     if (!nodeId) return null

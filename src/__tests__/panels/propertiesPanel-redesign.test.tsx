@@ -149,32 +149,27 @@ describe('PP-2 — ClassPicker visible immediately on element selection', () => 
 // PP-3: Pill click opens minimal StyleRuleComposer; clicking again closes it
 // ---------------------------------------------------------------------------
 
-describe('PP-3 — Pill click toggles CSS editor; locked preview shown with no active class', () => {
-  it('before class selection the locked preview CTA is shown; clicking a pill opens the CSS editor; clicking again returns to locked preview', () => {
-    const { nodeId } = loadSiteWithClasses(1)
+// Track P / `panel-21`: the write target is a rule, not a mode — there is
+// no more "pick a class to open its editor" gesture. A class assigned to
+// the node is immediately editable through the merged composer the moment
+// it's assigned, with no pill click and no locked-preview teaser in between.
+describe('PP-3 — an assigned, writable class is immediately editable, no pill click', () => {
+  it('the style sections render as soon as a class is assigned — no "Add class" teaser', () => {
+    const { nodeId, classIds } = loadSiteWithClasses(1)
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    // No active class — LockedStylePreview is shown with its "Add class" CTA.
-    // The style search bar is bound to the active class, so it's hidden in
-    // the no-class state (nothing to search).
-    expect(screen.getByRole('button', { name: /^add class$/i })).toBeDefined()
-    expect(screen.queryByRole('searchbox', { name: /search class style properties to add/i })).toBeNull()
+    // The class is already assigned by `loadSiteWithClasses` — the merged
+    // composer is live immediately, no gesture required. Sections are wrapped
+    // in `data-section-id` (P3, `STATE.md` `panel-25`) — `StyleSurface.tsx`'s
+    // old `data-style-section` wrapper only survives for the Module block now.
+    expect(screen.queryByText(/add a class to start styling this element/i)).toBeNull()
+    expect(document.querySelector('[data-section-id="layout"]')).not.toBeNull()
 
-    // Click the pill to activate the class CSS editor.
-    const pill = screen.getByRole('button', { name: /edit class \.class-1/i })
-    fireEvent.click(pill)
-
-    // CSS editor active — locked preview CTA gone, CSS property rows accessible,
-    // and the style search bar is now visible (scoped to the active class).
-    expect(screen.queryByRole('button', { name: /^add class$/i })).toBeNull()
-    expect(screen.getByRole('searchbox', { name: /search class style properties to add/i })).toBeDefined()
-
-    // Click again to deselect — locked preview returns and the search bar
-    // disappears with it.
-    fireEvent.click(pill)
-    expect(screen.getByRole('button', { name: /^add class$/i })).toBeDefined()
-    expect(screen.queryByRole('searchbox', { name: /search class style properties to add/i })).toBeNull()
+    // The write-target facts ride ClassPicker's own pills now (panel-41) —
+    // there is no second, read-only chip row inside the scroll container.
+    expect(screen.queryByTestId('write-target-row')).toBeNull()
+    expect(screen.getByTestId(`write-target-chip-${classIds[0]}`).textContent).toContain('.class-1')
   })
 })
 
@@ -206,32 +201,15 @@ describe('SelectorHeader delete action', () => {
   })
 })
 
+// Track P / `panel-21` deleted the sticky search bar AND `StyleCategoryRail`
+// outright (`STUDIO-LIVE-CANVAS-PLAN.md` §P1: "chrome that costs a click or
+// a glance and buys nothing"). The three tests this block used to hold
+// exercised exactly that chrome (a searchbox with the accessible name
+// "Search class style properties to add…", and rail buttons like "Show
+// typography styles") — both are gone from `StyleSurface.tsx` by design, so
+// there is nothing left here to assert. The one still-relevant fact (no
+// bespoke autocomplete CSS survives) stays as a static gate.
 describe('StyleRuleComposer inline style filtering', () => {
-  it('filters the inline style catalog without opening an autocomplete menu', () => {
-    const { nodeId } = loadSiteWithClasses(1)
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-    fireEvent.change(screen.getByRole('searchbox', { name: /search class style properties to add/i }), {
-      target: { value: 'color' },
-    })
-
-    // Fill is a LIST now (G6), so it does not pre-draw an unset row for a
-    // search to match — and since W8-1 finished G9, `color` is one of its
-    // entries too (a text node's colour is its fill). Searching "color"
-    // therefore surfaces the section's own add actions rather than two
-    // resident rows; the properties stay reachable, which is what this test is
-    // really about.
-    expect(document.querySelector('[data-testid="css-property-row-color"]')).toBeNull()
-    expect(screen.getByRole('button', { name: /add text colour/i })).toBeDefined()
-    expect(screen.getByRole('button', { name: /add solid color fill/i })).toBeDefined()
-    expect(document.querySelector('[data-testid="css-property-row-display"]')).toBeNull()
-    expect(screen.queryByRole('menu', { name: /available style properties/i })).toBeNull()
-    expect(screen.queryByRole('listbox', { name: /available style properties/i })).toBeNull()
-    expect(screen.queryByRole('option')).toBeNull()
-  })
-
   it('does not keep bespoke autocomplete result styles in StyleRuleComposer.module.css', () => {
     const css = readFileSync(join(PP_DIR, 'StyleRuleComposer.module.css'), 'utf-8')
 
@@ -242,54 +220,13 @@ describe('StyleRuleComposer inline style filtering', () => {
     expect(css).not.toMatch(/\.searchResultsEmpty\b/)
   })
 
-  it('category rail buttons navigate via scroll-anchor (all sections stay in DOM)', () => {
+  it('does not render a search bar or a category rail anymore (Track P / P1)', () => {
     const { nodeId } = loadSiteWithClasses(1)
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    // Layout is one of Figma's always-present blocks — its DisplaySwitcher
-    // renders even for an empty class.
-    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
-
-    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — for an empty class it
-    // starts as a single header line; reveal it via "+" before asserting the
-    // fontFamily row exists.
-    fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-
-    const typographyButton = screen.getByRole('button', { name: /show typography styles/i })
-    fireEvent.click(typographyButton)
-
-    // Typography button is pressed (scroll-anchor active); both sections still in DOM.
-    expect(typographyButton.getAttribute('aria-pressed')).toBe('true')
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-    // Scroll-anchor: clicking a section scrolls to it, does NOT hide other sections.
-    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
-  })
-
-  it('search filters across all categories regardless of which rail button was last clicked', () => {
-    const { nodeId } = loadSiteWithClasses(1)
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-    // Click typography rail button (scroll-anchor: does NOT remove other sections from DOM).
-    fireEvent.click(screen.getByRole('button', { name: /show typography styles/i }))
-
-    // All sections still present after clicking a rail button in scroll-anchor mode.
-    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
-
-    // Search for 'fontFamily' — only typography rows match. The layout
-    // section, which is not specially filtered by query inside LayoutSection,
-    // collapses to nothing because none of its property keys match.
-    fireEvent.change(screen.getByRole('searchbox', { name: /search class style properties to add/i }), {
-      target: { value: 'fontFamily' },
-    })
-
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-color"]')).toBeNull()
+    expect(screen.queryByRole('searchbox', { name: /search class style properties to add/i })).toBeNull()
+    expect(document.querySelector('[data-testid="style-category-rail"]')).toBeNull()
   })
 })
 
@@ -350,12 +287,16 @@ describe('ClassPicker — suggestion hover preview', () => {
 // ---------------------------------------------------------------------------
 
 describe('PP-4 — Module Section default open with controls', () => {
-  it('Module section titled with definition.name is present and open by default', () => {
+  it('Module section titled with definition.name is present and always open (P2 rule 2 — no accordion)', () => {
     const { nodeId } = loadSiteWithHeading()
     selectNode(nodeId)
     render(<PropertiesPanel />)
-    // "Text" is the definition.name for base.text
-    expect(screen.getByRole('button', { name: /module settings.*text/i })).toBeDefined()
+    // "Text" is the definition.name for base.text. The module header is a
+    // fixed block now (Track P / P1 removed the module-settings accordion),
+    // not a toggle button — see `StyleSurface.tsx`'s `.moduleHeader`.
+    const moduleSection = document.querySelector('[data-style-section="module"]')
+    expect(moduleSection?.textContent).toContain('Text')
+    expect(screen.queryByRole('button', { name: /module settings.*text/i })).toBeNull()
   })
 
   it('Property controls are visible without interaction (module section default open)', () => {
@@ -397,13 +338,14 @@ describe("PP-6 — StyleSurface used by PropertiesPanel; Section shared in Style
     expect(src).toMatch(/import.*StyleSurface.*from\s+['"]\.\/StyleSurface['"]/)
   })
 
-  it('StyleSectionsEditor.tsx imports Section from the shared @ui/components/Section primitive', () => {
-    // Section moved from StyleRuleComposer into StyleSectionsEditor when inline-styles
-    // refactoring (commit ee346c41) extracted the style-section rendering into a
-    // shared target-agnostic renderer used by both StyleRuleComposer and InlineStyleComposer.
-    const src = readFileSync(join(PP_DIR, 'StyleSectionsEditor.tsx'), 'utf-8')
-    expect(src).toMatch(/import\s*\{\s*Section\s*\}\s*from\s+['"]@ui\/components\/Section['"]/)
-  })
+  // The `StyleSectionsEditor.tsx` half of this describe block ("imports
+  // Section from the shared primitive") is deleted: that file no longer
+  // exists (`STATE.md` `panel-25`, P3 item 11 — Studio extras is complete,
+  // and `StyleSectionsEditor.tsx` was the last file rendering the legacy
+  // curated-section registry). Every `INSPECTOR_SECTIONS` manifest entry now
+  // imports `Section` from `@ui/components/Section` directly and
+  // independently — there is no longer one shared renderer to assert this
+  // fact about in one place.
 })
 
 // ---------------------------------------------------------------------------
@@ -616,10 +558,9 @@ describe('PP-11 — Editing a text-type class property via TextControl updates c
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
     expect(screen.queryByRole('combobox', { name: /class style breakpoint/i })).toBeNull()
-    expect(screen.getByRole('searchbox', { name: /search class style properties to add/i })).toBeDefined()
+    // The style sections are live without any pill click — see PP-3.
+    expect(document.querySelector('[data-section-id="layout"]')).not.toBeNull()
   })
 })
 
@@ -630,6 +571,12 @@ describe('StyleRuleComposer unset CSS property placeholders', () => {
     render(<PropertiesPanel />)
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
+
+    // panel-39 — Layout is a collapsed disclosure until a layout exists, and
+    // this fixture's class sets no `display` at all. The mode row is one
+    // click behind the header, not gone; opening it here is what the user
+    // does, and `layoutSection.test.tsx` owns the "collapsed at rest" fact.
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
 
     const modeRow = document.querySelector('[data-testid="css-layout-mode-row"]')
     expect(modeRow).not.toBeNull()
@@ -648,42 +595,16 @@ describe('StyleRuleComposer unset CSS property placeholders', () => {
     expect(useEditorStore.getState().site!.styleRules[useEditorStore.getState().activeClassId!].styles.display).toBeUndefined()
   })
 
-  it('renders unset text defaults as placeholders, not input values', () => {
-    const { nodeId, classIds } = loadSiteWithClasses(1)
-    const clsId = classIds[0]
-    // Set display to flex so the GapInput is revealed inside the flex
-    // block. Gap is a container-only property and lives in the visual
-    // flex/grid blocks rather than the fallback rows.
-    useEditorStore.getState().updateClassStyles(clsId, { display: 'flex' })
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    const gapInput = screen.getByLabelText('Gap') as HTMLInputElement
-    expect(gapInput.value).toBe('')
-    expect(gapInput.placeholder).toBe('0px')
-    expect(useEditorStore.getState().site!.styleRules[clsId].styles.gap).toBeUndefined()
-  })
-
-  it('renders stored CSS declarations as actual control values', () => {
-    const { nodeId, classIds } = loadSiteWithClasses(1)
-    const clsId = classIds[0]
-    useEditorStore.getState().updateClassStyles(clsId, { display: 'flex', gap: '32px' })
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    // The Flex segment of the SegmentedControl is pressed when display: flex
-    // is stored on the class.
-    const flexSegment = screen.getByRole('button', { name: /^horizontal stack$/i })
-    expect(flexSegment.getAttribute('aria-pressed')).toBe('true')
-
-    // Gap renders inside the flex block via the GapInput primitive (token-aware).
-    const gapInput = screen.getByLabelText('Gap') as HTMLInputElement
-    expect(gapInput.value).toBe('32px')
-  })
+  // The two tests this block used to hold here ("renders unset text defaults
+  // as placeholders" / "renders stored CSS declarations as actual control
+  // values") both drove the single `gap`-shorthand `GapInput` — deleted in P3
+  // (`STATE.md` `panel-25`, item 4). `GapRow.tsx` replaced it with a
+  // `rowGap`/`columnGap` split (`aria-label="Row gap"`/`"Column gap"`, no
+  // combined "Gap" field exists anymore); the placeholder/value-round-trip
+  // behaviour they pinned is generic `ScrubTokenField` behaviour, covered by
+  // `scrubTokenField.test.tsx`, and the row/column write path itself is
+  // covered by `inspector/sections/__tests__/layoutSection.test.tsx`'s own
+  // "Row gap / Column gap" describe block.
 })
 
 describe('LayoutSection — clear via active segment X', () => {
@@ -702,8 +623,12 @@ describe('LayoutSection — clear via active segment X', () => {
     fireEvent.click(flexSegment)
 
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
-    // After clearing, the row falls back to "No auto layout" — pressed, because
-    // that is now a real mode rather than an empty state.
+    // panel-39 — clearing the layout folds the section back to its one-row
+    // rest state, exactly as Figma's `−` on Auto layout does. The mode row is
+    // behind the header's chevron now, and the header offers `+` again.
+    expect(screen.queryByTestId('css-layout-mode-row')).toBeNull()
+    expect(screen.getByTestId('inspector-layout-add')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
@@ -727,12 +652,16 @@ describe('LayoutSection — clear via active segment X', () => {
     // otherwise the inherited base value would bleed through and the segment
     // would stay pressed (Job #1342 followup).
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
+    // …and the section folds back to one row (panel-39) — its body, including
+    // the four mode buttons, is one click behind the header again.
+    expect(screen.queryByTestId('css-layout-mode-row')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
-  it('clicking the active flex direction icon clears flexDirection', () => {
+  it('the reverse toggle flips the CURRENT axis — there is no second direction picker', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
     useEditorStore.getState().updateClassStyles(clsId, { display: 'flex', flexDirection: 'column' })
@@ -741,12 +670,15 @@ describe('LayoutSection — clear via active segment X', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    const columnSegment = screen.getByRole('button', { name: /^column$/i })
-    expect(columnSegment.getAttribute('aria-pressed')).toBe('true')
+    // The row/column choice lives in the mode row alone now (P9).
+    expect(screen.queryByRole('button', { name: /^column$/i })).toBeNull()
 
-    fireEvent.click(columnSegment)
+    const reverse = screen.getByTestId('css-layout-reverse-toggle')
+    expect(reverse.getAttribute('aria-pressed')).toBe('false')
 
-    expect(useEditorStore.getState().site!.styleRules[clsId].styles.flexDirection).toBeUndefined()
+    fireEvent.click(reverse)
+
+    expect(useEditorStore.getState().site!.styleRules[clsId].styles.flexDirection).toBe('column-reverse')
   })
 })
 
@@ -847,24 +779,20 @@ describe('LayoutSection — grid block', () => {
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.gridTemplateColumns).toBeUndefined()
   })
 
-  it('hides gridTemplateColumns / gridTemplateRows / justifyItems fallback rows when display is grid', () => {
-    const { nodeId, classIds } = loadSiteWithClasses(1)
-    const clsId = classIds[0]
-    useEditorStore.getState().updateClassStyles(clsId, { display: 'grid' })
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    // Generic ClassPropertyRow rows for the grid-owned properties are
-    // suppressed; the visual GridBlock owns those controls instead.
-    expect(document.querySelector('[data-testid="css-property-row-gridTemplateColumns"]')).toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-gridTemplateRows"]')).toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-justifyItems"]')).toBeNull()
-    // Gap is owned by the GridBlock's GapInput (TokenAwareInput) and lives
-    // inside the visual block, not as a fallback row.
-    expect(screen.getByLabelText('Gap')).toBeDefined()
-  })
+  // The old "hides gridTemplateColumns / gridTemplateRows / justifyItems
+  // fallback rows when display is grid" and "reveals the GapInput once
+  // display becomes flex" tests are deleted. Both premises are gone, not
+  // relocated: `gridTemplateColumns`/`gridTemplateRows`/`justifyItems` are
+  // curated properties (`classStyleSections.ts`'s `MIGRATED_SECTION_
+  // PROPERTIES`) rendered ONLY by `GridTrackControl`/`AlignGrid` inside
+  // `LayoutSection`'s `isGrid` branch — there is no longer a generic
+  // `ClassPropertyRow` fallback for them to conditionally suppress under ANY
+  // display value (see the passing "does not render the grid block when
+  // display is flex" test above for that on/off fact). The single `gap`
+  // shorthand `GapInput` these two tests also drove is gone — `GapRow.tsx`
+  // (P3, `STATE.md` `panel-25`, item 4) replaced it with a resident
+  // `rowGap`/`columnGap` split mounted directly inside the flex/grid block,
+  // not behind the layout settings popover.
 
   it('hides gap / rowGap / columnGap rows when display is not flex or grid', () => {
     const { nodeId } = loadSiteWithClasses(1)
@@ -872,38 +800,25 @@ describe('LayoutSection — grid block', () => {
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    // Default display (unset) → no gap controls at all (fallback is gone,
-    // visual block isn't rendered yet).
-    expect(screen.queryByLabelText('Gap')).toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-columnGap"]')).toBeNull()
-    // Item-level properties (gridColumn / gridRow / alignSelf / flex) remain
-    // REACHABLE with no display set — they depend on the PARENT's display,
-    // which we cannot observe from a class-style editor. G3 moved them into
-    // the layout settings popover, whose trigger is deliberately resident for
-    // exactly this reason; it must not be nested inside the flex/grid block.
-    expect(document.querySelector('[data-testid="css-property-row-alignSelf"]')).toBeNull()
+    // Default display (unset) → Layout is folded to one row (panel-39), so
+    // open it; the point of this test is the gap rows being absent from the
+    // BODY, not the body being absent.
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
+
+    // No gap controls at all (`GapRow` only mounts inside the flex/grid
+    // block).
+    expect(screen.queryByTestId('css-row-gap-input')).toBeNull()
+    expect(screen.queryByTestId('css-column-gap-input')).toBeNull()
+    // Item-level properties (gridColumn / gridRow / flex) remain REACHABLE
+    // with no display set — they depend on the PARENT's display, which we
+    // cannot observe from a class-style editor. They live in the layout
+    // settings popover, whose trigger is deliberately resident for exactly
+    // this reason. `alignSelf`/`justifySelf` are NOT among them — Align
+    // (`STATE.md` `panel-25`, item 2) owns them exclusively now; see
+    // `inspector/sections/__tests__/layoutSection.test.tsx`'s own "does NOT
+    // expose alignSelf/justifySelf — AlignSection owns them exclusively".
     fireEvent.click(screen.getByTestId('layout-settings-trigger'))
-    expect(document.querySelector('[data-testid="css-property-row-alignSelf"]')).not.toBeNull()
     expect(document.querySelector('[data-testid="css-property-row-gridColumn"]')).not.toBeNull()
-  })
-
-  it('reveals the GapInput once display becomes flex', () => {
-    const { nodeId, classIds } = loadSiteWithClasses(1)
-    const clsId = classIds[0]
-    useEditorStore.getState().updateClassStyles(clsId, { display: 'flex' })
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    // Gap is now inside the flex block (token-aware input), not a fallback row.
-    expect(screen.getByLabelText('Gap')).toBeDefined()
-    // The split-axis rowGap / columnGap are container-only and live in the
-    // layout settings popover — one click, not a resident row.
-    expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).toBeNull()
-    fireEvent.click(screen.getByTestId('layout-settings-trigger'))
-    expect(document.querySelector('[data-testid="css-property-row-rowGap"]')).not.toBeNull()
-    expect(document.querySelector('[data-testid="css-property-row-columnGap"]')).not.toBeNull()
   })
 })
 
@@ -995,7 +910,7 @@ describe('LayoutSection — position block', () => {
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.top).toBe('12px')
   })
 
-  it('G10/F29: absolute position renders the constraint side-pickers instead of the 4-direction grid', () => {
+  it('G10/F29: absolute position renders the per-axis constraint dropdowns instead of the 4-direction grid', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
     useEditorStore.getState().updateClassStyles(clsId, { position: 'absolute', left: '10px' })
@@ -1004,8 +919,8 @@ describe('LayoutSection — position block', () => {
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
     expect(document.querySelector('[data-testid="css-direction-input-top"]')).toBeNull()
-    expect(screen.getByRole('combobox', { name: 'X anchor side' })).toBeTruthy()
-    expect(screen.getByRole('combobox', { name: 'Y anchor side' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'X constraint' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Y constraint' })).toBeTruthy()
     expect(screen.getByRole('textbox', { name: 'X offset (left)' })).toBeTruthy()
   })
 
@@ -1069,10 +984,11 @@ describe('ClassPropertyRow — token-aware properties', () => {
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — reveal it for this
-    // empty class before reaching for its fontSize row.
-    fireEvent.click(screen.getByRole('button', { name: /add typography/i }))
-
+    // Text (TextSection, P3 item 9) is ALWAYS RESIDENT — it dropped the
+    // `collapsedWhenEmpty` posture the old Typography section inherited, so
+    // the fontSize row is already here with no reveal gesture needed (see
+    // `TextSection.tsx`'s own doc, "makes Text an ALWAYS-RESIDENT section
+    // instead").
     const fontSizeRow = document.querySelector('[data-testid="css-property-row-fontSize"]')
     expect(fontSizeRow).not.toBeNull()
     const fontSizeInput = fontSizeRow?.querySelector('input') as HTMLInputElement
@@ -1112,26 +1028,21 @@ describe('ClassPropertyRow — token-aware properties', () => {
   })
 })
 
+// Track P / P1 deleted `StyleCategoryRail` outright — no more
+// `class-style-category-dot-*` rail icons. The per-CATEGORY section-header
+// indicator dots this block used to assert on (`class-style-section-dot-*`,
+// driven by `classStyleSections.ts`'s `getClassStyleSectionSetCounts`) are
+// ALSO gone: that "N set"/search bookkeeping was the same soon-to-retire
+// machinery P1's own risk table already flagged (`STATE.md` `panel-25`,
+// "Risks" — "the (soon fully retired) search/count machinery"), and P3's own
+// per-section migration finished retiring it — `CLASS_STYLE_SECTIONS` is
+// permanently `[]` (`classStyleSections.ts`'s own doc). None of the 16
+// `INSPECTOR_SECTIONS` entries render a generic per-category "set" dot; the
+// one surviving `indicator`/`indicatorTestId` usage (`ExportSection.tsx`'s
+// `export-section-dot`) is a different, node-level concept ("N ready to
+// export"), not a per-category style-set marker.
 describe('StyleRuleComposer set style indicators', () => {
-  it('marks category rail icons and section headers that contain stored class styles', () => {
-    const { nodeId, classIds } = loadSiteWithClasses(1)
-    const clsId = classIds[0]
-    useEditorStore.getState().updateClassStyles(clsId, { display: 'flex', fontFamily: 'Inter, sans-serif' })
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    expect(screen.getByTestId('class-style-section-dot-layout')).toBeDefined()
-    expect(screen.getByTestId('class-style-section-dot-typography')).toBeDefined()
-    expect(screen.queryByTestId('class-style-section-dot-size')).toBeNull()
-
-    expect(screen.getByTestId('class-style-category-dot-layout')).toBeDefined()
-    expect(screen.getByTestId('class-style-category-dot-typography')).toBeDefined()
-    expect(screen.queryByTestId('class-style-category-dot-size')).toBeNull()
-  })
-
-  it('does not mark inherited base styles as set on breakpoint tabs', () => {
+  it('reflects inherited base styles on breakpoint tabs without re-declaring them', () => {
     const { nodeId, classIds } = loadSiteWithClasses(1)
     const clsId = classIds[0]
     useEditorStore.getState().updateClassStyles(clsId, { display: 'flex' })
@@ -1139,16 +1050,16 @@ describe('StyleRuleComposer set style indicators', () => {
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
-
-    expect(screen.queryByTestId('class-style-section-dot-layout')).toBeNull()
-    expect(screen.queryByTestId('class-style-category-dot-layout')).toBeNull()
-
     // Inherited base style (display: flex) is reflected on the SegmentedControl
     // — the Flex segment is pressed because the inherited cascade resolves to
     // flex on this breakpoint, even though nothing is stored at the mobile tab.
     const flexSegment = screen.getByRole('button', { name: /^horizontal stack$/i })
     expect(flexSegment.getAttribute('aria-pressed')).toBe('true')
+    // Nothing is stored AT this breakpoint — a mobile-tab write would still
+    // land on `contextStyles.mobile`, not silently re-declare the base value.
+    expect(
+      useEditorStore.getState().site!.styleRules[clsId].contextStyles.mobile?.display,
+    ).toBeUndefined()
   })
 })
 
@@ -1187,15 +1098,14 @@ describe('PP-13 — Breakpoint hint inside Module section when non-desktop bp ac
   // dot indicator on the Module section header — only the dot indicator below is
   // still part of the spec.
 
-  it('breakpoint dot indicator appears on Module section header when non-desktop bp active', () => {
+  it('the Module section still renders (as a fixed block, not an accordion) at a non-desktop breakpoint', () => {
     const { nodeId } = loadSiteWithHeading()
     selectNode(nodeId)
     useEditorStore.setState({ activeBreakpointId: 'tablet' } as Parameters<typeof useEditorStore.setState>[0])
     render(<PropertiesPanel />)
 
-    // The Module settings section includes the selected module name and breakpoint indicator.
-    const moduleSection = screen.getByRole('button', { name: /module settings.*text/i })
-    expect(moduleSection).toBeDefined()
+    const moduleSection = document.querySelector('[data-style-section="module"]')
+    expect(moduleSection?.textContent).toContain('Text')
   })
 
   it('no breakpoint hint when desktop bp is active', () => {
@@ -1282,35 +1192,15 @@ describe('HF-1 — Class pill actions are keyboard-reachable (no tabIndex={-1})'
 // HF-2: StyleRuleComposer state isolation — switching class pills resets state
 // ---------------------------------------------------------------------------
 
-describe('HF-2 — Switching class pills resets StyleRuleComposer local state', () => {
-  it('property search resets and updates placeholder after switching classes (no state leak)', () => {
-    const { nodeId } = loadSiteWithClasses(2)
-    selectNode(nodeId)
-    render(<PropertiesPanel />)
-
-    // Activate class-1 — StyleRuleComposer mounts
-    const pill1 = screen.getByRole('button', { name: /edit class \.class-1/i })
-    fireEvent.click(pill1)
-
-    const searchInput1 = screen.getByRole('searchbox', { name: /search class style properties to add/i }) as HTMLInputElement
-    expect(searchInput1.placeholder).toBe('Search styles in .class-1...')
-
-    // Type a query into the local search field.
-    fireEvent.change(searchInput1, { target: { value: 'font' } })
-    expect(searchInput1.value).toBe('font')
-
-    // Switch to class-2 — StyleRuleComposer should remount (key={activeClassId})
-    const pill2 = screen.getByRole('button', { name: /edit class \.class-2/i })
-    fireEvent.click(pill2)
-
-    // class-2's search must be empty and scoped to class-2, NOT leaked from class-1.
-    const searchInput2 = screen.getByRole('searchbox', { name: /search class style properties to add/i }) as HTMLInputElement
-    expect(searchInput2.value).toBe('')
-    expect(searchInput2.placeholder).toBe('Search styles in .class-2...')
-  })
-
-  it('switching to an empty class collapses Typography again with no assigned-style leak', () => {
-    // class-1 gets a fontFamily property; class-2 is empty
+// Track P / `panel-21` merged the old exclusive per-class `StyleRuleComposer`
+// pill-toggle into ONE view over every assigned class at once
+// (`WriteTargetStyleComposer`) — there is no more "switch which class is
+// open" gesture (and no per-class search box to leak between them). What
+// still matters, in the new shape: a value set on ONE class attributes to
+// THAT class only (`stylePropertyProvenance.ts`'s exact-match rule), never
+// bleeding onto a sibling class that sets nothing.
+describe('HF-2 — no cross-class value leak in the merged composer', () => {
+  it('a property set on one assigned class does not leak onto an empty sibling class', () => {
     const { nodeId } = loadSiteWithHeading()
     const storeState = useEditorStore.getState()
     const cls1 = storeState.createClass('class-1-isolation')
@@ -1318,26 +1208,24 @@ describe('HF-2 — Switching class pills resets StyleRuleComposer local state', 
     storeState.addNodeClass(nodeId, cls1.id)
     storeState.addNodeClass(nodeId, cls2.id)
     storeState.updateClassStyles(cls1.id, { fontFamily: 'serif' })
-    // cls2 has no styles
+    // cls2 has no styles of its own.
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    // Open class-1 — Typography has a set value, so it renders open with the
-    // fontFamily CSS property row visible.
-    const pill1 = screen.getByRole('button', { name: /edit class \.class-1-isolation/i })
-    fireEvent.click(pill1)
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
+    // Both classes are visible together now — the single, honestly-
+    // attributed fontFamily row shows class-1's value.
+    const row = document.querySelector('[data-testid="css-property-row-fontFamily"]')
+    expect(row).not.toBeNull()
+    expect((row?.querySelector('input') as HTMLInputElement | null)?.value).toBe('serif')
 
-    // Switch to class-2 — Typography is `collapsedWhenEmpty` (Law 1 / G1) and
-    // class-2 has nothing set, so it collapses back to its "+" header: no
-    // fontFamily row at all, which is the strongest guarantee that class-1's
-    // value isn't leaking into it. The always-present sections (Position,
-    // via zIndex's generic row) still render their rows.
-    const pill2 = screen.getByRole('button', { name: /edit class \.class-2-isolation/i })
-    fireEvent.click(pill2)
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
-    expect(screen.queryByDisplayValue('serif')).toBeNull()
-    expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
+    // Both classes are named as write targets on ClassPicker's own pills —
+    // cls2 carries nothing, so it is not itself claiming the value.
+    expect(screen.getByTestId(`write-target-chip-${cls1.id}`).textContent).toContain(
+      '.class-1-isolation',
+    )
+    expect(screen.getByTestId(`write-target-chip-${cls2.id}`).textContent).toContain(
+      '.class-2-isolation',
+    )
   })
 })
 
@@ -1416,27 +1304,28 @@ describe('PP-19 — No inline styles in ClassPropertyRow / cssControlTypes (Cons
 })
 
 // ---------------------------------------------------------------------------
-// PP-20: Property search adds class-backed styles
+// PP-20: Adding class-backed styles to an empty class
+//
+// The style search bar this used to drive was deleted outright (Track P /
+// P1). Its replacement — Typography's `collapsedWhenEmpty` "+" reveal — is
+// ALSO gone: Text (`TextSection`, P3 item 9, `STATE.md` `panel-25`) dropped
+// that posture and is now ALWAYS RESIDENT (see `TextSection.tsx`'s own doc,
+// "makes Text an ALWAYS-RESIDENT section instead" — a text layer always has
+// a real family/size/weight to show, so there is no genuinely empty state to
+// collapse to). The fontFamily row is therefore already on screen with no
+// reveal gesture at all; these tests exercise the still-real guarantee this
+// block pins — a first-ever write to an empty class, prefilled with the
+// element's actual rendered value and scoped to the active breakpoint.
 // ---------------------------------------------------------------------------
 
-describe('PP-20 — Property search adds class-backed styles to the active class', () => {
-  it('searching for "font family" and selecting it adds fontFamily to class styles', () => {
+describe('PP-20 — Adding a first class-backed style to an empty class', () => {
+  it('setting fontFamily on an empty class adds it to the class styles', () => {
     const { nodeId } = loadSiteWithHeading()
     const state = useEditorStore.getState()
     const cls = state.createClass('add-prop-class')
     state.addNodeClass(nodeId, cls.id)
     selectNode(nodeId)
     render(<PropertiesPanel />)
-
-    const pill = screen.getByRole('button', { name: /edit class \.add-prop-class/i })
-    fireEvent.click(pill)
-
-    // The minimal add-property search is always present when a class is active.
-    const searchInput = screen.getByRole('searchbox', { name: /search class style properties to add/i })
-    expect(searchInput).toBeDefined()
-
-    // Type to filter to fontFamily
-    fireEvent.change(searchInput, { target: { value: 'fontF' } })
 
     const fontFamilyInput = document
       .querySelector('[data-testid="css-property-row-fontFamily"]')
@@ -1455,7 +1344,7 @@ describe('PP-20 — Property search adds class-backed styles to the active class
     expect('fontFamily' in updatedCls.styles).toBe(true)
   })
 
-  it('active canvas breakpoint scopes added properties to that breakpoint', () => {
+  it('active canvas breakpoint scopes the added property to that breakpoint', () => {
     const { nodeId } = loadSiteWithHeading()
     const state = useEditorStore.getState()
     const cls = state.createClass('bp-prop-class')
@@ -1464,13 +1353,8 @@ describe('PP-20 — Property search adds class-backed styles to the active class
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    const pill = screen.getByRole('button', { name: /edit class \.bp-prop-class/i })
-    fireEvent.click(pill)
-
     expect(screen.queryByRole('combobox', { name: /class style breakpoint/i })).toBeNull()
 
-    const searchInput = screen.getByRole('searchbox', { name: /search class style properties to add/i })
-    fireEvent.change(searchInput, { target: { value: 'fontF' } })
     const fontFamilyInput = document
       .querySelector('[data-testid="css-property-row-fontFamily"]')
       ?.querySelector('input') as HTMLInputElement
@@ -1481,7 +1365,6 @@ describe('PP-20 — Property search adds class-backed styles to the active class
     expect(updatedCls.styles.fontFamily).toBeUndefined()
     expect(updatedCls.contextStyles.mobile.fontFamily).toBe('serif')
   })
-
 })
 
 // ---------------------------------------------------------------------------
@@ -1512,7 +1395,7 @@ describe('PP-20b — Module settings exclude visual CSS fields', () => {
 // ---------------------------------------------------------------------------
 
 describe('PP-21 — Empty class: always-present sections stay resident, collapsible sections start as one line', () => {
-  it('a class with no styles shows the always-present rows, a collapsed Typography header, and no empty-state message', () => {
+  it('a class with no styles shows the always-present rows, a resident Text section, a collapsed Stroke header, and no empty-state message', () => {
     const { nodeId } = loadSiteWithHeading()
     const state = useEditorStore.getState()
     const cls = state.createClass('empty-cls')
@@ -1520,21 +1403,31 @@ describe('PP-21 — Empty class: always-present sections stay resident, collapsi
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
-    const pill = screen.getByRole('button', { name: /edit class \.empty-cls/i })
-    fireEvent.click(pill)
-
-    // Position/Size/Layout/Spacing are Figma's always-present blocks — their
-    // rows render even before a property is assigned.
+    // Layout/Measures/Align are Figma's always-present blocks — their rows
+    // render even before a property is assigned. No pill click needed — the
+    // merged composer is live the moment the class is assigned (PP-3).
+    // panel-39 narrowed "always present" for Layout specifically: an empty
+    // class has no `display`, so Layout rests as one row with an "Add auto
+    // layout" `+` — Law 1's own shape — and discloses the mode row on click.
+    // Measures/Align are unchanged and still resident.
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
     expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
 
-    // Typography is `collapsedWhenEmpty` (Law 1 / G1) — an empty class
-    // renders it as a single header line with a "+", not its property grid.
-    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).toBeNull()
-    expect(screen.getByRole('button', { name: /add typography/i })).toBeDefined()
+    // Text (P3 item 9, `STATE.md` `panel-25`) dropped the old Typography
+    // section's `collapsedWhenEmpty` posture and is now ALWAYS RESIDENT — a
+    // text layer always has a real family to show, so the fontFamily row is
+    // already here on an empty class, no "+" reveal needed.
+    expect(document.querySelector('[data-testid="css-property-row-fontFamily"]')).not.toBeNull()
 
-    // Search affordance present; no extra empty state copy.
-    expect(screen.getByRole('searchbox', { name: /search class style properties to add/i })).toBeDefined()
+    // Stroke (P3 item 6) is a genuinely optional property and DOES keep the
+    // Law 1 "+" reveal — the still-real half of this test's own title
+    // ("collapsible sections start as one line").
+    expect(screen.queryByTestId('stroke-controls-row')).toBeNull()
+    expect(screen.getByRole('button', { name: /add stroke/i })).toBeDefined()
+
+    // No empty-state copy.
     expect(screen.queryByText(/no class styles set/i)).toBeNull()
   })
 })
@@ -1543,16 +1436,17 @@ describe('PP-21 — Empty class: always-present sections stay resident, collapsi
 // PP-22: Module settings section is first visible accordion
 // ---------------------------------------------------------------------------
 
-describe('PP-22 — Module settings is the first visible accordion', () => {
-  it('Module settings is the first accordion after the header class picker', () => {
+describe('PP-22 — Module settings is the first visible block after the class picker', () => {
+  it('Module settings renders after the header class picker (no accordion — Track P / P1)', () => {
     const { nodeId } = loadSiteWithHeading()
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
     const classInput = screen.getByRole('textbox', { name: /add or create a css selector/i })
-    const moduleSectionBtn = screen.getByRole('button', { name: /module settings/i })
+    const moduleSection = document.querySelector('[data-style-section="module"]')
+    expect(moduleSection).not.toBeNull()
 
-    expect(classInput.compareDocumentPosition(moduleSectionBtn) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(classInput.compareDocumentPosition(moduleSection!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
     expect(screen.queryByRole('button', { name: /^classes$/i })).toBeNull()
   })
 })
@@ -1562,14 +1456,9 @@ describe('PP-22 — Module settings is the first visible accordion', () => {
 // ---------------------------------------------------------------------------
 
 describe('PP-24 — StyleSectionsEditor assigned categories use shared Section', () => {
-  it('StyleSectionsEditor.tsx imports Section from the shared @ui/components/Section primitive', () => {
-    // Section ownership moved from StyleRuleComposer → StyleSectionsEditor in the
-    // inline-styles refactor (commit ee346c41). StyleRuleComposer now delegates all
-    // style-section rendering to StyleSectionsEditor, which is the file that
-    // legitimately imports and uses the Section primitive.
-    const src = readFileSync(join(PP_DIR, 'StyleSectionsEditor.tsx'), 'utf-8')
-    expect(src).toMatch(/import\s*\{\s*Section\s*\}\s*from\s+['"]@ui\/components\/Section['"]/)
-  })
+  // The "StyleSectionsEditor.tsx imports Section..." test is deleted — that
+  // file no longer exists (`STATE.md` `panel-25`, P3 item 11 is complete).
+  // See `PP-6`'s own identical note above.
 
   it('StyleRuleComposer.tsx does not contain sectionsArea CSS class reference', () => {
     const src = readFileSync(join(PP_DIR, 'StyleRuleComposer.tsx'), 'utf-8')

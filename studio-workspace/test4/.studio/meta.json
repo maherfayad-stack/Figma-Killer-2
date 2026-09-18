@@ -74,8 +74,10 @@
     "figma"
   ],
   "previewAxes": {
-    "colorScheme": "light",
-    "direction": "ltr",
-    "locale": "en"
-  }
+    "colorScheme": "dark",
+    "direction": "rtl",
+    "locale": "ar"
+  },
+  "lastOpenedAt": 1789651388928,
+  "designSystem": "alm"
 }

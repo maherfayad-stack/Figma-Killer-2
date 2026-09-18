@@ -5,7 +5,7 @@
  *
  * ## Why these are server tools now (W9-6)
  *
- * Both shipped as `execution: 'browser'` wrappers over `EditorStore`'s own
+ * Both shipped as `execution: 'bridge'` wrappers over `EditorStore`'s own
  * `setFrameAxes`/`duplicateFrameAsVariant`, because that is where the toolbar
  * calls them from. That reasoning does not survive one question: where does the
  * result LIVE? Not in the store. A frame's axes override and a variant frame
@@ -89,7 +89,7 @@ const setFrameAxesTool: AiTool = {
   mutates: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Override a board frame\'s preview direction/colorScheme/locale — the same "show this screen in RTL/dark/a specific locale" control the toolbar\'s own preview-axes UI drives. Addressed by pageId (from studio_list_pages); when a page has more than one frame, the first one found is targeted unless frameId is given explicitly. A design-review turn should call this BEFORE studio_screenshot/studio_compare to check the RTL/dark rendering, not just the default one. Writes .studio/boards.json directly, so it needs NO Studio browser tab open — and a user who does have one open sees the same frame flip, because the board is nudged to re-read from disk. Requires studio.write.',
+    'Pin a PER-FRAME preview override for direction/colorScheme/locale — NOT the same control as the toolbar. The toolbar only sets the board-wide default axes; this override is scoped to ONE frame and always wins over the board/toolbar axes, whatever they are set to. It persists in .studio/boards.json until a user clears it from that frame\'s own right-click menu ("Follow board preview axes") — it does not expire or revert on its own, so a frame pinned this way stays pinned across later toolbar changes. Addressed by pageId (from studio_list_pages); when a page has more than one frame, the first one found is targeted unless frameId is given explicitly. A design-review turn should call this BEFORE studio_screenshot/studio_compare to check the RTL/dark rendering, not just the default one. Writes .studio/boards.json directly, so it needs NO Studio browser tab open — and a user who does have one open sees the same frame flip, because the board is nudged to re-read from disk. Requires studio.write.',
   inputSchema: StudioSetFrameAxesInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const args = input as { dir?: string; pageId: string; frameId?: string; axes: Partial<PreviewAxes> }

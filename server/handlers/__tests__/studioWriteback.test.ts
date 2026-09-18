@@ -18,8 +18,16 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, applyStudioEditBatch, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
+import {
+  applyStudioEdit,
+  applyStudioEditBatch,
+  canonicalSourceRel,
+  dedupeStudioEdits,
+  isSharedSourceNodeId,
+  studioEditLocation,
+} from '../studioWriteback'
 import { locateTag } from '../../../src/core/ast-codemods/__tests__/fixtureLocation'
+import { LF } from '@core/utils/lineEndings'
 
 let tmpDir: string
 
@@ -42,7 +50,7 @@ const read = (relPath: string): string =>
 
 describe('studioEditLocation — writable-path guard', () => {
   it('accepts an ordinary workspace-relative source path', () => {
-    expect(studioEditLocation('src/screens/Home.jsx:10:5')).toEqual({
+    expect(studioEditLocation(tmpDir, 'src/screens/Home.jsx:10:5')).toEqual({
       rel: 'src/screens/Home.jsx',
       line: 10,
       col: 5,
@@ -50,7 +58,7 @@ describe('studioEditLocation — writable-path guard', () => {
   })
 
   it('accepts a dictionary module, which is where resolved copy lives', () => {
-    expect(studioEditLocation('src/i18n/translations.js:142:18')).toEqual({
+    expect(studioEditLocation(tmpDir, 'src/i18n/translations.js:142:18')).toEqual({
       rel: 'src/i18n/translations.js',
       line: 142,
       col: 18,
@@ -58,7 +66,7 @@ describe('studioEditLocation — writable-path guard', () => {
   })
 
   it('still resolves a composite (inlined) id to the component file', () => {
-    expect(studioEditLocation('pages/Home.jsx:77:19~components/Icon.jsx:3:6')).toEqual({
+    expect(studioEditLocation(tmpDir, 'pages/Home.jsx:77:19~components/Icon.jsx:3:6')).toEqual({
       rel: 'components/Icon.jsx',
       line: 3,
       col: 6,
@@ -74,7 +82,7 @@ describe('studioEditLocation — writable-path guard', () => {
     ['windows absolute', 'C:/Windows/win.ini:1:1'],
     ['empty segment', 'src/a//b.tsx:1:1'],
   ])('refuses %s', (_label, nodeId) => {
-    expect(studioEditLocation(nodeId)).toBeNull()
+    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
   })
 
   it.each([
@@ -83,7 +91,86 @@ describe('studioEditLocation — writable-path guard', () => {
     ['lockfile', 'bun.lock:1:1'],
     ['stylesheet', 'src/app.css:1:1'],
   ])('refuses %s — a writeback belongs on app source only', (_label, nodeId) => {
-    expect(studioEditLocation(nodeId)).toBeNull()
+    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
+  })
+})
+
+/**
+ * `sec-17` landmine 4, closed. The guard used to be purely lexical, so it had
+ * no opinion about two `rel`s that name ONE file — and two spellings do. The
+ * consequence was `transplantJsxElement` writing the destination and then
+ * clobbering it with the origin's text minus the moved element, reporting
+ * `{ ok: true }` over markup that now exists nowhere. `sec-17` fixed that one
+ * codemod; these drive the property itself.
+ */
+describe('studioEditLocation — two spellings of one file collapse to one target', () => {
+  it('canonicalises the casing a case-insensitive filesystem actually stores', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+
+    const asStored = studioEditLocation(tmpDir, 'pages/Home.tsx:1:27')
+    const asLowercased = studioEditLocation(tmpDir, 'pages/home.tsx:1:27')
+    expect(asStored?.rel).toBe('pages/Home.tsx')
+
+    // On a case-SENSITIVE filesystem `pages/home.tsx` is a different file that
+    // does not exist, so it keeps its lexical spelling and the two stay
+    // distinct — which is correct there. On Windows/macOS they are one file
+    // and must decode to one target.
+    const oneFile = fs.existsSync(path.join(tmpDir, 'pages', 'home.tsx'))
+    if (oneFile) expect(asLowercased?.rel).toBe('pages/Home.tsx')
+    else expect(asLowercased?.rel).toBe('pages/home.tsx')
+  })
+
+  it('resolves a symlinked directory back to the real one', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+    // A junction on Windows, a directory symlink elsewhere — the shape git
+    // stores and an imported repo carries.
+    let linked = true
+    try {
+      fs.symlinkSync(path.join(tmpDir, 'pages'), path.join(tmpDir, 'mirror'), 'junction')
+    } catch {
+      linked = false // unprivileged POSIX without symlink permission
+    }
+    if (!linked) return
+
+    expect(studioEditLocation(tmpDir, 'mirror/Home.tsx:1:27')?.rel).toBe('pages/Home.tsx')
+  })
+
+  it('dedupes two aliases of one file to a single edit', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+    const deduped = dedupeStudioEdits(tmpDir, [
+      { kind: 'text', nodeId: 'pages/Home.tsx:1:27', text: 'first' },
+      { kind: 'text', nodeId: 'pages/home.tsx:1:27', text: 'second' },
+    ])
+
+    const oneFile = fs.existsSync(path.join(tmpDir, 'pages', 'home.tsx'))
+    expect(deduped).toHaveLength(oneFile ? 1 : 2)
+    if (oneFile) expect(deduped[0]).toMatchObject({ text: 'second' })
+  })
+
+  it('refuses a source symlink that points OUT of the project', () => {
+    // Lexically impeccable — no `..`, not absolute, a source extension — and
+    // written straight through the old guard.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-outside-'))
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.tsx'), 'export const secret = 1\n', 'utf8')
+      fs.mkdirSync(path.join(tmpDir, 'pages'), { recursive: true })
+      let linked = true
+      try {
+        fs.symlinkSync(path.join(outside, 'secret.tsx'), path.join(tmpDir, 'pages', 'escape.tsx'), 'file')
+      } catch {
+        linked = false
+      }
+      if (!linked) return
+
+      expect(studioEditLocation(tmpDir, 'pages/escape.tsx:1:1')).toBeNull()
+      expect(canonicalSourceRel(tmpDir, 'pages/escape.tsx')).toBeNull()
+      // …and the edit that would have used it writes nothing.
+      const result = applyStudioEdit(tmpDir, { kind: 'text', nodeId: 'pages/escape.tsx:1:1', text: 'pwned' })
+      expect(result.applied).toBe(false)
+      expect(fs.readFileSync(path.join(outside, 'secret.tsx'), 'utf8')).toBe('export const secret = 1\n')
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
   })
 })
 
@@ -393,6 +480,120 @@ export default function Home() {
 
   it('is always treated as shared — the write shifts every line below it', () => {
     expect(isSharedSourceNodeId('src/Home.tsx:5:6', 'insert')).toBe(true)
+  })
+})
+
+/**
+ * DS-3 — `designSystemImport`. The client cannot spell an import of the
+ * project's own `design-system/` folder, because the specifier depends on
+ * where in the tree the file being written sits; the SERVER knows, having just
+ * decoded the node id through `studioEditLocation`, so it computes it.
+ *
+ * The refusal these tests protect is the one that would be easy to lose: if
+ * the client were allowed to guess, a page one directory deeper would get
+ * `'../design-system'` and import a folder that is not there — code that
+ * typechecks against a Vite ambient module and fails only at runtime.
+ */
+describe('applyStudioEdit — insert with designSystemImport', () => {
+  const PAGE = `export default function Home() {
+  return (
+    <section className="wrap">
+      <p>hi</p>
+    </section>
+  )
+}
+`
+
+  it("writes '../design-system' for a page one level down", () => {
+    write('pages/Home.tsx', PAGE)
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'Button',
+      designSystemImport: true,
+      props: { label: 'Buy now' },
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('pages/Home.tsx')).toBe(
+      `import { Button } from '../design-system'
+export default function Home() {
+  return (
+    <section className="wrap">
+      <p>hi</p>
+      <Button label="Buy now" />
+    </section>
+  )
+}
+`,
+    )
+  })
+
+  it("climbs the right number of levels for a nested page", () => {
+    write('pages/account/Settings.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/account/Settings.tsx:3:6',
+      name: 'Button',
+      designSystemImport: true,
+    })
+
+    expect(read('pages/account/Settings.tsx')).toStartWith("import { Button } from '../../design-system'\n")
+  })
+
+  it('reuses the existing import on a second insert — one import, two elements', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, { kind: 'insert', nodeId: 'pages/Home.tsx:3:6', name: 'Button', designSystemImport: true })
+    // Re-read: the first write shifted every line below it, so the container
+    // is now one line further down — exactly what `shifted: true` means.
+    applyStudioEdit(tmpDir, { kind: 'insert', nodeId: 'pages/Home.tsx:4:6', name: 'Chip', designSystemImport: true })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Button, Chip } from '../design-system'\n")
+    expect(after.match(/from '\.\.\/design-system'/g)).toHaveLength(1)
+    expect(after).toContain('<Button />')
+    expect(after).toContain('<Chip />')
+  })
+
+  it('resolves a design-system component nested inside a subtree, at any depth', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'div',
+      children: [{ name: 'span', children: [{ name: 'Pill', designSystemImport: true }] }],
+    })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Pill } from '../design-system'\n")
+    expect(after).toContain('<Pill />')
+  })
+
+  it('wraps in a design-system container with the same computed specifier', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, { kind: 'wrap', nodeId: 'pages/Home.tsx:4:8', name: 'Card', designSystemImport: true })
+
+    const after = read('pages/Home.tsx')
+    expect(after).toStartWith("import { Card } from '../design-system'\n")
+    expect(after).toContain('<Card>')
+  })
+
+  it('a package insert is untouched by any of this', () => {
+    write('pages/Home.tsx', PAGE)
+
+    applyStudioEdit(tmpDir, {
+      kind: 'insert',
+      nodeId: 'pages/Home.tsx:3:6',
+      name: 'Button',
+      importSpecifier: '@acme/ui',
+    })
+
+    expect(read('pages/Home.tsx')).toStartWith("import { Button } from '@acme/ui'\n")
   })
 })
 
@@ -1468,6 +1669,35 @@ export default function Onboarding() {
 }
 `
 
+/**
+ * `struct-11` — `IMPORTED_PAGE` with the first feature row's two `<span>`s
+ * inside one container, which is what a ⌘G on them writes.
+ *
+ * Derived from the page rather than copied, so the two can never drift; if the
+ * replacement below ever stops matching, this is the page itself and every
+ * assertion against it fails loudly rather than comparing nothing.
+ *
+ * The container is a `<span>` — NOT the `<div>` the caller asks for in one of
+ * the cases below. The run is inline, so an inline container keeps it flowing
+ * with the text around it; `div` and `span` are the two interchangeable
+ * containers and which one lands is the content model's call, not the
+ * caller's.
+ */
+const GROUPED_FEATURE_ROW = IMPORTED_PAGE.replace(
+  [
+    '                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />',
+    '                <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>',
+    '',
+  ].join(LF),
+  [
+    '                <span>',
+    '                  <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />',
+    '                  <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>',
+    '                </span>',
+    '',
+  ].join(LF),
+)
+
 describe('applyStudioEditBatch — duplicate / wrap / reparent on a real imported page (W4-1)', () => {
   const REL = 'pages/Onboarding.tsx'
   const at = (tag: string, occurrence = 1): string => {
@@ -1573,5 +1803,163 @@ describe('applyStudioEditBatch — duplicate / wrap / reparent on a real importe
     for (const kind of ['duplicate', 'wrap', 'reparent'] as const) {
       expect(isSharedSourceNodeId(`${REL}:5:6`, kind)).toBe(true)
     }
+  })
+})
+
+// K3 — group / ungroup through the same batch entry, on the same real page.
+// Group is the first structural write that names SEVERAL elements, so the
+// tests that matter most are the ones asserting it refuses rather than
+// widening its own span: a gap in the run, and a run that crosses files.
+//
+// `struct-11` — and one more refusal, which is why the happy-path cases below
+// group the two `<span>`s inside a feature row rather than the `<li>`s
+// themselves: a container around two `<li>`s is invalid HTML, so the batch now
+// refuses it. The wrapper's tag follows the content model of what is above it
+// and what is inside it, so a run of inline elements gets a `<span>`.
+describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)', () => {
+  const REL = 'pages/Onboarding.tsx'
+  const at = (tag: string, occurrence = 1): string => {
+    const { line, col } = locateTag(IMPORTED_PAGE, tag, occurrence)
+    return `${REL}:${line}:${col}`
+  }
+
+  beforeEach(() => {
+    write(REL, IMPORTED_PAGE)
+  })
+
+  it('writes ONE container around a run of siblings', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'span' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.shifted).toBe(true)
+    // The whole file, byte for byte: one container around the run, its members
+    // re-hung one level, and nothing else in the page touched.
+    expect(GROUPED_FEATURE_ROW, 'the expected-output fixture no longer matches the page it is derived from').not.toBe(
+      IMPORTED_PAGE,
+    )
+    expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
+    // One container, not one per element. Counted as a DELTA because the page
+    // already ends with an attribute-less `<span>` of its own.
+    expect(read(REL).split('<span>').length - IMPORTED_PAGE.split('<span>').length).toBe(1)
+  })
+
+  it('REFUSES a container around list items, and writes nothing (`struct-11`)', () => {
+    // `<ul><div><li/><li/></div></ul>` is invalid HTML, and React reports it in
+    // the user's own app. There is no tag Studio could write here, so the batch
+    // refuses and the file is byte-identical.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('content-model')
+    expect(result.refusals?.[0]?.message).toContain('<ul>')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('picks the tag from the CONTEXT, not from the caller', () => {
+    // The caller asked for `div` and got `span`: the run is inline, so an
+    // inline container is what keeps it flowing with the text around it. `div`
+    // and `span` are the two interchangeable containers, and which one lands is
+    // not the caller's to decide.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
+  })
+
+  it('REFUSES a run with an unselected sibling in the middle, and writes nothing', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 3)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('not-contiguous')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES a group whose other members are in a different file', () => {
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: ['pages/Home.tsx:4:5'], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('cross-file')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('ungroups a plain container, hoisting its children into its place', () => {
+    write(REL, IMPORTED_PAGE)
+    const grouped = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'span' },
+    ])
+    expect(grouped.written).toBe(1)
+
+    // The wrapper is the first `<span` in the file now — it sits immediately
+    // above the two it was written around.
+    const after = read(REL)
+    const wrapper = locateTag(after, 'span', 1)
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'ungroup', nodeId: `${REL}:${wrapper.line}:${wrapper.col}` },
+    ])
+
+    expect(result.written).toBe(1)
+    // Group then ungroup is the identity on this file, byte for byte.
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES ungrouping a container that carries behaviour, and writes nothing', () => {
+    // `<span … dangerouslySetInnerHTML={{…}} />` is a container doing more than
+    // holding children: dissolving it would drop the markup it injects.
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('span', 1) }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(result.refusals?.[0]?.message).toContain('dangerouslySetInnerHTML')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('REFUSES ungrouping a COMPONENT — that would delete a usage, not a group', () => {
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'ungroup', nodeId: at('IOSStatusBar') }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('has-behaviour')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('treats both as shared, and never collapses two groups on one element', () => {
+    for (const kind of ['group', 'ungroup'] as const) {
+      expect(isSharedSourceNodeId(`${REL}:5:6`, kind)).toBe(true)
+    }
+    // Two groups keyed on the same first element are two nested containers the
+    // user asked for, not one write repeated — `dedupeStudioEdits` must keep
+    // both. (Applied one after the other here through two batches, because the
+    // second names a run the first has already re-indented.)
+    // The hero image and the copy block: a flow-content run inside a
+    // flow-content parent, so both wrappers are legal and this case stays
+    // about dedupe rather than about the content model.
+    const first = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('img'), siblingNodeIds: [at('div', 3)], name: 'div' },
+    ])
+    expect(first.written).toBe(1)
+    const after = read(REL)
+    const img = locateTag(after, 'img', 1)
+    // 1 = `styles.body`, 2 = `styles.top`, 3 = the wrapper just written,
+    // 4 = `styles.copy`.
+    const copy = locateTag(after, 'div', 4)
+    const second = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'group',
+        nodeId: `${REL}:${img.line}:${img.col}`,
+        siblingNodeIds: [`${REL}:${copy.line}:${copy.col}`],
+        name: 'section',
+      },
+    ])
+    expect(second.written).toBe(1)
+    expect(read(REL)).toContain('<section>')
   })
 })

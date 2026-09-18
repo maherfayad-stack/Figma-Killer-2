@@ -15,7 +15,7 @@
  */
 import { existsSync, readdirSync, statSync } from 'node:fs'
 import { basename, join, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
 import type { ProjectPlatform } from '@core/studio-board'
 import {
   DEFAULT_TRUST_TIER,
@@ -130,6 +130,29 @@ export function resolveProjectDir(requested: string | null | undefined): string 
   return listStudioProjects(root)[0]?.dir ?? root
 }
 
+/**
+ * `resolveProjectDir`'s containment check, plus a genuine on-disk existence
+ * check — for a caller that must distinguish "no such project" from "a real
+ * project whose own state (e.g. a dev server) just isn't ready yet."
+ * `resolveProjectDir` alone cannot make that distinction: it deliberately
+ * SUCCEEDS for a not-yet-created project directory too ("allowing missing" —
+ * the scaffold/import posture every other caller of it wants). Returns
+ * `null` for both a workspace-escape attempt and a directory that does not
+ * exist; never throws. Introduced for `server/liveOrigin.ts` (L2) — see
+ * `live-05`'s `STATE.md` entry for why `getDevServerStatus` alone can't
+ * distinguish these two cases either (it always returns a defined,
+ * `phase: 'stopped'` status for a dir it has never spawned a process for).
+ */
+export function resolveExistingProjectDir(requested: string): string | null {
+  try {
+    const dir = resolveProjectDir(requested)
+    return existsSync(dir) ? dir : null
+  } catch (err) {
+    if (err instanceof ProjectDirOutsideWorkspaceError) return null
+    throw err
+  }
+}
+
 /** File extensions a page file may use — `.tsx` (hand-authored) or `.jsx` (a plain-JS React repo, e.g. a GitHub import). */
 const PAGE_FILE_EXTENSIONS = ['.tsx', '.jsx'] as const
 
@@ -146,7 +169,14 @@ function isPageFile(relPath: string): boolean {
  * `collectWorkspaceFiles` via `listWorkspaceFiles`).
  */
 export function discoverPageFiles(pagesDir: string): string[] {
-  return listWorkspaceFiles(pagesDir).filter(isPageFile)
+  // `design-system/` is Studio's own copy of the built-in design system,
+  // written into the project so it builds standalone (`isDesignSystemPath`,
+  // `@core/page-parser`). Forty component `.jsx` files that each default-export
+  // JSX are indistinguishable from a pages directory to every rule here, so a
+  // project whose pages root IS its project root would put the whole design
+  // system on the board as pages. Relative to `pagesDir`, same as every other
+  // path in this walk.
+  return listWorkspaceFiles(pagesDir).filter((relPath) => isPageFile(relPath) && !isDesignSystemPath(relPath))
 }
 
 // ---------------------------------------------------------------------------

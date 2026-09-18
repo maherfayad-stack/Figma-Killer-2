@@ -1,6 +1,6 @@
 /**
- * curatedDefaults — what the package's own docs cannot say, supplied once, per
- * component.
+ * curatedDefaults — what the design system's own docs cannot say, supplied
+ * once, per component.
  *
  * Everything else an inserted component starts with is read out of
  * `manifest.generated.json` (`buildDesignSystemManifest`) — the package's
@@ -9,13 +9,13 @@
  *
  * A separate module from `register.tsx` for the reason its own list says: an
  * entry here is a CLAIM that the docs are incomplete, and it stops updating
- * when the package does. That is worth being able to read on its own.
+ * when the design system does. That is worth being able to read on its own.
  */
-import chaletIcon from '@alm-design/design-system/src/icons/line-icons/chalet.svg?raw'
-import compassIcon from '@alm-design/design-system/src/icons/line-icons/compass.svg?raw'
-import calendarStartIcon from '@alm-design/design-system/src/icons/line-icons/calendarStart.svg?raw'
-import discountIcon from '@alm-design/design-system/src/icons/line-icons/discount.svg?raw'
-import userCircleIcon from '@alm-design/design-system/src/icons/line-icons/userCircle.svg?raw'
+import chaletIcon from 'alm-design-system/src/icons/line-icons/chalet.svg?raw'
+import compassIcon from 'alm-design-system/src/icons/line-icons/compass.svg?raw'
+import calendarStartIcon from 'alm-design-system/src/icons/line-icons/calendarStart.svg?raw'
+import discountIcon from 'alm-design-system/src/icons/line-icons/discount.svg?raw'
+import userCircleIcon from 'alm-design-system/src/icons/line-icons/userCircle.svg?raw'
 
 /**
  * What the package's own docs cannot say, supplied once, per component.
@@ -28,8 +28,9 @@ import userCircleIcon from '@alm-design/design-system/src/icons/line-icons/userC
  *
  *  - **The icons.** The docs write `icon: <HomeIcon />` inside the example,
  *    which has no JSON form, so the docs pass drops it and every tab arrived as
- *    a label above an empty 24px slot. The icons themselves ship in the package
- *    (`src/icons/line-icons/`), and its own TabBar section names the set to use.
+ *    a label above an empty 24px slot. The icons themselves are vendored
+ *    (`vendor/alm-design-system/src/icons/line-icons/`), and the design
+ *    system's own TabBar section names the set to use.
  *  - **The count.** The doc snippet shows three tabs; the same section says a
  *    tab bar holds "3–5 top-level destinations", and this product's has five.
  *
@@ -44,7 +45,7 @@ import userCircleIcon from '@alm-design/design-system/src/icons/line-icons/userC
  * instead of pinning a copy of today's paths.
  *
  * Keep this list SHORT. An entry here is a claim the docs are incomplete, and
- * every one of them is a default that stops updating when the package does.
+ * every one of them is a default that stops updating when the design system does.
  */
 export const CURATED_DEFAULTS: Record<string, Record<string, unknown>> = {
   TabBar: {

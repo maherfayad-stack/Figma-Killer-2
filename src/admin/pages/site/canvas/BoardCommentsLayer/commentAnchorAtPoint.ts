@@ -30,6 +30,7 @@ import { useEditorStore } from '@site/store/store'
 import { captureNodeHint } from '@core/studio-anchor'
 import type { CommentAnchor } from '@core/studio-comments'
 import { canvasZoomOf } from '../canvasZoom'
+import { resolvePortalDocument } from '../frameAdapter/resolvePortalDocument'
 
 /**
  * Screen point → board point, measured off the transform layer itself.
@@ -55,15 +56,17 @@ function toBoardPoint(
 /**
  * The node id under a point inside a board frame, or `null`.
  *
- * Reads through the frame's iframe, which is same-origin (`srcdoc`), so
- * `contentDocument` is reachable. Everything here is wrapped because a frame
- * that is still booting has no document yet, and a comment placed a moment
- * too early must land as a coordinate-only pin, not an exception.
+ * Portal-mode only (`live-05`, STATE.md): board frames are same-origin
+ * (`srcdoc`), reached through the registry-based escape hatch instead of a
+ * raw `iframe.contentDocument`. A bridge-registered or not-yet-booted frame
+ * resolves `null` the same way — comment placement degrades to a
+ * coordinate-only pin, not an exception, matching every other best-effort
+ * fallback in this function.
  */
 function nodeIdAtPoint(frameEl: HTMLElement, clientX: number, clientY: number): string | null {
   try {
     const iframe = frameEl.querySelector('iframe')
-    const doc = iframe?.contentDocument
+    const doc = resolvePortalDocument(iframe)
     if (!iframe || !doc) return null
     const iframeRect = iframe.getBoundingClientRect()
     const scale = iframe.offsetWidth > 0 ? iframeRect.width / iframe.offsetWidth : 1

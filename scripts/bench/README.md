@@ -28,6 +28,7 @@ bun run bench:footprint     # repo / node_modules / SLOC stats
 bun run bench:health        # fallow + jscpd + madge snapshot
 bun run bench:agent-turn    # chat-turn server cost: guide, first stream line, MCP, capture, compare
 bun run bench:browser       # real Chromium via Playwright — opt-in
+bun run bench:studio-board  # canvas perf gate — runs the Playwright spec, opt-in
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
 ```
 
@@ -173,6 +174,28 @@ You'll get a frame-by-frame scrubber with DOM snapshots, network waterfall, cons
 **A note on FCP/LCP across navigations.** FCP and LCP only fire reliably on a *cold* document load. Subsequent in-session navigations (e.g. moving from `/admin/dashboard` to `/admin/site`) are served from disk + HTTP cache, complete their DCL in single-digit milliseconds, and the browser does not always fire fresh paint observers for them. For those rows, watch DCL + dom_nodes + heap. The cold `/admin` row is the canonical FCP/LCP number.
 
 **Future scenarios** to layer on: drag interactions on the canvas, programmatic class-creation through the editor store (would need a small dev-only hook to expose the store on `window`), Lighthouse-style INP for interactions, mobile viewport runs, CPU throttling.
+
+### studio-board (opt-in)
+The canvas perf gate. It does **not** drive a browser itself: it spawns Playwright's own Node
+runner (`node node_modules/@playwright/test/cli.js test tests/e2e/studio-board-perf.e2e.ts
+--reporter=json`), parses the JSON report, republishes the spec's `perf` annotations as bench
+rows, and fails when the spec fails.
+
+Why a subprocess: Playwright talks to Chromium over `--remote-debugging-pipe`, and Bun on
+Windows does not wire the extra stdio fds that transport needs, so an in-process
+`chromium.launch()` never returns. The earlier version of this bench caught that and reported
+`skipped` — a perf gate that had never once opened a browser and structurally could not fail.
+
+**The budgets live in the spec, not in the bench.** `studio-board-perf.e2e.ts` owns
+`BUDGET_PAN_WORST_FRAME_MS`, `BUDGET_ZOOM_WORST_FRAME_MS` and the virtualization assertions,
+each derived from a real run against the real corpus. This bench reproduces the failing
+assertion's message in the report rather than re-asserting the same numbers from a second
+place.
+
+Needs Chromium (`bun run bench:browser:install`) and the corpus project the spec names. If the
+spec skips itself because that project is not on disk, the bench reports `skipped` — read that
+as **no signal**, never as a pass. Playwright's own `webServer` starts the disposable
+`bun run e2e:dev` stack, so this bench boots no server of its own.
 
 ### snapshot-tokens (opt-in)
 Measures how many tokens the site-editor agent's page **read surface** costs, comparing the two representations of the same page:

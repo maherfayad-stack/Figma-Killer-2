@@ -26,7 +26,7 @@
  * Jobs live in an in-memory `Map<jobId, JobRecord>` while THIS process can
  * observe them — but the dev server runs under `bun --watch`, so any file
  * edit restarts the process and empties that map. Every job is ALSO mirrored
- * to `<appRoot>/.studio/install-job.json` (`installJobStore.ts`) at start and
+ * to `<projectDir>/.studio/install-job.json` (`installJobStore.ts`) at start and
  * at completion, so a restart mid-install doesn't strand the client polling a
  * `jobId` that 404s forever. A record found on disk with no matching
  * in-memory entry (the process that owned it is gone) resolves to the
@@ -76,9 +76,17 @@
  *     via `subprocessRunner.ts`'s shared `captureSubprocess` — a runaway
  *     install cannot grow a job's log without bound. The log says so when it
  *     happens.
- *   - Package manager detection reads only lockfile presence in `dir`; it
- *     never shells out, never reads `PATH`, never trusts a client-supplied
- *     package manager name.
+ *   - Package manager detection and every argv this module can spawn live in
+ *     `packageManager.ts` — a pure module with no subprocess and no job state,
+ *     which is where `--ignore-scripts` and the name/version validation are
+ *     enforced. Detection reads only lockfile presence in `dir`; it never
+ *     shells out, never reads `PATH`, never trusts a client-supplied package
+ *     manager name.
+ *   - The package-manager subprocess runs inside the project write lock
+ *     (`projectWriteLock.ts`, G7) — scoped to the SUBPROCESS, not to the
+ *     polled job, so the client still gets its `jobId` immediately. A git verb
+ *     that arrives mid-install reports `busy` instead of hitting git's own
+ *     `index.lock`.
  *
  * `startInstallJob` and the timing/spawn primitives it uses are injectable
  * (`InstallJobOverrides`) so tests can assert on the exact argv/cwd/env
@@ -102,115 +110,21 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { isSafePackageName } from '@core/site-dependencies/packageNames'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { projectsRootDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
+import {
+  detectPackageManager,
+  installArgv,
+  isSafeDependencyName,
+  isSafeDependencyVersion,
+  type DependencyMutation,
+  type PackageManager,
+} from './packageManager'
 import { captureSubprocess, minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from './installJobStore'
 import { reprobeProjectProfile } from './projectProbe'
-
-// ---------------------------------------------------------------------------
-// Package manager detection
-// ---------------------------------------------------------------------------
-
-export type PackageManager = 'bun' | 'pnpm' | 'yarn' | 'npm'
-
-/** Checked in order; the first lockfile present wins. */
-const LOCKFILE_MANAGERS: ReadonlyArray<{ file: string; manager: PackageManager }> = [
-  { file: 'bun.lock', manager: 'bun' },
-  { file: 'bun.lockb', manager: 'bun' },
-  { file: 'pnpm-lock.yaml', manager: 'pnpm' },
-  { file: 'yarn.lock', manager: 'yarn' },
-  { file: 'package-lock.json', manager: 'npm' },
-]
-
-/** No lockfile present (or an unrecognized one) defaults to `bun` — this project's own toolchain. */
-export function detectPackageManager(dir: string): PackageManager {
-  for (const { file, manager } of LOCKFILE_MANAGERS) {
-    if (existsSync(join(dir, file))) return manager
-  }
-  return 'bun'
-}
-
-/** `--ignore-scripts` is mandatory for every manager — never conditional, never wire-configurable. */
-const INSTALL_ARGV: Record<PackageManager, string[]> = {
-  bun: ['bun', 'install', '--ignore-scripts'],
-  pnpm: ['pnpm', 'install', '--ignore-scripts'],
-  yarn: ['yarn', 'install', '--ignore-scripts'],
-  npm: ['npm', 'install', '--ignore-scripts'],
-}
-
-// ---------------------------------------------------------------------------
-// E3 — a single add/remove dependency mutation, riding this same job runner
-// ---------------------------------------------------------------------------
-
-export interface AddDependencyMutation {
-  kind: 'add'
-  /** Already validated by `isSafeDependencyName` at the route boundary — see that function's doc. */
-  name: string
-  /** Already validated by `isSafeDependencyVersion`. `'*'` when the caller didn't specify one — resolves to each manager's own "latest" behaviour. */
-  version: string
-  dev: boolean
-}
-export interface RemoveDependencyMutation {
-  kind: 'remove'
-  name: string
-}
-export type DependencyMutation = AddDependencyMutation | RemoveDependencyMutation
-
-/** Same package-name gate the client (`DepsSection.tsx`) and the runtime dependency resolver already use — re-validated here because a request body is never trusted just because the client already checked. */
-export function isSafeDependencyName(name: string): boolean {
-  return isSafePackageName(name)
-}
-
-/**
- * A version/range specifier is appended directly after `name@` in a single
- * argv token (`bun add foo@<version>`) — never shell-interpolated, but still
- * validated so it can't be crafted to look like a FLAG to the package
- * manager (e.g. a version starting with `-`) or carry characters no real
- * semver range/tag uses. `'*'`/`'latest'` (the common "no opinion" values)
- * and ordinary semver ranges (`^1.2.3`, `~1.2.3`, `1.x`, `>=1.0.0 <2.0.0` is
- * NOT supported — a single token only, which covers every version this UI
- * actually lets a user type) all pass.
- */
-const SAFE_DEPENDENCY_VERSION_RE = /^[A-Za-z0-9][A-Za-z0-9.^~*_+-]*$/
-
-export function isSafeDependencyVersion(version: string): boolean {
-  return SAFE_DEPENDENCY_VERSION_RE.test(version)
-}
-
-/** `name@version` — `'*'`/`'latest'` degrade to a bare `name` so each manager resolves its own idea of "latest" rather than being told to literally install the tag `"*"`. */
-function dependencySpec(name: string, version: string): string {
-  return version === '*' || version === 'latest' ? name : `${name}@${version}`
-}
-
-function addArgv(manager: PackageManager, mutation: AddDependencyMutation): string[] {
-  const spec = dependencySpec(mutation.name, mutation.version)
-  switch (manager) {
-    case 'bun':
-      return ['bun', 'add', spec, ...(mutation.dev ? ['--dev'] : []), '--ignore-scripts']
-    case 'pnpm':
-      return ['pnpm', 'add', spec, ...(mutation.dev ? ['--save-dev'] : []), '--ignore-scripts']
-    case 'yarn':
-      return ['yarn', 'add', spec, ...(mutation.dev ? ['--dev'] : []), '--ignore-scripts']
-    case 'npm':
-      return ['npm', 'install', spec, mutation.dev ? '--save-dev' : '--save', '--ignore-scripts']
-  }
-}
-
-function removeArgv(manager: PackageManager, mutation: RemoveDependencyMutation): string[] {
-  // npm alone spells this "uninstall" — every other manager (and npm's own
-  // alias) accepts "remove", but this stays explicit rather than relying on
-  // an alias.
-  const verb = manager === 'npm' ? 'uninstall' : 'remove'
-  return [manager, verb, mutation.name, '--ignore-scripts']
-}
-
-function installArgv(manager: PackageManager, mutation: DependencyMutation | undefined): string[] {
-  if (!mutation) return INSTALL_ARGV[manager]
-  return mutation.kind === 'add' ? addArgv(manager, mutation) : removeArgv(manager, mutation)
-}
+import { withProjectWriteLock } from './projectWriteLock'
 
 // ---------------------------------------------------------------------------
 // Postinstall-prone package warnings
@@ -377,7 +291,21 @@ export interface InstallJobOverrides {
 
 interface JobRecord {
   id: string
+  /**
+   * The APP ROOT — where the package manager runs and what the persisted
+   * record reports. For a monorepo project this is a subdirectory of the
+   * project (`apps/web/`), which is why it is not the lock key; see
+   * {@link JobRecord.projectDir}.
+   */
   dir: string
+  /**
+   * The PROJECT directory, and the only correct key for the project write
+   * lock. Every other writer — a canvas save, a page scaffold, a git verb —
+   * locks on the project, so locking an install on `dir` would key a monorepo
+   * install differently from all of them and serialize it against nothing.
+   * Not persisted: the job record's `dir` is what a poller cares about.
+   */
+  projectDir: string
   packageManager: PackageManager
   status: InstallJobStatus
   log: string
@@ -399,17 +327,45 @@ function toPersistedRecord(job: JobRecord): PersistedInstallJob {
   return { id, dir, packageManager, status, log, truncated, exitCode, warnings, startedAt, finishedAt, pid }
 }
 
+/**
+ * Spawns the package manager and pumps its output to completion, holding the
+ * project write lock for exactly that window.
+ *
+ * The lock wraps the SUBPROCESS, not the job: `startInstallJob` still returns
+ * a `jobId` synchronously and the client still polls `GET .../install/:id`
+ * without contending for anything. What it serializes is the only part that
+ * touches the user's files — a package manager rewriting `package.json`, the
+ * lockfile and `node_modules` must not overlap a `git add`/`git commit` pair
+ * (G7). While it runs, a git verb reports `busy` rather than surfacing git's
+ * own `index.lock` error, which is the honest answer: the project genuinely
+ * is being written to.
+ *
+ * The key is `job.projectDir`, NOT `job.dir`. Those are the same string only
+ * when the app root is the project directory itself; for a monorepo project
+ * `job.dir` is `<project>/apps/web` while every other writer locks on
+ * `<project>`, so keying on it would put the install on a lock of its own and
+ * serialize it against nothing — exactly the race this exists to stop, still
+ * open on precisely the projects most likely to have a long install.
+ *
+ * The spawn happens INSIDE the lock rather than before it, because a
+ * subprocess that is already running is not something a lock acquired
+ * afterwards can serialize.
+ */
 async function runInstallJob(
   job: JobRecord,
-  proc: InstallSpawnedProcess,
+  spawnProcess: () => InstallSpawnedProcess,
   opts: { timeoutMs: number; maxLogBytes: number; setTimeoutImpl: typeof setTimeout; clearTimeoutImpl: typeof clearTimeout },
 ): Promise<void> {
-  const result = await captureSubprocess(proc, {
-    timeoutMs: opts.timeoutMs,
-    maxStdoutBytes: opts.maxLogBytes,
-    maxStderrBytes: opts.maxLogBytes,
-    setTimeoutImpl: opts.setTimeoutImpl,
-    clearTimeoutImpl: opts.clearTimeoutImpl,
+  const result = await withProjectWriteLock(job.projectDir, async () => {
+    const proc = spawnProcess()
+    job.pid = proc.pid ?? null
+    return captureSubprocess(proc, {
+      timeoutMs: opts.timeoutMs,
+      maxStdoutBytes: opts.maxLogBytes,
+      maxStderrBytes: opts.maxLogBytes,
+      setTimeoutImpl: opts.setTimeoutImpl,
+      clearTimeoutImpl: opts.clearTimeoutImpl,
+    })
   })
 
   job.log = result.stdout + result.stderr
@@ -433,8 +389,19 @@ async function runInstallJob(
     // Failure here must not fail the install: the job DID succeed, and
     // `resolveProjectProfile` heals a stale cache on the next read anyway.
     // This re-probe is the fast path, not the only path.
+    //
+    // `job.projectDir`, NOT `job.dir`. `probeProject` takes the PROJECT
+    // directory and finds the app root itself (`detectAppRoot`), and
+    // `mergeStudioMeta` writes the profile into the project's own `.studio/`
+    // — which is where every reader looks. Passing the app root here was
+    // wrong twice on a monorepo (`sec-18`): it re-detected an app root
+    // RELATIVE to the app root, so the cached profile's paths were wrong, and
+    // it wrote them into a second `.studio/meta.json` inside the user's
+    // git-tracked application that nothing ever reads — leaving the very
+    // "zero registered package components" defect this re-probe exists to fix
+    // still present on exactly the imports most likely to hit it.
     try {
-      reprobeProjectProfile(job.dir)
+      reprobeProjectProfile(job.projectDir)
     } catch (err) {
       console.error('[studio:install] post-install re-probe failed:', err)
     }
@@ -442,7 +409,7 @@ async function runInstallJob(
     job.status = 'failed'
   }
   // Terminal write — the durability net a restart falls back to.
-  writeInstallJobFile(toPersistedRecord(job))
+  writeInstallJobFile(job.projectDir, toPersistedRecord(job))
 }
 
 /**
@@ -474,12 +441,16 @@ export function startInstallJob(
   const packageManager = detectPackageManager(cwd)
   const argv = installArgv(packageManager, mutation)
   const spawn = overrides.spawn ?? defaultSpawn
-  const proc = spawn(argv, { cwd, env: installSubprocessEnv(), stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' })
+  // Deferred into `runInstallJob` so the package manager starts INSIDE the
+  // project write lock — see that function's doc.
+  const spawnProcess = () =>
+    spawn(argv, { cwd, env: installSubprocessEnv(), stdout: 'pipe', stderr: 'pipe', stdin: 'ignore' })
 
   const id = crypto.randomUUID()
   const job: JobRecord = {
     id,
     dir: cwd,
+    projectDir,
     packageManager,
     status: 'running',
     log: '',
@@ -488,14 +459,15 @@ export function startInstallJob(
     warnings: [],
     startedAt: Date.now(),
     finishedAt: null,
-    pid: proc.pid ?? null,
+    // Filled in by `runInstallJob` once the lock lets it spawn.
+    pid: null,
   }
   jobs.set(id, job)
   // Initial write — if the process dies before `runInstallJob` ever writes a
   // terminal record, `resolvePersistedJobStatus` still finds THIS record on
   // the next status query and correctly resolves it to 'interrupted' rather
   // than a job no one has ever heard of.
-  writeInstallJobFile(toPersistedRecord(job))
+  writeInstallJobFile(job.projectDir, toPersistedRecord(job))
 
   const opts = {
     timeoutMs: overrides.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -504,11 +476,11 @@ export function startInstallJob(
     clearTimeoutImpl: overrides.clearTimeoutImpl ?? clearTimeout,
   }
 
-  void runInstallJob(job, proc, opts).catch((err) => {
+  void runInstallJob(job, spawnProcess, opts).catch((err) => {
     console.error('[studio:install]', err)
     job.status = 'failed'
     job.finishedAt = Date.now()
-    writeInstallJobFile(toPersistedRecord(job))
+    writeInstallJobFile(job.projectDir, toPersistedRecord(job))
   })
 
   return id
@@ -543,9 +515,11 @@ export function getInstallJob(id: string): PublicInstallJob | null {
 
 /**
  * The one place that reconciles "found in memory" vs. "found on disk, but
- * the process that started it is gone." `appRoot` is the job's own spawn
- * `cwd` (`resolveAppRoot`'s result, already resolved/containment-checked by
- * the caller) — where `.studio/install-job.json` lives.
+ * the process that started it is gone." `projectDir` is the PROJECT directory
+ * (already resolved/containment-checked by the caller) — where
+ * `.studio/install-job.json` lives, because every `.studio/` sidecar is keyed
+ * on the project and never on the app root (`server-25`; see
+ * `installJobStore.ts`'s own doc for the monorepo defect that made it so).
  *
  * - In-memory hit: return it live (this IS the process that owns the job;
  *   its log/status are still growing).
@@ -558,8 +532,8 @@ export function getInstallJob(id: string): PublicInstallJob | null {
  * - Not in memory, persisted terminal status: return it as-is — a genuinely
  *   completed job surviving a restart, reported truthfully.
  */
-function resolvePersistedJobStatus(appRoot: string): PublicInstallJob | null {
-  const persisted = readInstallJobFile(appRoot)
+function resolvePersistedJobStatus(projectDir: string): PublicInstallJob | null {
+  const persisted = readInstallJobFile(projectDir)
   if (!persisted) return null
 
   const live = jobs.get(persisted.id)
@@ -576,16 +550,16 @@ function resolvePersistedJobStatus(appRoot: string): PublicInstallJob | null {
       `The server restarted while this install was running${persisted.pid !== null ? ` (pid ${persisted.pid})` : ''} — its outcome could not be observed. Check whether dependencies actually landed, then retry if not.`,
     ],
   }
-  writeInstallJobFile(interrupted)
+  writeInstallJobFile(projectDir, interrupted)
   return toPublicJobFromPersisted(interrupted)
 }
 
-/** By-id lookup with the disk fallback: in-memory first, then `.studio/install-job.json` under `appRootDir` (already resolved + containment-checked by the caller) when `appRootDir` is given and the id matches what's persisted there. `null` maps to a 404 at the route. */
-export function resolveInstallJobStatus(id: string, appRootDir?: string): PublicInstallJob | null {
+/** By-id lookup with the disk fallback: in-memory first, then `.studio/install-job.json` under `projectDir` (already resolved + containment-checked by the caller) when `projectDir` is given and the id matches what's persisted there. `null` maps to a 404 at the route. */
+export function resolveInstallJobStatus(id: string, projectDir?: string): PublicInstallJob | null {
   const live = getInstallJob(id)
   if (live) return live
-  if (!appRootDir) return null
-  const resolved = resolvePersistedJobStatus(appRootDir)
+  if (!projectDir) return null
+  const resolved = resolvePersistedJobStatus(projectDir)
   return resolved && resolved.id === id ? resolved : null
 }
 
@@ -673,18 +647,20 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
     // consulted to find `.studio/install-job.json` when THIS process has no
     // live memory of the job (e.g. it restarted since the job started). A
     // malformed/unsafe `dir` degrades to the in-memory-only lookup rather
-    // than 404ing the whole request over an optional param.
-    let appRootDir: string | undefined
+    // than 404ing the whole request over an optional param. The PROJECT
+    // directory, not `resolveAppRoot(dir)`: the sidecar is Studio's own and
+    // lives at the project root even when the app does not.
+    let projectDir: string | undefined
     const dirParam = url.searchParams.get('dir')
     if (dirParam) {
       try {
         const dir = resolveProjectDir(dirParam)
-        if (isDirWithinWorkspace(dir)) appRootDir = resolveAppRoot(dir)
+        if (isDirWithinWorkspace(dir)) projectDir = dir
       } catch {
-        // fall through with appRootDir left undefined
+        // fall through with projectDir left undefined
       }
     }
-    const job = resolveInstallJobStatus(id, appRootDir)
+    const job = resolveInstallJobStatus(id, projectDir)
     if (!job) return new Response('Not found', { status: 404 })
     return jsonResponse(job)
   }

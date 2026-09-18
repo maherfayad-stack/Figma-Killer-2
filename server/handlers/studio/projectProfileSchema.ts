@@ -160,7 +160,11 @@ const AppRootCandidateSchema = Type.Object({
 
 /**
  * Where one of this project's design systems lives on disk — regardless of
- * whether it arrived via `npm install` (source `'node-modules'`, root inside
+ * whether it is Studio's BUILT-IN design system (source `'builtin'`, root the
+ * Studio-written `design-system/` folder at the project root, whose SOURCE
+ * ships with the project but whose docs and compiled CSS are read from
+ * Studio's own vendored copy — see `designSystemDetect.ts`), arrived via
+ * `npm install` (source `'node-modules'`, root inside
  * `node_modules/`, app-root-relative like every other install-dependent path
  * on this schema) or the manual "Import design tokens" wizard's CSS copy
  * (source `'imported'`, root always `styles/imported/<slug>/` relative to the
@@ -175,9 +179,9 @@ const AppRootCandidateSchema = Type.Object({
  * for one that was `npm install`ed.
  */
 const DesignSystemRefSchema = Type.Object({
-  /** The dependency name (`'node-modules'` source) or the imported folder's slug (`'imported'` source). */
+  /** `'alm'` (`'builtin'` source), the dependency name (`'node-modules'` source), or the imported folder's slug (`'imported'` source). */
   name: Type.String(),
-  source: Type.Union([Type.Literal('node-modules'), Type.Literal('imported')]),
+  source: Type.Union([Type.Literal('builtin'), Type.Literal('node-modules'), Type.Literal('imported')]),
   /** Project-relative POSIX path to this design system's own root directory — where its CSS (and, for a `'node-modules'` source, its docs) live. */
   root: Type.String(),
 })

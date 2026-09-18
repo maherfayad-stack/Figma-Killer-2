@@ -26,10 +26,20 @@ export type {
 } from './setStyledDeclaration'
 export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpecifier'
 export type { SetImportSpecifierParams } from './setImportSpecifier'
+export { rewriteImportSpecifier } from './rewriteImportSpecifier'
+export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
+// D2 G3 — the cross-FILE move `moveJsxElement` deliberately refuses.
+export { transplantJsxElement } from './transplantJsxElement'
+export type {
+  TransplantJsxElementParams,
+  TransplantJsxElementResult,
+  TransplantJsxRefusal,
+  TransplantJsxRefusalReason,
+} from './transplantJsxElement'
 export { duplicateJsxElement } from './duplicateJsxElement'
 export type {
   DuplicateJsxElementParams,
@@ -38,7 +48,26 @@ export type {
   DuplicateJsxRefusalReason,
 } from './duplicateJsxElement'
 export { wrapJsxElement } from './wrapJsxElement'
-export type { WrapJsxElementParams, WrapJsxElementResult } from './wrapJsxElement'
+export type {
+  WrapJsxElementParams,
+  WrapJsxElementResult,
+  WrapJsxRefusal,
+  WrapJsxRefusalReason,
+} from './wrapJsxElement'
+export { wrapJsxElements } from './wrapJsxElements'
+export type {
+  WrapJsxElementsParams,
+  WrapJsxElementsRefusal,
+  WrapJsxElementsRefusalReason,
+  WrapJsxElementsResult,
+} from './wrapJsxElements'
+export { unwrapJsxElement } from './unwrapJsxElement'
+export type {
+  UnwrapJsxElementParams,
+  UnwrapJsxElementResult,
+  UnwrapJsxRefusal,
+  UnwrapJsxRefusalReason,
+} from './unwrapJsxElement'
 export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
 export type { ImportPruneSession } from './pruneOrphanedImports'
@@ -48,6 +77,7 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
 export type {

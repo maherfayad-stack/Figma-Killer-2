@@ -14,6 +14,8 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import { act, cleanup, render } from '@testing-library/react'
 import { UserStylesheetInjector } from '@site/canvas/UserStylesheetInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
@@ -41,10 +43,21 @@ afterEach(() => {
   resetStore()
 })
 
-function Harness({ id, onRender }: { id: string; onRender: ProfilerOnRenderCallback }) {
+/**
+ * Own detached document + adapter per harness — mirrors production exactly:
+ * every `IframeFrameSurface` constructs exactly one `PortalFrameAdapter` for
+ * its OWN iframe document. `applyOverlay`'s managed-style map lives on the
+ * adapter INSTANCE, not the document, so two adapters sharing one document
+ * (the pre-`live-05` version of this test) would each blindly create their
+ * own `mc-user-styles` overlay rather than reusing one — not a scenario
+ * production ever produces.
+ */
+function Harness({ id, onRender, adapter }: { id: string; onRender: ProfilerOnRenderCallback; adapter: PortalFrameAdapter }) {
   return (
     <Profiler id={id} onRender={onRender}>
-      <UserStylesheetInjector targetDocument={document} />
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <UserStylesheetInjector />
+      </CanvasFrameAdapterContext.Provider>
     </Profiler>
   )
 }
@@ -81,11 +94,17 @@ describe('UserStylesheetInjector render scope (Track C3)', () => {
     }
 
     // Two "frames" — both keyed off the same (global) active page, mirroring
-    // how `IframeFrameSurface` mounts one of these per breakpoint frame.
+    // how `IframeFrameSurface` mounts one of these per breakpoint frame. Each
+    // gets its own document + adapter (see `Harness`'s own doc).
+    const doc1 = document.implementation.createHTMLDocument('frame-1')
+    const doc2 = document.implementation.createHTMLDocument('frame-2')
+    const adapter1 = new PortalFrameAdapter(doc1)
+    const adapter2 = new PortalFrameAdapter(doc2)
+
     render(
       <>
-        <Harness id="frame-1" onRender={onRender} />
-        <Harness id="frame-2" onRender={onRender} />
+        <Harness id="frame-1" onRender={onRender} adapter={adapter1} />
+        <Harness id="frame-2" onRender={onRender} adapter={adapter2} />
       </>,
     )
 
@@ -102,7 +121,7 @@ describe('UserStylesheetInjector render scope (Track C3)', () => {
     expect(renderCounts['frame-1']).toBe(1)
     expect(renderCounts['frame-2']).toBe(1)
 
-    const styleElBefore = document.getElementById('mc-user-styles')?.textContent
+    const styleElBefore = doc1.querySelector('[data-studio-overlay-id="mc-user-styles"]')?.textContent
     expect(styleElBefore).toContain('color: red')
 
     // Now change something the CSS genuinely depends on — a style file's
@@ -119,6 +138,10 @@ describe('UserStylesheetInjector render scope (Track C3)', () => {
 
     expect(renderCounts['frame-1']).toBeGreaterThan(1)
     expect(renderCounts['frame-2']).toBeGreaterThan(1)
-    expect(document.getElementById('mc-user-styles')?.textContent).toContain('color: blue')
+    expect(doc1.querySelector('[data-studio-overlay-id="mc-user-styles"]')?.textContent).toContain('color: blue')
+    expect(doc2.querySelector('[data-studio-overlay-id="mc-user-styles"]')?.textContent).toContain('color: blue')
+
+    adapter1.dispose()
+    adapter2.dispose()
   })
 })

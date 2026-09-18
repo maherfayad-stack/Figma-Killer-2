@@ -9,7 +9,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { isAbsolute, join } from 'node:path'
 import { getConnectorWorkspace, registerConnectorWorkspace } from './connectorWorkspace'
 import { resolveToolProjectDir } from './tools/studio/resolveToolProjectDir'
 
@@ -77,7 +77,10 @@ describe('resolveToolProjectDir', () => {
     // depends on what is on disk in this checkout.
     const dir = resolveToolProjectDir(undefined, {})
     expect(typeof dir).toBe('string')
-    expect(dir.startsWith('/')).toBe(true)
+    // `isAbsolute`, not `startsWith('/')`: an absolute win32 path begins with a
+    // drive letter (`C:\…`), so the string check asserted POSIX path syntax
+    // rather than the property the comment above actually names.
+    expect(isAbsolute(dir)).toBe(true)
   })
 
   // A bound connector naming a DIFFERENT project is refused, and a `dir`

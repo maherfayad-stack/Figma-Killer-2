@@ -26,6 +26,7 @@
  * hand-written one after it.
  */
 import { Node, type JsxAttribute, type JsxSpreadAttribute } from 'ts-morph'
+import { classifyJsxTagKind } from '@core/page-tree'
 import type { CssInJsScope } from './cssInJsExtract'
 import type { ParsedPropValue } from './types'
 
@@ -54,11 +55,11 @@ export function resolveStyledAttachment(
 ): StyledAttachment | undefined {
   if (file.empty) return undefined
 
-  const binding = /^[A-Z]/.test(tagName) ? file.binding(tagName) : undefined
+  const binding = classifyJsxTagKind(tagName) === 'component' ? file.binding(tagName) : undefined
   const classNames: string[] = []
   const dropProps: string[] = []
   let name = tagName
-  let kind: 'element' | 'component' = /^[A-Z]/.test(tagName) ? 'component' : 'element'
+  let kind: 'element' | 'component' = classifyJsxTagKind(tagName)
 
   if (binding && binding.base.kind === 'tag') {
     name = binding.base.tag

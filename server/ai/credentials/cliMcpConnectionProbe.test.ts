@@ -67,6 +67,12 @@ describe('parseCliMcpList', () => {
     const parsed = parseCliMcpList('figma: https://mcp.figma.com/mcp (HTTP) - ⏸ Pending approval')
     expect(parsed.has('figma')).toBe(false)
   })
+
+  it('reads a CRLF transcript exactly like its LF twin — the `claude` CLI on Windows prints CRLF', () => {
+    const crlf = parseCliMcpList(REAL_OUTPUT.replace(/\n/g, '\r\n'))
+    expect([...crlf.entries()]).toEqual([...parseCliMcpList(REAL_OUTPUT).entries()])
+    expect(crlf.get('figma')).toBe('connected')
+  })
 })
 
 /** Minimal `SubprocessSpawnFn` stand-in — enough for `captureSubprocess` to read one result. */

@@ -16,20 +16,30 @@
  *      otherwise hold port 3001 and block the local cms).
  *   4. Waits until postgres actually accepts connections.
  *
+ * Before any of that, `runDevPreflight` (scripts/lib/devPreflight.ts) installs
+ * dependencies when the checkout has none or the lockfile moved, and reports
+ * any drifted generated artefact in the background. See that module for why.
+ *
  * Either way, the script then:
  *
  *   - Pre-checks ports 3001 (cms) and 5173 (vite) and prints an
  *     actionable message if either is held by something we don't own.
  *   - Spawns the cms (`bun --watch server/index.ts`) and vite
- *     (`bun node_modules/vite/bin/vite.js --host 127.0.0.1`) as children, forwarding their output
- *     and signals so Ctrl+C cleanly kills both.
+ *     (`bun node_modules/vite/bin/vite.js --host 127.0.0.1`) as children through
+ *     `spawnStackChild`, forwarding their output and signals so Ctrl+C cleanly
+ *     kills both. In a terminal that is a plain stdio inherit; with this
+ *     script's own output redirected or piped, each child writes to
+ *     `.tmp/dev-<name>.log` and this script tails it, because a child that
+ *     blocks writing to a pipe nobody drains stops serving (see that module).
  */
 
 import { mkdir } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import { isSqliteUrl } from '../server/db'
 import { bunCommand, viteCommand } from './lib/bunCommand'
+import { runDevPreflight } from './lib/devPreflight'
 import { ensurePortFree } from './lib/freePort'
+import { spawnStackChild, type StackChild } from './lib/stackChild'
 
 const CMS_PORT = Number(process.env.PORT ?? '3001')
 const VITE_PORT = Number(process.env.VITE_PORT ?? '5173')
@@ -207,6 +217,8 @@ async function waitForPostgresReady(timeoutMs = 60_000): Promise<void> {
 
 // --- main -----------------------------------------------------------------
 
+runDevPreflight(log, fail)
+
 if (isSqliteUrl(DATABASE_URL)) {
   const dbPath = DATABASE_URL.replace(/^sqlite:|^file:/, '')
   await mkdir(dirname(dbPath), { recursive: true })
@@ -236,13 +248,38 @@ log('')
 interface DevProcess {
   name: string
   command: string[]
+  /** Where this child's output goes when we do not own a terminal — see `spawnStackChild`. */
+  logPath: string
   env?: Record<string, string>
 }
 
 const processes: DevProcess[] = [
   {
+    // `--watch` is safe here, and that is a measured claim rather than a hope.
+    // Bun's watcher keys on the ENTRY'S TRANSITIVE MODULE GRAPH, per file — not
+    // on directories. Measured 2026-09-17 with a controlled `bun --watch`
+    // fixture: a new file in a sibling directory, a modified file in a sibling
+    // directory, 300 files written into a `studio-workspace/` under the cwd, and
+    // an unimported file dropped into the very directory holding an imported
+    // module all produced ZERO restarts; touching the imported module restarted
+    // every time. Bun also holds no OS handle on a directory containing no graph
+    // module (that `studio-workspace/` could be `rmdir`'d while the watcher ran,
+    // while renaming the imported module's directory failed EPERM) — so the
+    // Windows EBUSY watcher panic recorded in `server-14` cannot originate from
+    // a workspace write.
+    //
+    // `server/index.ts`'s graph is 630 modules: 567 under `server/`, 55 under
+    // `src/modules/base`, 3 `src/core/data`, 3 `src/modules/studio`, 2
+    // `src/core/persistence`. Zero under `studio-workspace/`, `uploads/`,
+    // `.tmp/`, `.data/` or `dist/`; zero tests. Do NOT replace this with a
+    // hand-maintained directory allowlist — any such list drifts from the real
+    // graph the moment an import changes, and `--watch` derives it exactly.
+    //
+    // `bun run dev:server` runs the same command standalone when you want the
+    // server without Vite.
     name: 'cms',
     command: bunCommand('--watch', 'server/index.ts'),
+    logPath: './.tmp/dev-cms.log',
     env: {
       PORT: String(CMS_PORT),
       DATABASE_URL,
@@ -253,27 +290,24 @@ const processes: DevProcess[] = [
   {
     name: 'vite',
     command: viteCommand('--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort'),
+    logPath: './.tmp/dev-vite.log',
   },
 ]
 
-const children: Bun.Subprocess[] = []
+const children: StackChild[] = []
 let shuttingDown = false
 
 function stopChildren(signal: NodeJS.Signals = 'SIGTERM'): void {
   for (const child of children) {
-    if (child.exitCode === null) child.kill(signal)
+    child.stopTail()
+    if (child.process.exitCode === null) child.process.kill(signal)
   }
 }
 
 for (const cfg of processes) {
-  const child = Bun.spawn(cfg.command, {
-    env: { ...process.env, ...cfg.env },
-    stdin: 'inherit',
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
+  const child = spawnStackChild(cfg.command, { ...process.env, ...cfg.env }, cfg.logPath)
   children.push(child)
-  void child.exited.then((code) => {
+  void child.process.exited.then((code) => {
     if (shuttingDown) return
     shuttingDown = true
     stopChildren()

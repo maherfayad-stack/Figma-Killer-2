@@ -7,10 +7,37 @@
  * **Tier 2, not Tier 0/1.** Every other Studio MCP tool reads source
  * statically or writes it back; this one EXECUTES the project's own code —
  * whatever `scripts.dev` runs, including every dependency it imports. That is
- * exactly the blast-radius `studio.run.project` exists to gate: never granted
- * by default, never implicit to a connector (`mcp-tooling.md`'s "Never let a
- * tool publish, deploy, or run project code without an explicit, separately-
- * gated capability").
+ * exactly the blast-radius `studio.run.project` exists to gate
+ * (`mcp-tooling.md`'s "Never let a tool publish, deploy, or run project code
+ * without an explicit, separately-gated capability").
+ *
+ * **TWO gates, not one (A10 / `sec-05` finding 1).** The capability alone was
+ * never enough, and for a year it was all this tool had: it answers "may this
+ * CALLER run project code at all", which is a property of the connector, not
+ * of the repository it is pointed at. A connector holding
+ * `studio.run.project` could therefore boot ANY project's dev server,
+ * including one whose owner never promoted it past Tier 0 — strictly weaker
+ * than the HTTP route (`devServer.ts`) doing the same spawn, which has always
+ * demanded `trust === 'run-project'`. So this handler now ALSO calls
+ * `checkTrustTier(dir, 'run-project')` (`handlers/studio/trustGate.ts`, the
+ * same helper the route uses) and refuses a Tier-0/1 project with the shared
+ * `trust-tier-required` code.
+ *
+ * The agent may ask for a promotion and may never perform one — that is
+ * enforced, not merely stated: `.studio/` is refused to its native
+ * `Write`/`Edit` by the generated `PreToolUse` hook
+ * (`handlers/studio/agentWriteScope.ts`), because otherwise the gate below
+ * would be a file the caller it gates could edit. What the tier does NOT
+ * prove is that a human weighed this particular project: §6 decision 2 of
+ * STUDIO-FIGMA-FEEL-PLAN.md promotes a Vite project with a lockfile on first
+ * open. `docs/reference/capabilities.md` states the full boundary.
+ *
+ * Because both gates exist, the CAPABILITY can now be held by an ordinary
+ * operator: `studio.run.project` is granted to the built-in Admin role
+ * (`server/auth/capabilities.ts`), which is what makes the only
+ * ground-truth verification tool in the toolset reachable at all. What used
+ * to be one coarse, never-granted switch is now "this operator may run
+ * project code" × "this project has been promoted".
  *
  * **`route`, not `pageId`.** A Studio page (one parsed screen FILE) does not
  * always correspond to an addressable URL in the project's own dev server —
@@ -36,16 +63,27 @@
  * reused across calls, torn down after `idleTimeoutMs` of no further
  * `studio_render_reference` calls for that project — never left running
  * forever, never re-booted on every single call either.
+ *
+ * **The process manager itself lives in `../../../../handlers/studio/
+ * devServer.ts`** (Track L's `live-01`) — one spawner, shared with the new
+ * `/admin/api/studio/dev-server/*` routes and the client prewarm hook, not
+ * duplicated here. This module is a CONSUMER: `ensureDevServer` boots or
+ * reuses the project's dev server, `scheduleDevServerIdleTeardown` starts
+ * this call's own idle clock on success, and everything below that —
+ * launching the headless browser, navigating, screenshotting — is this
+ * tool's own concern and stays here.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk } from '@core/ai'
+import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolveAppRoot } from '../../../../handlers/studio/appRoot'
-import { detectPackageManager, type PackageManager } from '../../../../handlers/studio/installDeps'
-import { minimalSubprocessEnv, type SpawnedProcessLike } from '../../../../handlers/studio/subprocessRunner'
+import { TRUST_TIER_REQUIRED_CODE, checkTrustTier } from '../../../../handlers/studio/trustGate'
+import {
+  ensureDevServer,
+  scheduleDevServerIdleTeardown,
+  type DevServerOverrides,
+} from '../../../../handlers/studio/devServer'
 import {
   defaultLaunchBrowser,
   type PlaywrightLikeBrowser,
@@ -58,196 +96,15 @@ import {
 // callers (including its test) inject fakes against these names.
 export type { PlaywrightLikeBrowser, PlaywrightLikePage }
 
-const BOOT_TIMEOUT_MS = 30_000
 const NAV_TIMEOUT_MS = 20_000
 /** Grace period after `load` for client-side React mount/render to settle — see the `goto` call site. */
 const NAV_SETTLE_MS = 500
 const DEFAULT_IDLE_TIMEOUT_MS = 2 * 60_000
-const MAX_LOG_BYTES = 32_000
-const DEV_SERVER_ENV_EXTRA_KEYS = ['APPDATA', 'LOCALAPPDATA', 'npm_config_cache'] as const
-
-// Matches the printed "Local:" URL every mainstream React dev server emits
-// (Vite, Next.js, CRA/webpack-dev-server, Remix) — deliberately generic
-// rather than framework-specific regexes, see module doc.
-const URL_PATTERN = /https?:\/\/(?:localhost|127\.0\.0\.1)(?::\d+)?[^\s"'<>]*/i
-
-// Strips ANSI SGR escape sequences (`\x1b[...m`) before URL matching.
-// CONFIRMED NECESSARY against the real eSIM corpus (Vite v8): Vite colorizes
-// its "Local:" line by wrapping just the PORT DIGITS in their own escape
-// codes — `http://localhost:\x1b[1m5173\x1b[22m/\x1b[39m` — which splits the
-// `:` from the digits that follow it. Without stripping first, `:\d+` in
-// `URL_PATTERN` never matches (the character right after `:` is an escape
-// byte, not a digit), the optional port group is skipped entirely, and
-// `[^\s"'<>]*` still greedily swallows the raw escape bytes into the
-// "matched" URL — producing a garbage host Playwright's `page.goto` then
-// hangs on (an invalid host takes its own long DNS/connect timeout to fail,
-// rather than failing fast) instead of a clean navigation.
-const ANSI_ESCAPE_PATTERN = /\x1b\[[0-9;]*[A-Za-z]/g // eslint-disable-line no-control-regex -- strips terminal color codes before URL matching
-
-function stripAnsi(text: string): string {
-  return text.replace(ANSI_ESCAPE_PATTERN, '')
-}
-
-interface DevServerEntry {
-  appRoot: string
-  proc: SpawnedProcessLike
-  packageManager: PackageManager
-  baseUrl: string | null
-  urlPromise: Promise<string | null>
-  log: string
-  idleTimer: ReturnType<typeof setTimeout> | null
-}
 
 /** Injectable seams for tests — never touched by real callers. */
-export interface ReferenceRenderOverrides {
-  spawn?: (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: 'pipe'; stderr: 'pipe'; stdin: 'ignore' }) => SpawnedProcessLike
+export interface ReferenceRenderOverrides extends DevServerOverrides {
   launchBrowser?: () => Promise<PlaywrightLikeBrowser>
-  bootTimeoutMs?: number
   navTimeoutMs?: number
-}
-
-const defaultSpawn: NonNullable<ReferenceRenderOverrides['spawn']> = (argv, options) =>
-  Bun.spawn(argv, options) as unknown as SpawnedProcessLike
-
-/** Per-process registry, keyed by resolved app root — one dev server per project, reused across calls. */
-const servers = new Map<string, DevServerEntry>()
-
-function devScriptFor(appRoot: string): string | null {
-  const pkgPath = join(appRoot, 'package.json')
-  if (!existsSync(pkgPath)) return null
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(pkgPath, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return null
-    const scripts = (parsed as Record<string, unknown>).scripts
-    if (!scripts || typeof scripts !== 'object') return null
-    const map = scripts as Record<string, unknown>
-    if (typeof map.dev === 'string') return 'dev'
-    if (typeof map.start === 'string') return 'start'
-    return null
-  } catch {
-    return null
-  }
-}
-
-function capText(current: string, chunk: string): string {
-  const combined = current + chunk
-  return combined.length > MAX_LOG_BYTES ? combined.slice(combined.length - MAX_LOG_BYTES) : combined
-}
-
-/** Continuously drains stdout/stderr for the process's lifetime so a chatty dev server never stalls on a full pipe buffer — resolves `urlPromise` the first time a Local URL is seen, keeps draining after. */
-function pumpAndWatch(entry: DevServerEntry, resolveUrl: (url: string | null) => void): void {
-  let resolved = false
-  const settle = (url: string | null) => {
-    if (resolved) return
-    resolved = true
-    resolveUrl(url)
-  }
-  const pump = async (stream: ReadableStream<Uint8Array> | null) => {
-    if (!stream) return
-    const reader = stream.getReader()
-    const decoder = new TextDecoder()
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (!value) continue
-        const chunk = decoder.decode(value, { stream: true })
-        entry.log = capText(entry.log, chunk)
-        if (!entry.baseUrl) {
-          const cleanChunk = stripAnsi(chunk)
-          const match = URL_PATTERN.exec(cleanChunk) ?? URL_PATTERN.exec(stripAnsi(entry.log))
-          if (match) {
-            entry.baseUrl = match[0].replace(/\/$/, '')
-            settle(entry.baseUrl)
-          }
-        }
-      }
-    } catch {
-      // stream errored/closed — nothing more to drain
-    }
-  }
-  void pump(entry.proc.stdout)
-  void pump(entry.proc.stderr)
-  void entry.proc.exited.then(() => settle(null))
-}
-
-function scheduleTeardown(entry: DevServerEntry, appRoot: string, idleTimeoutMs: number): void {
-  if (entry.idleTimer) clearTimeout(entry.idleTimer)
-  // Deliberately NOT `.unref()`'d — on this Bun version, unref-ing a timer
-  // created inside an async function that's the last live handle can starve
-  // it of ever firing at all (confirmed empirically: the identical boot-race
-  // timer below hung indefinitely with `.unref()` and fired correctly
-  // without it). The admin server process this actually runs in is already
-  // kept alive by `Bun.serve`'s listening socket regardless.
-  entry.idleTimer = setTimeout(() => {
-    servers.delete(appRoot)
-    try {
-      entry.proc.kill()
-    } catch {
-      // already exited
-    }
-  }, idleTimeoutMs)
-}
-
-async function getOrStartDevServer(
-  appRoot: string,
-  overrides: ReferenceRenderOverrides,
-): Promise<{ ok: true; baseUrl: string } | { ok: false; error: string; log: string }> {
-  const existing = servers.get(appRoot)
-  if (existing?.baseUrl) return { ok: true, baseUrl: existing.baseUrl }
-
-  const devScript = devScriptFor(appRoot)
-  if (!devScript) {
-    return {
-      ok: false,
-      error: `No "dev" or "start" script found in package.json at ${appRoot}.`,
-      log: '',
-    }
-  }
-  const packageManager = detectPackageManager(appRoot)
-  const spawn = overrides.spawn ?? defaultSpawn
-  const proc = spawn([packageManager, 'run', devScript], {
-    cwd: appRoot,
-    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS),
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
-  })
-
-  let resolveUrl!: (url: string | null) => void
-  const urlPromise = new Promise<string | null>((resolve) => { resolveUrl = resolve })
-  const entry: DevServerEntry = { appRoot, proc, packageManager, baseUrl: null, urlPromise, log: '', idleTimer: null }
-  servers.set(appRoot, entry)
-  pumpAndWatch(entry, resolveUrl)
-
-  const bootTimeoutMs = overrides.bootTimeoutMs ?? BOOT_TIMEOUT_MS
-  let bootTimer: ReturnType<typeof setTimeout> | undefined
-  // Deliberately NOT `.unref()`'d — see `scheduleTeardown`'s comment above.
-  const timedOut = await Promise.race([
-    urlPromise.then(() => false),
-    new Promise<boolean>((resolve) => {
-      bootTimer = setTimeout(() => resolve(true), bootTimeoutMs)
-    }),
-  ])
-  if (bootTimer) clearTimeout(bootTimer)
-
-  if (timedOut || !entry.baseUrl) {
-    servers.delete(appRoot)
-    try {
-      proc.kill()
-    } catch {
-      // already exited
-    }
-    return {
-      ok: false,
-      error: timedOut
-        ? `Dev server ("${packageManager} run ${devScript}") did not print a Local URL within ${bootTimeoutMs}ms.`
-        : `Dev server ("${packageManager} run ${devScript}") exited before printing a Local URL.`,
-      log: entry.log,
-    }
-  }
-
-  return { ok: true, baseUrl: entry.baseUrl }
 }
 
 const InputSchema = Type.Object(
@@ -278,7 +135,7 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
     mutates: true,
     requiredCapabilities: ['studio.run.project'],
     description:
-      'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Requires studio.run.project (never granted by default, never implicit) because this EXECUTES the project\'s own code, unlike every other Studio tool. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
+      'Tier 2: boots the OPEN PROJECT\'s own dev server (its "dev" or "start" script, via the detected package manager) and screenshots `route` through a real headless browser at the given viewport — the ground truth to compare a studio_export_frames capture against. Gated TWICE because this EXECUTES the project\'s own code, unlike every other Studio tool: the caller needs studio.run.project, AND the project itself must be promoted to "run-project" trust. A project at "static" or "render-packages" trust refuses with code "trust-tier-required" — ask the user to promote it in Studio and call again; you may never promote it yourself, and calling again without that promotion returns the same refusal. `route` must be a path this project\'s OWN dev server actually serves (its router or URL-state, not necessarily the Studio page slug) — not every parsed Studio page has one; screens reached only via in-app interaction (a tap, a picked option) are not reachable this way. The dev server is reused across calls for the same project and torn down after `idleTimeoutMs` of inactivity. If the dev server fails to boot, returns ok:false with the captured stdout/stderr tail — never a synthetic result.',
     inputSchema: InputSchema,
     handler: async (input, ctx: ToolContext) => {
       const {
@@ -300,23 +157,37 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
       const dir = resolveToolProjectDir(dirInput, ctx)
       const appRoot = resolveAppRoot(dir)
 
-      const server = await getOrStartDevServer(appRoot, overrides)
-      if (!server.ok) {
-        // `error` is populated (not just `message`) so an MCP caller sees the
-        // real reason — `server.ts`'s CallToolResult builder only forwards
-        // `output.error` on an `ok:false` result, dropping any other field.
-        return {
-          ok: false,
-          error: server.error,
-          code: 'dev-server-failed-to-boot',
-          message: server.error,
-          log: server.log,
-          dir,
-          appRoot,
-        }
+      // Gate 2 of 2 — the PROJECT's own tier (A10, `sec-05` finding 1). Gate 1
+      // (`requiredCapabilities: ['studio.run.project']`) was already enforced
+      // by `toolAllowedForCapabilities` before this handler ran; it says the
+      // caller may run project code, not that THIS project may be run.
+      // Read off `dir`, never `appRoot`: `.studio/` lives at the project root,
+      // and a monorepo's nested app root has no meta file of its own.
+      const trust = checkTrustTier(dir, 'run-project')
+      if (!trust.ok) {
+        return toolRefusal(
+          TRUST_TIER_REQUIRED_CODE,
+          `This project is at "${trust.trust}" trust, and booting its dev server runs its own code — that needs the highest tier ("run-project").`,
+          {
+            remedy: 'Ask the user to promote the project in Studio, then call this again; you may not promote it yourself, so this same call will keep refusing until they do.',
+            details: { trust: trust.trust, requiredTrust: trust.required, dir },
+          },
+        )
       }
-      const entry = servers.get(appRoot)
-      if (entry) scheduleTeardown(entry, appRoot, idleTimeoutMs)
+
+      const server = await ensureDevServer(dir, overrides)
+      if (!server.ok) {
+        // `toolRefusal` renders the code into `error` for exactly the reason
+        // this branch used to hand-roll: `server.ts`'s CallToolResult builder
+        // only forwards `output.error` on an `ok:false` result, dropping every
+        // other field, so a code that lives only in a sibling property is a
+        // code the model never sees.
+        return toolRefusal('dev-server-failed-to-boot', server.error, {
+          remedy: 'Read the captured log, fix the cause in the project, then call again — the same call fails identically until the dev script comes up.',
+          details: { log: server.log, dir, appRoot },
+        })
+      }
+      scheduleDevServerIdleTeardown(dir, idleTimeoutMs)
 
       const normalizedRoute = route.startsWith('/') ? route : `/${route}`
       const url = `${server.baseUrl}${normalizedRoute}`
@@ -344,9 +215,9 @@ export function createReferenceRenderTool(overrides: ReferenceRenderOverrides = 
           await page.close()
         }
       } catch (err) {
-        return aiToolError(
-          `Could not render ${url}: ${err instanceof Error ? err.message : String(err)}`,
-        )
+        return toolRefusal('render-failed', `Could not render ${url}: ${err instanceof Error ? err.message : String(err)}`, {
+          remedy: 'The dev server is up, so confirm this is a route it actually serves before trying again.',
+        })
       } finally {
         if (browser) await browser.close()
       }

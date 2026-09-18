@@ -63,6 +63,20 @@ interface ClassStylesPreview {
   styles: Partial<CSSPropertyBag>
 }
 
+/**
+ * Transient style preview applied on top of one or more nodes' inline styles
+ * while a user hovers a suggestion in a property control on the Element
+ * (inline) target — the inline mirror of {@link ClassStylesPreview}. Inline
+ * styles have no breakpoint/condition axis (a real `style=""` attribute can't
+ * be media-queried — see `InlineStyleComposer`'s doc), so there is no
+ * `breakpointId` to carry. `nodeIds` covers both the single-node
+ * `InlineStyleComposer` and the N-node `MultiInlineStyleComposer`.
+ */
+export interface NodeStylesPreview {
+  nodeIds: string[]
+  styles: Partial<CSSPropertyBag>
+}
+
 export type CssRuleApplyMode = 'merge' | 'replace'
 
 export interface CssRuleApplyResult {
@@ -117,6 +131,17 @@ export interface StyleRuleSlice {
   previewClassStyles: ClassStylesPreview | null
   setPreviewClassStyles(preview: ClassStylesPreview): void
   clearPreviewClassStyles(classId?: string): void
+
+  /**
+   * Transient style patch previewed on the canvas while hovering a
+   * suggestion in the Element (inline) target — the inline mirror of
+   * `previewClassStyles`. Consumed at the canvas render boundary
+   * (`NodeRenderer`), merged over the node's stored `inlineStyles` for the
+   * previewed node id(s) only. Pushes no history.
+   */
+  previewNodeStyles: NodeStylesPreview | null
+  setPreviewNodeStyles(preview: NodeStylesPreview): void
+  clearPreviewNodeStyles(nodeId?: string): void
 
   // ── CRUD ──────────────────────────────────────────────────────────────────
   /**

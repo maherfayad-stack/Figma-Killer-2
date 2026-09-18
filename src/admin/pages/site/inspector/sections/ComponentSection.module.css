@@ -1,0 +1,162 @@
+/**
+ * ComponentSection — styles for the `studio.instance` Properties panel
+ * section (`STATE.md` `panel-25`, P3 item 11). Achromatic palette (color as
+ * identity/state/canvas affordance only). CSS Modules only. Token-only
+ * colors — no hardcoded hex/rgb/hsl.
+ */
+
+/* ── Header strip — mirrors ComponentRefView's header ────────────────────── */
+
+/* Horizontal padding is 0, not `--inspector-space-l` — this block is a
+   CHILD of `<Section flush>`'s own `.sectionContent`, which already insets
+   every child by `--inspector-pad-x`. Re-adding horizontal padding here
+   double-inset the header/actions/swap blocks to 22px while the prop rows
+   below (plain `PropertyControlRenderer`/`ControlRow` output, zero self-
+   padding) sat at the correct 12px — the reported "prop labels sit further
+   left than the header" bug. */
+.header {
+  display: flex;
+  align-items: center;
+  gap: var(--inspector-space-xs);
+  padding: var(--inspector-space-s) 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-3);
+}
+
+.headerIcon {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.headerName {
+  flex: 1;
+  font-size: var(--text-s);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sourceBadge {
+  flex-shrink: 0;
+  padding: var(--inspector-space-4xs) var(--inspector-space-2xs);
+  border-radius: var(--radius);
+  background: var(--bg-surface-2);
+  color: var(--text-disabled);
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+/* ── Detach / Swap actions ────────────────────────────────────────────────── */
+
+/* Horizontal 0 — see `.header`'s comment above; same `.sectionContent`
+   ancestor already supplies `--inspector-pad-x`. */
+.actionsRow {
+  display: flex;
+  gap: var(--inspector-space-2xs);
+  padding: var(--inspector-space-s) 0;
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Detach refusal notice — same shape as SharedComponentNotice, danger tone ── */
+
+/* Horizontal margin 0 — same `.sectionContent` ancestor inset applies; a
+   nonzero horizontal margin here pushed this card an extra 10px inside that
+   inset instead of spanning the same content width as the rows around it. */
+.refusalNotice {
+  display: flex;
+  gap: var(--inspector-space-2xs);
+  align-items: flex-start;
+  margin: var(--inspector-space-s) 0;
+  padding: var(--inspector-space-xs) var(--inspector-space-s);
+  border-radius: var(--radius);
+  background: var(--danger-10);
+}
+
+.refusalIcon {
+  flex-shrink: 0;
+  color: var(--danger-light);
+  align-self: baseline;
+}
+
+.refusalBody {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-2xs);
+  min-width: 0;
+}
+
+.refusalText {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.4;
+  color: var(--danger-text);
+}
+
+/* ── Swap picker ──────────────────────────────────────────────────────────── */
+
+/* Horizontal 0 — see `.header`'s comment above. */
+.swapPicker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-2xs);
+  padding: var(--inspector-space-s) 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-surface-2);
+}
+
+.swapEmpty {
+  margin: var(--inspector-space-2xs) 0 0;
+  padding: var(--inspector-space-m);
+  font-size: var(--text-2xs);
+  color: var(--text-disabled);
+  text-align: center;
+  line-height: 1.5;
+}
+
+.swapList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-4xs);
+  margin: var(--inspector-space-2xs) 0 0;
+  padding: 0;
+  list-style: none;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.swapCandidate {
+  width: 100%;
+  justify-content: flex-start;
+}
+
+/* ── No call-site props placeholder ──────────────────────────────────────── */
+
+/* Horizontal 0 — see `.header`'s comment above. */
+.noParams {
+  padding: var(--space-4xl) 0;
+  font-size: var(--text-xs);
+  color: var(--text-disabled);
+  text-align: center;
+  line-height: 1.6;
+}
+
+/* ── Props list — plain flow now that this section is inline content inside
+   `Section`'s own body, not an independently scrolling full-height pane
+   (`STATE.md` `panel-25`'s Section 11 work order). Had NO gap at all — every
+   declared prop is its own group, and they rendered touching, tighter than
+   even a within-group gap elsewhere in the panel. `--inspector-space-m` is
+   the same between-group step every other list of independent rows in this
+   panel uses (`Section.module.css`'s `.sectionBody`, `AttributesSection`'s
+   `.rows`). `margin-top` gives the list itself the same breathing room from
+   the header/actions strip above it, which otherwise sits flush against the
+   first prop row. ───────────────────────────────────────────────────────── */
+
+.propsList {
+  display: flex;
+  flex-direction: column;
+  gap: var(--inspector-space-m);
+  margin-top: var(--inspector-space-m);
+}

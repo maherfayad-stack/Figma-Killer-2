@@ -457,7 +457,7 @@ export async function buildStudioLiveDigest(
     // the digest and the gate must flag the identical set of pages, or the
     // digest trains the model to distrust its own gate.
     const userKey = studioAgentUserKey(options.userId)
-    pageWriteVerification = computePageWriteVerification(dir, userKey, pages, resolveProjectFidelityMode(dir, userKey))
+    pageWriteVerification = computePageWriteVerification(dir, userKey, pages, { fidelityMode: resolveProjectFidelityMode(dir, userKey) })
   } catch (err) {
     console.error('[ai/liveDigest] page write verification failed — continuing without it:', err)
   }

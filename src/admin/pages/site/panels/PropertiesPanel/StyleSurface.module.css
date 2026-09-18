@@ -1,15 +1,29 @@
-/* StyleSurface — unified properties editor (scroll-anchor layout). */
+/* StyleSurface — unified properties editor (Track P, P1: one scrolling column, no rail). */
 
-/* ── Outer shell: THE scroll container, two-column grid ────────────────────── */
-/*    Left column  = content (search bar + sections)                           */
-/*    Right column = sticky rail (32px)                                        */
+/* ── Outer shell: THE scroll container, one column ──────────────────────────
+   P1 deletes the sticky icon rail (`STUDIO-LIVE-CANVAS-PLAN.md` §P1/§4.0
+   names it chrome that "costs a click or a glance and buys nothing") — the
+   panel is a single flow now, top to bottom, matching P2 rule 1 (fixed
+   order) and rule 2 (everything at rest). */
 .surface {
     flex: 1;
     min-height: 0;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) var(--inspector-rail-w);
-    padding-top: var(--space-2xl);
-    padding-bottom: var(--space-7xl);
+    grid-template-columns: minmax(0, 1fr);
+    /*
+     * FROZEN, not fluid — `--space-2xl`/`--space-7xl` are `clamp()`-based and
+     * rendered 15.917px / 31.848px at a 1400px window, i.e. the one place the
+     * panel's own "inspector spacing is pinned" rule (globals.css) was not
+     * applied. Worse, `--space-7xl` was on BOTH this element and
+     * `.surfaceContent` below, so the tab carried 63.7px of bottom padding —
+     * two full section headers of dead scroll, counted twice.
+     *
+     * One decision, here: `--inspector-space-m` top and bottom. Measured
+     * saving across all four baseline fixtures: 63.6px
+     * (`docs/audits/penpot-inspector-baseline/05-section-heights.md`).
+     */
+    padding-top: var(--inspector-space-m);
+    padding-bottom: var(--inspector-space-m);
     gap: 0;
     overflow-y: auto;
     overflow-x: hidden;
@@ -19,15 +33,38 @@
 }
 
 /* ── Left content column ─────────────────────────────────────────────────── */
-/* Grid with the same 1px gap as `.styleSections` so the Module section and the
-   CSS sections share one consistent vertical rhythm. (The sticky search bar is
-   absolutely positioned, so it's out of flow and adds no gap.) */
+/*
+ * `.surfaceContent` is the single shared ancestor of EVERY top-level block
+ * the panel mounts — real `<Section>`-wrapped entries and the headerless
+ * ones (Layer/Align/Measures, which have no header and so never go through
+ * `Section.module.css` at all) alike — so this grid `gap` is where the
+ * panel's BETWEEN-SECTION spacing belongs, not in `Section.module.css`
+ * itself (`Section` is also used by GitPanel/FrameworkScalePanel, outside
+ * this panel's rhythm). Used to be `var(--space-px)` (1px) — sections read
+ * as one continuous wall with only a 1px hairline between them, no
+ * breathing room a scanning eye could use as a landmark. Now
+ * `--inspector-space-m`, the panel's between-section step.
+ *
+ * It was `--inspector-space-xl` (12px) until panel-39 measured what twelve
+ * of those cost a text node: 132px, against the 8px section gap Figma and
+ * Penpot both draw (`docs/audits/penpot-inspector-baseline/02-measurements.
+ * md`). 8px is still twice the 4px within-group step, so the hierarchy that
+ * `fix/inspector-spacing-audit` established — within-group < between-group
+ * < between-section — survives intact; only the top step moved onto the
+ * measured reference. Saving: 44px on the F2 text fixture.
+ *
+ * This is also what makes each section's header sit closer to ITS OWN
+ * content than to the section above it: `Section.module.css`'s
+ * `.sectionContent` already has zero top padding (the header's own box ends
+ * and the first row begins immediately), so the only space around a header
+ * is this shared gap sitting ABOVE it — proximity, not a magic number tuned
+ * per header.
+ */
 .surfaceContent {
     display: grid;
     align-content: start;
-    gap: var(--space-px);
+    gap: var(--inspector-space-m);
     min-width: 0;
-    padding-bottom: var(--space-7xl);
     /*
      * The rail is a sibling grid column, not an overlay, but the scroll
      * container clips on the X axis at the PANEL edge — so a section whose
@@ -61,25 +98,19 @@
     min-width: 0;
 }
 
-/* ── Sticky search bar ───────────────────────────────────────────────────── */
-.searchBarRow {
-    position: absolute;
-    bottom: -1px;
-    right: 0;
-    left: 0;
-    z-index: 99;
-    padding: var(--space-4xl);
-    padding-top: var(--space-8xl);
-    padding-bottom: var(--inspector-space-l);
-    background: linear-gradient(0, var(--panel-fade-bg) 50%, transparent);
-}
-
-/* ── Right column: sticky rail ───────────────────────────────────────────── */
-.railSticky {
-    position: sticky;
-    top: 0;
-    align-self: start;
-    padding-top: var(--inspector-space-3xs);
+/*
+ * A section whose `appliesTo` passes but whose own component renders `null`
+ * (Align, with no flex/grid parent — its own doc: "the row doesn't exist in
+ * the DOM at all") still leaves its `[data-section-id]` wrapper `<div>` in
+ * the grid — a literal empty element, not a hidden one. Found auditing the
+ * new between-section gap this pass added: a CSS grid `gap` still applies on
+ * BOTH sides of a zero-height empty item, so one invisible section silently
+ * cost 2x the between-section step instead of 0. `:empty` collapses it out
+ * of the grid the same way the component itself already opted out of the
+ * DOM.
+ */
+[data-section-id]:empty {
+    display: none;
 }
 
 /* ── Generated utility lock wrapper ─────────────────────────────────────── */
@@ -87,22 +118,8 @@
     padding: 0;
 }
 
-/* ── Track F1 / S6 — Element + Class blocks, shown together ─────────────────
-   Each write target's own composer gets a small label so it's always clear
-   which one a row belongs to — the two blocks are independent, not tabs. */
-.targetBlock {
-    display: grid;
-    gap: var(--space-px);
-}
-
-.targetBlockLabel {
-    padding: var(--inspector-space-2xs) var(--inspector-space-l);
-    color: var(--text-subtle);
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-}
+/* The Module section's own chrome moved out with the markup, to
+   `ModuleBlock.module.css` beside the component that renders it. */
 
 /* ────────────────────────────────────────────────────────────────────────────
    LockedStylePreview
@@ -124,7 +141,7 @@
 .lockedPreviewTeaser {
     display: grid;
     gap: var(--inspector-space-s);
-    padding: var(--inspector-space-l) var(--inspector-space-xl);
+    padding: var(--inspector-space-l) var(--inspector-pad-x);
     pointer-events: none;
     opacity: 0.55;
     user-select: none;
@@ -170,7 +187,7 @@
 .generatedUtilityState {
     display: grid;
     gap: var(--inspector-space-s);
-    margin: var(--inspector-space-s) var(--inspector-space-l) var(--inspector-space-xl);
+    margin: var(--inspector-space-s) var(--inspector-pad-x) var(--inspector-space-xl);
     padding: var(--inspector-space-l);
     border-radius: 12px;
     background: var(--bg-surface);

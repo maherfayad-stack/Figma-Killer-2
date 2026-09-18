@@ -5,8 +5,8 @@
  * every page in the project — a project can accumulate many pages across
  * boards, and a board's own page list is what the user is actually working
  * with. Switching the active board (in `StudioBoardsList` above) narrows this
- * list to that board's frames; `AddFramePicker` / `NewPageButton` in the
- * header are how a page joins the active board in the first place. Falls back
+ * list to that board's frames; `AddPagePicker` in the header is how a page
+ * joins the active board in the first place. Falls back
  * to every page while boards haven't loaded yet (`!boardsLoaded`), so there's
  * no empty flash during the brief window before `.studio/boards.json` returns.
  *
@@ -41,7 +41,7 @@ import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import type { Page } from '@core/page-tree'
 import { DomPanel, PageLayerSubtree } from '@site/panels/DomPanel'
-import { AddFramePicker, NewPageButton } from '@site/canvas/BoardFramesLayer'
+import { AddPagePicker } from '@site/canvas/BoardFramesLayer'
 import { Input } from '@ui/components/Input'
 import { TreeChevron, TreeContainer, TreeIconSlot, TreeLabel, TreeRow } from '@site/ui/Tree'
 import { FileTextSolidIcon } from 'pixel-art-icons/icons/file-text-solid'
@@ -105,14 +105,13 @@ export function StudioPagesTree({ editable = true }: StudioPagesTreeProps) {
     <div className={styles.section}>
       <div className={styles.header}>
         <span className={styles.heading}>Pages</span>
-        {/* Two entry points for populating the board: `NewPageButton` creates a
-            brand-new page file, `AddFramePicker` curates an already-made page
-            onto the active board. `BoardFramesLayer` only renders these in its
-            empty state, so once a board has any frames this header is the only
-            remaining home for them. */}
+        {/* ONE entry point for populating the board: `AddPagePicker` both
+            creates a brand-new page file and curates an already-made page onto
+            the active board. `BoardFramesLayer` only renders it in its empty
+            state, so once a board has any frames this header is the only
+            remaining home for it. */}
         <div className={styles.headerActions}>
-          <NewPageButton iconOnly ariaLabel="New page" size="micro" />
-          <AddFramePicker iconOnly ariaLabel="Add existing page to board" size="micro" />
+          <AddPagePicker iconOnly ariaLabel="Add page" size="micro" />
         </div>
       </div>
       <TreeContainer ariaLabel="Pages" testId="studio-pages-tree" className={styles.scroll}>

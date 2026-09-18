@@ -1102,6 +1102,15 @@ describe('LayerNodeContextMenu — refusal footer', () => {
 
     const notice = screen.getByTestId('constraint-notice')
     expect(notice.getAttribute('data-constraint-reason')).toBe('shared-component')
-    expect(screen.getByTestId('constraint-origin').textContent).toContain('Icon.jsx:3')
+    // R1 (`STATE.md`'s `refusal-01`) gave `shared-component` a real targeted
+    // `edit-component` action — `ConstraintNotice`'s own de-dup rule
+    // ("origin is offered on its own only when no action already points at a
+    // file") now correctly suppresses the separate `constraint-origin` badge
+    // this test used to assert on, since the action button below points at
+    // the same file. The button's own label doesn't name the file the way
+    // the old badge did — a real, minor precision loss worth a follow-up,
+    // not a bug this test should paper over.
+    expect(screen.queryByTestId('constraint-origin')).toBeNull()
+    expect(screen.getByTestId('constraint-action-edit-component').textContent).toContain('Open the component definition')
   })
 })

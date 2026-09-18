@@ -5,6 +5,7 @@ import { readServerConfig } from './config'
 import { DEV_ORIGIN_ALLOWLIST, configurePublicOrigins, configureTrustedProxyCidrs, stampSocketIp } from './auth/security'
 import { applySecurityHeaders } from './securityHeaders'
 import { startConversationPurgeTick } from './ai/boot'
+import { provideGithubCredentialDb } from './handlers/studio/githubToken'
 
 await import('./richtextSanitizer')
 const { handleServerRequest } = await import('./router')
@@ -29,6 +30,12 @@ await activateInstalledServerPlugins(db, config.uploadsDir)
 // AI runtime: start the nightly conversation-purge tick. Operators add
 // their own provider credentials via Settings → AI → Providers on first install.
 startConversationPurgeTick(db)
+// Git's network verbs need the signed-in user's stored GitHub token, and they
+// are reached from sub-routers whose signature carries a user id but no
+// `DbClient`. Handing the client over once here is what lets
+// `getGithubTokenForUser(userId)` be the single-argument function those
+// callers share — see `server/handlers/studio/githubToken.ts`.
+provideGithubCredentialDb(db)
 
 /**
  * Build the CORS response headers for an incoming request.
@@ -123,3 +130,21 @@ Bun.serve({
 })
 
 console.log(`[server] Listening on http://localhost:${config.port}`)
+
+// The live origin: a second, cookie-free Bun.serve listener that proxies
+// `/p/<projectKey>/*` to a Tier 2 project's own dev server. Dynamic import
+// matches this file's existing pattern (`handleServerRequest`,
+// `activateInstalledServerPlugins` are both dynamic imports above) and keeps
+// `liveOrigin.ts` out of the startup path if it ever throws before the
+// primary listener is up. Always started (unconditional on trust tier — the
+// live origin gates per-request by reading a project's own dev-server phase,
+// not globally). A bind failure here must not take down the admin server —
+// caught and logged, not rethrown; `GET /admin/api/studio/live-origin`
+// reports `liveOrigin: null` when this failed.
+try {
+  const { startLiveOriginServer } = await import('./liveOrigin')
+  startLiveOriginServer(config)
+  console.log(`[server] Live origin listening on http://localhost:${config.livePort}`)
+} catch (err) {
+  console.error('[server] Live origin listener failed to start:', err)
+}

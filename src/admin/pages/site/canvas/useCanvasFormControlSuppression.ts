@@ -1,5 +1,7 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
+import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
 const CANVAS_EDITOR_CONTROL_SELECTOR = '[data-canvas-interactive="true"]'
@@ -14,13 +16,26 @@ interface CanvasFormControlSuppressionOptions {
  * Canvas design mode renders real authored form controls, but they are still
  * canvas nodes. Suppress native activation before browser autofill/select UI
  * appears, while preserving canvas selection.
+ *
+ * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's
+ * `Document` through `PortalFrameAdapter`'s escape hatch. Bridge mode is a
+ * documented gap, not a silent one: suppressing a native control's default
+ * activation (`preventDefault`/`stopPropagation`/`blur()`) has to run INSIDE
+ * the cross-origin frame, which means it needs a real `runtime.ts` behavior
+ * analogous to `hoverSuppressionRules.ts` — a new capability, not a message
+ * translation, and out of this batch's scope. `interaction='canvas'` (design
+ * mode) against a bridge frame currently leaves native form controls
+ * un-suppressed; flag this to whoever wires up `documentMode==='bridge'` for
+ * real.
  */
 export function useCanvasFormControlSuppression(
-  iframeDoc: Document | null,
+  adapter: FrameDocumentAdapter | null,
   { breakpointId, enabled }: CanvasFormControlSuppressionOptions,
 ): void {
   useEffect(() => {
     if (!enabled) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
     if (!iframeDoc) return
     let latestPointerActivatedSelect: Element | null = null
     let latestActivatedSelectForClick: Element | null = null
@@ -67,7 +82,7 @@ export function useCanvasFormControlSuppression(
       iframeDoc.removeEventListener('click', suppressClickActivation, { capture: true })
       iframeDoc.removeEventListener('focusin', suppressFocus, { capture: true })
     }
-  }, [breakpointId, enabled, iframeDoc])
+  }, [breakpointId, enabled, adapter])
 }
 
 function isElementLike(value: EventTarget | null): value is Element {

@@ -207,6 +207,77 @@ describe('studio_list_components', () => {
     expect(result.note).toContain('acme-ds-1-0-0')
   })
 
+  /**
+   * DS-3 — the BUILT-IN design system, listed straight from the committed
+   * manifest `src/modules/alm/register.tsx` registers the palette from. It
+   * needs no install, no `.d.ts` and no Code Connect file, which is exactly
+   * why it used to be invisible to this tool: every source it consults is
+   * keyed on `node_modules`.
+   */
+  it('lists the built-in design system for a project carrying the design-system folder', async () => {
+    write('design-system/index.js', 'export {}\n')
+
+    const result = (await call('studio_list_components')) as {
+      components: Array<{ name: string; pkg: string; apiSource: string; props: Array<{ name: string; kind: { kind: string } }> }>
+      designSystems: Array<{ name: string; source: string; root: string }>
+    }
+
+    expect(result.designSystems).toEqual([{ name: 'alm', source: 'builtin', root: 'design-system' }])
+    const builtin = result.components.filter((c) => c.apiSource === 'builtin')
+    expect(builtin.length).toBeGreaterThan(10)
+    const button = builtin.find((c) => c.name === 'Button')
+    expect(button).toBeDefined()
+    // `pkg` is the FOLDER, not a package name — the tool description says the
+    // specifier is relative to the importing file and that an insert should
+    // use `designSystemImport: true` rather than guess it.
+    expect(button!.pkg).toBe('design-system')
+    // Props arrive in the same `PropKind` vocabulary every other entry uses.
+    expect(button!.props.every((p) => typeof p.kind.kind === 'string')).toBe(true)
+  })
+
+  /**
+   * DS-1 filled `description`/`keywords`/`group` on every component in the
+   * committed manifest; DS-3 wrote this tool to pass them through as OPTIONAL
+   * so the two branches could compile apart. Now that both have landed, they
+   * are real data and an agent choosing a component reads them — so assert
+   * against the REAL manifest, not a fixture, that they survive the trip. A
+   * regenerated manifest that dropped them would otherwise fail silently here
+   * and leave the agent back on guessing from names.
+   */
+  it('carries the built-in manifest\'s description, keywords and group through to the catalog', async () => {
+    write('design-system/index.js', 'export {}\n')
+
+    // Not optional: a built-in entry comes off `DesignSystemComponentSpec`,
+    // which requires all three. An entry missing one is a broken manifest.
+    const result = (await call('studio_list_components')) as {
+      components: Array<{ name: string; apiSource: string; description: string; keywords: string[]; group: string }>
+    }
+
+    const builtin = result.components.filter((c) => c.apiSource === 'builtin')
+    expect(builtin.length).toBeGreaterThan(10)
+    // Every one of them, not just the one we spot-check below.
+    for (const entry of builtin) {
+      expect(typeof entry.description).toBe('string')
+      expect(entry.description.length).toBeGreaterThan(0)
+      // The placeholder DS-6 replaced named the retired npm.
+      expect(entry.description).not.toContain('@alm-design/design-system')
+      expect(Array.isArray(entry.keywords)).toBe(true)
+      expect(entry.keywords.length).toBeGreaterThanOrEqual(3)
+      expect(typeof entry.group).toBe('string')
+      expect(entry.group.length).toBeGreaterThan(0)
+    }
+
+    const button = builtin.find((c) => c.name === 'Button')
+    expect(button!.group).toBe('Actions')
+  })
+
+  it('lists NO built-in components for a project that does not carry the folder', async () => {
+    // The refusal: naming components a project cannot import is worse than an
+    // empty list, because the agent writes the import and the build breaks.
+    const result = (await call('studio_list_components')) as { components: Array<{ apiSource: string }> }
+    expect(result.components.some((c) => c.apiSource === 'builtin')).toBe(false)
+  })
+
   it('reports no note at all for a project with neither an installed nor an imported design system', async () => {
     const result = (await call('studio_list_components')) as { components: unknown[]; designSystems: unknown[]; note?: string }
     expect(result.components).toEqual([])

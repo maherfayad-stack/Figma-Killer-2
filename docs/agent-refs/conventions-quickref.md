@@ -118,11 +118,14 @@ Every mutation in `src/core/page-tree/mutations.ts` is **tree-agnostic**. The on
 place that knows which tree is active is `resolveActiveTreeTarget`
 (`store/slices/site/helpers.ts`), used through `mutateActiveTree(fn)`.
 
-The 11 named store actions (`insertNode`, `deleteNode`, `updateNodeProps`,
+The 13 named store actions (`insertNode`, `deleteNode`, `updateNodeProps`,
 `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`,
-`toggleNodeLocked`, `toggleNodeHidden`, `moveNode`, `duplicateNode`, `wrapNode`)
-are one-liners over `mutateActiveTree`. **They must not contain a
-`kind === 'visualComponent'` branch.**
+`setNodesLocked`, `setNodesHidden`, `moveNode`, `duplicateNode`, `wrapNode`,
+`groupNodes`, `ungroupNode`) are one-liners over `mutateActiveTree`. **They must
+not contain a `kind === 'visualComponent'` branch.** Two of them live in their
+own modules: `groupNodes`/`ungroupNode` in `site/groupActions.ts`,
+`setNodesLocked`/`setNodesHidden` in `site/visibilityActions.ts` — extend the
+gate's `ACTION_PATHS` when a named action moves.
 **Gate:** `no-vc-mode-branches-in-mutations.test.ts`.
 
 **A structural action on a studio-imported tree must write source or refuse —
@@ -145,6 +148,16 @@ Studio reads and writes the user's repo. Every path is untrusted.
   (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`).
 - **Containment is checked on the real path, after resolving symlinks.** A repo
   can arrive from GitHub and git stores symlinks — a textual check is bypassable.
+  That includes the WRITEBACK decoder: `studioEditLocation(dir, nodeId)` and
+  `canonicalSourceRel(dir, rel)` realpath-resolve and re-derive the `rel`, so
+  two spellings of one file (`pages/Home.tsx` vs `pages/home.tsx`, or a
+  junctioned directory) can never be two write targets, and a `.tsx` symlink
+  pointing out of the project is refused even though it is lexically clean.
+- **A secret file on disk goes through `privateTempDir.ts`**, never
+  `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
+  `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,
+  `writePrivateFileExclusive` / `writePrivateFileReplacing` for the file. A
+  failed restriction is a REFUSAL at any caller about to write a secret.
 - Archive entries: decide *before* inflating (per-file cap, total cap, file
   count cap, traversal). See `studioGithubImport.ts`'s `filter` callback.
 - A write target is derived **server-side**. Never accept a caller-supplied
@@ -164,6 +177,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
   account name, and without it a signed-in MCP server silently reports
   `! Needs authentication` and a turn gets zero of its tools). Pinned by
   `subprocessRunner.test.ts`; the story is `mcp-16` in `STATE.md`.
+- **Reading a subprocess's output is line-wise, and on Windows those lines are
+  CRLF.** Cut captured stdout/stderr with `splitLines` — or normalise with
+  `toLf` before an `/m`-anchored regex — from `@core/utils/lineEndings`. Never
+  a bare `'\n'` split, never a per-call-site `.replace(/\r$/, '')`. The `\r`
+  lands on the LAST field of a line and is silent: `%(HEAD) === '*'` goes
+  false for every branch, a commit sha becomes 41 characters. Gated by
+  `subprocess-output-line-endings.test.ts`; the rule and its two documented
+  exceptions are in [docs/server.md](../server.md) → "Line endings —
+  subprocess output".
 
 ---
 

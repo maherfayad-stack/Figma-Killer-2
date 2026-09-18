@@ -9,13 +9,13 @@
  * way `src/modules/alm/register.tsx` does for the one hardcoded
  * `@alm-design/design-system` case.
  *
- * `src/modules/alm/register.tsx` is NOT deleted by this change —
- * `standing-07` (STATE.md): that deletion is gated on the generic pipeline
- * being PROVEN to render the eSIM board visually equivalently, which needs a
- * real browser dogfood pass this change does not run. The two paths coexist:
- * `@alm-design/design-system` components keep resolving to `alm.<Name>`
- * (`studioPageLoad.ts`'s `ALM_DESIGN_PACKAGE_SPECIFIER` carve-out); every
- * OTHER package's components resolve to `pkg.*` and register here.
+ * `src/modules/alm/register.tsx` is NOT deleted by this change, and it is no
+ * longer a carve-out either: it registers Studio's OWN built-in design system,
+ * which is not a package at all. A project reaches those components through
+ * its own `design-system/` folder, `componentSources.ts` classifies that as
+ * the `design-system` source kind, and `moduleMapping.ts` sends it to
+ * `alm.<Name>`. EVERY package — with no exception for any specifier —
+ * resolves to `pkg.*` and registers here.
  *
  * Kept VERBATIM from `register.tsx`, because each earned its own comment
  * there — see the sibling functions/constants below for why:
@@ -53,7 +53,7 @@
  *     any parsing/bundling happens) so a project that DOES depend on a
  *     component package gets an honest, actionable refusal
  *     (`trust-tier-required`) recorded via `setPackageBundleStatus` — surfaced
- *     by `ModulePicker.tsx`/`ModuleInserterDialog.tsx` with a "Promote
+ *     by `ModulePicker.tsx`/the Assets panel with a "Promote
  *     project" action, and by `PackageComponentPlaceholder.tsx` for a node
  *     already on the board — rather than the picker just staying silently
  *     empty. A project with no component-package dependency at all costs
@@ -161,7 +161,7 @@ const ComponentBundleResponseSchema = Type.Union([
 
 /**
  * Module ids the insert palette hides, across every registered package —
- * consulted by `moduleAvailability` (`moduleInserterModel.ts`) alongside
+ * consulted by `moduleAvailability` (`panels/AssetsPanel/assetsModel.ts`) alongside
  * `PALETTE_HIDDEN_ALM_MODULE_IDS`. Rebuilt wholesale each `syncProjectModules`
  * run (cheap — one pass over the just-fetched component list), not
  * maintained incrementally: this only changes once per project load/switch,
@@ -419,7 +419,7 @@ function unregisterActiveProjectModules(): void {
  * those left `syncProjectModules`'s promise REJECTED with nothing to catch it
  * (`void syncProjectModules(...)` in the hook below) — an unhandled rejection
  * that, in production, also left `PackageComponentPlaceholder`/`ModulePicker`/
- * `ModuleInserterDialog` stuck showing "Loading…" forever, since
+ * the insert palette stuck showing "Loading…" forever, since
  * `setPackageBundleStatus` was never reached. Catching here turns every
  * failure mode into the SAME honest, actionable refusal the `{ ok: false }`
  * branch already gives a structured server refusal — never a silent stall,
@@ -435,7 +435,19 @@ async function syncProjectModules(dir: string): Promise<void> {
     if (dir !== activeProjectDir) return // project changed again while this request was in flight
 
     if (!response.ok) {
-      console.error(`[registerProjectModules] bundle refused (${response.code}): ${response.message}`)
+      // `trust-tier-required` is not a failure — it is the DEFAULT. Tier 0
+      // (`static`) is what every project is until a human clicks to promote
+      // it (CLAUDE.md invariant 1), so logging it at error level fired on
+      // every board open of every project on disk and made the console
+      // useless for spotting real ones (Track Z: "detect the errors I did not
+      // see"). The refusal is already published through
+      // `setPackageBundleStatus` and rendered where it matters —
+      // `PackageComponentPlaceholder`, the ModulePicker and the insert
+      // palette — which is the honest place for a state the user can act on.
+      // Every OTHER code is a genuine failure and still says so.
+      if (response.code !== 'trust-tier-required') {
+        console.error(`[registerProjectModules] bundle refused (${response.code}): ${response.message}`)
+      }
       setPackageBundleStatus({ ok: false, code: response.code, message: response.message })
       return
     }
@@ -464,7 +476,19 @@ async function syncProjectModules(dir: string): Promise<void> {
         id,
         name: spec.name,
         description: `${spec.name} — ${spec.pkg}`,
-        category: 'Design System',
+        // `category` is a SECTION NAME in the Assets panel, not a kind tag. It
+        // used to read `'Design System'`, which was tolerable while every
+        // importable module shared that one flat category — it now reads as a
+        // claim that a user's own npm component belongs to Studio's built-in
+        // design system, which it does not. Studio's own components carry
+        // their purpose group here (Navigation, Actions, …); a third-party
+        // package's components carry `'Packages'`, and `AssetsPanel`'s
+        // `groupByCategory` sorts an unknown group after the known ones, so
+        // they land in their own sub-group at the foot of the section with
+        // `PackageBundleNotice` above them. Splitting is by module ID
+        // (`base.*` vs everything else), never by this string, so the section
+        // a `pkg.*` component appears in does not depend on it.
+        category: 'Packages',
         version: '1.0.0',
         icon: CursorClickSolidIcon,
         trusted: true,
@@ -475,7 +499,7 @@ async function syncProjectModules(dir: string): Promise<void> {
         // How this component is spelled in the user's source, so adding it from
         // the picker can write `import { X } from '<pkg>'` + `<X />` into the
         // file — see `ModuleDefinition.sourceImport`.
-        sourceImport: { specifier: spec.pkg, name: spec.name },
+        sourceImport: { kind: 'package', specifier: spec.pkg, name: spec.name },
         component: makePackageComponent(spec.pkg, spec.name, Comp, Provider),
         // Publish (HTML) path is out of scope, same as `register.tsx` — the canvas uses `component` above.
         render: () => ({ html: '' }),
@@ -540,7 +564,7 @@ export function resyncActiveProjectModules(): void {
  *     route; the route refuses with `trust-tier-required` BEFORE any
  *     parsing/bundling, and that refusal is recorded via
  *     `setPackageBundleStatus` — read by `ModulePicker.tsx`/
- *     `ModuleInserterDialog.tsx` (picker-level "N components need this project
+ *     the Assets panel (picker-level "N components need this project
  *     promoted" notice) and `PackageComponentPlaceholder.tsx` (per-node, once
  *     one is on the board) — never a silent empty palette. Because the gate is
  *     the route's, every renderer that calls this — the editor canvas and the

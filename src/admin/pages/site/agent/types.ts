@@ -223,6 +223,16 @@ export interface AgentMessage {
   role: 'user' | 'assistant'
   blocks: AgentMessageBlock[]
   timestamp: number
+  /**
+   * A9 — the latest `step k/N` this assistant turn reported about its own
+   * plan, parsed out of its text as it streamed (`parseTurnStepReport`).
+   *
+   * Session-only and display-only: it drives the activity strip's progress
+   * line and is never persisted, never replayed to a model, and never used to
+   * decide anything. Absent on a turn that reported no plan, which is an
+   * ordinary state — the strip then counts tool calls instead.
+   */
+  reportedStep?: { index: number; total: number }
 }
 
 export interface AgentLayoutRect {

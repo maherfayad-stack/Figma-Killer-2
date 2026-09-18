@@ -1,0 +1,36 @@
+/* ── Save-status chip ────────────────────────────────────────────────────── */
+/*
+ * Sits in the toolbar's right slot, left of the zoom controls. Deliberately
+ * quiet: it is read constantly and should never pull the eye while the answer
+ * is "Saved". The only state that carries colour is the stuck one, and that
+ * colour comes from the Button primitive's `tone="danger"`, not from here.
+ *
+ * `.chip` lands on BOTH the interactive (Button) and the static (span) form,
+ * so it only carries type — geometry for the static form lives in `.text`,
+ * which must not fight the Button's own padding.
+ */
+
+.chip {
+    font-size: var(--text-xs);
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Static (non-interactive) form: match the micro Button's height so the
+   toolbar row does not shift when the state flips between them. */
+.text {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 var(--space-2xs);
+    border-radius: var(--radius-sm);
+    user-select: none;
+}
+
+.saved {
+    color: var(--text-subtle);
+}
+
+.busy {
+    color: var(--text-muted);
+}

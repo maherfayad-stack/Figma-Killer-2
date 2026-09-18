@@ -46,7 +46,7 @@
  * master-key rotation is detected and surfaced as "re-enter this secret"
  * rather than a silent decrypt failure.
  */
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
@@ -54,11 +54,10 @@ import {
   decryptSecret,
   encryptSecret,
 } from '../../secrets/encryption'
+import { ensurePrivateDirectory, writePrivateFileReplacing } from './privateTempDir'
 import { getMasterKeyFingerprint, loadMasterKey } from '../../secrets/masterKey'
 
 const DEFAULT_DATA_ROOT_SEGMENT = ['.data', 'mcp-server-secrets'] as const
-const FILE_MODE = 0o600
-const DIR_MODE = 0o700
 
 /** Resolve (without creating) the data root — overridable via env for ops flexibility, same convention as `resolveClaudeCliDataRoot`. */
 export function resolveMcpServerSecretsRoot(
@@ -110,19 +109,39 @@ function readSecretFile(path: string): SecretFile {
   return parseJsonWithFallback(raw, SecretFileSchema, {})
 }
 
+/**
+ * Writes the envelope through `privateTempDir.ts`'s exclusive-create +
+ * rename, never `writeFileSync` (`sec-18`).
+ *
+ * This file used to be protected by `mkdirSync({ mode })` + two `chmodSync`
+ * calls, which is real on POSIX and very nearly a no-op on Windows — Node
+ * maps `chmod` onto the read-only attribute and never touches the DACL, so
+ * the only protection was whatever the data root happened to inherit
+ * (`server-25` and `sec-15` both recorded this file as still open). The
+ * contents are encrypted at rest, which is what made it not urgent; it is
+ * still ciphertext plus a key fingerprint that nothing else on the machine
+ * has any business reading.
+ *
+ * The directory is not created here: {@link setMcpServerSecret} does that,
+ * because restricting a directory needs a subprocess on Windows and therefore
+ * has to happen somewhere that can await. By the time this runs, the
+ * directory exists and is private — see that function.
+ */
 function writeSecretFile(path: string, file: SecretFile): void {
-  mkdirSync(dirname(path), { recursive: true, mode: DIR_MODE })
-  try {
-    chmodSync(dirname(path), DIR_MODE)
-  } catch {
-    // Best-effort on platforms without POSIX mode bits (Windows).
-  }
-  writeFileSync(path, JSON.stringify(file), { mode: FILE_MODE })
-  try {
-    chmodSync(path, FILE_MODE)
-  } catch {
-    // Best-effort — see above.
-  }
+  writePrivateFileReplacing(path, JSON.stringify(file))
+}
+
+/**
+ * Refuses rather than writing a secret somewhere it could not lock down —
+ * the same posture `claudeCliMcpConfigFile.ts` took after `sec-15`, and for
+ * the same reason: `restricted: false` followed by a write is a guarantee
+ * nobody checked.
+ */
+async function ensureSecretDirectory(path: string): Promise<void> {
+  if (await ensurePrivateDirectory(dirname(path))) return
+  throw new Error(
+    '[ai/mcpServerSecretStore] could not restrict the secrets directory to this account — refusing to store the secret.',
+  )
 }
 
 /**
@@ -140,6 +159,7 @@ export async function setMcpServerSecret(
 ): Promise<void> {
   assertSafeSegment(fieldName, 'fieldName')
   const path = secretFilePath(dataRoot, userId, projectKey, serverName)
+  await ensureSecretDirectory(path)
   const file = readSecretFile(path)
   const masterKey = await loadMasterKey()
   const encrypted = await encryptSecret(masterKey, plaintext)

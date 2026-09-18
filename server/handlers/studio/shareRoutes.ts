@@ -25,16 +25,18 @@
  * capture the POST drives also runs `on behalf of` a user id, which is what
  * lets it fall back to that user's open editor tab when no headless browser
  * is available. So this module, like the comments pair, is called outside
- * `STUDIO_SUB_ROUTERS` because it needs the `DbClient` the uniform
- * `(req, url, pathname)` signature does not carry.
+ * `STUDIO_SUB_ROUTERS` because it needs the `AuthUser` the uniform
+ * `(req, url, pathname)` signature does not carry — resolved once by
+ * `routeGate.ts` and delivered in `StudioSessionRuntime`, never looked up
+ * here.
  *
- * Any authenticated role may manage shares. Sharing is the reviewer-facing
+ * `routeCapabilities.ts` declares `site.read` to list shares and
+ * `site.content.edit` to mint or revoke one. Sharing is the reviewer-facing
  * half of the product; gating it above the role that does the design work
  * would defeat the point.
  */
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { requireAuthenticatedUser } from '../../auth/authz'
-import type { DbClient } from '../../db/client'
+import type { StudioSessionRuntime } from './routeGate'
 import { Type } from '@core/utils/typeboxHelpers'
 import {
   isShareTokenShape,
@@ -64,14 +66,13 @@ const SharePostBodySchema = Type.Object({
 
 export async function tryServeStudioShares(
   req: Request,
-  runtime: { db: DbClient },
+  runtime: StudioSessionRuntime,
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
   if (pathname !== STUDIO_SHARES_ROUTE) return null
 
-  const user = await requireAuthenticatedUser(req, runtime.db)
-  if (user instanceof Response) return user
+  const user = runtime.user
 
   if (req.method === 'GET') {
     try {

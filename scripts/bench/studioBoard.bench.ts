@@ -1,366 +1,343 @@
 /**
- * Studio board benchmark — WS-5.6's perf gate.
+ * Studio board benchmark — the canvas perf gate (`STUDIO-FIGMA-FEEL-PLAN.md` S6).
  *
- * Generates a synthetic project on disk (50 pages / ~400 flat elements each,
- * ~20 000 nodes total), opens it in Studio mode in a real Chromium via
- * Playwright (the SAME `lib/browser.ts` harness `benches/browser.ts` uses),
- * and asserts the four WS-5 budgets:
+ * This module does not drive a browser itself. It **shells out to Playwright's
+ * own Node runner** and runs `tests/e2e/studio-board-perf.e2e.ts`, then reports
+ * that spec's measurements and fails the bench when the spec fails.
  *
- *   - Selection → ring paint
- *   - Pan at 60fps (no scripted-pan frame over budget)
- *   - Store change → panel re-render
- *   - Mounted iframes at rest (virtualization actually bounds the count)
+ * Why a subprocess rather than `lib/browser.ts`: Playwright drives Chromium
+ * over `--remote-debugging-pipe`, and Bun on Windows does not wire the extra
+ * stdio fds that transport needs, so `chromium.launch()` never returns. The
+ * previous version of this file caught that failure and reported `skipped`,
+ * which made `bench:studio-board` a perf gate that could not fail — it had
+ * never once opened a browser. The Playwright test runner spawns **node**, so
+ * running the spec through it is the one shape that actually executes here.
  *
- * ⚠ **THE BUDGETS BELOW ARE UNCALIBRATED, AND THIS BENCH HAS NEVER RUN.**
- * An earlier draft of this file claimed they were "calibrated against a real
- * run"; they were not, and could not have been. `launchBrowser` cannot start
- * Chromium under Bun on Windows at all — see the KNOWN LIMITATION block in
- * `lib/browser.ts` for the root cause and the measurements. The launch throws,
- * the catch below turns it into `skippedResult`, and the suite reports
- * success having opened no browser.
+ * Consequences of that choice, stated plainly:
  *
- * The numbers are therefore still WS-5.6's plan targets, not observations.
- * **Real, measured canvas numbers live in
- * `tests/e2e/studio-board-perf.e2e.ts`**, which runs under the Playwright
- * test runner (Node) and drives the real `maherfayad-stack-eSIM` board; its
- * budgets ARE derived from measurements. Calibrate these against a first
- * green run of this bench before treating any of them as a gate.
- *
- * Skips (does not fail the suite) when `dist/` or Chromium isn't available —
- * same posture as `benches/browser.ts`. Treat a `skipped` line here as "no
- * signal", never as a pass.
+ *   - **The budgets live in the spec, not here.** `studio-board-perf.e2e.ts`
+ *     owns `BUDGET_PAN_WORST_FRAME_MS`, `BUDGET_ZOOM_WORST_FRAME_MS` and the
+ *     virtualization assertions, and every one of them is derived from a real
+ *     run against the real corpus. Duplicating the numbers in this file would
+ *     create two sources of truth that drift the first time one is ratcheted.
+ *     "Fail on budget" is therefore: a breached budget fails the spec, a
+ *     failed spec fails this bench, and the failing assertion's own message is
+ *     reproduced in the report.
+ *   - **The fixture is the spec's fixture.** The old synthetic 50-frame/20k-node
+ *     project generator lived here only to feed the Bun-launched browser; it is
+ *     gone with it. The spec runs against the committed twelve-frame board at
+ *     `studio-workspace/__board-perf-fixture` and FAILS (no longer skips) if it
+ *     is absent. The skip handling below stays as a backstop — a run that
+ *     measured nothing must never be reported as a pass, whatever caused it.
+ *   - **The server is the spec's server.** `playwright.config.ts`'s `webServer`
+ *     starts `bun run e2e:dev` (disposable `.tmp/e2e-*` DB + uploads), so this
+ *     module no longer boots one.
  */
-import { resolve, join } from 'node:path'
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { existsSync, readFileSync, rmSync } from 'node:fs'
+import { Type, type Static } from '@sinclair/typebox'
+import { safeParseJson } from '@core/utils/jsonValidate'
 import type { BenchModule, BenchResult, BenchRow, BenchContext } from './lib/types'
-import { fmtMs, fmtNum } from './lib/stats'
+import { fmtMs } from './lib/stats'
 import { log } from './lib/log'
-import { startServer, type ServerHandle } from './lib/server'
-import {
-  launchBrowser,
-  measureFramesDuring,
-  type BrowserSession,
-} from './lib/browser'
 
 const REPO_ROOT = resolve(import.meta.dir, '../..')
+const SPEC_PATH = 'tests/e2e/studio-board-perf.e2e.ts'
+/**
+ * The Playwright CLI is invoked as `node <cli.js>` rather than through `npx`:
+ * `npx` re-resolves the package (and can reach the network) on every run, and
+ * its Windows shim is a `.cmd` whose argument quoting is one more thing to get
+ * wrong. Spawning the local CLI with the Node binary directly is the same
+ * runner with none of that — and Node, not Bun, is the entire point.
+ */
+const PLAYWRIGHT_CLI = resolve(REPO_ROOT, 'node_modules/@playwright/test/cli.js')
 
-// CLI flag plumbing — same pattern as `benches/browser.ts` (reads
-// process.argv directly so this module stays self-contained).
-function readArg(name: string): string | undefined {
-  for (const arg of process.argv) {
-    if (arg.startsWith(`--${name}=`)) return arg.slice(name.length + 3)
+// ── Playwright's JSON report ────────────────────────────────────────────────
+// Only the fields this module reads are described; the reporter emits far
+// more, and TypeBox allows the rest through (no `additionalProperties: false`).
+
+const AnnotationSchema = Type.Object({
+  type: Type.String(),
+  description: Type.Optional(Type.String()),
+})
+
+const TestResultSchema = Type.Object({
+  status: Type.String(),
+  duration: Type.Optional(Type.Number()),
+  errors: Type.Optional(Type.Array(Type.Object({ message: Type.Optional(Type.String()) }))),
+  annotations: Type.Optional(Type.Array(AnnotationSchema)),
+})
+
+const TestSchema = Type.Object({
+  status: Type.Optional(Type.String()),
+  annotations: Type.Optional(Type.Array(AnnotationSchema)),
+  results: Type.Array(TestResultSchema),
+})
+
+const SpecSchema = Type.Object({
+  title: Type.String(),
+  /** Repo-relative, with the platform's separators. Used to tell the target spec from the `setup` project's. */
+  file: Type.Optional(Type.String()),
+  ok: Type.Boolean(),
+  tests: Type.Array(TestSchema),
+})
+
+const SuiteSchema = Type.Recursive((Self) =>
+  Type.Object({
+    title: Type.Optional(Type.String()),
+    specs: Type.Optional(Type.Array(SpecSchema)),
+    suites: Type.Optional(Type.Array(Self)),
+  }),
+)
+
+const ReportSchema = Type.Object({
+  suites: Type.Array(SuiteSchema),
+  errors: Type.Optional(Type.Array(Type.Object({ message: Type.Optional(Type.String()) }))),
+  stats: Type.Object({
+    expected: Type.Number(),
+    unexpected: Type.Number(),
+    skipped: Type.Number(),
+    flaky: Type.Number(),
+    duration: Type.Optional(Type.Number()),
+  }),
+})
+
+function flattenSpecs(suites: readonly Static<typeof SuiteSchema>[]): Static<typeof SpecSchema>[] {
+  const out: Static<typeof SpecSchema>[] = []
+  for (const suite of suites) {
+    if (suite.specs) out.push(...suite.specs)
+    if (suite.suites) out.push(...flattenSpecs(suite.suites))
   }
-  return undefined
-}
-
-// ── Synthetic project ───────────────────────────────────────────────────────
-
-const FRAME_COUNT = 50
-const NODES_PER_FRAME = 400 // + 1 root container per page ≈ 20 050 nodes total.
-
-function pageFileName(i: number): string {
-  return `Page${String(i).padStart(2, '0')}.tsx`
-}
-
-/** `PageNN.tsx` -> `pageNN` — matches `pageIdFromRelPath`'s kebab-casing (no hyphen inserted: no lowercase-then-uppercase transition in "PageNN"). */
-function pageId(i: number): string {
-  return `page${String(i).padStart(2, '0')}`
-}
-
-function generateSyntheticProject(dir: string): void {
-  rmSync(dir, { recursive: true, force: true })
-  const pagesDir = join(dir, 'pages')
-  mkdirSync(pagesDir, { recursive: true })
-
-  for (let i = 1; i <= FRAME_COUNT; i++) {
-    const items = Array.from(
-      { length: NODES_PER_FRAME },
-      (_, j) => `      <div>Item ${j + 1}</div>`,
-    ).join('\n')
-    const source = [
-      `export default function Page${String(i).padStart(2, '0')}() {`,
-      '  return (',
-      '    <div className="page">',
-      items,
-      '    </div>',
-      '  )',
-      '}',
-      '',
-    ].join('\n')
-    writeFileSync(join(pagesDir, pageFileName(i)), source, 'utf8')
-  }
-}
-
-// ── Studio-mode helpers ──────────────────────────────────────────────────────
-
-const OWNER_EMAIL = 'perf-bench-owner@example.com'
-const OWNER_PASSWORD = 'perf-bench-owner-password-1'
-
-async function setupAndLoginOwner(session: BrowserSession, baseUrl: string): Promise<void> {
-  await session.page.goto(`${baseUrl}/admin`, { waitUntil: 'domcontentloaded' })
-  await session.page.evaluate(
-    async (args: { baseUrl: string; email: string; password: string }) => {
-      await fetch(`${args.baseUrl}/admin/api/cms/setup`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ siteName: 'Perf Bench', email: args.email, password: args.password }),
-      })
-      // 409 ("Setup already complete") is fine on a re-run against a
-      // still-warm DB from a previous invocation — the login call right
-      // after this is what actually matters.
-    },
-    { baseUrl, email: OWNER_EMAIL, password: OWNER_PASSWORD },
-  )
-  const loginRes = await session.page.evaluate(
-    async (args: { baseUrl: string; email: string; password: string }) => {
-      const r = await fetch(`${args.baseUrl}/admin/api/cms/login`, {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: args.email, password: args.password }),
-      })
-      return { ok: r.ok, status: r.status, body: await r.text() }
-    },
-    { baseUrl, email: OWNER_EMAIL, password: OWNER_PASSWORD },
-  )
-  if (!loginRes.ok) throw new Error(`Bench owner login failed: HTTP ${loginRes.status}: ${loginRes.body.slice(0, 200)}`)
-}
-
-/** Opens `/admin/site?studio` pointed at `projectDir`, first-run board seed included (`useStudioDefaultBoardSeed`). */
-async function openStudioBoard(session: BrowserSession, baseUrl: string, projectDir: string): Promise<void> {
-  await session.page.addInitScript((dir: string) => {
-    window.localStorage.setItem('studio:studio:dir', dir)
-    window.localStorage.setItem('studio:studio', '1')
-  }, projectDir)
-  await session.page.goto(`${baseUrl}/admin/site?studio`, { waitUntil: 'domcontentloaded' })
-  await session.page.waitForSelector('[data-testid="canvas-root"]', { state: 'visible', timeout: 30_000 })
-  await session.page.waitForSelector('[data-testid="board-frames-layer"]', { state: 'attached', timeout: 30_000 })
+  return out
 }
 
 /**
- * Bring `pageId(1)`'s frame on screen. The board seeds frames near the
- * board origin in grid order (`frameGrid.ts`), so the first frame is
- * usually visible at the default `{zoom:1,panX:0,panY:0}` view already;
- * zooming out (sign-safe, unlike guessing a wheel-pan direction) is the
- * fallback for whatever grid geometry a future change might produce.
+ * The specs from THIS spec file only.
+ *
+ * Load-bearing: the run also executes `playwright.config.ts`'s `setup` project
+ * (`auth.setup.ts`), which is an ordinary passing test. Reading the run's
+ * top-level `stats` instead would see `expected: 1` and call the run a pass
+ * while the only spec that measures anything had skipped itself — the exact
+ * "reported success having opened no browser" failure this module was rewritten
+ * to eliminate. A skip must never be able to hide behind the setup's pass.
+ *
+ * Path comparison is on POSIX-normalised suffixes: Playwright reports
+ * `tests\e2e\...` on Windows and `tests/e2e/...` elsewhere.
  */
-async function bringFirstFrameOnScreen(session: BrowserSession): Promise<void> {
-  const iframeSelector = `[data-page-id="${pageId(1)}"] [data-testid="board-frame-body"] iframe`
-  for (let attempt = 0; attempt < 15; attempt++) {
-    const visible = await session.page
-      .locator(iframeSelector)
-      .first()
-      .isVisible()
-      .catch(() => false)
-    if (visible) return
-    await session.page.keyboard.press('-')
-    await session.page.waitForTimeout(120)
+function specsFromTargetFile(
+  specs: readonly Static<typeof SpecSchema>[],
+): Static<typeof SpecSchema>[] {
+  const suffix = SPEC_PATH.split('/').pop()!
+  return specs.filter((spec) => (spec.file ?? '').replace(/\\/g, '/').endsWith(suffix))
+}
+
+/**
+ * The spec records every number it measures as a `perf`-typed annotation
+ * (`annotate()` in `studio-board-perf.e2e.ts`), formatted `"<label>: <value>"`.
+ * Those annotations ARE the bench's report rows — the alternative is
+ * re-measuring the same board a second time from a second harness.
+ */
+function readPerfAnnotations(specs: readonly Static<typeof SpecSchema>[]): BenchRow[] {
+  const rows: BenchRow[] = []
+  const seen = new Set<string>()
+  for (const spec of specs) {
+    for (const test of spec.tests) {
+      const annotations = [
+        ...(test.annotations ?? []),
+        ...test.results.flatMap((r) => r.annotations ?? []),
+      ]
+      for (const annotation of annotations) {
+        if (annotation.type !== 'perf' || !annotation.description) continue
+        const separator = annotation.description.indexOf(': ')
+        const label =
+          separator === -1 ? annotation.description : annotation.description.slice(0, separator)
+        const value = separator === -1 ? '—' : annotation.description.slice(separator + 2)
+        // A retry re-emits every annotation; keep the first reading of each.
+        if (seen.has(label)) continue
+        seen.add(label)
+        rows.push({ label, metrics: { value } })
+      }
+    }
   }
-  throw new Error(`page01's frame never came on screen after repeated zoom-out (selector: ${iframeSelector})`)
+  return rows
+}
+
+function readFailureMessages(specs: readonly Static<typeof SpecSchema>[]): string[] {
+  const messages: string[] = []
+  for (const spec of specs) {
+    if (spec.ok) continue
+    for (const test of spec.tests) {
+      for (const result of test.results) {
+        for (const error of result.errors ?? []) {
+          if (error.message) messages.push(error.message)
+        }
+      }
+    }
+  }
+  return messages
+}
+
+/** Strips Playwright's ANSI colouring so a budget failure is legible inside a markdown report. */
+function plain(message: string): string {
+  // eslint-disable-next-line no-control-regex
+  return message.replace(/\x1b\[[0-9;]*m/g, '').trim()
 }
 
 // ── Bench module ─────────────────────────────────────────────────────────────
 
 export const studioBoardBench: BenchModule = {
   name: 'studio-board',
-  title: 'Studio board (synthetic 50-frame / 20 000-node) — WS-5.6 perf gate',
+  title: 'Studio board (real corpus, Playwright runner) — canvas perf gate',
   description:
-    'Real Chromium against a synthetic 50-frame/20k-node Studio board. Asserts selection paint, pan frame times, panel re-render latency, and mounted-iframe count against calibrated budgets. Skips gracefully if Chromium/dist are unavailable.',
+    "Runs tests/e2e/studio-board-perf.e2e.ts through Playwright's Node runner and reports its measurements. The spec owns the budgets; a breached budget fails this bench. Skips (no signal, never a pass) when the Playwright CLI is absent.",
 
   async run(ctx: BenchContext): Promise<BenchResult> {
-    const projectDir = resolve(ctx.outputDir, 'studio-board-synth')
-    log.step(`Generating synthetic project (${FRAME_COUNT} pages × ${NODES_PER_FRAME} nodes) at ${projectDir}`)
-    generateSyntheticProject(projectDir)
-
-    const staticDir = existsSync(resolve(REPO_ROOT, 'dist')) ? resolve(REPO_ROOT, 'dist') : undefined
-    if (!staticDir) {
-      log.warn('dist/ not found — run `bun run build` first.')
-      return skippedResult(this.name, this.title, 'no dist/ — run `bun run build` first')
+    if (!existsSync(PLAYWRIGHT_CLI)) {
+      return skippedResult(
+        this.name,
+        this.title,
+        `Playwright is not installed (${PLAYWRIGHT_CLI} missing) — run \`bun install\``,
+      )
     }
 
-    let server: ServerHandle | null = null
-    let session: BrowserSession | null = null
-    try {
-      log.step('Spawning production server on a free port (fresh DB)')
-      server = await startServer({
-        staticDir,
-        seedDbPath: resolve(ctx.outputDir, 'studio-board-bench-empty.db'), // deliberately absent — fresh DB, fresh owner
-        runDbPath: resolve(ctx.outputDir, `studio-board-bench-${Date.now()}.db`),
-      })
-      log.ok(`Server up in ${fmtMs(server.bootMs)} at ${server.baseUrl}`)
+    const reportPath = resolve(ctx.outputDir, 'studio-board-playwright-report.json')
+    rmSync(reportPath, { force: true })
 
-      // Prefer Playwright's OWN pinned Chromium over a system browser: a
-      // full desktop Chrome install can hang on `launch()` in a locked-down
-      // sandbox (observed while calibrating this bench) where the
-      // lightweight bundled chromium/chromium-headless-shell launches fine.
-      // `--chrome-path=` still overrides explicitly when the caller wants a
-      // specific binary (matches `benches/browser.ts`'s own flag).
-      log.step('Launching Chromium (headless)')
-      const overrideChrome = readArg('chrome-path')
-      try {
-        session = await launchBrowser({ executablePath: overrideChrome })
-      } catch (err) {
-        log.warn((err as Error).message)
-        return skippedResult(this.name, this.title, (err as Error).message)
-      }
+    log.step(`Running ${SPEC_PATH} through Playwright's Node runner`)
+    const started = performance.now()
+    const child = Bun.spawn(['node', PLAYWRIGHT_CLI, 'test', SPEC_PATH, '--reporter=json'], {
+      cwd: REPO_ROOT,
+      env: {
+        ...process.env,
+        // The json reporter writes to stdout unless this is set; the webServer's
+        // own piped output shares that stream, so parse a file instead.
+        PLAYWRIGHT_JSON_OUTPUT_NAME: reportPath,
+      },
+      stdin: 'inherit',
+      stdout: 'inherit',
+      stderr: 'inherit',
+    })
+    const exitCode = await child.exited
+    const elapsedMs = performance.now() - started
 
-      log.step('First-run setup + login')
-      await setupAndLoginOwner(session, server.baseUrl)
-
-      log.step('Opening Studio board (cold load) — timing first interactive frame')
-      const loadStart = performance.now()
-      await openStudioBoard(session, server.baseUrl, projectDir)
-      await bringFirstFrameOnScreen(session)
-      const firstInteractiveFrameMs = performance.now() - loadStart
-
-      // Let virtualization/posture settle (initial mount churn) before
-      // measuring "at rest" — matches how a human would read this number:
-      // not the instant of first paint, a moment after things calm down.
-      await session.page.waitForTimeout(1500)
-
-      // ── Mounted iframes at rest ─────────────────────────────────────────
-      const mountedIframes = await session.page.evaluate(() => document.querySelectorAll('iframe').length)
-
-      // ── Selection → ring paint ──────────────────────────────────────────
-      log.step('Selection → ring paint')
-      const contentFrame = session.page.frameLocator(
-        `[data-page-id="${pageId(1)}"] [data-testid="board-frame-body"] iframe`,
+    if (!existsSync(reportPath)) {
+      throw new Error(
+        `studio-board: Playwright exited ${exitCode} without writing a JSON report to ${reportPath}. ` +
+          'The runner itself failed to start — check the output above.',
       )
-      // Last of the flat sibling divs — a genuine leaf node, not the page's
-      // own root container.
-      const targetNode = contentFrame.locator('[data-node-id]').last()
-      await targetNode.waitFor({ state: 'visible', timeout: 15_000 })
-      const nodeBox = await targetNode.boundingBox()
-      if (!nodeBox) throw new Error('synthetic leaf node has no bounding box')
+    }
 
-      const selectStart = performance.now()
-      await session.page.mouse.click(nodeBox.x + nodeBox.width / 2, nodeBox.y + nodeBox.height / 2)
-      const ring = contentFrame.locator('[data-canvas-selection-ring="true"]')
-      await ring.waitFor({ state: 'visible', timeout: 5_000 })
-      const ringPaintMs = performance.now() - selectStart
-
-      // ── Store change → panel re-render ──────────────────────────────────
-      // The SAME click above is a store change (node selection); the
-      // Properties panel reacting to it is the panel re-render this budget
-      // is about. Measured from the same click for a realistic, single
-      // user-perceived action rather than a synthetic store dispatch.
-      const panel = session.page.locator('[data-testid="properties-panel"]')
-      const panelVisibleAt = performance.now()
-      await panel.waitFor({ state: 'visible', timeout: 5_000 }).catch(() => {})
-      const panelRerenderMs = performance.now() - selectStart
-      void panelVisibleAt
-
-      // ── Pan at 60fps ─────────────────────────────────────────────────────
-      log.step('Scripted 1s pan — frame timing')
-      const canvasRoot = session.page.locator('[data-testid="canvas-root"]')
-      const canvasBox = await canvasRoot.boundingBox()
-      if (!canvasBox) throw new Error('canvas root has no bounding box')
-      await session.page.mouse.move(
-        canvasBox.x + canvasBox.width / 2,
-        canvasBox.y + canvasBox.height / 2,
+    const parsed = safeParseJson(readFileSync(reportPath, 'utf8'), ReportSchema)
+    if (!parsed.ok) {
+      throw new Error(
+        `studio-board: Playwright's JSON report at ${reportPath} did not match the expected shape: ${parsed.error.message}`,
       )
-      const panFrames = await measureFramesDuring(
-        session.page,
-        async () => {
-          // 20 wheel ticks over ~1s — a continuous drag-scroll pan, the
-          // "glitching" report's own repro shape (WS-5.4).
-          for (let i = 0; i < 20; i++) {
-            await session!.page.mouse.wheel(30, 20)
-            await session!.page.waitForTimeout(50)
-          }
-        },
-        { minDurationMs: 1000 },
+    }
+    const report = parsed.value
+
+    const allSpecs = flattenSpecs(report.suites)
+    const targetSpecs = specsFromTargetFile(allSpecs)
+    const rows = readPerfAnnotations(targetSpecs)
+    const { unexpected, flaky } = report.stats
+
+    // Failures first — a failure anywhere in the run (including the `setup`
+    // project, without which nothing can be measured) is a failure.
+    if (exitCode !== 0 || unexpected > 0) {
+      const failures = readFailureMessages(allSpecs).map(plain)
+      const runnerErrors = (report.errors ?? []).map((e) => plain(e.message ?? '')).filter(Boolean)
+      throw new SpecFailedError(failures, runnerErrors, exitCode)
+    }
+
+    const targetTests = targetSpecs.flatMap((spec) => spec.tests)
+    if (targetTests.length === 0) {
+      throw new Error(
+        `studio-board: Playwright's report contains no result for ${SPEC_PATH} at all. ` +
+          'The run succeeded without ever executing the spec this bench exists to measure.',
       )
+    }
 
-      // ───────────────────────────────────────────────────────────────────
-      // Budgets — WS-5.6's PLAN TARGETS, not measurements. See this module's
-      // header: no run of this bench has ever completed, so nothing here has
-      // been calibrated. The equivalent measured numbers (on the real corpus,
-      // via the Playwright test runner) are in
-      // `tests/e2e/studio-board-perf.e2e.ts`. Notably, the real board shows
-      // a zoom that crosses virtualization boundaries costing ~290ms in a
-      // single frame — so `BUDGET_PAN_WORST_FRAME_MS = 20` here is very
-      // likely to fail on its first real run, and that failure will be
-      // TRUE. Calibrate then; do not pre-emptively loosen.
-      // ───────────────────────────────────────────────────────────────────
-      const BUDGET_RING_PAINT_MS = 32
-      const BUDGET_PAN_WORST_FRAME_MS = 20
-      const BUDGET_PANEL_RERENDER_MS = 8
-      const BUDGET_MOUNTED_IFRAMES = 20
+    // The spec ran and opted out — `studio-board-perf.e2e.ts` calls `test.skip`
+    // when the corpus project it measures is not on this disk. That is "no
+    // signal", and it is the one thing this bench must never report as a pass.
+    if (targetTests.every((t) => t.status === 'skipped')) {
+      return skippedResult(
+        this.name,
+        this.title,
+        `${SPEC_PATH} did not run a single test — every one of them was skipped, so nothing was measured`,
+      )
+    }
 
-      const rows: BenchRow[] = [
-        {
-          label: 'Selection → ring paint',
-          metrics: { elapsed: fmtMs(ringPaintMs), budget: fmtMs(BUDGET_RING_PAINT_MS) },
-          notes: ringPaintMs <= BUDGET_RING_PAINT_MS ? 'PASS' : 'FAIL — over budget',
-        },
-        {
-          label: 'Pan — worst single frame',
-          metrics: {
-            worst: fmtMs(panFrames.worstFrameMs),
-            mean: fmtMs(panFrames.meanFrameMs),
-            frames: fmtNum(panFrames.frames),
-            dropped: fmtNum(panFrames.droppedFrames),
-            budget: fmtMs(BUDGET_PAN_WORST_FRAME_MS),
-          },
-          notes: panFrames.worstFrameMs <= BUDGET_PAN_WORST_FRAME_MS ? 'PASS' : 'FAIL — over budget',
-        },
-        {
-          label: 'Store change → panel re-render',
-          metrics: { elapsed: fmtMs(panelRerenderMs), budget: fmtMs(BUDGET_PANEL_RERENDER_MS) },
-          notes: panelRerenderMs <= BUDGET_PANEL_RERENDER_MS ? 'PASS' : 'FAIL — over budget (see STATE.md perf-01 for why this one is calibrated loose)',
-        },
-        {
-          label: 'Mounted iframes at rest',
-          inputs: { totalFrames: FRAME_COUNT },
-          metrics: { mounted: fmtNum(mountedIframes), budget: `≤ ${BUDGET_MOUNTED_IFRAMES}` },
-          notes: mountedIframes <= BUDGET_MOUNTED_IFRAMES ? 'PASS' : 'FAIL — virtualization not bounding mount count',
-        },
-        {
-          label: 'First interactive frame (cold load)',
-          metrics: { elapsed: fmtMs(firstInteractiveFrameMs) },
-          notes: 'Informational — WS-5.5\'s <2s budget is for a 40-page real-repo PARSE, not this synthetic no-dependency fixture; not gated here.',
-        },
-      ]
+    log.ok(
+      `${SPEC_PATH} passed in ${fmtMs(elapsedMs)} (${targetTests.length} test(s), ${flaky} flaky)`,
+    )
 
-      const allPassed =
-        ringPaintMs <= BUDGET_RING_PAINT_MS &&
-        panFrames.worstFrameMs <= BUDGET_PAN_WORST_FRAME_MS &&
-        panelRerenderMs <= BUDGET_PANEL_RERENDER_MS &&
-        mountedIframes <= BUDGET_MOUNTED_IFRAMES
+    const headlineFor = (label: string): string =>
+      rows.find((r) => r.label === label)?.metrics.value ?? '—'
 
-      if (!allPassed) {
-        throw new BudgetExceededError(rows)
-      }
-
-      return {
-        name: this.name,
-        title: this.title,
-        headline: {
-          ring: fmtMs(ringPaintMs),
-          panWorst: fmtMs(panFrames.worstFrameMs),
-          mountedIframes: fmtNum(mountedIframes),
+    return {
+      name: this.name,
+      title: this.title,
+      headline: {
+        panWorst: headlineFor('pan worst frame'),
+        zoomWorst: headlineFor('zoom worst frame'),
+        liveIframes: headlineFor('live iframes @ working zoom'),
+      },
+      sections: [
+        {
+          title: 'Canvas budgets (measured by tests/e2e/studio-board-perf.e2e.ts)',
+          intro:
+            'Every number below is read from the spec\'s own `perf` annotations. The budgets are asserted inside the spec — this bench passes exactly when the spec does.',
+          rows:
+            rows.length > 0
+              ? rows
+              : [
+                  {
+                    label: 'perf annotations',
+                    metrics: { count: '0' },
+                    notes:
+                      'The spec passed but recorded no `perf` annotation — check that `annotate()` is still being called.',
+                  },
+                ],
         },
-        sections: [{ title: 'WS-5.6 budgets', rows }],
-      }
-    } finally {
-      await session?.close()
-      await server?.stop()
+      ],
     }
   },
 }
 
-/** Thrown when a budget fails — the orchestrator's own catch-and-record path renders this as a FAILED bench, per its existing contract (see `scripts/bench/index.ts`). */
-class BudgetExceededError extends Error {
-  constructor(rows: BenchRow[]) {
-    const failing = rows.filter((r) => r.notes?.startsWith('FAIL'))
-    super(`WS-5.6 budget(s) exceeded: ${failing.map((r) => r.label).join(', ')}`)
-    this.name = 'BudgetExceededError'
+/**
+ * Thrown when the run fails — the orchestrator records it as a FAILED bench
+ * and exits non-zero (see `scripts/bench/index.ts`).
+ *
+ * The two causes are kept apart because they send you to different places. An
+ * *assertion* failure means a budget moved and the spec's own message names
+ * which one. A *runner* failure (webServer never came up, Chromium missing,
+ * config error) means nothing was measured at all — reporting that as "a
+ * budget was breached" would send someone hunting a perf regression that never
+ * happened.
+ */
+class SpecFailedError extends Error {
+  constructor(
+    assertionFailures: readonly string[],
+    runnerErrors: readonly string[],
+    exitCode: number,
+  ) {
+    if (assertionFailures.length > 0) {
+      super(`${SPEC_PATH} failed — a canvas budget was breached:\n\n${assertionFailures.join('\n\n')}`)
+    } else if (runnerErrors.length > 0) {
+      super(
+        `${SPEC_PATH} never ran — the Playwright runner failed before any assertion:\n\n${runnerErrors.join('\n\n')}`,
+      )
+    } else {
+      super(
+        `${SPEC_PATH} failed with no recorded assertion or runner message (playwright exited ${exitCode}) — check the output above.`,
+      )
+    }
+    this.name = 'SpecFailedError'
   }
 }
 
 function skippedResult(name: string, title: string, reason: string): BenchResult {
+  log.warn(reason)
   return {
     name,
     title,

@@ -1,0 +1,96 @@
+/*
+ * MeasuresSection — Penpot's Measures section (`STATE.md` `panel-25`, P3
+ * item 3). `02-measurements.md`'s own Y-origins: W/H row `y=180` (Δ16 from
+ * Layer/Align above it — a section-boundary gap), X/Y row `y=216` (Δ4 —
+ * tightly paired), rotation/radius row `y=252` (Δ4 — tightly paired). The
+ * whole block is unlabeled — there is no "MEASURES" header text in the real
+ * panel, matching Layer's own template.
+ *
+ * `.measures`'s own gap sits BETWEEN three distinct groups — the W/H size
+ * block, the position row, and the rotation/radius row — not within one, so
+ * it uses `--inspector-space-m` (the panel's between-group step), not the
+ * within-group `--inspector-gap-tight` it used to share with the tightly-
+ * paired fields inside each of those groups (`.positionBlock` below).
+ */
+
+.measures {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-m);
+    padding-inline: var(--inspector-pad-x);
+    padding-block: var(--inspector-space-2xs);
+}
+
+/* The FLEX ELEMENT face's own body padding — `Section` already draws the
+ * header row's own inline padding, AND its `.sectionContent` already insets
+ * this body by `--inspector-pad-x` (this face mounts inside a real
+ * `<Section title="Flex element">`, unlike the headerless Constraints face
+ * `.measures` above, which has no such ancestor and legitimately sets its
+ * own `padding-inline`). Re-applying `--inspector-pad-x` here on top of
+ * `Section`'s own chrome doubled THIS element's own inset; `padding-block`
+ * stays — `.sectionContent` only pads its bottom, and this face needs the
+ * same top/bottom rhythm the unlabeled face uses so switching faces doesn't
+ * change row spacing. See `.flexElementSectionBreakout` below for the OTHER
+ * half of this bug, which this rule alone did not fix. */
+.flexElementBody {
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
+    padding-inline: 0;
+    padding-block: var(--inspector-space-2xs);
+}
+
+/*
+ * `<Section title="Flex element">` mounts as a plain CHILD of `.measures`
+ * above — so `.measures`'s own `padding-inline: --inspector-pad-x` insets
+ * `<Section>`'s outer box by 12px, same as every sibling row. But `<Section>`
+ * is a real `Section` primitive: its `.sectionHeader`/`.sectionContent`
+ * unconditionally apply `--inspector-pad-x` to their OWN content too — it
+ * has no way to know it is already sitting inside an inset ancestor. Left
+ * alone that stacks to 24px total: the "Flex element" label and the row
+ * below it sat a full `--inspector-pad-x` to the right of the W/H and
+ * rotation rows immediately above/below (measured live: 1134px vs. 1122px
+ * at a real breakpoint — exactly one extra 12px inset, not the doubled-and-
+ * then-fully-fixed 24px the first pass's fix believed it had reached).
+ *
+ * Same breakout `PropertyList.module.css`'s `.list` uses for the identical
+ * shape of bug: cancel the ancestor's inherited inset with an equal,
+ * opposite margin so `<Section>`'s own chrome becomes the SOLE source of
+ * the 12px, landing flush with the Constraints face's rows around it.
+ */
+.flexElementSectionBreakout {
+    margin-inline: calc(var(--inspector-pad-x) * -1);
+}
+
+/* Position switcher + directions/constraints, paired with the small z-index
+ * settings trigger on the SAME row — z-index stays resident regardless of
+ * which face (Constraints vs. Flex element) is showing; see this file's own
+ * component doc for why it is not gated behind the flex/grid check. */
+.positionSettingsRow {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--inspector-field-gap);
+}
+
+.positionBlock {
+    flex: 1 1 auto;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-2xs);
+}
+
+/* Rotation paired with the radius cluster on one row — the measured
+ * `rotation/radius row` (`02-measurements.md`), replacing the old
+ * `PositionSection.tsx` rotation+z-index pairing. */
+.rotationRadiusRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-field-gap);
+}
+
+.rotationCellWrap,
+.radiusCellWrap {
+    flex: 1 1 0;
+    min-width: 0;
+}

@@ -337,3 +337,127 @@
     -webkit-box-orient: vertical;
     overflow: hidden;
 }
+
+/* The drag ghost (S2/K2). A zero-size anchor pinned to the pointer, counter-
+   scaled out of the canvas transform for the same reason the refusal chip is:
+   it is a label ABOUT the gesture, not part of the page, so it must read the
+   same at 25% and at 400%. Offset down-right of the cursor so it never sits
+   under the arrow itself. */
+.dragGhost {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 0;
+    height: 0;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y)) scale(calc(1 / var(--canvas-zoom)));
+    transform-origin: 0 0;
+}
+
+.dragGhostLabel {
+    position: absolute;
+    top: var(--space-2xs);
+    left: var(--space-2xs);
+    width: max-content;
+    max-width: 200px;
+    padding: var(--space-3xs) var(--space-2xs);
+    border-radius: var(--radius-sm);
+    /* Opaque, for the same reason the refusal label is: this floats over the
+       user's own page and cannot assume what is behind it. */
+    background: var(--bg-surface-3);
+    box-shadow: inset 0 0 0 1px var(--border);
+    color: var(--text-bright);
+    font-size: var(--text-2xs);
+    font-weight: 500;
+    line-height: 1.35;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* K2 — Alt held: the drop writes a COPY, not a move. Generated content rather
+   than a second element, so the painter writes one attribute instead of
+   mounting and unmounting a badge mid-gesture. */
+.dragGhost[data-duplicating="true"] .dragGhostLabel::before {
+    content: "+ ";
+    color: var(--accent-3);
+    font-weight: 700;
+}
+
+/* G15 — the chip is answering a gesture that will NOT land (a file that is not
+   an image, the empty board). Same opaque surface, the refusal's own hairline
+   and text colour, so the answer reads as a refusal before release rather than
+   as a toast after it. Matches `.dropRefusalChipLabel`, which says the same
+   kind of thing about an element drag. */
+.dragGhost[data-refusing="true"] .dragGhostLabel {
+    background: var(--bg-body);
+    box-shadow: inset 0 0 0 1px var(--warning-30);
+    color: var(--warning-text);
+    white-space: normal;
+    max-width: 260px;
+}
+
+/* K6's reflow preview — one box per sibling that would make room for the drop.
+   It is drawn OVER the real sibling (which never moves: that element is the
+   user's own DOM and a transform written onto it would change what their
+   `%` chains and `backdrop-filter`s resolve against, and an abandoned gesture
+   would leave it behind).
+
+   Two independent movement channels, deliberately:
+     - `transform` PLACES the box on the sibling's measured rect, through the
+       same `--canvas-drop-*` channel every other indicator uses;
+     - `translate` is the only thing that ever ANIMATES, so a re-measure
+       repositions the box without sliding it across the frame.
+   The travel itself is a WAAPI animation from `canvasDragPainter.ts`, which is
+   also where `prefers-reduced-motion` is honoured — a scripted animation is
+   invisible to the global CSS clamp. */
+.reflowGhost {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y));
+    /* The resting delta. The painter's WAAPI travel (and its no-WAAPI
+       fallback, an inline `style.translate`) both override this. */
+    translate: 0 0;
+    width: var(--canvas-drop-w);
+    height: var(--canvas-drop-h);
+    border-radius: 2px;
+    background: var(--accent-3-10);
+    box-shadow: inset 0 0 0 1px var(--canvas-snap-guide-color);
+    opacity: 0;
+    transition: opacity 120ms ease-out;
+}
+
+.reflowGhost[data-shifting="true"] {
+    opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .reflowGhost {
+        transition: none;
+    }
+}
+
+/* K6 — one alignment guide per snapped axis, drawn at a sibling's edge or
+   centre while an element is being placed freely. Same token as the board's
+   own snap guides, because it is the same affordance one level down. The rect
+   channel carries a zero on the guide's thin axis; the hairline itself is the
+   1px below, which stays 1px on screen at every zoom because the whole overlay
+   layer is inside the canvas transform. */
+.snapGuide {
+    position: absolute;
+    box-sizing: border-box;
+    pointer-events: none;
+    transform: translate(var(--canvas-drop-x), var(--canvas-drop-y));
+    width: var(--canvas-drop-w);
+    height: var(--canvas-drop-h);
+    background: var(--canvas-snap-guide-color);
+}
+
+.snapGuide[data-axis="x"] {
+    width: 1px;
+}
+
+.snapGuide[data-axis="y"] {
+    height: 1px;
+}

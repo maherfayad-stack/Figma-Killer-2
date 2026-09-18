@@ -103,9 +103,9 @@
  */
 import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
-import { Project, QuoteKind } from 'ts-morph'
+import { QuoteKind } from 'ts-morph'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
-import { relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
+import { createProject, relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
 import {
   analyzeDeclarationTarget,
   classifyStylesheetEditability,
@@ -451,7 +451,10 @@ type StylesheetImportOutcome =
  * as nothing" requirement takes for the create branch.
  */
 function ensureStylesheetImport(pageAbsPath: string, cssAbsPath: string, convention: 'css' | 'module'): StylesheetImportOutcome {
-  const project = new Project({ useInMemoryFileSystem: false })
+  // `createProject()` rather than a bare `new Project(...)`: it carries the
+  // CRLF-preserving file system every other codemod writes through, so adding
+  // an import to a page in a Windows checkout does not convert the file.
+  const project = createProject()
   // Single-quote imports, matching every other `ast-codemods` writer that
   // creates a fresh import declaration (`detachComponent.ts`,
   // `extractComponentCopy.ts`, `extractSubtreeToComponent.ts`,

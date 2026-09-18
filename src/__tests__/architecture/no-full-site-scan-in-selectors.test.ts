@@ -64,11 +64,48 @@
  * `site.pages`. If the lookup a selector needs isn't one of the five, add a
  * new index there following the same rebuild-at-load /
  * incrementally-maintained-by-mutations pattern, rather than scanning inline.
+ *
+ * ### Second detector — whole-`site` selectors under `inspector/` (P4 / panel-23)
+ *
+ * `usePropertiesPanelData.ts:106`'s `const site = useEditorStore((s) =>
+ * s.site)` was the confirmed root cause of rule 8 (selection→painted-panel
+ * ≤16ms): Mutative replaces the `site` ROOT object on every mutation
+ * anywhere in the document, so subscribing to the whole object re-renders on
+ * every keystroke regardless of what changed. `WHOLE_SITE_SELECTOR_RE` below
+ * catches a `useEditorStore(` selector whose body returns bare `s.site` /
+ * `state.site` (optionally through `?.`/`!.`) and nothing narrower — e.g.
+ * `useEditorStore((s) => s.site)`, NOT `useEditorStore((s) => s.site?.styleRules)`,
+ * which keeps its reference stable across any mutation that doesn't touch
+ * `styleRules` specifically (Mutative's structural sharing).
+ *
+ * Scoped to an explicit COVERED SET (`WHOLE_SITE_SCAN_ROOTS`), not the whole
+ * repo, per `STATE.md` (`panel-23`)'s own text — a repo-wide ban would need to
+ * allowlist every legitimate whole-`site` read elsewhere (`saveSite`,
+ * `loadSite`, plugin RPC, autosave serialization), which would gut the gate
+ * the same way a repo-wide `FOR_OF_PAGES_RE` ban would. This means the gate
+ * does NOT catch a regression in `usePropertiesPanelData.ts` itself (that
+ * file lives outside the covered set) — verified instead by direct grep in
+ * `panel-23`'s own verification step.
+ *
+ * The set grows one directory at a time, as each is cleaned:
+ *
+ *   - `admin/pages/site/inspector/` — the original entry (`panel-23`).
+ *   - `admin/pages/site/canvas/` — added by S3
+ *     (`STUDIO-FIGMA-FEEL-PLAN.md`). `ModuleSandboxFrame.tsx` selected the
+ *     whole `site` and then ran `generateClassCSS` in its render body, once
+ *     per sandboxed module instance, on every store change. It now subscribes
+ *     to `s.site?.styleRules` / `.breakpoints` / `.conditions` and computes
+ *     through the per-node memo in `canvasClassCss.ts`. The canvas is the
+ *     other surface where this defect is expensive by construction: every
+ *     mounted frame runs its injectors over the same snapshot, so one
+ *     whole-`site` subscription is paid N times.
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, relative, extname, sep } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+import { statSync, existsSync } from 'fs'
+import { join, relative, sep } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const SCAN_ROOT = join(SRC_ROOT, 'admin')
@@ -97,6 +134,15 @@ const FULL_SITE_SCAN_ALLOWLIST = new Set<string>([
   // the deleted VC from every page tree. Inside a `mutateSiteWithExplorerReconcile`
   // recipe — a user-initiated delete, once, not a selector.
   'admin/pages/site/store/slices/visualComponentsSlice.ts',
+  // `findReplacementNodeId` (R2's `RefusalDialog`): re-locates a node by its
+  // ORIGINAL call-site position after a detach/extract codemod changes its
+  // id shape — an id-keyed index can't help here since the whole point is
+  // the old id is gone. Reached one hop from `RefusalDialog`, but only runs
+  // inside a bare `useEditorStore.subscribe` opened for the bounded window
+  // between "user clicked detach/extract" and "the board reload lands or a
+  // timeout fires" (`waitForReloadThenRetry`, unsubscribed either way) — not
+  // a standing render selector that re-runs on every unrelated keystroke.
+  'admin/pages/site/ui/RefusalDialog/findReplacementNode.ts',
 ])
 
 // Windows' `path.relative` emits backslashes; normalize before comparing or
@@ -107,21 +153,8 @@ function toPosix(p: string): string {
   return p.split(sep).join('/')
 }
 
-function collectSourceFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      if (entry === '__tests__' || entry === 'node_modules') continue
-      out.push(...collectSourceFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 // Matches the literal hook call `useEditorStore(` — NOT `useEditorStore.getState(`,
 // which is an imperative snapshot read, not a subscribed selector.
@@ -154,6 +187,36 @@ function findFullSiteScanLines(content: string): number[] {
     // tombstone would teach the next author to delete the explanation.
     if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
     if (FOR_OF_PAGES_RE.test(line)) hits.push(i + 1)
+  }
+  return hits
+}
+
+// ---------------------------------------------------------------------------
+// Second detector — whole-`site` selector (P4 / panel-23), scoped to
+// `admin/pages/site/inspector/` — see this file's own doc comment above.
+// ---------------------------------------------------------------------------
+
+/** The covered set for the whole-`site` selector detector — see this file's doc comment. */
+const WHOLE_SITE_SCAN_ROOTS = [
+  join(SRC_ROOT, 'admin/pages/site/inspector'),
+  join(SRC_ROOT, 'admin/pages/site/canvas'),
+]
+
+// `useEditorStore((s) => s.site)` / `useEditorStore((state) => state.site)`,
+// optionally through `?.`/`!.` on the way to `.site` — and NOTHING narrower
+// after it (the selector body ends there). A selector returning
+// `s.site?.styleRules` does not match: after `site` comes `?.styleRules`,
+// not the closing paren this pattern requires immediately after `site`.
+const WHOLE_SITE_SELECTOR_RE =
+  /useEditorStore\(\s*\(?\s*\w+\s*\)?\s*=>\s*\w+(?:\?|!)?\.site\s*\)/
+
+function findWholeSiteSelectorLines(content: string): number[] {
+  const hits: number[] = []
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
+    if (WHOLE_SITE_SELECTOR_RE.test(line)) hits.push(i + 1)
   }
   return hits
 }
@@ -220,7 +283,7 @@ function valueImportsOf(file: string, content: string): string[] {
 
 function readOrNull(file: string): string | null {
   try {
-    return readFileSync(file, 'utf8')
+    return readSource(file)
   } catch {
     return null
   }
@@ -288,12 +351,57 @@ describe('Architecture gate — no full-site pages scan reachable from a useEdit
     expect(violations).toHaveLength(0)
   })
 
+  it('no useEditorStore( selector in the covered set returns bare s.site', () => {
+    const violations: string[] = []
+
+    for (const root of WHOLE_SITE_SCAN_ROOTS) {
+      for (const file of collectSourceFiles(root)) {
+        const content = readOrNull(file)
+        if (content === null) continue
+        const rel = toPosix(relative(SRC_ROOT, file))
+        for (const lineNum of findWholeSiteSelectorLines(content)) {
+          violations.push(`${rel}:${lineNum}`)
+        }
+      }
+    }
+
+    if (violations.length > 0) {
+      throw new Error(
+        '[no-full-site-scan-in-selectors] A useEditorStore( selector inside ' +
+        'the covered set (WHOLE_SITE_SCAN_ROOTS) returns the whole `site` object ' +
+        '(`s.site`/`state.site`) instead of a narrower field.\n' +
+        'Mutative replaces `site` wholesale on every mutation anywhere in the ' +
+        'document, so a selector returning it re-renders on every keystroke ' +
+        'regardless of what changed — the confirmed root cause of rule 8 ' +
+        '(selection→painted-panel ≤16ms, panel-23). Subscribe to the ' +
+        'narrower branch instead (e.g. `s.site?.styleRules`, ' +
+        '`s.site?.pages.find(...)`) — Mutative\'s structural sharing keeps ' +
+        'that reference stable across mutations that do not touch it.\n\n' +
+        'Violations:\n' + violations.map((v) => `  ${v}`).join('\n'),
+      )
+    }
+
+    expect(violations).toHaveLength(0)
+  })
+
+  it('WHOLE_SITE_SELECTOR_RE flags a bare `s.site` selector but not a narrower one', () => {
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((state) => state.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s?.site)')).toEqual([1])
+    expect(findWholeSiteSelectorLines('  const site = useEditorStore((s) => s!.site)')).toEqual([1])
+    // Narrower — must NOT match.
+    expect(findWholeSiteSelectorLines('  useEditorStore((s) => s.site?.styleRules)')).toEqual([])
+    expect(findWholeSiteSelectorLines('  useEditorStore((s) => s.site?.pages.find((p) => p.id === id))')).toEqual([])
+    // A quoted tombstone in a doc comment is not a violation.
+    expect(findWholeSiteSelectorLines(' * was `useEditorStore((s) => s.site)` before')).toEqual([])
+  })
+
   it('follows the exact import edge the defect hid behind, and detects the walk it hid', () => {
     // Without this, the widening is untested machinery: the rule above passes
     // trivially if `valueImportsOf` silently resolves nothing.
     const notice = join(SCAN_ROOT, 'pages/site/panels/PropertiesPanel/SlotFillNotice.tsx')
     const slotOwners = join(SCAN_ROOT, 'pages/site/panels/PropertiesPanel/slotOwners.ts')
-    const content = readFileSync(notice, 'utf8')
+    const content = readSource(notice)
 
     expect(USE_EDITOR_STORE_HOOK_RE.test(content)).toBe(true)
     expect(valueImportsOf(notice, content)).toContain(slotOwners)

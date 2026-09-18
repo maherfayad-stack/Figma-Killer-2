@@ -88,6 +88,29 @@ export function isColorToken(value: string): boolean {
 }
 
 // ---------------------------------------------------------------------------
+// Swatch painting — a `var(--token)` reference into the PROJECT's own
+// stylesheet has no meaning inside the admin's own document (a different DOM
+// tree from the canvas iframe the token is actually declared in), so
+// `background-color: var(--x)` on a swatch element living in the admin chrome
+// resolves to nothing and paints transparent — a real, measured bug (`STATE.md`
+// panel-33): a text row read `var(--text-base-default)` while its swatch
+// painted `rgba(0, 0, 0, 0)`, even though the frame plainly rendered
+// `rgb(248, 249, 249)`.
+//
+// `resolveSwatchColor` is the one place that decides what a swatch actually
+// paints: the authored value verbatim whenever this module can already parse
+// it (a literal hex/rgb/hsl, or a token this component's own catalogue
+// resolved), and the caller-supplied RESOLVED value — the frame's own
+// `getComputedStyle` truth, never a re-implemented variable lookup or a
+// guessed token table — only as the fallback for a reference nothing else
+// could resolve. The AUTHORED string is a separate fact, unaffected by this
+// helper — display it from the caller's own `value`, not from this return.
+// ---------------------------------------------------------------------------
+export function resolveSwatchColor(authored: string, resolved: string | undefined): string {
+  return parseCssColor(authored) ? authored : (resolved ?? authored)
+}
+
+// ---------------------------------------------------------------------------
 // hex3 / hex4 / hex6 / hex8
 // ---------------------------------------------------------------------------
 

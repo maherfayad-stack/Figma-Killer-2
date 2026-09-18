@@ -15,11 +15,27 @@
  * or `--custom` untouched). The display name kebab-cases camelCase keys back
  * to CSS form so `gridAutoFlow` reads as `grid-auto-flow`; custom properties
  * (`--brand`) display as-is.
+ *
+ * ## Three call sites (`STATE.md` `panel-25`, P3 item 11)
+ *
+ * Kept in place, NOT moved into `inspector/sections/` — this component is
+ * genuinely shared by three real callers, matching this doc's own
+ * "target-agnostic… keeps the two editing targets from drifting" framing,
+ * now two targets: the thin `inspector/sections/CustomPropertiesSection.tsx`
+ * wrapper (the manifest's own entry, `forceOpen` always on — Law 2 never
+ * collapses a section behind a search this composer doesn't have), plus
+ * `StyleRuleComposer.tsx` (ambient/global-selector), which calls this
+ * directly now that `StyleSectionsEditor.tsx` (its old intermediary) is
+ * deleted — there, `forceOpen` stays `undefined`, preserving the
+ * pre-existing `defaultOpen`-driven collapse. The third caller,
+ * `MultiInlineStyleComposer.tsx`, is gone: S5 widened `useSelectionModel()`
+ * to N nodes, so the manifest wrapper serves a multi-selection too.
  */
 import { useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { Section } from '@ui/components/Section'
 import { Input } from '@ui/components/Input'
+import { isMixed } from '@ui/components/MixedValue'
 import { Button } from '@ui/components/Button'
 import { ControlRow } from '@ui/components/ControlRow'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
@@ -36,6 +52,14 @@ interface CustomPropertiesSectionProps {
   defaultOpen: boolean
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
   onRemove: (property: keyof CSSPropertyBag) => void
+  /**
+   * `INSPECTOR_SECTIONS`' manifest entry passes `true` — this section always
+   * renders open there, the same convention every migrated section's own
+   * Law-2 "forceOpen once relevant" uses. `undefined`/falsy preserves the
+   * pre-existing `defaultOpen`-driven collapse for the ambient-selector and
+   * multi-select callers.
+   */
+  forceOpen?: boolean
 }
 
 /**
@@ -67,6 +91,7 @@ export function CustomPropertiesSection({
   defaultOpen,
   onChange,
   onRemove,
+  forceOpen,
 }: CustomPropertiesSectionProps) {
   const customKeys = getCustomProperties(storedStyles)
 
@@ -107,20 +132,31 @@ export function CustomPropertiesSection({
       title="Custom properties"
       icon={SlidersHorizontalIcon}
       defaultOpen={defaultOpen}
+      forceOpen={forceOpen}
       flush
       indicator={setCount > 0}
       meta={setCount > 0 ? `${setCount} set` : undefined}
     >
       <div className={sectionStyles.sectionBody}>
         {customKeys.map((key) => {
-          const value = storedStyles[key]
+          const rawValue = storedStyles[key]
+          // W8-3 — a multi-selection's collapsed bag (`useSelectionModel`)
+          // hands this row `MIXED` for an uncurated property members disagree on
+          // (`STATE.md` `panel-25`'s Section 11 work order). Normalized here,
+          // the same one place `ClassPropertyRow` does it for every curated
+          // row — an un-normalized `String(MIXED)` prints the Symbol's own
+          // description into the field, exactly the "control that lies" bug
+          // class `CLAUDE.md`'s Studio-specific section warns about.
+          const mixed = isMixed(rawValue)
+          const value = mixed ? '' : String(rawValue ?? '')
           return (
             <div key={key} className={styles.row} data-testid={`custom-property-row-${key}`}>
               <ControlRow propKey={key} label={displayName(key)}>
                 <Input
                   id={`ctrl-${key}`}
                   fieldSize="sm"
-                  value={String(value ?? '')}
+                  value={value}
+                  mixed={mixed}
                   aria-label={`${displayName(key)} value`}
                   onChange={(e) =>
                     onChange(key as keyof CSSPropertyBag, e.target.value || undefined)

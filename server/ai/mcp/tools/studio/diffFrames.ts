@@ -33,7 +33,7 @@
  * outright, with no reconciliation.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { aiToolError, aiToolOk } from '@core/ai'
+import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { getDesignReference, readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
@@ -99,14 +99,14 @@ export const diffFramesTool: AiTool = {
     }
 
     if ((reference !== undefined) === (referenceId !== undefined)) {
-      return aiToolError('Provide exactly one of `reference` (base64 PNG) or `referenceId` (a studio_register_design_reference id).')
+      return toolRefusal('invalid-input', 'Provide exactly one of `reference` (base64 PNG) or `referenceId` (a studio_register_design_reference id).')
     }
 
     let a: DecodedImage
     try {
       a = decodePngBase64(baseline, 'baseline')
     } catch (err) {
-      return aiToolError(`Could not decode input PNG: ${err instanceof Error ? err.message : String(err)}`)
+      return toolRefusal('image-decode-failed', `Could not decode input PNG: ${err instanceof Error ? err.message : String(err)}`)
     }
 
     let b: DecodedImage
@@ -127,18 +127,22 @@ export const diffFramesTool: AiTool = {
       const dir = resolveToolProjectDir(dirInput, ctx)
       const designRef = getDesignReference(dir, referenceId)
       if (!designRef) {
-        return aiToolError(`No design reference "${referenceId}" found for this project — call studio_list_design_references to see what is registered.`)
+        return toolRefusal('no-such-reference', `No design reference "${referenceId}" found for this project.`, {
+          remedy: 'Call studio_list_design_references to see what is registered.',
+        })
       }
       const referenceBytes = readDesignReferenceBytes(dir, designRef)
       if (!referenceBytes) {
-        return aiToolError(`Design reference "${referenceId}" is registered but its file could not be read from disk.`)
+        return toolRefusal('reference-unreadable', `Design reference "${referenceId}" is registered but its file could not be read from disk.`, {
+          remedy: 'It may have been removed outside Studio — register the export again.',
+        })
       }
       const reconciled = await reconcileReference(referenceBytes, designRef.width, designRef.height, a.width, a.height)
-      if (!reconciled.ok) return aiToolError(reconciled.error)
+      if (!reconciled.ok) return toolRefusal('image-decode-failed', reconciled.error)
       try {
         b = decodePngBuffer(reconciled.result.pngBuffer, 'reference')
       } catch (err) {
-        return aiToolError(`Could not decode the reconciled reference image: ${err instanceof Error ? err.message : String(err)}`)
+        return toolRefusal('image-decode-failed', `Could not decode the reconciled reference image: ${err instanceof Error ? err.message : String(err)}`)
       }
       dimensionReconciliation = {
         method: reconciled.result.method,
@@ -157,11 +161,13 @@ export const diffFramesTool: AiTool = {
       try {
         b = decodePngBase64(reference as string, 'reference')
       } catch (err) {
-        return aiToolError(`Could not decode input PNG: ${err instanceof Error ? err.message : String(err)}`)
+        return toolRefusal('image-decode-failed', `Could not decode input PNG: ${err instanceof Error ? err.message : String(err)}`)
       }
       if (a.width !== b.width || a.height !== b.height) {
-        return aiToolError(
-          `baseline (${a.width}x${a.height}) and reference (${b.width}x${b.height}) are different pixel sizes — export/render both at the same width and dpr before diffing.`,
+        return toolRefusal(
+          'invalid-input',
+          `baseline (${a.width}x${a.height}) and reference (${b.width}x${b.height}) are different pixel sizes.`,
+          { remedy: 'Export/render both at the same width and dpr before diffing, or pass referenceId instead — that path reconciles a resolution mismatch.' },
         )
       }
     }

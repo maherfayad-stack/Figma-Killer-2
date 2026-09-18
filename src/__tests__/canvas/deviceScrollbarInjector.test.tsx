@@ -9,35 +9,70 @@
  * without disabling scrolling — `overflow: hidden` would also remove the
  * scrollbar, by making a tall page unreachable.
  */
-import { describe, expect, it } from 'bun:test'
-import { render } from '@testing-library/react'
+import { afterEach, describe, expect, it } from 'bun:test'
+import { cleanup, render } from '@testing-library/react'
 import { DeviceScrollbarInjector } from '@site/canvas/DeviceScrollbarInjector'
+import { CanvasFrameAdapterContext } from '@site/canvas/CanvasContexts'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
 
 const STYLE_ID = 'studio-device-scrollbars'
 
-function styleIn(doc: Document): HTMLStyleElement | null {
-  return doc.head.querySelector<HTMLStyleElement>(`#${STYLE_ID}`)
+let adapters: PortalFrameAdapter[] = []
+
+afterEach(() => {
+  cleanup()
+  for (const adapter of adapters) adapter.dispose()
+  adapters = []
+})
+
+function makeAdapter(doc: Document): PortalFrameAdapter {
+  const adapter = new PortalFrameAdapter(doc)
+  adapters.push(adapter)
+  return adapter
+}
+
+function styleIn(doc: Document): Element | null {
+  return doc.head.querySelector(`[data-studio-overlay-id="${STYLE_ID}"]`)
 }
 
 describe('DeviceScrollbarInjector', () => {
   it('injects the rule while a device is drawn', () => {
     const doc = document.implementation.createHTMLDocument('frame')
-    render(<DeviceScrollbarInjector targetDocument={doc} hidden />)
+    const adapter = makeAdapter(doc)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <DeviceScrollbarInjector hidden />
+      </CanvasFrameAdapterContext.Provider>,
+    )
     expect(styleIn(doc)).not.toBeNull()
   })
 
   it('injects nothing for desktop and fluid live mode', () => {
     // There the scrollbar IS what a visitor sees, so it must stay.
     const doc = document.implementation.createHTMLDocument('frame')
-    render(<DeviceScrollbarInjector targetDocument={doc} hidden={false} />)
+    const adapter = makeAdapter(doc)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <DeviceScrollbarInjector hidden={false} />
+      </CanvasFrameAdapterContext.Provider>,
+    )
     expect(styleIn(doc)).toBeNull()
   })
 
   it('removes the rule when the author switches away from a device', () => {
     const doc = document.implementation.createHTMLDocument('frame')
-    const view = render(<DeviceScrollbarInjector targetDocument={doc} hidden />)
+    const adapter = makeAdapter(doc)
+    const view = render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <DeviceScrollbarInjector hidden />
+      </CanvasFrameAdapterContext.Provider>,
+    )
     expect(styleIn(doc)).not.toBeNull()
-    view.rerender(<DeviceScrollbarInjector targetDocument={doc} hidden={false} />)
+    view.rerender(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <DeviceScrollbarInjector hidden={false} />
+      </CanvasFrameAdapterContext.Provider>,
+    )
     // Removed, not emptied — the document is left as if no device had been
     // drawn at all.
     expect(styleIn(doc)).toBeNull()
@@ -45,7 +80,12 @@ describe('DeviceScrollbarInjector', () => {
 
   it('hides the scrollbar without disabling scrolling', () => {
     const doc = document.implementation.createHTMLDocument('frame')
-    render(<DeviceScrollbarInjector targetDocument={doc} hidden />)
+    const adapter = makeAdapter(doc)
+    render(
+      <CanvasFrameAdapterContext.Provider value={adapter}>
+        <DeviceScrollbarInjector hidden />
+      </CanvasFrameAdapterContext.Provider>,
+    )
     const css = styleIn(doc)?.textContent ?? ''
     expect(css).toContain('scrollbar-width: none')
     expect(css).toContain('::-webkit-scrollbar')
@@ -54,7 +94,13 @@ describe('DeviceScrollbarInjector', () => {
     expect(css).not.toContain('overflow')
   })
 
-  it('does not fall over before the iframe document exists', () => {
-    expect(() => render(<DeviceScrollbarInjector targetDocument={null} hidden />)).not.toThrow()
+  it('does not fall over before the iframe adapter exists', () => {
+    expect(() =>
+      render(
+        <CanvasFrameAdapterContext.Provider value={null}>
+          <DeviceScrollbarInjector hidden />
+        </CanvasFrameAdapterContext.Provider>,
+      ),
+    ).not.toThrow()
   })
 })

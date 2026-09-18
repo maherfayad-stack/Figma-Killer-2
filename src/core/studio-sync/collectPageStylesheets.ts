@@ -21,8 +21,8 @@
  * `usedFiles` list out of `inlineLocalComponents` instead; reading `loc.file`
  * needs no new plumbing and cannot drift out of sync, because the set of files
  * that contributed nodes is exactly the set whose CSS matters — a component
- * that was NOT inlined (an `alm.*` package component) contributes no nodes and
- * correctly contributes no CSS.
+ * that was NOT inlined (an `alm.*` design-system component, a `pkg.*` package
+ * one) contributes no nodes and correctly contributes no CSS.
  *
  * ## Order
  *
@@ -34,10 +34,15 @@
  * ## What is deliberately NOT collected
  *
  * Only relative specifiers (`./x.css`, `../y.css`). A bare package specifier
- * (`@alm-design/design-system/dist/styles.css`) is skipped here: pulling a
- * dependency's whole stylesheet into the site's EDITABLE class list would
- * bury the user's own classes. Anything resolving outside the workspace root
- * is rejected outright.
+ * (`@acme/ui/dist/styles.css`) is skipped here: pulling a dependency's whole
+ * stylesheet into the site's EDITABLE class list would bury the user's own
+ * classes. Anything resolving outside the workspace root is rejected outright.
+ *
+ * So is everything under the project's own `design-system/` folder, even
+ * though it IS a relative import: that folder is Studio's copy of the built-in
+ * design system (`isDesignSystemPath`), the canvas already injects the same
+ * CSS as a read-only `@layer vendor` bucket, and collecting its ~400 rules
+ * again would bury the user's classes exactly as a package's would.
  *
  * Bare-specifier `.css` imports are NOT simply dropped, though — WS-2.3
  * collects them through a completely separate path,
@@ -46,7 +51,7 @@
  * (`ProjectCssInjector`) that never touches `site.styleRules`/`classIds`.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
-import { isPrototypeShellPath } from '@core/page-parser'
+import { isDesignSystemPath, isPrototypeShellPath } from '@core/page-parser'
 import path from 'node:path'
 import type { Project } from 'ts-morph'
 import type { ParsedPage } from '@core/page-parser'
@@ -155,6 +160,12 @@ export function collectEntryStylesheets(project: Project, workspaceRoot: string)
       }
       const rel = path.relative(root, targetPath)
       if (rel.startsWith('..') || path.isAbsolute(rel)) continue
+      // Never descend into Studio's own design-system copy. The shell's
+      // `providers.generated.jsx` imports `'../design-system'`, whose
+      // `index.js` imports every component's `.css` — following that edge
+      // would walk 40 stylesheets of Studio's own code into the user's
+      // cascade. Same rule, same reason as `isPrototypeShellPath` above.
+      if (isDesignSystemPath(rel.split(path.sep).join('/'))) continue
       if (!visited.has(targetPath)) queue.push(targetPath)
     }
   }
@@ -198,6 +209,11 @@ function recordMissingStylesheetCandidate(
   const absPath = path.resolve(path.dirname(importerAbsPath), specifierWithoutQuery)
   const relPath = path.relative(root, absPath)
   if (relPath.startsWith('..') || path.isAbsolute(relPath)) return
+  // A design-system stylesheet is refused by `resolveStylesheetSpecifier` on
+  // purpose, not because it is absent — recording it as a "missing candidate"
+  // would make the cache permanently stale (the file is right there, so the
+  // "is it still absent" check fails on every single load).
+  if (isDesignSystemPath(relPath.split(path.sep).join('/'))) return
   out.add(absPath)
 }
 
@@ -336,5 +352,14 @@ function resolveStylesheetSpecifier(specifier: string, importerAbsPath: string, 
   if (relPath.startsWith('..') || path.isAbsolute(relPath)) return undefined
   if (!existsSync(absPath)) return undefined
 
-  return { relPath: relPath.split(path.sep).join('/'), absPath }
+  const relPosix = relPath.split(path.sep).join('/')
+  // DS-3 — the built-in design system's own stylesheets are Studio's, not the
+  // user's: the canvas already injects Studio's copy of that CSS as a
+  // read-only `@layer vendor` bucket, so collecting it here too would put ~400
+  // rules the user cannot meaningfully edit into `site.styleRules` and bury
+  // their own classes. Reached through `design-system/index.js`'s own
+  // `./tokens/tokens.css` import during the ENTRY walk below.
+  if (isDesignSystemPath(relPosix)) return undefined
+
+  return { relPath: relPosix, absPath }
 }

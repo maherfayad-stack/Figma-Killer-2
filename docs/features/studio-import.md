@@ -15,7 +15,7 @@ The load path is `GET /admin/api/studio/load?dir=<abs>` → `loadStudioPages` (`
 - **Page discovery is configurable.** `.studio/meta.json`'s `pagesDir` points at a repo's real screens directory (e.g. `src/screens`); `.tsx` and `.jsx` are both discovered.
 - **Written for any React repo, not one app.** `genericRepoShapes.test.ts` is a second fixture that shares nothing with the validation corpus — `.tsx`, arrow components, named exports, a barrel between page and component, typed data modules — and exists because a suite grown from one repo's defects encodes that repo's habits.
 - **Local components are inlined.** A `<Card />` whose import resolves inside the workspace is expanded into its own JSX so the canvas shows real markup, not an opaque box. The call-site node is **replaced** by that JSX, not left wrapping it. Inlined nodes are **editable**, and the panel says how many places an edit will land in.
-- **Package components are not.** `@alm-design/design-system`'s `<Button />` stays a `alm.Button` node rendered by its own module.
+- **Design-system and package components are not.** A `<Button />` imported from the project's own `design-system/` folder stays an `alm.Button` node rendered by Studio's own built-in pack; one imported from an npm package stays a `pkg.*` node rendered from that package's bundle.
 - **`.map` over a statically-resolved array is expanded** into one node per item, so a list renders as a list. Rows are locked (derived from data).
 - **The parser SELECTS one `return`** (parser-06) — the last JSX-bearing one, the component's "normal" state — and leaves it unlocked. A screen with `if (stage === 'loading') return …` shows the branch that survives every guard; the guard branches are recorded as `label` + source location (`ParsedNode.branchAlternatives`), never rendered. A ternary/`&&` inside JSX gets the same treatment one level down (parser-07 closed a gap where `&&` used to render unconditionally, with no static check at all), and both honor a `useState(<literal>)` binding's own initial value as a real, first-paint answer when the condition names one.
 - **A component's array/object props survive.** `<ActionSheet actions={[{ label }, { label }]}/>` reaches the canvas as a real array, so the design-system component renders its buttons. HTML elements stay scalar-only (an attribute is a string).
@@ -91,7 +91,12 @@ src/core/page-tree/
 └── sourceWritability.ts       — the ONE per-prop rule every edit surface asks (`codeProps`)
 
 src/core/ast-codemods/
-└── setJsxTagName.ts           — renames an HTML element; the writeback behind the `tag` property
+├── setJsxTagName.ts           — renames an HTML element; the writeback behind the `tag` property
+└── locateJsxElement.ts        — `createProject()`: the CRLF-preserving ts-morph project every codemod writes through
+
+src/core/utils/lineEndings.ts  — pure leaf: detect / normalise / restore a file's line ending, and
+                                  `splitLines` (never `text.split('\n')` — see "Line endings" below)
+src/core/page-parser/eolFileSystem.ts — the ts-morph FileSystemHost that applies it
 
 src/modules/alm/
 └── register.tsx               — design-system components as modules; revives `{ svg }` props into elements;
@@ -139,12 +144,35 @@ Page discovery (`discoverPageFiles`) walks `pagesDir` recursively, returns sorte
 
 ### How a project gets in, and what it reports on the way (W7-4)
 
-Three entry paths, two routes, one aftermath:
+Four entry paths, three routes, one aftermath:
 
 | Path | Route | Transport |
 |---|---|---|
 | GitHub URL | `POST /admin/api/studio/import-github` → `{ jobId }`, then poll `GET .../import-github/status` | zipball fetch, phases reported (`downloading` with a byte count, `unpacking`, `probing`) |
+| GitHub URL, **Keep history (clone)** | `POST /admin/api/studio/git/clone` → `{ jobId }`, then poll `GET .../git/clone/status` | `git clone --filter=blob:none`, phases `cloning` / `probing` |
 | `.zip` / picked folder / **folder dropped on the launcher** | `POST /admin/api/studio/import-upload` | multipart XHR (upload progress) |
+
+**Why a clone is a separate route, not a flag on the import.** They share no
+machinery: the zipball path is an HTTP fetch plus an `unzipSync` with an
+entry-decider (the zip-bomb mitigation); the clone path is a subprocess behind
+`gitRunner.ts`'s guards, with the URL judged by `gitPaths.ts`'s transport
+allowlist and the credential handed over through a one-shot askpass. They meet
+again at `buildImportSummary`, which is the part that genuinely is the same —
+so both land the user on the identical summary step.
+
+The zipball stays the **default**: it needs no `git` on the host and no
+credential, which is right for "show me this repo". Turn **Keep history** on
+and the project arrives with its commit history, every branch, and `origin`
+already set, so the version-control panel is fully working the moment the board
+opens instead of the user's first commit having no parent. The clone path
+deliberately has no `ref` or `subdir` field — a clone brings every branch (so a
+ref is something to switch to afterwards, in the panel) and a partial checkout
+is not a clone — and no `token` field either: the credential is the signed-in
+GitHub account's, resolved server-side from the session
+([`studio-git.md`](studio-git.md)). It **refuses rather than overwrites** when
+`studio-workspace/<owner>-<repo>` already exists; the zipball path clears that
+directory because re-importing is how a zipball user updates, and a clone user
+has `git pull`.
 
 A dropped folder is not a fourth path. `src/admin/pages/site/studio/droppedFolderWalk.ts`
 walks the `DataTransfer` entry tree (`webkitGetAsEntry()`, paging `readEntries`
@@ -200,11 +228,22 @@ running. `installDeps.ts`'s job registry is an in-memory
 `Map<jobId, JobRecord>`, so a naive implementation would strand the client
 polling a `jobId` the new process has never heard of, 404ing forever (from
 the UI: "the install button did nothing"). Every job is now ALSO mirrored to
-`<appRoot>/.studio/install-job.json` (`installJobStore.ts`) at start and at
+`<projectDir>/.studio/install-job.json` (`installJobStore.ts`) at start and at
 completion. A status query that finds a record on disk with no matching
 in-memory job — the process that owned it is gone — resolves it to a
 terminal `'interrupted'` status rather than reporting a phantom `'running'`
-forever (`resolvePersistedJobStatus` in `installDeps.ts`). Both status routes
+forever (`resolvePersistedJobStatus` in `installDeps.ts`). The sidecar is keyed
+on the **project** directory, never on the app root the install spawns in: on a
+monorepo import those differ, and writing it at the app root put a second
+`.studio/` directory inside the user's own git-tracked application that nothing
+else in Studio reads (`sec-15`, closed by `sec-18` — the same defect
+`server-25` fixed for `lastDeploy` one module over). The record's own `dir`
+field still names the app root, because that is what a poller asked about.
+There is no fallback read: a record left at an old app-root location by a
+previous build is ignored. The post-install profile re-probe moved with it, for
+a sharper reason — `probeProject` takes the project directory and finds the app
+root itself, so passing the app root re-detected an app root relative to the
+app root and cached the wrong paths where no reader would ever see them. Both status routes
 (`GET /admin/api/studio/install/status?dir=` and
 `GET /admin/api/studio/install/:id?dir=`) go through this resolution, so a
 completed-then-restarted install is still reported correctly — paired with
@@ -341,8 +380,58 @@ component's own file, so a text or style edit lands there and refuses as
 
 `resolveComponentSources` classifies every `kind: 'component'` node:
 
-- **local** — the import resolves to a real file inside the workspace. `inlineLocalComponents` parses that file's returned JSX and splices it in, recursively (`maxDepth` 6, `maxNodes` 4000).
-- **package** — a bare specifier. Left as an opaque `alm.*` node with a read-only prop surface; the design-system modules render these properly on their own.
+| Kind | When | What happens to the node |
+|---|---|---|
+| **local** | the import resolves to a real file inside the workspace | `inlineLocalComponents` parses that file's returned JSX and splices it in, recursively (`maxDepth` 6, `maxNodes` 4000) |
+| **package** | a bare specifier that resolves outside the workspace (or not at all) | left opaque, with a read-only prop surface. Module id `pkg.<sanitized-package>.<Name>` — **every** package, with no carve-out for any specifier |
+| **design-system** | the import resolves inside `<root>/design-system/` — Studio's own copy of the built-in design system, written into the project by `designSystemFiles.ts` | left opaque, exactly as a package is. Module id `alm.<ExportName>`, rendered by the built-in `alm.*` module pack from Studio's own vendored source at every trust tier. `name` is the PUBLIC EXPORT name, so `import { Button as Btn }` and `<DS.Button/>` both land on `alm.Button` |
+
+### Why `<project>/design-system/` is a black box
+
+A DS-backed project carries a Studio-written `design-system/` folder so the
+repository builds, runs and downloads standalone, and its pages import it by
+relative path (`import { Button } from '../design-system'`). Its source is
+therefore *inside* the workspace — which is exactly why it needs a rule of its
+own, because every default in this pipeline would otherwise treat it as the
+user's app:
+
+- **Not inlined.** Expanding `<Button variant="primary"/>` would replace one
+  node the user can edit with ~40 nodes of a component they do not own and
+  cannot keep (Studio rewrites the folder whenever it goes stale).
+- **Its CSS never enters `site.styleRules`.** The canvas already injects
+  Studio's own copy of the same stylesheet as a read-only `@layer vendor`
+  bucket; collecting it again would bury the user's own classes under hundreds
+  of rules they cannot meaningfully edit. `collectPageStylesheets` (page walk
+  AND entry walk) and `styleCompile` both skip the folder.
+- **Never searched for pages, components or assets.** Forty `.jsx` files that
+  each default-export JSX otherwise score as the best pages directory in the
+  project (`projectProbe`'s heuristic, `discoverPageFiles`), its components
+  would be offered as the project's own local components
+  (`componentSpecExtract`), and its bundled SVGs as the project's own assets
+  (`projectAssets`).
+- **Detach / extract-component refuse on it**, with the same stable
+  `package-component` reason code and a message naming the real case.
+
+The folder name lives in two places on purpose — `PROJECT_DESIGN_SYSTEM_DIR` in
+`src/core/page-parser/designSystemDir.ts` (the browser core cannot import
+`server/`) and in `server/handlers/studio/builtinDesignSystem.ts`, which also
+owns `BUILTIN_DESIGN_SYSTEM_DIR` (Studio's vendored copy) and
+`isDesignSystemBacked(dir)`. `designSystemDir.test.ts` asserts the two literals
+are equal; nothing else does. The match is **root-anchored**: a user's own
+`src/design-system/` folder of hand-written components stays local and stays
+inlinable.
+
+### Inserting one: the server computes the specifier
+
+`ModuleDefinition.sourceImport` is `{ kind: 'package'; specifier; name } | { kind: 'design-system'; name }`. A design-system insert has no specifier the
+browser can send — the real one is relative to the file being written
+(`'../design-system'` from `pages/Home.tsx`, `'../../design-system'` from
+`pages/account/Settings.tsx`) and the editor knows a node id, not a directory
+depth. So the wire carries `designSystemImport: true` (insert, wrap, slot fill,
+and any nested child of an insert subtree), and
+`studioStructuralWriteback.ts` resolves it with `designSystemImportSpecifier(targetRel)`
+**after** `studioEditLocation` has decoded and path-guarded the target. MCP's
+`studio_apply_edits` takes the same field.
 
 ### Composite node ids
 
@@ -358,6 +447,12 @@ The rule: an inlined node's id is
 `INLINE_ID_SEPARATOR` is `'~'`, exported from `@core/page-parser`. `fsCodemodAdapter.ts` **mirrors** the literal rather than importing it, because pulling the page-parser barrel into the browser bundle drags ts-morph/TypeScript along and blows the `AdminCanvasLayout` chunk budget by an order of magnitude (measured). The same file already mirrors `ComponentSource` for that reason.
 
 > **Writeback guard.** `NODE_LOC_ID` (`studioWriteback.ts`) is a permissive `:line:col` pattern whose greedy `.*` matches straight *through* the separator. Run on a whole composite id it yields the right line and column with a file path of `pages/Home.jsx:77:19~components/Icon.jsx` — a path that does not exist, and if it ever did, a file the user never asked to modify. `studioEditLocation` therefore splits on `INLINE_ID_SEPARATOR` and keeps the **tail** before matching. Order is not optional.
+
+### A second reader of the same id grammar: the live-frame Vite plugin (Track L, `live-03`)
+
+`buildSourceNodeId` (mints `rel:line:col[suffix]`) and `classifyJsxTagKind` (lowercase tag = element, capitalized = component — the exact `/^[A-Z]/` rule `processElement` and `cssInJsAttach.ts` used to each keep an independent copy of) now live in `@core/page-tree` (`sourceNodeId.ts`, `jsxTagKind.ts`) rather than only inside the ts-morph parser, precisely so a SECOND reader with no ts-morph dependency can mint identical ids for identical source positions. That second reader is `@core/studio-runtime`'s Vite plugin (`vitePlugin.ts` → `idStamp.ts`), which stamps `data-node-id` on every host element in a live dev-server frame using a Babel AST walk — `toRuntimeStampId` is the plain (never-suffixed, never-composite) id shape that single-file walk can ever produce, since Babel sees one file in isolation and knows nothing about a `.map` iterating N times or a component being called from N call sites.
+
+That gap between "the plugin's stamp" and "the tree's real id" is closed by `liveNodeResolve.ts`, not by widening what the plugin stamps: it pairs a live DOM element's OCCURRENCE INDEX among every element sharing its stamp (in document order) against that same stamp's real node ids (in tree order) — one mechanism for both the inlined-call-site mismatch and the `.map`-row mismatch, since both reduce to "N elements share one Babel-visible source position." An element the plugin never stamped at all (vendor/package-internal markup) resolves to its nearest stamped ancestor instead, marked inexact. The plugin only ever runs in `vite dev` (`apply: 'serve'`) — never in a `vite build`/"Download the code" output, which must stay free of Studio-only markup. Full contract: `STATE.md`'s `live-03` entry and this module's own file headers.
 
 ### The call site is an instance, not a wrapper (WS-4.2)
 
@@ -603,7 +698,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 | Properties panel, top | `SourceConstraintNotice` — one of three variants: the structural reason, the `.map`-row reason, or (the majority case) "the structure is fine, these specific values are not". Plus `resolution.note` when the evaluator had to choose, and which individual props stay read-only |
 | Prop rows | `CodeValueControl` for a code-valued prop only (`propLockReason`); its literal siblings get their ordinary control |
 | In-place canvas inspector | Same `propLockReason`. It previously rendered a live-looking input for every prop, including ones the store was about to refuse |
-| Inline styles | `InlineStyleComposer` is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
+| Inline styles | The merged style composer (`StyleSectionsComposer`, `src/admin/pages/site/inspector/sections/`) is offered unless the node is a `.map` row. Per-property refusals happen in the store. **Classes are unaffected** either way — assigning one writes `node.classIds`, which none of this gates |
 | HTML attributes tab | `readOnly` only when `htmlAttributes` itself is code-valued |
 | Canvas double-click | An `info` toast when the **text prop** is code-valued. Announced where the store's other early-returns stay silent, because it is the only one a user can mistake for a bug: they double-clicked real copy sitting right there and nothing happened |
 
@@ -667,6 +762,13 @@ It now has its own edit kind and codemod. `saveSite` collapses `tag`/`customTag`
 `studioEditLocation` now rejects a `rel` that is absolute, contains a `..` or empty segment, or does not end in a JS/TS extension.
 
 This was a real hole, not a hypothetical one: the whole edit batch arrives from the client with `rel` inside each `nodeId`, and the save route builds its target with `join(dir, rel)` — so a `nodeId` of `../../.ssh/config:1:1` was an arbitrary file write. Nothing legitimate produces one (the parser mints ids from `path.relative(workspaceRoot, file)` for files it already found inside the workspace), and the check lives in the single decoder every path shares, so ordering, dedupe, touched-file collection, and apply all inherit it.
+
+**And it is checked on the REAL path, not the spelling.** `studioEditLocation(dir, nodeId)` resolves `join(dir, rel)` through `realpathSync.native` and re-derives `rel` from the real path of `dir`, so the `rel` every downstream step sees is the one the filesystem actually stores. Two things follow, and both were holes:
+
+- **Two spellings can name one file.** `pages/Home.tsx` vs `pages/home.tsx` on a case-insensitive filesystem (this machine, every Windows install, default macOS), or `mirror/Home.tsx` where `mirror` is a symlink or an NTFS junction to `pages` — the kind git stores, so an imported repo carries it. `sec-17` found the consequence: `transplantJsxElement`'s same-file guard compared the two strings, so a cross-frame move between two aliases wrote the destination and then clobbered it with the origin's text minus the moved element — the markup gone, inserted nowhere, `{ ok: true }` reported, and no undo entry for that family. That fix compared two realpaths inside one codemod; `sec-18` closed the property at the decoder, so `dedupeStudioEdits`' key, the batch's touched-file set, and every codemod's `join(dir, rel)` now agree about how many files a batch touches.
+- **A lexical guard is not containment.** A `.tsx` symlink INSIDE the project pointing at a file outside it has no `..`, is not absolute, and has the right extension — it passed cleanly and was written. `relative()` against the real project root turns it into a leading `..`, and the same guard then refuses it.
+
+A file that does not exist yet keeps its lexical `rel`: there is nothing to canonicalise against, the lexical guard has already passed, and every codemod refuses a missing file on its own. `orderStudioEditsForApply` is the one caller that deliberately does NOT canonicalise — it sorts by line number, descending globally and therefore also within each file, so which file a `rel` names never enters the comparison and an O(n log n) burst of `realpath` calls on the save path would buy nothing.
 
 ### A save only reloads when a write actually landed
 
@@ -954,7 +1056,20 @@ The path, end to end:
 | `duplicate-selector` / `duplicate-declaration` / `shorthand-override` / `important-override` | apply to `unset` exactly as they do to `set` — removing a declaration the cascade was already ignoring changes the file and nothing on screen |
 | `compiled-stylesheet` | a `.min.css` or a `dist/`-style build path (`classifyStylesheetEditability`). A `*.module.css` is **not** in this bucket — what is compiled there is the class NAME, not the file, and `studioCss.ts`'s `cssModuleSource` inverts `moduleClassMaps` so the selector arriving here is the one as written in the file |
 
-**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order: the stylesheet **co-located with the class's own page** (`pages/Home.tsx` → `pages/Home.module.css`); else the single editable `.css` file this project already writes to; else a named refusal (`ambiguous-stylesheet`, listing the candidates); else, with no stylesheet anywhere, a `create` edit naming the page for the server to co-locate a new one with.
+**Where a BRAND-NEW class's first declarations go** is the same "exactly one honest target" rule one level up, and it lives in `src/admin/pages/site/studio/cssInsertDestination.ts`. In order:
+
+1. the stylesheet the **user already chose** for this rule (`pinCssInsertDestination` — see the ambiguity remedy below);
+2. the stylesheet **co-located with the class's anchor page** (`pages/Home.tsx` → `pages/Home.module.css`);
+3. else the single editable `.css` file this project already writes to;
+4. else, with more than one, a named refusal — `ambiguous-stylesheet`, **carrying the candidates as data**, never creating a further file;
+5. else, with no stylesheet anywhere, a `create` edit naming the anchor page for the server to co-locate a new one with;
+6. else `no-editable-stylesheet`, which now means what it says: no stylesheet exists, and nothing names a page to put one beside.
+
+**The anchor page is the class's own page, or failing that the page that is OPEN (Z8).** Steps 2 and 5 both ask "which page is this class's?", and the only answer used to be `pageFileForRule` — the rule's `scope`, or where the class is assigned. A class made the ordinary way (the Selectors panel's "create class", nothing selected) is on no element, so that answered `null` and the resolver refused, with the words "this class has no page to co-locate a new one with" and the reason "this module has no notion of which page is open". The client does. `collectStyleRuleEdits` takes the board's `activePageId`, `resolveOpenPageFile` turns it into the one source file that page's own markup lives in, and the resolver treats it as the anchor of **last resort** — strictly a fallback, so a class already used on Home never follows the board to Onboarding.
+
+`resolveOpenPageFile` is stricter than `server/handlers/studio/pageSourceFile.ts`'s `resolvePageSourceFile`, and deliberately not the same function: that one answers "a file to READ for this page" best-effort (first decodable node id wins, tail-first, so an inlined `<Header/>` as the first child answers `components/Header.tsx`). A destination for a WRITE cannot be best-effort. This one reads each node's **call site** (the head of a composite id — always a position in the page's own file), skips Next route chrome (a `layout.tsx` is composed into every route, so a stylesheet beside it is a stylesheet every frame imports), and answers only when every node agrees on one file.
+
+**`ambiguous-stylesheet` is a choice, not a toast.** The refusal carries every candidate, so it reaches the user as a `RefusalDialog` with one `choose-stylesheet` remedy per file (`explainCssRuleConstraint` builds them; `constraintActions.ts` runs them). Clicking one pins the destination for that rule and asks for an immediate save; the declarations the user typed are still in the diff, because `fsCodemodAdapter` seeds `refusedRuleIds` with every destination refusal so `commitBaseline` never advances past one. Without that, the baseline adopted a value that had never reached disk and the user's answer landed on a diff reading "no change" — the `style-02` failure mode, one level up. A pin is dropped on every `loadSite`, and ignored if the file it names stops being one of the project's editable stylesheets.
 
 `style-02`: that co-location step used to read the page from `rule.scope.nodeId` only, and the sole producer of node-scoped rules (`ensureNodeStyleClass`) has no non-test caller — so it never fired, and **every** new class in a project with two or more stylesheets refused with "Studio found N candidate stylesheets". The page was recoverable the whole time from where the class is *assigned*: `buildClassPageIndex` walks the pages, decodes each node id back to its file, and answers when every node carrying that class is in one file (two files ⇒ still ambiguous, still refused).
 
@@ -975,7 +1090,7 @@ The path, end to end:
 - A rule with **no mapped `.css` source** — a Tailwind/Sass/PostCSS-generated class. There is no stylesheet declaration to rewrite, so this refusal is permanent, not a gap awaiting a feature — but the element carrying that class is not stuck: its own `className` attribute is a *different* write target, covered next.
 - A **`@container` / `@supports` context**. `setDeclarationAtMedia` emits `@media` and nothing else, so writing one of those would put the declaration under a condition the user did not ask for.
 
-Both surface as toasts on save. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
+Both surface as toasts on save (`StyleRuleEditPlan.unmapped` / `unwritableContexts`). A **destination** refusal is a third, separate list (`destinationRefusals`) and not one of these: that class is writable the moment a file is named, so it gets the dialog described above rather than a toast. Silence is the one outcome that loses a user's work without telling them, so neither is a silent skip. Each unmapped class carries its own `reason` (`UnmappedStyleRule`), rendered as the toast BODY — `style-02`: it used to be concatenated into the generic lead, producing the self-contradictory "…has no hand-editable CSS file in this project — Studio found 4 candidate stylesheets…".
 
 **A baseline never advances past a refusal (`style-02`).** `commitBaseline` ran unconditionally after every save, including the ones the server refused. The declaration never reached disk, but the baseline adopted it — so the user's obvious next move, typing the same value again, diffed as "no change", produced no edit, and was never attempted a second time. The refusal was reported once and then became permanent and invisible. `commitBaseline` now takes `refusedRuleIds` (joined from the save response's `refusals` through `StyleRuleEditPlan.ruleIdByNodeId`) and keeps those rules' previous baseline entry; the repeat TOAST is de-duplicated instead, in `refusalToasts.ts`. `commitClassIdsBaseline`'s `refusedNodeIds` is the same fix on the `className` side.
 
@@ -1257,7 +1372,7 @@ Every declaration Phase A put on the canvas, replayed through `setStyledDeclarat
 
 `import '@acme/ui/dist/style.css'` — a bare-specifier stylesheet import — is a THIRD, separate input `styleCompile.ts` produces, alongside `css`/`moduleClassMaps`: `CompiledStyles.vendorCss`. Unlike Sass/PostCSS/Tailwind, this needs **no trust promotion** — resolving a bare specifier against `<dir>/node_modules/<pkg>/<subpath>` and reading the already-built `.css` file is a text scan plus a file read, never code execution, so `collectVendorCss` runs unconditionally at every trust tier (only `node_modules` existing is required; missing it degrades to a `vendor-css-requires-install` warning pointing at `POST /admin/api/studio/install`).
 
-`vendorCss` never joins `css`/`moduleClassMaps` and is never parsed through `cssToStyleRules` — it rides `loadStudioPages`'s return value as its own field, reaches the client as `GET /admin/api/studio/load`'s `vendorCss`, and is injected into the canvas iframe by `ProjectCssInjector` as a read-only `@layer vendor` bucket, explicitly ordered below the editable `@layer user-authored` bucket so a user's own class edit always wins over a package default. See `docs/features/canvas-iframe-per-frame.md`'s "Vendor vs. user-authored ordering" for the cascade-layer mechanics, and `docs/agent-refs/canvas-internals.md`. `ProjectCssInjector` also carries `@alm-design/design-system`'s own bundled stylesheet (Studio's own dependency, not the open project's) — the same bucket now serves both sources.
+`vendorCss` never joins `css`/`moduleClassMaps` and is never parsed through `cssToStyleRules` — it rides `loadStudioPages`'s return value as its own field, reaches the client as `GET /admin/api/studio/load`'s `vendorCss`, and is injected into the canvas iframe by `ProjectCssInjector` as a read-only `@layer vendor` bucket, explicitly ordered below the editable `@layer user-authored` bucket so a user's own class edit always wins over a package default. See `docs/features/canvas-iframe-per-frame.md`'s "Vendor vs. user-authored ordering" for the cascade-layer mechanics, and `docs/agent-refs/canvas-internals.md`. `ProjectCssInjector` also carries the BUILT-IN design system's bundled stylesheet — Studio's own vendored copy (`vendor/alm-design-system/dist/index.css`, imported as a build-time constant), not anything the open project installed — so the same bucket serves both sources.
 
 ### The frame gives percentage heights a definite basis
 
@@ -1270,6 +1385,114 @@ This is the same move `resolveViewportUnits` makes for `vh`: give authored CSS a
 ### Numeric style values get their unit
 
 `style={{ width: size, height: size }}` parses to real numbers. `width: 44` is not valid CSS — the browser drops the declaration, in the canvas and in published HTML alike — so a bare number has to become `44px`. `sanitiseCssValue` sees only the value and can only stringify it, so `cssValueForProperty(prop, value)` (in `@core/css-sanitize`) owns the unit rule and every style-bag emitter goes through it. The rule is React's `isUnitlessNumber` list, so the canvas, the publisher, and anyone who has written JSX all agree. Before this, every inline SVG icon rendered at its own intrinsic size: a 24px check painted 300px wide across its badge.
+
+---
+
+## Line endings — a CRLF repo parses the same and stays CRLF
+
+`parser-13`. Studio edits OTHER PEOPLE'S repositories, and a repository cloned
+on Windows with Git's default `core.autocrlf=true` has a **CRLF working tree**.
+Two separate failures follow from that, and one mechanism closes both.
+
+### The reading half
+
+In a JavaScript regex `.` does not match `\r` (it is a line terminator) and a
+non-`m` `$` matches only end-of-input. So `/^(#{1,6})\s+(.*)$/` matches **not
+one heading** in a CRLF markdown document. That is not hypothetical: it emptied
+Studio's own vendored design-system manifest, and `bun run alm:sync` then wrote
+the empty manifest over the real one (`STATE.md` `server-24`, `PROJECT-BRIEF.md`
+§6 trap 15). The same regex reads the design-system docs shipped inside a
+package in the **user's** `node_modules` (`server/handlers/studio/designSystemGuide.ts`),
+where a `.gitattributes` in Studio's own repo cannot help.
+
+**The rule: anything that reads a file line-wise uses `splitLines` from
+`@core/utils/lineEndings`, never `text.split('\n')`.**
+
+The same leaf, and the same rule, cover the other CRLF source on a Windows
+machine: the stdout of the command-line tools Studio spawns against the user's
+repo (`git`, `tsc`, `vercel`/`netlify`, a package manager). That half is
+[docs/server.md](../server.md) → "Line endings — subprocess output", gated
+separately by `subprocess-output-line-endings.test.ts`.
+
+### The writing half
+
+Every codemod builds its inserted text with `'\n'` — the indent helpers in
+`jsxChildPlacement.ts`, the printed subtree in `jsxSubtree.ts`, postcss's
+`raws.before = '\n\n'`, the literal fragments in `buildRule`/`buildStep`.
+Before `parser-13`, editing one attribute in a CRLF file left a **mixed** file
+and a `git diff` showing the user lines they never touched
+(`STATE.md` `struct-10` landmine 7). Formatting-preserving has to include line
+endings or it is not formatting-preserving.
+
+### The one seam
+
+`src/core/page-parser/eolFileSystem.ts` — `EolPreservingFileSystem`, a ts-morph
+`FileSystemHost` that **normalises every read to `\n` and re-applies the file's
+own dominant ending on every write**. It is installed on every disk-backed
+`Project` Studio opens:
+
+| Factory | Where |
+|---|---|
+| `createProject()` | `src/core/ast-codemods/locateJsxElement.ts` — every single-file codemod |
+| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load AND every codemod handed that project |
+| `parsePageFile`'s default project | `src/core/page-parser/parsePageFile.ts` |
+| the probe projects | `packageManifest.ts`, `figmaCodeConnect.ts`, `prototypeCodeFlow.ts` |
+
+`manipulationSettings.newLineKind` is pinned to `LineFeed` on the two factories
+for the same reason: the printer must agree with the hand-built strings, and the
+file system stays the only place an ending is decided.
+
+The pure-text codemods cannot use a file system, so they carry the same contract
+themselves: `@core/css-codemods`' `preservingLineEndings` wraps `setDeclaration`,
+`setDeclarationAtMedia`, `removeDeclaration`, `insertRule`, `insertKeyframes`,
+`setDeclarationAtKeyframe` and `removeDeclarationAtKeyframe`, and
+`extractStringsToDictionary` / `translationWrite.ts` detect-and-restore around
+their own in-memory `Project`.
+
+### Why normalise rather than preserve through
+
+Node positions are unaffected either way — TypeScript counts `\r\n` as ONE
+terminator and the `\r` sits after every token on its line, so a node's 1-based
+`(line, col)`, and therefore its **node id**, is identical in both forms.
+Normalising changes absolute offsets, never `line:col`. What it buys is that no
+`\r` can reach a resolved VALUE: a multi-line template literal or JSX text
+block would otherwise carry `\r` into the page tree on Windows and not
+elsewhere, and two users would see different boards for the same repo. A CRLF
+project and its LF copy now produce a byte-identical `loadStudioPages` result.
+
+### What is deliberately NOT preserved
+
+- **A mixed file is rewritten to its dominant ending.** Per-line preservation
+  through an AST rewrite is not something we can promise, and a half-converted
+  file is a defect to repair. Ties go to CRLF — the only way a tie arises in
+  practice is a CRLF file a tool has partly converted.
+- **Consequently, a multi-line template literal inside a mixed file** has its
+  embedded endings normalised with everything else. In a uniform file it
+  round-trips byte-for-byte.
+- **The byte-order mark is a separate concern.** ts-morph strips it on read and
+  re-adds it on write, and `applyLineEnding` leaves a leading `\uFEFF` alone.
+  A BOM'd file still **refuses** every structural edit, because
+  `verbatimSourceText` compares the on-disk bytes (BOM included) against the
+  parsed text (BOM stripped) and a mismatch is `stale-source` — pre-existing,
+  unchanged by `parser-13`, and gated by a test so nobody "fixes" it into a
+  silent BOM-dropping write.
+
+### Tests
+
+`src/__tests__/utils/lineEndings.test.ts` (the primitives),
+`src/core/ast-codemods/__tests__/crlfSourceFiles.test.ts` (every structural
+codemod, twin LF/CRLF fixtures, plus the wrap→unwrap byte-identical round trip
+and the BOM refusal), `src/core/css-codemods/__tests__/crlfStylesheets.test.ts`,
+`src/core/page-parser/__tests__/crlfParse.test.ts` (identical page trees),
+`server/handlers/studio/__tests__/crlfProjectLoad.test.ts` (identical
+`loadStudioPages` result), and the CRLF package case in
+`server/handlers/studio/projectGuide.test.ts`.
+
+**Every one of those fixtures is written by the test, never committed** — this
+repository's own working tree is CRLF-converted by Git on checkout, so a
+committed CRLF fixture cannot be trusted to still be CRLF when the test opens
+it. None of them share anything with the eSIM corpus, per
+`genericRepoShapes.test.ts`'s discipline.
 
 ---
 

@@ -11,6 +11,12 @@ node_modules
 dist
 !vendor/pixel-art-icons/dist/
 !vendor/pixel-art-icons/dist/**
+# The vendored design system's `dist/` is a COMMITTED build artefact, same
+# contract as pixel-art-icons above: Studio's admin bundle imports `dist/`
+# (never `src/`), and `alm-design-system-fresh.test.ts` gates it against a
+# rebuild. Produced by `bun run alm:sync`.
+!vendor/alm-design-system/dist/
+!vendor/alm-design-system/dist/**
 dist-ssr
 .worktrees/
 .superpowers/
@@ -136,7 +142,56 @@ docs/superpowers/
 # server's disk" is the durability guarantee, not "survives a git clone" —
 # the agent re-fetches it from the design tool on request.
 **/.studio/variables/
-# The per-project guide Studio writes into a workspace project on every chat
+
+# --- studio-workspace/ -- USER DATA, not this repository's source -----------
+# STUDIO-FIGMA-FEEL-PLAN.md §6 decision 4. Every `studio-workspace/<project>/`
+# is a user's own React repository checked out inside this one, so the default
+# is IGNORED: a dogfooding session, a GitHub import, or a bench fixture
+# (`__bench-synth/` and `__bench-live-synth/`, whose one-by-one rules this
+# blanket rule replaces) must never turn up in `git status` as something to
+# commit. The missing rule cost 140,894 committed lines in `188fda1a`.
+#
+# The negations below are the named sample projects this repo's own tests open.
+# Adding one means committing someone's repository into this one, so the list
+# stays short and every entry names its consumer:
+#
+#   __canonical-fixture/  src/core/page-parser/__tests__/canonicalCheck.test.ts
+#                         server/handlers/studio/canonicalPageCheck.test.ts
+#                         server/handlers/studio/pageSourceFile.test.ts
+#                         scripts/bench/benches/agent-turn.ts
+#   __board-perf-fixture/ tests/e2e/studio-board-perf.e2e.ts -- the canvas perf
+#                         gate, which had no corpus on a clean checkout at all
+#                         until this one existed (`verify-01` finding 1). Its
+#                         own README says why it is twelve frames.
+#   test4/                the Phase 0 dogfood target (plan §3) and the project
+#                         `PropertiesPanel/imageFillValue.ts` documents against
+#   __vite-live-fixture/  tests/e2e/studio-feel-phase0.e2e.ts -- the ONLY place
+#                         the trust tier moves without a human clicking
+#                         anything (plan §6 decision 2), so the only place a
+#                         lost gate is silent. Its own README says why it is
+#                         five files and why it has no node_modules.
+#
+# `test4 copy/` is deliberately NOT kept -- it is a local dogfooding duplicate,
+# and `scripts/bench/lib/liveFrameFixture.ts` degrades with a named error when
+# it is absent. The e2e specs' own projects (`maherfayad-stack-eSIM`,
+# `esim-journey`) are not kept either: each spec `test.skip`s when its project
+# is not on disk, which is the intended contract for real user data.
+studio-workspace/*
+!studio-workspace/.ignore
+!studio-workspace/__board-perf-fixture/
+!studio-workspace/__canonical-fixture/
+!studio-workspace/__vite-live-fixture/
+!studio-workspace/test4/
+
+# Inside a kept sample project, that project's OWN generated output is still
+# ignored. `prototype/*.generated.*` is re-emitted by the prototype connector
+# on every scan (`server/handlers/studio/prototypeRoutes.ts`) -- 64k lines for
+# `test4` alone, rewritten on every dogfood. `node_modules/` and `dist/` need
+# no entry here: the root rules at the top of this file already match at any
+# depth (and `studio-workspace/.ignore` re-includes them for ripgrep only).
+studio-workspace/*/prototype/*.generated.*
+
+# The per-project guide Studio writes into a kept sample project on every chat
 # turn (`server/handlers/studio/projectGuide.ts`, tracked by
 # `.claude/.studio-generated.json`). Generated output, not source — distinct
 # from THIS repo's own `.claude/` harness and root `CLAUDE.md`, both tracked
@@ -147,3 +202,17 @@ studio-workspace/*/CLAUDE.md
 
 # Playwright/E2E run output — generated, not source
 test-results/
+
+# The Vite prototype shell `ensurePrototypeShell` scaffolds into a project.
+# Generated output, rewritten on demand — and, inside `__canonical-fixture/`,
+# a real hazard: that directory is BOTH a Studio project and the parser
+# suite's committed reference corpus, and the `prototypeShellBoards`-family
+# tests scaffold onto the checked-in copy rather than a tmp copy (the
+# `live-01` landmine in STATE.md). Without these rules one full `bun test`
+# leaves ~15 generated files inside the fixture and the next `git add` sweeps
+# them into the corpus — which is exactly what happened while this rule was
+# being written. Scoped to the fixture: a USER's project owns its own shell.
+studio-workspace/__canonical-fixture/prototype/
+studio-workspace/__canonical-fixture/index.html
+studio-workspace/__canonical-fixture/vite.config.js
+studio-workspace/__canonical-fixture/.studio/shell.json

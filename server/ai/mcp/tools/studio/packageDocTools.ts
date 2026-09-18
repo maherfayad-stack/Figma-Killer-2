@@ -40,8 +40,24 @@
 import { existsSync, readFileSync, statSync } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
+import { BUILTIN_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from '../../../../handlers/studio/builtinDesignSystem'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
+
+/**
+ * The name a project's BUILT-IN design system answers to here — the same one
+ * `designSystemDetect.ts` reports and `studio_list_components` lists under, so
+ * an agent that read either can ask for its docs without a second lookup.
+ *
+ * Its docs are not in `node_modules` and never were: they ship with Studio
+ * (`BUILTIN_DESIGN_SYSTEM_DIR`), which is also why they are readable with no
+ * dependency install. Only offered for a project that actually carries the
+ * design system — reading a design system's docs for a project that cannot
+ * import it is worse than a miss, because the agent would then write imports
+ * the project has no folder for.
+ */
+const BUILTIN_DESIGN_SYSTEM_NAME = 'alm'
 
 /** Markdown only. A dependency's docs are the use case; its source is not. */
 const ALLOWED_DOC_PATTERN = /^[A-Za-z0-9._-]+\.md$/
@@ -59,7 +75,7 @@ const PackageDocInputSchema = Type.Object(
       Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),
     ),
     package: Type.String({
-      description: 'Installed package name, e.g. "@alm-design/design-system".',
+      description: 'Installed package name, e.g. "@acme/ui" — or "alm" for Studio\'s built-in design system, whose docs ship with Studio and need no dependency install (only available for a project that carries the design-system/ folder).',
     }),
     doc: Type.Optional(
       Type.String({ description: 'Markdown file in the package root. Defaults to CLAUDE.md.' }),
@@ -91,6 +107,16 @@ function resolvePackageDoc(projectDir: string, packageName: string, doc: string)
   if (!ALLOWED_DOC_PATTERN.test(doc)) return null
   // A package name is `name` or `@scope/name` — nothing else may reach a path.
   if (!/^(@[A-Za-z0-9._-]+\/)?[A-Za-z0-9._-]+$/.test(packageName)) return null
+
+  // The built-in design system's docs live with Studio, not under any
+  // `node_modules`. Same containment rule as below, against its own root.
+  if (packageName === BUILTIN_DESIGN_SYSTEM_NAME && isDesignSystemBacked(projectDir)) {
+    const packageDir = resolve(BUILTIN_DESIGN_SYSTEM_DIR)
+    const file = resolve(packageDir, doc)
+    if (!file.startsWith(packageDir + sep)) return null
+    if (!existsSync(file) || !statSync(file).isFile()) return null
+    return file
+  }
 
   let current = resolve(projectDir)
   for (let hop = 0; hop <= MAX_PARENT_HOPS; hop++) {
@@ -158,7 +184,7 @@ const packageDocTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Read an installed dependency\'s own markdown documentation (CLAUDE.md, design.md, README.md) BY SECTION. These files routinely exceed the plain-Read size limit — a design system\'s reference can be 100 KB+, so reading it whole always fails; this is how to actually get at it. Call with outline:true first to see every heading and its size, then call again with section:"<heading>" for just the part you need. Resolves the package from the project upward, so a hoisted node_modules works. Markdown files in the package root only; the whole file is never returned. Returns { ok:false, error } when the package or doc is not installed.',
+    'Read a design system\'s own markdown documentation (CLAUDE.md, design.md, README.md) BY SECTION — an installed dependency\'s, or Studio\'s built-in design system (package:"alm", whose docs ship with Studio; no install needed). These files routinely exceed the plain-Read size limit — a design system\'s reference can be 100 KB+, so reading it whole always fails; this is how to actually get at it. Call with outline:true first to see every heading and its size, then call again with section:"<heading>" for just the part you need. Resolves the package from the project upward, so a hoisted node_modules works. Markdown files in the package root only; the whole file is never returned. Returns { ok:false, error } when the package or doc is not installed.',
   inputSchema: PackageDocInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, package: packageName, doc: docInput, outline, section } = input as {
@@ -173,14 +199,18 @@ const packageDocTool: AiTool = {
 
     const file = resolvePackageDoc(dir, packageName, doc)
     if (!file) {
-      return { ok: false, error: `"${packageName}/${doc}" is not an installed markdown doc reachable from this project.` }
+      return toolRefusal('no-such-file', `"${packageName}/${doc}" is not a markdown doc reachable from this project.`, {
+        remedy: packageName === BUILTIN_DESIGN_SYSTEM_NAME
+          ? "This project does not carry the built-in design system — check studio_list_components's designSystems field."
+          : 'Check the package is installed and the doc name is one it actually ships.',
+      })
     }
 
     let markdown: string
     try {
       markdown = readFileSync(file, 'utf8')
     } catch (err) {
-      return { ok: false, error: `Could not read "${packageName}/${doc}": ${err instanceof Error ? err.message : String(err)}` }
+      return toolRefusal('io-error', `Could not read "${packageName}/${doc}": ${err instanceof Error ? err.message : String(err)}`)
     }
 
     const sections = splitSections(markdown)

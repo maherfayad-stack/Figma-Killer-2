@@ -65,6 +65,7 @@ import {
   type TextEdit,
 } from './jsxChildRange'
 import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
+import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 
 export interface MoveJsxElementParams {
@@ -110,7 +111,19 @@ export interface MoveJsxRefusal {
   message: string
 }
 
-export type MoveJsxElementResult = { ok: true } | { ok: false; refusal: MoveJsxRefusal }
+/**
+ * `relocated` (`store-14`) is the MOVED element's own tag-name `line:col`
+ * after the write — the id the parser will mint for it on the next read.
+ *
+ * A move creates nothing, so it has no `created` to report; but it is exactly
+ * the kind whose node id CHANGES, which is why the board loses the selection
+ * across a reorder or a reparent unless the codemod says where the element
+ * went. `null` when the re-parsed file does not confirm the position — the
+ * same refusal-to-guess `createdJsxLocation` documents.
+ */
+export type MoveJsxElementResult =
+  | { ok: true; relocated: CreatedJsxLocation | null }
+  | { ok: false; refusal: MoveJsxRefusal }
 
 function refuseMove(reason: MoveJsxRefusalReason, message: string): MoveJsxElementResult {
   return { ok: false, refusal: { reason, message } }
@@ -173,8 +186,12 @@ function reorder(
   }
 
   const at = position === 'before' ? anchor.range.start : anchor.range.end
+  const moved = verbatim.slice(target.start, target.end)
   writeVerbatimSource(sourceFile, file, spliceRange(verbatim, target.start, target.end, at))
-  return { ok: true }
+  // `spliceRange`'s own arithmetic, read back: the block lands at `at`, minus
+  // its own length when it was cut from above that point.
+  const landedAt = at >= target.end ? at - (target.end - target.start) : at
+  return { ok: true, relocated: createdJsxLocation(sourceFile, landedAt, moved) }
 }
 
 /**
@@ -241,5 +258,11 @@ function reparent(
 
   const removal: TextEdit = { start: target.start, end: target.end, text: '' }
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, removal]))
-  return { ok: true }
+  return {
+    ok: true,
+    // The placement's offset is measured against the ORIGINAL text; only the
+    // removal can have moved it. Same arithmetic `insertJsxElement` runs for
+    // the import edit above its own splice.
+    relocated: createdJsxLocation(sourceFile, offsetAfterEdits([removal], placement.edit.start), placement.edit.text),
+  }
 }

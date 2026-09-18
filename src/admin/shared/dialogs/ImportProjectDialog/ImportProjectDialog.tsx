@@ -40,10 +40,12 @@ import { Button } from '@ui/components/Button'
 import { Dialog } from '@ui/components/Dialog'
 import { FileUpload } from '@ui/components/FileUpload'
 import { Input } from '@ui/components/Input'
+import { Switch } from '@ui/components/Switch'
 import { Tab, TabList, TabPanel, Tabs } from '@ui/components/Tabs'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
+import { cloneGithubProject, type CloneProgressPhase } from '@site/studio/gitRequests'
 import { importGithubProject, type ImportProgress } from '@site/studio/importGithubProject'
 import { pickedFolderName, uploadProjectArchive } from '@site/studio/importUploadProject'
 import type { ImportSummary } from '@site/studio/importSummary'
@@ -83,6 +85,15 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
   const [ref, setRef] = useState('')
   const [subdir, setSubdir] = useState('')
   const [token, setToken] = useState('')
+  /**
+   * Clone instead of zipball. Off by default: the zipball needs no `git` on
+   * the host and no credential, which is the right default for "show me this
+   * repo". On, the project arrives with its history, its branches, and
+   * `origin` already set — so the version-control panel works the moment the
+   * board opens, instead of the user's first commit having no parent.
+   */
+  const [keepHistory, setKeepHistory] = useState(false)
+  const [clonePhase, setClonePhase] = useState<CloneProgressPhase | null>(null)
 
   // Upload tab
   const [zipFile, setZipFile] = useState<File | null>(null)
@@ -98,6 +109,7 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
   const refId = useId()
   const subdirId = useId()
   const tokenId = useId()
+  const keepHistoryId = useId()
   const zipNameId = useId()
   const folderNameId = useId()
 
@@ -140,8 +152,23 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
     setBusy(true)
     setProgress(0)
     setGithubProgress(null)
+    setClonePhase(null)
     setSubmitError(null)
     try {
+      if (tab === 'github' && keepHistory) {
+        // The clone path has no `ref`, `subdir`, or `token` field, and that is
+        // not an omission: a clone brings every branch (so a ref is something
+        // to switch to afterwards, in the panel), a partial checkout is not a
+        // git clone, and the credential is the signed-in account's — resolved
+        // server-side from the session, never sent on this wire.
+        const result = await cloneGithubProject({
+          url: trimmedUrl,
+          onProgress: setClonePhase,
+        })
+        handleSucceeded(result)
+        return
+      }
+
       if (tab === 'github') {
         const result = await importGithubProject({
           url: trimmedUrl,
@@ -248,6 +275,30 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
                 />
               </div>
 
+              <div className={styles.toggleRow}>
+                <div className={styles.toggleRowContent}>
+                  <label htmlFor={keepHistoryId} className={styles.toggleRowLabel}>
+                    Keep history (clone)
+                  </label>
+                  <p className={styles.toggleRowDesc}>
+                    Brings the commit history, every branch, and <strong>origin</strong> — so committing and
+                    pushing work straight away. Needs git on this server, and a GitHub sign-in for a private
+                    repository.
+                  </p>
+                </div>
+                <Switch
+                  id={keepHistoryId}
+                  checked={keepHistory}
+                  disabled={busy}
+                  onCheckedChange={setKeepHistory}
+                />
+              </div>
+
+              {/* Ref and subdir narrow a zipball. A clone takes the whole
+                  repository by definition, so both are hidden rather than
+                  shown disabled — a control that cannot apply is noise. */}
+              {keepHistory ? null : (
+                <>
               <div className={dialogStyles.field}>
                 <label htmlFor={refId} className={dialogStyles.label}>Branch / ref (optional)</label>
                 <Input
@@ -290,8 +341,18 @@ export function ImportProjectDialog({ onClose, onImported }: ImportProjectDialog
                   disabled={busy}
                 />
               </div>
+                </>
+              )}
 
-              {busy && tab === 'github' && <GithubImportProgress progress={githubProgress} />}
+              {busy && tab === 'github' ? (
+                keepHistory ? (
+                  <p className={styles.progressLabel} role="status">
+                    {clonePhase === 'probing' ? 'Looking for pages…' : 'Cloning the repository…'}
+                  </p>
+                ) : (
+                  <GithubImportProgress progress={githubProgress} />
+                )
+              ) : null}
             </div>
           </TabPanel>
 

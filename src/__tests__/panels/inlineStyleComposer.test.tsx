@@ -11,7 +11,7 @@
  *    the composer used to offer a full editor for it anyway.
  */
 import { describe, it, expect, afterEach, afterAll, beforeEach } from 'bun:test'
-import { render, screen, cleanup } from '@testing-library/react'
+import { render, screen, cleanup, fireEvent } from '@testing-library/react'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel/PropertiesPanel'
 import { useEditorStore } from '@site/store/store'
 import { registry, type AnyModuleDefinition } from '@core/module-engine'
@@ -101,14 +101,30 @@ function loadNodeInlineEditing(overrides: {
 
 describe('InlineStyleComposer — per-property lock notice', () => {
   it('names the locked property and does not claim it will save', () => {
+    // `gridAutoFlow` is uncurated — as of P3 item 11 (`STATE.md` `panel-25`,
+    // Studio extras) this whole-node banner is `CustomPropertiesSection`
+    // (manifest wrapper)'s own, scoped to the uncurated long tail; a locked
+    // CURATED property (like `width`, claimed by `MeasuresSection.tsx`) is
+    // reported by its own row's `provenanceByProperty`-driven lock state
+    // instead — see `MeasuresSection.tsx`'s own "code-locked properties"
+    // test, and `CustomPropertiesSection.tsx`'s (both the manifest wrapper
+    // and the underlying editor) own doc for why the two are split.
     loadNodeInlineEditing({
-      inlineStyles: { width: '50%', color: 'red' },
-      codeProps: ['style:width'],
+      inlineStyles: { gridAutoFlow: 'column', color: 'red' },
+      codeProps: ['style:gridAutoFlow'],
     })
     render(<PropertiesPanel />)
 
-    const notice = screen.getByTestId('inline-style-locked-properties-notice')
-    expect(notice.textContent).toMatch(/width/i)
+    // S5 — Custom properties lives inside the Design tab's one collapsed
+    // `More` disclosure now (the 900px budget, `docs/features/inspector.md`
+    // §6), so this notice is one click in rather than always on screen. That
+    // is the correct scope for it: it is a statement about the uncurated long
+    // tail, not about the node as a whole — a locked CURATED property still
+    // reports itself on its own always-visible row.
+    fireEvent.click(screen.getByRole('button', { name: 'More' }))
+
+    const notice = screen.getByTestId('custom-properties-locked-properties-notice')
+    expect(notice.textContent).toMatch(/grid auto flow/i)
     expect(notice.textContent).toMatch(/read-only/i)
   })
 

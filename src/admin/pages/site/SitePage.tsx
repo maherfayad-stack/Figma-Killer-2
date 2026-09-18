@@ -3,6 +3,8 @@ import { AdminCanvasLayout } from '@admin/layouts/AdminCanvasLayout'
 import { consumePendingAction } from '@admin/spotlight/pendingAction'
 import { useEditorStore } from '@site/store/store'
 import { useMcpWorkspaceBridge } from '@admin/ai/useMcpWorkspaceBridge'
+import { RefusalDialog } from '@site/ui/RefusalDialog'
+import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { agentProjectDir, executeAgentTool } from './agent'
 import { flushEditorSave } from './hooks/editorSaveRef'
 
@@ -18,6 +20,14 @@ async function flushPendingSiteDraft(): Promise<void> {
  * lazy-loaded one level down by AdminCanvasLayout after the shell has painted.
  */
 export function SitePage() {
+  // THE editor keyboard listener (`K1`). One `document` keydown/keyup pair for
+  // the whole workspace; every canvas shortcut registers a SCOPE handler with
+  // it instead of adding a listener of its own — see
+  // `canvas/editorKeyDispatcher.ts` for the precedence ladder. Mounted here,
+  // above the lazy editor body, so it exists before the canvas does and
+  // survives every remount below it.
+  useEditorKeyDispatcher()
+
   // Relay MCP browser-tool calls to this open editor while it's mounted.
   // The bridge is registered server-side under `site:${projectKey}`, so it
   // has to say which project this tab is showing. `agentProjectDir` is passed
@@ -63,5 +73,10 @@ export function SitePage() {
     return unsubscribe
   }, [])
 
-  return <AdminCanvasLayout />
+  return (
+    <>
+      <AdminCanvasLayout />
+      <RefusalDialog />
+    </>
+  )
 }

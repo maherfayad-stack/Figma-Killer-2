@@ -18,9 +18,15 @@
  *   6. `ClassPropertyRow` — a `MIXED` cell reaches the right control as
  *      "mixed" instead of stringifying the symbol, and the first commit
  *      reports one real value to `onChange`.
- *   7. `StyleSectionsEditor` — `MIXED` in `storedStyles` counts as SET (the
- *      section's indicator/meta), and `MIXED` in `currentStyles` becomes the
- *      row's placeholder.
+ *
+ * A 7th section used to pin the same MIXED-bag contract through
+ * `StyleSectionsEditor` directly (`MIXED` in `storedStyles` counts as SET;
+ * `MIXED` in `currentStyles` becomes the row's placeholder). That file is
+ * deleted (`STATE.md` `panel-25`, P3 item 11 — Studio extras); the same two
+ * facts are still true of every section built on `ClassPropertyRow`/
+ * `StackedPropertyGrid` (unchanged primitives, tested above and in each
+ * migrated section's own suite, e.g. `interactionSection.test.tsx`), so
+ * nothing here needs re-proving at this file's level.
  */
 import { afterEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
@@ -31,10 +37,6 @@ import { Input } from '@ui/components/Input'
 import { TokenAwareInput } from '@site/property-controls/TokenAwareInput'
 import { ColorValueInput } from '@site/property-controls/ColorValueInput'
 import { ClassPropertyRow } from '../ClassPropertyRow'
-import { StyleSectionsEditor } from '../StyleSectionsEditor'
-
-/** Multi-property write channel — see `StyleSectionsEditor`'s `onChangeMany`. */
-function noopMany() {}
 
 afterEach(cleanup)
 
@@ -221,50 +223,5 @@ describe('ClassPropertyRow — MIXED cell', () => {
     expect(
       (screen.getByLabelText('Line height') as HTMLInputElement).getAttribute('placeholder'),
     ).toBe('Mixed')
-  })
-})
-
-// ---------------------------------------------------------------------------
-// 7. StyleSectionsEditor — MIXED through the bags
-// ---------------------------------------------------------------------------
-
-describe('StyleSectionsEditor — MIXED bags', () => {
-  function renderEditor(
-    storedStyles: Record<string, unknown>,
-    currentStyles: Record<string, unknown> = {},
-  ) {
-    return render(
-      <StyleSectionsEditor
-        storedStyles={storedStyles}
-        currentStyles={currentStyles}
-        sectionKey="base"
-        styleQuery=""
-        onChange={noop}
-        onChangeMany={noopMany}
-        onRemove={noop}
-        onClearProperty={noop}
-        onClearProperties={noop}
-        onPreview={noop}
-        onClearPreview={noop}
-      />,
-    )
-  }
-
-  it('counts a MIXED property as set', () => {
-    // `cursor` lives in the Interaction section, which is `collapsedWhenEmpty`
-    // — so its indicator dot appearing at all is the assertion that MIXED
-    // survived `hasStyleValue`.
-    renderEditor({ cursor: MIXED })
-    expect(screen.getByTestId('class-style-section-dot-interaction')).toBeTruthy()
-  })
-
-  it('turns a MIXED effective value into the row placeholder', () => {
-    // A sibling property keeps the `collapsedWhenEmpty` section's body open
-    // (Law 1) so the `cursor` row — unset on the target, mixed underneath —
-    // actually renders.
-    renderEditor({ pointerEvents: 'none' }, { cursor: MIXED })
-    const field = screen.getByLabelText('Cursor') as HTMLInputElement
-    expect(field.value).toBe('')
-    expect(field.getAttribute('placeholder')).toBe('Mixed')
   })
 })

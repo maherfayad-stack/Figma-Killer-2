@@ -5,11 +5,11 @@
  * Multi-document support
  * ──────────────────────
  * Each breakpoint frame in the canvas is its own iframe. `IframeFrameSurface`
- * mounts one of these injectors per frame, targeting the iframe's document
- * so user CSS lands inside the page document — exactly where it sits on the
- * published site. When no `targetDocument` prop is passed, the injector
- * falls back to the editor's main document (currently only used by tests
- * and any non-iframe canvas path).
+ * mounts one of these injectors per frame; this component reads the frame's
+ * `FrameDocumentAdapter` from `CanvasFrameAdapterContext` (rather than a
+ * `Document` prop) so user CSS lands inside the page document regardless of
+ * whether the frame is a same-origin portal or a future cross-origin bridge
+ * (`live-05`, STATE.md). A `null` adapter is a no-op.
  *
  * The CSS goes in unchanged. Inside the iframe the `<body>` IS the page
  * body, `body > nav` is a real direct-child relationship, and `:nth-child()`
@@ -54,10 +54,11 @@
  * active page's own content does not recompute this stylesheet.
  */
 
-import { useEffect } from 'react'
+import { useContext, useEffect } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import type { SiteFile } from '@core/files/schemas'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { CanvasFrameAdapterContext } from './CanvasContexts'
 import type { CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
 import { buildUserStylesheetCss } from './canvasUserStylesheetCss'
@@ -69,11 +70,6 @@ const EMPTY_FILES: SiteFile[] = []
 
 interface UserStylesheetInjectorProps {
   /**
-   * Document to inject the <style> tag into. Defaults to the editor's main
-   * document.
-   */
-  targetDocument?: Document
-  /**
    * Frame viewport used to resolve CSS viewport units (`vh`/`vw`/…) to fixed
    * px so they don't feed the iframe's grow-to-content height loop. When
    * omitted (non-iframe contexts), CSS is injected verbatim. See
@@ -82,7 +78,8 @@ interface UserStylesheetInjectorProps {
   viewport?: CanvasViewport
 }
 
-export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesheetInjectorProps = {}) {
+export function UserStylesheetInjector({ viewport }: UserStylesheetInjectorProps = {}) {
+  const adapter = useContext(CanvasFrameAdapterContext)
   // Narrow slices — see the module doc's "Perf (Track C3)" section. None of
   // these mint a fresh reference on an edit to node content anywhere on the
   // board (Mutative's structural sharing keeps `site.files`/`site.runtime`
@@ -115,14 +112,7 @@ export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesh
   )
 
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
-    let styleEl = targetDoc.getElementById(STYLE_TAG_ID) as HTMLStyleElement | null
-    if (!styleEl) {
-      styleEl = targetDoc.createElement('style')
-      styleEl.id = STYLE_TAG_ID
-      styleEl.setAttribute('data-source', 'UserStylesheetInjector')
-      targetDoc.head.appendChild(styleEl)
-    }
+    if (!adapter) return
 
     // Concatenate the user stylesheets that target the active page, in
     // cascade order, then pin viewport units to the frame viewport
@@ -144,17 +134,17 @@ export function UserStylesheetInjector({ targetDocument, viewport }: UserStylesh
     // the layer (source order + specificity preserved). The
     // `CANVAS_CSS_LAYER_ORDER` prelude also pins this layer ABOVE `@layer vendor`
     // (`ProjectCssInjector`, WS-2.3) — see `canvasCssLayers.ts`.
-    styleEl.textContent = css
-      ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
-      : `${CANVAS_CSS_LAYER_ORDER}\n/* no user stylesheets */`
-  }, [targetDocument, viewport, files, runtime, activePageScope])
+    adapter.applyOverlay(
+      STYLE_TAG_ID,
+      css
+        ? `${CANVAS_CSS_LAYER_ORDER}\n@layer ${USER_AUTHORED_LAYER} {\n${css}\n}`
+        : `${CANVAS_CSS_LAYER_ORDER}\n/* no user stylesheets */`,
+    )
+  }, [adapter, viewport, files, runtime, activePageScope])
 
   useEffect(() => {
-    const targetDoc = targetDocument ?? document
-    return () => {
-      targetDoc.getElementById(STYLE_TAG_ID)?.remove()
-    }
-  }, [targetDocument])
+    return () => adapter?.removeOverlay(STYLE_TAG_ID)
+  }, [adapter])
 
   return null
 }

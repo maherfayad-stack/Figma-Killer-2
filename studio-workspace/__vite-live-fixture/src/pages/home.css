@@ -1,0 +1,32 @@
+.home {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 32px;
+  font-family: system-ui, sans-serif;
+  color: #1b1b1f;
+  background: #ffffff;
+}
+
+.home__title {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.home__body {
+  margin: 0;
+  max-width: 48ch;
+  font-size: 15px;
+  line-height: 1.5;
+}
+
+.home__action {
+  align-self: flex-start;
+  padding: 10px 18px;
+  border: 1px solid #1b1b1f;
+  border-radius: 6px;
+  background: #1b1b1f;
+  color: #ffffff;
+  font-size: 14px;
+}

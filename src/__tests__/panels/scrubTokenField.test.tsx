@@ -11,10 +11,15 @@
  * Real `PointerEvent`s are dispatched against the rendered mark (happy-dom
  * implements `PointerEvent` + `set/has/releasePointerCapture` natively), the
  * same approach `ScrubInput`'s own suite takes — not a mock of the handler.
+ *
+ * `ScrubTokenField` relocated from `panels/PropertiesPanel/LayoutSection/` to
+ * `inspector/sections/LayoutSection/` in P3 (`STATE.md` `panel-25`, item 4) —
+ * the component itself, its props, and this whole gesture contract are
+ * unchanged, only the import path moved.
  */
 import { describe, expect, it, mock, afterEach } from 'bun:test'
 import { render, screen, cleanup, fireEvent } from '@testing-library/react'
-import { ScrubTokenField } from '@site/panels/PropertiesPanel/LayoutSection/ScrubTokenField'
+import { ScrubTokenField } from '@site/inspector/sections/LayoutSection/ScrubTokenField'
 import type { Token } from '@site/property-controls/tokenUtils'
 
 afterEach(cleanup)
