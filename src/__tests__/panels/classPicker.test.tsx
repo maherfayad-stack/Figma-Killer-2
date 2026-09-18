@@ -180,6 +180,36 @@ describe('ClassPicker — rendering', () => {
     expect(screen.getByRole('button', { name: 'Remove class .header' })).toBeTruthy()
   })
 
+  // panel-41 — the pills and the input are ONE row, and the pills carry the
+  // write-target facts that used to be a second, read-only `WriteTargetRow`
+  // 40px below them inside the Design tab's scroll container. Containment is
+  // the structural half of that (happy-dom has no layout engine, so the 28px
+  // of chrome it buys back is measured by `tests/e2e/inspector-height.e2e.ts`
+  // instead); `styleSurfaceWriteLock.test.tsx` covers the locked/default
+  // facts themselves.
+  it('renders the selector pills inside the input row, not as a second row', () => {
+    const { nodeId } = loadSiteWithNode()
+    const cls = selectClass(nodeId, 'header')
+    render(<ClassPicker nodeId={nodeId} />)
+
+    const input = screen.getByTestId('class-picker-input')
+    const chip = screen.getByTestId(`write-target-chip-${cls.id}`)
+    const inputRow = input.closest('div')?.parentElement ?? null
+    expect(inputRow).not.toBeNull()
+    expect(inputRow!.contains(chip)).toBe(true)
+  })
+
+  // The inline chip states `style=` as a target whenever it IS one — it used
+  // to appear only once the node already carried inline styles, which made
+  // the panel's default write target invisible on a fresh element.
+  it('names the inline layer as a target on a node with no inline styles yet', () => {
+    const { nodeId } = loadSiteWithNode()
+    render(<ClassPicker nodeId={nodeId} />)
+    expect(screen.getByTestId('write-target-chip-inline')).toBeTruthy()
+    // …but offers no "clear inline styles" X, because there is nothing to clear.
+    expect(screen.queryByTestId('inline-style-pill-remove')).toBeNull()
+  })
+
   it('renders the trailing action node when supplied', () => {
     const { nodeId } = loadSiteWithNode()
     render(

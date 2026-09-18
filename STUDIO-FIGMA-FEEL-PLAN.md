@@ -763,11 +763,16 @@ Collected from the wave-2 handoffs. Each names the entry that found it.
 - **`relocatedNodeIds`** (`store-13`): `move`/`reparent` still lose the selection after a resync
   — the same mechanism as `createdNodeIds`, one field over. Plus a product call on what
   `ungroup` should select.
-- **The three inspector density levers with their measured numbers** (`panel-39`,
-  `docs/features/inspector.md` §6): `WriteTargetRow` duplicates ClassPicker's pill stack
-  (−40px everywhere), folding unset module props (−72px on F4, but it collides with
-  `visual-builder` and `reliability` e2e), pairing Layout's align pad with the gap fields
-  (−84px on F3).
+- ~~**The three inspector density levers with their measured numbers** (`panel-39`,
+  `docs/features/inspector.md` §6)~~ — **done, `panel-41`**: all three taken, plus a
+  content-sized text editor and a flush-section padding fix. The Design tab's total overflow
+  at 900px went 444px → 36px; F1, F3 and F4 fit outright and are asserted strictly.
+  `POPULATED_SECTION_OVERFLOW_PX` is deleted. **What is left:** merging Shadow + Blur into
+  Figma's single **Effects** section — WS-6.1's own diagram — is a measured **41px** and would
+  put F2 (a text layer, 36px over) inside the budget too, letting the last exception go. It is
+  a section-manifest change plus a restructure of `ShadowSection.tsx` (636 lines) and
+  `BlurSection.tsx` (416), both rewritten by `panel-38` for the Mixed contract, so it needs its
+  own work order. See `docs/features/inspector.md` §6 → "The one open lever, with its number".
 - **Layer hidden/locked over N ids** (`panel-38`): a store action for the fan-out, not a Mixed fix.
 - **Filter `site_*` write tools out of a Studio-scoped connector** (`store-13`): the CMS
   toolset's system prompt still tells the model to use `site_insert_html`, which now refuses.

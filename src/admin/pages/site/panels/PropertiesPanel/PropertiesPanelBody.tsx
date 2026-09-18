@@ -263,11 +263,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           the Styles/Attributes switcher that used to gate this — every
           section now mounts from `INSPECTOR_SECTIONS`, in one continuous
           scroll with a single collapsed More group at its end. */}
-      <StyleSurface
-        definition={definition}
-        moduleContent={moduleTabContent}
-        onFocusClassPicker={onFocusClassPicker}
-      />
+      <StyleSurface moduleContent={moduleTabContent} onFocusClassPicker={onFocusClassPicker} />
     </div>
     </MultiSelectTargetProvider>
   )

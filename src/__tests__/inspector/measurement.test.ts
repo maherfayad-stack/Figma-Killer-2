@@ -411,7 +411,7 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // occupies a grid item, so it contributes 0px of height and one full gap —
 // counted honestly rather than skipped.
 //
-// Panel CHROME above the sections (the write-target chip row, ClassPicker,
+// Panel CHROME above the sections (ClassPicker's one tag-input row,
 // `.surface`'s own padding) is NOT in this number: none of it is an
 // `INSPECTOR_SECTIONS` entry with a row count to compute. The real,
 // whole-panel measurement lives in `tests/e2e/inspector-height.e2e.ts`, which
@@ -419,10 +419,10 @@ const EXPECTED_REST_HEIGHT_PX: Record<(typeof EXPECTED_SECTION_IDS)[number], num
 // `docs/audits/penpot-inspector-baseline/`. That spec's first real run
 // (`STATE.md` panel-37) put numbers on the chrome for the first time — 274px,
 // of which panel-39 reclaimed 92 by moving `FrameSizePanel` out of every node
-// selection and trimming the tab strip — and on the Module block, which is
-// now measured as a `data-section-id="module"` row in the same artefact
-// (158px on a text node, 252px on an image) rather than being invisible to
-// both tables.
+// selection and trimming the tab strip, and panel-41 a further 28 by folding
+// the selector pills into the ClassPicker's own row — and on the Module
+// block, which is measured as a `data-section-id="module"` row in the same
+// artefact rather than being invisible to both tables.
 // ---------------------------------------------------------------------------
 
 const BETWEEN_SECTION_GAP = 8 // --inspector-space-m
@@ -474,13 +474,13 @@ describe('computed section rest-height budget', () => {
 
   it('the F2 text node Design tab costs 612px of sections with More collapsed', () => {
     // This is a SECTIONS-only sum, and it is not the whole Design tab. The
-    // measured `contentHeight` for the same fixture is 916px against 718px of
+    // measured `contentHeight` for the same fixture is 782px against 746px of
     // room at a 900px viewport (`tests/e2e/inspector-height.e2e.ts`,
-    // `STATE.md` panel-39) — the difference is the write-target row, the
-    // Module block and container padding, none of which a static row count
-    // can see. What this exact number is good for is catching a section that
-    // quietly grows a resident row without anyone opening a browser; it is
-    // NOT evidence that the tab fits.
+    // `STATE.md` panel-41) — the difference is the Module block, the
+    // between-section gaps and the container padding, none of which a static
+    // row count can see. What this exact number is good for is catching a
+    // section that quietly grows a resident row without anyone opening a
+    // browser; it is NOT evidence that the tab fits.
     //
     // 756 -> 612 is panel-39: Layout's rest state dropped from 3 rows to a
     // collapsed header (-104), and the between-section gap moved from 12px to

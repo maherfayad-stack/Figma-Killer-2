@@ -337,32 +337,32 @@ export function LayoutSection() {
         />
 
         {isFlex && (
-          <div className={styles.flexBlock}>
-            <div className={styles.flexHeaderRow}>
-              <FlexFlowControl
-                flexDirection={isMixed(currentStyles.flexDirection) ? MIXED : flexDirection}
-                flexWrap={flexWrap}
-                onChangeDirection={(v) => onChange('flexDirection', v)}
-                onChangeWrap={(v) => onChange('flexWrap', v)}
-                onClearWrap={() => onClearProperty('flexWrap')}
-              />
+          <div className={styles.alignGapRow}>
+            <AlignGrid
+              mode="flex"
+              flexDirection={flexDirection}
+              align={{ value: alignItems, isSet: hasStyleValue(storedStyles.alignItems) }}
+              justify={{ value: justifyContent, isSet: hasStyleValue(storedStyles.justifyContent) }}
+              onChange={(patch) => onChangeMany({ alignItems: patch.align ?? null, justifyContent: patch.justify ?? null })}
+              onClear={() => {
+                onClearProperty('alignItems')
+                onClearProperty('justifyContent')
+              }}
+              aria-label="Alignment"
+              data-testid="css-align-grid"
+            />
+            <div className={styles.alignGapFields}>
+              <div className={styles.flexHeaderRow}>
+                <FlexFlowControl
+                  flexDirection={isMixed(currentStyles.flexDirection) ? MIXED : flexDirection}
+                  flexWrap={flexWrap}
+                  onChangeDirection={(v) => onChange('flexDirection', v)}
+                  onChangeWrap={(v) => onChange('flexWrap', v)}
+                  onClearWrap={() => onClearProperty('flexWrap')}
+                />
+              </div>
+              {gapRow}
             </div>
-            <div className={styles.alignGapRow}>
-              <AlignGrid
-                mode="flex"
-                flexDirection={flexDirection}
-                align={{ value: alignItems, isSet: hasStyleValue(storedStyles.alignItems) }}
-                justify={{ value: justifyContent, isSet: hasStyleValue(storedStyles.justifyContent) }}
-                onChange={(patch) => onChangeMany({ alignItems: patch.align ?? null, justifyContent: patch.justify ?? null })}
-                onClear={() => {
-                  onClearProperty('alignItems')
-                  onClearProperty('justifyContent')
-                }}
-                aria-label="Alignment"
-                data-testid="css-align-grid"
-              />
-            </div>
-            {gapRow}
           </div>
         )}
 
@@ -400,44 +400,49 @@ export function LayoutSection() {
                 aria-label="Alignment"
                 data-testid="css-align-grid"
               />
+              <div className={styles.alignGapFields}>{gapRow}</div>
             </div>
-            {gapRow}
           </div>
         )}
 
-        <PaddingCluster
-          storedStyles={storedStyles}
-          currentStyles={currentStyles}
-          tokens={spacingTokens}
-          onChange={onChange}
-          onChangeMany={onChangeMany}
-          onPreview={onPreview}
-          onClearPreview={onClearPreview}
-        />
-
-        <div className={styles.marginRow}>
-          <MarginCluster
+        {/* Padding and margin, paired on one row — see `.spacingRow`'s own
+            comment. Both rest as ONE linked field plus a toggle, so the pair
+            costs the row the taller of the two, not the sum. */}
+        <div className={styles.spacingRow}>
+          <PaddingCluster
             storedStyles={storedStyles}
             currentStyles={currentStyles}
             tokens={spacingTokens}
             onChange={onChange}
+            onChangeMany={onChangeMany}
             onPreview={onPreview}
             onClearPreview={onClearPreview}
           />
-          <Button
-            ref={boxModelTriggerRef}
-            variant="ghost"
-            size="xs"
-            iconOnly
-            aria-haspopup="dialog"
-            aria-expanded={boxModelOpen}
-            aria-label="Box model"
-            tooltip="Box model — padding and margin diagram"
-            data-testid="spacing-box-model-trigger"
-            onClick={() => setBoxModelOpen((open) => !open)}
-          >
-            <SlidersHorizontalIcon size={14} aria-hidden="true" />
-          </Button>
+
+          <div className={styles.marginRow}>
+            <MarginCluster
+              storedStyles={storedStyles}
+              currentStyles={currentStyles}
+              tokens={spacingTokens}
+              onChange={onChange}
+              onPreview={onPreview}
+              onClearPreview={onClearPreview}
+            />
+            <Button
+              ref={boxModelTriggerRef}
+              variant="ghost"
+              size="xs"
+              iconOnly
+              aria-haspopup="dialog"
+              aria-expanded={boxModelOpen}
+              aria-label="Box model"
+              tooltip="Box model — padding and margin diagram"
+              data-testid="spacing-box-model-trigger"
+              onClick={() => setBoxModelOpen((open) => !open)}
+            >
+              <SlidersHorizontalIcon size={14} aria-hidden="true" />
+            </Button>
+          </div>
         </div>
         {boxModelOpen && (
           <InspectorPopover

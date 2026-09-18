@@ -39,6 +39,7 @@ import type {
 import type { Page, PageNode } from '@core/page-tree'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
 import { LoopPropertiesView } from './LoopPropertiesView'
+import { ModuleBlock } from './ModuleBlock'
 import { ParamPromotableRow } from './ParamPromotableRow'
 import { FormSettingsPanel } from './FormSettingsPanel'
 import { isFormSettingsModule } from './formSettingsAnalysis'
@@ -72,11 +73,18 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
   } = args
 
   // Branch 1: `base.loop` gets the dedicated loop UI.
-  if (selectedNode?.moduleId === 'base.loop' && selectedNodeId) {
+  if (selectedNode?.moduleId === 'base.loop' && selectedNodeId && definition) {
     return (
-      <LoopPropertiesView
-        nodeId={selectedNodeId}
-        props={selectedNode.props as Record<string, unknown>}
+      <ModuleBlock
+        definition={definition}
+        resident={
+          <LoopPropertiesView
+            nodeId={selectedNodeId}
+            props={selectedNode.props as Record<string, unknown>}
+          />
+        }
+        folded={null}
+        foldedCount={0}
       />
     )
   }
@@ -123,77 +131,112 @@ export function renderModuleTabContent(args: ModuleTabContentArgs): React.ReactN
     (selectedNode.assetOrigin !== undefined ||
       (hasWritableSourceLocation(selectedNode.id) && isPropWritableToSource(selectedNode, imageEditProp)))
 
-  return (
-    <>
-      {showFormSettings && (
-        <FormSettingsPanel
-          page={activePage}
-          nodeId={selectedNodeId}
-          onPatchProps={patchModuleProps}
-        />
-      )}
+  // The schema walk, partitioned by whether the USER'S SOURCE sets the prop
+  // (panel-41 / Law 3). A row whose key is absent from `selectedNode.props`
+  // and carries no breakpoint override is a pre-drawn default, not a value —
+  // it goes behind one disclosure instead of costing a resident row.
+  //
+  // `selectedNode.props`, deliberately, not `resolvedPropsForBreakpoint`: the
+  // resolved bag folds in the module's own `defaults`, so every key in a
+  // schema is "present" there and the partition would be a no-op. A node
+  // INSERTED in the editor is seeded with those same defaults in its own
+  // `props` (`mutations.ts`'s `props: { ...defaults }`), so its rows stay
+  // resident — the fold is a fact about parsed source, which is exactly where
+  // the pre-drawn rows come from.
+  const residentRows: React.ReactNode[] = []
+  const foldedRows: React.ReactNode[] = []
 
-      {showImageSource && imageEditProp !== undefined && (
-        <ImageSourceSection
-          node={selectedNode}
-          prop={imageEditProp}
-          value={resolvedPropsForBreakpoint[imageEditProp]}
+  for (const [key, control] of Object.entries(definition.schema) as Array<[string, PropertyControl]>) {
+    // Hidden controls carry a type for the engine (escaping dispatch) but
+    // render no editor surface — e.g. base.outlet.html, a publisher-filled
+    // binding target the author never edits.
+    if (control.hidden) continue
+    if (isPromotedFormProperty(selectedNode, key)) continue
+    // Already rendered above as the dedicated Studio image picker.
+    if (showImageSource && key === imageEditProp) continue
+    if (control.condition && !evaluateCondition(control.condition, resolvedPropsForBreakpoint)) {
+      continue
+    }
+    if (control.appliesWhen && !propAppliesToInstance(control.appliesWhen, key, resolvedPropsForBreakpoint)) {
+      continue
+    }
+
+    const row =
+      inVisualComponent && activeDocument?.kind === 'visualComponent' && selectedNodeId ? (
+        <ParamPromotableRow
+          key={key}
+          vcId={activeDocument.vcId}
+          nodeId={selectedNodeId}
+          propKey={key}
+          control={control}
+          value={resolvedPropsForBreakpoint[key]}
+          isOverride={overrideKeys.has(key)}
           onChange={updateModuleProp}
         />
-      )}
+      ) : (
+        <PropertyControlRenderer
+          key={key}
+          propKey={key}
+          control={control}
+          value={resolvedPropsForBreakpoint[key]}
+          onChange={updateModuleProp}
+          isOverride={overrideKeys.has(key)}
+          // Only `collection-index` reads this: `TabBar.value` names one entry
+          // of the sibling `items`, so its options are the node's own data.
+          siblingProps={resolvedPropsForBreakpoint}
+          constraint={explainPropConstraint(selectedNode, key, resolvedPropsForBreakpoint[key]) ?? undefined}
+          // E2.5 — only `SlotControl` reads this: a package/design-system
+          // component's own `node`-kind prop is filled directly on ITS OWN
+          // element (unlike `studio.instance`, there's no separate call
+          // site), so the owner IS the selected node.
+          ownerNodeId={selectedNodeId ?? undefined}
+        />
+      )
 
-      {Object.entries(definition.schema).map(([key, control]: [string, PropertyControl]) => {
-        // Hidden controls carry a type for the engine (escaping dispatch) but
-        // render no editor surface — e.g. base.outlet.html, a publisher-filled
-        // binding target the author never edits.
-        if (control.hidden) return null
-        if (isPromotedFormProperty(selectedNode, key)) return null
-        // Already rendered above as the dedicated Studio image picker.
-        if (showImageSource && key === imageEditProp) return null
-        if (control.condition && !evaluateCondition(control.condition, resolvedPropsForBreakpoint)) {
-          return null
-        }
-        if (control.appliesWhen && !propAppliesToInstance(control.appliesWhen, key, resolvedPropsForBreakpoint)) {
-          return null
-        }
+    if (isPropSetOnNode(selectedNode, key, overrideKeys)) residentRows.push(row)
+    else foldedRows.push(row)
+  }
 
-        if (inVisualComponent && activeDocument?.kind === 'visualComponent' && selectedNodeId) {
-          return (
-            <ParamPromotableRow
-              key={key}
-              vcId={activeDocument.vcId}
+  return (
+    <ModuleBlock
+      definition={definition}
+      resident={
+        <>
+          {showFormSettings && (
+            <FormSettingsPanel
+              page={activePage}
               nodeId={selectedNodeId}
-              propKey={key}
-              control={control}
-              value={resolvedPropsForBreakpoint[key]}
-              isOverride={overrideKeys.has(key)}
+              onPatchProps={patchModuleProps}
+            />
+          )}
+
+          {showImageSource && imageEditProp !== undefined && (
+            <ImageSourceSection
+              node={selectedNode}
+              prop={imageEditProp}
+              value={resolvedPropsForBreakpoint[imageEditProp]}
               onChange={updateModuleProp}
             />
-          )
-        }
+          )}
 
-        return (
-          <PropertyControlRenderer
-            key={key}
-            propKey={key}
-            control={control}
-            value={resolvedPropsForBreakpoint[key]}
-            onChange={updateModuleProp}
-            isOverride={overrideKeys.has(key)}
-            // Only `collection-index` reads this: `TabBar.value` names one entry
-            // of the sibling `items`, so its options are the node's own data.
-            siblingProps={resolvedPropsForBreakpoint}
-            constraint={explainPropConstraint(selectedNode, key, resolvedPropsForBreakpoint[key]) ?? undefined}
-            // E2.5 — only `SlotControl` reads this: a package/design-system
-            // component's own `node`-kind prop is filled directly on ITS OWN
-            // element (unlike `studio.instance`, there's no separate call
-            // site), so the owner IS the selected node.
-            ownerNodeId={selectedNodeId ?? undefined}
-          />
-        )
-      })}
-    </>
+          {residentRows}
+        </>
+      }
+      folded={<>{foldedRows}</>}
+      foldedCount={foldedRows.length}
+    />
   )
+}
+
+/**
+ * Whether this instance's own source (or a breakpoint override the user made)
+ * sets `key` — the resident/folded partition above.
+ *
+ * A breakpoint override counts as set even when the base value is absent: the
+ * user wrote it, and hiding the only row that shows it would hide their edit.
+ */
+function isPropSetOnNode(node: PageNode, key: string, overrideKeys: Set<string>): boolean {
+  return overrideKeys.has(key) || (node.props as Record<string, unknown>)[key] !== undefined
 }
 
 function isPromotedFormProperty(selectedNode: PageNode, key: string): boolean {
