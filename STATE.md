@@ -3885,6 +3885,70 @@ E2E_EXIT=1
 
 ---
 
+### meta-17 — wave 3 integrated and merged: the plan is closed
+
+- **Agent:** orchestrator (main session, Opus 5 1M) · **Stage:** done
+- **Updated:** 2026-09-18
+- **Branch:** `integration/figma-feel-wave-3` → merged into `feat/alm-figma-killer-studio-shell`.
+- **Goal:** finish the last wave the owner asked for, make the docs true, merge, and stop. No wave 4.
+
+- **What happened to the wave.** Eleven work orders were dispatched. The account hit its **weekly
+  model limit** mid-wave and terminated five agents (`panel-41`, `git-23`, `mcp-25`, `canvas-21`,
+  `store-14`). Four of those five had already pushed everything and opened their PRs; only
+  `verify-4` had unpushed work, and it was committed and pushed by the orchestrator. **Ten of the
+  eleven work orders are complete; `verify-4` is the one that is not** — its cached tree walk,
+  fixture containment, auto-promote case and file-drop browser test all landed, its full cold-suite
+  triage did not.
+- **Merged, in this order** (`--no-ff`, one merge commit each): `sec-18` #183 · `struct-11` #182 ·
+  `store-14` #185 · `canvas-21` #188 · `panel-41` #184 · `mcp-25` #187 · `git-23` #186 ·
+  `verify-4` #189. `server-26` #179 and `panel-40` #180 had already been merged into the shell
+  branch individually, ahead of the integration.
+- **Conflict calls, all keeping both sides' intent.** `gitOperations.ts`: `readRemotes` parses
+  through `server-26`'s CRLF-safe grammar and applies `sec-18`'s credential redaction on the way
+  out, so the parser's own test stays pure and every consumer still inherits the redaction.
+  `cliMcpConnectionProbe.ts`: `splitLines` AND the private-dir writers. `studio-pipeline.md` +
+  `structuralConstraint.ts`: `content-model` and `stale-undo` are independent additions at one
+  spot. `StyleSurface.tsx`: `panel-40`'s `PanelBoundary` import stays, `panel-41`'s deleted
+  `WriteTargetRow` import goes. The route-capability gate keeps `sec-18`'s dispatch-aware rewrite
+  (the literal scan `verify-4` branched from could not see ~30 routes) wired onto `verify-4`'s
+  shared cache. The plan file had a different §9 bullet struck on each side — both strikes kept.
+- **Phase 0 case 4 is the one worth reading twice.** `struct-11` and `store-14` each named the
+  other as the reason the case was still red: `struct-11` fixed the wrapper tag and said the queue
+  and undo were `store-14`'s; `store-14` fixed the queue, selection and undo and said the tag was
+  `struct-11`'s. With both merged every claim holds. **All seven Phase-0 cases now assert and pass
+  and none carries `test.fail()`** — the plan's DoD line 1 is met.
+- **Two defects only the merge could find**, fixed in integration commits: the generated
+  studio-runtime bundles were stale against the merged tree, and `server-26`'s subprocess-output
+  gate built its own `readdirSync` recursion, which `verify-4`'s new shared-walk rule forbids —
+  migrated onto `walkSourceTree`/`readSource` rather than allowlisted.
+- **One defect the security pass found, and it was on the owner's GitHub account.**
+  `github-sync.e2e.ts` created a real private scratch repository per run and deleted it in
+  teardown — except `gh repo delete` needs the `delete_repo` scope, which this machine's token
+  does not carry. Each run archived its repository as a fallback and left it behind: **22 private
+  `studio-g8-scratch-*` repositories**, all archived, all still there. The spec now checks the
+  delete scope BEFORE it creates anything and skips naming the one command that grants it. **The
+  22 existing repositories need a human** — this session cannot delete them (the scope grant is an
+  interactive browser flow).
+- **Verification at the integration head:** `bun run build` exit 0 · `bun run lint` exit 0 ·
+  `bun test src/__tests__/architecture` **650 pass / 0 fail** (quiet run, 126 files) ·
+  `bun run test` **14,443 pass / 2 skip / 1 fail** over 1,284 files in 785 s (the one failure
+  printed no marker in the captured output; `sectionsMixed.test.tsx`, the only file that warned,
+  passes **19/0** alone). Browser gates were NOT re-run at the integration head — each agent ran
+  its own and `verify-4`'s cold-suite triage is the open item.
+- **Docs made true, not just updated:** the plan carries a "Wave 3 — landed" table, §9 is now
+  "What is still open after three waves" (seven real leftovers, each with the entry that found
+  it), and §8's definition of done is ticked line by line with the artefact that proves each —
+  **including the one line the plan does not meet**: `bun run test:e2e` starts itself but 64 specs
+  are still untriaged cold.
+- **Human action needed:** (1) delete the 22 archived scratch repositories, or run
+  `gh auth refresh -h github.com -s delete_repo` first; (2) review and merge the shell branch into
+  `main` when ready — it is the only branch left besides `main`; (3) the dogfood scripts in each
+  wave-3 entry; (4) `GITHUB_OAUTH_CLIENT_ID` for device-flow sign-in; (5) the two owner-level calls
+  the reviews left: whether Admin should hold `studio.git.write`, and whether
+  `ensureClaudeCliConfigDir` should fail closed like the other secret writers.
+
+---
+
 ### sec-18 — the route table is exact, and every sidecar and secret lives where it should
 
 - **Agent:** security-guard (Opus 5, 1M) — wave 3, `standing-05`
