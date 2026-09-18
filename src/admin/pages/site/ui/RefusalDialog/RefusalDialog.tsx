@@ -59,7 +59,7 @@ export function RefusalDialog() {
 
   if (!dialogState) return null
 
-  const { title, constraint, nodeId, retry } = dialogState
+  const { title, constraint, nodeId, retry, duplicateIntoFrame } = dialogState
 
   function waitForReloadThenRetry(originalNodeId: string, retryFn: (newNodeId: string) => void) {
     const position = callSitePosition(originalNodeId)
@@ -139,6 +139,7 @@ export function RefusalDialog() {
           constraint={constraint}
           nodeId={nodeId}
           onActionSettled={handleActionSettled}
+          duplicateIntoFrame={duplicateIntoFrame}
         />
       }
     >

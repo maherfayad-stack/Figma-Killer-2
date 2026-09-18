@@ -157,13 +157,14 @@ const GRANDFATHERED: Record<string, number> = {
   // how the process starts) moved whole to `bootstrapTemplates.ts`, leaving
   // this file the per-screen/board templates (what a user looks at). Under
   // CEILING, so it is held by the normal ceiling rule now.
-  // `src/admin/pages/site/store/slices/uiSlice.ts` (723): R2's
-  // `structuralRefusalDialog` state + `dismissStructuralRefusalDialog`
-  // pushed this over CEILING. Candidate split: the refusal-dialog slice of
-  // ui state has no relationship to the rest of `uiSlice.ts` and could move
-  // to its own slice file following the pattern other dialog/modal state
-  // already uses elsewhere in this store.
-  'src/admin/pages/site/store/slices/uiSlice.ts': 723,
+  // src/admin/pages/site/store/slices/uiSlice.ts graduated (723 → 685) when
+  // `canvas-21` performed the split this note had already named: the
+  // `StructuralRefusalDialogState` shape — which is not really UI state, but
+  // the far end of a store action's refusal, carrying live handler closures —
+  // moved whole to `slices/structuralRefusalDialogState.ts`. The slice keeps
+  // the field; the contract has its own module, which is also what the three
+  // consumers outside the slice were already importing it for. Under CEILING,
+  // so it is held by the normal ceiling rule now.
 }
 
 // ---------------------------------------------------------------------------
