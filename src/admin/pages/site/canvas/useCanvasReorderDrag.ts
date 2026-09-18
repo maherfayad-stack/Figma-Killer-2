@@ -413,6 +413,7 @@ export function useCanvasReorderDrag({
       // room for one. Filled by the first frame that resolves one.
       reflow: EMPTY_REFLOW,
       reflowKey: '',
+      reflowCandidates: null,
     } satisfies DragSession
 
     // Cross-frame drag signal. Every iframe's pointer relay (see

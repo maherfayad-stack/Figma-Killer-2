@@ -42,7 +42,7 @@
 import { registry } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
-import type { CanvasDropResolution, CanvasTransplantResolution } from './canvasDnd'
+import type { CanvasDropCandidate, CanvasDropResolution, CanvasTransplantResolution } from './canvasDnd'
 import { resolveCanvasDropTarget, resolveCanvasTransplantTarget } from './canvasDnd'
 import { autoPanDelta } from './canvasDragAutoPan'
 import {
@@ -167,9 +167,16 @@ export interface DragSession {
    * frame, and re-packing the container for it would be work whose output is
    * byte-identical. Same "skip the write whose value is unchanged" discipline
    * the painter itself follows, one level up.
+   *
+   * The cache is keyed on the target AND on the candidate array it was packed
+   * from. The second half is what a frame REFLOW invalidates: the
+   * `ResizeObserver` replaces `index.candidates` wholesale, the drop target can
+   * easily resolve to the same `(parent, index)` afterwards, and without this
+   * the preview would keep animating boxes at rects the page no longer has.
    */
   reflow: readonly CanvasReflowShift[]
   reflowKey: string
+  reflowCandidates: readonly CanvasDropCandidate[] | null
 }
 
 /**
@@ -235,6 +242,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     // A free move reorders nothing, so no sibling makes room for it.
     session.reflow = EMPTY_REFLOW
     session.reflowKey = ''
+    session.reflowCandidates = null
     session.freeStep = paintFreeMoveFrame({
       layer: env.dropLayer,
       resolution: free,
@@ -333,8 +341,9 @@ function refreshReflowPreview(
 ): void {
   const target = foreign ? session.foreignResolution.target : session.resolution.target
   const key = target ? `${foreign ? foreign.pageId : ''}|${target.parentId}|${target.index}|${session.duplicating}` : ''
-  if (key === session.reflowKey) return
+  if (key === session.reflowKey && index.candidates === session.reflowCandidates) return
   session.reflowKey = key
+  session.reflowCandidates = index.candidates
   if (!target) {
     session.reflow = EMPTY_REFLOW
     return
