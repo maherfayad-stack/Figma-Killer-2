@@ -220,7 +220,7 @@ export function removeConversationAttachmentsRoot(userId: string, conversationId
 }
 
 function conversationAttachmentsRootPath(userId: string, conversationId: string): string {
-  const digest = createHash('sha256').update(`${userId} ${conversationId}`).digest('hex').slice(0, 32)
+  const digest = createHash('sha256').update(`${userId}\u0000${conversationId}`).digest('hex').slice(0, 32)
   return join(tmpdir(), `${SESSION_DIR_PREFIX}${digest}`)
 }
 
