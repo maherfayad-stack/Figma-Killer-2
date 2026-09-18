@@ -32,7 +32,7 @@ beforeEach(async () => {
   token = generateConnectorToken()
   await createConnector(db, {
     userId: 'u1', label: 'Claude Code', type: 'local',
-    capabilities: ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit', 'data.system.tables.read'],
+    capabilities: ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit', 'studio.write', 'data.system.tables.read'],
     tokenHash: await hashConnectorToken(token),
   })
 })
@@ -83,7 +83,9 @@ describe('MCP end-to-end (stateless multi-request, real handler)', () => {
     const names = (list.json.result?.tools ?? []).map((t) => t.name)
     expect(names).toContain('site_list_documents') // headless site read
     expect(names).toContain('site_read_styles') // headless design-system read
-    expect(names).toContain('site_insert_html') // browser editing tool, relayed to the editor
+    expect(names).toContain('site_read_document') // relayed browser read
+    expect(names).toContain('studio_apply_edits') // the write tool that lands in the user's .tsx
+    expect(names).not.toContain('site_insert_html') // CMS page-tree write, withheld (registry.ts)
 
     const read = await rpc('tools/call', { name: 'site_read_styles', arguments: {} })
     expect(read.json.result?.isError).toBeFalsy()
@@ -113,7 +115,7 @@ describe('MCP end-to-end (stateless multi-request, real handler)', () => {
     const names = tools.map((t) => t.name)
     expect(names).toContain('site_list_documents')
     expect(names).toContain('site_read_styles')
-    expect(names).not.toContain('site_insert_html') // write tool gated out (no ai.tools.write)
+    expect(names).not.toContain('studio_apply_edits') // write tool gated out (no ai.tools.write)
     expect(names).not.toContain('mutate_page_tree') // removed entirely
   })
 })
