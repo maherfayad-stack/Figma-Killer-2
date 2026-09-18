@@ -154,8 +154,12 @@ export async function tryServeStudioGithubAuth(
   }
 
   // Every route below is account-scoped — see the module doc. The user was
-  // resolved once by `routeGate.ts`, which also required `studio.git.write`
-  // for the three state-changing actions.
+  // resolved once by `routeGate.ts`, which also required `site.structure.edit`
+  // for the state-changing actions and `site.read` for the two GETs. NOT
+  // `studio.git.write` — that capability gates the AGENT tool
+  // `studio_git_commit` and is withheld from Admin on purpose; requiring it
+  // here would 403 every Admin out of GitHub sign-in. See
+  // `routeCapabilities.ts`'s "Why git is NOT studio.git.write".
   const user = runtime.user
 
   try {

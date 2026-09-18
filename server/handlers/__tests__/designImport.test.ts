@@ -5,12 +5,67 @@
  * layer (body validation, response shape, error mapping), same split as
  * `studio.test.ts`'s "route wiring" describe blocks.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { strToU8, zipSync } from 'fflate'
 import { tryServeDesignImport } from '../designImport'
+import {
+  createCapabilityTestHarness,
+  type CapabilityTestHarness,
+} from '../../../src/__tests__/helpers/capabilityHarness'
+import { syncSystemRoles } from '../../repositories/roles'
+
+/**
+ * `sec-16` gated this namespace on `studio.write` + an acceptable `Origin`.
+ * Every request below therefore carries a real Owner session, the way the
+ * editor's own does — a bare `Request` now gets a 401 and proves nothing
+ * about the route.
+ */
+let harness: CapabilityTestHarness
+let ownerCookie: string
+/** A real signed-in session that holds nothing this namespace accepts. */
+let powerlessCookie: string
+
+beforeAll(async () => {
+  harness = await createCapabilityTestHarness()
+  // `server/index.ts` runs this after the migrations on every boot; the test
+  // DB stops at the migrations' seed, whose role rows are a snapshot of the
+  // capability list as it stood when that migration was written.
+  await syncSystemRoles(harness.db)
+  ownerCookie = await harness.setupOwner()
+  const powerless = await harness.createRoleUser({
+    name: 'Design Import Nobody',
+    slug: 'design-import-nobody',
+    capabilities: ['dashboard.read'],
+  })
+  powerlessCookie = powerless.cookie
+})
+
+afterAll(async () => {
+  await harness.cleanup()
+})
+
+/** Drive one request, with whatever cookie/headers the caller wants. */
+async function serve(
+  path: string,
+  init: { method?: string; body?: unknown; cookie?: string; origin?: string } = {},
+): Promise<Response> {
+  const url = new URL(`http://localhost${path}`)
+  const req = new Request(url, {
+    method: init.method ?? 'POST',
+    headers: { 'content-type': 'application/json' },
+    ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
+  })
+  // `Origin` and `Cookie` are forbidden header names in the Request
+  // constructor — they must be set on the Headers object afterwards.
+  if (init.cookie) req.headers.set('cookie', init.cookie)
+  if (init.origin) req.headers.set('origin', init.origin)
+  const res = await tryServeDesignImport(req, { db: harness.db }, url, url.pathname)
+  expect(res).not.toBeNull()
+  return res!
+}
 
 function buildFakeZipball(files: Record<string, string>): Uint8Array {
   const input: Record<string, Uint8Array> = {}
@@ -32,15 +87,7 @@ describe('POST /admin/api/design-import/preview', () => {
   })
 
   async function post(body: unknown): Promise<Response> {
-    const url = new URL('http://localhost/admin/api/design-import/preview')
-    const req = new Request(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const res = await tryServeDesignImport(req, undefined, url, url.pathname)
-    expect(res).not.toBeNull()
-    return res!
+    return await serve('/admin/api/design-import/preview', { body, cookie: ownerCookie })
   }
 
   it('previews a GitHub source end to end, returning classified candidates', async () => {
@@ -94,11 +141,9 @@ describe('POST /admin/api/design-import/preview', () => {
     expect(res.status).toBe(400)
   })
 
-  it('rejects a GET request', async () => {
-    const url = new URL('http://localhost/admin/api/design-import/preview')
-    const req = new Request(url, { method: 'GET' })
-    const res = await tryServeDesignImport(req, undefined, url, url.pathname)
-    expect(res).toBeNull()
+  it('rejects a GET request with a 404 rather than falling through to the admin SPA', async () => {
+    const res = await serve('/admin/api/design-import/preview', { method: 'GET', cookie: ownerCookie })
+    expect(res.status).toBe(404)
   })
 })
 
@@ -114,15 +159,7 @@ describe('POST /admin/api/design-import/copy-css', () => {
   })
 
   async function post(body: unknown): Promise<Response> {
-    const url = new URL('http://localhost/admin/api/design-import/copy-css')
-    const req = new Request(url, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    })
-    const res = await tryServeDesignImport(req, undefined, url, url.pathname)
-    expect(res).not.toBeNull()
-    return res!
+    return await serve('/admin/api/design-import/copy-css', { body, cookie: ownerCookie })
   }
 
   it('writes the given files under styles/imported/<sourceSlug>/', async () => {
@@ -172,5 +209,103 @@ describe('POST /admin/api/design-import/copy-css', () => {
     // The slug is sanitized — never a literal ".." path segment.
     expect(body.dir.includes('..')).toBe(false)
     expect(fs.existsSync(path.join(tmpDir, '..', 'evil'))).toBe(false)
+  })
+})
+
+/**
+ * `sec-16`. Before this gate existed both routes authenticated NOTHING.
+ * `copy-css` was therefore an unauthenticated write of caller-supplied bytes
+ * into the operator's real repository, reachable from any page they happened
+ * to visit: `readValidatedBody` calls `req.json()` whatever the content type,
+ * so a cross-origin `<form enctype="text/plain">` needs no preflight and no
+ * CORS opt-in — and needed no cookie, because no cookie was read.
+ */
+describe('design-import namespace — the gate', () => {
+  let tmpDir: string
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'design-import-gate-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  const PREVIEW = '/admin/api/design-import/preview'
+  const COPY_CSS = '/admin/api/design-import/copy-css'
+
+  function plantBody() {
+    return {
+      dir: tmpDir,
+      sourceSlug: 'planted',
+      files: [{ relPath: 'pwned.css', contents: 'body { content: "pwned"; }' }],
+    }
+  }
+
+  function plantedFile(): string {
+    return path.join(tmpDir, 'styles', 'imported', 'planted', 'pwned.css')
+  }
+
+  it.each([PREVIEW, COPY_CSS])('refuses an unauthenticated POST to %s with 401', async (route) => {
+    const res = await serve(route, { body: plantBody() })
+    expect(res.status).toBe(401)
+    expect(fs.existsSync(plantedFile())).toBe(false)
+  })
+
+  it.each([PREVIEW, COPY_CSS])(
+    'refuses a signed-in session without studio.write on %s with 403',
+    async (route) => {
+      const res = await serve(route, { body: plantBody(), cookie: powerlessCookie })
+      expect(res.status).toBe(403)
+      expect(fs.existsSync(plantedFile())).toBe(false)
+    },
+  )
+
+  it.each([PREVIEW, COPY_CSS])(
+    'refuses a cross-origin POST to %s carrying the victim cookie',
+    async (route) => {
+      const res = await serve(route, {
+        body: plantBody(),
+        cookie: ownerCookie,
+        origin: 'https://evil.test',
+      })
+      expect(res.status).toBe(403)
+      expect(((await res.json()) as { error?: string }).error).toBe('Forbidden: invalid origin')
+      expect(fs.existsSync(plantedFile())).toBe(false)
+    },
+  )
+
+  it('refuses a cross-origin POST even with no cookie at all — CSRF precedes the session lookup', async () => {
+    const res = await serve(COPY_CSS, { body: plantBody(), origin: 'https://evil.test' })
+    expect(res.status).toBe(403)
+    expect(fs.existsSync(plantedFile())).toBe(false)
+  })
+
+  it('refuses an origin-less cross-site browser POST (Sec-Fetch-Site, sec-16)', async () => {
+    const url = new URL(`http://localhost${COPY_CSS}`)
+    const req = new Request(url, {
+      method: 'POST',
+      headers: { 'content-type': 'text/plain' },
+      body: JSON.stringify(plantBody()),
+    })
+    req.headers.set('cookie', ownerCookie)
+    req.headers.set('sec-fetch-site', 'cross-site')
+    const res = await tryServeDesignImport(req, { db: harness.db }, url, url.pathname)
+    expect(res?.status).toBe(403)
+    expect(fs.existsSync(plantedFile())).toBe(false)
+  })
+
+  it('answers 404 for an undeclared path under the namespace, even for the Owner', async () => {
+    const res = await serve('/admin/api/design-import/copy-css/extra', {
+      body: plantBody(),
+      cookie: ownerCookie,
+    })
+    expect(res.status).toBe(404)
+  })
+
+  it('leaves paths outside the namespace to the rest of the router', async () => {
+    const url = new URL('http://localhost/admin/api/design-importer')
+    const req = new Request(url, { method: 'POST' })
+    expect(await tryServeDesignImport(req, { db: harness.db }, url, url.pathname)).toBeNull()
   })
 })
