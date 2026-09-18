@@ -118,7 +118,9 @@ argv-flag-shaped), and anything past GitHub's own ceilings of 39 and 100
 characters. `.github`, `socket.io` and `my_org` still parse. The zipball
 import's `parseGithubRepoUrl` (`server/handlers/studioGithubImport.ts`) calls
 the same two functions, so the two entry paths cannot disagree about what a
-repository is called.
+repository is called — and, since `sec-15`, it refuses userinfo for the same
+reason this parser does, rather than accepting a URL carrying a credential and
+silently dropping it.
 
 `POST git/clone` is the **Clone (keeps history)** alternative to the zipball
 import, as a polled job with the same shape and the same terminal
