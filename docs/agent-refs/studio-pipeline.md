@@ -307,6 +307,7 @@ from the node id and `lockReason` alone:
 | `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or in-place DUPLICATE is fine — the batch is ordered bottom-to-top. A GROUP (K3) of several is fine too, and this is the refusal it gets when the selection is not one run: different parents, or a gap between the members. A multi Alt+DRAG is not: N copies at one drop position have no single order in the code (`planSourceDuplicateTo`) |
 | `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
 | `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
+| `content-model` | `struct-11`: the container a group would write cannot legally sit where it would land (`<div>` in a `<p>`, anything in a `<ul>`/`<tr>`/`<select>`) or cannot legally hold what it would hold (a wrapper around an `<li>`, a `<td>`, a `<figcaption>`). Decided from `@core/utils/htmlContentModel` — early by `previewStructuralGroup` when the tags are nameable, and always by the codemod against the AST. The remedy is the jump: `origin` is the CONTAINER whose content model forbids it |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
@@ -365,6 +366,38 @@ parent's element children between the ends are not exactly the ones named, and
 element is not this kind: it is the existing `wrap`, unchanged. `unwrapJsxElement`
 is the inverse — the children, dedented one level, replace the container's own
 range.
+
+**The container's TAG follows the HTML content model** (`struct-11`). It used
+to be whatever the caller named, and every caller named `div`
+(`base.container`'s `sourceIntrinsic`) — so grouping two inline `<span>`s that
+live inside a `<p>` wrote a `<div>` into phrasing content and React reported it
+in the user's own console as a hydration error. Studio broke the file it was
+editing. The rule is now one table,
+`@core/utils/htmlContentModel.ts` — element categories (phrasing / flow /
+`positional` / metadata), what each element may contain (void and text-only
+elements hold nothing; `a`/`ins`/`video`/… are *transparent* and resolve by
+walking up; `ul`/`tr`/`select`/`picture`/`dl` name their own legal children) —
+and one decision, `chooseGroupWrapperTag`:
+
+- `div` and `span` are the two interchangeable containers, so a caller naming
+  either is asking for "a box" and gets whichever is legal. Any other name
+  (`section`, a component) is the caller's own choice: it is CHECKED, never
+  re-spelled, and refused if it cannot sit there.
+- An all-phrasing run gets a `<span>` wherever one is legal, so a group keeps
+  flowing with the text it replaced instead of becoming a block.
+- `<dl>` is the one restricted parent HTML lets a `<div>` group inside, and it
+  still takes one.
+
+Asked TWICE, from two fact sources, with one rule. `wrapJsxElement` /
+`wrapJsxElements` read the real ancestors and members out of the AST
+(`wrapperContentModel.ts`) and are the AUTHORITY — nothing else can stop an
+agent or a hand-built batch. `previewStructuralGroup` asks the same question
+off the page tree first, through an injected `nodeHtmlTag` resolver (the tag
+lives in the module registry, which `@core/page-tree` may not import), so an
+impossible group refuses BEFORE the round trip, with a dialog and a way
+forward. A resolver that cannot name a tag returns `null`, which is read as "no
+opinion" and never as a refusal — the early check only ever refuses on positive
+knowledge.
 
 **A reorder is written against an ANCHOR, never an index.** The editor's child
 list and the JSX child list are different lists. `planSourceMove` simulates the
