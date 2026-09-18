@@ -205,11 +205,35 @@ async function runCommitAndSwitch(
     if (switched.code !== 'dirty-tree') return switched
     return {
       ...switched,
-      message: `Committed ${committed.shortSha}, but these files are still uncommitted, so the branch was not switched. Commit or discard them, then switch.`,
+      message:
+        `Committed ${committed.shortSha}, but ${namePaths(switched.dirtyFiles ?? [])} still uncommitted, so the ` +
+        'branch was not switched. Commit or discard them, then switch.',
     }
   }
 
   return { ...committed, branch: switched.branch }
+}
+
+/** How many paths a refusal message will spell out before it summarises. Keeps the message bounded. */
+const MAX_NAMED_PATHS = 4
+
+/**
+ * `"pages/About.tsx is"` / `"a.tsx, b.tsx and 3 more files are"`.
+ *
+ * The refusal has to NAME what is still dirty: "these files" is a sentence the
+ * user cannot act on without leaving Studio for a terminal, and this panel's
+ * whole premise is that they never have to. `dirtyFiles` was already on the
+ * wire — it just never reached the message the browser renders, which is the
+ * only field `apiRequest` surfaces. Found by the G8 dogfood
+ * (`tests/e2e/github-sync.e2e.ts`, step 11).
+ */
+function namePaths(paths: readonly string[]): string {
+  if (paths.length === 0) return 'some files are'
+  if (paths.length === 1) return `${paths[0]} is`
+  const named = paths.slice(0, MAX_NAMED_PATHS)
+  const rest = paths.length - named.length
+  const list = rest > 0 ? `${named.join(', ')} and ${rest} more file${rest === 1 ? '' : 's'}` : named.join(', ')
+  return `${list} are`
 }
 
 // ---------------------------------------------------------------------------
@@ -498,6 +522,31 @@ async function runContinueConflictResolution(dir: string): Promise<GitConflictAb
       code: 'unresolved-conflicts',
       message: 'Some files are still unmerged. Choose a version for each one first.',
       conflictFiles: state.files,
+    }
+  }
+
+  // `git rebase --continue` refuses while ANY tracked file carries unstaged
+  // changes — including files that had nothing to do with the conflict — and
+  // it says so with *"You must edit all merge conflicts and then mark them as
+  // resolved using git add"*, which is written for a terminal and, worse, is
+  // not true: nothing is unmerged by the time we get here. Reaching git with
+  // that state turns a 409 the panel could act on into a 500 carrying git's
+  // own message. Answer the honest refusal instead, naming the files.
+  //
+  // Not hypothetical: the G8 dogfood hit it because Studio's own board reload
+  // rewrites the preview shell into the project while a conflict is open
+  // (`tests/e2e/github-sync.e2e.ts`, cases 2b/6b/8).
+  if (state.kind === 'rebase') {
+    const unstaged = await runGit(dir, ['diff', '--name-only'])
+    const changed = unstaged.ok ? unstaged.stdout.split(/\r?\n/).filter(Boolean) : []
+    if (changed.length > 0) {
+      return {
+        ok: false,
+        code: 'dirty-tree',
+        message:
+          'These files have changed since the conflict was resolved, and a rebase cannot continue over uncommitted changes. Commit or discard them, then continue.',
+        dirtyFiles: changed,
+      }
     }
   }
 

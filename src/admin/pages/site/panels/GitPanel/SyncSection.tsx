@@ -100,11 +100,30 @@ export function SyncSection({
 
   const pull = (strategy: 'ff-only' | 'rebase' | 'merge') =>
     run(strategy === 'ff-only' ? 'Pull' : strategy === 'rebase' ? 'Rebase' : 'Merge', async () => {
-      const result = await pullGitRemote(dir, strategy)
-      setOutput(result.output || 'Already up to date.')
-      onRefsChanged()
-      // A pull that moved HEAD changed the .tsx files under every frame.
-      onWorkingTreeChanged()
+      try {
+        const result = await pullGitRemote(dir, strategy)
+        setOutput(result.output || 'Already up to date.')
+        onRefsChanged()
+        // A pull that moved HEAD changed the .tsx files under every frame.
+        onWorkingTreeChanged()
+      } catch (err) {
+        // A pull that STOPPED did not leave the repository as it found it: on
+        // a conflict there is now a rebase (or merge) in progress and
+        // unmerged files on disk. `run`'s own failure path refreshes git
+        // STATUS only, and `useGitConflicts` is keyed on `refsNonce` — so
+        // without this the user is shown "Rebase failed" and nothing to act
+        // on, and the per-file Keep mine / Keep theirs / Continue list stays
+        // hidden until they close and reopen the panel. Found by the G8
+        // dogfood (`tests/e2e/github-sync.e2e.ts`, step 8), which could not
+        // reach any of the conflict UI at all.
+        //
+        // The board is deliberately NOT reloaded here: the files this pull
+        // touched carry conflict markers for the moment, and `keep`,
+        // `finish` and `abort` each reload once the user has decided.
+        conflicts.refresh()
+        onRefsChanged()
+        throw err
+      }
     })
 
   const push = () =>
