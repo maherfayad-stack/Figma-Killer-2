@@ -1561,6 +1561,2213 @@ None blocking — this design is directly implementable by `panel-designer` (the
 - **Human action needed:** run `bun install`; confirm decision 2 was meant as "promote, don't ask"
   (not "keep it manual"); then authorize the Track Z wave.
 
+### sec-14 — per-request capability gating on every Studio route
+
+- **Agent:** security-guard (Opus 5, 1M)
+- **Stage:** done — draft PR open, needs review + human dogfood of the editor against a real workspace
+- **Branch + PR:** `feat/studio-route-capability-gating` off `27616ba8` → draft **PR #167** against `feat/alm-figma-killer-studio-shell` (three commits: `9bb624f9` gate, `fdec4eff` sub-router extraction, `07ea8105` docs)
+- **Updated:** 2026-09-18
+
+**Goal.** Plan §9 item 1 / §6 decision 7 / `sec-05` finding 2: gate every `/admin/api/studio/*` route per request, designed so a NEW route cannot ship without declaring its capability, and extend `originAllowed` CSRF to every mutating Studio route (`sec-13` scoped it to the three git sub-routers and named the rest as this wave's job).
+
+**Scope — files touched.**
+New: `server/handlers/studio/{routeCapabilities,routeGate,subRouters}.ts`, `server/handlers/__tests__/{studioRouteGate.test.ts,helpers/studioRouteHarness.ts}`, `src/__tests__/architecture/studio-routes-capability-declared.test.ts`.
+Changed: `server/handlers/studio.ts`; `server/handlers/studio/{commentsRoutes,shareRoutes,nodeExportRoutes,projectRoutes,trashRoutes,githubAuthRoutes}.ts`; six test files; `src/__tests__/helpers/capabilityHarness.ts` (added `studio()` / `studioRequest()`); docs `PROJECT-BRIEF.md` (trap 16), `docs/server.md`, `docs/reference/capabilities.md`, `docs/features/mcp-connectors.md`, `docs/agent-refs/path-index.md`.
+**Not touched, by instruction:** `studio/deploy.ts`, `studio/gitPaths.ts` (`server-25`), `server/ai/mcp/**` (`mcp-24`). `deploy` and `dev-server` are gated from the table without editing either file. `STATE.md` and `CLAUDE.md` untouched.
+
+---
+
+## Done
+
+**One gate, at dispatch, keyed by data.** `tryServeStudio`'s first statement is `gateStudioRequest(req, runtime.db, pathname)`, which asks four questions in this order, and the order is the design:
+
+1. Not a Studio path → `null`, router continues unchanged.
+2. Path not in `STUDIO_ROUTE_CAPABILITIES` → **404**, before a sub-router runs and before `resolveProjectDir` touches the filesystem.
+3. State-changing method + `!originAllowed(req)` → 403 `{ error: 'Forbidden: invalid origin' }` — **before** the session lookup, so a forged cross-origin POST costs a header comparison, not a DB round trip, and the refusal does not depend on whether the victim was signed in.
+4. `requireCapability` with the declaration's capability for this method class.
+
+The resolved `AuthUser` rides `StudioSessionRuntime` into the five session sub-routers. **Six sub-routers lost their own auth calls** — one policy, one place. `tryServeStudio` now ends in a 404 rather than `null`: the gate already proved the path is a declared Studio route, and letting an API path continue down the router table ends at `tryServeAdminApp` handing an API caller the SPA's HTML.
+
+**`trashRoutes.ts` became an ordinary sub-router.** Its only reason to ride `STUDIO_SESSION_SUB_ROUTERS` was its own two `requireCapability` calls; with the gate owning those it needs neither the db nor the user.
+
+**`studio.ts` went 712 → 619 lines** (the 700 ceiling tripped when the gate landed). The lines removed were ~40 sub-router imports and the two arrays → `studio/subRouters.ts`. That is also the single line `canvas-20` needs for its asset-upload sub-router, plus a `routeCapabilities.ts` entry — both module docs say so.
+
+---
+
+## Checklist (security-guard, run against this change)
+
+**Paths** — all n-a for this change: no new path decoding. `resolveProjectDir` / `isRealpathContained` are untouched and still run, now strictly *after* auth. One improvement: an unauthenticated caller no longer reaches them at all.
+**Archives** — n-a.
+**Write targets** — n-a; no new writer.
+**Subprocesses** — n-a; no new spawn. `install` (`studio.write`), `dev-server` / `deploy` (`studio.run.project`) now require a capability before their spawners are reachable, which they did not before.
+**Secrets** — **fixed-adjacent:** `POST/DELETE /admin/api/studio/github/token` (store / delete the GitHub credential — the highest-value writes on the surface) previously required a session but no capability; they now require `site.structure.edit`. No token is logged, returned, or persisted anywhere new.
+**CSRF** — **fixed:** was three sub-routers, now the whole namespace.
+**Capability gating** — **fixed:** was 3 routes of ~50, now all of them.
+
+---
+
+## Decisions a later agent should not re-litigate
+
+1. **Capabilities map by effect, not by verb.** `site.read` reads; `studio.write` changes the project's files; `studio.run.project` makes Studio run somebody's code *or hands out the right to* (trust promotion and style-compile consent are in this family deliberately); `site.structure.edit` for git history and the GitHub credential; `site.content.edit` for comments and shares (the **Client** role holds it and is meant to).
+2. **`node-png` / `node-jsx` / `reload-scope` declare `mutate: 'site.read'`, and it is not a typo.** They are POSTs because a node-id set does not belong in a query string; they write nothing.
+3. **Git is NOT gated on `studio.git.write`, and this is the one real judgement call in the PR.** `capabilities.ts` states the split in as many words: that capability gates the AGENT tool `studio_git_commit`, is withheld from Admin on purpose (W4-3), and "a human in the Version control panel is unaffected — that surface is gated by `site.structure.edit`". I tried `studio.git.write` first; it 403s an Admin out of the Version control panel and out of GitHub sign-in (`githubAuth.test.ts` caught it: the `admin`-role fixture user could no longer `device/start`). The only way to give it back is granting the role the capability that *also* hands its agent commit rights — weakening the agent gate to fix a human one. So the routes take the human capability and `studio.git.write` keeps meaning exactly what it meant. Reasoning is in `routeCapabilities.ts`'s "Why git is NOT `studio.git.write`" section.
+4. **`subPaths: true` only for genuinely dynamic paths and shared action namespaces** (`deploy/<jobId>`, `install/<jobId>`, `git/`, `github/`, `dev-server/`, `prototype/`). Effect: a NEW action under a declared namespace inherits that namespace's capability instead of being unreachable — fail-closed in the direction that matters, since the namespace capability is the stricter one. Everything else is an exact entry.
+5. **Undeclared path → 404, not 403 or 405.** It tells a prober nothing, and it matches what the sub-router would have done by falling through.
+6. **The architecture gate scans path LITERALS, not `requireCapability` calls.** Inverse of `cms-handlers-capability-gated.test.ts`, and it has to be: a correctly gated Studio sub-router contains no auth call at all, so scanning for the call would prove nothing.
+
+---
+
+## Landmines
+
+1. **Never add a `requireCapability` call inside a Studio sub-router.** The gate already ran. A second check is a second policy, and the two will disagree. If a route needs a *different* capability, change its table entry.
+2. **Adding a sub-router is two edits.** `subRouters.ts` **and** `routeCapabilities.ts`. Miss the second and the routes 404 — deliberately — and `studio-routes-capability-declared.test.ts` fails the build naming the path. (`canvas-20`: this is your one extra line.)
+3. **A route whose path comes from a `src/core/` constant needs the gate test's `SHARED_ROUTE_CONSTANT_FILES` list.** `shareRoutes.ts` matches on `STUDIO_SHARES_ROUTE` from `src/core/studio-share/shareWire.ts`, so there is no literal in the handler tree and the "every declaration is reachable" direction failed until that file was added to the scan.
+4. **The capability-test harness Owner is NOT a real Owner unless you call `syncSystemRoles(db)` first.** `createTestDb` stops at the migrations, whose `roles` seed is a snapshot of `CORE_CAPABILITIES` as it stood when that migration was written — it has no `studio.write`. `server/index.ts` runs `syncSystemRoles` on every boot; the harness does not. This cost 20 minutes: the symptom is an Owner cookie getting a 403 that looks like a gate bug. `studioRouteHarness.ts` and the two tests that need it call it explicitly; I did **not** put it inside `createCapabilityTestHarness`, because that would silently widen every existing capability test's Owner.
+5. **`Origin` is a forbidden header in the `Request` constructor** (`sec-13` said so and it is still true). `harness.studioRequest(req)` exists precisely so a CSRF test can build the request itself and `req.headers.set('origin', …)` after construction. A test that passes `origin` in the constructor's `headers` bag sends no Origin at all, and `originAllowed` *trusts* a missing Origin — so it passes for the wrong reason.
+6. **`new Request('http://localhost/admin/api/studio/save/../projects')` normalises to `/admin/api/studio/projects` before any handler sees it.** I wrote that as a traversal probe, and it returned 200 because it is a legitimate declared route by the time the gate runs. It is not a hole; it is the URL parser doing its job. The probe list now uses `/save/extra` and says why.
+7. **An opaque-origin iframe cannot reach a Studio route any more.** The canvas frames (`IframeFrameSurface`) carry no `sandbox` attribute, so they are same-origin and send cookies — verified. `ModuleSandboxFrame` (`sandbox="allow-scripts"`, plugin canvas modules) *is* opaque: if a plugin module ever referenced `/admin/api/studio/asset`, it would now get 401 instead of bytes. Nothing does today (module images come from `/uploads/`), but it is the one client-side shape this change can break.
+8. **The headless capture path was already built for this.** `capturePayload.ts` rewrites every `/admin/api/studio/asset?…` URL onto its own token-gated endpoint *because* "that route is session-cookie gated". That comment was aspirational before this PR and is true now — do not "simplify" it back.
+9. **The gate does NOT cover the MCP surface.** MCP tools are dispatched in-process by the tool engine, never through `tryServeStudio`, so their authorization is still the connector capability set. The two models have to be kept in agreement by hand — which is exactly how `sec-05` finding 1 happened. Noted in `docs/features/mcp-connectors.md`.
+
+---
+
+## Verification (real numbers, this machine, mid parallel wave)
+
+- `bun run build` — **exit 0** (`tsc -b && vite build`, built in 1m10s).
+- `bun run lint` — **exit 0**, zero errors. (The "6 pre-existing unused-`os`" errors quoted in earlier handoffs are gone on this base.)
+- `bun test src/__tests__/architecture` — **613 pass / 2 fail**; both (`alm-design-system-fresh`, `no-core-barrel-deep-imports`) pass alone. The barrel gate took **29.6 s under load vs 1.9 s alone** — the load sensitivity the wave brief warns about, measured.
+- `bun test server/handlers` — **2259 pass / 3 fail** (before the test fixes: 2184 / 78).
+- `bun test` (full) — **13811 pass / 2 skip / 30 fail** in 1482 s.
+  - 6 are the named pre-existing reds: `claudeCli` 0600, `studio.test.ts` nested-page load, `parityMatrix`, `studio_compare` ×2 (confirmed 13 pass / 2 fail running that file alone), `studio_list_projects`.
+  - The other 24 were re-run alone and pass: `no-core-barrel-deep-imports`, `no-css-var-fallbacks`, `vendor-icons-fresh`, `alm-design-system-fresh`, `publicSdkExports`, `authStepUp`, `pluginServerRuntime` ×4, `pluginWorkerRpcTimeout`, `selectorStability`, `fillSection`, `useBridgeComputedValues` ×3, `canonicalCheck` ×3, `canonicalPageCheck`, `localizedPage` ×3 (4/4 alone, 19 s), `studio_compare` verdict-cache. All are 5 s per-test timeouts under an 11-agent wave.
+  - **Zero new reds.**
+- Targeted: `studioRouteGate.test.ts` **195/0** · `studio-routes-capability-declared.test.ts` **4/0** · `studio.test.ts` 85/1 (the known red) · `studioAsset` + `reloadScope` **35/0** · `trashRoutes` **5/0** · `shareRoutes` + `nodeExportRoutes` **10/0** · `githubAuth` **22/0** · `git.test.ts` **39/0** · `module-size-budgets` **5/0**.
+
+**Adversarial inputs actually driven:** a cross-origin `text/plain` form POST carrying the victim's Owner cookie against **all 34 mutating routes** (403 `Forbidden: invalid origin`, every one); the same with no cookie at all (still 403, proving CSRF precedes the session lookup); an unauthenticated GET and POST against **every declared route** (401, DB untouched — `trashRoutes.test.ts` uses a `DbClient` Proxy that throws on any use); a `dashboard.read`-only session against every declared route (403 `Forbidden`); `studio.write`-only against `git/push`, `dev-server/start`, `deploy`, `trust-tier` (403 each, while `projects` still 200); `site.read`+`site.content.edit` against `save` and `trash/purge` (403) while `trash` reads 200; `/admin/api/studio/not-a-route`, `/save/extra`, `/SAVE`, `/loadx` (404 even for the Owner); `GET /save` and `POST /load` (404, no method-set disclosure); `/admin/api/studio/git/brand-new-verb` (inherits `site.structure.edit`, not ungated); `/admin/api/studio/save/../projects` (normalised by the URL parser — documented, not a hole).
+
+---
+
+## Human action needed
+
+1. **Dogfood the editor against a real workspace** while signed in as Owner. Everything the canvas does is same-origin with cookies, so it should be invisible — the specific things to watch are frame images (`/asset`), the Tier-1 component bundle, the Version control panel, and GitHub sign-in.
+2. **Decide whether the Admin role should hold `studio.git.write`.** It does not today, and this PR did *not* change that — it routed the HTTP git surface to `site.structure.edit` instead, so Admin keeps the Version control panel. If you later want Admin's *agent* to be able to commit, that is a separate, deliberate grant in `adminCapabilities`.
+3. **`STUDIO-FIGMA-FEEL-PLAN.md` §9's first bullet is now done.** I left the plan file alone to avoid colliding with the other ten wave-2 agents — the orchestrator should strike it.
+4. No `CLAUDE.md` rule needs to change. The nearest thing worth adding, if the orchestrator wants it in the rule book rather than only in `PROJECT-BRIEF.md` trap 16, is one line: *"A Studio route that is not in `server/handlers/studio/routeCapabilities.ts` does not exist — never add a `requireCapability` call inside a Studio sub-router."*
+
+
+---
+
+### sec-16 — security review of PR #167 (per-route capability gating + CSRF on the Studio surface)
+
+- **Agent:** security-guard (Opus 5, 1M) — second reviewer of `sec-14`'s own work
+- **Stage:** done — draft review PR open against #167's branch, needs #167's author (or the orchestrator) to merge it into #167 before #167 itself merges
+- **Result:** **https://github.com/maherfayad-stack/Figma-Killer-2/pull/176** — draft, base `feat/studio-route-capability-gating`, branch `review/pr-167`, one commit `5975a8b1`
+- **Reviewed:** PR #167 head `07ea8105`, base `27616ba8` on `feat/alm-figma-killer-studio-shell`
+- **Updated:** 2026-09-18
+
+**Verdict: #167's gate is sound.** I attacked its own claims and could not get past it. Everything I found is either one namespace over, or the one corner of its table that is not fail-closed.
+
+---
+
+## Scope
+
+Read: `PROJECT-BRIEF.md`, `CLAUDE.md`, `STATE.md` (`sec-05`, `sec-10`–`sec-13`), `docs/reference/capabilities.md`, `docs/agent-refs/handoff-protocol.md`, the #167 diff, and `sec-14.md`'s Decisions + Landmines.
+
+Enumerated every `/admin/api/studio/*` path literal reachable from `server/handlers/studio.ts` and every file in `subRouters.ts` (plus `src/core/studio-share/shareWire.ts`'s constant), and every route method in `git.ts` / `gitSyncRoutes.ts` / `gitRemoteRoutes.ts` / `githubAuthRoutes.ts` / `projectRoutes.ts` / `trashRoutes.ts` / `devServer.ts` / `deploy.ts` / `installDeps.ts` / `nodeExportRoutes.ts`.
+
+Changed (8 files): `server/auth/security.ts`, `server/handlers/designImport.ts`, `server/handlers/studio/{githubAuthRoutes,projectRoutes}.ts` (comments), `server/handlers/__tests__/designImport.test.ts`, `src/__tests__/server/security.test.ts`, `src/__tests__/architecture/{studio-routes-capability-declared,singleInstallManagedHosting}.test.ts`.
+**Not touched, per instruction:** `STATE.md`, `CLAUDE.md`. Also left alone: `routeCapabilities.ts`'s table shape, `deploy.ts`, `gitPaths.ts`, `server/ai/mcp/**`.
+
+---
+
+## Findings by severity
+
+### HIGH — `/admin/api/design-import/*` authenticated nothing — **FIXED**
+
+`server/handlers/designImport.ts` is route #3 in `server/router.ts`, directly after `tryServeStudio`. Neither route called `requireCapability`, `requireAuthenticatedUser`, or `originAllowed`.
+
+`POST /admin/api/design-import/copy-css` was an **unauthenticated write of caller-supplied bytes into the operator's real repository**. Exploit path, concretely:
+
+1. Operator runs Studio on `localhost:3001` and visits any web page.
+2. The page submits `<form action="http://localhost:3001/admin/api/design-import/copy-css" method="POST" enctype="text/plain">` with a JSON-shaped body. No preflight, no CORS opt-in — `readValidatedBody` calls `req.json()` whatever the content type, so it parses.
+3. Every `.css` entry in `files[]` is written under `<dir>/styles/imported/<slug>/`.
+
+**No cookie required**, because no cookie was read — so `SameSite` is irrelevant and the victim need not even be signed in. `resolveProjectDir` + `isSafeRelPath` + the `.css` filter do confine it to `studio-workspace/<project>/`, so this is file-planting, not traversal and not RCE — but it writes to the one directory the product treats as user data with no other copy, and at Tier 1 a planted stylesheet is compiler input.
+
+`POST .../preview` was the same shape one step earlier: an unauthenticated server-side fetch of an arbitrary GitHub URL or npm spec, with a caller-supplied `token` forwarded to GitHub.
+
+**Fix:** both require `studio.write` and an acceptable `Origin`, CSRF before the session lookup. The namespace absorbs itself — anything else under the prefix 404s instead of falling through to `tryServeAdminApp` and handing an API caller the SPA's HTML. `studio.write` is right for both halves: one wizard, the preview exists only to feed the copy, Owner + Admin hold it, Client deliberately does not.
+
+### MEDIUM — a missing `Origin` was an unconditional CSRF pass — **FIXED**
+
+`originAllowed` began `if (!rawOrigin) return true`, app-wide (CMS, AI, Studio, and the four sub-routers that run it themselves). The check could be removed by removing the header.
+
+**Fix:** when `Origin` is absent, `Sec-Fetch-Site` decides. It is a Fetch-spec *forbidden header name* — script cannot set it, only a browser can — so it is trustworthy when present and absent for every scripted caller. `cross-site` / `same-site` refused (`same-site` is exactly the different-subdomain case `SameSite=Lax` misses); `same-origin` / `none` pass; neither header present still passes. Strict tightening; `studioRouteGate.test.ts` still 195/0.
+
+### MEDIUM — `subPaths: true` is not fail-closed on the READ side — **documented + pinned, NOT restructured**
+
+`sec-14` decision 4 says namespace inheritance is "fail-closed in the direction that matters, since the namespace capability is the stricter one." **That premise is false for a GET.** A new GET under a namespace inherits `read: 'site.read'` — the capability the **Client** role holds.
+
+Driven: `GET /admin/api/studio/dev-server/restart` → `read=site.read`; `GET /admin/api/studio/deploy/whatever` → `read=site.read`. A future GET-shaped verb under either would let a read-only reviewer spawn a build or a dev server on a project already at `run-project` (which, under §6 decision 2, a Vite project reaches on first open without a human deciding anything), with no table edit for anyone to review.
+
+I did **not** restructure. The real fix — exact entries plus an explicit dynamic-id marker for the only two namespaces that need one (`deploy/<jobId>`, `install/<jobId>`) — also requires rewriting `studio-routes-capability-declared.test.ts`'s "every declaration is reachable from a literal" direction, because `gitSyncRoutes.ts` and friends match on action strings (`'conflict/resolve'`), never on a full path literal. Too large for a review to land mid-wave.
+
+Instead: **the namespace inventory and each namespace's two capabilities are now pinned by an assertion** in the arch gate, with the exploit written next to it. The set cannot grow and a capability cannot change without a deliberate edit.
+
+### LOW — two stale security comments — **FIXED**
+
+- `githubAuthRoutes.ts` told the next reader the gate "also required `studio.git.write` for the three state-changing actions". It requires `site.structure.edit`. That is the PR's single most contested decision and the file that most needed it right had it backwards.
+- `projectRoutes.ts` still described `/delete`'s neighbours as ungated ("a real gap and not a precedent this route is following") — which the PR had just made false.
+
+### LOW / informational — **NOT fixed, deliberately**
+
+- **`GET /admin/api/studio/git/remotes` returns raw remote URLs at `site.read`.** Studio's own `setRemote` re-composes through `parseGithubRemoteUrl` and never writes a credential into a remote, but a repo cloned *outside* Studio can carry `https://x-access-token:TOKEN@github.com/...` in `.git/config`, and the Client role would read it. Pre-existing; #167 strictly improves it (the route was ungated). A redaction in `readRemotes` is a one-line follow-up.
+- **`GET /admin/api/studio/component-bundle` and `GET /admin/api/studio/load` spawn a subprocess at `site.read`** (`Bun.build` in a child process; the Tier-1 style compiler). Both sit downstream of an explicit Tier-1 promotion, which is `studio.run.project` — so the consent model holds — but Client can re-trigger the spawn at will.
+- **The arch gate's scan boundary.** It reads `server/handlers/studio.ts`, `server/handlers/studio/**`, and one `src/core` file, with `/'(\/admin\/api\/studio\/[a-z0-9\-/]*)'/g`. A path in a template literal, containing an underscore or a capital, or living in a `server/handlers/studio*.ts` sibling, would be invisible to it. Nothing does that today.
+
+---
+
+## Sound, no change
+
+- **Path normalisation is fail-closed.** Driven against `resolveStudioRouteCapability` after WHATWG normalisation: `%2e%2e` and `..` resolve *before* the gate (so `/save/../load` really is `/load` — #167's landmine 6 is correct, not a hole); `save/`, `//save`, `/admin/api/studio//save`, `save;x=1`, `save%20`, `SAVE`, `design-system/other`, `trash/other` all UNDECLARED → 404. Query strings are outside `pathname`. No shape reaches a sub-router the gate did not see: both compare the same normalised `pathname`, and the gate's prefix is a prefix of every sub-router's literal.
+- **Ordering.** `tryServeStudio` is route #2 — nothing before it can serve a Studio path. `OPTIONS` is answered 204 at the `Bun.serve` boundary for every path uniformly (pre-existing, discloses nothing). `HEAD` takes the `read` capability, then 404s in the sub-router.
+- **`Origin` edge cases.** `Origin: null` fails `normalizeOrigin` → refused (test added). `http://127.0.0.1:5173.evil.test` is exact-equality-compared after normalisation, never prefix-matched → refused (test added). `VITE_ALLOWED_ORIGIN` is normalised and empty-filtered; `*` normalises to `null` and matches nothing.
+- **`/_studio/mcp` and the live origin were neither gated nor un-gated by #167.** Both are outside `/admin/api/studio/`. `liveOrigin.ts` serves only `/p/<projectKey>/*` and is forbidden from importing `./router`. A Tier-2 live frame renders its own dev server's assets, not `/admin/api/studio/asset` — landmine 7's live-frame question is a no-op. `IframeFrameSurface`'s `<iframe srcDoc>` carries no `sandbox`, so it is same-origin and cookies flow; `ModuleSandboxFrame`'s `sandbox="allow-scripts"` is opaque and would now 401, which nothing depends on.
+- **The git judgement call (decision 3) is correct.** Role matrix from `capabilities.ts`: `site.structure.edit` → **Owner + Admin only** (Client holds `dashboard.read`, `site.read`, `site.content.edit`, `media.read`, `data.custom.tables.read`; Member holds nothing). `github/token` takes the same capability, so the set that can push is exactly the set that can store the token. No role can push without storing, or vice versa. `studio.git.write` keeps meaning "your agent may commit as you", and gating the HTTP surface on it would have 403'd every Admin out of the Version control panel and GitHub sign-in.
+- **Landmine 4 is NOT a production problem — no release blocker.** `server/index.ts` line 24 runs `await syncSystemRoles(db)` after `runMigrations` and before `Bun.serve`, so a fresh SQLite install boots with an Owner holding all of `CORE_CAPABILITIES`. The staleness is the test harness's alone, and #167 handles it correctly by calling it explicitly rather than inside `createCapabilityTestHarness`.
+- **`install` is correctly `studio.write`, not `studio.run.project`** — `installDeps.ts` always passes `--ignore-scripts`, so no postinstall runs.
+- **`node-png` / `node-jsx` / `reload-scope` declaring `mutate: 'site.read'` is defensible.** They write nothing. `node-png` does drive a capture that can launch a browser, which is a spawn at a read capability — but it photographs Studio's own canvas, not the project's process, and the capture pipeline mints a per-user grant.
+- **404-for-undeclared breaks nothing.** No `/admin/api/studio/*` path is an SPA route; the six test files #167 updated were the only consumers of the old fall-through.
+
+---
+
+## Landmines for whoever comes next
+
+1. **`Sec-Fetch-Site` is now load-bearing for CSRF when `Origin` is absent.** Do not "simplify" `originAllowed`'s first branch back to `return true`. A test proves both refusals; it went 2-fail → 0-fail across the one-line change.
+2. **`server/handlers/designImport.ts` gates itself** and is deliberately NOT in `routeCapabilities.ts` — that table is keyed on the `/admin/api/studio/` prefix and must stay keyed on exactly what it owns. A third design-import route needs its own entry in `DESIGN_IMPORT_ROUTES` or it 404s (by design), and its own `if` branch or it hits the module's final 404.
+3. **`singleInstallManagedHosting.test.ts`'s `cross-site` ban now has a two-file allowlist** (`server/auth/security.ts`, `server/handlers/__tests__/designImport.test.ts`) because that word is also a `Sec-Fetch-Site` value. The rule still fails for every other file — do not widen the allowlist without the same reasoning.
+4. **`bun install` in a fresh worktree can stop early.** Mine installed 45 packages, and `componentBundle.test.ts` then failed 4/19 with `no-components-found` instead of `react-version-mismatch` — a missing React, not a bug. A second `bun install` (635 packages) made it 19/0. Re-run `bun install` before believing a React-shaped red.
+5. **The namespace pin will fail loudly if you add a `subPaths` entry.** That is the point. Read the comment above it before editing the expected array — the fix is usually an exact entry, not a new namespace.
+
+---
+
+## Verification (real numbers, this machine, mid parallel wave)
+
+- `bun run build` — **exit 0** (`tsc -b && vite build`, built in 33.4 s).
+- `bun run lint` — **exit 0**, zero errors. (Needed a full `bun install` first; the partial install made ESLint resolve the main checkout's `node_modules` and die on `zod-validation-error/v4`.)
+- `bun test src/__tests__/architecture` — **614 pass / 2 fail**. Both are `bundle-size-budgets` (`state-vendor-*.js`, `CodeMirrorEditor-*.js` over budget); they fail alone, and this diff ships zero client bytes. Pre-existing on the base.
+- `bun test server/handlers` — **2270 pass / 1 skip / 2 fail**: `git.test.ts`'s write-lock 409 (timing under load — **39/0 alone**) and `studio.test.ts`'s nested-page load (the known pre-existing red named in the brief).
+- `bun test server/auth` — **44 / 0**.
+- Targeted: `designImport.test.ts` **18/0** (was **0 pass / 8 fail** the moment the gate landed — red proven) · `src/__tests__/server/security.test.ts` **52/0** (**50/2** with the `Sec-Fetch-Site` branch short-circuited — red proven) · `studioRouteGate.test.ts` **195/0**, unchanged by the CSRF tightening · `studio-routes-capability-declared.test.ts` **5/0** · `singleInstallManagedHosting.test.ts` **2/0** · `componentBundle.test.ts` **19/0** · `localizedPage.test.ts` **4/0**.
+
+**Adversarial inputs actually driven:** a cross-origin `text/plain` form POST against both design-import routes, with and without the victim's Owner cookie, each asserting the planted file is absent from disk afterwards; an origin-less `Sec-Fetch-Site: cross-site` POST carrying the Owner cookie; an unauthenticated POST and a `dashboard.read`-only POST against both; `Origin: null`; `http://127.0.0.1:5173.evil.test`; `Sec-Fetch-Site` = `same-origin` / `none` / `Same-Origin` / `" none "` / `cross-site` / `same-site`; `/admin/api/studio/save/%2e%2e/load`, `/save/../load`, `/save/`, `//save`, `/admin/api/studio//save`, `/save;x=1`, `/save%20`, `/SAVE`, `/save?dir=x`, `/design-system/other`, `/trash/other`, `/dev-server/restart`, `/deploy/whatever`, `/git/brand-new-verb`; `/admin/api/design-import/copy-css/extra`; `GET` on `/admin/api/design-import/preview`; `/admin/api/design-importer`.
+
+---
+
+## Security-guard checklist (this change)
+
+- **Paths** — n-a for new decoding; **verified** for the existing gate (14 normalisation probes, all fail-closed). `isSafeRelPath` + `resolveProjectDir` on the design-import write target: **pass**, unchanged.
+- **Archives** — n-a.
+- **Write targets** — `copy-css`'s target is derived from a server-side slug (`safeProjectFolderName`) under a `resolveProjectDir`-confined root, fields passed explicitly: **pass** (the hole was authorization, not the target).
+- **Subprocesses** — n-a; no new spawn. Noted two existing spawns reachable at `site.read`.
+- **Secrets** — **pass**; `preview`'s caller-supplied `token` goes only to GitHub, is never logged, returned, or persisted. Flagged `readRemotes` as the one place a stored credential could surface at `site.read`.
+- **Capability gating** — **fixed** for the design-import namespace.
+- **CSRF** — **fixed** for the design-import namespace and, app-wide, for the origin-less case.
+
+---
+
+## Human action needed
+
+1. **Merge PR #176 into #167 before #167 lands**, or the HIGH ships alongside the PR that was meant to close exactly this class of hole.
+2. **Decide the `subPaths` follow-up.** The pin makes the corner visible; it does not remove it. Exact entries + an explicit dynamic-id marker is the real fix and needs its own PR (it touches the arch gate's literal scan).
+3. **`readRemotes` redaction** — one line, separate PR, if you agree a Client should never see a credential-bearing remote URL from a repo cloned outside Studio.
+4. Nothing here changes #167's own conclusions. Its human-action list — dogfood the editor as Owner; decide whether Admin should hold `studio.git.write` — stands unchanged.
+5. `STATE.md` untouched, as instructed. Both this entry and `sec-14`'s need transcribing by whoever owns the file.
+
+
+---
+
+### server-25 — the trust tier is read from one directory, and the two Windows-shaped reds close for real
+- **Agent:** server-engineer (Opus 5, wave 2 parallel, `standing-05`)
+- **Stage:** done
+- **Branch + PR:** `fix/server-tier-dir-and-windows-reds` off `27616ba8` (`feat/alm-figma-killer-studio-shell`). 4 commits: `3a49fe0d` · `3d608d35` · `78d415a4` · `7a4f2ab7`. PR: **#166** (draft, base `feat/alm-figma-killer-studio-shell`) — https://github.com/maherfayad-stack/Figma-Killer-2/pull/166
+- **Updated:** 2026-09-18
+- **Goal:** plan §9's last item (`sec-12`'s reported-not-fixed), `sec-13`'s informational finding, and the two `standing-01` reds that are Windows-shaped — all four closed at the product, not papered over.
+
+**Scope — files touched**
+- Product: `server/handlers/studio/{trustGate,deploy,deployJobs,gitPaths}.ts` · `server/handlers/studioGithubImport.ts` · `server/ai/drivers/{claudeCliMcpConfigFile,claudeCli,claudeCliWarmTurn}.ts` · NEW `server/ai/credentials/privateTempDir.ts`
+- Tests: `server/handlers/__tests__/{deploy,gitRemote,studioGithubImport,studio}.test.ts` · `server/ai/drivers/claudeCli.test.ts` · NEW `server/ai/credentials/privateTempDir.test.ts` · NEW `server/ai/credentials/fileProtection.testHelpers.ts`
+- Docs: `docs/server.md` · `docs/features/studio-git.md` · `docs/features/agent.md` · `docs/features/mcp-connectors.md` · `docs/agent-refs/path-index.md`
+- **Not touched:** `server/handlers/studio.ts` (the route table, `sec-14`'s), `server/ai/mcp/**` (`mcp-24`'s), `vendorDocs.ts`/`componentCuration.ts` (`parser-13`'s), `STATE.md`, `CLAUDE.md`. No new routes, no route restructuring.
+
+**Done so far**
+
+**(1) `deploy.ts` read the trust tier off the APP ROOT — a monorepo could never deploy.** `.studio/` is a project-directory sidecar. `devServer.ts` and `referenceRender.ts` already read the project dir; `deploy.ts:169` read `resolveAppRoot(guard.dir)`, so a monorepo import whose real `package.json` sits at `<project>/apps/web` looked for `<project>/apps/web/.studio/meta.json` — a file that never exists — and answered Tier 0 forever. Promoting to `run-project` changed nothing: 409 on POST, `canDeploy: false` on GET.
+- `checkTrustTier`/`requireTrustTier` now name the parameter `projectDir` and the doc states the contract with the reason. `deploy.ts` passes `guard.dir` at both sites, and `serveStatus` goes through `checkTrustTier` instead of keeping a second inline `readStudioMeta(...).trust`. One reader, one place.
+- `deployJobs.ts` carried the same defect one level down: it read AND wrote `lastDeploy` at the app root, which on a monorepo created a **second `.studio/meta.json` inside the user's app** that nothing else ever reads. `JobRecord` now carries `projectDir` and `appRoot` separately — the split `sec-13` already made in `installJobStore.ts`.
+- The app root still drives provider detection (`vercel.json`/`netlify.toml` sit beside `package.json`) and the CLI's cwd. That half was never wrong.
+
+**(2) `SAFE_REPO_SEGMENT` accepted `..` as an owner (`sec-13`, informational).** `[A-Za-z0-9_.-]+` matches `..`, and the SSH branch ran no other check, so `git@github.com:../hello-world.git` parsed with `owner: '..'`. The HTTPS branch only survived it because `new URL` normalises `..` out of a pathname — an accident, not a rule. `isGithubOwnerSegment`/`isGithubRepoSegment` replace the bare charset test in both branches: no dots-only segment, no leading/trailing `-` on an owner, no leading `-` on a repo (which would make the derived `<owner>-<repo>` folder name argv-flag-shaped), GitHub's own 39/100 ceilings. `.github` stays legal. `studioGithubImport.ts`'s second copy of the charset now calls the same two functions.
+
+**(3) `claudeCli` red — the MCP config file was private on POSIX only.** The file holds a live connector bearer token and, once a registered server is approved, a third-party PAT in plaintext. It was protected with `writeFileSync`'s `mode` + `chmodSync(dir, 0o700)`. On Windows that is very nearly a no-op — Node maps `chmod` onto the read-only attribute and `statSync` reports `0o666` back — so the only real protection was whatever `%TEMP%` inherits. The test asserted `0o600` on both platforms and was red here for exactly that reason: **it asserted a guarantee neither the platform nor the product was making.**
+- NEW `server/ai/credentials/privateTempDir.ts`: `createPrivateTempDir(prefix)` → mode bits on POSIX, `icacls <dir> /inheritance:r /grant:r "<user>:(OI)(CI)(F)"` on Windows, through `runCappedSubprocess`, argv array, no shell.
+- Applied to the DIRECTORY **before** the secret is written into it: on NTFS a new file inherits its parent's inheritable ACEs at creation, so the config file never exists with a wider ACL. Measured: 3 ACEs (`SYSTEM`, `BUILTIN\Administrators`, user) → **1** (`MAHERFAYAD\Admin:(I)(F)`).
+- Fail-soft and it says so: a failed restriction logs and returns `false`; `McpConfigFile` carries `restricted`.
+- `writeMcpConfigFile`/`tryWriteMcpConfigFile` are now async; both call sites await.
+- The test asserts what the platform enforces — mode bits on POSIX, exactly one ACE ending in the current user with full control on Windows, read back through the real `icacls`. **Not `test.skip`.**
+
+**(4) `studio.test.ts` "nested-page load" — stale premise, NOT a broken load.** Driven against the real route with a probe: the nested page returns exactly what the test's own comments describe — page ids `['home','marketing-landing']`, the `<Header/>` call site kept as `studio.instance` with Header's own `<span>` inlined under a composite id (`pages/marketing/Landing.tsx:6:8~components/Header.tsx:1:44`), the outer `<div>` namespaced by the nested workspace-relative path, the prop edit round-tripping into that exact file. All of it already passed. One literal failed: the fixture imported `@alm-design/design-system` and the assertion wanted `moduleId: 'alm.Button'` — from the era when that npm was special-cased into `alm.*`. `standing-07` retired that; the real answer is `pkg._alm_design_design_system.Button`. Fixture now names a third-party package (`@acme/ui`) and the assertion calls `packageModuleId('@acme/ui','Button')` rather than hard-coding a string that can drift from its own generator. **Diagnosis: the premise. No product change.**
+
+**Decisions a later agent should not re-litigate**
+- **`.studio/meta.json` is keyed on the PROJECT directory, always.** Written into `trustGate.ts`'s doc and `docs/server.md`. All ~60 `readStudioMeta` call sites in the tree now agree; deploy was the only dissenter. The app root is correct for the project's CODE (install cwd, `node_modules`, provider CLI cwd) and never for Studio's own sidecar.
+- **`deployJobs.JobRecord` carries both dirs, not one.** Reusing a single `dir` field is what produced the nested `.studio/`; a comment says so.
+- **The driver's `options.spawn` is NOT threaded into the ACL call.** That seam stands in for the `claude` binary — handing it `icacls` would pollute a test's recorded argv AND report the protection as applied without it ever running. `privateTempDir` keeps its own seam for its own unit test; the drivers let the real call run, which is what makes `claudeCli.test.ts`'s assertion mean something.
+- **`icacls` per config directory, not a memoized per-process private root.** A memoized root would amortise the subprocess to one per server process, but it is shared mutable state whose first caller's test seam wins, and `bun test` runs many processes. One short subprocess per cold turn / warm session is well inside the noise of spawning `claude` itself.
+- **The account name is `os.userInfo().username`, bare, not `USERDOMAIN\USERNAME`.** `icacls` resolves the local SAM first then the domain; the environment is not the authority on who this process runs as. Verified on this machine: `icacls` echoes back the resolved `MAHERFAYAD\Admin`, so the test asserts the ACE's tail, not a literal.
+- **`isGithubRepoSegment` allows a LEADING dot** — `.github` is GitHub's own organisation-profile repository. Only an all-dots segment is refused. Do not "tighten" this.
+- **`fileProtection.testHelpers.ts` is test-only and named so.** The repo had no `__testHelpers` convention; a plain `.ts` with no product caller would read as dead code.
+
+**Landmines**
+- `resolveAppRoot(dir) !== dir` on a monorepo. `sec-13` already wrote this down for locks; it is equally true for every CACHE and every SIDECAR. If you add a `.studio/` field, key it on the project dir or you will write a file nobody reads.
+- **`server/handlers/studio/gitSyncOperations.ts` contains a literal NUL byte** (a `git diff -z` separator written as a raw `\0` in a string literal, not as an escape). Git classifies the file as **binary**, so `git diff` shows no hunks and `rg`/`grep` skip it entirely. Pre-existing, on `git-22`'s branch, NOT mine and not touched — but anyone grepping the git surface will silently miss this file. Worth a follow-up to replace it with `'\u0000'`. (Same shape as the Write/Edit-tool trap in the wave-2 brief; `claudeCliAttachments.ts` also reports as binary.)
+- The Windows `chmod` illusion is wider than this one file: `mcpServerSecretStore.ts` (0600/0700) and `cliMcpConnectionProbe.ts` still rely on mode bits alone for files holding encrypted secrets. Encrypted-at-rest makes those far less urgent, but the docs' "0600/0700 discipline" line is still POSIX-only. `createPrivateTempDir` is there if someone wants to close it.
+- `parseGithubRemoteUrl`'s HTTPS branch was NEVER protected against `..` by a rule — only by `new URL`'s pathname normalisation. If anyone ever swaps that parser for a regex, the hole reopens. The tests drive both forms for exactly this reason.
+- `bun test server/handlers server/ai/drivers` shows 4 reds under load (`git.test.ts` write-lock 409, `localizedPage.test.ts` ×3) that pass **0 fail** when each file is run alone. Load artefacts, per `standing-01`'s triage rule — verified, not assumed.
+- `ai-driver-isolation.test.ts` fails inside the architecture run (20 s whole-tree budget) and passes 6/0 alone. Known, `standing-01`.
+
+**Verification** (Windows 11, Bun 1.3.6, this worktree)
+- `bun run build` — **pass** (`tsc -b` clean, `vite build` ✓ in 45.45 s).
+- `bun run lint` — **clean**, zero errors.
+- `bun test src/__tests__/architecture` — **610 pass / 1 fail**; the 1 is `ai-driver-isolation`, which passes **6/0** run alone. 611 accounted for, matching the brief's quiet-machine number.
+- `bun test server/handlers server/ai/drivers` — **2344 pass / 4 fail**; all 4 pass alone (`git.test.ts` **39/0**, `localizedPage.test.ts` **4/0**).
+- Each formerly-red / new file, run ALONE:
+  - `server/ai/drivers/claudeCli.test.ts` → **86 pass / 0 fail**, 194 expect() (was 85/1)
+  - `server/handlers/__tests__/studio.test.ts` → **86 pass / 0 fail**, 206 expect() (was 85/1)
+  - `server/handlers/__tests__/deploy.test.ts` → **30 pass / 0 fail**, 76 expect() (was 25 tests)
+  - `server/handlers/__tests__/gitRemote.test.ts` → **27 pass / 0 fail**, 126 expect()
+  - `server/handlers/__tests__/studioGithubImport.test.ts` → **27 pass / 0 fail**, 50 expect()
+  - `server/ai/credentials/privateTempDir.test.ts` → **5 pass / 0 fail**, 19 expect()
+- **Every new test verified failing without its fix**, not just passing with it:
+  - deploy gate on the app root → 2 fail ("Expected 200, Received 409"; "Expected run-project, Received static")
+  - `lastDeploy` written at the app root → 1 fail
+  - charset-only owner/repo rule → 2 fail (`..`/`.`/`-owner` all parsed)
+  - `icacls` short-circuited to `false` → 1 fail ("Expected length: 1, Received length: 3")
+- `bun test` (FULL) — **13,637 pass / 2 skip / 20 fail / 1 error / 1,242 files / 1,459 s**.
+  - **4 are `mcp-24`'s known set** and nobody else's: `canvas parity matrix`, `studio_compare` ×2, `studio_list_projects`.
+  - **The other 16 all pass 0 fail run ALONE** — verified individually, not assumed: `ai-driver-isolation` 6/0 · `admin-router-usage` 4/0 · `alm-design-system-fresh` 4/0 · `publicSdkExports` 4/0 · `authStepUp` 17/0 · `selectorStability` 3/0 · `canonicalPageCheck` 3/0 · `liveDigest` 18/0 · `hooks` 8/0 · `pageSourceFile` 2/0 · `git.test.ts` 39/0 · `localizedPage.test.ts` 4/0. Whole-tree-scan and fixture-contention artefacts under the eleven-agent parallel load, exactly as `standing-01` describes (every one of them is a 5–25 s case).
+  - `git status --porcelain` is **empty** after the full run — no fixture dirtied, `studio-workspace/` untouched.
+  - **Zero new reds.**
+
+**Next step:** none — the work order is complete and the draft PR is open. **Human action needed:** none blocking. Two optional decisions: (a) whether `gitSyncOperations.ts`'s literal NUL byte (file reads as binary to git and grep) gets a follow-up; (b) whether `createPrivateTempDir` should also back `mcpServerSecretStore.ts`'s persistent secret directory, whose 0600/0700 is POSIX-only today.
+
+
+---
+
+### sec-15 — security review of PR #166 (`fix/server-tier-dir-and-windows-reds`): a planted temp file could receive the live MCP bearer token — APPROVED WITH FIXES
+
+- **Agent:** security-guard (Opus 5, wave 2, reviewing `server-25`)
+- **Stage:** done
+- **Result:** **https://github.com/maherfayad-stack/Figma-Killer-2/pull/174** (draft, base `fix/server-tier-dir-and-windows-reds`). Branch `review/pr-166`, 4 commits on top of `7a4f2ab7`: `102d9721` · `47b37de0` · `64a56f1f` · `3100b1df`.
+- **Updated:** 2026-09-18
+- **Verdict on #166:** the three product fixes are correct and the test they "un-redded" was genuinely a stale premise. Two MEDIUM holes remained in the new Windows code, both fixed here with red-then-green tests; the NUL-byte landmine was wider than reported (seven files, not two) and now has a gate.
+
+**Scope — what I drove**
+- `server/ai/credentials/privateTempDir.ts` + `fileProtection.testHelpers.ts` + `claudeCliMcpConfigFile.ts` (the `icacls` subprocess, the account name, the `mkdtemp`→`icacls` race, failure handling, timeouts, the POSIX branch, and the file's ACL after write)
+- `server/handlers/studio/{trustGate,deploy,deployJobs}.ts` (project dir vs app root), plus a tree-wide grep for other `.studio/` sidecars keyed on `resolveAppRoot`
+- `server/handlers/studio/gitPaths.ts` `isGithubOwnerSegment`/`isGithubRepoSegment` and `studioGithubImport.ts`'s `parseGithubRepoUrl`
+- `server/handlers/__tests__/studio.test.ts`'s fixture change
+- the literal-NUL landmine across the whole tracked tree
+
+**Findings by severity**
+
+**MEDIUM — the MCP config file could be written into an attacker's pre-created file. FIXED (`47b37de0`).**
+`createPrivateTempDir` narrows the directory AFTER `mkdtempSync` created it. Two facts make that window exploitable on Windows:
+1. `/inheritance:r` on the PARENT does not strip an explicit ACE from a child that **already exists**. Measured: plant `mcp-config.json`, `icacls <file> /grant BUILTIN\Users:(R)`, run the real `restrictDirectoryToCurrentUser` → the directory comes back single-ACE (`MAHERFAYAD\Admin:(OI)(CI)(F)`) and the planted file still reads `["BUILTIN\\Users:(R)","MAHERFAYAD\\Admin:(I)(F)"]`.
+2. `writeFileSync`'s default `'w'` flag opens-and-truncates an existing file. It does not refuse it, and truncation does not reset a DACL.
+
+**Concrete exploit path.** On a machine whose `%TEMP%` is redirected to a shared volume — the exact scenario `privateTempDir.ts`'s own module doc cites as the reason the `icacls` call exists — a local attacker watches `%TEMP%` with `ReadDirectoryChangesW` (fires on creation), sees `studio-claude-cli-mcp-config-XXXXXX` appear before `icacls` runs, creates `mcp-config.json` inside it with a DACL granting itself read, and waits. Studio then writes the turn's live connector bearer token — and, once a registered MCP server is approved, a third-party PAT — into that file in plaintext, and reports `restricted: true` throughout, because the DIRECTORY really was restricted. Fix: `writePrivateFileExclusive` (`O_CREAT | O_EXCL`) — a name that already exists as a file, directory, hardlink or symlink is an error, not a target. That is also what makes the "a new file inherits the parent's ACEs" argument true rather than merely likely.
+
+**MEDIUM — `restricted: false` wrote the secret anyway, and no caller read the flag. FIXED (`47b37de0`).**
+`writeMcpConfigFile` returned `restricted` and wrote regardless. Grepped the tree: nothing in the product ever read it, and no test did either. So the guarantee in that module's own doc ("nothing else on the machine can list the directory or open the file") was conditional on a value nobody checked. It now deletes the staging directory and throws; `tryWriteMcpConfigFile` converts that into the degradation the module already designed for a write failure — **the turn runs without MCP tools**. `McpConfigFile.restricted` deleted (true by construction). Also: every failure path between "directory created" and "file written" now removes the directory, so a refusal cannot accumulate empty staging dirs in `%TEMP%`.
+**This reverses `server-25`'s stated fail-soft posture** — flagged in the PR body for a human veto. It was not on that handoff's do-not-re-litigate list.
+
+**LOW — the zipball import accepted a repo URL carrying userinfo. FIXED (`64a56f1f`).**
+`parseGithubRemoteUrl` has refused `https://user:pass@github.com/o/r` since G2; `parseGithubRepoUrl` accepted it and silently dropped the credential. Not a leak — nothing composes or logs the input URL, the `ImportJob` record does not carry it, and the fetch is built from `api.github.com/repos/<owner>/<repo>` — but it is the worse outcome for the user: a pasted private-repo clone URL goes out unauthenticated and 404s on a repository that exists. Both parsers refuse it now.
+
+**LOW — seven tracked files carried a literal NUL byte, not two. FIXED + GATED (`102d9721`).**
+`server/handlers/studio/gitSyncOperations.ts` · `server/ai/drivers/claudeCliAttachments.ts` · `server/ai/drivers/claudeCliSessionPool.ts` ×2 · `src/ui/components/Toast/toastBus.ts` ×4 · `src/core/studio-prototype/codeFlow.ts` · `src/admin/pages/dashboard/hooks/useProjectThumbnail.ts` · `STUDIO-WAVE7-PLAN.md`. Confirmed with ripgrep: `gitSyncOperations.ts` reports `binary file matches (found "\0" byte around offset 18122)` and **drops every match after it** — the last ~190 lines of the git-sync surface, including `readBranchCommitSubjects` and several `runGit` call sites, are invisible to grep-driven review. `git diff` did NOT classify it binary (that heuristic only reads the first 8000 bytes), which is why `server-25` saw no hunks for `toastBus.ts` but did for this one. `toastBus.ts` had also silently acquired CRLF in the index — git skips EOL normalisation for a file it believes is binary — corrected in the same commit (whole-file diff, line endings only). New gate: `src/__tests__/architecture/no-nul-bytes-in-source.test.ts`, reads through `Bun.file` in parallel (~4,400 files in ~130 ms; a serial `readFileSync` loop took 19 s and timed the test out), pins a minimum file count so it cannot silently scan nothing.
+
+**LOW / informational — `.studio/install-job.json` is still written at the APP ROOT. REPORTED, not fixed.**
+`server/handlers/studio/installJobStore.ts` (`installJobFile(dir)`) + `installDeps.ts:429` write and read `<resolveAppRoot(projectDir)>/.studio/install-job.json`. Self-consistent, so nothing is broken — but on a monorepo import it creates a second `.studio/` directory **inside the user's own app**, which is git-tracked source. Same class as the `lastDeploy` defect #166 fixes, one level over. Left alone deliberately: outside this PR's scope, belongs with whoever owns `installDeps.ts`. **It is the only remaining one** — I grepped every `readStudioMeta` / `mergeStudioMeta` / `writeStudioMeta` call site under `server/` and every `resolveAppRoot` use; deploy was the last sidecar dissenter and #166 closed it.
+
+**Sound, no change**
+- **`icacls` argv safety.** Driven with an account name of `Admin /grant Everyone:(F)`: exit 87, `Invalid parameter "Admin /grant Everyone:(F):(OI)(CI)(F)"` — the whole string arrives as ONE token. No shell, no argument splitting. A Windows SAM name cannot contain `:`; spaces, `&`, and non-ASCII all survive as one argv element. A name that does not resolve gives exit 52 "No mapping" and leaves the inherited ACL (now a refusal, per the second MEDIUM).
+- **Binary resolution is not a planted-exe vector.** Bun resolves `icacls` from `PATH`, not from `cwd`. Driven by copying `whoami.exe` to `icacls.exe` inside the `cwd` the call uses (`os.tmpdir()`) and confirming the REAL `icacls` still ran. So `cwd: tmpdir()` is safe.
+- **No rename/replace anywhere on the secret path**, so there is no second place for the inherited ACL to be dropped after the write. End-to-end: `writeMcpConfigFile`'s file reads `["MAHERFAYAD\\Admin:(I)(F)"]`.
+- **Timeouts/caps**: 10 s, 16 KB per stream, through `runCappedSubprocess`. POSIX branch is a practical no-op (`mkdtemp` already creates at 0700) and harmless.
+- **`trustGate`/`deploy`/`deployJobs`.** `guard.dir` = `assertDeployableProject` → `assertWithinWorkspace` → `isRealpathContained` (symlink-resolving, refuses the workspace root itself). `resolveAppRoot`/`joinAppRoot` are real-path contained within the project dir and fall back to it on any escape, so `JobRecord.appRoot` can only ever be a subprocess `cwd` inside the project. `lastDeploy` is written at the project dir only; #166's own test asserts `apps/web/.studio` never appears. No caller can pass an app root — both `deploy.ts` sites pass `guard.dir`, and `serveStatus` now goes through the same `checkTrustTier` rather than a second inline read.
+- **`isGithubOwnerSegment` / `isGithubRepoSegment`.** Drove 38 segments and 45 URLs through BOTH parsers. Refused identically in both URL forms: `..` `.` `...` `....` `%2e%2e` `%2E%2E` `-x` `x-`(owner) 40-char owner 101-char repo `a b` `a/b` `a\b` `a:b` `ünïcode` `ＡＢ` zero-width-space em-dash `a\u0000b` `repo%00`, and `git@github.com:owner/repo.git/..`. Accepted by both: `.github` `a..b` `socket.io` `my_org` `_` `.-.` and the exact 39/100 ceilings. `https://github.com//owner/repo` and `owner//repo` normalise to `owner/repo` (empty segments filtered), they do not traverse. Every derived filesystem name goes through `githubProjectFolderName` / `defaultGithubImportDir`, both of which compose `<owner>-<repo>` — so no accepted pair can produce `.`, `..`, `.git`, `.studio`, or a Windows reserved device name (`con`, `nul`, `prn`) as a directory, because the hyphen is always there.
+- **`studio.test.ts` is a premise fix, not a weakened assertion.** `nodeByModule` is `Object.values(...).find(...)!.id` — a miss throws on `.id`. The new line asserts `packageModuleId('@acme/ui','Button')` rather than the retired literal `alm.Button`, so it pins the derivation instead of a string that can drift from its own generator. Strictly stronger.
+
+**Landmines**
+- **Raw NUL bytes hide source from every grep-driven agent.** Now gated, but the failure mode is worth remembering: ripgrep stops at the first NUL and reports `binary file matches`, so a review that greps for a guard and gets no hit concludes the guard is absent. `git diff` only applies the same heuristic to the first 8000 bytes, so the two tools disagree about which files are affected — do not use "git diff shows hunks" as evidence a file is NUL-free.
+- **Writing the escape back is itself a trap.** The Write/Edit tools (and most editors) turn `\u0000` typed into a string literal back into a raw byte. The correction has to be made at byte level — I used a Python `bytes.replace`. The gate's failure message says so.
+- **`toastBus.ts` was CRLF in the index** purely because git thought it was binary. Any other file that acquires a NUL will do the same silently; `.gitattributes`'s own header explains what CRLF in the index breaks here.
+- **`/inheritance:r` is about the parent, never about existing children.** Anyone adding a second secret file under `privateTempDir` must use `writePrivateFileExclusive`, not `writeFileSync`. Writing this down because the "a new file inherits the parent's ACEs" reasoning is correct and complete only for files THIS process creates.
+- **`mcpServerSecretStore.ts` and `cliMcpConnectionProbe.ts` still rely on mode bits alone** for files holding encrypted secrets (`server-25`'s landmine, still true). Encrypted-at-rest makes it far less urgent; `createPrivateTempDir` is there if someone wants to close it.
+- `server/ai/mcp/**` has 4 genuinely red tests owned by `mcp-24` (`canvas parity matrix`, `studio_compare` ×2, `studio_list_projects`) — not mine, unchanged by this branch.
+- Nineteen further reds appear only under whole-directory load (every headless-capture file, `git.test.ts`'s lock 409, `localizedPage.test.ts`) and pass 0 fail run alone. `standing-01`'s triage rule holds; I verified each file individually rather than assuming.
+
+**Verification** (Windows 11, Bun 1.3.6, this worktree)
+- `bun run build` — **pass** (`tsc -b` clean, `vite build` ✓ 40.51 s)
+- `bun run lint` — **clean**, zero errors
+- `bun test src/__tests__/architecture` — **612 pass / 1 fail** (613 total, +2 from the new gate). The 1 is `ai-driver-isolation`, **6 / 0** run alone.
+- `bun test server/handlers server/ai` — **3031 pass / 1 skip / 23 fail**. 4 are `mcp-24`'s. **All 19 others pass 0 fail run alone**, verified file by file: `headlessCapture` 10/0 · `headlessFrameInspect` 9/0 · `captureFrames` 10/0 · `browserPool` 3/0 · `computedStyles`+`measureElement` 13/0 · `git.test.ts` 39/0 · `localizedPage.test.ts` 4/0.
+- Each new/changed file alone: `privateTempDir.test.ts` + `claudeCliMcpConfigFile.test.ts` **14 / 0** (45 expect) · `claudeCli.test.ts` **86 / 0** · `studioGithubImport.test.ts` **28 / 0** · `gitRemote.test.ts` **27 / 0** · `no-nul-bytes-in-source.test.ts` **2 / 0** · Toast + studio-prototype **71 / 0** · `claudeCliSessionPool.test.ts` **17 / 0**.
+- **Every new test verified failing without its fix:** `'wx'`→`'w'` → 2 fail (planted file truncated and given the secret; its own `BUILTIN\Users:(R)` survives the parent restriction) · `!restricted` short-circuited → 2 fail (`writeMcpConfigFile` resolves and leaves a staging dir; `tryWriteMcpConfigFile` returns a file) · userinfo check removed → 1 fail (all four credential URL shapes parse) · injected `export const probe = \`a<NUL>b\`` → the NUL gate fails with file, line and byte offset.
+- `git status --porcelain` empty after every run. `studio-workspace/` untouched. No `STATE.md` / `CLAUDE.md` edits.
+
+**Adversarial inputs actually driven** (not reasoned about)
+`..` `.` `...` `....` `-x` `x-` `.github` `a..b` `..a` `a..` `_` `-` `--` `.-.` `.git` `.studio` `node_modules` `CON` `con` `nul` `PRN` `aux.txt` 39×`a` 40×`a` 100×`r` 101×`r` `ünïcode` `ＡＢ` `x—y` `a​b` `%2e%2e` `%2E%2E` `a b` `a/b` `a\b` `a:b` `a\u0000b` `""` · `git@github.com:../hello-world.git` `git@github.com:./h.git` `git@github.com:.../h.git` `git@github.com:owner/..git` `git@github.com:owner/repo.git/..` `git@github.com:-owner/repo.git` `git@github.com:owner/-repo.git` · `https://github.com/../h` `https://github.com/owner/..` `https://github.com/owner/repo/..` `https://github.com//owner/repo` `https://github.com/owner//repo` `https://user:pass@github.com/o/r` `https://ghp_…@github.com/o/r` `https://:pass@github.com/o/r` `https://GITHUB.com/o/r` `https://github.com:443/o/r` `https://github.com/o/repo%00` · icacls account names `Admin /grant Everyone:(F)`, `Admin" /grant "Everyone:(F)`, `Everyone`, `*S-1-1-0`, `Admin&whoami`, `Admin with spaces`, `Ädmin` · an `icacls.exe` planted in the subprocess `cwd` · a pre-created `mcp-config.json` carrying `BUILTIN\Users:(R)` · a pre-created `mcp-config.json` as a DIRECTORY · a cyclic config object · an injected NUL byte in a `.ts` file under `src/core/`.
+
+**Human action needed**
+One judgement call to confirm or veto: **`writeMcpConfigFile` now fails CLOSED** where #166 chose fail-soft. The cost is that on a machine where `icacls` genuinely cannot run, the Claude CLI driver loses MCP tools for that turn instead of writing the token into a directory that is user-private on a *default* install. I judged "never write a secret somewhere you failed to lock down" the right side of that trade, given the degradation already exists, is non-fatal, and is what a failed connector mint already does. Everything else in this branch is additive.
+
+**Next step:** none — the review is complete and PR #174 is open against #166. If #166 is squashed rather than merged, rebase `review/pr-166` onto whatever lands.
+
+
+---
+
+### mcp-24 — the MCP half of `standing-01`'s named reds: a real parity gap, two stale test premises, and one guard that was only half-wired
+- **Agent:** mcp-tooling (parallel wave 2, `standing-05`)
+- **Stage:** done
+- **Branch / PR:** `fix/mcp-named-reds-and-parity-gap` off `feat/alm-figma-killer-studio-shell` @ `27616ba8`. **Draft PR #168** → `feat/alm-figma-killer-studio-shell` (https://github.com/maherfayad-stack/Figma-Killer-2/pull/168). Five commits: `594541c0` (parity), `2efcb298` (compare), `91d91581` (projectTools), `9d2bc55a` (git guard), `914e1bc7` (double-carry gate).
+- **Updated:** 2026-09-18
+- **Goal:** the four MCP-owned entries in `standing-01`'s named-red set go green by fixing the product or the test's premise — never by loosening a gate — plus `sec-13`'s two informational leftovers.
+- **Scope:** `server/ai/runtime/types.ts` · `server/ai/tools/studio/parityMatrix.{ts,test.ts}` · `server/ai/mcp/tools/studio/{variantTools.ts,gitTools.ts,gitTools.test.ts,compare.test.ts,projectTools.test.ts}` · `server/ai/drivers/http/toolLoopBounds.ts` (doc comment only) · new `src/__tests__/architecture/failed-tool-result-drops-data.test.ts` · docs: `features/agent.md`, `features/mcp-connectors.md`, `reference/architecture-tests.md`, `agent-refs/path-index.md`.
+
+#### Done so far
+
+**1. `parityMatrix` — a real content gap, closed two different ways.**
+`studio_plan_variants` and `studio_import_figma_frame` were the two `mutates: true` tools no parity row named.
+
+- `studio_import_figma_frame` **got a row**: *"Arm a screen against a supplied design — attach it, record its variables, and size the board frame to it."* It has a genuine canvas-parity path — the user attaches the design through the reference-upload panel (`src/admin/pages/site/studio/uploadDesignReference.ts` → `POST /admin/api/studio/reference-upload`) and drags the board frame to the design's own size. The tool exists because the ORDER was what a weaker model got wrong, not any single leg.
+- `studio_plan_variants` genuinely has none. `AiTool` gains **`headlessOnly?: string`** (`server/ai/runtime/types.ts`), a sentence the TOOL carries. The gate reads the field; `docs/features/agent.md` renders it in a marker-delimited table (`<!-- headless-only-tools:start/end -->`) with a doc↔code parity test, mirroring the refusal-code table. Declaring `headlessOnly` **and** appearing in a row fails the gate.
+- **No allowlist was added to the test.** That was the explicit constraint and it is honoured: `parityMatrix.test.ts` has no name list of its own.
+- Confirmed `.studio/variants.json` has no editor consumer at all (`variantStore.ts`'s only readers are `variantTools.ts`, `variantSeeds.ts` and `promptSessionBlocks.ts`).
+
+**2 + 3. `compare.test.ts` — both reds were the TEST's premise.**
+- `readPassingCompare(dir, pageId)` at (old) line 390 has been missing its `userKey` since W10 §5 moved the verification store under `.studio/cache/agent/<userKey>/` (`mcp-22` spotted it, did not fix it). It looked up page `undefined` under a userKey that was really a page id, so it could only ever answer `null` — which failed the *"records a passing verdict"* test **and made its *"does NOT record a failing verdict"* sibling pass for entirely the wrong reason.** Both call sites now derive the key with `studioAgentUserKey(CTX_USER_ID)` from the same `userId` the handler is given.
+- The imageScale node-mapping fixture was sized for the **retired 98 / 1.5** thresholds W9-2 replaced with `FIDELITY_THRESHOLDS`. A 60×60 block on a 400×400 reference is 2.25% of the frame — under `balanced`'s **6%** structural ceiling — so the page legitimately passed and `expect(page.pass).toBe(false)` was simply wrong. Block + node rects re-sized to 10.56% of the frame (89.44% similarity, under balanced's 92% pass mark), still landing outside BOTH node rects if read as unscaled CSS px.
+  **Red-then-green proven:** pinned `scaleNodeRectToImageSpace(n, 1)` in `frameDiffEngine.ts:513` → `worstRegionNodeIds` came back `[]` and the test failed on the assertion it is named after; restored byte-identical → green.
+- Also corrected the stale *"1.5% structural-region floor"* comment on the neighbouring test.
+
+**4. `studio_list_projects` — the TEST's premise again, and it was never asserting its own name.**
+`src/__tests__/setup.ts:542` points `STUDIO_WORKSPACE_DIR` at the **bare OS temp directory** for the whole suite. Right for the ~50 files whose fixture just needs to survive containment; wrong for the one tool whose job is to enumerate the workspace root and run `resolveProjectProfile` over every project in it. Against `os.tmpdir()` it walked every stray directory on the machine: **21–33 s**, past the 5 s per-test timeout whenever anything else was running, and machine-state-dependent by construction. It also meant the assertion could not be about content — the test named *"lists the project by folder name"* only checked `Array.isArray`.
+Given a root of its own (the escape `setup.ts` itself documents), it asserts the name, the dir, the page count and the Tier-0 trust default, and runs in **4.6 s**. No product change.
+
+**5. `gitTools.ts` `guardProject` — `sec-13`'s "dead branch" was NOT dead, and the real defect was next door.**
+- **The `outside-workspace` branch is live.** `resolveProjectDir` accepts the workspace **ROOT** — literally what you get with no `dir` in an empty workspace — and the root is not a project, so `assertOwnGitRepo` answers `outside-workspace` with nothing having thrown. **Proven:** replaced the branch with `toolRefusal('io-error','UNREACHABLE-PROBE')` and the new root test went red on `io-error`; restored. The branch stays, and two tests now pin both ways of reaching it.
+- **What was actually wrong:** only `studio_git_commit` caught `ProjectDirOutsideWorkspaceError`, so `studio_git_status`, `_branch`, `_push` and `_open_pr` handed the agent a raw exception while their own descriptions promise *"a structured, non-throwing failure"*. And commit's catch was a bare `catch {}` that also swallowed `ProjectDirMismatchError`, reporting *"that directory is not a Studio project"* for a project that exists and is simply not this turn's. Its hand-rolled `{ ok, code, error }` skipped `toolRefusal` entirely, so the family's refusals carried no `retryable` and no rendered `[code=… retryable=…]` suffix — the one part a driver actually shows the model.
+- `guardProject` now owns both halves for all five tools, returns a real `ToolRefusal`, and **re-throws a mismatch unchanged** (matching every other Studio tool). `studio_git_commit`'s duplicate is deleted. `gitTools.ts` 426 → 438 lines, well under the ceiling.
+
+**6. The `duplicate-call` double-carry — re-checked after `mcp-23`: still needed, nothing removed.**
+All four consumers that hand a tool result to a model still reduce a FAILED one to `output.error` and drop `output.data`: `anthropic.ts:402` (`toolOutputToContent`), `http/chatCompletions.ts:127` (`toolOutputToString`), `responses-shared.ts:150` (`toolOutputToString`), and `mcp/server.ts:199` (the `CallToolResult` builder — the external-MCP path, which `toolLoopBounds.ts`'s comment did not name). So both copies stay. The premise is now pinned by a new gate (`failed-tool-result-drops-data.test.ts`) whose failure message names the serialised copy to delete, instead of being a paragraph nobody re-audits. The same premise is what makes `toolRefusal`'s rendered suffix correct, so the gate protects both.
+
+- **Next step:** none. All six work-order items are done, verified and on draft PR #168; it needs an integrator merge, not more work.
+
+#### Decisions
+- **`headlessOnly` lives on `AiTool`, not in a test allowlist** — a name on a list inside a test file is a gate switched off; a sentence on the tool is a claim the next reader can check and the docs can render. `mutates`, `execution` and `requiredCapabilities` already live there, so this is the same shelf.
+- **`studio_import_figma_frame` gets a row rather than `headlessOnly`** — its three legs each have an editor path (reference upload, frame drag) or an existing parity row. Calling it headless-only would have been the easy lie.
+- **`ProjectDirMismatchError` keeps throwing in the git family.** Every other Studio tool lets it throw and `execTool.ts:121` turns it into a readable `{ ok:false, error }` naming both projects. Catching it only here would have been a second convention; flattening it into `outside-workspace` (what the old `catch {}` did) was actively false.
+- **`projectTools.test.ts` takes its own workspace root rather than `studio_list_projects` being changed.** The tool's contract IS "enumerate the workspace"; the test was pointing it at the machine.
+- **The `outside-workspace` branch is kept, against `sec-13`'s note.** Deleting live code because a review called it dead would have been the worst outcome here.
+
+#### Landmines
+- **`git checkout -- <file>` inside a worktree restores from the INDEX.** It cost me the whole `gitTools.ts` refactor mid-task (unstaged at the time). **Stage before running any probe you intend to revert**, or revert with a targeted edit.
+- **`src/__tests__/setup.ts:542` makes `os.tmpdir()` the Studio workspace root for the entire suite.** Any test that ENUMERATES the workspace (rather than addressing one project in it) is therefore scanning the machine's temp directory, and will be slow, load-sensitive and non-deterministic. `studio_list_projects` was the one that bit; audit any future listing test the same way.
+- **`FIDELITY_THRESHOLDS` is `balanced: 92 / 6%`.** Any `studio_compare` fixture whose comment says "1.5%" or "98" predates W9-2 and is measuring against numbers that no longer exist. There is at least one more such comment elsewhere in the suite.
+- **`assertOwnGitRepo` refuses the workspace root** (`gitRunner.ts:117`, `dir === root`), and `resolveProjectDir(undefined)` returns exactly that root when the workspace is empty. Any reasoning of the form "the containment check already threw, so this branch is dead" has to account for it.
+- The `compare.test.ts` `mock.module` block must keep publishing **every** export of the three mocked modules and restoring them in `afterAll` — `mock.module` is process-global and permanent (`mock-module-must-restore.test.ts`).
+
+#### Verification — real numbers, this branch, this machine
+- `bun run build` — **exit 0** (`tsc -b && vite build`, built in 42.09 s).
+- `bun run lint` — **clean, 0 errors** (the six `'os' is defined but never used` errors `standing-01` records are gone on this base).
+- `bun test src/__tests__/architecture` — **616 pass / 0 fail** across 122 files (70.5 s, quiet run). A first run under load was 615/1 with `ai-driver-isolation` timing out at 11.9 s against its 5 s budget; **alone: 6 pass / 0 fail in 2.97 s** — `standing-01`'s named load artefact. 616 vs `meta-14`'s 611 = my 5 new gate tests (4 renderer rows + the matched-pair assertion; the parity gate's 3 new tests live in `server/`).
+- `bun test server/ai src/__tests__/ai` — **1156 pass / 1 fail** across 117 files (207 s). The single fail is `claudeCli` *"writes the MCP config to a 0600 file"* — `server-25` owns it, untouched here. **All four of my named reds are gone.**
+- Each formerly-red file **run alone**:
+  - `server/ai/tools/studio/parityMatrix.test.ts` — **10 pass / 0 fail**, 80 expect() calls, 1.56 s (was 7/1).
+  - `server/ai/mcp/tools/studio/compare.test.ts` — **15 pass / 0 fail**, 79 expect() calls, 47.7 s (was 13/2).
+  - `server/ai/mcp/tools/studio/projectTools.test.ts` — **21 pass / 0 fail**, 53 expect() calls, **4.63 s** (was 21/0 alone but 21/1 under load at 21–33 s for the one test).
+  - `server/ai/mcp/tools/studio/gitTools.test.ts` — **35 pass / 0 fail**, 101 expect() calls, 10.7 s (was 29/0; +6 new guard tests).
+- Red-then-green proofs driven, not assumed: `frameDiffEngine.ts` `imageScale`→1 (compare), `outsideWorkspaceRefusal()`→`io-error` probe (git guard). Both restored byte-identical.
+- Full `bun test` — **13,642 pass / 2 skip / 13 fail / 1 error** across 1,242 files in **1,272 s** (`meta-14`'s quiet baseline: 13,636 / 6 / 0 in 589 s — this machine was running eleven agents, so wall time is 2.2x and the whole-tree scans time out). Triage of all 13:
+  - **2 are the pre-existing set the work order allows**: `claudeCli` *"writes the MCP config to a 0600 file"* and `studio.test.ts` *"discovers a nested page…"* — both `server-25`'s, untouched.
+  - **11 are load artefacts, every one of which passes alone**: `admin-router-usage` x2 (12.3 s / 12.1 s), `ai-driver-isolation` (31.8 s), `alm-design-system-fresh`, `pixel-art-icons` freshness — all five covered by the quiet `src/__tests__/architecture` run at **616/0**; `publicSdkExports`, `authStepUp` per-IP limiter, `selectorStability` (18 s) — **26 pass / 0 fail** in a four-file run; `localizedPage.test.ts` x3 — **4 pass / 0 fail alone** in 19.5 s, i.e. ~5 s per test against a 5 s timeout, which is why they fall over under any contention.
+  - **Zero new reds. All four of mine are gone.** A first full run under heavier load was 20 fail / 3 errors over the SAME files — the set is load-dependent, not content-dependent.
+
+#### Human action needed
+**None for these changes** — every one of them is server/test/doc and `standing-02` puts this half on static gates only.
+
+Two things for the integrator, both about other people's entries rather than mine:
+
+1. **`sec-13`'s informational finding that `guardProject`'s `outside-workspace` branch is dead is wrong** and should not be carried forward. It is reachable through the workspace root; the branch and two tests for it are now in the tree.
+2. **No CLAUDE.md rule needs to change.** The one thing worth adding to a standing note (I must not edit `STATE.md` myself) is the `setup.ts` workspace-root fact under Landmines above — it is a whole class of slow, load-sensitive test and it is not written down anywhere today.
+
+
+---
+
+### parser-13 — CRLF-safe parsing and formatting-preserving codemods for USERS' repositories
+
+- **Agent:** parser-surgeon (wave 2, `standing-05`)
+- **Stage:** done — gates green, draft PR open
+- **Branch / PR:** `fix/crlf-safe-parse-and-codemods` off `27616ba8` · PR **#169** (draft) against `feat/alm-figma-killer-studio-shell`
+- **Updated:** 2026-09-18
+- **Work order:** `STUDIO-FIGMA-FEEL-PLAN.md` §9 item 3; `STATE.md` `server-24` open item 2; `struct-10` landmine 7.
+
+#### Goal
+Studio parses and rewrites *other people's* repositories, which on Windows are
+CRLF working trees (`core.autocrlf=true` is Git-for-Windows' default).
+`server-24`'s `.gitattributes` fixed Studio's own vendored tree; nothing fixed
+the user's. Make (a) every structural and style codemod preserve the file's
+existing EOL, (b) every line-wise read in the parse/probe path CRLF-safe,
+(c) CRLF fixtures with byte assertions, (d) an end-to-end "CRLF project parses
+to the same page tree as its LF copy".
+
+#### Scope — every file touched
+**New**
+- `src/core/utils/lineEndings.ts` — the pure-string leaf (`detectLineEnding`, `toLf`, `applyLineEnding`, `splitLines`, `LF`, `CRLF`). Zero deps; importable from the browser bundle and from both codemod families without a cycle.
+- `src/core/page-parser/eolFileSystem.ts` — `EolPreservingFileSystem`, a ts-morph `FileSystemHost`; `eolFileSystemOf`, `projectLineEnding`.
+- `src/core/css-codemods/preserveLineEndings.ts` — `preservingLineEndings` + `CssRewrite`.
+
+**Parser**
+- `src/core/page-parser/componentSources.ts` — `createWorkspaceProject` gets the host + `newLineKind: LineFeed`.
+- `src/core/page-parser/parsePageFile.ts` — the default single-file project gets the host.
+- `src/core/page-parser/index.ts` — barrel export.
+
+**ast-codemods**
+- `locateJsxElement.ts` — `createProject()` gets the host + pinned `newLineKind`.
+- `jsxChildRange.ts` — `verbatimSourceText`/`writeVerbatimSource` read/write through the PROJECT's file system instead of `node:fs` (this is the load-bearing one — see Decisions).
+- `extractSubtreeToComponent.ts` — the synthesised component inherits the page's ending.
+- `extractComponentCopy.ts` — the copy project gets the host.
+- `extractStringsToDictionary.ts` — text-in/text-out, so it detects and restores itself.
+
+**css-codemods**
+- `setDeclaration.ts`, `removeDeclaration.ts`, `insertRule.ts`, `keyframes.ts` — all seven write entries wrapped in `preservingLineEndings`.
+
+**server**
+- `server/handlers/studio/designSystemGuide.ts` — `readDoc` normalises; `splitSections`/`firstProseLine` use `splitLines`.
+- `server/handlers/studio/hardcodedStrings.ts` — scans LF-only.
+- `server/handlers/studio/translationCatalog.ts` — parses LF-only.
+- `server/handlers/studio/translationWrite.ts` — detect on read, restore on write.
+- `server/handlers/studioCssWriteback.ts` — `ensureStylesheetImport` uses `createProject()` instead of a bare `new Project(...)`.
+- `server/handlers/studio/{packageManifest,figmaCodeConnect,prototypeCodeFlow}.ts` — read-only probe projects get the host.
+
+**Tests (new)**
+- `src/__tests__/utils/lineEndings.test.ts` (13)
+- `src/core/ast-codemods/__tests__/crlfSourceFiles.test.ts` (11)
+- `src/core/css-codemods/__tests__/crlfStylesheets.test.ts` (11)
+- `src/core/page-parser/__tests__/crlfParse.test.ts` (5)
+- `server/handlers/studio/__tests__/crlfProjectLoad.test.ts` (4)
+- `server/handlers/studio/projectGuide.test.ts` — one appended `describe` (CRLF design-system package)
+
+**Docs**
+- `docs/features/studio-import.md` — new "Line endings — a CRLF repo parses the same and stays CRLF" section + the file map.
+- `docs/agent-refs/studio-pipeline.md` — a writeback-rules row + the "decided in exactly one place" paragraph.
+- `PROJECT-BRIEF.md` — trap 15 gains the user's-repo half (append only, no restructure).
+
+**Commits** — `a1739664` (core seam + parser), `77040145` (ast-codemods), `78e2846f` (css-codemods), `716c24a1` (server), `0f1ae5fe` (docs), `f1496d49` (a literal U+FEFF → escape).
+
+#### Decisions
+1. **Normalise to LF on read, re-apply the file's dominant ending on write** — not preserve-through. Reason: node positions are unaffected *either way* (TypeScript counts `\r\n` as ONE terminator and the `\r` sits after every token on its line, so `line:col` and therefore every node id is identical in both forms; only absolute offsets move). What normalising buys is that no `\r` reaches a resolved VALUE — a multi-line template literal or JSX text block would otherwise carry `\r` into the page tree on Windows and not elsewhere, i.e. two users seeing different boards for the same repo. It also fixes every codemod at once instead of chasing the dozens of `'\n'` string literals in `jsxChildPlacement.ts` / `jsxSubtree.ts` / `unwrapJsxElement.ts` / postcss `raws.before`, which is precisely the band-aid CLAUDE.md forbids.
+2. **The seam is a ts-morph `FileSystemHost`, not a helper at every call site.** That is why ~15 `sourceFile.saveSync()` calls needed no change at all, and why ts-morph's BOM re-add still rides through untouched (it prefixes the text it hands `writeFileSync`; `applyLineEnding` leaves a leading `U+FEFF` alone). `RealFileSystemHost` is not exported by ts-morph, so the inner host is taken once, lazily, from a throwaway `new Project({useInMemoryFileSystem:false}).getFileSystem()`.
+3. **`verbatimSourceText` had to move off `node:fs`.** It compares on-disk bytes against `sourceFile.getFullText()`. With the parse normalised, raw bytes would be `"…\r\n"` vs `"…\n"` → **every structural edit in a Windows checkout would have refused as `stale-source`**. Reading through the same host keeps the guard about what it is about (stale source) and leaves the ending to the layer that owns it. This is the single change most likely to be misread as "weakening a containment check" — it is not; nothing about path handling changed, and the BOM refusal is asserted by a new test so it cannot be silently "fixed" into a BOM-dropping write.
+4. **Line-ending questions, per this module's four-question rule:** none of this locks a node, none adds to `codeProps`, none carries an `origin`, and the panel shows nothing new. It is a byte-level property of the file, not a value.
+5. **A mixed file is normalised to its dominant ending** (ties → CRLF, the repairing direction for a half-converted file). Per-line preservation through an AST rewrite is not promisable. Documented in the module doc, the feature doc, and gated by a test.
+6. **The CSS codemods carry the contract themselves** rather than relying on `studioCssWriteback.ts`, because they are pure text-in/text-out and are also called from the browser. Consequence: `studioCssWriteback.ts` needed no EOL change at all (only the `createProject()` swap for its own JSX import write).
+7. **A no-op CSS edit returns the caller's OWN bytes**, never a re-serialised copy — a re-sent edit on a later autosave tick must rewrite nothing, not even a line ending.
+8. **Fixtures are built from strings in the test, never committed.** This repo's working tree is CRLF-converted by Git on checkout, so a committed CRLF fixture cannot be trusted to still be CRLF. Every fixture is deliberately outside the eSIM vocabulary (warehouse stock room, conference programme, lending library, village hall) per `genericRepoShapes.test.ts`'s discipline.
+9. **Tier D was not touched, nothing executes, `parsePageFile` still never throws.** No writeback target was widened; the one refusal in the area (`stale-source` on a BOM) is now covered by a test that did not exist before.
+
+#### Landmines — things `docs/features/studio-import.md` did not say (now added; `studio-scribe` should carry these to STATE)
+1. **`server-24` open item 2 was already half-done on this base.** `src/core/design-system-manifest/vendorDocs.ts` and `componentCuration.ts` are already `/\r?\n/`-safe (with a `vendorDocsCrlf.test.ts` gate). The *live* instance of that bug was one folder over: `server/handlers/studio/designSystemGuide.ts` runs the identical `/^(#{1,6})\s+(.*)$/` over markdown read from a design-system package inside the **user's** `node_modules`. Proved by reverting the fix — `buildDesignSystemGuide` returns `undefined` for a CRLF package, so the agent is told the package documents nothing.
+2. **`hardcodedStrings.ts` and `extractStringsToDictionary` must agree on the ending or i18n extraction silently refuses.** The scan reports each literal's text; the codemod re-checks it against its own parse. Normalising only one side turns every multi-line JSX string into a `text-changed` refusal on Windows. They are now both LF.
+3. **A BOM'd file refuses EVERY structural edit** (`stale-source`), because `verbatimSourceText` compares disk bytes (BOM included) against the parsed text (BOM stripped). Pre-existing, unchanged, now asserted. Do not "fix" it without deciding what happens to the mark.
+4. **This worktree was cut at `8ab00ae0`, 197 commits behind, and the reset to `27616ba8` left 74 tracked files under `studio-workspace/` and `vendor/` showing as modified** — purely CR-at-EOL, because `git reset --hard` does not re-normalise files already in the working tree and the new `.gitattributes` marks `studio-workspace/** -text`. `git diff --numstat --ignore-cr-at-eol` proved it was CR-only; `git checkout -- studio-workspace vendor` restored them. **Check `git status` right after the reset** — committing that would have been a 7,000-line line-ending diff over user data.
+5. **The Write/Edit tools turn a `U+FEFF` escape in prose into a literal byte-order mark**, same class as the documented `\u0000` trap. It landed in three places and only two were caught by `no-irregular-whitespace`; the third needed a byte scan. Byte-scan any file where you typed a `\u` escape.
+6. **`Page` has no `.tree`** — it spreads `NodeTreeSchema.properties`, so it is `page.nodes` / `page.rootIds` directly. Cost a debugging cycle; two empty `pages` arrays `toEqual` each other, so a tree assertion that reaches through a wrong property looks like "the project didn't load".
+7. **Not done, deliberately, to avoid a wave collision:** `server/handlers/studio/deployRunner.ts` and `deployProviders.ts` split subprocess stdout on a bare `'\n'`. Git's own output is LF so `gitRunner.ts`/`gitOperations.ts` are fine and `tscDiagnostics.ts` already strips a trailing `\r` per line, but a Windows `vercel`/`netlify` CLI emits CRLF. `server-25` owns `deploy.ts`; whoever picks that up should use `splitLines`.
+8. **`src/core/siteImport/cssToStyleRules.ts` is unaffected by this work but still carries `standing-09`'s `@layer` defect.** Mentioned only so nobody assumes "CSS is CRLF-clean now" means "CSS import is clean now".
+9. `src/admin/pages/site/studio/fsCodemodAdapter.ts` is **exactly 700 lines** and needed no change (it is an HTTP adapter with no file I/O). Do not add a line to it.
+
+#### Verification — real numbers, this machine, 2026-09-18
+- `bun run build` — **exit 0** (`tsc -b && vite build`, built in 1 m 5 s).
+- `bun run lint` — **exit 0**. (Note: the six pre-existing `'os' is defined but never used` errors `server-24` reported are **gone** on this base; lint is clean.)
+- `bun test src/__tests__/architecture` — **608 pass / 3 fail / 611 total**; all three are 5 s-timeout artefacts under concurrent load (`alm-design-system-fresh` 6.9 s, `no-core-barrel-deep-imports` 17.9 s, one `ai-driver-isolation` pair on an earlier run). Re-run alone: `no-core-barrel-deep-imports` **2 pass / 0 fail in 1.57 s**, `alm-design-system-fresh` passes. Effectively **611 / 0** on a quiet machine, matching the work order's expectation.
+- `bun test src/core/ast-codemods src/core/css-codemods src/core/page-parser src/core/studio-sync` — **850 pass / 0 fail** across 55 files (136 s).
+- `bun test server/handlers/studio` — **939 pass / 1 fail**; the failing name differed between two runs (`canonicalSummaryForFile`, then `resolvePageSourceFile`), both 5–6 s against the 5 s default. Run together alone: **5 pass / 0 fail**.
+- New tests: `lineEndings` 13/0 · `crlfSourceFiles` 11/0 · `crlfStylesheets` 11/0 · `crlfParse` 5/0 · `crlfProjectLoad` 4/0 · `projectGuide` 38/0 (was 37).
+- Full `bun test` — **13,676 pass / 2 skip / 11 fail / 13,689 tests across 1,246 files, 936.95 s.** Zero new reds. Of the 11: **5** are the dispatch's named pre-existing set (`claudeCli` 0600, `studio.test.ts` nested-page load, `parityMatrix`, `studio_compare` ×2 — `studio_list_projects` happened to pass); the rest are 5 s-timeout artefacts of the 4-worker run. A first, noisier run showed 17 distinct names; **every one of them was re-run ALONE and passes** — `ai-driver-isolation`, `admin-router-usage` ×2, `no-core-barrel-deep-imports` (2/0 in 1.57 s), `module-size-budgets` (5/0 in 0.79 s), `mock-module-must-restore`, `selectorStability`, `publicSdkExports`, `localizedPage` ×3 (4/0), `authStepUp` (17/0), `canonicalPageCheck` + `pageSourceFile` (5/0). Nothing outside my diff was touched.
+- The only pre-existing reds named in the dispatch (`claudeCli`, `studio.test.ts`, `parityMatrix`, `studio_compare` ×2, `studio_list_projects`) were not touched by this change.
+- `git ls-files --eol` on every new file: `i/lf w/lf`. No `w/mixed` anywhere under `src/` or `server/`.
+
+#### Human action needed
+Static-gate work per `standing-02` (parser/server — happy-dom models it fine), but one **dogfood** is worth doing because it is the whole point of the change and no unit test can see a user's real repo:
+
+1. Take a real project in `studio-workspace/` (or clone one fresh on Windows so Git converts it), confirm `git ls-files --eol` shows `w/crlf`, open it at `/admin/site`.
+2. Change one text value and one CSS declaration, save, then `git diff`: **only the lines you edited may appear**, and `git diff --stat` must not report the whole file. Before this change the diff was the entire file.
+3. ⌘G two adjacent rows, then ⌘⇧G the wrapper: `git diff` must come back **empty**.
+4. If the project ships a design system as a package, check the Assets panel still lists its components with real descriptions (that is `designSystemGuide.ts`'s CRLF fix).
+5. A project with a `.gitattributes` of its own saying `* text eol=crlf` is the strongest case — after a save it must still be clean, not permanently self-dirtying.
+
+#### Rule-book note
+Nothing in `CLAUDE.md` needs to change for this work. One adjacent observation for the orchestrator: `CLAUDE.md` §"Mutation API" still says **11** named tree-mutation actions; `struct-10` made it **13** (`groupNodes`, `ungroupNode`). That is `struct-10`'s landmine 1, still open — not mine to edit.
+
+
+---
+
+### store-13 — structural commits report the ids they create, and no insert orphans a node
+
+- **Agent:** store-engineer (wave 2, parallel-wave protocol `standing-05`)
+- **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`. Not dogfooded in a browser.
+- **Branch:** `feat/structural-commits-report-created-ids` · **PR:** https://github.com/maherfayad-stack/Figma-Killer-2/pull/171 (draft)
+- **Commits:** `52804952` (codemods + save route) · `c166481f` (selection + paste) · `11ba4911` (HTML-import refusal) · `3eb8723b` (docs) · `09cb655a` (one test assertion). Base `27616ba8`.
+- **Updated:** 2026-09-18
+- **Setup defect, again:** the worktree was seeded at `8ab00ae0`, **197 commits behind** the named base. Reset to `27616ba8` before starting. Third wave running in a row where this has cost an agent time — worth fixing in whatever cuts the worktrees.
+
+#### Goal
+The two linked `STUDIO-FIGMA-FEEL-PLAN.md` §9 items: `keys-01`'s K7 follow-up (a
+structural write must report the node ids it CREATED so ⌘D / Alt+drag / paste /
+insert-from-library / ⌘G select the new element after the source resync) and
+`mcp-21`'s open defect (`site_insert_html` / `site_replace_node_html` merging
+nanoid nodes into a studio-imported tree with no source write behind them).
+
+#### What shipped
+
+**(1) The created id, end to end.**
+- **Codemods** (`src/core/ast-codemods/`). NEW `createdJsxLocation.ts`
+  (`offsetAfterEdits` + `createdJsxLocation`). `insertJsxElement`,
+  `duplicateJsxElement`, `wrapJsxElement` and `wrapJsxElements` return
+  `{ ok: true, created: CreatedJsxLocation | null }`. The location is derived
+  from the byte range each one spliced — the first `<` in a rendered block is
+  the new element's own opening tag in every placement shape — and then
+  **verified** by re-locating an element there in the re-parsed file. A position
+  that does not resolve reports `null`, never a guess.
+- **Save route.** `StructuralEditOutcome` carries `created?`;
+  `StudioEditApplyOutcome` carries `created?`; `StudioEditBatchResult` gains
+  **`createdNodeIds: string[]`**, minted with `buildSourceNodeId` so the ids
+  cannot drift from the parser's own spelling.
+- **Client.** `StudioSaveResponseSchema` gains an optional `createdNodeIds`.
+  `commitStructural` parks them in NEW
+  `src/admin/pages/site/studio/pendingCreatedSelection.ts` — a one-slot,
+  30 s-expiring box — **before** awaiting the resync, because the narrow path
+  applies its patch synchronously inside `resyncBoardAfterWrite`.
+  `usePersistence.ts`'s NEW exported `selectNodesCreatedByLastWrite()` claims it
+  on **both** re-read paths (`patchPages` and the full `loadSite`).
+- **Paste.** `pasteNode` was the one structural gesture that never asked whether
+  the tree was studio-imported: it restored the clipboard SNAPSHOT as nanoid
+  nodes and the next parse deleted them. NEW `writePasteToSource`
+  (`studioSourceWrites.ts`) commits a paste as a `duplicate` of the clipboard's
+  own roots into the destination container, and refuses by name when those roots
+  are not elements in this file.
+
+**(2) `insertImportedNodes` refuses on a studio tree.** NEW
+`refuseImportedNodesInto` + `HTML_IMPORT_ON_SOURCE_REFUSAL`
+(`studioSourceWrites.ts`). **I chose REFUSE, not a source insert** — see
+Decisions §1. `insertImportedNodes` returns NEW `ImportedNodesResult`
+(`importedNodesResult.ts`) instead of `string[]` so the reason travels to the
+modal (inline) and to the tool (its `error`). `refuseImportedNodesInto` is also
+a store action, because `site_replace_node_html` DELETES the target's children
+before inserting and a refusal discovered at insert time emptied the node —
+found by the new regression test, not by reading.
+
+#### Scope — files by slice
+
+| Slice | Files |
+|---|---|
+| `@core/ast-codemods` | NEW `createdJsxLocation.ts`; `insertJsxElement.ts`, `duplicateJsxElement.ts`, `wrapJsxElement.ts`, `wrapJsxElements.ts`, `index.ts`; NEW `__tests__/createdJsxLocation.test.ts`; 47 `toEqual({ ok: true })` assertions across 4 existing specs → `toMatchObject` |
+| server save route | `studioStructuralWriteback.ts`, `studioEditSchemas.ts`, `studioWriteback.ts`; NEW `__tests__/studioCreatedNodeIds.test.ts` |
+| editor store — `site` slice | `studioSourceWrites.ts` (491→675), `nodeActions.ts` (603→620), `types.ts` (695→663 — it SHRANK: the new type is its own module), NEW `importedNodesResult.ts` |
+| editor store — `clipboard` slice | `clipboardSlice.ts` (303→322) |
+| studio commit layer | NEW `pendingCreatedSelection.ts`, `studioStructuralCommits.ts` (526→543), `studioSaveRequests.ts`; NEW `__tests__/{createdNodeSelection,pendingCreatedSelection}.test.ts` |
+| editor hooks | `usePersistence.ts` (636→668) |
+| canvas | `useCanvasNodeShortcuts.ts` (stale K7 comment only) |
+| agent executor | `executor.ts` (691→480), NEW `htmlTools.ts` (233), `documentTools.ts` (168→195); NEW `src/__tests__/agent/insertHtmlOnStudioTree.test.ts`; 2 assertions updated in `executor.test.ts` / `agentSlice.test.ts` |
+| panels / modals | `FormSettingsPanel.tsx`, `ImportHtmlModal.tsx` |
+| other tests | `src/__tests__/editor-store/mutateAllPagesAndSite.test.ts` (one assertion) |
+| docs | `docs/agent-refs/{editor-store,studio-pipeline,path-index}.md`, `docs/features/{agent,html-import,mcp-connectors,spotlight}.md` |
+
+43 files, +1888 / −309.
+
+#### Exported signatures that CHANGED (`canvas-20`, `parser-13`: read this)
+- `InsertJsxElementResult` / `DuplicateJsxElementResult` / `WrapJsxElementResult`
+  / `WrapJsxElementsResult`: the `ok: true` member gained a required
+  `created: CreatedJsxLocation | null`. **Parameter lists are unchanged.**
+- `StructuralEditOutcome` (`studioStructuralWriteback.ts`): `ok: true` member
+  gained optional `created?: CreatedJsxLocation | null`. **`applyStructuralEdit`'s
+  parameter list is unchanged.**
+- `StudioEditApplyOutcome` gained optional `created?`; `StudioEditBatchResult`
+  gained required `createdNodeIds: string[]`.
+- `StudioSourceWrites` gained `refuseImportedNodesInto` and `writePasteToSource`;
+  `refuseInsertInto` keeps its boolean signature (it now delegates to a private
+  `refuseInsertIntoWithReason`).
+- `SiteSlice.insertImportedNodes` returns `ImportedNodesResult`, not `string[]`.
+  `SiteSlice` gained `refuseImportedNodesInto(parentId): string | null`.
+- `usePersistence.ts` newly exports `selectNodesCreatedByLastWrite()` (test seam).
+- `executor.ts` no longer defines `runInsertHtml` / `runGetNodeHtml` /
+  `runReplaceNodeHtml` / `findNodeInActiveDoc` / `nodeNotInActiveDocError` — the
+  first three live in `htmlTools.ts`, the last two are exported from
+  `documentTools.ts`.
+
+#### New selectors and their complexity
+**None.** No selector was added or widened. The one new store READ is
+`selectNodesCreatedByLastWrite`'s membership test against the WS-5.2
+`_nodeIdToPageIds` index — **O(1) per created id**, run once per resync, never on
+a store-change path.
+
+#### New mutations, coalesce keys, history behaviour
+**No new tree mutation and no new coalesce key.** Every write here is a one-shot
+structural commit, which by construction does not coalesce and does not push a
+history entry on the studio path (the board is re-read from disk; `patchPages`
+deliberately bypasses `runHistoricMutation` — see its own doc). `pasteNode` on a
+studio tree stops pushing a history entry, correctly: it no longer mutates the
+tree at all. On a CMS tree it is unchanged — one `mutateSiteState`, one undo step.
+`CLAUDE.md`'s "13 named tree-mutation store actions" count is **unaffected** —
+nothing here is a named tree mutation.
+
+#### Decisions
+1. **`insertImportedNodes` REFUSES rather than routing to a source insert.** The
+   work order allowed either and asked which and why. Three reasons a source
+   insert is genuinely unavailable: (a) the importer's rule table maps HTML onto
+   ~15 base modules and exactly **two** — `base.container` and `base.text` —
+   implement `ModuleDefinition.sourceIntrinsic`, so links, buttons, images, every
+   form control, `<studio-loop>` and `<studio-outlet>` have no JSX form Studio
+   may write; writing only the writable part is the half-applied patch this store
+   forbids; (b) the `<style>` half of the payload targets a stylesheet, not the
+   `.tsx`, so one call would land two writes in two files or leave the structure
+   unstyled; (c) the tools' own contract — return the ids you created so the
+   caller can address them — cannot be met by a write whose ids do not exist
+   until the resync, which happens after the tool returns. The refusal names
+   `studio_apply_edits`' `insert` edit, which does write real JSX and does return
+   an addressable id.
+2. **No new `TOOL_REFUSAL_CODES` entry.** The parity-gated table and
+   `studio-tool-refusals-are-coded.test.ts` are scoped to
+   `server/ai/mcp/tools/studio/`, and that gate explicitly keeps `aiToolError`
+   "for the CMS half, which has its own conventions". `site_insert_html` is a
+   CMS-toolset browser tool, so it refuses through `aiToolError` carrying the
+   store's own sentence plus the studio remedy. `docs/features/agent.md`'s tool
+   table documents it instead.
+3. **The handoff is a BOX, not a callback.** `studioStructuralCommits.ts` is
+   inside the store's own build graph (`store.ts → nodeActions.ts →
+   studioStructuralCommits.ts`); importing `useEditorStore` there closes exactly
+   the cycle `adminEvents.ts` documents and exists to break. The box is a leaf
+   with no imports at all, and `usePersistence.ts` — which already owns both
+   re-read paths and already has store access — drains it.
+4. **Created positions are pinned to their distance from the END of the file**,
+   not to an absolute line. `orderStudioEditsForApply` applies a batch
+   bottom-to-top, so every edit that runs after a creation sits strictly ABOVE it
+   and shifts its line while leaving its distance from the end alone. Recording
+   the line is stale for every created element but the last — reachable today
+   with a multi-selection ⌘D, and pinned by a test.
+5. **Selection happens on the commit path, not at the gesture's call site.** K7's
+   rule ("a background tool must never move the user's selection") still holds
+   for the in-memory path — `duplicateNode` still selects nothing. On a studio
+   tree there is no selection to steal: the resync re-mints every id the write
+   shifted and `patchPages` prunes a selection that no longer resolves.
+6. **`created` is `null` rather than a guess** when the re-parsed file does not
+   confirm the position, and a write whose elements did not ALL come back selects
+   nothing rather than part of itself. A wrong id would select — and then let the
+   user edit — an element they never made.
+
+#### Landmines
+1. **`docs/features/mcp-connectors.md`'s "hole of its own shape" paragraph is
+   gone.** If another branch also edits that bullet, take this version: the
+   defect it described is fixed.
+2. **`executor.ts` was 691 lines and my change pushed it to 708.** I extracted
+   `htmlTools.ts` (the three HTML tools) and moved `findNodeInActiveDoc` /
+   `nodeNotInActiveDocError` into `documentTools.ts` rather than grandfathering.
+   Anyone else editing `executor.ts` this wave will conflict on the import block
+   and on the deleted regions.
+3. **`studioSourceWrites.ts` is at 675/700.** Next split candidate; the natural
+   seam is "refusals and their sentences" vs "the writers".
+4. **`insertImportedNodes`' return type changed.** Five call sites updated
+   (modal, `FormSettingsPanel`, executor ×2, one test). A sixth appearing on
+   another branch is a type error, not a silent bug.
+5. **The created id is always a PLAIN `rel:line:col`.** Correct today because a
+   structural gesture on an INLINED node is refused upstream
+   (`shared-component`). If that refusal is ever relaxed, `createdNodeIds` needs
+   the call-site prefix or the selection silently misses.
+6. **Two of the four creating codemods write through `applyTextEdits`, two do
+   not.** `offsetAfterEdits` is only needed where an import edit sits above the
+   JSX (`insert`, `wrap`, `group`); `duplicate` splices once and passes the raw
+   offset. A future codemod that adds a second edit ABOVE its own must pass it
+   through `offsetAfterEdits` or the created line will be short by its length.
+7. **Two architecture gates and three other specs are load-sensitive on this
+   machine** and fail only in a full run — see Verification. All pass alone.
+8. **`copyNode` still snapshots on a studio tree.** Only the PASTE half became a
+   source write; the clipboard entry is still a node snapshot, which is what lets
+   `writePasteToSource` name the roots. A copy from another project therefore
+   still lands in the clipboard and is refused at paste time, by name.
+9. **`parser-13` collision, avoided:** I added `createdJsxLocation.ts` and new
+   return fields but touched **no** EOL handling in `src/core/ast-codemods/**`.
+   The new helper reads line/col through `sourceFile.getLineAndColumnAtPos`
+   (ts-morph's own line starts), so it inherits whatever CRLF handling
+   `parser-13` lands rather than duplicating a rule.
+
+#### Not done / follow-ups
+- **`move`/`reparent` still lose the selection after a resync.** The moved
+  element's own id shifts, `patchPages` prunes it, and nothing reports a
+  "created" id for a kind that creates nothing. A `relocatedNodeIds` counterpart
+  is the same mechanism one field over; `canvas-20` is already in those files for
+  the cross-frame move and may want it.
+- **`ungroup` selects nothing.** Its children get new ids and "which of them" has
+  no obviously right answer. Worth a product call.
+- **The CMS toolset's system prompt still tells the model to use
+  `site_insert_html`** (`server/ai/tools/site/systemPrompt.ts`). The Studio
+  prompt/toolset is chosen per-request, so an in-canvas agent on a Studio project
+  never sees it; an external MCP connector still can, and now gets the refusal.
+  Whether `site_*` write tools should be filtered out of a Studio-scoped
+  connector's tool list entirely is `mcp-24`'s call (`server/ai/mcp/**`).
+
+#### Verification (real numbers, Windows, this machine)
+- `bun run build` — **exit 0** (tsc + vite, 59.4 s).
+- `bun run lint` — **exit 0**, no errors or warnings (only the pre-existing
+  `[BABEL]` 500 KB deoptimise note on `vitePluginBundle.ts`).
+- `bun test src/__tests__/architecture` — **595 pass / 1 skip / 2 fail**; both
+  failures are whole-tree scans that time out under load and pass alone
+  (`alm-design-system-fresh` 4/0, `no-core-barrel-deep-imports` 2/0). The bundle
+  gate self-skips without `dist/`.
+- `bun test src/core/ast-codemods` — **382 / 0** (new `createdJsxLocation.test.ts` 10/0).
+- `bun test server/handlers/__tests__/studioCreatedNodeIds.test.ts` — **8 / 0**.
+- `bun test src/admin/pages/site/studio/__tests__/createdNodeSelection.test.ts` — **6 / 0**.
+- `bun test src/admin/pages/site/studio/__tests__/pendingCreatedSelection.test.ts` — **7 / 0**.
+- `bun test src/__tests__/agent/insertHtmlOnStudioTree.test.ts` — **5 / 0**.
+- `bun test src/__tests__/editor-store` — **473 / 0**.
+- `bun test src/__tests__/agent src/admin/pages/site` — **1320 / 0**.
+- **Full `bun test`** — **13666 pass / 2 skip / 12 fail**, 946.6 s. Triage:
+  - the **six** known pre-existing reds on this base — `claudeCli` 0600 mode,
+    `studio.test.ts` nested-page load, `parityMatrix`, `studio_compare` ×2,
+    `studio_list_projects`;
+  - **five** load-sensitive 5 s timeouts, each verified green run alone —
+    `admin-router-usage` ×2 (3/0), `ai-driver-isolation` (6/0),
+    `publicSdkExports` (5/0), `localizedPage` (4/0);
+  - **one** genuinely mine — `insertImportedNodes regression` asserted
+    `toHaveLength` on the old `string[]` return. Fixed in `09cb655a`; the suite
+    is 473/0 after it. **Zero new reds.**
+- No NUL bytes in any of the 43 touched files (byte-scanned). Every touched file
+  is CRLF in the working tree and LF in the index, matching its neighbours.
+
+#### Human action needed (dogfood, `/admin/site`, a source-backed project)
+1. Select an element → **⌘D**. After the resync the COPY is selected and named in
+   the Properties header — not the original. One toast.
+2. **⌘D ×5 rapidly.** One "Duplicated" toast (collapsed), at most one "Still
+   writing your last change", and the LAST copy selected. `git diff` shows
+   exactly as many copies as the toast claims.
+3. **Alt+drag** an element into another container: the copy lands there and is
+   selected.
+4. **⌘G** two adjacent siblings: the new `<div>` is selected afterwards.
+5. **Insert a box (`R`) or a design-system component**: the new element is
+   selected and the inspector is already pointed at it.
+6. **⌘C then ⌘V**: the copy appears NEXT TO the selection, is selected, and is a
+   real element in the `.tsx` (`git diff`). Reload the board — it is still there.
+   This is the one that used to vanish.
+7. **⌘V after copying from a different project** (switch projects, then paste):
+   a refusal naming "not part of this page's code any more", and `git diff` empty.
+8. **Paste HTML** (the Import HTML modal) on a studio project: the dialog shows
+   the refusal inline and nothing is added.
+9. Everything above on an ordinary CMS document: unchanged.
+
+
+---
+
+### canvas-20 — D2 G3 + G15: a drag that crosses a frame moves markup between files, and a dropped file becomes an `<img>`
+
+- **Agent:** canvas-engineer (parallel wave 2, `standing-05`)
+- **Stage:** done — draft PR open against `feat/alm-figma-killer-studio-shell`
+- **Branch + PR:** `feat/cross-frame-drag-and-file-drop` · **PR #172** (draft) — https://github.com/maherfayad-stack/Figma-Killer-2/pull/172 · base `27616ba8`
+- **Commits:** `a9a66c52` (codemod) · `49fc1488` (rule + wire shape) · `a251d64f` (store) · `3da9000a` (canvas, G3) · `7a318164` (canvas + server, G15) · `2ec1adcf` (docs)
+- **Updated:** 2026-09-18
+
+---
+
+## Goal
+
+The two Figma-hands items `canvas-19` left open, both from D2:
+
+- **G3 — cross-frame drag.** Dragging an element out of frame A and dropping it
+  into a container in frame B — a different page file — MOVES it: one
+  structural commit that removes it from A's `.tsx` and writes it into B's,
+  both files or neither. Alt copies. Refuses honestly, with a sentence, when
+  the markup cannot survive the move.
+- **G15 — OS file drop.** Dropping an image file from the desktop onto a frame
+  lands it in the project's own asset convention and writes an
+  `<img src alt>` at the drop point, as ONE structural commit. Empty board →
+  refusal toast, no write. Non-image → refusal naming the type.
+
+---
+
+## Scope — every file touched
+
+**Core codemods** (`src/core/ast-codemods/`)
+- NEW `transplantJsxElement.ts` — the cross-FILE move.
+- NEW `__tests__/transplantJsxElement.test.ts` (12).
+- `jsxImportEdits.ts` — `resolveImportEdits` now takes an `ImportRequirement`
+  (`{ specifier, style?: 'named' | 'default' | 'namespace' }`) so a MIRRORED
+  binding keeps the shape the user wrote it in.
+- `jsxSubtree.ts` (`collectSubtreeImports` returns the new shape),
+  `insertJsxElement.ts`, `insertJsxIntoSlotProp.ts`, `wrapJsxElement.ts`,
+  `wrapJsxElements.ts` (call sites), `index.ts` (barrel).
+
+**Page tree** (`src/core/page-tree/`)
+- NEW `sourceStructureTransplant.ts` — `previewStructuralTransplant`, the first
+  structural preview that takes TWO trees.
+- NEW `__tests__/sourceStructureTransplant.test.ts` (13). `index.ts` (barrel).
+
+**Server** (`server/handlers/`)
+- `studioStructuralWriteback.ts` — `TransplantEditSchema`, `applyTransplantEdit`,
+  `isStructuralEditKind`. `applyStructuralEdit`'s parameter type EXCLUDES
+  `transplant`.
+- `studioWriteback.ts` — the `transplant` dispatch branch; the destination file
+  joins `touchedFiles`; the post-batch import prune now covers a transplant that
+  moves.
+- `studioEditSchemas.ts` (`StudioEditRefusal['kind']`), `studioEditRouting.ts`
+  (dedupe exemption).
+- NEW `studio/assetDrop.ts` — `POST /admin/api/studio/asset-drop`, one line in
+  `STUDIO_SUB_ROUTERS` (`studio.ts`).
+- NEW `__tests__/studioTransplantWriteback.test.ts` (9), NEW
+  `__tests__/assetDrop.test.ts` (17).
+
+**Store** (`src/admin/pages/site/store/slices/site/`)
+- NEW `transplantActions.ts`, NEW `imageDropActions.ts`.
+- `structuralSourceEdits.ts` (`planSourceTransplant`, a `transplant` refusal
+  title), `types.ts` (two actions + `TransplantDestination`), `nodeActions.ts`
+  (two spreads, two union members).
+- NEW `__tests__/transplantPlan.test.ts` (6), NEW
+  `__tests__/imageDropInsert.test.ts` (4).
+- `src/admin/pages/site/studio/studioStructuralCommits.ts` —
+  `commitStudioTransplant` (appended).
+- NEW `src/admin/pages/site/studio/dropStudioAsset.ts`.
+
+**Canvas** (`src/admin/pages/site/canvas/`)
+- NEW `canvasDropSurfaceRegistry.ts`, `canvasDragBoard.ts`, `canvasDragFrame.ts`,
+  `canvasDragCommit.ts`, `canvasFileDrop.ts`, `useCanvasFileDrop.ts`.
+- `useCanvasReorderDrag.ts` (700 → **525**, two extractions), `canvasDnd.ts`
+  (`resolveCanvasTransplantTarget`, `CanvasDragPaintTarget`),
+  `canvasDragPainter.ts`, `canvasSelectionOverlayPositioning.ts`,
+  `BreakpointSelectionOverlay.tsx` (registration + `pageId`),
+  `CanvasRoot.tsx` (one hook), `useIframeEventForwarding.ts` (a fourth relay).
+- NEW `src/__tests__/canvas/canvasCrossFrameDrag.test.tsx` (7),
+  `canvasDragBoard.test.ts` (9), `canvasFileDrop.test.ts` (11).
+
+**Gates + docs**
+- `src/__tests__/architecture/single-drag-mechanism.test.ts` — two allowlist
+  entries with reasons.
+- `src/admin/spotlight/keybindingGestures.ts` — two `?`-sheet entries.
+- `docs/agent-refs/canvas-internals.md`, `docs/agent-refs/studio-pipeline.md`,
+  `docs/agent-refs/editor-store.md`, `docs/agent-refs/path-index.md`,
+  `docs/reference/canvas-dnd.md`, `docs/server.md`.
+
+---
+
+## Done so far
+
+**G3 — the write.** `transplantJsxElement` is one codemod, not a delete plus an
+insert: two edits are two writes the batch could land half of, and the second
+has no markup to insert — the element's source text only exists in the file the
+first one just removed it from. It partitions the subtree's free variables
+(`analyzeFreeVariables`, the machinery `extractSubtreeToComponent` already
+uses): a name the ORIGIN resolves at module scope is CARRIED as a mirrored
+import (relative specifiers re-resolved against the destination's own location,
+import style preserved); anything body-local refuses as `captured-scope`, by
+name. Both files' next contents are computed in full before either is written.
+
+**G3 — the rule.** `previewStructuralTransplant` answers everything decidable
+from the two ids: the four `refusePlacement` reasons on BOTH ends, one element
+at a time, an honest destination container, and a backstop refusal when the two
+frames turn out to be two views of one file. The AST answers the two only it
+can — `captured-scope` and `binding-conflict` — at save time.
+
+**G3 — the gesture.** Every mounted design frame publishes itself to a
+module-scoped `canvasDropSurfaceRegistry`; membership IS the viewport test
+`frameVirtualization` already performs. Frame rects are measured ONCE per
+gesture and refreshed only on a live-transform change or a registry change; a
+frame's candidates are measured lazily on first entry. Chrome is painted in the
+frame the pointer is OVER, in that frame's own space, into that frame's own
+layer; `session.paintedLayer` clears the one being left. A cross-frame drop
+resolves as an INSERT (the element is not in that tree). Alt copies. The refusal
+chip appears while the pointer is still down.
+
+**G15 — the route.** `asset-drop` shares `asset-upload`'s whole security
+pipeline (`landAssetBytes`) and adds the one question upload's caller answers
+for itself: WHICH directory can back a literal `<img src>`. Always `public/` —
+the one directory every framework the probe recognises serves from the site
+root. Created only for a framework that declares the convention; 409 with a
+remedy otherwise. The write directory is a server-derived constant, so the
+`targetDir` traversal surface does not exist on this route.
+
+**G15 — the gesture.** `planCanvasFileDrop` decides every refusal before the
+network is touched. `useCanvasFileDrop` is mounted once at `CanvasRoot`;
+`useIframeEventForwarding` relays `dragover`/`drop` onto the iframe element and
+cancels both inside the frame. `insertImageIntoPage` names its page explicitly
+and posts one `insert` with `src` and a non-empty `alt`.
+
+---
+
+## Decisions
+
+1. **`pageId`, never `frameId`, decides whether a drop is cross-frame.** Two
+   frames can render the same page (a "duplicate as variant" sibling, WS-10
+   Phase 2); a drop between those two is an ordinary same-file reparent and
+   keeps going through `moveNodes`. `previewStructuralTransplant` refuses a
+   same-file gesture as a backstop rather than pointing a cross-file codemod at
+   one file.
+2. **A cross-frame drop is resolved as an INSERT, not a move.** The dragged
+   element is not in the destination tree, so a move resolver's cycle and
+   self-drop guards have nothing to check and its `draggedIds` mean nothing
+   there. `resolveCanvasInsertionTarget` is the function that already owns
+   "which container, and where among its children".
+3. **Chrome is painted in the destination frame's layer, not the origin's.**
+   `.viewport` is `overflow: hidden`; a cross-frame drop line in the origin's
+   layer is drawn where nobody can see it.
+4. **`public/` is the only honest asset home for a drop, and `src/assets/`
+   cannot be used.** Under every bundler in the probe's list, a file in
+   `src/assets/` is only reachable through an `import` the bundler rewrites to a
+   hashed URL — so a literal path works in `vite dev` and 404s in production,
+   and `<img src={photo}>` is TWO edits in two places. A project with neither a
+   `public/` nor a detected framework gets a 409 naming the remedy.
+5. **No optimistic canvas change, and no undo entry**, for either gesture —
+   they join the `insert`/`duplicate`/`wrap`/`group` family. The node that
+   appears afterwards is a freshly parsed one whose id is the `rel:line:col` the
+   write produced, so there is nothing an optimistic edit could mint. Both are
+   gated by `guardAgainstConcurrentStructuralCommit`.
+6. **`transplant` gets its own server entry** (`applyTransplantEdit`) rather
+   than a branch of `applyStructuralEdit`, and is excluded from that function's
+   parameter TYPE. Widening eight same-file kinds' `{ line, col }` parameters to
+   carry a file would make all of them read as if they might be cross-file.
+7. **Native HTML5 DnD for G15, by necessity.** A file from outside the browser
+   is only ever delivered through `DataTransfer.files`. Both surfaces that touch
+   the API join `single-drag-mechanism`'s allowlist with that reason; the
+   DECISION half (`canvasFileDrop.ts`) touches no DnD API and stays off it.
+8. **Two extractions before adding a line**, per the ceiling rule:
+   `canvasDragCommit.ts` (the one store write a released drag makes) and
+   `canvasDragFrame.ts` (the session shape and one animation frame of it).
+   `useCanvasReorderDrag.ts` is 525 and is now only React.
+
+---
+
+## Landmines
+
+**The three-way fight (height / injectors / events) — one new interaction.**
+
+1. **`overflow: hidden` on `.viewport` is now load-bearing for the DRAG, not
+   just for the frame.** It is why per-frame drag layers exist at all and why
+   `session.paintedLayer` has to clear the frame being left. If anyone makes a
+   frame's viewport `overflow: visible` (the auto-height rule already does this
+   on `.frameBody`, one level out), cross-frame chrome will start bleeding
+   across frames and the "clear the layer you left" logic will look redundant
+   when it is not.
+2. **`useIframeEventForwarding` now has FOUR relays, and the new one cancels
+   events inside the frame.** `dragover`/`drop` are `preventDefault()`ed in the
+   frame's own document as well as relayed — without that the browser navigates
+   the frame's document to the dropped file, replacing the rendered page with a
+   bare image and silently killing the portal. Anything that adds a
+   `{ passive: true }` or removes the cancel reintroduces it.
+3. **The board rect cache and the frame candidate index invalidate on DIFFERENT
+   signals and must not be merged.** Candidates go stale on a frame REFLOW
+   (`ResizeObserver` on the body); board rects go stale on a TRANSFORM change or
+   a REGISTRY change. A reflow inside frame B does not move frame A's rect, and
+   a pan does not reflow anything. `canvasDragBoard.test.ts` pins the counts.
+4. **Registering a drop surface from `BreakpointSelectionOverlay` means the
+   registry's lifetime is the OVERLAY's, not the iframe's.** `perf-07`'s mount
+   pool keeps a departed frame's iframe alive; the overlay unmounts with the
+   frame. That is the behaviour we want (a frame off-screen is not a drop
+   target), but it means `listCanvasDropSurfaces()` is NOT "every live iframe" —
+   do not use it as one.
+5. **`dropLayer` is a CLOSURE, not a value, on `CanvasDropSurface`.** React
+   populates `dropLayerRef` after the registration effect runs on the first
+   commit, and `iframeElement` is replaced wholesale on a frame reload. Storing
+   the element would register `null` forever.
+6. **The transplant's import prune is keyed on the ORIGIN only.** The
+   destination's freshly carried import is deliberately never snapshotted — if
+   someone adds it to `referencedBefore`, the prune will delete the import the
+   codemod just wrote, because it was not live before the batch.
+7. **`resolveImportEdits`'s requirement shape changed** (`Map<string, string>` →
+   `Map<string, ImportRequirement>`). Three existing callers moved with it. A
+   default/namespace requirement never joins an existing declaration's named
+   list — it gets its own line, which is always valid.
+8. **`applyStructuralEdit` can no longer be handed a `transplant`** (excluded in
+   the type). A caller that routes one there will not compile — which is the
+   point, but it will read as a surprise to anyone adding a tenth kind.
+9. **Three import cycles were introduced and closed in the same change.** The
+   two new store action modules must NOT import `lookupCanvasPageById` from
+   `@site/store/store` (they are imported BY the composed store) — they scan
+   `site.pages` themselves, once per gesture. And `CanvasDragPaintTarget` lives
+   in `canvasDnd.ts`, not beside the painter, because
+   `canvasSelectionOverlayPositioning.ts` reads it and the painter imports that
+   module.
+10. **No undo for either gesture.** ⌘Z after a cross-frame drag or a file drop
+    undoes whatever came before it. This is the existing behaviour of every
+    source-write-without-tree-mutation gesture (⌘D on a studio tree included),
+    not a new gap — but the plan's "⌘Z is one step" bar is not met by this
+    family, and closing it needs `commitStructural` to report created node ids
+    (`store-13`'s work) plus a structural-history entry shape that can name two
+    files.
+
+**Coordination with the other wave-2 agents** — all APPEND, nothing
+restructured:
+- `store-13` (`studioStructuralCommits.ts` / `nodeActions.ts` /
+  `studioWriteback.ts`): `commitStudioTransplant` is appended above
+  `commitStudioDuplicate`; `nodeActions.ts` gains two spreads and two union
+  members at the end of its list; `studioWriteback.ts` gains one `case` before
+  the grouped structural cases plus two small blocks inside
+  `applyStudioEditBatch`. No existing exported signature changed. **One
+  exception worth naming:** `applyStructuralEdit`'s `edit` parameter is now
+  `Exclude<StructuralEdit, { kind: 'transplant' }>` — a type narrowing, not a
+  behaviour change, but it is a signature edit.
+- `perf-9` (`IframeFrameSurface`, `BoardFramesLayer`, pool modules,
+  `BoardFrameView` mount logic): **none of those files are touched.**
+  `useIframeEventForwarding.ts` is, with one appended effect — that module is
+  the relay layer, not the mount layer.
+- `sec-14` (`server/handlers/studio.ts` capability gating): the new route is a
+  new sub-router file with ONE `STUDIO_SUB_ROUTERS` line. **Declare it a WRITE**
+  — `POST /admin/api/studio/asset-drop` writes bytes into the user's repo and
+  belongs with `POST /admin/api/studio/delete` / `duplicate` / `sample` under
+  `requireCapability('studio.write')` when that gating lands. It currently has
+  the same posture as `asset-upload` (none), which is `docs/server.md`'s
+  documented single-operator posture, not an oversight introduced here.
+
+**No CLAUDE.md rule needs to change for this work.** The two new store actions
+are not tree-mutation actions (they mutate no tree), so §"Mutation API"'s count
+is unaffected — `struct-10`'s open note that the text says 11 and the gate says
+13 is still the only pending rule-book edit there.
+
+---
+
+## Verification — real numbers
+
+- `bun run build` — **clean**, exit 0, built in 34.67 s.
+- `bun run lint` — **exit 0, zero errors.** (The six unused-`os` errors
+  `standing-01` records are not present at this base.)
+- `bunx tsc -b` — clean.
+- `bun test src/__tests__/architecture` — **596 pass / 1 fail**; the one fail is
+  `ai-driver-isolation`, which passes **6/0 in 2.46 s** run alone — the
+  whole-tree-scan-under-load artefact `standing-01` names. An earlier run of the
+  same suite under heavier load also showed `mock.module must be restored`,
+  `module-size-budgets` and `no-core-barrel-deep-imports` failing; all three
+  pass on a quieter run. `no-circular-dependencies` **passes** (it did not, mid-
+  change — three cycles were introduced and closed; see landmine 9).
+- `bun test src/__tests__/canvas src/admin/pages/site/canvas src/__tests__/studio server/handlers`
+  — **3594 pass / 2 fail** across 300 files, 231.9 s. The two:
+  `studio.test.ts`'s nested-page load (on the brief's known-red list) and
+  `localizedPage.test.ts`'s locale `textOrigin` case, which passes **4/0 alone**
+  in 13.9 s — another load artefact, triaged per `standing-01`'s rule.
+- New suites, all green on the first run they were written for:
+  `transplantJsxElement` 12/0 · `sourceStructureTransplant` 13/0 ·
+  `studioTransplantWriteback` 9/0 · `transplantPlan` 6/0 ·
+  `canvasCrossFrameDrag` 7/0 · `canvasDragBoard` 9/0 · `canvasFileDrop` 11/0 ·
+  `imageDropInsert` 4/0 · `assetDrop` 17/0. **88 new tests.**
+- `bun test src/core/ast-codemods` — 384/0 (was 372/0 before the new file), so
+  the `resolveImportEdits` signature change broke nothing.
+- **Full `bun test` — 9 failures, every one triaged, ZERO new reds.** Seven are
+  on the brief's known list: `claudeCli` (`streamClaudeCli` MCP config file),
+  `studio.test.ts`'s nested-page load, `parityMatrix`, `studio_compare` ×2 —
+  plus `localizedPage` ×3 and `selectorStability`, which are NOT on that list
+  and are load artefacts: `localizedPage` passes **4/0 in 15.5 s** run alone and
+  `selectorStability` passes as soon as the file count drops, both being
+  whole-tree scans against a timeout (the same class as `ai-driver-isolation`).
+  Neither is in any code path this branch touches — the server diff is
+  `studioWriteback` / `studioStructuralWriteback` / `studioEditSchemas` /
+  `studioEditRouting` / one import + one array line in `studio.ts` / the new
+  `assetDrop.ts`, none of which is in the page-load path.
+  `studio_list_projects` did not fail at all this run.
+- **No Playwright run** (`standing-02`: this is a canvas/geometry change, so it
+  wants a browser — but the plan's own e2e budget work is `verify-01`'s and the
+  stack must be hand-started on this machine; the dogfood script below is the
+  gate instead).
+
+---
+
+## Human action needed — dogfood script
+
+Route **`/admin/site`**, a Studio project with **at least three pages on one
+board**, at **50 % zoom**, with **two frames showing DIFFERENT pages** side by
+side. Have the two `.tsx` files open in an editor and `git diff` ready.
+
+1. **The ordinary drag still works.** Drag an element within ONE frame and drop
+   it on a sibling. Drop line tracks, toolbar does not flicker, the file gets
+   exactly one moved element. *(Regression check — the session was refactored
+   into three modules.)*
+2. **Cross-frame move.** Drag an element out of frame A and hold the pointer
+   over a container in frame B. **The drop line must appear inside frame B, and
+   frame A's must vanish.** Release. Expect: one "Moved into another frame"
+   toast naming B's page, the element gone from A's `.tsx`, present in B's, and
+   any import it needed (an icon, a local component) added to B.
+3. **The import came with it.** Check B's import block: the binding is written
+   in the SAME shape A had it (a default import stays a default import). If A
+   no longer uses that binding anywhere, its import is gone from A too.
+4. **Cross-frame copy.** Same drag with **Alt** held. The ghost gains `+`;
+   release with Alt still down. Expect a "Copied into another frame" toast, A
+   byte-identical (`git diff` on A is empty), B gained the element.
+5. **A refusal the user can act on.** Drag an element that reads a prop or a
+   hook value (`{user.name}`, `{open && …}`) into another frame. Expect a
+   refusal that NAMES the variable and does not write either file. Then drag a
+   `.map` row across: the refusal chip appears **while the pointer is still
+   down**, and releasing writes nothing.
+6. **Two frames of one page are not cross-frame.** Duplicate a frame as a
+   variant (same page, two frames) and drag an element from one into the other.
+   It must behave as an ordinary move in one file — no "another frame" toast.
+7. **Multi-select refuses out loud.** Select two elements, drag them into
+   another frame: the chip says to drag them one by one, and the release writes
+   nothing.
+8. **Escape and the empty board.** Mid-drag over frame B, press Escape — all
+   chrome clears in both frames, nothing is written. Repeat, releasing over the
+   empty board between frames: nothing written, no toast.
+9. **File drop, the happy path.** Drag a PNG from the desktop onto a container
+   inside a frame. Expect: the file appears in the project's `public/`, ONE
+   "Added img" toast, and `<img src="/<name>.png" alt="<name>"/>` written at the
+   drop position (not appended at the end). The image renders on the canvas
+   after the resync.
+10. **File drop, the two refusals.** Drop the same PNG on the empty board →
+    "Drop the image onto a frame", no file written to `public/`. Drop a PDF on a
+    frame → a refusal naming `application/pdf`, again no file written.
+11. **A drop does not navigate the frame.** After step 10, the frame is still
+    showing the page — not a bare image. *(This is the one failure mode that
+    destroys the session; if it happens, the relay's `preventDefault` inside the
+    frame is gone.)*
+12. **Auto-pan across frames.** At 25 %, drag an element toward the canvas edge
+    until the board pans and a previously off-screen frame arrives. The drop
+    line must resolve inside that newly-arrived frame. *(This is the registry-
+    version invalidation; if it fails, the new frame was never measured.)*
+13. **Perf.** With React DevTools "Highlight updates" on, a cross-frame drag
+    must still flash exactly **twice** (activation, release). Any per-move flash
+    means the board scan leaked into React.
+
+Then decide whether the missing undo (landmine 10) is worth a follow-up work
+order, since it is the one place this work does not meet the plan's "⌘Z is one
+step" bar.
+
+
+---
+
+### sec-17 — security review of PR #172 (cross-frame transplant + OS image drop)
+
+- **Agent:** security-guard (wave 2, `STUDIO-FIGMA-FEEL-PLAN.md`)
+- **Stage:** done — draft PR open against the branch under review
+- **Result:** **PR #177** (draft) — https://github.com/maherfayad-stack/Figma-Killer-2/pull/177
+  · branch `review/pr-172`, base `feat/cross-frame-drag-and-file-drop` (head `2ec1adcf`), one commit `777ee4b2`
+- **Reviewed:** PR #172 by `canvas-20` — `transplant` (a JSX move between two page files as one structural commit) and `POST /admin/api/studio/asset-drop` (an OS image drop that uploads into `public/` and writes an `<img>`).
+- **Updated:** 2026-09-18
+
+---
+
+## Scope
+
+`server/handlers/studio/assetDrop.ts` · `server/handlers/studio.ts` (route wiring) ·
+`server/handlers/studioWriteback.ts` + `studioStructuralWriteback.ts` +
+`studioEditRouting.ts` (read, not changed) · `src/core/ast-codemods/transplantJsxElement.ts` ·
+`src/core/page-tree/sourceStructureTransplant.ts` (read) ·
+`src/admin/pages/site/canvas/useCanvasFileDrop.ts` / `canvasFileDrop.ts` /
+`useIframeEventForwarding.ts` · the shared pipeline this PR leans on
+(`assetLanding.ts`, `archiveIngest.ts`, `appRoot.ts`, `auth/security.ts`, `auth/authz.ts`).
+
+Four fixes, five findings. Every fix was confirmed **RED with the fix reverted**, then green.
+
+---
+
+## Findings by severity
+
+### HIGH — a cross-frame move could DELETE the user's markup and report success. **FIXED**
+
+`transplantJsxElement`'s same-file guard was `file === destinationFile` — the two path
+**strings**. `studioEditLocation` → `isWritableSourceRel` is purely lexical (rejects `..`,
+absolute paths, drive letters, non-source extensions) and has no opinion about two `rel`s
+that name one file. Two spellings do:
+
+- a **case difference** on a case-insensitive filesystem (`pages/Home.tsx` vs
+  `pages/home.tsx`) — this machine, every Windows install, default macOS;
+- a **symlink/junction** (`mirror/Home.tsx` → `pages/Home.tsx`) — the kind git stores and
+  an imported repo carries.
+
+Exploit path, concretely: both spellings load as **separate ts-morph `SourceFile`s** backed
+by one file on disk. `verbatimSourceText` reads the same bytes for both, so the
+`stale-source` guard passes on both. The destination's spliced text (element inserted +
+import carried) is written first; then `writeVerbatimSource(originSource, file, nextOrigin)`
+writes `originText` with the element's range **cut out** — clobbering the destination write
+entirely. On disk: the element is gone, inserted nowhere. The codemod returns
+`{ ok: true, carriedImports: ['Badge'] }` and the batch reports `written: 1`. The
+post-batch import prune then also deletes the binding's import, because the origin snapshot
+recorded it live and the clobbered file no longer references it. No undo entry exists for
+this family (canvas-20 landmine 10), so the user cannot get it back from the editor.
+
+Reachable two ways: (a) a repo with a symlinked/junctioned page directory — the parser
+walks both, the board shows two frames, and an **ordinary** cross-frame drag between them
+destroys the element, no attacker required; (b) a crafted `/save` batch, which is trivially
+deliverable because that route has no CSRF check (see "still open").
+
+Driven before the fix, on a real temp dir:
+`RESULT {"ok":true,"carriedImports":["Badge"]}` and `<Badge tone="quiet">New</Badge>`
+absent from the file afterwards.
+
+**Fix:** compare `realpathSync.native` of both ends (resolves symlinks *and* canonicalises
+case in one call), falling back to `path.resolve` when a path does not exist yet.
+Tests: 3 in `transplantJsxElement.test.ts` (case alias, junction-reached destination, and
+"still moves between two genuinely different files reached through a link"), 2 end-to-end
+in `studioTransplantWriteback.test.ts`.
+
+### HIGH — `POST /admin/api/studio/asset-drop` had neither a session nor a CSRF check. **FIXED**
+
+A multipart POST is exactly the shape a plain cross-origin
+`<form enctype="multipart/form-data">` can send: no preflight, no JavaScript, no CORS.
+Any page the user had open in another tab could land a file of its choosing in whichever
+project they were editing, at a predictable site-root path.
+
+Red before the fix: the forged cross-origin POST returned **200** and
+`public/forged.png` was on disk.
+
+**Fix:** `originAllowed` (the CSRF check `studio/git.ts`, `gitRemoteRoutes` and
+`gitSyncRoutes` already apply) + `requireCapability(req, db, 'studio.write')` (the gate
+`/delete`, `/duplicate` and the trash writes carry). Both run **before the body is read**.
+The sub-router moved from `STUDIO_SUB_ROUTERS` to `STUDIO_SESSION_SUB_ROUTERS` for the
+`DbClient`. The 403 body names nothing on disk.
+
+A test-only `deps.authorize` seam lets the 20 behavioural tests drive the route without a
+real `sessions` table; the three tests in the `authorization` block pass **no deps** and
+therefore meet the real gate — that is what pins production.
+
+### MEDIUM — a dropped LINK still navigated the design frame's document away. **FIXED**
+
+The relay cancelled the frame document's default **only** for drags carrying `Files`.
+`text/uri-list` (a link, a bookmark, an image dragged out of another tab) fell through to
+the browser's default, which is to navigate the document that received the drop. The
+portal's React root is torn out and an attacker-chosen page renders cross-origin inside
+the editor's own chrome where the user's design was. Same failure canvas-20's landmine 2
+names for files, worse ending.
+
+**Fix:** rule extracted to `src/admin/pages/site/canvas/canvasFrameDragRelay.ts`, where
+`preventDefault()` is unconditional and first; the **relay** stays files-only. Design
+frames only (`isLive` still short-circuits in the hook). `useIframeEventForwarding.ts` left
+the `single-drag-mechanism` allowlist (it no longer touches a DnD API, and the gate's
+stale-entry test caught that immediately); the new module joined it.
+Test: `src/__tests__/canvas/canvasFrameDragRelay.test.ts`, 4 cases.
+
+### MEDIUM — a transplant could write a repo that does not build, in two files, with no undo. **FIXED**
+
+`resolveCarriedBinding`'s last fallback imports a helper **from the origin file**. The
+PR's own test pinned this with a **non-exported** `const label`, asserting
+`import { label } from './Home'` is written into `About.tsx`. Stated rationale: "the
+compiler says so loudly". It does — after both files are already written, with the markup
+gone from one, a dangling import in the other, and no history entry for either. That is a
+write with two dishonest targets, which is exactly what invariant 2 forbids.
+
+**Fix:** refuses as a new `unexported-binding` reason (checked via `isExported()` on the
+function/variable/class declaration), naming the symbol and the remedy, touching neither
+file. The existing test now covers the **exported** form; two new tests cover an
+unexported helper and an unexported local component. No exhaustive switch consumes these
+reason strings, so the new one flows through the existing refusal channel unchanged.
+
+### LOW — `resolveDroppedAssetHome` mixed a checked path with an unchecked one. **FIXED**
+
+`absolute` came from `resolveAppRoot` (real-path containment-checked, degrades to the
+project dir on escape) while `relToProject` re-joined the **raw** `profile.appRoot` out of
+the user-editable `.studio/meta.json`. `landAssetBytes` → `resolveAssetWriteDir` would
+still have refused a `..` or a symlink escape, so nothing got out — but `existsSync` /
+`mkdirSync` and the path actually written could name different directories, producing an
+"Invalid target directory" 400 for a project whose `public/` exists. Now derived from
+`absolute`.
+
+---
+
+## Sound, no change
+
+Driven, not assumed:
+
+- **Streamed size cap.** `readFormDataWithLimit` → `readBytesWithLimit` treats
+  `content-length` as a fast pre-check only; the authoritative check is the running total
+  off the stream. A body at the cap lands, a body 1 KB over 413s with nothing written.
+- **Magic-byte sniffing beats every declaration.** PNG header named `.svg`; JPEG bytes
+  named `lying.png` declared `image/png` → written `lying.jpg`; `%PDF` named `report.png`
+  declared `image/png` → 400 "not a recognized image format", nothing on disk; 0-byte file
+  → 400; no `file` part → 400.
+- **SVG is sanitised before it touches disk.** `<script>fetch("//evil.test")</script>`
+  inside an SVG named `mark.png` → written as `mark.svg` with neither `<script` nor
+  `evil.test` in the bytes.
+- **The `src` that reaches the JSX attribute cannot break out of it.** Driven through the
+  real composition (`landAssetBytes` → `droppedAssetSrc`, not through multipart, because
+  Bun's serializer percent-escapes `"` and *drops* an entry whose filename contains `:` —
+  a guard fed only names the transport already defanged has not been driven):
+  `a"onerror="alert(1).png`, `it's.png`, `<script>.png`, `{process.env.SECRET}.png`,
+  `line\nbreak.png`, `sp ace.png`, `photo.png:evil` (ADS), `trailing. .png`,
+  `nul\0byte.png`, `e\u0301\u00e9.png` (combining vs. precomposed), `CON.png`, `NUL`.
+  Every one reduces to `/[A-Za-z0-9_-]+\.ext`. Traversal set: `../../secret.png`,
+  `..\..\secret.png`, `//evil.test/x.png`, `/etc/passwd.png`,
+  `C:\Windows\System32\x.png`, `\\?\C:\evil.png` — none produces `..`, a leading `//`, or
+  more than one path segment.
+- **No overwrite.** A second `logo.png` becomes `logo-2.png`; the first is still there.
+- **Two files in one body** → exactly one written (`form.get('file')` takes the first);
+  the client refuses multi-file before the network anyway.
+- **No traversal surface on this route at all** — the write directory is the server
+  constant `public`, and it still goes through `resolveAssetWriteDir`'s real-path
+  containment (nearest existing ancestor).
+- **Both ends of a transplant are path-guarded.** `parentNodeId` of
+  `../../../etc/evil.tsx:1:2` → `not-found`, nothing written; `.env:1:1` → `not-found`,
+  `.env` byte-identical.
+- **`stale-source` covers both files** (`verbatimSourceText` on origin and destination).
+- **The write order is load-bearing and correct.** Destination first: driven with a
+  read-only destination (`chmod 0444`, EPERM on Windows), the origin came back
+  byte-identical and `written` was 0. The reverse order would lose the element outright.
+- **The import prune's asymmetry is safe even if the destination IS snapshotted** — the
+  prune only removes names in `wasReferenced` that are no longer live, and a carried
+  binding was by definition not referenced in the destination before the batch.
+- **`.map` refusals, driven end to end.** The row itself refuses `expression-child`
+  (`resolveJsxChildRange`, before the scope analysis — worth knowing, it is not
+  `captured-scope`); the `<ul>` around it refuses `captured-scope` naming `items`. Both
+  write nothing to either file.
+- **A Tier-2 live frame cannot trigger a write by dragging.** The relay effect is
+  short-circuited by `isLive`, and a drop inside a live iframe's document does not bubble
+  to the parent `window` where `useCanvasFileDrop` listens.
+- **The client-side plan is pure of HTTP** — every refusal (empty board, multi-file,
+  non-image, no container) is decided before a byte is uploaded.
+
+---
+
+## Landmines
+
+1. **`deps.authorize` on `assetDrop.ts` is an auth seam in production code.** It defaults
+   to the real `requireCapability` and `tryServeStudio` passes no deps, and the
+   "no deps, no session → 401" test is what keeps that true. If anyone adds a second
+   caller that passes deps, that test stops proving anything. Delete the seam the moment
+   `sec-14`'s `routeCapabilities.ts` gating can gate the route from the table instead.
+2. **`asset-drop` is now the ONLY studio asset route with auth.** `asset-upload` still has
+   neither check. That asymmetry is deliberate for this PR's scope, not a statement that
+   upload is safe — it is the next thing to fix.
+3. **A link-reached destination still produces a slightly wrong relative import specifier.**
+   `relativeSpecifier` is computed from the literal `destinationFile`, so a transplant into
+   `mirror/About.tsx` writes `../pages/ui/Badge` instead of `./ui/Badge`. Harmless today
+   (the parser mints rels from real paths, so this only happens for a hand-crafted id), but
+   if anyone ever makes the decoder symlink-aware, normalise both ends to their real paths
+   at the codemod's entry rather than only comparing them.
+4. **`isWritableSourceRel` stays lexical.** The same-file fix closes the transplant's own
+   consequence, not the underlying property. Anything new that decodes a node id into a
+   write target inherits the lexical guard, not a realpath one.
+5. **`canvasFrameDragRelay.ts` now cancels EVERY native drag inside a design frame.** That
+   is correct today because nothing in a design frame's document uses HTML5 DnD (canvas
+   and layer drags are pointer-based). If a future design frame ever hosts a real
+   draggable, this is the line that will have silently disabled it.
+6. **The relay's file path is still untested** — happy-dom has no `DragEvent`/
+   `DataTransfer`, so the re-dispatch branch cannot be driven in this suite. Only the
+   cancel path is covered. That gap is pre-existing, not introduced here.
+
+---
+
+## Verification — numbers
+
+- `bun run build` — clean, exit 0, **24.09 s**.
+- `bun run lint` — **exit 0, zero errors**.
+- `bun test src/__tests__/architecture` — **611 pass / 0 fail**, 121 files, 41.1 s.
+- `bun test src/core/ast-codemods src/__tests__/canvas src/admin/pages/site/store` —
+  **1405 pass / 0 fail**, 162 files, 41.5 s.
+- `bun test server/handlers` — **2103 pass / 1 skip / 2 fail**, 124 files, 187.4 s. Both
+  fails pre-existing and triaged: `studio.test.ts`'s nested-page load (on the brief's
+  known-red list) and `localizedPage.test.ts`, which passes **4 / 0 in 13.9 s** run alone
+  (the whole-tree-scan-under-load artefact `standing-01` names, also recorded by
+  `canvas-20`). Neither is in this review's diff.
+- Per-suite: `transplantJsxElement` **17/0** (was 12) · `studioTransplantWriteback`
+  **14/0** (was 9) · `assetDrop` **24/0** (was 17) · `canvasFrameDragRelay` **4/0** (new)
+  · `single-drag-mechanism` **4/0**.
+- Red-then-green, each confirmed by reverting the fix:
+  - same-file guard → 2 of 3 new codemod tests fail, the case-alias one with
+    `Expected: false, Received: true` and the element gone from disk;
+  - auth gates → all 3 fail, the forged POST returning **200** with the file written;
+  - relay cancel → 2 of 4 fail with `defaultPrevented` false;
+  - `unexported-binding` → the PR's own test asserted the broken import, now rewritten.
+
+---
+
+## Human action needed
+
+1. **Merge #177 into `feat/cross-frame-drag-and-file-drop` before #172 goes anywhere.**
+   The HIGH transplant finding is silent data loss in the user's own repository, reachable
+   without an attacker on any repo with a symlinked or junctioned page directory.
+2. **Decide `/save`'s posture** (`sec-14` / PR #167's `routeCapabilities.ts`).
+   `POST /admin/api/studio/save` — the route the transplant arrives on — has no CSRF and no
+   session check. That is the documented single-operator posture for the whole writeback
+   surface, not something #172 introduced, but it is what turns the transplant bug from
+   local-only into remotely reachable. `asset-drop` should become a table entry there
+   (`studio.write`, write) and the inline check deleted; `asset-upload` and `/save` belong
+   in the same table.
+3. **Dogfood step 11 of canvas-20's script gains a second case:** after dropping a PDF on a
+   frame, also drag a **link** (from the bookmarks bar or another tab) onto a frame. The
+   frame must not change at all. Before this review it navigated.
+4. **Dogfood the new refusal:** drag an element that uses a local, non-exported helper or
+   component (`<Card/>` declared as `function Card()` with no `export`) into another frame.
+   Expect a refusal naming it and telling you to export it, and `git diff` empty on both
+   files. Previously this wrote a broken import into the destination and removed the markup
+   from the origin.
+
+
+---
+
+### perf-9 — one module decides which frames are mounted, and why
+
+- **Agent:** perf-hunter (wave 2, parallel, `standing-05`)
+- **Stage:** done — implementation, docs, static gates and browser budgets all green; draft PR open, awaiting review + dogfood
+- **Branch / PR:** `refactor/one-frame-mount-pool` off `27616ba8` (`feat/alm-figma-killer-studio-shell`). Commits `7767c492` (unify) · `a60c3cb6` (budget gate + agent reader). **PR #175** (draft, base `feat/alm-figma-killer-studio-shell`).
+- **Updated:** 2026-09-18
+- **Goal:** `meta-14`'s deferred design call. Two frame mount pools coexisted — S1's `frameMountPool.ts` (`perf-07`) for portal frames and L8 Phase B's `liveFramePool.ts` (`perf-06`/`live-08`) for Tier-2 live frames. Unify into one pool parameterised by frame cost, or prove with numbers why two must stay.
+
+## Scope
+
+- NEW `src/admin/pages/site/canvas/BoardFramesLayer/framePool.ts` (183 lines).
+- DELETED `BoardFramesLayer/frameMountPool.ts`, `BoardFramesLayer/liveFramePool.ts`, `src/__tests__/canvas/frameMountPool.test.ts`, `src/__tests__/canvas/liveFramePool.test.ts`.
+- Modified `BoardFramesLayer/BoardFramesLayer.tsx` (414 → 382), `BoardFramesLayer/BoardFrameView.tsx` (657 → 648), `agent/renderEvidence.ts`, `agent/studioExportFrames.ts`.
+- NEW tests `src/__tests__/canvas/framePool.test.ts` (24), `src/__tests__/canvas/framePoolMountReason.test.tsx` (6).
+- Docs: `docs/agent-refs/canvas-internals.md` §Perf (new "`framePool.ts` — the ONE module…" section), `docs/features/canvas-iframe-per-frame.md`, `docs/agent-refs/path-index.md`.
+
+## Done — the merge, and why it was the right call
+
+**They were the same algorithm three weeks apart.** Both said: every on-screen
+frame, in the layer's order, plus as many recently-on-screen frames as the
+budget allows, evicted least-recently-on-screen. They differed in exactly one
+expression, the budget. `BoardFramesLayer` computed **both** every render, held
+two `useState` slots, and threw one away; `BoardFrameView` then re-derived which
+applied from the trust tier, so "is this frame mounted" resolved through three
+fallbacks (`isLiveMounted ?? isMounted ?? isOnScreen`) across two files.
+
+One policy now, parameterised by `FrameMountCost` — what a *mounted* frame costs
+on this board:
+
+| cost | a mounted frame is | budget |
+|---|---|---|
+| `portal` (Tier 0/1) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
+| `live` (Tier 2) | `LiveBoardFrame`: a fallback document **and** a cross-origin bridge iframe against a real dev server — **two** documents until ready | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+
+The cost is derived from the trust tier in `BoardFramesLayer` and **nowhere
+else** — the tier no longer reaches mounting at all — and it is part of the
+retention key, so Tier-2 auto-promotion (and its Undo) resizes the pool without
+waiting for a pan, which neither old pool did.
+
+`resolveFrameMount({ isOnScreen, isPooled })` → `{ mounted, reason }` is the one
+per-frame answer. `BoardFrameView` stamps `reason` on the frame element as
+**`data-frame-mount`** (`on-screen` / `pooled` / `offscreen`). Three readers,
+one answer: the budget gate, `agentRenderFrameMountReason` in
+`agent/renderEvidence.ts`, and a human with devtools open.
+
+**`isMounted` stays OPTIONAL** (`meta-14` landmine 1) — `boardFrameViewTierFork.test.tsx`
+still renders `BoardFrameView` without it and is green.
+
+**One real defect fixed on the way:** the live pool had no `knownIds` argument,
+so a frame removed from the board (or whose page was deleted) held a pool slot
+until the caller happened to re-seed. Its own test file documented this as
+expected behaviour. The unified pool prunes on both sides.
+
+**Capture path.** `agentRenderFrameMountReason(pageId)` reads the same stamp, and
+`studio_export_frames` now names the mount state when a capture times out. After
+`perf-08` fixed "a loaded document is not a mounted frame", the two remaining
+causes of that timeout — the frame was never pooled, versus it is mounted but
+its staged node tree never landed — still read identically and cost very
+different things to fix. `findAgentRenderFrame` deliberately does **not** consult
+the stamp: a frame the pool holds offscreen is perfectly capturable, and a
+capture must never be refused for being out of view.
+
+## Decisions
+
+1. **Unified, not kept apart.** The instruction was "unify unless you can show
+   why not", and the only difference was a `Math.max`. Nothing in the live
+   pool's contract needed a second module.
+2. **`frameVirtualization.ts` was NOT absorbed.** It owns board→screen geometry
+   ("what does on-screen mean"), is cited by six other docs and by
+   `rulerGeometry.ts`, and is a sibling of `boardSnapping.ts`/`rectResize.ts`.
+   `framePool.ts` owns what happens to a frame once it is or is not on screen.
+   Two questions, two modules, one answer each.
+3. **`isMounted` kept its name.** Renaming it to `mount?: FrameMount` would have
+   been a cleaner shape but `meta-14` landmine 1 names this exact prop, and its
+   gate turns on the name. The reason rides on the DOM instead of a second prop.
+4. **Three reasons, not four.** `evicted` would need extra state to distinguish
+   from "never mounted", for a diagnostic. `offscreen` is what is actually known.
+5. **`data-frame-mount` written literally in JSX**, with `FRAME_MOUNT_ATTR` for
+   readers — JSX cannot take a computed attribute name without a spread, and a
+   spread for one attribute reads worse than a comment plus a test that ties the
+   two spellings (`framePoolMountReason.test.tsx` reads the rendered element back
+   through `readFrameMountReason`).
+
+## Verification — real numbers
+
+**Unit A/B, scripted 24-step pan across a 24-frame board (happy-dom, 3 passes
+per scenario, 2 runs each), base `27616ba8` vs branch — byte-identical:**
+
+| scenario | React commits | max mounted frames | max iframes |
+|---|---|---|---|
+| Tier 0, zoom 1 | 556 → **556** | 8 → **8** | 8 → **8** |
+| Tier 2, zoom 1 | 556 → **556** | 8 → **8** | 16 → **16** |
+| Tier 0, zoom 0.25 | 491 → **491** | 12 → **12** | 12 → **12** |
+| Tier 2, zoom 0.25 | 479 → **479** | 8 → **8** | 16 → **16** |
+
+Mounted-frame series matched step for step (`2,3,4,5,6,7,8,8,…` at zoom 1;
+`6,7,8,9,10,11,12,12,…,11,10,9,8,8` at zoom 0.25 portal). The Tier-2 rows are
+worth reading twice: **8 mounted live frames is 16 documents**, because a
+`LiveBoardFrame` mounts its Tier-0 fallback and its bridge iframe together until
+the bridge reports ready. That is the measured reason the live budget is a
+ceiling and the portal budget is a floor.
+
+**Browser, `studio-feel.e2e.ts`'s scripted Ctrl+wheel zoom (12 ticks, 150 ms
+apart) on a 12-frame board, 3 runs each, against
+`tests/e2e/helpers/canvasPerf.ts`'s 250 ms / 35 ms:**
+
+| | before (base source, same stack) | after | budget |
+|---|---|---|---|
+| **worst zoom frame** | 32.7 / 26.8 / 37.6 ms | **26.1 / 36.6 / 42.7 / 28.4 ms** | < 250 |
+| **mean zoom frame** | 16.7 / 16.7 / 16.7 ms | **16.6 / 16.7 / 16.8 ms** | < 35 |
+| frames > 20 ms | 4/133, 1/131, 4/132 | 4/132, 4/135, 5/132, 5/135 | — |
+| live iframes before → after zoom | 10 → 12 | 10 → 12 | — |
+| frames-layer mutations | 36 | **38** | pan budget 10, untouched |
+| transform-layer style writes | 13 | 13 | > 0 |
+
+Same board, same stack, same gesture; A/B taken by `git checkout 27616ba8 --`
+on the two touched directories and letting Vite HMR pick it up. Worst-frame
+spread (26–43 ms) is machine noise on a box running eleven agents — the means
+are identical to 0.2 ms. **No improvement claimed and none intended:** this is a
+behaviour-preserving merge, and the number that matters is that it did not move.
+
+The **+2 frames-layer mutations** are the `data-frame-mount` attribute changing
+on the two frames that cross the viewport margin during the zoom. It writes only
+when membership changes, so `studio-board-perf.e2e.ts`'s
+`BUDGET_PAN_LAYER_MUTATIONS = 10` (observed 0 — that pan crosses no margin) is
+unaffected.
+
+**Gates:**
+- `bun run build` — exit 0 · `bun run lint` — clean
+- `bun test src/__tests__/architecture` — **611 pass / 0 fail** (quiet run, after `bun run build` so the bundle gates are not skipped)
+- `bun test src/__tests__/canvas src/admin/pages/site/canvas` — **1118 / 0** (144 files)
+- `bun test src/__tests__/agent` (incl. `agentBreakpointCapture.test.tsx`) — **303 / 0**
+- `bun test src/__tests__/canvas/framePool.test.ts src/__tests__/canvas/framePoolMountReason.test.tsx` — **30 / 0**, 613 assertions
+- Playwright, hand-started stack on **3487 / 5487** with `VITE_ALLOWED_ORIGIN=http://127.0.0.1:5487` and `E2E_REUSE_SERVER=1`: `studio-feel.e2e.ts` + `studio-board-perf.e2e.ts` → **4 passed, 2 skipped**. `studio-workspace/` restored with `git checkout --` afterwards (plus the untracked `__canonical-fixture/.studio/framework.json` the run generates, which `git checkout` does not remove).
+- Full `bun run test` — **13,643 pass / 2 skip / 10 fail / 1 error** over 1,241 files in 752 s
+  (baseline `meta-14` at `91a8451e`: 13,636 / 2 / 6 / 0 — this branch adds 30
+  tests and 19 of the 24 old pool assertions were re-expressed, hence 13,655 vs
+  13,647 total). **Zero new reds.** Six of the ten are `standing-01`'s named set
+  (`claudeCli` 0600 mode, `studio.test.ts` nested-page load, `parityMatrix`,
+  `studio_compare` × 2, `studio_list_projects`); the other four are the
+  load-sensitive 5 s-timeout cluster in landmine 5, each re-run alone and green:
+  `server/ai/mcp/capture` **38 / 0**, `server/handlers/__tests__/localizedPage.test.ts`
+  **4 / 0**
+
+**The budget added:** `src/__tests__/canvas/framePoolMountReason.test.tsx`.
+A 24-step scripted pan across a 24-frame board asserts, at every step and for
+both costs, `mountedFrames <= framePoolBudget(cost, framesOnScreen)`, read out of
+the DOM. **Proven it can fail:** deleting the budget `break` in `nextFramePool`
+turns 4 of 6 red (`Expected: <= 8, Received: 9`); restored → green.
+
+## Landmines
+
+1. **`studio-board-perf.e2e.ts` self-skips on this machine** — its corpus
+   `studio-workspace/maherfayad-stack-eSIM` is not here (`verify-01` finding 1).
+   The ≥ 9-frame measurement above was taken by **temporarily widening
+   `studio-workspace/test4`'s board from 3 frames to 12** (four columns of its
+   three existing pages, `x` 1300 apart) and running `studio-feel.e2e.ts`, which
+   copies `test4` into its own ephemeral `__e2e-studio-feel/` fixture. Restored
+   with `git checkout -- studio-workspace/`. If you need to redo this, that is
+   the cheapest path — it needs no spec edit at all.
+2. **Bun 1.3.6 segfaults running Vite on this machine** (`panic(main thread):
+   Segmentation fault`, RSS 1.30 GB / peak 1.72 GB, logged in full). It took the
+   whole e2e stack down mid-run twice and produced four `ERR_CONNECTION_REFUSED`
+   failures that look exactly like product bugs. Both halves of the stack need a
+   **restart-on-exit supervisor** for a measurement run; `bun run e2e:dev` is the
+   opposite — it kills the surviving half on purpose so Playwright sees a clean
+   failure. Scripts used are in `.tmp/` on the worktree (untracked).
+3. **A long-running foreground wait (`until …; done`) that hits the Bash tool's
+   timeout and is "moved to background" appears to take sibling background tasks
+   down with it.** That is how the first two e2e attempts died, and how one full
+   `bun test` run ended with no summary line. Poll with short foreground commands.
+4. **`bun test` bare ≠ `bun run test`.** `package.json`'s script carries
+   `--parallel=4`, which `bunfig.toml`'s comment explains is load-bearing, not a
+   speed knob. A bare run gave 15 extra reds.
+5. **Several gates are load-sensitive and fail only under a loaded machine**, all
+   with 5 s-timeout shapes: `ai-driver-isolation` (whole-tree scan — `meta-14`
+   already recorded this one), `alm-design-system-fresh`,
+   `server/handlers/__tests__/localizedPage.test.ts` (4 pass / 0 fail alone, in
+   21.8 s — its individual ts-morph parses sit right on the 5 s per-test limit),
+   `cmsPlugins`, `authStepUp`, `publicSdkExports`, `pluginWorkerRpcTimeout`,
+   `selector-stability`, `admin-router-usage`. Every one of them passed when
+   re-run alone. Do not chase them.
+6. **Tried and NOT kept:** a `FrameMountReason` of `'evicted'` distinct from
+   `'offscreen'`. It needs the previous pool list carried in state purely to
+   label a diagnostic, and "was this frame once mounted" is not a question
+   anything asks. Also not done: folding `frameVirtualization.ts` into the pool —
+   see decision 2.
+7. **happy-dom wall-clock is not a perf signal.** The same harness measured
+   800–1000 ms for a pan loop before the change and 1000–1300 ms after, purely
+   because a `bun run build` had just finished; the commit counts and mount
+   series were identical to the integer. Only count things in happy-dom.
+
+## Human action needed — dogfood
+
+`bun run dev`, `/admin/site`, a board with **12+ frames** at 100 %:
+
+1. **Pan one column left, then back.** Frames you just left must NOT blink or
+   re-flash a poster — they were never unmounted. Open devtools, inspect a frame
+   wrapper you just panned away from: `data-frame-mount="pooled"`. Pan further
+   and it becomes `"offscreen"` and shows its poster; pan back onto it and it is
+   `"on-screen"` with the same `<iframe>` element (the DOM node id in devtools
+   does not change).
+2. **Ctrl+wheel out until the whole board is in view, then back in.** Frames
+   fade up from posters without the canvas locking; nothing moves that you did
+   not move.
+3. **Count the live set at rest:** `document.querySelectorAll('[data-frame-mount="on-screen"],[data-frame-mount="pooled"]').length`
+   should sit at `max(8, visible + 4)` on an ordinary (Tier 0/1) project.
+4. **Tier 2, if you have a promoted Vite project:** the same count should cap at
+   **8** instead, and each of those 8 is two iframes until its bridge reports
+   ready. If a live board ever holds more mounted frames than the same board
+   would as a Tier-0 board, that is the regression this change exists to prevent
+   and `framePoolMountReason.test.tsx` should have caught it.
+5. **Agent:** ask for `studio_export_frames` on a page that is on the board. If
+   it ever fails, the error now ends with `mount state: on-screen|pooled|offscreen|not on the board`
+   — that word is the diagnosis.
+
+
+---
+
+### panel-38 — FillSection tells the truth about Mixed, and so do Layer, Shadow and Blur
+- **Agent:** panel-designer (parallel wave 2, `standing-05`)
+- **Stage:** done (every gate run; draft PR open) — **needs human dogfood**
+- **Branch / PR:** `fix/fill-section-mixed` off `feat/alm-figma-killer-studio-shell` (`27616ba8`). **PR [#165](https://github.com/maherfayad-stack/Figma-Killer-2/pull/165)** (draft, base `feat/alm-figma-killer-studio-shell`). Four commits: `855d42a1` (extract) · `b55331ad` (Fill Mixed) · `474fa4d1` (Layer/Shadow/Blur Mixed) · `c8e6c614` (tests + docs).
+- **Updated:** 2026-09-18
+- **Goal:** `STUDIO-FIGMA-FEEL-PLAN.md` §9 item 8 (`panel-36`'s disclosed gap) — re-wire Mixed row by row in `FillSection`, THROUGH the one multi-select model S5 introduced, and audit the other Design-tab sections for the same dropped-sentinel pattern.
+
+- **Scope:**
+  - `src/admin/pages/site/inspector/sections/` → `FillSection.tsx`, `FillSectionParts.tsx`, `FillSectionActions.tsx`, `FillColorField.tsx`, `buildColorFillEntry.tsx`, `LayerSection.tsx`, `ShadowSection.tsx`, `BlurSection.tsx`, `boxShadowLayers.ts`; **new** `fillRowDescriptors.tsx`, `FillEntryPopover.tsx`, `GradientEditor.tsx`, `__tests__/sectionsMixed.test.tsx`.
+  - `src/admin/pages/site/panels/PropertiesPanel/styleValueUtils.ts` (new `pickMixedCell`).
+  - `docs/features/inspector.md` §9.3 + the `module-size-budgets` note in "Gates that bite work in this area". `STUDIO-FIGMA-FEEL-PLAN.md` §9 bullet struck.
+  - **No CSS module touched. No token added to `globals.css`.** Every Mixed surface is an existing primitive prop (`mixed` on `Input`/`Select`/`ColorValueInput`/`ScrubInput`) or an accessible-label change.
+  - Did **not** touch `LayoutSection.tsx`, `InspectorShell.tsx(.module.css)`, the Module block, or `docs/features/inspector.md` §6 — `panel-39`'s territory. Layout's Mixed wiring was already complete (W8-3/P9), so no value wiring was needed there either.
+
+- **Done so far:**
+  1. **Extraction first** (`FillSection.tsx` was 698/700). `fillRowDescriptors.tsx` took the `FillEntryData` union, the popover-title map and `describeLayer`; `FillEntryPopover.tsx` took the switch over row kinds. Later `GradientEditor.tsx` left `FillSectionParts.tsx` for the same reason. Final: FillSection **626**, FillSectionParts **660**, FillEntryPopover **174**, fillRowDescriptors **108**, GradientEditor **99** — all under 700.
+  2. **Fill, row by row.** `textStored`/`colorStored` now ask `hasStyleValue` about the RAW cell (`readString` collapses a Symbol to `undefined`, which is why the colour and shorthand rows *vanished*). Colour rows read "Mixed" through `ColorValueInput`'s existing `mixed` prop and drop their `%` opacity cell. Content fit's trailing value reads "Mixed" and its popover passes the sentinel through `pickMixedCell`. A disagreeing `background-image` collapses the per-layer rows into ONE "Mixed" row (`mixedLayersEntry`) whose popover is `BackgroundDeclarationsBody`; the two layer-add buttons disable. A stack the layers agree on keeps its per-layer rows, and only the disagreeing satellite goes whole-declaration.
+  3. **Audit.** Stroke, Text, Layout, Measures, Transform, RadiusCluster were already wired (W8-3 / P9) — verified, not re-touched. Three were not:
+     - **Shadow** was the only one that *lied*. `parseShadowValue(storedStyles.boxShadow as string | number | undefined)` did `String(value)`; `String(Symbol)` is legal, so a mixed selection produced `{ kind: 'raw', raw: 'Symbol(studio-mixed-value)' }` — a raw text field showing that string and offering to write it into the user's stylesheet. `parseShadowValue` now takes `Mixed` and returns a fourth arm `{ kind: 'mixed' }`.
+     - **Blur** produced NO row at all under a `Section` Law 1 had already forced open — a populated section with an empty body, and "Add layer blur" still enabled beside it.
+     - **Layer** showed the 100% opacity fallback for five different opacities (`toPercentString` collapsed the Symbol before `resolveStyleFieldDisplay`, which already knows `MIXED`, could see it), an unset blend trigger with `normal` ticked in its menu, and an unpressed CSS-visibility toggle.
+  4. **Bug found on the way, fixed:** `ShadowSection.handleReorder` offset the text-shadow block by the box-shadow **layer** count. A `raw` box shadow contributes one row but zero layers, so every text-shadow drag under it was silently swallowed. Now offset by the box block's **row** count (`boxRowCount`).
+  5. **19 tests** in `inspector/sections/__tests__/sectionsMixed.test.tsx`, store-backed (two sibling layers, anchor last — `selectionModel.test.ts`'s S5 fixture shape).
+
+- **Next step:** none for this work order. Two follow-ups are recorded below under Landmines and in `docs/features/inspector.md` §9.3's closing paragraph.
+
+- **Decisions:**
+  1. **A disagreeing LIST collapses to one row and edits the whole declaration.** This is the single rule behind Fill's background block, Shadow and Blur. A multi-selection has no shared layer *index*, so every per-index gesture (reorder, per-layer blend, "add at 0", "remove layer 2") is refused by construction. The alternative — letting `setBackgroundLayerSatellite(model, prop, index, v)` run against a model parsed from a bag where the cell was `MIXED` — writes the CSS **initial** into every *other* layer of every selected node. That is the "one keystroke flattens a disagreement" bug class, doing it silently.
+  2. **Add buttons disable while the corresponding list is mixed**, with the reason in the tooltip. "Insert at index 0" over a list that does not exist is a replace wearing an add's icon. Same posture the existing `layersRefused` (raw layer list) path already took, so no new concept.
+  3. **`parseShadowValue` grew a `mixed` arm rather than being guarded at the call site.** The parse of a mixed cell *is* a distinct outcome, and a tagged union makes the compiler force every consumer to decide. A call-site guard would have left the next caller free to reintroduce the `String(Symbol)` path.
+  4. **`OrphanSatellitesBody` → `BackgroundDeclarationsBody`**, one component with a three-value `reason` (`no-layer` / `refused-layers` / `mixed-layers`) and a caller-supplied property list. Three reasons, one shape, because the honest write is identical in all three. Not a second code path.
+  5. **Layer's CSS-visibility eye gets no indeterminate glyph** — the same call §9.3 already makes for `AlignGrid` and Clip content. It names the disagreement in its accessible label, renders unpressed, and clicking it hides every selected layer (Figma's contract: the first edit agrees them).
+  6. **`pickMixedCell` is a new helper, not a widened `pickMixedString`.** `pickMixedString` stringifies a number as `${n}px`, which is wrong for a row that hands the number to a numeric control. Both now exist, each with one job.
+
+- **Landmines:**
+  - **`String(MIXED)` does not throw.** A template literal on a Symbol throws; `String(symbol)` returns `"Symbol(studio-mixed-value)"`. Any parser that normalizes with `String(value)` will happily swallow the sentinel and produce a real-looking value. `boxShadowLayers.ts` did exactly that for months. Grep for `as string | number` next to a `storedStyles[...]` read — that cast is the tell.
+  - **`hasStyleValue(MIXED)` is `true`, `readString(bag, k)` is `undefined` for the same cell.** Sections that ask "is it set?" through `readString`'s *output* rather than the raw cell make a row disappear; sections that ask `hasStyleValue` on the raw cell get the disclosure right but then need a separate `isMixed` for the display. Both must be asked about the same cell.
+  - **`Button` converts `disabled` + `tooltip` into `aria-disabled`,** not the native attribute, so the reason can still be hovered. A test asserting `toHaveProperty('disabled', true)` on such a button fails; assert `getAttribute('aria-disabled')`. Two of my 19 cases hit this.
+  - **`node.hidden` / `node.locked` in `LayerSection` are anchor-only under a multi-selection** — `toggleNodeHidden(selectedNodeId)` toggles one of N. That is a structural fan-out gap (it needs a store action over N ids the way `setNodesInlineStyles` is for styles), NOT a Mixed one, and it is deliberately out of this PR's scope. Recorded in `LayerSection.tsx`'s own doc, §9.3, and the plan's §9 bullet.
+  - `FillSectionParts.tsx` is back at **660/700**. The next thing that lands in it must extract first; `GradientEditor.tsx` is the precedent.
+  - The `fillSection.test.tsx` suite logs a `NetworkError … /admin/api/studio/project-assets` from happy-dom on every run. Pre-existing, unrelated to this branch, and does not fail anything — `useProjectImageAssets` fetches on mount.
+
+- **Verification** (real numbers, this machine, worktree `agent-aa82c77c596062e76`):
+  - `bun run build` (`tsc -b && vite build`) — **clean**, built in 32.9–51.9 s across four runs.
+  - `bun run lint` — **clean** (one Babel `deoptimised the styling` note on the 500 KB generated `vitePluginBundle.ts`; not a diagnostic).
+  - `bun test src/__tests__/architecture` — **609 pass / 2 fail**, and the two are load-flakes, not mine: the failing pair *changed identity between two runs* (`alm-design-system-fresh` "timed out after 5000ms" in one, `no-core-barrel-deep-imports` at 24.4 s in the other). Re-run in isolation with the four gates the work order names: `no-core-barrel-deep-imports` + `alm-design-system-fresh` + `module-size-budgets` + `css-token-policy` + `button-primitive-usage` + `no-css-var-fallbacks` → **16 pass / 0 fail** in 8.05 s.
+  - `bun test src/__tests__/inspector src/__tests__/panels src/admin/pages/site/inspector` — **1117 pass / 0 fail** across 83 files, 38.4 s (baseline from `panel-37` was 1098/0; +19 are this branch's new cases).
+  - `bun test src/admin/pages/site/inspector/sections/__tests__/sectionsMixed.test.tsx` — **19 pass / 0 fail**.
+  - **Red-then-green proven**, not assumed: reverting `textStored` to `hasStyleValue(textValue)` and `filterMixed` to `false` turned **4 of the 19 red, 15 stayed green**, then `git checkout --` restored both files byte-identical and the suite returned to 19/0.
+  - Full `bun test` — **13,644 pass / 17 fail / 1 error** across 1,242 files in **1,428 s**. Six are the expected pre-existing set (`streamClaudeCli` MCP config · `studio.test.ts` nested-page load · `canvas parity matrix` · `studio_compare` ×2 · `studio_list_projects`). The other **11 are machine-load timeouts** on a box running eleven parallel agents, none in a file this branch touches: `admin-router-usage`, `ai-driver-isolation`, `alm-design-system-fresh`, `plugin SDK exports`, `zustand-selector-stability`, `Step-up auth` limiter, `loadStudioPageInLocale` ×3, `canonicalCheck`, `writeShareSnapshot`. Re-run in isolation: `server/handlers/studio/shareSnapshot.test.ts` **8/0**; `localizedPage.test.ts` + `canonicalCheck.test.ts` **36/2**, and the two survivors report `a beforeEach/afterEach hook timed out` with a **different case failing than in the full run** (canonicalCheck rule 2 vs rule 4) — the signature of the 5 s budget under load, not a logic failure. `ai-driver-isolation` behaves exactly as `standing-01` documents. **Zero new reds.**
+  - **No browser pass** (`standing-02`: panels are static-gate territory). No `*:sync` script run; no generated artefact touched. `globals.css` untouched.
+
+- **Human action needed — dogfood at `/admin/site`.** Every step needs a **multi-selection** (Shift-click a second layer); that is the entire surface this changes, and a single selection must look byte-identical to before.
+  1. **Two text layers with different colours.** Fill's **Text** row must still be there and read **Mixed**, with **no `%` field** beside it. Type `#00ff00`, blur: both layers change, **one Ctrl+Z reverts both**. (Before: the row was simply gone.)
+  2. **One layer with a background colour, one with none.** Fill's **Solid fill** row reads **Mixed** — "set on one, absent on the other" is a disagreement, not unset.
+  3. **Two layers with different `background-image`s** (a gradient and an image is ideal). Fill shows **one** row labelled *Background image* reading **Mixed** — not two stacks, not zero rows. **Add gradient fill** and **Add image fill** are greyed with a tooltip naming why. Click the row: the popover offers `background-image` and any set satellite as whole declarations; typing one writes it to both.
+  4. **Two layers with the SAME `background-image` but different `background-size`.** The per-layer row must come back (with its blend dropdown), and only the size field inside the popover reads Mixed.
+  5. **Two layers at different opacities.** The Layer row's opacity field reads **Mixed**, not `100%`. Type `80`, blur: both change, one undo.
+  6. **Two layers with different `mix-blend-mode`.** The droplet's tooltip reads **Blend mode: Mixed**; open the menu and **no** item is ticked (before, `Normal` was).
+  7. **Two layers with different `box-shadow`s.** The Shadow row reads **Mixed**. Open it: the field is empty with a "Mixed" placeholder. **The string `Symbol(studio-mixed-value)` must not appear anywhere** — that is the defect this fixes. *Drop shadow* / *Inner shadow* in the `+` menu are greyed; *Text shadow* is not.
+  8. **Two layers with different `filter: blur()`.** Blur shows a **Mixed** row, not an empty open section.
+  9. **Regression sweep, single selection:** pick one layer with a gradient fill, a shadow and a blur and confirm every row, popover, reorder drag and add button behaves exactly as before — the extraction moved three files' worth of code.
+
+
+---
+
+### panel-39 — the Design tab fits a 900px window (density pass + one real budget)
+
+**Agent:** `panel-designer` (Opus 5, wave 2)
+**Stage:** complete — verified, PR open as draft
+**Branch / PR:** `fix/inspector-design-tab-fits-900` →
+https://github.com/maherfayad-stack/Figma-Killer-2/pull/170 (draft, base
+`feat/alm-figma-killer-studio-shell`)
+**Updated:** 2026-09-18
+
+---
+
+## Goal
+
+`panel-37`/`meta-14` left the plan's S5 acceptance unmet: the Design tab
+overflowed a 900px window by 334–564px, and
+`tests/e2e/inspector-height.e2e.ts` had been turned into a four-number
+ratchet on those measurements. Close the overflow, and turn the ratchet into
+a real budget stated in one place.
+
+## Scope
+
+- `src/admin/pages/site/inspector/sections/LayoutSection.tsx`
+- `src/admin/pages/site/panels/PropertiesPanel/StyleSurface.module.css`
+- `src/admin/pages/site/panels/PropertiesPanel/StyleSurface.tsx`
+- `src/admin/pages/site/panels/PropertiesPanel/PropertiesPanel.tsx`
+- `src/admin/pages/site/panels/PropertiesPanel/PropertiesPanelBody.tsx`
+- `src/admin/pages/site/panels/PropertiesPanel/PropertiesPanel.module.css`
+- `src/admin/pages/site/inspector/InspectorShell.module.css`
+- `src/styles/globals.css` (comment only — **no token added, none removed**)
+- `tests/e2e/inspector-height.e2e.ts`
+- `src/__tests__/inspector/measurement.test.ts`
+- `src/admin/pages/site/inspector/sections/__tests__/layoutSection.test.tsx`
+- `src/__tests__/panels/propertiesPanel-redesign.test.tsx`
+- `docs/features/inspector.md` (§1 Law 1, §1 Law 5, §4 G12, §6 rewritten)
+- `docs/audits/penpot-inspector-baseline/05-section-heights.{md,json}`
+
+Deliberately **not** touched: `FillSection*` and `inspector.md` §9.3
+(`panel-38` owns them), `playwright.config.ts`, `auth.setup.ts` (`verify-2`
+owns them). `FillSection` is **not** a height contributor: 73px on F1/F2/F3,
+41px on F4 — nothing for panel-38 to do for this budget.
+
+## Done so far — four commits, each with its own measured number
+
+1. **`050c21b7` de-duplicate the Design tab's padding, move to Figma's 8px
+   section gap.** `.surface` and `.surfaceContent` BOTH carried
+   `padding-bottom: var(--space-7xl)` — the admin's *fluid* `clamp()` scale,
+   inside the one panel whose geometry is declared frozen. 79.6px of
+   container padding at a 1400px window, half a literal duplicate → 16px
+   (`--inspector-space-m` top and bottom on the scroll container only).
+   **−63.6px on all four fixtures.** Between-section gap
+   `--inspector-space-xl` (12) → `--inspector-space-m` (8), the step Figma
+   and Penpot both draw. **−44px on F2.**
+2. **`b95b4a89` Layout rests as one row until a layout exists.**
+   `forceOpen={hasLayout}` instead of unconditional; collapsed state is a
+   32px header with Figma's `+` ("Add auto layout" → vertical stack) and an
+   `indicator` dot when any property the section claims is set. Body
+   unchanged, one click away; a flex/grid container (or an unrepresentable
+   `display` like `inline-block`, or Mixed) still renders open at rest.
+   **199 → 33px on F1/F2/F4 (−167).**
+3. **`2a750524` the frame's size strip belongs to the frame.**
+   `FrameSizePanel` moved into `PropertiesPanelBody`'s nothing-selected
+   branch. Tab strip block padding → `--inspector-space-2xs`.
+   **Chrome 274 → 182px; room 626 → 718px (+92).**
+4. **`54dfd112` the gate is one budget, not four ratchets.** See "Decisions".
+
+## Decisions
+
+1. **The budget is `clientHeight`, read at runtime, not a literal.** The gate
+   asserts the Design tab's own height against the room the docked panel
+   actually has at 900px — so reclaiming chrome moves the budget by itself
+   and nobody edits a number in two places. `DESIGN_TAB_CEILING_PX` (four
+   hand-pinned numbers) is deleted.
+2. **It measures `contentHeight`, not `scrollHeight`.** `scrollHeight` is
+   `max(clientHeight, content)`: for a tab that *fits* it reports the room
+   itself, so it can show neither headroom nor a fitting fixture creeping
+   back toward the limit. This is why panel-37's F1 number (960) and mine
+   (690) are not comparable line-for-line — the artefact now records
+   `contentHeight`, `clientHeight`, `scrollHeight`, `overflowPx` and
+   `headroomPx` separately.
+3. **One named allowance, `POPULATED_SECTION_OVERFLOW_PX = 210`, for one
+   documented cause.** Three fixtures still overflow, and every pixel of it
+   is a *populated* section — see "What is left". A single documented number
+   for a single named cause is a budget; four per-fixture numbers are a
+   ratchet. Raising it means declaring a new cause in `inspector.md` §6.
+4. **The regressions are pinned as structure, not as numbers.** Because one
+   uniform allowance cannot also be a tight per-fixture ratchet, two e2e
+   tests assert the folds the budget rests on: the four Studio extras behind
+   one More disclosure (152px), and Layout as one row with its body one
+   click away and a flex container still open at rest (167px).
+5. **Law 1 gets a stated exception for Layout.** Law 1 says an unused
+   section is "not a disclosure — no chevron, no body". Layout on a plain
+   block is *unused*, not *empty*: `overflow`, padding, margin and the
+   item-level `flex`/`gridColumn`/`gridRow` are real CSS on any element, and
+   `Section`'s `empty` prop would delete them. So Layout rests at one row
+   like every other unused section but keeps a real body behind its chevron.
+   Written into §1, not left implicit in a component file.
+6. **Clearing the layout folds the section back to one row.** That is what
+   Figma's `−` on Auto layout does. Three existing tests asserted the mode
+   row survived a clear; they now assert the fold and open it explicitly.
+7. **The Module block is budgeted, not restructured.** It carries
+   `data-section-id="module"` so it appears in the measured artefact (158px
+   text, 252px image, 60px otherwise). Folding its unset props is named as a
+   lever with its number, not taken — see "Landmines".
+8. **No token added and none removed.** `globals.css` changed only in its
+   spacing-hierarchy comment: `--inspector-space-m` is now the
+   between-section step as well as the between-group one, and
+   `--inspector-space-xl` is documented as inset-card block padding
+   (`MultiSelectorInspector`, the generated-utility notice), which is what it
+   is actually used for.
+
+## Landmines
+
+1. **`panel-37`'s chrome table has a mislabelled band, and it is load-bearing.**
+   The 88px row called "node header (title + breadcrumb)" is **`FrameSizePanel`**
+   — the board frame's device preset + W/H. The node title is inside
+   `PanelHeader`'s own 36px. Corrected in both artefacts and in
+   `inspector.md` §6. Anyone re-deriving "how do I reclaim chrome" from the
+   old table will look for a node header that does not exist.
+2. **Every DOM query must scope to `[data-inspector-tab="design"]:not([hidden])`.**
+   panel-37's landmine, still true. My new Layout test scopes through
+   `designSection()`.
+3. **`getByRole('button', { name: 'Layout' })` is now ambiguous** — the
+   collapsed header carries both the section toggle and an "Add auto layout"
+   button. Use `exact: true` (Playwright) or `'Layout'` exactly (RTL, where
+   `name` is already exact).
+4. **Two architecture tests time out under load on this machine, not from my
+   change.** `no-core-barrel-deep-imports` (43s) and
+   `alm-design-system-fresh > dist/ was built from the current vendor/src`
+   (7.3s) exceed the 5s per-test default when the whole `architecture` folder
+   runs at once; both pass in isolation (2/0 and 4/0). Different one failed
+   on each of two consecutive full-folder runs — classic contention flake.
+5. **`bun install` in a fresh worktree is mandatory** and the base is
+   `27616ba8`; this worktree was cut 197 commits behind and had to be
+   `git reset --hard`'d.
+6. **Lever 2 (module props) is deliberately NOT taken and would collide.**
+   Folding module prop rows whose key is absent from `selectedNode.props`
+   behind one disclosure is worth ~72px on F4 and would put it inside the
+   budget. It is a module-engine-wide UX change: `renderModuleTabContent` is
+   shared with the VC param-promotion surface, and
+   `tests/e2e/visual-builder.e2e.ts` + `tests/e2e/reliability.e2e.ts` both
+   drive `property-control-*` rows directly. It needs its own work order and
+   its own dogfood.
+7. **The e2e spec dirties `studio-workspace/`.** `git checkout -- studio-workspace/`
+   after every run; it also generates an untracked `.studio/framework.json`
+   in the fixture project (removed with the fixture by the spec's `afterAll`).
+
+## Verification — real numbers
+
+Stack started by hand on isolated ports (`E2E_VITE_PORT=5211`,
+`E2E_CMS_PORT=3211`, `VITE_ALLOWED_ORIGIN=http://127.0.0.1:5211`),
+`E2E_REUSE_SERVER=1`.
+
+### The browser gate — before and after, per fixture, at 1400×900
+
+| Fixture | before (`scrollHeight`) | before room | over | after (`contentHeight`) | after room | over |
+|---|---:|---:|---:|---:|---:|---:|
+| F1 rectangle | 960 | 626 | 334 | **690** | 718 | **0** (28 spare) |
+| F2 text | 1190 | 626 | 564 | **916** | 718 | **198** |
+| F3 flex board | 1013 | 626 | 387 | **909** | 718 | **191** |
+| F4 image | 1043 | 626 | 417 | **773** | 718 | **55** |
+
+Total overflow 1702px → 444px (−74%). Chrome 274 → 182px.
+
+Per-section, F2 text (the worst fixture), before → after:
+
+| Child | before | after |
+|---|---:|---:|
+| `WriteTargetRow` | 32 | 32 |
+| `module` | 158 | 158 |
+| `layer` | 32 | 32 |
+| `align` | 0 | 0 |
+| `measures` | 122 | 122 |
+| `layout` | **199** | **33** |
+| `fill` | 73 | 73 |
+| `stroke` / `shadow` / `blur` | 33 each | 33 each |
+| `text` | 197 | 197 |
+| `export` | 33 | 33 |
+| `more` (collapsed) | 33 | 33 |
+| grid gaps | 132 (11×12) | **88** (11×8) |
+| container padding | **80** | **16** |
+| **total** | **1190** | **916** |
+
+```
+npx playwright test tests/e2e/inspector-height.e2e.ts   → 4 passed (43.0s)
+```
+
+### Static gates
+
+```
+bun run build                      → tsc -b + vite build, built in 41.70s, clean
+bun run lint                       → clean (one Babel 500KB deopt note, pre-existing)
+bun test src/__tests__/architecture → 609 pass / 2 fail  (both timeout flake under
+                                      load; each passes alone — see landmine 4)
+bun test src/__tests__/inspector src/__tests__/panels \
+        src/admin/pages/site/inspector
+                                   → 1099 pass / 0 fail
+bun test (full)                    → 13,635 pass / 15 fail / 2 skip / 1 error,
+                                      1241 files, 1395s — ZERO new reds
+```
+
+**Full-suite triage.** Two are named pre-existing: `streamClaudeCli — MCP
+config file` (`claudeCli`) and `GET /admin/api/studio/load — Phase 7A ...
+nested page` (`studio.test.ts` nested-page load). Every other failure is a
+per-test **5-second timeout** on a machine running eleven agents in parallel
+— the printed durations say so (7.8s / 8.0s / 21.2s / 6.8s / 5.0s / 16.6s /
+7.7s / 5.8s / 5.2s) — and each was re-run in isolation:
+
+| Test | alone |
+|---|---|
+| `admin-router-usage` ×2 | pass |
+| `alm-design-system-fresh > dist/ was built from ...` | 4 pass / 0 fail |
+| `no-core-barrel-deep-imports` | 2 pass / 0 fail |
+| `store/selectorStability` + `plugin-sdk/publicSdkExports` | 8 pass / 0 fail |
+| `server/handlers/__tests__/localizedPage.test.ts` ×3 | 4 pass / 0 fail |
+| `ai-driver-isolation > @anthropic-ai/claude-agent-sdk` | **still times out alone at 22s** — a slow filesystem scan against bun's 5s default on this Windows checkout, pre-existing and unrelated to this diff |
+
+None of them reads a file this branch touches.
+
+The static half moved with the code: F2's computed Design-tab section total
+756 → **612** (gap −40, Layout −104), the More fold 164 → **152** at the 8px
+gap, and a new assertion that collapsing Layout is worth 104px and leaves it
+the same height as every other unused section.
+
+### What is left, and why it is not density work
+
+Every remaining pixel is a value the user's own source sets, drawn once, at
+the 32px row height `04-token-gaps.md` measures off Penpot:
+
+- **F2, 198 over** — `text` 197 (Figma's own four typography rows) + the
+  158px Module block (the node's `text` content editor at 90px + its `tag`
+  row).
+- **F3, 191 over** — `layout` 329, a real flex container: mode 34, flow 32,
+  3×3 align pad 48, row/column gap 34, padding 34, margin 34, clip 32.
+- **F4, 55 over** — the 252px Module block: a 104px image picker plus
+  `loading`/`fetchPriority`/`decoding`.
+
+Three named levers, each with its number, in `inspector.md` §6 and
+`05-section-heights.md`:
+
+1. `WriteTargetRow` duplicates ClassPicker's pill stack — **40px** on every
+   selection, and merging them removes the panel's own copy of the
+   write-target ambiguity WS-6.2 exists to fix. Left alone here because it is
+   a behaviour change to the write target, not a density change.
+2. Module props the source does not set are pre-drawn (Law 3 says otherwise)
+   — **~72px on F4**, which would put F4 inside the budget. See landmine 6.
+3. Layout stacks what Figma pairs (align pad + gap; padding + margin) —
+   **~84px on F3**.
+
+## Human action needed — dogfood script (`standing-02`)
+
+At **`/admin/site`, docked Properties panel, browser window ~900px tall**:
+
+1. **Select the plain rectangle / any `<div>` with no `display` set.** The
+   **Layout** section must be ONE row: title, a `+` on the right, and a
+   chevron that appears on hover. Confirm the whole Design tab fits with no
+   scrollbar. Click the chevron → padding, margin, "Clip content" and the
+   settings `⚙` all appear, unchanged.
+2. **Click that `+`.** It writes `display: flex; flex-direction: column` to
+   the source and the section opens and stays open, now showing `−` instead
+   of `+`. Click `−` → it folds back to one row. This is the gesture most
+   likely to feel wrong; say so if it does.
+3. **Select an element with padding but no flex/grid** (e.g. `.page`, or the
+   `.board`'s parent). Layout must be collapsed **with a small dot beside the
+   title** — that dot is the promise that a collapsed header never hides a
+   stored value. Open it and confirm the padding really is set.
+4. **Select the flex board.** Layout must be open at rest, exactly as before,
+   with no `+`.
+5. **Deselect everything (click empty canvas inside a frame).** The frame's
+   device-size preset + W/H strip appears above "Select an element…". Confirm
+   it is still easy to find — this is the one visible relocation, and the
+   only place a user loses something if it reads as missing. Then select any
+   node and confirm the strip is gone from above the inspector (it used to
+   draw a second W/H pair four rows above `MeasuresSection`'s real one).
+6. **Scan the whole Design tab on a text node** for the tighter 8px section
+   gap: sections should still read as separate blocks, not as one wall. If
+   they don't, the gap is one line — `.surfaceContent { gap }` in
+   `StyleSurface.module.css`.
+
+
+---
+
+### verify-3 — the Phase 0 exit dogfood, machine-checked: 3 contracts locked, 4 defects named
+
+- **Agent:** test-engineer (parallel wave 2, `standing-05`) · own worktree
+- **Stage:** done — spec green (8/8 on the Playwright reporter: 4 pass, 4 expected failures), gates run, draft PR open
+- **Branch:** `test/phase0-exit-dogfood-e2e` off `27616ba8` · **PR:** [#173](https://github.com/maherfayad-stack/Figma-Killer-2/pull/173) (draft, base `feat/alm-figma-killer-studio-shell`)
+- **Commits:** `901737b7` (console-noise fix) · `ba3e60ec` (dev-only crash probe) · `6679c0ea` (the spec + helper + docs)
+- **Updated:** 2026-09-18
+
+#### Goal
+
+`STUDIO-FIGMA-FEEL-PLAN.md` §8 DoD line 1 and `meta-14`'s "Human action needed":
+turn the Phase 0 exit dogfood into something a machine runs, against the real
+`/admin/site` on a real workspace project, asserting real values (node counts,
+resolved pixel distances, bytes on disk) rather than "did not throw".
+
+#### Scope
+
+**Added:** `tests/e2e/studio-feel-phase0.e2e.ts` · `tests/e2e/helpers/studioFixtureProject.ts` ·
+`src/admin/pages/site/inspector/PanelCrashProbe.tsx`.
+**Touched (3 lines):** `src/admin/pages/site/inspector/InspectorShell.tsx` (mount the probe behind
+`import.meta.env.DEV`).
+**Fixed (13 lines, in the feature's own file):** `src/admin/pages/site/studio/registerProjectModules.ts`.
+**Docs:** `docs/e2e/README.md` (coverage-map row + a section on the expected-failure convention and the
+per-case fixture copy) · `docs/agent-refs/path-index.md` (three new rows).
+Did **not** touch `playwright.config.ts`, `auth.setup.ts`, any existing helper or any existing spec
+(`verify-2`'s scope), or `STATE.md` / `CLAUDE.md`.
+
+#### Done so far — the per-case result table
+
+Run against a hand-started stack on 5221/3221 with `VITE_ALLOWED_ORIGIN=http://127.0.0.1:5221`
+and `E2E_REUSE_SERVER=1`. Playwright exit code **0**, `8 passed (3.8m)` — four genuine passes and
+four `test.fail()` cases that failed as documented.
+
+| # | Case | Result | What was measured |
+|---|---|---|---|
+| — | `auth.setup.ts` (SETUP-001) | **pass** | 26.1 s |
+| 1 | ⌘D ×5 inside 300 ms | **expected fail** | burst 21–48 ms · toast cards `warning×4, success` = **2 cards, not 5** (Z1 holds) · **copies added to source: 1** (want 5) · siblings 4 (was 3) · selection still `pages/SMS.tsx:54:18`, the pre-burst node |
+| 2 | Alt-hover measurement | **pass** | gap 3.9 px · pills read **3.9** (want 3.90625) and **2** (want 2) · both within the 1 px tolerance · overlay hidden again on Alt release |
+| 3 | Alt+drag → sibling slot | **pass** | mid-gesture chrome `{present:true, duplicating:"true", refusal:null}` · exactly one `success` card · **+1 copy in the `.tsx`** · original's source line byte-identical · +1 element on the canvas |
+| 4 | ⌘G / ⌘⇧G / ⌘Z | **expected fail** | ⌘G: children 3→2 ✓, source changed ✓ · **selection stays on `SMS.tsx:54:18`** ✗ · ⌘⇧G restores the file exactly ✓ · **second ⌘G writes nothing** ("Still writing your last change") ✗ · **React: "In HTML, `<div>` cannot be a descendant of `<p>`"** ✗ |
+| 5 | a panel that throws | **expected fail** | the `ErrorBoundary` fallback renders and pushes **0 error toasts** (Z2's silent half holds) — but `canvas-root` and `canvas-notch` are **gone**: the fallback replaced the whole editor body |
+| 6 | save chip | **pass** | `saved → saving → saved` for one structural write · 4 forced 500s, then "Unsaved — retry" · **0 toast cards on the whole failure path** · Retry with the route restored → `saved` |
+| 7 | zero unexplained console errors | **expected fail** | 14 events recorded, **12 matched** by a 4-entry allowlist; the 2 unexplained are case 4's React HTML-validity errors |
+
+#### The four defects, with the observed behaviour
+
+1. **⌘D ×5 makes one copy, not five** (`store-11`/`store-12`).
+   `guardAgainstConcurrentStructuralCommit` refuses presses 2–5 while the first write is in
+   flight. Z1 is working — the four refusals collapse onto ONE warning card with `×4` — but the
+   gesture is not: the user pressed it five times and got one element. Serializing a burst instead
+   of refusing it is a queueing design decision, not a local edit, so it is not fixed here.
+2. **A source-backed duplicate/group selects nothing new** (`keys-01`, its own open follow-up).
+   `duplicateNode` returns `''` on a studio-imported tree because the copy's id is the `line:col`
+   the codemod has not written yet; `commitStructural` does not report created node ids. Shows up
+   in case 1 (⌘D) and again in case 4 (⌘G leaves the selection on the pre-group node).
+3. **⌘G writes a `<div>` into phrasing content** (`struct-10`, K3) — **the most serious finding.**
+   Grouping two inline `<span>`s that live inside a `<p>` emits `<div>`, and React says so twice:
+   *"In HTML, `<div>` cannot be a descendant of `<p>`. This will cause a hydration error."* and
+   *"`<p>` cannot contain a nested `<div>`."* Studio wrote markup that breaks the user's real app.
+   The wrapper tag is hard-coded at K3's call sites (`runGroupShortcut` → `groupNodes`,
+   `name: 'div'`); choosing `<span>` in a phrasing context is a parser-side decision. This is also
+   why case 7 is red — allowlisting those two would be exactly the "errors I did not see" failure.
+4. **The inspector has no error boundary of its own** (`store-12`, Z2).
+   `error-boundary-coverage.test.ts` enumerates seven seams and the inspector is not one of them.
+   The nearest boundary above it is `AdminCanvasLayout`'s
+   `LazyChunkBoundary location="site-editor-body"`, which wraps the canvas and every panel
+   together — so a panel that throws takes the whole editor body down and replaces it with
+   "Editor chunk failed to load", which is neither the panel's own fallback nor a true statement.
+   The fix is a per-panel seam plus a row in the coverage gate: small, but it is a NEW
+   architectural boundary, which is the panel owner's call.
+
+#### Fixed here (in scope, 13 lines, the feature's own file)
+
+**A Tier-0 project logged `console.error` on every board open.**
+`registerProjectModules.ts:438` logged every `{ ok: false }` component-bundle response at error
+level, including `trust-tier-required` — which is not a failure but the DEFAULT for every project
+on disk until a human promotes it. Three of the first fifteen events case 7 recorded were this. It
+now logs only for codes that are genuine failures; the refusal is still published through
+`setPackageBundleStatus` and rendered by `PackageComponentPlaceholder` / the ModulePicker / the
+insert palette, which is where a user can act on it.
+
+#### Decisions
+
+- **`test4`, not `__canonical-fixture`, and the `sms` frame by name.** The canonical fixture has no
+  `.studio/boards.json`, no committed board and no frame geometry, and its own README says it "is
+  not meant to be opened as a Studio project" — cases 1–6 all need a mounted frame before they can
+  press a key. On `test4`, the `sms` screen is the only one that satisfies everything at once: a
+  run of adjacent, source-addressable, non-form-control leaf siblings long enough to drag one past
+  a neighbour, visible space between them, all written in the page's own file, and one run of
+  literal text. Reasons are in the spec header, per case.
+- **A pristine fixture copy per CASE, not per file.** Every case writes real source. With one copy
+  per file, case 4 grouped whatever case 3 had left behind, and the `<div>`-in-`<p>` defect
+  appeared and disappeared between consecutive runs. Measured, then fixed.
+- **`test.fail()` rather than a weakened assertion.** Playwright fails the run if an expected
+  failure starts passing, so a fix cannot land silently and the docblock naming the defect cannot
+  rot. Nothing was softened to get green.
+- **Soft assertions inside the expected-failure cases.** A dogfood that stops at the first broken
+  claim makes the human run it three times to learn three things; `settle()` gives the fast path
+  when a claim holds and a bounded, non-throwing read when it does not.
+- **Selection identity is verified after every click.** `NodeRenderer` selects the INNERMOST node
+  under the cursor, so a click that lands on a child silently retargets every source assertion
+  after it. The first version of this spec duplicated a grandchild while asserting about its
+  grandparent's file position — `selectAndConfirm` turns that class of mistake into "this spec is
+  aimed at the wrong element", which reads very differently from "the gesture wrote the wrong
+  thing".
+- **Case 3 does not adjudicate which SLOT a drop resolves to.** Dropping on the leading edge of an
+  inline sibling 3.9 px away put the copy OUTSIDE the container under the pointer (annotated:
+  `elements inside the container under the pointer: 3 (was 3)`), while the source gained exactly
+  one copy. Which slot a drop resolves to is `previewStructuralMove`'s contract, not K2's, and a
+  leaf `<span>` holding text is a legitimate container for both readings — so the case asserts the
+  three things the work order names plus "the canvas gained exactly one element", and the
+  container count is annotated for the drag owner (`canvas-19`) instead of being asserted here.
+- **The console allowlist has four entries, each pinned to something this spec injected** (the
+  probe's name, or the message the spec puts in its own 500 envelope), so an entry can never grow
+  to cover a real failure. Case 7 also fails if an allowlist entry matches NOTHING — an entry that
+  stops describing the run starts hiding whatever it matches next.
+
+#### Landmines
+
+1. **The dev stack must be started by hand on isolated ports.** With `E2E_REUSE_SERVER=1` and
+   nothing listening on the port `E2E_ADMIN_BASE_URL` names, Playwright silently spawns
+   `bun run e2e:dev` on the DEFAULT 5174/3002 and then times out waiting for your port. The
+   failure reads as "Process from config.webServer was not able to start", which is not what
+   happened. Check the port is alive before blaming the spec (`verify-01` finding 3 is the same
+   trap from the other side).
+2. **`registerProjectModules`'s log was 3 of 15 console events.** Any new "expected state"
+   reported at error level will blow case 7 for everyone. That is the gate working; fix the log
+   level rather than the allowlist.
+3. **`findSiblingRun` excludes authored form controls on purpose.**
+   `useCanvasFormControlSuppression` installs a capture-phase `pointerdown` that calls
+   `preventDefault()` on any press inside `input, textarea, select, button`, and the drag
+   trigger's first line is `if (event.defaultPrevented) return`. A press on one of those can never
+   open a drag session. That is the product working; it just makes them unusable as drag targets.
+   An earlier version of this spec drove `<input>`s and read "Alt+drag is broken".
+4. **`decodeNodeSourceLocation` takes the LAST segment of a composite id.** For an inlined local
+   component that is the COMPONENT's file, while the gesture writes the CALL SITE's file — so a
+   spec reading "the file this node writes to" reads the wrong one and every source assertion
+   quietly measures an untouched file. `findSiblingRun` only returns plain `rel:line:col` ids for
+   exactly this reason.
+5. **Playwright's `test.fail()` must be called INSIDE the test body.** At the top level of a
+   `describe` it marks every test in the group.
+6. **Running this spec dirties `studio-workspace/`.** `auth.setup.ts` rewrites
+   `__canonical-fixture/.studio/meta.json` and generates an untracked
+   `__canonical-fixture/.studio/framework.json` that `git checkout --` does not remove
+   (`panel-37`'s landmine, unchanged). After a local run:
+   `git checkout -- studio-workspace/` **and** `rm -f studio-workspace/__canonical-fixture/.studio/framework.json`.
+7. **`studio-feel.e2e.ts` and this spec now carry near-identical private copies** of the fixture
+   copy / pan / click-in-frame / toast-recorder helpers. `verify-2` owns that file and is moving it
+   onto a throwaway workspace copy of its own, so de-duplicating onto
+   `helpers/studioFixtureProject.ts` is **an integrator job**, not a merge conflict.
+
+#### For the integrator
+
+- No `playwright.config.ts` change is needed: the spec runs under the existing `e2e` project and
+  the existing `setup` dependency. If the `e2e-budgets` CI job should gate the dogfood too, add
+  `tests/e2e/studio-feel-phase0.e2e.ts` to the spec list in `.github/workflows/ci.yml` — but note
+  it takes ~4 minutes and four of its cases are red by design, so it needs `--pass-with-no-tests`
+  semantics or its own job, not the budget slice's.
+- Three defects above are unclaimed wave-2 work orders: the ⌘G wrapper tag (`struct-10`), the
+  per-panel error boundary (`store-12`), and created-node-id reporting from `commitStructural`
+  (`keys-01`).
+
+#### Verification, with real numbers
+
+- `bun run build` — **exit 0** (`tsc -b && vite build`, built in 27.6 s).
+- `bun run lint` — **exit 0**, clean. (One `no-useless-assignment` this branch introduced was fixed,
+  not suppressed.)
+- `bun test src/__tests__/architecture` — **611 pass / 0 fail** in 66 s on a quiet machine. (610/1
+  while the dev stack was still running: `ai-driver-isolation > @anthropic-ai/claude-agent-sdk`
+  timed out at 21.3 s against its 5 s budget — `meta-14`'s documented load-sensitive whole-tree
+  scan, "611/0 quiet, 610/1 when raced".)
+- Full `bun test` — **13,632 pass / 2 skip / 10 fail** across 1,241 files in 870 s. Six are
+  `standing-01`'s named set (`claudeCli` 0600 mode, `studio.test.ts` nested-page load,
+  `parityMatrix`, `studio_compare` ×2, `studio_list_projects`). The other four are timeouts under
+  parallel-wave load — `ai-driver-isolation` (16.4 s vs 5 s), `publicSdkExports` (5.0 s),
+  `localizedPageWriteback`/`localizedPage` ×2 (7.4 s, 6.3 s) — and every one of them is **green
+  standalone**: 6/0, 5/0, 4/0 respectively, re-run after the suite. **Zero new reds.** The 870 s
+  runtime against `meta-14`'s 589 s baseline is the same load.
+- `npx playwright test tests/e2e/studio-feel-phase0.e2e.ts` — **exit 0, 8 passed (3.8 m)**, isolated
+  stack 5221/3221 with `VITE_ALLOWED_ORIGIN`. Per-case table above. `studio-workspace/` restored and
+  the untracked `framework.json` removed afterwards.
+
+#### Human action needed
+
+- Review the PR. The four expected failures are the deliverable, not a defect in the spec — read
+  them as the dogfood's findings.
+- **Decide on finding 3 (⌘G writes `<div>` into a `<p>`) first.** It is the only one of the four
+  that puts invalid markup into a user's repository; the other three are editor-side annoyances.
+- Nothing needs to be driven by hand to close `meta-14`'s Phase 0 dogfood any more — the
+  measurements are in the table above and re-runnable. `G8` (the real private-repo GitHub dogfood)
+  is untouched and still needs a human.
+
+
+---
+
 ### meta-15 — wave 2 of the Figma-feel plan dispatched: eleven parallel work orders from §9
 - **Agent:** orchestrator (main session) · **Stage:** in flight · **Updated:** 2026-09-18
 - **Base:** `27616ba8` = `feat/alm-figma-killer-studio-shell` after the `--no-ff` merge of PR #162 (wave 1). Clean merge, no conflicts; verification numbers are `meta-14`'s (the merge added only STATE.md commits on the shell side).
@@ -2483,6 +4690,7 @@ Modified: `CanvasRoot.tsx` + css · `IframeFrameSurface.module.css` · `UndoRedo
 ---
 
 ### sec-13 — security review of PR #160 (G3–G7): CSRF reached half the git surface, and the write lock had two unbounded edges — APPROVED WITH FIXES
+- **Correction (mcp-24, 2026-09-18):** the informational finding that `guardProject`'s `outside-workspace` branch is dead is WRONG — `resolveProjectDir(undefined)` returns the workspace root in an empty workspace and `assertOwnGitRepo` refuses the root, so the branch is reachable; it stays, with two tests pinning it (PR #168).
 - **Agent:** security-guard · **Stage:** done · **Updated:** 2026-09-17
 - **Result:** draft PR #161 (`review/pr-160` → `feat/branches-pull-pr`), six commits. **Merge #161 into #160 (the integrator merges it right after #160).**
 - **Scope:** `server/handlers/studio/{git,gitRemoteRoutes,gitOperations,gitSyncOperations,installDeps,subprocessRunner}.ts`, `server/ai/mcp/tools/studio/gitTools.ts`, `src/admin/pages/site/studio/gitSyncRequests.ts`, five test files.
@@ -12126,6 +14334,9 @@ concurrent session", one as "another agent's in-flight refactor". Either
 would have sent the next person hunting a bug that does not exist. If you are
 about to report a large, cross-cutting `tsc` breakage in files nobody touched,
 **check `npx tsc --version` against `package.json` before you write it down.**
+
+### standing-10 — `src/__tests__/setup.ts` makes `os.tmpdir()` the Studio workspace root for the whole suite
+Any test that ENUMERATES the workspace (rather than addressing one project inside it) scans the machine's temp directory: slow, load-sensitive, non-deterministic. `studio_list_projects` bit first (`mcp-24`, 21–33 s vs a 5 s budget). Give such a test its own workspace root (the escape `setup.ts` documents). Related: `bun run test` carries `--parallel=4` (load-bearing per `bunfig.toml`); a bare `bun test` produces extra reds. The Write/Edit/Bash tools turn a `\u0000` or `\uFEFF` escape typed in prose into the RAW byte — the `no-nul-bytes-in-source` gate (sec-15) catches the first; byte-scan for the second; build such text with `chr()` in Python.
 
 ### standing-01 — the pre-existing-failure bucket is 33, and every one of them has a name
 **Rewritten 2026-09-17 by `test-05` (PR #158). The "34 failures" text and the "honest not-my-failure bucket" framing are both dead — do not quote them.**
