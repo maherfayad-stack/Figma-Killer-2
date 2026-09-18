@@ -310,6 +310,18 @@ splice of the original bytes (`jsxChildRange.ts`), and it refuses outright if
 the text on disk differs from the text ts-morph parsed. An AST rewrite that
 reformats an untouched sibling is a defect.
 
+**The four that CREATE also say where (`store-13`).** `insertJsxElement`,
+`duplicateJsxElement`, `wrapJsxElement` and `wrapJsxElements` return
+`created: { line, col } | null` alongside `ok: true` — the new element's own
+tag-name position, derived from the byte range they spliced
+(`createdJsxLocation.ts`) and then VERIFIED by re-locating an element there in
+the re-parsed file. `null` means "written, but the position could not be
+confirmed", which is deliberately not a guess: a wrong id would select, and let
+the user edit, something they never made. `applyStudioEditBatch` mints
+`createdNodeIds` from them; see `editor-store.md` for what the board does with
+that, and for why the batch pins each one to its distance from the end of the
+file rather than to an absolute line.
+
 **Commit shape.** Structural edits are one-shot commits
 (`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` /
 `commitStudioGroup` / `commitStudioUngroup` / … in
