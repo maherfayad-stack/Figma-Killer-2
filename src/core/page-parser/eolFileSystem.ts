@@ -45,7 +45,7 @@
  *    byte-for-byte.
  *  - The byte-order mark is NOT this class's business: ts-morph strips it on
  *    read and re-adds it to the text it hands `writeFileSync`, and
- *    {@link applyLineEnding} leaves a leading `﻿` alone.
+ *    {@link applyLineEnding} leaves a leading `\uFEFF` alone.
  *
  * It lives beside `createWorkspaceProject` (`componentSources.ts`) because
  * that is the one function that decides how Studio opens a ts-morph

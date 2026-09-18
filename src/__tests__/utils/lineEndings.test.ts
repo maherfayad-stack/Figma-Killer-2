@@ -46,7 +46,7 @@ describe('toLf', () => {
   })
 
   it('leaves a byte-order mark alone', () => {
-    expect(toLf('﻿a\r\nb')).toBe('﻿a\nb')
+    expect(toLf('\uFEFFa\r\nb')).toBe('\uFEFFa\nb')
   })
 })
 

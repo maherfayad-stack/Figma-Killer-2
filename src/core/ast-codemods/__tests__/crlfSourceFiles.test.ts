@@ -252,7 +252,7 @@ describe('what a line ending does NOT change', () => {
 
   it('still REFUSES a file whose on-disk bytes are not the bytes it parsed — the BOM case', () => {
     const file = path.join(tmpDir, 'Bom.tsx')
-    fs.writeFileSync(file, `﻿${STOCK_ROOM_LINES.join('\r\n')}`, 'utf8')
+    fs.writeFileSync(file, `\uFEFF${STOCK_ROOM_LINES.join('\r\n')}`, 'utf8')
     const before = readRaw(file)
 
     const result = deleteJsxElement({ file, line: 11, col: 8 })
