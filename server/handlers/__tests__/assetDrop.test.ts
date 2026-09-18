@@ -17,6 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { landAssetBytes } from '../studio/assetLanding'
 import {
   droppedAssetSrc,
   resolveDroppedAssetHome,
@@ -59,13 +60,30 @@ function dropRequest(fields: Record<string, string>, file?: { name: string; byte
   return new Request('http://localhost/admin/api/studio/asset-drop', { method: 'POST', body: form })
 }
 
+/**
+ * The route needs a `DbClient` for its `studio.write` check (`sec-17`). These
+ * tests never reach it: `allowWrite` stands in for the capability gate so the
+ * behavioural assertions below can drive the route without standing up a real
+ * `sessions` table. The gate ITSELF is pinned by the `authorization` block at
+ * the bottom of this file, which passes NO deps and therefore meets the real
+ * `requireCapability`.
+ */
+const db = {} as never
+const allowWrite = async (): Promise<Response | null> => null
+
 const serve = (req: Request) =>
-  tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/asset-drop')
+  tryServeStudioAssetDrop(req, { db }, new URL(req.url), '/admin/api/studio/asset-drop', {
+    authorize: allowWrite,
+  })
 
 describe('tryServeStudioAssetDrop — routing', () => {
   it('returns null for a non-matching path', async () => {
     const req = new Request('http://localhost/admin/api/studio/other', { method: 'POST' })
-    expect(await tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/other')).toBeNull()
+    expect(
+      await tryServeStudioAssetDrop(req, { db }, new URL(req.url), '/admin/api/studio/other', {
+        authorize: allowWrite,
+      }),
+    ).toBeNull()
   })
 
   it('returns null for a matching path with the wrong method', async () => {
@@ -198,5 +216,148 @@ describe('tryServeStudioAssetDrop — refusals', () => {
     } finally {
       fs.rmSync(bare, { recursive: true, force: true })
     }
+  })
+})
+
+/**
+ * `sec-17` — who is allowed to ask at all.
+ *
+ * This route writes caller-supplied bytes into the user's repository, and
+ * before this block it had neither of the two checks the rest of Studio's
+ * write surface carries. The exploit is not subtle: a multipart POST is a
+ * shape a plain cross-origin `<form>` can send with no JavaScript and no
+ * preflight, so any page the user has open in another tab could drop a file
+ * of its choosing into whichever project they happen to be editing — and then
+ * `<img src="/that-file.svg">` is one gesture away from being written into
+ * their source by hand.
+ *
+ * Both tests below pass NO `deps`, so they meet the real gates rather than a
+ * stand-in.
+ */
+describe('tryServeStudioAssetDrop — authorization', () => {
+  beforeEach(seedViteProject)
+
+  const ungated = (req: Request) =>
+    tryServeStudioAssetDrop(req, { db }, new URL(req.url), '/admin/api/studio/asset-drop')
+
+  /**
+   * `Origin` is a forbidden header in the `Request` constructor, so it is set
+   * afterwards — which is also exactly why the check is worth something: only
+   * the browser writes that header and a page cannot forge it.
+   */
+  it('refuses a forged cross-origin POST before any byte is written', async () => {
+    const req = dropRequest({ dir: tmpDir }, { name: 'forged.png', bytes: PNG_BYTES })
+    req.headers.set('origin', 'https://evil.test')
+
+    const res = await ungated(req)
+    expect(res!.status).toBe(403)
+    expect(fs.existsSync(path.join(tmpDir, 'public', 'forged.png'))).toBe(false)
+  })
+
+  it('says nothing about the filesystem when it refuses', async () => {
+    const req = dropRequest({ dir: tmpDir }, { name: 'forged.png', bytes: PNG_BYTES })
+    req.headers.set('origin', 'https://evil.test')
+    const body = (await (await ungated(req))!.json()) as { error: string }
+    expect(body.error).not.toContain(tmpDir)
+  })
+
+  it('refuses a same-origin POST with no session, and writes nothing', async () => {
+    const req = dropRequest({ dir: tmpDir }, { name: 'anon.png', bytes: PNG_BYTES })
+
+    const res = await ungated(req)
+    expect(res!.status).toBe(401)
+    expect(fs.existsSync(path.join(tmpDir, 'public', 'anon.png'))).toBe(false)
+  })
+})
+
+/**
+ * `sec-17` — the filename and the `src` literal, driven with the inputs that
+ * would break out of the JSX attribute the drop is about to write.
+ *
+ * `droppedAssetSrc`'s output goes straight into `<img src="…">` as a string
+ * prop. A name carrying a quote, an angle bracket, a brace or a newline would
+ * either terminate the attribute early or open a JSX expression container, so
+ * these assert the DERIVED name rather than the declared one — and that the
+ * file actually on disk is the one the `src` names.
+ */
+describe('tryServeStudioAssetDrop — the name that reaches the source', () => {
+  beforeEach(seedViteProject)
+
+  /**
+   * The exact composition the route performs, minus HTTP. Driven directly
+   * rather than through `dropRequest` because a multipart body cannot CARRY
+   * some of these names — Bun's serializer percent-escapes a `"` and drops an
+   * entry whose filename contains a `:` — and a guard that is only ever fed
+   * names the transport already defanged has not been driven at all.
+   */
+  const landedSrc = (name: string): string => {
+    const landed = landAssetBytes(tmpDir, 'public', PNG_BYTES, name)
+    if (!landed.ok) throw new Error(`refused: ${landed.error}`)
+    return droppedAssetSrc(landed.relPath)
+  }
+
+  it('cannot produce a src that breaks out of the JSX attribute', () => {
+    fs.mkdirSync(path.join(tmpDir, 'public'), { recursive: true })
+    for (const hostile of [
+      'a"onerror="alert(1).png',
+      "it's.png",
+      '<script>.png',
+      '{process.env.SECRET}.png',
+      'line\nbreak.png',
+      'sp ace.png',
+      'photo.png:evil', // NTFS alternate data stream
+      'trailing. .png',
+      'nul\u0000byte.png',
+      'e\u0301\u00e9.png', // combining acute vs. precomposed — normalisation
+      'CON.png', // Windows reserved device name
+      'NUL',
+    ]) {
+      const src = landedSrc(hostile)
+      expect({ hostile, src }).toEqual({ hostile, src: expect.stringMatching(/^\/[A-Za-z0-9_-]+\.png$/) })
+      // The file the literal names is the file that was actually written.
+      expect(fs.existsSync(path.join(tmpDir, 'public', src.slice(1)))).toBe(true)
+    }
+  })
+
+  it('never emits a traversal or a protocol-relative src', () => {
+    fs.mkdirSync(path.join(tmpDir, 'public'), { recursive: true })
+    for (const hostile of [
+      '../../secret.png',
+      '..\\..\\secret.png',
+      '//evil.test/x.png',
+      '/etc/passwd.png',
+      'C:\\Windows\\System32\\x.png',
+      '\\\\?\\C:\\evil.png',
+    ]) {
+      const src = landedSrc(hostile)
+      expect(src.startsWith('//')).toBe(false)
+      expect(src).not.toContain('..')
+      expect(src.split('/')).toHaveLength(2)
+    }
+  })
+
+  it('sanitises an SVG before it reaches disk, and still serves it from the site root', async () => {
+    const svg = new TextEncoder().encode(
+      '<svg xmlns="http://www.w3.org/2000/svg"><script>fetch("//evil.test")</script><rect width="1" height="1"/></svg>',
+    )
+    const res = await serve(dropRequest({ dir: tmpDir }, { name: 'mark.png', bytes: svg }))
+    const body = (await res!.json()) as { src: string }
+    // The BYTES decided the extension, not the `.png` the caller declared.
+    expect(body.src).toBe('/mark.svg')
+    const onDisk = fs.readFileSync(path.join(tmpDir, 'public', 'mark.svg'), 'utf8')
+    expect(onDisk).not.toContain('<script')
+    expect(onDisk).not.toContain('evil.test')
+  })
+
+  it('writes exactly one file when the body carries two', async () => {
+    const form = new FormData()
+    form.append('dir', tmpDir)
+    form.append('file', new File([PNG_BYTES], 'first.png'))
+    form.append('file', new File([PNG_BYTES], 'second.png'))
+    const req = new Request('http://localhost/admin/api/studio/asset-drop', { method: 'POST', body: form })
+
+    const res = await serve(req)
+    expect(res!.status).toBe(200)
+    expect(fs.readdirSync(path.join(tmpDir, 'public'))).toEqual(['first.png'])
   })
 })

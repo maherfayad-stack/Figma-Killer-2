@@ -59,10 +59,37 @@
  *     has does not exist on this route at all. It still goes through
  *     `resolveAssetWriteDir`'s real-path containment check, because the
  *     project itself can arrive from GitHub and git stores symlinks.
+ *
+ * ## Who is allowed to ask (`sec-17`)
+ *
+ * Two gates, both BEFORE the body is read, because a 25 MB body buffered for a
+ * caller who is about to be refused is itself the cost:
+ *
+ *   - **`originAllowed`** — the CSRF check `studio/git.ts` and the git-sync
+ *     routes already apply to every POST they own. Without it any page the
+ *     user happens to have open can reach this route with a plain
+ *     `<form enctype="multipart/form-data">`: no preflight, no JavaScript, and
+ *     a file of the attacker's choosing lands in the repository the user is
+ *     currently editing. The browser writes `Origin` and a page cannot forge
+ *     it, which is the whole value of the check.
+ *   - **`requireCapability('studio.write')`** — the same gate `/delete`,
+ *     `/duplicate` and the trash writes carry, and the capability whose own
+ *     doc says it "gates install/save/frame/codemod mutations". Writing a file
+ *     into someone's repository is one of those. This is why the route rides
+ *     `STUDIO_SESSION_SUB_ROUTERS` (it needs the `DbClient`) rather than the
+ *     plain `(req, url, pathname)` list `asset-upload` is still on.
+ *
+ * When `sec-14`'s table-driven gating (`routeCapabilities.ts`, PR #167) lands,
+ * this route belongs in it as a WRITE — `studio.write` — and the inline
+ * `requireCapability` below should become that table's entry rather than a
+ * second, parallel check.
  */
 import { existsSync, mkdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
+import { isStateChangingMethod, originAllowed } from '../../auth/security'
+import { requireCapability } from '../../auth/authz'
+import type { DbClient } from '../../db/client'
 import { badRequest, jsonResponse } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
@@ -120,11 +147,22 @@ export type AssetDropHome =
  */
 export function resolveDroppedAssetHome(dir: string): AssetDropHome {
   const profile = resolveProjectProfile(dir)
+  // `resolveAppRoot`, never `profile.appRoot` rejoined by hand: `.studio/
+  // meta.json` is a file the user (or an imported repo) can hand-edit, and
+  // that helper is the one place the cached value is real-path containment-
+  // checked, degrading to the project directory when it escapes.
   const appRoot = resolveAppRoot(dir)
   const absolute = join(appRoot, PUBLIC_DIR)
   // Project-relative, POSIX, because that is the vocabulary
   // `resolveAssetWriteDir` and every `relPath` on the wire already speak.
-  const relToProject = profile.appRoot ? `${profile.appRoot}/${PUBLIC_DIR}` : PUBLIC_DIR
+  // `sec-17` — derived from the CHECKED absolute path rather than re-joining
+  // the raw `profile.appRoot`. The two must name one directory: an `appRoot`
+  // of `../../elsewhere` degrades to `dir` above but would still have been
+  // spelled verbatim into the relative form, so `existsSync`/`mkdirSync` and
+  // the path actually written would have been talking about different places.
+  // (`landAssetBytes` would still refuse the `..`; this keeps the two halves
+  // from disagreeing in the first place rather than relying on that.)
+  const relToProject = relative(resolve(dir), absolute).split(sep).join('/')
 
   if (existsSync(absolute)) return { ok: true, absolute, relToProject }
 
@@ -163,17 +201,47 @@ export interface AssetDropDeps {
    * `studio-workspace/` and could write a fixture into it.
    */
   resolveDir?: (requested: string | null | undefined) => string
+  /**
+   * Overrides the `studio.write` capability check — test-only, so the
+   * behavioural tests below it (which directory, which bytes, which refusal)
+   * can drive the route without standing up a real `sessions` table.
+   *
+   * Returns a `Response` to refuse, `null` to allow. Production never passes
+   * one: `tryServeStudio` calls this sub-router with no `deps` at all, so the
+   * default — the real {@link requireCapability} — is what every real request
+   * meets. The "no deps, no session → 401" test is what pins that.
+   */
+  authorize?: (req: Request, db: DbClient) => Promise<Response | null>
+}
+
+async function defaultAuthorize(req: Request, db: DbClient): Promise<Response | null> {
+  const user = await requireCapability(req, db, 'studio.write')
+  return user instanceof Response ? user : null
 }
 
 // `_url` is unused (this route branches on `pathname` alone) but kept in the
-// signature so this sub-router matches the shape `tryServeStudio` composes.
+// signature so this sub-router matches the shape `tryServeStudio` composes for
+// `STUDIO_SESSION_SUB_ROUTERS` — the list that additionally carries the
+// `DbClient`, which this route needs for its capability check.
 export async function tryServeStudioAssetDrop(
   req: Request,
+  runtime: { db: DbClient },
   _url: URL,
   pathname: string,
   deps: AssetDropDeps = {},
 ): Promise<Response | null> {
   if (pathname !== '/admin/api/studio/asset-drop' || req.method !== 'POST') return null
+
+  // Both gates run BEFORE the body is touched: a caller who is about to be
+  // refused must not get 25 MB of server memory spent on them first, and a
+  // forged cross-origin POST must not reach the filesystem at all. The
+  // response says nothing about the workspace — see the git routes' own CSRF
+  // tests for why the message is deliberately bare.
+  if (isStateChangingMethod(req.method) && !originAllowed(req)) {
+    return jsonResponse({ error: 'Forbidden' }, { status: 403 })
+  }
+  const refusal = await (deps.authorize ?? defaultAuthorize)(req, runtime.db)
+  if (refusal) return refusal
 
   try {
     const form = await readFormDataWithLimit(req, MAX_ASSET_DROP_BYTES)

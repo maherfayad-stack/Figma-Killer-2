@@ -225,6 +225,18 @@ prune covers a transplant that MOVES, because it orphans an import in the
 origin exactly as a delete does; the destination's freshly carried import is
 never snapshotted and therefore can never be pruned.
 
+**The same-file refusal is on the REAL path, not on the two strings**
+(`sec-17`). `studioEditLocation`'s guard is lexical — it rejects `..`, absolute
+paths, drive letters and non-source extensions, but it has no opinion about two
+`rel`s that name one file: a case difference on a case-insensitive filesystem,
+or a symlink/junction of the kind git itself stores in an imported repo. If
+such a pair reached the codemod it would load them as two independent ts-morph
+source files, write the destination's spliced text, and then overwrite the
+whole file with the origin's — the pre-edit text with the element **cut out**.
+The markup would be deleted from the user's repository, land nowhere, and the
+batch would report `written: 1`. `transplantJsxElement` therefore compares
+`realpathSync.native` of both ends.
+
 **What travels with the markup.** `transplantJsxElement` partitions the
 subtree's free variables (`analyzeFreeVariables`): a name the ORIGIN file
 resolves at module scope is CARRIED as a mirrored import — following a relative
@@ -294,6 +306,12 @@ CROSS-FILE move can answer that a same-file one cannot: **`captured-scope`**
 (the markup reads a binding local to the component it is leaving, so there is no
 module the other file could import it from) and **`binding-conflict`** (the
 destination already means something else by a name the move would carry).
+`sec-17` adds a third: **`unexported-binding`** — the markup reads a helper or
+a local component the origin file DECLARES but does not export, so the mirrored
+import the destination would receive resolves to nothing. Writing it anyway
+(the earlier behaviour, on the reasoning that the compiler would say so) leaves
+the markup gone from one file and a broken import in the other, with no undo
+entry for either — so it refuses and names the export to add.
 
 **A refusal reaches the user as an `EditConstraint`, never a bare string.**
 `describeStructuralRefusal` (`src/core/page-tree/editConstraint.ts`) dresses

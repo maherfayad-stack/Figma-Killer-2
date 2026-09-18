@@ -709,6 +709,23 @@ Response: `{ ok: true, relPath, src }` — `relPath` is workspace-relative
 the literal the `<img>` gets (`/photo.png` in both cases: the app root is where
 the app lives on disk and the browser never sees it).
 
+**Who may ask** (`sec-17`). Two gates, both **before the body is read** — an
+unauthorised caller must not cost 25 MB of server memory, and a forged request
+must not reach the filesystem at all:
+
+- `originAllowed` — the same CSRF check the git routes apply to every POST they
+  own. A multipart POST is a shape a plain cross-origin `<form>` can send with
+  no JavaScript and no preflight, so without it any page the user has open in
+  another tab could land a file of its choosing in the project they are
+  editing. Refuses with a bare **403** that names nothing on disk.
+- `requireCapability('studio.write')` — the gate `/delete`, `/duplicate` and
+  the trash writes already carry. This is why the route rides
+  `STUDIO_SESSION_SUB_ROUTERS` (it needs the `DbClient`) rather than the plain
+  sub-router list. **401** with no session, **403** without the capability.
+
+`asset-upload` still has neither, which is the documented single-operator
+posture rather than a decision this route copied.
+
 ---
 
 ## Adding a new endpoint

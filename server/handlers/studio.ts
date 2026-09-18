@@ -133,6 +133,7 @@
  *       directory that does not exist yet.
  *
  *   POST /admin/api/studio/asset-drop         → `studio/assetDrop.ts`
+ *       (a `STUDIO_SESSION_SUB_ROUTERS` entry — see below)
  *       D2 G15 — the WRITE behind dropping an image file from the OS onto a
  *       board frame. Shares `asset-upload`'s whole security pipeline
  *       (streamed size cap, magic-number sniffing, SVG sanitisation,
@@ -141,6 +142,9 @@
  *       directory every framework Studio recognises serves from the site
  *       root, so it is the only one that can back a literal `<img src>` —
  *       see that module's own doc for why `src/assets/` cannot.
+ *       `sec-17` — gated by `originAllowed` (CSRF) AND
+ *       `requireCapability('studio.write')`, both before the body is read,
+ *       which is why it needs the `DbClient`.
  *
  *   GET  /admin/api/studio/project-assets     → `studio/projectAssets.ts`
  *       The READ side of the inspector's image-fill picker: every image file
@@ -357,7 +361,6 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
-  tryServeStudioAssetDrop,
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
@@ -389,6 +392,11 @@ const STUDIO_SUB_ROUTERS = [
  * capture, a file's contents) rather than merely reading a project directory.
  */
 const STUDIO_SESSION_SUB_ROUTERS = [
+  // `sec-17` — here rather than in the plain list above because its
+  // `studio.write` capability check needs the `DbClient`. A route that writes
+  // caller-supplied bytes into the user's repository is a write like
+  // `/delete` and `/duplicate`, not a read like `/probe`.
+  tryServeStudioAssetDrop,
   tryServeStudioGithubAuth,
   tryServeStudioComments,
   tryServeStudioProjectRoutes,

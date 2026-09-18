@@ -196,8 +196,8 @@ export default function Home() {
     expect(fs.readFileSync(about, 'utf8')).toContain('<Badge tone="quiet">New</Badge>')
   })
 
-  it('carries a helper the origin file declares itself, imported FROM the origin', () => {
-    const home = writeFixture('Home.tsx', `const label = 'Hi'
+  it('carries a helper the origin file EXPORTS, imported FROM the origin', () => {
+    const home = writeFixture('Home.tsx', `export const label = 'Hi'
 
 export default function Home() {
   return (
@@ -224,6 +224,7 @@ export default function Home() {
     expect(result).toEqual({ ok: true, carriedImports: ['label'] })
     expect(fs.readFileSync(about, 'utf8')).toContain("import { label } from './Home'")
   })
+
 })
 
 describe('transplantJsxElement — refusals leave BOTH files untouched', () => {
@@ -231,6 +232,82 @@ describe('transplantJsxElement — refusals leave BOTH files untouched', () => {
     expect(fs.readFileSync(home, 'utf8')).toBe(homeText)
     expect(fs.readFileSync(about, 'utf8')).toBe(aboutText)
   }
+
+  /**
+   * `sec-17`. The same helper as the test above, NOT exported. Writing the
+   * move anyway is what this used to do, on the reasoning that "the compiler
+   * says so loudly" — but by the time the compiler says anything both files
+   * are already written: the markup is gone from the origin, the destination
+   * imports a name that is not there, the repository does not build, and ⌘Z
+   * undoes none of it (this edit family mints no history entry at all). A
+   * write that cannot land honestly in BOTH files refuses, and names the
+   * one-line remedy.
+   */
+  it('refuses a helper the origin declares but does not export, touching neither file', () => {
+    const homeText = `const label = 'Hi'
+
+export default function Home() {
+  return (
+    <main>
+      <p title={label}>x</p>
+    </main>
+  )
+}
+`
+    const home = writeFixture('Home.tsx', homeText)
+    const about = writeFixture('About.tsx', ABOUT)
+    const paragraph = locateTag(homeText, 'p')
+    const container = locateTag(ABOUT, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: paragraph.line,
+      col: paragraph.col,
+      destinationFile: about,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unexported-binding')
+    expect(result.refusal.message).toContain('label')
+    expectUntouched(home, homeText, about, ABOUT)
+  })
+
+  it('refuses an unexported local COMPONENT the destination could never import', () => {
+    const homeText = `function Card() {
+  return <div className="card" />
+}
+
+export default function Home() {
+  return (
+    <main>
+      <Card />
+    </main>
+  )
+}
+`
+    const home = writeFixture('Home.tsx', homeText)
+    const about = writeFixture('About.tsx', ABOUT)
+    const card = locateTag(homeText, 'Card')
+    const container = locateTag(ABOUT, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: card.line,
+      col: card.col,
+      destinationFile: about,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('unexported-binding')
+    expect(result.refusal.message).toContain('Card')
+    expectUntouched(home, homeText, about, ABOUT)
+  })
 
   it('refuses captured-scope when the element reads a body-local binding, and names it', () => {
     const homeText = `export default function Home({ user }: { user: { name: string } }) {
@@ -391,5 +468,104 @@ export default function About() {
     if (result.ok) throw new Error('unreachable')
     expect(result.refusal.reason).toBe('no-jsx-parent')
     expectUntouched(home, homeText, about, ABOUT)
+  })
+})
+
+/**
+ * `sec-17` — the same-file guard, driven with the two spellings that name one
+ * file without being one string.
+ *
+ * This is not a tidiness check. When both ends resolve to the same bytes the
+ * codemod loads them as two independent ts-morph source files, writes the
+ * destination's spliced text, and then overwrites the whole file with the
+ * origin's — which is the pre-edit text with the element CUT OUT. The element
+ * is deleted from the user's repository and inserted nowhere, and the codemod
+ * returns `ok: true`. So every assertion below checks the FILE as well as the
+ * refusal: a guard that returns the right reason while the markup is gone
+ * would be worth nothing.
+ */
+describe('transplantJsxElement — one file under two names', () => {
+  it('refuses a destination that differs from the origin only in case', () => {
+    const home = writeFixture('Home.tsx', HOME)
+    // The same file, spelled the way a hand-crafted node id could spell it.
+    // On a case-insensitive filesystem this opens the very same bytes.
+    const aliased = path.join(tmpDir, 'home.tsx')
+    if (!fs.existsSync(aliased)) return // case-sensitive filesystem: two real files, nothing to guard
+
+    const badge = locateTag(HOME, 'Badge')
+    const container = locateTag(HOME, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: badge.line,
+      col: badge.col,
+      destinationFile: aliased,
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('same-file')
+    expect(fs.readFileSync(home, 'utf8')).toBe(HOME)
+  })
+
+  it('refuses a destination reached through a symlinked directory', () => {
+    const home = writeFixture('pages/Home.tsx', HOME)
+    // A link of exactly the kind git stores and an imported repo can carry.
+    // `'junction'` is the Windows-friendly directory link (no elevation
+    // needed); POSIX ignores the type and makes an ordinary symlink.
+    const linked = path.join(tmpDir, 'mirror')
+    try {
+      fs.symlinkSync(path.join(tmpDir, 'pages'), linked, 'junction')
+    } catch {
+      return // no permission to create links on this machine — nothing to drive
+    }
+
+    const badge = locateTag(HOME, 'Badge')
+    const container = locateTag(HOME, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: badge.line,
+      col: badge.col,
+      destinationFile: path.join(linked, 'Home.tsx'),
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('same-file')
+    expect(fs.readFileSync(home, 'utf8')).toBe(HOME)
+  })
+
+  it('still moves between two genuinely different files reached through a link', () => {
+    const home = writeFixture('pages/Home.tsx', HOME)
+    writeFixture('pages/About.tsx', ABOUT)
+    const linked = path.join(tmpDir, 'mirror')
+    try {
+      fs.symlinkSync(path.join(tmpDir, 'pages'), linked, 'junction')
+    } catch {
+      return
+    }
+
+    const badge = locateTag(HOME, 'Badge')
+    const container = locateTag(ABOUT, 'main')
+
+    const result = transplantJsxElement({
+      file: home,
+      line: badge.line,
+      col: badge.col,
+      destinationFile: path.join(linked, 'About.tsx'),
+      destinationLine: container.line,
+      destinationCol: container.col,
+    })
+
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(path.join(tmpDir, 'pages', 'About.tsx'), 'utf8')).toContain(
+      '<Badge tone="quiet">New</Badge>',
+    )
+    expect(fs.readFileSync(home, 'utf8')).not.toContain('<Badge')
   })
 })

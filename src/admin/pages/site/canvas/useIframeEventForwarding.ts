@@ -34,9 +34,11 @@
  * OS file drop
  * ────────────
  * D2 G15. A `dragover`/`drop` carrying files from the desktop is re-dispatched
- * on the iframe element so the board's own handler sees it, and cancelled
- * inside the frame so the browser does not navigate that document to the
- * dropped file instead.
+ * on the iframe element so the board's own handler sees it. EVERY drag in a
+ * design frame's document is cancelled there — files or not — so the browser
+ * cannot navigate that document to whatever was dropped on it. The rule and
+ * its reasoning live in `canvasFrameDragRelay.ts`; this file owns only when
+ * it is installed.
  *
  * Keyboard
  * ────────
@@ -72,6 +74,7 @@
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
+import { installFrameDragRelay } from './canvasFrameDragRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -141,18 +144,12 @@ export function useIframeEventForwarding(
   // A native `dragover`/`drop` does not cross the iframe boundary, and a
   // frame is exactly where an image dropped from the desktop is meant to
   // land. `useCanvasFileDrop` listens on the parent `window`, so the pair is
-  // re-dispatched on the iframe ELEMENT here and bubbles up to it.
+  // re-dispatched on the iframe ELEMENT there and bubbles up to it.
   //
-  // The ORIGINAL `DataTransfer` is carried through on the clone rather than
-  // copied: `DataTransferItemList` is read-only outside a drag's own event
-  // handlers, so there is nothing to copy it INTO, and the files are the
-  // whole payload. Both events are cancelled inside the frame as well, so the
-  // browser does not also navigate the frame's document to the dropped file —
-  // which is its default for an unhandled drop and would replace the frame
-  // with a bare image.
-  //
-  // Only for a drag carrying FILES. An ordinary in-page HTML5 drag (the DOM
-  // panel's layer tree still uses `@dnd-kit`) is left entirely alone.
+  // The rule itself — cancel EVERY drop's default so the browser cannot
+  // navigate the frame's document away, relay only the file-carrying ones —
+  // lives in `canvasFrameDragRelay.ts`, which is where its reasoning and its
+  // test are. This effect is only its lifecycle.
   useEffect(() => {
     // Live frames belong to the running app: a drop there is the app's.
     if (isLive) return
@@ -161,36 +158,7 @@ export function useIframeEventForwarding(
     if (!iframeDoc) return
     const iframe = iframeRef.current
     if (!iframe) return
-
-    const carriesFiles = (transfer: DataTransfer | null): boolean =>
-      transfer !== null && Array.from(transfer.types).includes('Files')
-
-    const relay = (event: DragEvent) => {
-      if (!carriesFiles(event.dataTransfer)) return
-      event.preventDefault()
-      const rect = iframe.getBoundingClientRect()
-      const clientPoint = iframeLocalPointToParentClientPoint(
-        rect,
-        { width: iframe.clientWidth, height: iframe.clientHeight },
-        { x: event.clientX || 0, y: event.clientY || 0 },
-      )
-      iframe.dispatchEvent(
-        new DragEvent(event.type, {
-          bubbles: true,
-          cancelable: true,
-          clientX: clientPoint.x,
-          clientY: clientPoint.y,
-          dataTransfer: event.dataTransfer,
-        }),
-      )
-    }
-
-    iframeDoc.addEventListener('dragover', relay)
-    iframeDoc.addEventListener('drop', relay)
-    return () => {
-      iframeDoc.removeEventListener('dragover', relay)
-      iframeDoc.removeEventListener('drop', relay)
-    }
+    return installFrameDragRelay(iframeDoc, iframe)
   }, [adapter, iframeRef, isLive])
 
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────

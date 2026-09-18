@@ -1,0 +1,93 @@
+/**
+ * `sec-17` — the one failure mode that destroys an editing session.
+ *
+ * A design frame's document is a portal the editor has a React root inside.
+ * The browser's default for an uncancelled drop is to NAVIGATE the document
+ * that received it, which tears that root out: drop a file and the frame is a
+ * bare image, drop a link and the frame is an attacker-chosen page rendered
+ * inside the editor's own chrome.
+ *
+ * D2 G15 cancelled that default for drags carrying FILES. It did not cancel it
+ * for anything else — and `text/uri-list` (a link, a bookmark, an image
+ * dragged out of another tab) is both the easiest drag to perform by accident
+ * and the one with the worse outcome. These tests drive the non-file drag,
+ * which is the case that was open.
+ *
+ * `DragEvent`/`DataTransfer` do not exist under happy-dom, so the drags are
+ * built as plain cancelable `Event`s carrying a `dataTransfer` — the only
+ * three members the relay reads are `types`, `clientX/Y` and `preventDefault`.
+ */
+import { describe, expect, it } from 'bun:test'
+import { installFrameDragRelay } from '@site/canvas/canvasFrameDragRelay'
+
+function frameDoc(): Document {
+  return document.implementation.createHTMLDocument('frame')
+}
+
+/** A stand-in for the iframe ELEMENT in the parent document. */
+function iframeElement(): HTMLIFrameElement {
+  const iframe = document.createElement('iframe')
+  iframe.getBoundingClientRect = () =>
+    ({ left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300, x: 0, y: 0 }) as DOMRect
+  Object.defineProperty(iframe, 'clientWidth', { value: 400, configurable: true })
+  Object.defineProperty(iframe, 'clientHeight', { value: 300, configurable: true })
+  return iframe
+}
+
+function drag(type: 'dragover' | 'drop', types: readonly string[]): Event {
+  const event = new Event(type, { bubbles: true, cancelable: true })
+  Object.defineProperty(event, 'dataTransfer', { value: { types, files: [] } })
+  Object.defineProperty(event, 'clientX', { value: 10 })
+  Object.defineProperty(event, 'clientY', { value: 10 })
+  return event
+}
+
+describe('installFrameDragRelay — the frame must never navigate', () => {
+  it('cancels a dropped LINK inside the frame, so the browser does not load it there', () => {
+    const doc = frameDoc()
+    const teardown = installFrameDragRelay(doc, iframeElement())
+
+    for (const type of ['dragover', 'drop'] as const) {
+      const event = drag(type, ['text/uri-list', 'text/plain'])
+      doc.body.dispatchEvent(event)
+      expect({ type, defaultPrevented: event.defaultPrevented }).toEqual({ type, defaultPrevented: true })
+    }
+
+    teardown()
+  })
+
+  it('cancels a drag carrying nothing the board understands', () => {
+    const doc = frameDoc()
+    const teardown = installFrameDragRelay(doc, iframeElement())
+
+    const event = drag('drop', [])
+    doc.body.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+
+    teardown()
+  })
+
+  it('does NOT relay a non-file drag to the board — cancelling is the whole answer', () => {
+    const doc = frameDoc()
+    const iframe = iframeElement()
+    let relayed = 0
+    iframe.addEventListener('drop', () => {
+      relayed += 1
+    })
+    const teardown = installFrameDragRelay(doc, iframe)
+
+    doc.body.dispatchEvent(drag('drop', ['text/uri-list']))
+    expect(relayed).toBe(0)
+
+    teardown()
+  })
+
+  it('stops cancelling once torn down', () => {
+    const doc = frameDoc()
+    installFrameDragRelay(doc, iframeElement())()
+
+    const event = drag('drop', ['text/uri-list'])
+    doc.body.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+  })
+})

@@ -215,6 +215,149 @@ describe('applyStudioEditBatch — the transplant kind (D2 G3)', () => {
     expect(read(HOME_REL)).toBe(HOME)
   })
 
+  /**
+   * `sec-17`. `isWritableSourceRel` — the guard every decoded node id shares —
+   * is LEXICAL: it rejects `..`, absolute paths and non-source extensions, but
+   * it has no opinion about two spellings that name one file. So the same-file
+   * refusal above has to hold on the real path, not on the two `rel` strings.
+   *
+   * If it does not, this is not a cosmetic miss. The codemod loads the two
+   * spellings as separate source files, writes the destination's spliced text,
+   * and then overwrites the whole file with the origin's — the pre-edit text
+   * with the element cut out. `<Badge>` disappears from the user's repository,
+   * lands nowhere, and the batch reports `written: 1`. The post-batch import
+   * prune then removes `Badge`'s import too, because the origin snapshot said
+   * it was live and the clobbered file no longer references it.
+   */
+  it('refuses a destination that names the origin file with different case', () => {
+    if (!fs.existsSync(path.join(tmpDir, 'pages', 'home.tsx'))) return // case-sensitive fs: two real files
+
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'transplant',
+        nodeId: id(HOME_REL, HOME, 'Badge'),
+        parentNodeId: id('pages/home.tsx', HOME, 'main'),
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals[0]!.reason).toBe('same-file')
+    expect(read(HOME_REL)).toBe(HOME)
+  })
+
+  it('refuses a destination that reaches the origin file through a symlinked directory', () => {
+    const linked = path.join(tmpDir, 'mirror')
+    try {
+      fs.symlinkSync(path.join(tmpDir, 'pages'), linked, 'junction')
+    } catch {
+      return // no permission to create links on this machine — nothing to drive
+    }
+
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'transplant',
+        nodeId: id(HOME_REL, HOME, 'Badge'),
+        parentNodeId: id('mirror/Home.tsx', HOME, 'main'),
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals[0]!.reason).toBe('same-file')
+    expect(read(HOME_REL)).toBe(HOME)
+  })
+
+  /**
+   * `sec-17` — the `.map` row and its container, driven end to end rather than
+   * reasoned about. They refuse for two DIFFERENT reasons and it is worth
+   * pinning which: the row itself never reaches the scope analysis at all
+   * (`resolveJsxChildRange` refuses `expression-child` first — its parent is a
+   * JSX expression container, not a child list), while the `<ul>` around it
+   * does reach it and refuses `captured-scope` naming the prop. Both write
+   * nothing to either file, which is the part that matters.
+   */
+  const MAPPED = `export default function Home({ items }: { items: string[] }) {
+  return (
+    <main className="home">
+      <ul>
+        {items.map((item) => (
+          <li key={item}>{item}</li>
+        ))}
+      </ul>
+    </main>
+  )
+}
+`
+
+  it('refuses a row inside a .map() and writes neither file', () => {
+    write(HOME_REL, MAPPED)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'transplant',
+        nodeId: id(HOME_REL, MAPPED, 'li'),
+        parentNodeId: id(ABOUT_REL, ABOUT, 'main'),
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals[0]!.reason).toBe('expression-child')
+    expect(read(HOME_REL)).toBe(MAPPED)
+    expect(read(ABOUT_REL)).toBe(ABOUT)
+  })
+
+  it('refuses the container AROUND a .map(), naming the prop it reads', () => {
+    write(HOME_REL, MAPPED)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'transplant',
+        nodeId: id(HOME_REL, MAPPED, 'ul'),
+        parentNodeId: id(ABOUT_REL, ABOUT, 'main'),
+      },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals[0]!.reason).toBe('captured-scope')
+    expect(result.refusals[0]!.message).toContain('`items`')
+    expect(read(HOME_REL)).toBe(MAPPED)
+    expect(read(ABOUT_REL)).toBe(ABOUT)
+  })
+
+  /**
+   * `sec-17` — atomicity, driven with a destination the OS will not let us
+   * write. The codemod computes both files in full before either is put on
+   * disk and writes the DESTINATION first, so the failure direction that is
+   * actually reachable leaves the origin's markup exactly where it was. (The
+   * reverse order would lose the element entirely when the second write
+   * failed, which is why the order is not an accident.)
+   */
+  it('leaves the origin intact when the destination cannot be written', () => {
+    const about = path.join(tmpDir, ...ABOUT_REL.split('/'))
+    fs.chmodSync(about, 0o444)
+    try {
+      fs.appendFileSync(about, '')
+      return // the filesystem ignored the read-only bit (POSIX root) — nothing to drive
+    } catch {
+      // good: the write really is refused
+    }
+
+    try {
+      const result = applyStudioEditBatch(tmpDir, [
+        {
+          kind: 'transplant',
+          nodeId: id(HOME_REL, HOME, 'Badge'),
+          parentNodeId: id(ABOUT_REL, ABOUT, 'main'),
+        },
+      ])
+
+      expect(result.written).toBe(0)
+      expect(read(HOME_REL)).toBe(HOME)
+      expect(read(ABOUT_REL)).toBe(ABOUT)
+    } finally {
+      fs.chmodSync(about, 0o644)
+    }
+  })
+
   it('drops an anchor that belongs to a THIRD file rather than writing against it', () => {
     write('pages/Other.tsx', ABOUT)
     applyStudioEditBatch(tmpDir, [
