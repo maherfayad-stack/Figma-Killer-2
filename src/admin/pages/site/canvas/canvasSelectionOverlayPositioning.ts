@@ -5,10 +5,10 @@ import type {
   CanvasOverlayRect,
 } from './canvasOverlayGeometry'
 import type {
+  CanvasDragPaintTarget,
   CanvasDropAxis,
   CanvasRect,
 } from './canvasDnd'
-import type { CanvasDragPaintTarget } from './canvasDragPainter'
 
 const TOOLBAR_VERTICAL_OFFSET = 30
 const INSPECTOR_VERTICAL_GAP = 12

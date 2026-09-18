@@ -132,6 +132,16 @@
  *       symlinks, walking to the nearest existing ancestor for a target
  *       directory that does not exist yet.
  *
+ *   POST /admin/api/studio/asset-drop         → `studio/assetDrop.ts`
+ *       D2 G15 — the WRITE behind dropping an image file from the OS onto a
+ *       board frame. Shares `asset-upload`'s whole security pipeline
+ *       (streamed size cap, magic-number sniffing, SVG sanitisation,
+ *       real-path containment) and differs in exactly one thing: it decides
+ *       WHERE the file goes rather than being told. `public/` is the one
+ *       directory every framework Studio recognises serves from the site
+ *       root, so it is the only one that can back a literal `<img src>` —
+ *       see that module's own doc for why `src/assets/` cannot.
+ *
  *   GET  /admin/api/studio/project-assets     → `studio/projectAssets.ts`
  *       The READ side of the inspector's image-fill picker: every image file
  *       already in the workspace, as workspace-relative paths. `readdir`
@@ -288,6 +298,7 @@ import { tryServeStudioProbe } from './studio/projectProbe'
 import { tryServeStudioInstall } from './studio/installDeps'
 import { tryServeStudioIngest } from './studio/importUpload'
 import { tryServeStudioAssetUpload } from './studio/assetUpload'
+import { tryServeStudioAssetDrop } from './studio/assetDrop'
 import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
 import { tryServeStudioComponentBundle } from './studio/componentBundle'
 import { tryServeStudioTokens } from './studio/tokenExtract'
@@ -346,6 +357,7 @@ const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
+  tryServeStudioAssetDrop,
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,

@@ -38,7 +38,7 @@
  * moves inside one drop zone costs nothing after the first frame.
  */
 import type { SnapGuide } from './boardSnapping'
-import type { CanvasDropAxis, CanvasInvalidDropTarget, CanvasRect } from './canvasDnd'
+import type { CanvasDragPaintTarget, CanvasInvalidDropTarget } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import {
   dropIndicatorStyle,
@@ -56,19 +56,6 @@ export interface CanvasDragGhost {
   label: string
   /** K2 — Alt is held, so the drop writes a COPY. Renders the `+` badge. */
   duplicating: boolean
-}
-
-/**
- * The three fields the drop LINE is drawn from. Deliberately narrower than
- * either resolution type that satisfies it — a same-frame `CanvasDropTarget`
- * carries `draggedIds`/`parentId` for the commit, a cross-frame
- * `CanvasTransplantTarget` carries a position in a different tree entirely,
- * and neither is anything this module should be able to read.
- */
-export interface CanvasDragPaintTarget {
-  rect: CanvasRect
-  axis: CanvasDropAxis
-  position: 'before' | 'after' | 'inside'
 }
 
 export interface CanvasDragPaint {

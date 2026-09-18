@@ -35,12 +35,26 @@
  * backstop so a caller that gets the routing wrong gets a sentence rather than
  * a cross-file codemod pointed at one file.
  */
-import { lookupCanvasPageById } from '@site/store/store'
 import { commitStudioTransplant, guardAgainstConcurrentStructuralCommit } from '@site/studio/studioStructuralCommits'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceTransplant, presentStructuralRefusal } from './structuralSourceEdits'
+import type { Page, SiteDocument } from '@core/page-tree'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type TransplantActions = Pick<SiteSlice, 'transplantNodes'>
+
+/**
+ * The page with this id, or `null`.
+ *
+ * A plain scan rather than `store.ts`'s memoised `lookupCanvasPageById`,
+ * deliberately: this module is imported BY the composed store, so importing
+ * that memo back would close a cycle (`store -> siteSlice -> nodeActions ->
+ * here -> store`). The cost is one O(pages) walk per DROP — once per gesture,
+ * not per store change — which is the reason the memo exists at all and not a
+ * budget this path can trouble.
+ */
+function findPage(site: SiteDocument, pageId: string): Page | null {
+  return site.pages.find((page) => page.id === pageId) ?? null
+}
 
 export function createTransplantActions(helpers: SiteSliceHelpers): TransplantActions {
   const { get, set } = helpers
@@ -57,8 +71,8 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
       const site = state.site
       if (!site) return
 
-      const originPage = lookupCanvasPageById(site, destination.originPageId)
-      const destinationPage = lookupCanvasPageById(site, destination.pageId)
+      const originPage = findPage(site, destination.originPageId)
+      const destinationPage = findPage(site, destination.pageId)
       if (!originPage || !destinationPage) return
 
       const plan = planSourceTransplant(

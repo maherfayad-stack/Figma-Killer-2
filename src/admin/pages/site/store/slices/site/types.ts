@@ -366,6 +366,21 @@ export interface SiteSlice {
    * `transplantActions.ts`.
    */
   transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
+  /**
+   * D2 G15 — the `<img src alt>` a file dropped from the operating system
+   * becomes, written into the page the drop landed on.
+   *
+   * Names its page rather than using the active one: a dropped file lands
+   * wherever the pointer was, and the frame under a drop was never activated
+   * by a pointerdown because there was no pointerdown. See
+   * `imageDropActions.ts`.
+   */
+  insertImageIntoPage: (
+    pageId: string,
+    parentId: string,
+    index: number,
+    image: { src: string; alt: string },
+  ) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor

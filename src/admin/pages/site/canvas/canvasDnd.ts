@@ -51,6 +51,24 @@ export interface CanvasDropTarget extends PageTreeDropTarget {
   axis: CanvasDropAxis
 }
 
+/**
+ * The three fields the drop LINE is drawn from — everything
+ * `canvasDragPainter` may read of a resolved target, and nothing more.
+ *
+ * Deliberately narrower than either resolution type that satisfies it: a
+ * same-frame `CanvasDropTarget` carries `draggedIds`/`parentId` for the
+ * commit, a cross-frame `CanvasTransplantTarget` carries a position in a
+ * different tree entirely, and neither is anything a painter should be able
+ * to reach. It lives HERE rather than beside the painter because the geometry
+ * module reads it too, and the painter importing that module makes the other
+ * direction a cycle.
+ */
+export interface CanvasDragPaintTarget {
+  rect: CanvasRect
+  axis: CanvasDropAxis
+  position: PageTreeDropPosition
+}
+
 export interface CanvasInsertionTarget {
   parentId: string
   index: number

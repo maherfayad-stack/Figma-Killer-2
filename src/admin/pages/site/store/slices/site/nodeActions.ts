@@ -47,6 +47,7 @@ import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
 import { createGroupActions } from './groupActions'
 import { createTransplantActions } from './transplantActions'
+import { createImageDropActions } from './imageDropActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
@@ -87,6 +88,7 @@ type NodeActions = Pick<
   | 'groupNodes'
   | 'ungroupNode'
   | 'transplantNodes'
+  | 'insertImageIntoPage'
 >
 
 function recordPatchChanges(
@@ -604,6 +606,12 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // this module's `mutateActiveTree` machinery reaches the second one. See
     // `transplantActions.ts`.
     ...createTransplantActions(helpers),
+
+    // D2 G15 — an image file dropped from the OS onto a frame. Its own module
+    // for `transplantActions.ts`'s reason: it writes into a page named by the
+    // GESTURE rather than into the active tree, so none of this module's
+    // `mutateActiveTree` machinery applies. See `imageDropActions.ts`.
+    ...createImageDropActions(helpers),
   }
 
   return actions

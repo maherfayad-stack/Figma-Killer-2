@@ -105,27 +105,46 @@ function transformMoved(previous: CanvasTransform | null, next: CanvasTransform 
 }
 
 /**
- * The frame under `point` whose page differs from `originPageId`, or `null`.
+ * The frame under `point` that `accept` allows, or `null`.
  *
  * Last match wins, which is the honest reading when frames overlap: board
  * frames are freely positioned and can be dragged on top of one another, and
  * the one registered later is the one painted later, so it is the one the user
  * sees under the cursor.
  */
+function surfaceAt(
+  board: BoardDropSurfaces,
+  point: ClientPoint,
+  accept: (surface: CanvasDropSurface) => boolean,
+): CanvasDropSurface | null {
+  let found: CanvasDropSurface | null = null
+  for (const entry of board.rects) {
+    if (!accept(entry.surface)) continue
+    if (point.x < entry.left || point.x > entry.right) continue
+    if (point.y < entry.top || point.y > entry.bottom) continue
+    found = entry.surface
+  }
+  return found
+}
+
+/** The frame under `point` whose page differs from `originPageId` — a cross-frame DROP. */
 export function foreignSurfaceAtPoint(
   board: BoardDropSurfaces,
   point: ClientPoint,
   originPageId: string | null,
 ): CanvasDropSurface | null {
-  let found: CanvasDropSurface | null = null
-  for (const entry of board.rects) {
-    const { surface } = entry
-    if (!surface.pageId || surface.pageId === originPageId) continue
-    if (point.x < entry.left || point.x > entry.right) continue
-    if (point.y < entry.top || point.y > entry.bottom) continue
-    found = surface
-  }
-  return found
+  return surfaceAt(board, point, (surface) => Boolean(surface.pageId) && surface.pageId !== originPageId)
+}
+
+/**
+ * The frame under `point`, whichever page it shows — what an OS FILE drop
+ * (D2 G15) asks, since a dropped file has no origin frame to be foreign to.
+ */
+export function canvasSurfaceAtPoint(
+  board: BoardDropSurfaces,
+  point: ClientPoint,
+): CanvasDropSurface | null {
+  return surfaceAt(board, point, (surface) => Boolean(surface.pageId))
 }
 
 /**
