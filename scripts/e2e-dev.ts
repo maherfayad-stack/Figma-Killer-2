@@ -98,6 +98,8 @@ const VITE_ANSWER_GRACE_MS = 30_000
 /** Worst case 3 × the ceiling above, which stays inside `playwright.config.ts`'s `webServer.timeout`. */
 const VITE_BOOT_ATTEMPTS = 3
 const VITE_PROBE_INTERVAL_MS = 500
+/** Ceiling on one readiness request. A healthy Vite serves `index.html` in milliseconds. */
+const VITE_PROBE_TIMEOUT_MS = 5_000
 /** How long to wait for a killed Vite to release the port before respawning. */
 const VITE_PORT_RELEASE_TIMEOUT_MS = 15_000
 
@@ -177,10 +179,22 @@ function superviseExit(child: StackChild): void {
   })
 }
 
-/** True once Vite answers for a page it serves itself (never the proxied `/`). */
+/**
+ * True once Vite answers for a page it serves itself (never the proxied `/`).
+ *
+ * The `AbortSignal.timeout` is the load-bearing part, not a nicety. The failure
+ * this whole supervisor exists for is a Vite that ACCEPTS the connection and
+ * then never responds; an un-timed `fetch` against it never settles, so the
+ * probe loop below would hang inside its own first await — no ceiling, no
+ * retry, no message, just Playwright's timeout ten minutes later. Observed
+ * exactly that before this argument existed.
+ */
 async function viteAnswers(): Promise<boolean> {
   try {
-    const res = await fetch(`${E2E_ADMIN_ORIGIN}/admin`, { redirect: 'manual' })
+    const res = await fetch(`${E2E_ADMIN_ORIGIN}/admin`, {
+      redirect: 'manual',
+      signal: AbortSignal.timeout(VITE_PROBE_TIMEOUT_MS),
+    })
     return res.status < 500
   } catch {
     return false
