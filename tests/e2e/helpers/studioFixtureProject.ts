@@ -60,19 +60,6 @@ export function createFixtureProject(sourceName: string, fixtureName: string): F
 }
 
 /**
- * Delete the copy, retrying a Windows sharing violation.
- *
- * A spec that ran a real agent turn leaves a WARM `claude` process whose
- * `cwd` IS this directory (`claudeCliSessionPool.ts` holds it for up to ten
- * idle minutes), and Windows refuses to unlink a directory that is some
- * process's working directory — `EPERM`, not `EBUSY`. The product's own way
- * to end that process is deleting the conversation, which a spec should do
- * before it gets here; this loop covers the rest (a still-draining stream, a
- * file watcher) rather than leaving a 3 MB copy behind on the first blip.
- *
- * Never throws: failing to clean up a throwaway directory must not turn a
- * green run red. The fixture name is fixed, so the next run overwrites it.
- */
  * A fixture project the spec AUTHORS, rather than copies — an empty directory
  * under the workspace root, with its files written by the caller.
  *
@@ -109,6 +96,20 @@ export function createAuthoredFixtureProject(
   return { dir, ready: true }
 }
 
+/**
+ * Delete the copy, retrying a Windows sharing violation.
+ *
+ * A spec that ran a real agent turn leaves a WARM `claude` process whose
+ * `cwd` IS this directory (`claudeCliSessionPool.ts` holds it for up to ten
+ * idle minutes), and Windows refuses to unlink a directory that is some
+ * process's working directory — `EPERM`, not `EBUSY`. The product's own way
+ * to end that process is deleting the conversation, which a spec should do
+ * before it gets here; this loop covers the rest (a still-draining stream, a
+ * file watcher) rather than leaving a 3 MB copy behind on the first blip.
+ *
+ * Never throws: failing to clean up a throwaway directory must not turn a
+ * green run red. The fixture name is fixed, so the next run overwrites it.
+ */
 export function removeFixtureProject(fixture: FixtureProject): void {
   for (let attempt = 0; attempt < 5; attempt += 1) {
     try {

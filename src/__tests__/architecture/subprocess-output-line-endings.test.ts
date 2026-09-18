@@ -56,8 +56,9 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { existsSync } from 'node:fs'
+import { join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const SERVER_ROOT = join(PROJECT_ROOT, 'server')
@@ -85,17 +86,14 @@ const SUBPROCESS_TEXT_PARSERS = [
   'handlers/studio/gitSyncOperations.ts',
 ] as const
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      if (entry !== 'node_modules') walk(full, out)
-    } else if (extname(entry) === '.ts') {
-      out.push(full)
-    }
-  }
-  return out
+/**
+ * The gates share one cached walk of the tree (`shared-source-tree-walk.test.ts`):
+ * a private `readdirSync` recursion here would re-walk `server/` for this rule
+ * alone. `.ts` only — this rule is about TypeScript that reads a child's stdout.
+ */
+function walk(dir: string): string[] {
+  if (!existsSync(dir)) return []
+  return walkSourceTree(dir, ['.ts'])
 }
 
 function isTestFile(file: string): boolean {
@@ -117,7 +115,7 @@ function readsSubprocessOutput(source: string): boolean {
 const BARE_NEWLINE_SPLIT = /\.split\(\s*(?:'\\n'|"\\n"|`\\n`|\/\\n\/[a-z]*)\s*\)/
 
 function scanFile(file: string): string[] {
-  const source = stripComments(readFileSync(file, 'utf8'))
+  const source = stripComments(readSource(file))
   const violations: string[] = []
   source.split('\n').forEach((line, i) => {
     if (BARE_NEWLINE_SPLIT.test(line)) {
@@ -131,7 +129,7 @@ describe('architecture: subprocess output is read through splitLines', () => {
   test('every server file that spawns or consumes a subprocess avoids a bare newline split', () => {
     const spawners = walk(SERVER_ROOT)
       .filter((file) => !isTestFile(file))
-      .filter((file) => readsSubprocessOutput(readFileSync(file, 'utf8')))
+      .filter((file) => readsSubprocessOutput(readSource(file)))
 
     // Sanity: the derivation must find the runners themselves plus real callers.
     expect(spawners.length).toBeGreaterThan(5)
@@ -159,7 +157,7 @@ describe('architecture: subprocess output is read through splitLines', () => {
   test('the helper this gate points at is the one `parser-13` shipped', () => {
     const helper = join(PROJECT_ROOT, 'src/core/utils/lineEndings.ts')
     expect(existsSync(helper)).toBe(true)
-    const source = readFileSync(helper, 'utf8')
+    const source = readSource(helper)
     expect(source).toContain('export function splitLines')
     expect(source).toContain('export function toLf')
   })
