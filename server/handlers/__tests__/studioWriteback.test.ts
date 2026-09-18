@@ -20,6 +20,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { applyStudioEdit, applyStudioEditBatch, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
 import { locateTag } from '../../../src/core/ast-codemods/__tests__/fixtureLocation'
+import { LF } from '@core/utils/lineEndings'
 
 let tmpDir: string
 
@@ -1582,6 +1583,35 @@ export default function Onboarding() {
 }
 `
 
+/**
+ * `struct-11` — `IMPORTED_PAGE` with the first feature row's two `<span>`s
+ * inside one container, which is what a ⌘G on them writes.
+ *
+ * Derived from the page rather than copied, so the two can never drift; if the
+ * replacement below ever stops matching, this is the page itself and every
+ * assertion against it fails loudly rather than comparing nothing.
+ *
+ * The container is a `<span>` — NOT the `<div>` the caller asks for in one of
+ * the cases below. The run is inline, so an inline container keeps it flowing
+ * with the text around it; `div` and `span` are the two interchangeable
+ * containers and which one lands is the content model's call, not the
+ * caller's.
+ */
+const GROUPED_FEATURE_ROW = IMPORTED_PAGE.replace(
+  [
+    '                <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />',
+    '                <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>',
+    '',
+  ].join(LF),
+  [
+    '                <span>',
+    '                  <span className={styles.icon} dangerouslySetInnerHTML={{ __html: smsSvg }} />',
+    '                  <span className={styles.featureText}>{t.onboarding.uniqueRatesViaWhatsappEmail}</span>',
+    '                </span>',
+    '',
+  ].join(LF),
+)
+
 describe('applyStudioEditBatch — duplicate / wrap / reparent on a real imported page (W4-1)', () => {
   const REL = 'pages/Onboarding.tsx'
   const at = (tag: string, occurrence = 1): string => {
@@ -1694,6 +1724,12 @@ describe('applyStudioEditBatch — duplicate / wrap / reparent on a real importe
 // Group is the first structural write that names SEVERAL elements, so the
 // tests that matter most are the ones asserting it refuses rather than
 // widening its own span: a gap in the run, and a run that crosses files.
+//
+// `struct-11` — and one more refusal, which is why the happy-path cases below
+// group the two `<span>`s inside a feature row rather than the `<li>`s
+// themselves: a container around two `<li>`s is invalid HTML, so the batch now
+// refuses it. The wrapper's tag follows the content model of what is above it
+// and what is inside it, so a run of inline elements gets a `<span>`.
 describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)', () => {
   const REL = 'pages/Onboarding.tsx'
   const at = (tag: string, occurrence = 1): string => {
@@ -1707,16 +1743,47 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
 
   it('writes ONE container around a run of siblings', () => {
     const result = applyStudioEditBatch(tmpDir, [
-      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'span' },
     ])
 
     expect(result.written).toBe(1)
     expect(result.shifted).toBe(true)
-    const after = read(REL)
-    expect(after).toContain('              <div>\n                <li className={styles.feature}>')
-    expect(after).toContain('                </li>\n              </div>')
-    // One container, not one per element.
-    expect(after.split('<div>').length - 1).toBe(1)
+    // The whole file, byte for byte: one container around the run, its members
+    // re-hung one level, and nothing else in the page touched.
+    expect(GROUPED_FEATURE_ROW, 'the expected-output fixture no longer matches the page it is derived from').not.toBe(
+      IMPORTED_PAGE,
+    )
+    expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
+    // One container, not one per element. Counted as a DELTA because the page
+    // already ends with an attribute-less `<span>` of its own.
+    expect(read(REL).split('<span>').length - IMPORTED_PAGE.split('<span>').length).toBe(1)
+  })
+
+  it('REFUSES a container around list items, and writes nothing (`struct-11`)', () => {
+    // `<ul><div><li/><li/></div></ul>` is invalid HTML, and React reports it in
+    // the user's own app. There is no tag Studio could write here, so the batch
+    // refuses and the file is byte-identical.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('content-model')
+    expect(result.refusals?.[0]?.message).toContain('<ul>')
+    expect(read(REL)).toBe(IMPORTED_PAGE)
+  })
+
+  it('picks the tag from the CONTEXT, not from the caller', () => {
+    // The caller asked for `div` and got `span`: the run is inline, so an
+    // inline container is what keeps it flowing with the text around it. `div`
+    // and `span` are the two interchangeable containers, and which one lands is
+    // not the caller's to decide.
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'div' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(read(REL)).toBe(GROUPED_FEATURE_ROW)
   })
 
   it('REFUSES a run with an unselected sibling in the middle, and writes nothing', () => {
@@ -1742,12 +1809,14 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
   it('ungroups a plain container, hoisting its children into its place', () => {
     write(REL, IMPORTED_PAGE)
     const grouped = applyStudioEditBatch(tmpDir, [
-      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+      { kind: 'group', nodeId: at('span', 1), siblingNodeIds: [at('span', 2)], name: 'span' },
     ])
     expect(grouped.written).toBe(1)
 
+    // The wrapper is the first `<span` in the file now — it sits immediately
+    // above the two it was written around.
     const after = read(REL)
-    const wrapper = locateTag(after, 'div', 4)
+    const wrapper = locateTag(after, 'span', 1)
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'ungroup', nodeId: `${REL}:${wrapper.line}:${wrapper.col}` },
     ])
@@ -1784,18 +1853,23 @@ describe('applyStudioEditBatch — group / ungroup on a real imported page (K3)'
     // user asked for, not one write repeated — `dedupeStudioEdits` must keep
     // both. (Applied one after the other here through two batches, because the
     // second names a run the first has already re-indented.)
+    // The hero image and the copy block: a flow-content run inside a
+    // flow-content parent, so both wrappers are legal and this case stays
+    // about dedupe rather than about the content model.
     const first = applyStudioEditBatch(tmpDir, [
-      { kind: 'group', nodeId: at('li', 1), siblingNodeIds: [at('li', 2)], name: 'div' },
+      { kind: 'group', nodeId: at('img'), siblingNodeIds: [at('div', 3)], name: 'div' },
     ])
     expect(first.written).toBe(1)
     const after = read(REL)
-    const li = locateTag(after, 'li', 1)
-    const li2 = locateTag(after, 'li', 2)
+    const img = locateTag(after, 'img', 1)
+    // 1 = `styles.body`, 2 = `styles.top`, 3 = the wrapper just written,
+    // 4 = `styles.copy`.
+    const copy = locateTag(after, 'div', 4)
     const second = applyStudioEditBatch(tmpDir, [
       {
         kind: 'group',
-        nodeId: `${REL}:${li.line}:${li.col}`,
-        siblingNodeIds: [`${REL}:${li2.line}:${li2.col}`],
+        nodeId: `${REL}:${img.line}:${img.col}`,
+        siblingNodeIds: [`${REL}:${copy.line}:${copy.col}`],
         name: 'section',
       },
     ])
