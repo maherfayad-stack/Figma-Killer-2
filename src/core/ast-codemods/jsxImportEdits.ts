@@ -12,13 +12,38 @@ import type { Node, SourceFile } from 'ts-morph'
 import type { TextEdit } from './jsxChildRange'
 
 /**
- * The edits that put every `(name → specifier)` in `required` in scope.
+ * How a binding is written on its import declaration.
+ *
+ * `named` is what Studio writes for a component it authors, and was the only
+ * shape this module could express until D2 G3's cross-file move
+ * (`transplantJsxElement.ts`) needed to MIRROR a binding the user already
+ * wrote: dragging `<Logo/>` from one page to another has to carry whatever
+ * `import Logo from './Logo'` said, and re-spelling a default import as a
+ * named one writes a line that does not compile.
+ */
+export type ImportBindingStyle = 'named' | 'default' | 'namespace'
+
+/** One binding a write needs in scope: where it comes from, and how it is written. */
+export interface ImportRequirement {
+  specifier: string
+  /** Omitted means `named` — the shape Studio writes for a component it authors itself. */
+  style?: ImportBindingStyle
+}
+
+/**
+ * The edits that put every `(name → requirement)` in `required` in scope.
  *
  * Per specifier, three cases, cheapest first: the import declaration exists and
  * already names the binding (nothing to do); it exists and gains one more named
  * import; it does not exist and a whole line is added after the last import.
  * The quote character is copied from an existing import so a file written with
  * double quotes does not acquire a single-quoted line.
+ *
+ * A `default`/`namespace` requirement never joins an existing declaration's
+ * named list — the two are different positions on the line, and a file that
+ * already imports something else from that specifier may well already have a
+ * default of its own. It gets a declaration of its own instead, which is
+ * always valid even when it means two `import … from 'x'` lines.
  *
  * Every returned edit is measured against the ORIGINAL text and the caller
  * applies them in descending-offset order. That is why all the brand-new
@@ -31,18 +56,39 @@ import type { TextEdit } from './jsxChildRange'
 export function resolveImportEdits(
   sourceFile: SourceFile,
   text: string,
-  required: ReadonlyMap<string, string>,
+  required: ReadonlyMap<string, ImportRequirement>,
 ): TextEdit[] {
   if (required.size === 0) return []
 
   const declarations = sourceFile.getImportDeclarations()
   const quote = importQuoteChar(declarations)
   const edits: TextEdit[] = []
-  /** Specifier → the names it must newly declare, in first-seen order. */
-  const newDeclarations = new Map<string, string[]>()
+  /** The whole declaration lines this write adds, in first-seen order. */
+  const newLines: string[] = []
+  /** Specifier → the NAMED bindings it must newly declare, in first-seen order. */
+  const newNamed = new Map<string, string[]>()
 
-  for (const [name, specifier] of required) {
+  for (const [name, requirement] of required) {
+    const { specifier } = requirement
+    const style = requirement.style ?? 'named'
     const existing = declarations.find((d) => d.getModuleSpecifierValue() === specifier)
+
+    if (style !== 'named') {
+      if (existing) {
+        const alreadyThere =
+          style === 'default'
+            ? existing.getDefaultImport()?.getText() === name
+            : existing.getNamespaceImport()?.getText() === name
+        if (alreadyThere) continue
+      }
+      newLines.push(
+        style === 'default'
+          ? `import ${name} from ${quote}${specifier}${quote}\n`
+          : `import * as ${name} from ${quote}${specifier}${quote}\n`,
+      )
+      continue
+    }
+
     if (existing) {
       const named = existing.getNamedImports()
       if (named.some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)) continue
@@ -62,15 +108,17 @@ export function resolveImportEdits(
       // A bare side-effect import (`import 'x'`) — leave it alone and add a
       // second, explicit declaration below rather than rewriting the user's line.
     }
-    const names = newDeclarations.get(specifier)
+    const names = newNamed.get(specifier)
     if (names) names.push(name)
-    else newDeclarations.set(specifier, [name])
+    else newNamed.set(specifier, [name])
   }
 
-  if (newDeclarations.size > 0) {
-    const lines = [...newDeclarations]
-      .map(([specifier, names]) => `import { ${names.join(', ')} } from ${quote}${specifier}${quote}\n`)
-      .join('')
+  for (const [specifier, names] of newNamed) {
+    newLines.push(`import { ${names.join(', ')} } from ${quote}${specifier}${quote}\n`)
+  }
+
+  if (newLines.length > 0) {
+    const lines = newLines.join('')
     const lastDeclaration = declarations[declarations.length - 1]
     if (!lastDeclaration) {
       edits.push({ start: 0, end: 0, text: lines })

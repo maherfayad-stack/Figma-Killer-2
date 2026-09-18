@@ -21,6 +21,7 @@ import { tryServeStudioProbe } from './projectProbe'
 import { tryServeStudioInstall } from './installDeps'
 import { tryServeStudioIngest } from './importUpload'
 import { tryServeStudioAssetUpload } from './assetUpload'
+import { tryServeStudioAssetDrop } from './assetDrop'
 import { tryServeStudioReferenceUpload } from './referenceUpload'
 import { tryServeStudioComponentBundle } from './componentBundle'
 import { tryServeStudioTokens } from './tokenExtract'
@@ -62,6 +63,7 @@ export const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
+  tryServeStudioAssetDrop,
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,

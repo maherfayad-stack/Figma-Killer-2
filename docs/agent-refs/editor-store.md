@@ -311,6 +311,25 @@ REFUSES with a toast, because no writeback kind can put a subtree's source text
 back. Tagging happens only when a source write was actually issued — a CMS or
 Visual Component tree keeps plain patch replay.
 
+**Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
+(D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —
+an image file dropped from the OS) both take their page id as an argument
+instead of using `activePageId`, and neither goes through `mutateActiveTree`.
+A cross-frame drag ACTIVATES the destination frame on the way
+(`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
+active page is the wrong end of the gesture; a dropped file was never preceded
+by a pointerdown at all, so the frame under it was never activated. They are
+therefore NOT among the named tree-mutation actions the
+`no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
+
+Both join the `insert`/`duplicate`/`wrap`/`group` family in the other respect
+too: **nothing is shown optimistically and nothing is recorded on the undo
+stack**, because the node that appears afterwards is a freshly parsed one whose
+id is the `rel:line:col` the write produced. ⌘Z after either of them undoes
+whatever came before it, exactly as it does after ⌘D on a studio tree. Both are
+gated by `guardAgainstConcurrentStructuralCommit` for the same reason that
+family is.
+
 **A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
 wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the
 pre-reload tree against the reparse in parallel and rewrites every patch path

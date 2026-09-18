@@ -71,6 +71,17 @@ export type {
   StructuralMoveCommit,
   StructuralMovePreview,
 } from './sourceStructurePreview'
+// D2 G3 — the same rule asked across TWO trees: may this element leave the
+// page it is written in and land in a container on another one?
+export {
+  isTransplantDestinationTree,
+  previewStructuralTransplant,
+} from './sourceStructureTransplant'
+export type {
+  StructuralTransplantCommit,
+  StructuralTransplantInput,
+  StructuralTransplantPreview,
+} from './sourceStructureTransplant'
 // Track F2 — the refusal model. Wraps the two predicates above (plus B2/B1's
 // className/CSS vocabularies and Detach's) into one typed shape every refusal
 // surface renders: reason + human explanation + a way forward. See the

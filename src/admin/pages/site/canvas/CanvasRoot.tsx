@@ -63,6 +63,7 @@ import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasHandTool } from './useCanvasHandTool'
+import { useCanvasFileDrop } from './useCanvasFileDrop'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -390,6 +391,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // Not a key scope: mirrors the latched hand tool onto the shared space-pan
   // flag, which is what every pan-aware surface already reads.
   useCanvasHandTool()
+
+  // D2 G15 — an image file dragged in from the operating system. Mounted ONCE
+  // for the whole board (not per frame): the relay re-dispatches a drop that
+  // started inside a frame onto the iframe element in this document, so the
+  // listener has to sit above every frame. Off in live view, where a drop
+  // belongs to the running app rather than to the editor.
+  useCanvasFileDrop({ enabled: permissions.canEditStructure && !isLive, transformRef })
 
   // `global`, the bottom rung — undo / redo: what you get when nothing more
   // specific claimed the key. Moved off `UndoRedoButtons` so it survives the

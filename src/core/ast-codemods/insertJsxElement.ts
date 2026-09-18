@@ -154,8 +154,8 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   // to `<div />` and refusing on it would be a false positive. Checked for
   // every component in the subtree, not just the root.
   const imports = collectSubtreeImports({ name, props: params.props, importSpecifier, children })
-  for (const [componentName, specifier] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, specifier)
+  for (const [componentName, requirement] of imports) {
+    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
     if (binding) {
       return refuse(
         'binding-conflict',

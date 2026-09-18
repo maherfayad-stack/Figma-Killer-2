@@ -23,6 +23,12 @@ import { tryServeStudio } from '../../studio'
 export interface StudioRouteTestHarness {
   /** Drive one request through `tryServeStudio` as the signed-in Owner. */
   serve(req: Request, url: URL): Promise<Response | null>
+  /**
+   * The same, with NO session cookie — for a test that asserts the gate itself
+   * refuses (401) and, unlike `studioRouteGate.test.ts`, also wants to check
+   * what the refusal left on disk.
+   */
+  serveAnonymous(req: Request, url: URL): Promise<Response | null>
   /** The Owner's session cookie, for a test that needs to build the request itself. */
   readonly ownerCookie: string
   cleanup(): Promise<void>
@@ -37,6 +43,9 @@ export async function createStudioRouteTestHarness(): Promise<StudioRouteTestHar
     ownerCookie,
     serve(req, url) {
       req.headers.set('cookie', ownerCookie)
+      return tryServeStudio(req, { db: harness.db }, url, url.pathname)
+    },
+    serveAnonymous(req, url) {
       return tryServeStudio(req, { db: harness.db }, url, url.pathname)
     },
     cleanup: harness.cleanup,

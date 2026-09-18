@@ -150,6 +150,13 @@ export const STUDIO_ROUTE_CAPABILITIES: readonly StudioRouteDeclaration[] = [
   { path: '/admin/api/studio/design-system/migrate', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/prototype', subPaths: true, read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/asset-upload', read: null, mutate: 'studio.write' },
+  // `asset-drop` (D2 G15) writes caller-supplied BYTES into the user's
+  // repository, so it is a write like `/delete` and `/duplicate`, not a read
+  // like `/probe`. Declared here rather than checked inside the sub-router:
+  // `sec-17` shipped it with an inline `originAllowed` + `requireCapability`
+  // pair against a base that had no table, and the two would have been two
+  // policies the moment one of them moved.
+  { path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/reference-upload', read: 'site.read', mutate: 'studio.write' },
   { path: '/admin/api/studio/extract-component', read: null, mutate: 'studio.write' },
   { path: '/admin/api/studio/i18n-setup', read: null, mutate: 'studio.write' },

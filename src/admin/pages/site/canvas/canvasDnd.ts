@@ -4,6 +4,7 @@ import {
   explainGestureConstraint,
   getParent,
   previewStructuralMove,
+  previewStructuralTransplant,
   resolvePageTreeDropTarget,
   type EditConstraint,
   type PageTreeDropPosition,
@@ -50,6 +51,24 @@ export interface CanvasDropTarget extends PageTreeDropTarget {
   axis: CanvasDropAxis
 }
 
+/**
+ * The three fields the drop LINE is drawn from — everything
+ * `canvasDragPainter` may read of a resolved target, and nothing more.
+ *
+ * Deliberately narrower than either resolution type that satisfies it: a
+ * same-frame `CanvasDropTarget` carries `draggedIds`/`parentId` for the
+ * commit, a cross-frame `CanvasTransplantTarget` carries a position in a
+ * different tree entirely, and neither is anything a painter should be able
+ * to reach. It lives HERE rather than beside the painter because the geometry
+ * module reads it too, and the painter importing that module makes the other
+ * direction a cycle.
+ */
+export interface CanvasDragPaintTarget {
+  rect: CanvasRect
+  axis: CanvasDropAxis
+  position: PageTreeDropPosition
+}
+
 export interface CanvasInsertionTarget {
   parentId: string
   index: number
@@ -59,7 +78,7 @@ export interface CanvasInsertionTarget {
   axis: CanvasDropAxis
 }
 
-interface CanvasInvalidDropTarget {
+export interface CanvasInvalidDropTarget {
   overId: string
   rect: CanvasRect
   axis: CanvasDropAxis
@@ -93,6 +112,42 @@ interface ResolveCanvasDropTargetInput {
   candidates: CanvasDropCandidate[]
   point: CanvasPoint
   canHaveChildren: (moduleId: string) => boolean
+  /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
+  zoom?: number
+}
+
+/**
+ * Where a cross-frame drop would land, in the DESTINATION tree's own terms.
+ * Structurally identical to {@link CanvasInsertionTarget} because the question
+ * is the same one — see `resolveCanvasTransplantTarget` — and named separately
+ * because a reader tracing a DRAG should not have to know that.
+ */
+export interface CanvasTransplantTarget {
+  parentId: string
+  index: number
+  position: PageTreeDropPosition
+  overId: string
+  rect: CanvasRect
+  axis: CanvasDropAxis
+}
+
+export interface CanvasTransplantResolution {
+  target: CanvasTransplantTarget | null
+  invalid: CanvasInvalidDropTarget | null
+}
+
+interface ResolveCanvasTransplantTargetInput {
+  /** The tree the dragged element is written in. */
+  originTree: NodeTree<PageNode>
+  /** The tree the pointer is currently over — a DIFFERENT page. */
+  destinationTree: NodeTree<PageNode>
+  /** The dragged selection, in the origin tree's terms. */
+  draggedIds: readonly string[]
+  candidates: CanvasDropCandidate[]
+  point: CanvasPoint
+  canHaveChildren: (moduleId: string) => boolean
+  /** Alt held: the drop copies across frames instead of moving. */
+  copy: boolean
   /** Live canvas zoom (1 = 100%). See `getCanvasDropZone`. Defaults to 1. */
   zoom?: number
 }
@@ -234,6 +289,80 @@ export function resolveCanvasDropTarget({
     },
     invalid: null,
   }
+}
+
+/**
+ * D2 G3 — where a drag that crossed into ANOTHER frame would land, and
+ * whether it would be refused.
+ *
+ * **Resolution is an INSERT's question, not a move's.** The dragged element is
+ * not in this tree at all, so `resolvePageTreeDropTarget`'s cycle and
+ * self-drop guards have nothing to check and its `draggedIds` have no meaning
+ * here. What the destination is being asked is exactly what the picker asks —
+ * "which container, and where among its children" — which is
+ * `resolveCanvasInsertionTarget`, already built for that question.
+ *
+ * **The verdict is `previewStructuralTransplant`'s**, and it is asked WHILE
+ * THE POINTER IS STILL DOWN for the reason `resolveCanvasDropTarget` documents
+ * for its own preview: a refusal that only arrives as a toast after release
+ * reaches the user once they have let go and moved on. The store's own gate
+ * (`transplantNodes`) remains the sole commit-time authority; this is a
+ * preview of it, never a replacement.
+ */
+export function resolveCanvasTransplantTarget({
+  originTree,
+  destinationTree,
+  draggedIds,
+  candidates,
+  point,
+  canHaveChildren,
+  copy,
+  zoom = 1,
+}: ResolveCanvasTransplantTargetInput): CanvasTransplantResolution {
+  const candidate = findCanvasDropCandidate(candidates, point)
+  if (!candidate) return { target: null, invalid: null }
+
+  const zone = getCanvasDropZone(candidate, point, zoom)
+  const target = resolvePageTreeInsertionTarget({
+    tree: destinationTree,
+    overId: candidate.nodeId,
+    zone,
+    canHaveChildren,
+  })
+  if (!target) {
+    return { target: null, invalid: { overId: candidate.nodeId, rect: candidate.rect, axis: candidate.axis } }
+  }
+
+  const preview = previewStructuralTransplant({
+    originTree,
+    nodeIds: draggedIds,
+    destinationTree,
+    newParentId: target.parentId,
+    newIndex: target.index,
+    copy,
+  })
+  if (!preview.ok) {
+    // The refusal names one end of the gesture; the chip is rendered beside
+    // the pointer either way, so the node it is dressed against is whichever
+    // `previewStructuralTransplant` says it is about.
+    const about =
+      (preview.nodeId === undefined
+        ? undefined
+        : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])) ??
+      originTree.nodes[draggedIds[0] ?? ''] ?? { id: draggedIds[0] ?? '' }
+    const constraint = explainGestureConstraint(preview, about)
+    return {
+      target: null,
+      invalid: {
+        overId: candidate.nodeId,
+        rect: candidate.rect,
+        axis: candidate.axis,
+        ...(constraint ? { constraint } : {}),
+      },
+    }
+  }
+
+  return { target: { ...target, rect: candidate.rect, axis: candidate.axis }, invalid: null }
 }
 
 export function resolveCanvasInsertionTarget({

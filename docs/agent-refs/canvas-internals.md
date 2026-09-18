@@ -568,11 +568,92 @@ label, the media explorer keeps its own thumbnail card.
 
 ---
 
+## Dragging an element BETWEEN frames (D2 G3)
+
+A drag that leaves the frame it started in and lands in another one is a move
+whose two ends are in two different FILES. Three modules make that work, and
+each of them exists because the same-frame drag's assumptions stop holding at
+the frame boundary:
+
+- **`canvasDropSurfaceRegistry.ts`** — every mounted design frame publishes
+  itself (viewport, iframe, page id, its own drag layer) while
+  `BreakpointSelectionOverlay` is mounted. Registration IS the viewport test:
+  only a frame `frameVirtualization.ts` (plus the mount pool) decided to mount
+  has an overlay at all, so there is no second on-screen check. It is
+  module-scoped, **never a store selector** — a drag reads it on every
+  animation frame.
+- **`canvasDragBoard.ts`** — every registered frame's client rect, measured
+  ONCE per gesture and refreshed on exactly two signals: the LIVE transform
+  moved (auto-pan slides the board under a still pointer) or the registry
+  version changed (auto-panning to the edge mounts frames that did not exist
+  when the drag started). A frame's CANDIDATES are measured lazily, the first
+  time the pointer enters it.
+- **`canvasDragFrame.ts`** — one animation frame of the gesture, including the
+  branch that resolves and paints in another frame.
+
+Three things are load-bearing and easy to get wrong:
+
+1. **Chrome is painted in the frame the pointer is OVER.** `.viewport` is
+   `overflow: hidden`, so a cross-frame drop line drawn into the origin frame's
+   layer is drawn where nobody can see it. `session.paintedLayer` clears the
+   frame being left before the new one is written.
+2. **Resolution happens in the DESTINATION frame's own space**, against that
+   frame's own candidate index — so nothing needs converting between frames.
+3. **A cross-frame drop resolves as an INSERT, not a move.** The dragged
+   element is not in that tree, so a move resolver's cycle and self-drop guards
+   have nothing to check. The verdict comes from
+   `previewStructuralTransplant`, painted as the same refusal chip a same-frame
+   refusal already shows, while the pointer is still down.
+
+**`pageId`, never `frameId`, decides whether a drop is cross-frame.** Two frames
+can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
+a drop between those two is an ordinary same-file reparent that must keep going
+through `moveNodes`.
+
+The write is one `transplant` edit (`transplantJsxElement`), not a delete plus
+an insert: two edits are two writes the batch could land half of, and the second
+has no markup to insert — the element's source text only exists in the file the
+first one just removed it from. Alt held copies instead of moving. Nothing is
+moved on the canvas first, because the node that appears in the destination
+frame is a DIFFERENT node from the one that left (its id is the `rel:line:col`
+the write produces); the commit's resync covers both files, which the batch
+reports as touched.
+
+---
+
+## Dropping a file from the operating system (D2 G15)
+
+`useCanvasFileDrop` (mounted once at `CanvasRoot`, not per frame) plus
+`canvasFileDrop.ts` (the decision) plus a relay in
+`useIframeEventForwarding.ts`.
+
+**Native HTML5 drag-and-drop, by necessity.** A file that originates outside
+the browser is only ever delivered through `DataTransfer.files`; there is no
+pointer-event form of this gesture. Both the hook and the relay are on
+`single-drag-mechanism.test.ts`'s allowlist for that reason, and the DECISION
+half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
+
+- `dragover` **must** be cancelled or `drop` is never delivered — and is
+  cancelled only for a drag carrying files, so an in-page `@dnd-kit` drag is
+  untouched.
+- The relay re-dispatches both events on the iframe ELEMENT and cancels them
+  inside the frame, so the browser does not navigate that frame's document to
+  the dropped file.
+- Every refusal is decided before the network is touched: the empty board
+  ("Drop the image onto a frame"), several files at once, a declared
+  non-image. One toast, no write.
+- The bytes land through `POST /admin/api/studio/asset-drop` in the project's
+  own `public/` — the one directory every framework serves from the site root,
+  and therefore the only one that can back a literal `<img src>`. See that
+  module's doc for why `src/assets/` cannot.
+
+---
+
 ## Events across the iframe boundary
 
 React synthetic events bubble through the **fiber** tree, so React handlers work
 normally. **Native** listeners on the parent `window`/`document` never see iframe
-events. Four cases are bridged explicitly:
+events. Five cases are bridged explicitly:
 
 1. **Wheel** — re-dispatched on the iframe element so pan/zoom works.
 2. **Pointer** — forwarded during space-pan and active reorder drags. The one
@@ -585,7 +666,16 @@ events. Four cases are bridged explicitly:
 3. **Keyboard** — a cloned `keydown` is dispatched on the **parent `document`**
    (not the iframe element — that would double-fire the canvas-root handler that
    already gets it via fiber bubbling). `Tab` is blocked, never forwarded.
-4. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
+4. **OS file drag/drop** (D2 G15, `canvasFrameDragRelay.ts`) — **every**
+   `dragover`/`drop` in a design frame's document is cancelled there, because
+   the browser's default is to navigate the document that received it and that
+   tears the portal's React root out. A dropped LINK is as destructive as a
+   dropped file, so the cancel is unconditional (`sec-17`); only the
+   **file-carrying** ones are then re-dispatched on the iframe element for
+   `useCanvasFileDrop`. Design frames only — a live (Tier 2) frame's document
+   belongs to the running app. An in-page `@dnd-kit` drag is pointer-based and
+   untouched.
+5. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
 

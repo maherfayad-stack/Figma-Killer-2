@@ -38,7 +38,7 @@
  * moves inside one drop zone costs nothing after the first frame.
  */
 import type { SnapGuide } from './boardSnapping'
-import type { CanvasDropResolution } from './canvasDnd'
+import type { CanvasDragPaintTarget, CanvasInvalidDropTarget } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import {
   dropIndicatorStyle,
@@ -58,7 +58,9 @@ export interface CanvasDragGhost {
   duplicating: boolean
 }
 
-export interface CanvasDragPaint extends CanvasDropResolution {
+export interface CanvasDragPaint {
+  target: CanvasDragPaintTarget | null
+  invalid: CanvasInvalidDropTarget | null
   ghost: CanvasDragGhost | null
   /**
    * K6 — alignment guides for a FREE move: the sibling edges and centres the

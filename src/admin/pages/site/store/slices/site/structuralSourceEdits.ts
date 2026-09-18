@@ -46,6 +46,7 @@ import {
   isSourceDerivedNodeId,
   previewStructuralGroup,
   previewStructuralMove,
+  previewStructuralTransplant,
   refuseStructuralEdit,
   resolveContainerAnchor,
   resolveSourceContainer,
@@ -53,6 +54,7 @@ import {
   type NodeTree,
   type PageNode,
   type StructuralMoveCommit,
+  type StructuralTransplantCommit,
 } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
@@ -400,9 +402,61 @@ export function planSourceUngroup(
   return { ok: true, commit: isSourceDerivedNodeId(node.id) ? node.id : null }
 }
 
+/**
+ * D2 G3 — whether ONE element may leave the page it is written in and land in
+ * a container on ANOTHER page (a cross-frame drop), and if so where.
+ *
+ * A thin wrapper over `previewStructuralTransplant` (`@core/page-tree`), for
+ * exactly the reason `planSourceMove` is one over `previewStructuralMove`: the
+ * rule is pure and belongs next to the other structural rules, and the only
+ * thing the store adds is the `EditConstraint` dressing, which needs the NODE
+ * in hand to derive `origin` (the `rel:line:col` a "show me" button jumps to).
+ *
+ * `commit` is never `null` on success. Unlike every other plan here there is
+ * no "ordinary CMS tree" branch to fall through to: a cross-PAGE move has no
+ * in-memory equivalent at all — the two trees are two files — so either the
+ * source can take the write or the gesture refuses.
+ */
+export function planSourceTransplant(
+  originTree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  destinationTree: NodeTree<PageNode>,
+  newParentId: string,
+  newIndex: number,
+  copy: boolean,
+): StructuralPlan<StructuralTransplantCommit> {
+  const preview = previewStructuralTransplant({
+    originTree,
+    nodeIds,
+    destinationTree,
+    newParentId,
+    newIndex,
+    copy,
+  })
+  if (preview.ok) return { ok: true, commit: preview.commit }
+  // The node the refusal is about — either end of the gesture, since a
+  // transplant can be refused for what the CONTAINER is as well as for what
+  // the moved element is. `previewStructuralTransplant` names which.
+  const node = preview.nodeId === undefined
+    ? undefined
+    : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])
+  return {
+    ok: false,
+    constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
+    ...(node ? { nodeId: node.id } : {}),
+  }
+}
+
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */
 export const STRUCTURAL_REFUSAL_TITLE = {
   move: 'Move refused',
+  /**
+   * D2 G3 — a drag that crossed a frame boundary. Its own title because the
+   * refusals are about crossing (a binding that cannot travel, a container in
+   * a file that cannot take it), and "Move refused" on a gesture the user
+   * experienced as moving between SCREENS reads as if the drag itself failed.
+   */
+  transplant: 'Cannot move this between frames',
   delete: 'Delete refused',
   insert: 'Cannot add this to imported code',
   duplicate: 'Duplicate refused',

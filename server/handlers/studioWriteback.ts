@@ -9,7 +9,7 @@
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
- * 'reparent' | 'insert-slot' |
+ * 'reparent' | 'transplant' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
  * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
@@ -26,8 +26,8 @@
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
  *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert` /
- *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent`. These change
- *     WHERE markup is: they
+ *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent` / `transplant`.
+ *     These change WHERE markup is: they
  *     take a second and sometimes a third location (an anchor sibling, a
  *     destination parent), they change the file's line count (invalidating
  *     every id below them, which is why `isSharedSourceNodeId` always reports
@@ -74,7 +74,7 @@ import {
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
-import { applyStructuralEdit } from './studioStructuralWriteback'
+import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   isRefusingEditKind,
@@ -267,6 +267,39 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag })
       return { applied: true }
+    case 'transplant': {
+      // D2 G3 — the ONE structural kind whose destination is deliberately in a
+      // DIFFERENT file, so its ends are decoded WITHOUT the same-file filter
+      // every other kind applies. They still go through `studioEditLocation`,
+      // which is where the containment and app-source guards live, so a
+      // hand-crafted `parentNodeId` still cannot name a file outside the
+      // workspace or one that is not app source.
+      //
+      // The ANCHOR belongs to the destination's file, not the origin's: it
+      // names an existing child of the container the element is landing in. A
+      // foreign anchor is therefore dropped (append is an honest position),
+      // exactly as `insert`/`reparent` treat theirs.
+      const destination = studioEditLocation(edit.parentNodeId)
+      const anchorId = edit.anchorNodeId
+      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const result = applyTransplantEdit(
+        loc,
+        edit,
+        destination ? { file: join(dir, destination.rel), line: destination.line, col: destination.col } : null,
+        anchor && destination && anchor.rel === destination.rel
+          ? { file: join(dir, anchor.rel), line: anchor.line, col: anchor.col }
+          : null,
+      )
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      // `store-13` — a transplant creates markup in the DESTINATION, so the
+      // position it reports is pinned to `edit.parentNodeId`'s file, not to
+      // this edit's own. `applyStudioEditBatch` reads `createdIn` for that.
+      return {
+        applied: true,
+        ...(result.created === undefined ? {} : { created: result.created }),
+        createdIn: edit.parentNodeId,
+      }
+    }
     case 'move':
     case 'delete':
     case 'insert':
@@ -388,6 +421,14 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     // `studioEditFile` because this kind's write target is a FILE +
     // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
     if (edit.kind === 'css' && edit.op === 'create') touchedFiles.add(join(dir, edit.pageFile))
+    // D2 G3 — a transplant writes TWO files, and only the origin is named by
+    // `edit.nodeId`. The destination has to be in this set or the batch's
+    // line-count-shift check would report `shifted: false` for a write that
+    // moved every id in the file the element landed in.
+    if (edit.kind === 'transplant') {
+      const destination = studioEditFile(dir, edit.parentNodeId)
+      if (destination) touchedFiles.add(destination)
+    }
   }
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
@@ -412,7 +453,13 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   const importPrune = createImportPruneSession()
   const referencedBefore = new Map<string, ReadonlySet<string>>()
   for (const edit of ordered) {
-    if (edit.kind !== 'delete') continue
+    // D2 G3 — a transplant that MOVES (not copies) removes markup from the
+    // origin file exactly as a delete does, so it can orphan an import there
+    // in exactly the same way. The DESTINATION is deliberately not snapshotted:
+    // the codemod just added imports to it, and pruning a binding that has no
+    // reference yet at snapshot time would delete the one it wrote.
+    const removesMarkup = edit.kind === 'delete' || (edit.kind === 'transplant' && edit.copy !== true)
+    if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)
     if (!file || referencedBefore.has(file)) continue
     if (isPrunableSourceFile(file) && existsSync(file)) {
@@ -441,7 +488,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         // already carries the blast radius the caller asked to see.
       } else if (outcome.applied) {
         written += 1
-        if (outcome.created) recordCreatedPosition(createdPositions, dir, edit.nodeId, outcome.created)
+        if (outcome.created) recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, outcome.created)
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })

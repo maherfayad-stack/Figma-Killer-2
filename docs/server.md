@@ -698,6 +698,68 @@ The delete is the one in this feature, and its guard is stated where it happens:
 
 ---
 
+## Landing an image the user dropped on the canvas
+
+`POST /admin/api/studio/asset-drop` (`server/handlers/studio/assetDrop.ts`) —
+D2 G15's write. It is the second of two routes that put an image byte buffer
+into a project, and the difference between them is worth stating precisely
+because it is NOT a security difference:
+
+| | `asset-upload` (WS-8.3) | `asset-drop` (D2 G15) |
+|---|---|---|
+| Who says where the file goes | the caller, via `targetDir` | the SERVER, always `public/` |
+| What reads it afterwards | an `import heroImg from '…'` the caller is about to repoint | a literal `<img src="/photo.png">` Studio is about to write |
+| Traversal surface | a client string, guarded by `resolveAssetWriteDir` | none — the directory is a constant |
+
+Everything else is one shared pipeline and is not duplicated: the body is
+capped by **streamed byte count** (`readFormDataWithLimit`, so a spoofed
+`content-length` cannot bypass it), the **bytes** decide the format and the
+written extension (`sniffImageExtension` — never the filename or the declared
+MIME), SVG is sanitised before it touches disk, the filename is derived rather
+than trusted, a collision gets a numeric suffix rather than clobbering, and
+containment is checked on the **real** path of the nearest existing ancestor.
+All of it lives in `assetLanding.ts`.
+
+**Why `public/` is the only answer.** It is the one directory every framework
+the probe recognises (Vite, CRA, both Next routers, Remix, Astro) serves
+verbatim from the site root, so the file is reachable at `/<name>` in dev and
+in a production build alike — one literal, one honest target, no import.
+`src/assets/` cannot be used here: under every one of those bundlers a file
+there is only reachable through an `import` the bundler rewrites to a hashed
+URL, so a literal path works in `vite dev` and 404s in production, and
+`<img src={photo}>` would be TWO edits in two places. A missing `public/` is
+created only for a project whose framework declares the convention; for
+`framework: 'unknown'` the route answers **409** with the remedy
+("create a public/ folder") rather than guessing.
+
+Response: `{ ok: true, relPath, src }` — `relPath` is workspace-relative
+(`public/photo.png`, or `apps/web/public/photo.png` in a monorepo) and `src` is
+the literal the `<img>` gets (`/photo.png` in both cases: the app root is where
+the app lives on disk and the browser never sees it).
+
+**Who may ask** (`sec-17`, `sec-14`). One line in `routeCapabilities.ts` —
+`{ path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' }`
+— and nothing in the handler. `gateStudioRequest` therefore answers both
+questions **before the body is read**, which is the point: an unauthorised
+caller must not cost 25 MB of server memory, and a forged request must not
+reach the filesystem at all.
+
+- **CSRF.** A multipart POST is a shape a plain cross-origin `<form>` can send
+  with no JavaScript and no preflight, so without it any page the user has open
+  in another tab could land a file of its choosing in the project they are
+  editing. A bare **403** that names nothing on disk.
+- **`studio.write`** — the capability `/delete`, `/duplicate` and the trash
+  writes carry. **401** with no session, **403** without the capability.
+
+`sec-17` found this route unauthenticated and added an inline `originAllowed` +
+`requireCapability` pair, because the base it reviewed had no table to declare
+into; integration replaced that pair with the declaration and moved the
+sub-router back onto the plain `STUDIO_SUB_ROUTERS` list, since it no longer
+needs the `DbClient`. `asset-upload` and `/save` are declarations in the same
+table now, so the asymmetry `sec-17` recorded is gone.
+
+---
+
 ## Adding a new endpoint
 
 1. **Pick the right layer.**

@@ -78,7 +78,7 @@ import { Node, QuoteKind, SyntaxKind, type JsxAttribute, type JsxFragment, type 
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { insertJsxElement } from './insertJsxElement'
 import { indentUnit } from './jsxChildPlacement'
-import { conflictingBinding } from './jsxImportEdits'
+import { conflictingBinding, type ImportRequirement } from './jsxImportEdits'
 import {
   collectSubtreeImports,
   renderJsxNode,
@@ -203,8 +203,8 @@ export function insertJsxIntoSlotProp(params: InsertJsxIntoSlotPropParams): Inse
   }
 
   const imports = collectSubtreeImports(node)
-  for (const [componentName, specifier] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, specifier)
+  for (const [componentName, requirement] of imports) {
+    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
     if (binding) {
       return refuse(
         'binding-conflict',
@@ -402,10 +402,11 @@ function lineIndent(text: string, pos: number): string {
  * `addReconciledImports` in spirit, but simpler — those two also have to
  * MIRROR an import from a source binding's own declaration; this one only
  * ever writes the `(name, specifier)` pairs the caller's subtree already
- * names explicitly, so there is no binding to trace.
+ * names explicitly, so there is no binding to trace — and every one of them
+ * is a NAMED import for the same reason (`collectSubtreeImports`).
  */
-function addRequiredImports(sourceFile: SourceFile, required: ReadonlyMap<string, string>): void {
-  for (const [name, specifier] of required) {
+function addRequiredImports(sourceFile: SourceFile, required: ReadonlyMap<string, ImportRequirement>): void {
+  for (const [name, { specifier }] of required) {
     const existing = sourceFile.getImportDeclarations().find((d) => d.getModuleSpecifierValue() === specifier)
     if (existing) {
       const already = existing.getNamedImports().some((n) => (n.getAliasNode() ?? n.getNameNode()).getText() === name)

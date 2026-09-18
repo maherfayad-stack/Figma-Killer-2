@@ -328,6 +328,13 @@ export interface StudioEditApplyOutcome {
    * `applyStudioEditBatch`'s to know — see `StudioEditBatchResult.createdNodeIds`.
    */
   created?: CreatedJsxLocation | null
+  /**
+   * Which node id's FILE `created` is measured against, when that is not this
+   * edit's own. Only `transplant` (D2 G3) sets it: the element it creates
+   * lands in the DESTINATION's file, so minting the id off `edit.nodeId` — the
+   * origin — would name a position in the file the markup just LEFT.
+   */
+  createdIn?: string
 }
 
 /**
@@ -348,6 +355,10 @@ export interface StudioEditRefusal {
     | 'duplicate'
     | 'wrap'
     | 'reparent'
+    // D2 G3 — the cross-file move. Refuses for two reasons only the AST can
+    // see (`captured-scope`, `binding-conflict`) on top of everything a
+    // same-file reparent can.
+    | 'transplant'
     // K3 — ⌘G on a run of siblings, and ⌘⇧G. Both refuse for reasons only the
     // AST can see (`not-contiguous`, `mixed-indentation`, `has-behaviour`).
     | 'group'

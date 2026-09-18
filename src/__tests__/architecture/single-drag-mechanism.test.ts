@@ -102,6 +102,25 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
   // walk it feeds. The only reason native DnD is used at all here: dnd-kit
   // cannot see a dropped folder's contents.
   'admin/pages/site/studio/droppedFolderWalk.ts',
+  // D2 G15 — the board's own drop target for an image file dragged in from
+  // the OPERATING SYSTEM. Native by necessity and not by preference, for the
+  // same reason `LauncherDropZone` is: a file that originates outside the
+  // browser is only ever delivered through `DataTransfer.files`. There is no
+  // pointer-event form of this gesture to migrate to, so neither of these two
+  // is work D2's unification will ever reclaim — the DECISION half of the
+  // gesture (which frame, which position, which refusal) deliberately lives
+  // in `canvasFileDrop.ts`, which touches no DnD API at all and is therefore
+  // not on this list.
+  'admin/pages/site/canvas/useCanvasFileDrop.ts',
+  // The same gesture's iframe relay: a native `dragover`/`drop` does not
+  // cross the iframe boundary, so it is re-dispatched on the iframe element.
+  // `sec-17` lifted the RULE out of `useIframeEventForwarding.ts` (which is
+  // therefore no longer on this list — it now owns only the lifecycle) so it
+  // could be driven directly: cancel every drag's default inside a design
+  // frame, because the browser's default is to navigate the portal's document
+  // away and a dropped LINK is as destructive there as a dropped file; relay
+  // only the file-carrying ones.
+  'admin/pages/site/canvas/canvasFrameDragRelay.ts',
 ])
 
 // ─── File collection ─────────────────────────────────────────────────────────

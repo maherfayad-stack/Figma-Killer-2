@@ -5,8 +5,8 @@ import type {
   CanvasOverlayRect,
 } from './canvasOverlayGeometry'
 import type {
+  CanvasDragPaintTarget,
   CanvasDropAxis,
-  CanvasDropTarget,
   CanvasRect,
 } from './canvasDnd'
 
@@ -439,7 +439,7 @@ export function positionNodeBadge(
  */
 export type CanvasDropVars = Record<string, string>
 
-export function dropIndicatorStyle(target: CanvasDropTarget): CanvasDropVars {
+export function dropIndicatorStyle(target: CanvasDragPaintTarget): CanvasDropVars {
   if (target.position === 'inside') return rectStyle(target.rect)
   return lineStyle(target.rect, target.position, target.axis)
 }
