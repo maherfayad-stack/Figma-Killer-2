@@ -64,6 +64,7 @@ import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
+import { CanvasFileDropHint } from './CanvasFileDropHint'
 import { useBoardSelectAllShortcut } from './useBoardSelectAllShortcut'
 import { useCopyAsPngShortcut } from './useCopyAsPngShortcut'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -397,7 +398,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // started inside a frame onto the iframe element in this document, so the
   // listener has to sit above every frame. Off in live view, where a drop
   // belongs to the running app rather than to the editor.
-  useCanvasFileDrop({ enabled: permissions.canEditStructure && !isLive, transformRef })
+  const fileDrop = useCanvasFileDrop({ enabled: permissions.canEditStructure && !isLive, transformRef })
 
   // `global`, the bottom rung — undo / redo: what you get when nothing more
   // specific claimed the key. Moved off `UndoRedoButtons` so it survives the
@@ -590,6 +591,15 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               live frame has no pan/zoom to rule against. */}
           {!isLive && editable && (
             <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+          )}
+
+          {/* D2 G15 — where an OS file drag's cursor chip is painted while the
+              pointer is over the empty BOARD. Over a frame the same chip goes
+              in that frame's own drag layer; this layer exists only for the
+              case where there is no frame to put it in. Untransformed chrome,
+              a sibling of the transform layer, like the rulers above. */}
+          {!isLive && editable && permissions.canEditStructure && (
+            <CanvasFileDropHint layerRef={fileDrop.hintLayerRef} />
           )}
 
           {/*

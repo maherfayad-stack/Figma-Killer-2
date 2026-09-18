@@ -107,6 +107,17 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
           // after a detach/extract remedy lands means re-issuing the same drop
           // with that id swapped for its replacement.
           retry: (newNodeId) => actions.transplantNodes([newNodeId], destination),
+          // D2 G3 — "Duplicate into frame instead": the SAME drop, with Alt's
+          // meaning. It is the same store action and therefore the same gate,
+          // the same `guardAgainstConcurrentStructuralCommit`, and the same
+          // single "Copied into <page>" toast an Alt-drag would have landed —
+          // one gesture, one write, one toast, even though the user reached it
+          // through a button. `planSourceTransplant` only attaches the action
+          // when this call will actually be allowed, so the remedy cannot
+          // bounce straight back to the refusal it was offered for.
+          ...(plan.constraint.actions.some((action) => action.kind === 'duplicate-into-frame')
+            ? { duplicateIntoFrame: () => actions.transplantNodes(nodeIds, { ...destination, copy: true }) }
+            : {}),
           getState: get,
           set,
         })

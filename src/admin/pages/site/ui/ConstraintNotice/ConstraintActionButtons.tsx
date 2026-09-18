@@ -51,9 +51,18 @@ interface ConstraintActionButtonsProps {
    * and renders exactly as before.
    */
   onActionSettled?: (action: EditConstraintAction, ok: boolean) => void
+  /**
+   * D2 G3 — the `duplicate-into-frame` remedy's handler. Supplied only by
+   * `RefusalDialog`, which is the one surface that has it (it arrives on the
+   * dialog's own state, closed over by the store action that refused — there
+   * is no node id this component could rebuild it from). Every other caller
+   * omits it, so the action renders as advice text there rather than a button
+   * that could not work.
+   */
+  duplicateIntoFrame?: () => void
 }
 
-export function ConstraintActionButtons({ constraint, nodeId, onActionSettled }: ConstraintActionButtonsProps) {
+export function ConstraintActionButtons({ constraint, nodeId, onActionSettled, duplicateIntoFrame }: ConstraintActionButtonsProps) {
   if (constraint.actions.length === 0) return null
 
   return (
@@ -63,6 +72,7 @@ export function ConstraintActionButtons({ constraint, nodeId, onActionSettled }:
           nodeId,
           openSource: jumpToSource,
           makeParentRelative,
+          ...(duplicateIntoFrame ? { duplicateIntoFrame } : {}),
           ...(onActionSettled ? { onSettled: (ok: boolean) => onActionSettled(action, ok) } : {}),
         })
         return run ? (

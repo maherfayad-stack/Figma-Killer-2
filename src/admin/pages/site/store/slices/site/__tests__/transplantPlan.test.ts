@@ -130,3 +130,55 @@ describe('planSourceTransplant — refusals arrive dressed', () => {
     expect(plan.constraint.reason).toBe('reparent')
   })
 })
+
+/**
+ * The "Duplicate into frame instead" remedy, from both sides.
+ *
+ * It exists because the commonest cross-frame refusal on a real imported
+ * project - markup that belongs to a shared component or to a layout file -
+ * says the move "would apply to every place that component is used", which is
+ * true of a move and false of a copy. The button is therefore not a
+ * consolation prize; it is the one gesture that does what the user asked
+ * without the consequence they were warned about.
+ *
+ * The property pinned here is that it is offered ONLY when it would work.
+ * `planSourceTransplant` establishes that by re-asking the same rule with
+ * `copy: true` - so a refusal a copy shares must NOT carry the action, or the
+ * button would lead straight back to the sentence it was offered under.
+ */
+describe('planSourceTransplant - the copy remedy is offered only when it would land', () => {
+  const inlined = `${HOME}:5:5~ui/Badge.tsx:2:3`
+
+  function homeWithInlined(): NodeTree<PageNode> {
+    const tree = homeTree()
+    tree.nodes[inlined] = makeNode({ id: inlined, moduleId: 'base.text', parentId: tree.rootNodeId })
+    tree.nodes[tree.rootNodeId]!.children.push(inlined)
+    return tree
+  }
+
+  it('offers it on a shared-component refusal, where a copy touches nobody else', () => {
+    const plan = planSourceTransplant(homeWithInlined(), [inlined], aboutTree(), at(ABOUT, 3), 0, false)
+
+    expect(plan.ok).toBe(false)
+    if (plan.ok) return
+    expect(plan.constraint.reason).toBe('shared-component')
+    const remedy = plan.constraint.actions.find((action) => action.kind === 'duplicate-into-frame')
+    expect(remedy?.label).toBe('Duplicate into frame instead')
+  })
+
+  it('does NOT offer it on a `.map` row, which a copy cannot read either', () => {
+    const plan = planSourceTransplant(homeTree(), [`${HOME}:8:5#2`], aboutTree(), at(ABOUT, 3), 0, false)
+
+    expect(plan.ok).toBe(false)
+    if (plan.ok) return
+    expect(plan.constraint.actions.some((action) => action.kind === 'duplicate-into-frame')).toBe(false)
+  })
+
+  it('does NOT offer it to a gesture that was ALREADY a copy', () => {
+    const plan = planSourceTransplant(homeTree(), [`${HOME}:8:5#2`], aboutTree(), at(ABOUT, 3), 0, true)
+
+    expect(plan.ok).toBe(false)
+    if (plan.ok) return
+    expect(plan.constraint.actions.some((action) => action.kind === 'duplicate-into-frame')).toBe(false)
+  })
+})

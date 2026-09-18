@@ -619,6 +619,32 @@ frame is a DIFFERENT node from the one that left (its id is the `rel:line:col`
 the write produces); the commit's resync covers both files, which the batch
 reports as touched.
 
+**A cross-frame COPY is gated differently from a cross-frame MOVE, and the
+difference is a remedy.** Two of `refusePlacement`'s four reasons exist because
+the write would change markup OTHER call sites share: `shared-component` ("the
+change would apply to every place that component is used") and `route-chrome`
+("every page below the layout renders it"). Both sentences are true of a move,
+which cuts the element out of the component's or the layout's own file, and
+FALSE of a copy, which leaves those bytes alone and writes one new element into
+the destination page's own file. So `previewStructuralTransplant` lets a copy
+past those two (`copyEscapesOriginRefusal`) and keeps refusing the two that are
+about the markup itself — `list-row` (no source range to read) and `code-placed`
+(a spread, a slot fill, an SVG built in code).
+
+That is what makes **"Duplicate into frame instead"** honest. When a move
+refuses, `planSourceTransplant` re-asks the SAME function with `copy: true`; the
+`duplicate-into-frame` action is appended only if that comes back `ok`, so the
+button can never lead back to the sentence it was offered under. Its handler is
+a closure over the whole destination (page, container, index), which nothing can
+rebuild from a node id once the drag session is gone — so unlike
+`position-parent-relative` it travels on `StructuralRefusalDialogState`, and
+`RefusalDialog` hands it down to `ConstraintActionButtons`. Pressing it calls
+the same `transplantNodes` the drag called, so the copy rides the same
+concurrency guard, the same gate and the same single "Copied into another frame"
+toast an Alt-drag would have landed. Whether the markup can actually travel is
+still the AST's answer at save time (`captured-scope` / `unexported-binding`, by
+name).
+
 ---
 
 ## Dropping a file from the operating system (D2 G15)
@@ -642,6 +668,18 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 - Every refusal is decided before the network is touched: the empty board
   ("Drop the image onto a frame"), several files at once, a declared
   non-image. One toast, no write.
+- **And decided before RELEASE, too.** `canvasFileDragPreview.ts` runs the same
+  refusal functions on every `dragover`, through one rAF and zero React
+  commits, and paints the answer: over a frame, the element drag's own drop
+  line plus a cursor chip naming the format, in that frame's own drag layer;
+  over the empty board, "Drop onto a frame" in `CanvasFileDropHint`, a
+  board-level layer that exists because there is no frame layer to use there.
+  A `CanvasFileDropRefusal` carries a one-line `headline` for the chip and the
+  whole `message` for the toast, so the two cannot drift.
+- **The chip names the TYPE, never the file.** Before `drop` the drag data
+  store is in the spec's protected mode: `DataTransfer.files` is empty and
+  `getAsFile()` returns `null`, so there is no name and no size to show.
+  `DroppedFileFacts` is the reduced shape both halves are written against.
 - The bytes land through `POST /admin/api/studio/asset-drop` in the project's
   own `public/` — the one directory every framework serves from the site root,
   and therefore the only one that can back a literal `<img src>`. See that

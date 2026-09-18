@@ -38,7 +38,7 @@
  */
 import { explainCssRuleConstraint } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
-import type { StructuralRefusalDialogState } from '@site/store/slices/uiSlice'
+import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
 import type { ClassTokenRefusal } from './classNameWriteback'
 import type { CssDestinationRefusal, StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
 

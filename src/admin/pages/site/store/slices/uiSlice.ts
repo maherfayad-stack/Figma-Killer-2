@@ -1,4 +1,4 @@
-import type { EditConstraint } from '@core/page-tree'
+import type { StructuralRefusalDialogState } from './structuralRefusalDialogState'
 import type { EditorStore, EditorStoreSliceCreator } from '@site/store/types'
 import { clearCanvasSelectionDraft } from './selectionSlice'
 import {
@@ -93,34 +93,6 @@ export type LayoutNameDialogRequest =
  * opening a thread or arming the comment tool means Comments.
  */
 export type RightSidebarTab = 'properties' | 'comments'
-
-/**
- * A refused structural gesture (move/delete/insert/duplicate/wrap) that has
- * at least one runnable remedy — `RefusalDialog` (R2, `store-10`) renders this
- * as a modal instead of the plain toast `presentStructuralRefusal` still uses
- * for a terminal refusal (`constraint.actions.length === 0`).
- *
- * Lives in `uiSlice`, not a component: the gesture that produced this can come
- * from anywhere in the store's own action layer (Delete key, a layers-tree
- * drag, a context menu, spotlight) with no JSX render tree to hand the
- * constraint to — the same reason `pushToast` is a global bus rather than
- * component state.
- */
-export interface StructuralRefusalDialogState {
-  /** One of `STRUCTURAL_REFUSAL_TITLE`'s values — which gesture this refusal answers. */
-  title: string
-  constraint: EditConstraint
-  /** The node the refusal is about, when the plan had one in hand. */
-  nodeId?: string
-  /**
-   * Re-run the gesture this refusal blocked, against the node that replaces
-   * `nodeId` once a detach/extract's board reload lands. Present only for the
-   * two remedies that invalidate `nodeId` itself (`detach` / `extract`) —
-   * every other runnable remedy (`edit-component`, `jump-to-source`,
-   * `edit-array`) just opens a file and needs no re-issue.
-   */
-  retry?: (newNodeId: string) => void
-}
 
 interface UiSlice {
   // Panel visibility / layout

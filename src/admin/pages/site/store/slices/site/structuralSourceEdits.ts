@@ -51,6 +51,7 @@ import {
   resolveContainerAnchor,
   resolveSourceContainer,
   type EditConstraint,
+  type EditConstraintAction,
   type NodeTree,
   type PageNode,
   type StructuralMoveCommit,
@@ -446,11 +447,57 @@ export function planSourceTransplant(
   const node = preview.nodeId === undefined
     ? undefined
     : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])
+  const constraint = describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) })
   return {
     ok: false,
-    constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
+    constraint: offersCopyInstead(originTree, nodeIds, destinationTree, newParentId, newIndex, copy)
+      ? { ...constraint, actions: [...constraint.actions, DUPLICATE_INTO_FRAME_ACTION] }
+      : constraint,
     ...(node ? { nodeId: node.id } : {}),
   }
+}
+
+/**
+ * D2 G3's one remedy: the refused MOVE, re-issued as a copy.
+ *
+ * The label says what the button does rather than naming the mechanism,
+ * because a user who has just been told "moving this would change every place
+ * it is used" is being offered the thing that does not.
+ */
+const DUPLICATE_INTO_FRAME_ACTION: EditConstraintAction = {
+  label: 'Duplicate into frame instead',
+  kind: 'duplicate-into-frame',
+}
+
+/**
+ * Whether the SAME gesture with Alt held would be allowed — the only honest
+ * basis for offering "Duplicate into frame instead".
+ *
+ * It re-asks `previewStructuralTransplant`, the identical function that just
+ * refused, rather than testing the refusal's reason against a list here: the
+ * rule about which refusals a copy escapes belongs in the engine
+ * (`copyEscapesOriginRefusal`), and a second copy of it in the store is exactly
+ * the hand-kept-in-sync duplication `planSourceMove`'s own doc was written to
+ * stop repeating. A gesture that was ALREADY a copy has nothing to offer — it
+ * refused with Alt already held.
+ */
+function offersCopyInstead(
+  originTree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  destinationTree: NodeTree<PageNode>,
+  newParentId: string,
+  newIndex: number,
+  copy: boolean,
+): boolean {
+  if (copy) return false
+  return previewStructuralTransplant({
+    originTree,
+    nodeIds,
+    destinationTree,
+    newParentId,
+    newIndex,
+    copy: true,
+  }).ok
 }
 
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */
@@ -543,6 +590,13 @@ export function presentStructuralRefusal(
      */
     retry?: (newNodeId: string) => void
     /**
+     * D2 G3 — the `duplicate-into-frame` remedy's handler, when the refusing
+     * gesture had one to offer. Travels to the dialog on its state, because
+     * the destination it closes over cannot be rebuilt from a node id — see
+     * `StructuralRefusalDialogState.duplicateIntoFrame`.
+     */
+    duplicateIntoFrame?: () => void
+    /**
      * The store's own `get`. Supplied by every real call site; what makes the
      * toast's/dialog's jump-to-source button possible from inside a store
      * action without importing the composed store (see `openSourceFile`'s
@@ -565,6 +619,7 @@ export function presentStructuralRefusal(
         constraint,
         ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
         ...(context.retry ? { retry: context.retry } : {}),
+        ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
       }
     })
     return

@@ -166,6 +166,21 @@ export interface EditConstraintAction {
      * `openSource` already is.
      */
     | 'position-parent-relative'
+    /**
+     * D2 G3 — re-issue the cross-frame drop that just refused as a COPY.
+     *
+     * Offered only when the same gesture with `copy: true` passes the same
+     * gate — `planSourceTransplant` re-asks `previewStructuralTransplant` to
+     * find out — so it is never a button that leads straight back to the
+     * refusal it was offered for. The second action kind whose handler is a
+     * WRITE rather than a navigation, and injected for the same reason
+     * `position-parent-relative` is; the difference is that the closure it
+     * needs carries a whole DESTINATION (which page, which container, which
+     * index), which only the store action that refused still holds — so it
+     * travels on `StructuralRefusalDialogState` instead of being rebuilt from
+     * a node id.
+     */
+    | 'duplicate-into-frame'
   /**
    * Where this action points, when it points at a file — `origin`'s own
    * shape, so a caller can wire `jump-to-source` without re-deriving it.

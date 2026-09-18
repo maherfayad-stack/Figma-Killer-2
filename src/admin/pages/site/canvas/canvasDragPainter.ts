@@ -40,6 +40,9 @@
 import type { SnapGuide } from './boardSnapping'
 import type { CanvasDragPaintTarget, CanvasInvalidDropTarget } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
+import type { CanvasReflowShift } from './canvasReflowPreview'
+import { REFLOW_SHIFT_LIMIT } from './canvasReflowPreview'
+import { prefersReducedMotion } from './playbackMotion'
 import {
   dropIndicatorStyle,
   pointStyle,
@@ -56,7 +59,21 @@ export interface CanvasDragGhost {
   label: string
   /** K2 — Alt is held, so the drop writes a COPY. Renders the `+` badge. */
   duplicating: boolean
+  /**
+   * G15 — this chip is answering a gesture that will NOT land (a non-image
+   * file, the empty board). Renders in the refusal's own colours so the answer
+   * is legible before release rather than as a toast afterwards.
+   */
+  refusing?: boolean
 }
+
+/**
+ * How long a sibling takes to make room. Short enough that a pointer sweeping
+ * across four slots does not leave a queue of boxes still travelling behind
+ * it, long enough to read as movement rather than a jump.
+ */
+const REFLOW_DURATION_MS = 120
+const REFLOW_EASING = 'cubic-bezier(0.22, 0.61, 0.36, 1)'
 
 export interface CanvasDragPaint {
   target: CanvasDragPaintTarget | null
@@ -69,6 +86,12 @@ export interface CanvasDragPaint {
    * therefore has nothing to align.
    */
   guides?: readonly SnapGuide[]
+  /**
+   * K6's reflow preview: the siblings that would make room for this drop, and
+   * how far each travels (`canvasReflowPreview.ts`). Empty for a free move, a
+   * refused position, and any layout the packing model stands down for.
+   */
+  reflow?: readonly CanvasReflowShift[]
 }
 
 /**
@@ -92,6 +115,28 @@ interface DragLayerParts {
    * pool is.
    */
   guides: HTMLDivElement[]
+  /**
+   * K6's reflow preview — one box per sibling that would make room.
+   *
+   * Created EAGERLY, all `REFLOW_SHIFT_LIMIT` of them at once, and never
+   * removed: the set of shifting siblings changes every time the drop line
+   * crosses a slot, and minting and dropping elements at pointer rate is the
+   * one thing this whole painter exists to avoid. Same fixed pool, same
+   * reason, as the guides above and as `syncSelectorHighlightRings`.
+   */
+  reflow: ReflowPart[]
+}
+
+/** One pooled reflow box, the travel it is on, and both ends of that travel. */
+interface ReflowPart {
+  element: HTMLDivElement
+  /** Where the current travel ENDS — also the resting delta once it finishes. */
+  dx: number
+  dy: number
+  /** Where the current travel STARTED, so a retarget can interpolate from mid-flight. */
+  fromDx: number
+  fromDy: number
+  animation: Animation | null
 }
 
 const layerParts = new WeakMap<HTMLElement, DragLayerParts>()
@@ -140,11 +185,13 @@ export function paintCanvasDrag(layer: HTMLElement | null, paint: CanvasDragPain
   }
 
   paintGuides(parts, layer, paint.guides ?? [])
+  paintReflow(parts, paint.reflow ?? [])
 
   const ghost = paint.ghost
   if (ghost) {
     applyIndicatorVars(parts.ghost, pointStyle(ghost.point.x, ghost.point.y))
     setAttribute(parts.ghost, 'data-duplicating', ghost.duplicating ? 'true' : null)
+    setAttribute(parts.ghost, 'data-refusing', ghost.refusing ? 'true' : null)
     setText(parts.ghostLabel, ghost.label)
     show(parts.ghost)
   } else {
@@ -181,11 +228,114 @@ function createParts(layer: HTMLElement): DragLayerParts {
   ghostLabel.className = styles.dragGhostLabel
   ghost.appendChild(ghostLabel)
 
-  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, guides: [] }
+  const reflow: ReflowPart[] = []
+  for (let i = 0; i < REFLOW_SHIFT_LIMIT; i++) {
+    const element = doc.createElement('div')
+    element.className = styles.reflowGhost
+    // Stable attribute, not the hashed CSS Module class: this is how a test
+    // names a reflow box, the same way the ghost and the refusal chip are
+    // named above.
+    element.setAttribute('data-canvas-reflow-ghost', 'true')
+    element.setAttribute('aria-hidden', 'true')
+    reflow.push({ element, dx: 0, dy: 0, fromDx: 0, fromDy: 0, animation: null })
+  }
+
+  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, guides: [], reflow }
   hideAll(parts)
-  layer.append(line, invalid, chip, ghost)
+  layer.append(line, invalid, chip, ghost, ...reflow.map((part) => part.element))
   layerParts.set(layer, parts)
   return parts
+}
+
+/**
+ * K6 — move each pooled box to the sibling it stands for and travel it to the
+ * delta that sibling would take.
+ *
+ * ## Why WAAPI and not a CSS transition
+ *
+ * A transition interpolates from the element's PREVIOUS computed style, which
+ * an element created in this same task does not have, and which nothing here
+ * may ask for anyway — reading a computed style inside the write phase is the
+ * layout-thrash rule this whole painter is arranged around. `element.animate`
+ * needs neither: the FROM is a number this module already holds (`part.dx`),
+ * and retargeting mid-travel reads the eased progress off the running
+ * animation's own timing rather than off the DOM.
+ *
+ * ## Why `translate` and not `transform`
+ *
+ * The box is POSITIONED by `transform: translate(var(--canvas-drop-x), …)`,
+ * the same rect channel every other indicator uses. Animating the same
+ * property would mean animating its position as well, so a re-measure would
+ * slide the box across the frame. The independent `translate` property
+ * composes on top and is the only thing that ever moves.
+ *
+ * A box that stops shifting travels back to zero and then fades — it is the
+ * same sibling returning to its own place, which is exactly what the drop no
+ * longer landing there means.
+ */
+function paintReflow(parts: DragLayerParts, shifts: readonly CanvasReflowShift[]): void {
+  for (let i = 0; i < parts.reflow.length; i++) {
+    const part = parts.reflow[i]!
+    const shift = shifts[i]
+    if (shift) {
+      applyIndicatorVars(part.element, rectStyle(shift.rect))
+      setAttribute(part.element, 'data-shifting', 'true')
+      travelReflow(part, shift.dx, shift.dy)
+    } else {
+      setAttribute(part.element, 'data-shifting', null)
+      travelReflow(part, 0, 0)
+    }
+  }
+}
+
+/** Animate one pooled box from the delta it is showing to the one it should show. */
+function travelReflow(part: ReflowPart, dx: number, dy: number): void {
+  if (part.dx === dx && part.dy === dy) return
+
+  const from = currentReflowDelta(part)
+  part.animation?.cancel()
+  part.animation = null
+  part.fromDx = from.dx
+  part.fromDy = from.dy
+  part.dx = dx
+  part.dy = dy
+
+  const to = `${dx}px ${dy}px`
+  // No WAAPI (happy-dom, and the reduced-motion preference) — the box simply
+  // is where it would end up. `prefers-reduced-motion` must be asked in script
+  // here for the reason `playbackMotion` records: the global CSS clamp cannot
+  // see a scripted animation.
+  if (typeof part.element.animate !== 'function' || prefersReducedMotion()) {
+    part.element.style.translate = to
+    return
+  }
+
+  part.animation = part.element.animate(
+    [{ translate: `${part.fromDx}px ${part.fromDy}px` }, { translate: to }],
+    { duration: REFLOW_DURATION_MS, easing: REFLOW_EASING, fill: 'forwards' },
+  )
+}
+
+/**
+ * Where a pooled box is RIGHT NOW: its committed delta when nothing is
+ * running, or the eased interpolation of the travel still in flight.
+ *
+ * `getComputedTiming().progress` is the timing function already applied, so
+ * this recovers the on-screen position without touching the DOM — which is the
+ * whole point. Without it a pointer sweeping across slots would snap each box
+ * back to its last target before starting the next travel.
+ */
+function currentReflowDelta(part: ReflowPart): { dx: number; dy: number } {
+  const animation = part.animation
+  if (!animation || typeof animation.effect?.getComputedTiming !== 'function') {
+    return { dx: part.dx, dy: part.dy }
+  }
+  const progress = animation.effect.getComputedTiming().progress
+  if (typeof progress !== 'number') return { dx: part.dx, dy: part.dy }
+  return {
+    dx: part.fromDx + (part.dx - part.fromDx) * progress,
+    dy: part.fromDy + (part.dy - part.fromDy) * progress,
+  }
 }
 
 /**
@@ -264,4 +414,19 @@ function hideAll(parts: DragLayerParts): void {
   hide(parts.chip)
   hide(parts.ghost)
   for (const guide of parts.guides) hide(guide)
+  // The reflow boxes stay in the DOM between gestures — see `DragLayerParts`
+  // for why they are never created on demand — so the end of a drag RESETS
+  // them (no travel, no attribute) rather than removing them. A cancelled
+  // animation would otherwise still be holding the last delta the next drag
+  // would travel from.
+  for (const part of parts.reflow) {
+    part.animation?.cancel()
+    part.animation = null
+    part.dx = 0
+    part.dy = 0
+    part.fromDx = 0
+    part.fromDy = 0
+    part.element.style.translate = '0px 0px'
+    setAttribute(part.element, 'data-shifting', null)
+  }
 }

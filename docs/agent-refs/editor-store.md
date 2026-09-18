@@ -147,6 +147,19 @@ from `toastStructuralRefusal`) renders ONE of two things depending on whether
   reload lands — the user's delete/move/duplicate/wrap actually happens, not
   just the detach alone.
 
+A **second** closure now rides that field: `duplicateIntoFrame`, for D2 G3's
+`duplicate-into-frame` remedy. It takes no arguments, because there is no
+argument that would name the gesture — a cross-frame drop is a destination
+(page, container, index) the drag session no longer holds once `pointerup` has
+run, so `transplantActions.ts` closes over it and hands the closure to the
+dialog. `RefusalDialog` passes it down to `ConstraintActionButtons`, which
+supplies it to `resolveConstraintAction` exactly the way it supplies
+`makeParentRelative`. Pressing the button calls the SAME `transplantNodes` the
+drag called, with `copy: true` — same gate, same concurrency guard, one toast.
+`planSourceTransplant` only attaches the action when re-asking
+`previewStructuralTransplant` with `copy: true` comes back `ok`, so the remedy
+cannot bounce back to the refusal it was offered under.
+
 See `studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`".
 
 **`insertNode` does not mutate a studio tree at all.** It plans the write
