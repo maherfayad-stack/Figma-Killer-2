@@ -8,10 +8,17 @@
  * `<div>` wrapper behind in a tracked corpus every other spec measures. So the
  * contract here is: **copy the project, open the copy, delete the copy**.
  *
- * The copy has to live under `studio-workspace/` rather than `.tmp/` —
+ * The copy has to live under the workspace root rather than anywhere else —
  * `resolveProjectDir`'s containment check 404s anything outside it. Same
  * constraint `scripts/bench/lib/liveFrameFixture.ts` and
  * `tests/e2e/studio-feel.e2e.ts` both document.
+ *
+ * That root is `WORKSPACE_ROOT` from `./constants`: this RUN's throwaway copy
+ * of `studio-workspace/`, made by `scripts/e2e-dev.ts` and pointed at by
+ * `STUDIO_WORKSPACE_DIR`. So the copy-open-delete contract below is the second
+ * of two layers, and still worth having — specs share one workspace for the
+ * whole serial run, so a spec that structurally edits `test4` would change what
+ * every later spec reads, throwaway root or not.
  *
  * Nothing in this module asserts. It only gets a spec to the point where a
  * real board is on screen, a real element is selected, and the file that
@@ -21,19 +28,12 @@
 import { expect, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { WORKSPACE_ROOT } from './constants'
 
 /** Selector for a design-mode canvas iframe, inside a board frame. */
 export const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 /** The in-frame selection ring the overlay paints around the selected node. */
 export const SELECTION_RING = '[data-canvas-selection-ring="true"]'
-
-/**
- * Both the spec process and the server resolve the workspace root from the
- * process cwd (`projectsRootDir()` is `cwd + 'studio-workspace'`), and both
- * are started from the repo root — by `bun run test:e2e`, by the CI job, and
- * by a hand-started `bun run e2e:dev`.
- */
-export const WORKSPACE_ROOT = path.resolve(process.cwd(), 'studio-workspace')
 
 export interface FixtureProject {
   /** Absolute path of the ephemeral copy — what Studio is pointed at. */
