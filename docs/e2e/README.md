@@ -188,15 +188,24 @@ work that was never folded into that matrix at all — each spec below cites the
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
 
-#### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
+#### `studio-feel-phase0.e2e.ts` runs two cases that are EXPECTED to fail
 
 This spec is the plan's exit dogfood, so it asserts what the product was
-promised to do, not what it currently does. Four cases carry `test.fail()` with
-the defect and its owning `STATE.md` entry named in a docblock directly above
-them, and Playwright fails the run if one of them starts **passing** — so a fix
-cannot land silently and the annotation cannot rot. A run where all eight
-report `ok`/`x` is a clean run; read the `[phase0] …` annotations for the
-measurements.
+promised to do, not what it currently does. A case that does not hold yet
+carries `test.fail()` with the defect and its owning `STATE.md` entry named in
+a docblock directly above it, and Playwright fails the run if one of them
+starts **passing** — so a fix cannot land silently and the annotation cannot
+rot. A run where all eight report `ok`/`x` is a clean run; read the
+`[phase0] …` annotations for the measurements.
+
+**It started at four (`verify-3`) and is down to two.** `store-14` closed case
+1 (⌘D ×5 wrote one copy, because a gesture fired mid-commit was refused rather
+than queued) and case 4 (⌘G selected nothing, a second ⌘G wrote nothing, and a
+group had no ⌘Z), and flipped both flags off in the same change. The two that
+remain are case 5 — the inspector has no error boundary of its own, so a panel
+that throws takes the editor body with it (`store-12`, Z2) — and case 7, whose
+only unexplained console errors are the React hydration warnings ⌘G's
+hard-coded `<div>` wrapper produces inside a `<p>` (`struct-11`).
 
 It also writes to a project's real `.tsx`, so `helpers/studioFixtureProject.ts`
 copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each

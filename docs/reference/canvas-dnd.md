@@ -404,7 +404,7 @@ modifier state at **release**.
 ```
 duplicateNodesTo
   └─ writeDuplicateToSource(ids, { parentId, index })
-       ├─ guardAgainstConcurrentStructuralCommit()   ← same store-11 guard as ⌘D
+       ├─ deferWhileStructuralCommitInFlight(…)      ← same store-14 queue as ⌘D
        ├─ planSourceDuplicateTo(tree, ids, parentId, index)
        └─ commitStudioDuplicate([nodeId], { parentNodeId, anchorNodeId, position })
             └─ POST /studio/save  { kind: 'duplicate', nodeId, parentNodeId, … }

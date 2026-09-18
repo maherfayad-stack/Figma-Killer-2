@@ -307,6 +307,7 @@ from the node id and `lockReason` alone:
 | `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or in-place DUPLICATE is fine — the batch is ordered bottom-to-top. A GROUP (K3) of several is fine too, and this is the refusal it gets when the selection is not one run: different parents, or a gap between the members. A multi Alt+DRAG is not: N copies at one drop position have no single order in the code (`planSourceDuplicateTo`) |
 | `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
 | `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
+| `stale-undo` | `store-14`, decided on the CLIENT: ⌘Z (or ⌘⇧Z) on a source-writing gesture whose recorded inverse names a node the live tree no longer has. Something changed the file outside the undo stack, so re-issuing the write would edit whatever now sits at that line. Carries the jump-to-source remedy, and the sentence names the file |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
@@ -387,6 +388,14 @@ the user edit, something they never made. `applyStudioEditBatch` mints
 `createdNodeIds` from them; see `editor-store.md` for what the board does with
 that, and for why the batch pins each one to its distance from the end of the
 file rather than to an absolute line.
+
+`store-14` adds the mirror for markup a write MOVED rather than made:
+`moveJsxElement` returns `relocated: { line, col } | null` and
+`unwrapJsxElement` returns `relocated: { line, col }[]` (an ungroup hands
+several children back at once), derived and verified the same way. The batch
+mints `relocatedNodeIds` from them. A `transplant` reports through `created`
+when it copied and `relocated` when it moved — the two have different undos.
+Both id lists are on the `/save` response.
 
 **Commit shape.** Structural edits are one-shot commits
 (`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` /

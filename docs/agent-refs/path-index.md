@@ -269,9 +269,13 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `src/core/page-tree/treeOperations.ts` | `applyTreeOperation` — the plugin/agent dispatcher over those mutations, plus the structural source gate. |
 | 🔴 `src/core/page-tree/sourceStructure.ts` | **Can this node's PLACE be written back?** `refuseStructuralEdit` — the structural sibling of `sourceWritability.ts`. |
 | 🔴 `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts` | The store's structural gate: refuse before mutating, resolve the move anchor, decide what to commit. Thin over `@core/page-tree`'s own rule. |
-| 🔴 `src/admin/pages/site/store/slices/site/studioSourceWrites.ts` | The gestures that, on an imported tree, are a SOURCE write rather than a tree mutation: insert, duplicate, wrap. |
+| 🔴 `src/admin/pages/site/store/slices/site/studioSourceWrites.ts` | The gestures that, on an imported tree, are a SOURCE write rather than a tree mutation: insert, duplicate, wrap, group, ungroup, paste. |
+| 🔴 `src/admin/pages/site/store/slices/site/studioSourceRefusals.ts` | The two questions asked BEFORE any of those: can this container take an insert, and can it take a block of imported HTML. Split from `studioSourceWrites.ts` at the module-size ceiling, along the "refusals and their sentences" seam. |
+| 🔴 `src/admin/pages/site/store/slices/site/structuralSourceHistory.ts` | The undo stack's half of the source-writing family: records each gesture's entry after the resync, and re-issues one direction of it as a real write on ⌘Z / ⌘⇧Z. |
 | 🔴 `src/admin/pages/site/studio/studioStructuralCommits.ts` | The one-shot structural commits (move/reparent/duplicate/wrap/delete/insert) and the "reload only when a write landed" contract. Parks the ids a landed write CREATED for the resync to claim (`store-13`). |
-| 🔴 `src/admin/pages/site/studio/pendingCreatedSelection.ts` | One expiring slot holding the node ids a structural source write just created, between `commitStructural` and the board re-read that brings them in. A box rather than a callback because the commit module sits inside the store's own build graph. |
+| 🔴 `src/admin/pages/site/studio/pendingStructuralOutcome.ts` | One expiring slot holding what a structural source write reported — the ids to select, and the gesture's undo — between `commitStructural` and the board re-read that brings them in. A box rather than a callback because the commit module sits inside the store's own build graph. |
+| 🔴 `src/admin/pages/site/studio/structuralCommitQueue.ts` | One structural write on the wire at a time, and a gesture that arrives meanwhile runs NEXT instead of being refused (`store-14`). Also the in-flight flag the save chip reads. |
+| 🔴 `src/admin/pages/site/studio/structuralUndoPlan.ts` | What each source-writing gesture's ⌘Z is, as a template the write's own answer fills in — expressed in edit kinds the writeback protocol already has, never a `revert` kind. |
 
 ## Panels / UI
 
