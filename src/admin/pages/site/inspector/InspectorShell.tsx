@@ -52,6 +52,7 @@ import { useEditorStore } from '@site/store/store'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { PrototypePanel } from '@site/panels/PrototypePanel'
 import { InspectPanel } from '@site/panels/InspectPanel'
+import { PanelCrashProbe } from './PanelCrashProbe'
 import styles from './InspectorShell.module.css'
 
 export type InspectorTab = 'design' | 'prototype' | 'inspect'
@@ -95,6 +96,12 @@ export function InspectorShell({ designContent }: InspectorShellProps) {
         />
       </div>
       <div className={styles.tabContent} data-inspector-tab="design" hidden={tab !== 'design'}>
+        {/* Dev-only, build-time-erased: the only way a browser test can make a
+            panel throw and check Z2's "renders in place, never toasts"
+            contract. `import.meta.env.DEV` is replaced with `false` in a
+            production build, which drops both the element and the import.
+            See `PanelCrashProbe.tsx`'s own header. */}
+        {import.meta.env.DEV && <PanelCrashProbe panel="inspector" />}
         {designContent}
       </div>
       <div className={styles.tabContent} data-inspector-tab="prototype" hidden={tab !== 'prototype'}>

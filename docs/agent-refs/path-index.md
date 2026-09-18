@@ -366,6 +366,9 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `src/__tests__/setup.ts` | happy-dom setup, iframe global patching. |
 | 🟡 `src/__tests__/canvas/iframeCanvasQuery.ts` | **Required** to query canvas DOM in tests. (It is NOT under `src/admin/pages/site/canvas/__tests__/` — that directory does not exist.) |
 | 🟡 `tests/e2e/` | Playwright. Studio-relevant specs only. |
+| 🟡 `tests/e2e/studio-feel-phase0.e2e.ts` | The plan's Phase 0 exit dogfood, machine-checked. Four of its seven cases are `test.fail()` with the defect named — see `docs/e2e/README.md`. |
+| 🟡 `tests/e2e/helpers/studioFixtureProject.ts` | Copy a workspace project, open the copy, read its `.tsx` off disk, delete it. Any spec that drives a gesture which WRITES the user's source starts here. |
+| 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. |
 
 ## Not ours (dormant CMS)
 
