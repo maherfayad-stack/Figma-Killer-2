@@ -1471,6 +1471,13 @@ Only breakpoint 1 existed before, which meant a multi-round build loop re-read t
 
 `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` is the literal `'__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'`, declared **once** in `server/ai/runtime/types.ts` and imported everywhere — prompt builders and every driver. A duplicate definition would silently break prompt caching on whichever driver drifted. Gated by `ai-driver-shared-helpers.test.ts`.
 
+**There are TWO static prefixes**, and `buildSiteSystemPrompt` picks between them from the snapshot's own node ids (`isStudioPageRootId` on the root, or any `rel:line:col` node id). They differ only in the building block:
+
+- a **CMS page** gets the block below, unchanged;
+- a **studio-imported page** — one parsed out of the user's `.tsx`, which is what `/admin/site` shows on this fork — gets a block that says `site_insert_html` and `site_replace_node_html` REFUSE there (`store-13`: an HTML fragment has no honest single source form, and its `<style>` half targets a stylesheet rather than the `.tsx`), and names `studio_apply_edits`' `insert` edit, `studio_codemod` and `studio_create_page` as what writes instead. `site_read_document` / `site_get_node_html` still work and their `uid`s decode to `file:line:col`, so they are how you AIM a `studio_*` edit.
+
+  Two whole prefixes rather than a contradicting line in the dynamic suffix, because element 0 is what a driver puts `cache_control` on: each branch stays internally consistent AND fully cacheable, and which branch a project takes never changes mid-conversation. Gated by `src/__tests__/agent/siteSystemPromptStudioTree.test.ts`.
+
 **Static prefix key rules** (full text lives in `server/ai/tools/site/systemPrompt.ts`):
 - **Design system first.** Establish or reuse tokens before/while building (`site_set_color_tokens`, `site_set_type_scale`, `site_set_spacing_scale`, `site_set_font_tokens`), then reference them in CSS (`var(--<slug>)`, `var(--text-l)`, `var(--space-m)`, `var(--<font-var>)`) instead of raw hex/px/font-family. The dynamic suffix's `Tokens —` line shows what already exists; `(none …)` means no design system yet.
 - Structure as HTML (`site_insert_html` / `site_replace_node_html`); style with CSS in the same payload — a `<style>` block and/or `class=` attributes referencing the design tokens. The importer classifies selectors, so the agent never hand-builds classes at insert time.

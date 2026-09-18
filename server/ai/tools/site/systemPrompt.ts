@@ -8,23 +8,62 @@
  *
  * Content is intentionally static across providers — every reachable
  * behaviour comes from tools, not prompt knobs.
+ *
+ * There are TWO static prefixes, not one: they differ only in the building
+ * block, and which one a turn gets is decided by whether the open page was
+ * parsed out of a file on disk. See {@link STUDIO_BUILDING_BLOCK} for why a
+ * single prefix could not stay honest.
  */
 
 import type { SiteAgentSnapshot } from './snapshot'
 import type { SnapshotTokens } from './snapshot'
 import { describeAgentDocuments } from '@core/ai'
 import { describeAgentTokens } from './render'
+import { isSourceDerivedNodeId, isStudioPageRootId } from '@core/page-tree'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../../runtime/types'
 
-const STATIC_PROMPT_PREFIX = `You build/edit websites inside a visual site editor by calling tools. No filesystem or shell, with one narrow exception: when the user attached an image or file this turn, its staged path is given to you and you may use your own file-read tool ONLY to view that exact path — never to browse, search, or read anything else. Bias toward action — execute the prompt, don't ask scoping questions.
+const STATIC_PROMPT_HEAD = `You build/edit websites inside a visual site editor by calling tools. No filesystem or shell, with one narrow exception: when the user attached an image or file this turn, its staged path is given to you and you may use your own file-read tool ONLY to view that exact path — never to browse, search, or read anything else. Bias toward action — execute the prompt, don't ask scoping questions.
 
-Building:
+`
+
+/**
+ * The CMS building block: how you author structure when the open document is
+ * a CMS page (a `data_rows` row whose nodes are nanoids). Unchanged.
+ */
+const CMS_BUILDING_BLOCK = `Building:
 - Insert structure as semantic HTML with site_insert_html (<section>, <h1>, <p>, <a>, <button>, <img>, <ul>, <article>, <nav>, <footer>, ...). One site_insert_html per section (nav, hero, pricing, footer = 4-6 calls). Smaller chunks recover better when one fails.
 - Empty page → start inserting immediately; the dynamic suffix has the root id + breakpoints. Don't inspect first.
 - Editing existing content → site_read_document to read the current document as annotated HTML + CSS (every element carries uid="<nodeId>"). If site_read_document returns pageInfo.nextPart, keep calling site_read_document({ part: nextPart }) until you have the part(s) needed. Use site_get_node_html for one subtree; then site_update_node_props / site_replace_node_html addressing nodes by their uid.
-- Repetition: site_duplicate_node (N copies of a card) and site_duplicate_page (clone a page) — don't rebuild from scratch.
+- Repetition: site_duplicate_node (N copies of a card) and site_duplicate_page (clone a page) — don't rebuild from scratch.`
 
-Design system first:
+/**
+ * The same block for a STUDIO-IMPORTED page — one parsed out of the user's
+ * own `.tsx` — which is what `/admin/site` shows on this fork.
+ *
+ * It exists because the CMS block above was a promise the product stopped
+ * keeping. `site_insert_html` and `site_replace_node_html` REFUSE on a
+ * studio-imported tree (`store-13`: an HTML fragment has no honest single
+ * source form, and roughly half the payload is a `<style>` block that targets
+ * a stylesheet rather than the `.tsx`). A prompt that opens with "insert
+ * structure with site_insert_html" therefore spent the model's first tool
+ * call on a call that cannot succeed, and named no tool that can.
+ *
+ * ## Why this is a second STATIC prefix rather than a line in the dynamic suffix
+ *
+ * `buildSiteSystemPrompt` returns `[staticPrefix, BOUNDARY, dynamicSuffix]` so
+ * a driver can put `cache_control` on the prefix. A contradiction ("build with
+ * site_insert_html" in the cached half, "site_insert_html refuses" in the
+ * uncached half) is a prompt lottery, not an instruction. Selecting between
+ * two whole prefixes keeps each one internally consistent and still fully
+ * cacheable: which branch a project takes is a property of the project, so a
+ * conversation never alternates and never thrashes the cache.
+ */
+const STUDIO_BUILDING_BLOCK = `Building — THIS PAGE CAME FROM A REAL REACT FILE ON DISK:
+- The open page was parsed out of the project's own .tsx. Its source of truth is that file, not this editor's document, so the site_* WRITE tools do not apply to it: site_insert_html and site_replace_node_html REFUSE outright (an HTML fragment has no honest single source form, and its <style> half targets a stylesheet rather than the .tsx), and the page verbs (site_add_page, site_duplicate_page, site_delete_page, site_rename_page) would make a page no file in the repository describes.
+- Write structure with the studio_* toolset instead: studio_apply_edits' insert edit writes real JSX into the file and returns a node id you can address, studio_codemod rewrites an existing element, and studio_create_page scaffolds a real route file. Read with studio_read_file / studio_find_nodes / studio_get_node_source.
+- Reading the page as annotated HTML still works: site_read_document and site_get_node_html report the LIVE tree (every element carries uid="<nodeId>"), and those ids decode to rel:line:col — the file, line and column the element is written at. Use them to aim a studio_* edit; do not use them to aim a site_* write.`
+
+const STATIC_PROMPT_TAIL = `Design system first:
 - A consistent design comes from TOKENS, not repeated literals. The dynamic suffix lists the site's current tokens (the "Tokens —" line); if it says "(none …)", there is no design system yet — establish one before/while building.
 - Create tokens with site_set_color_tokens (colors → var(--<slug>)), site_set_type_scale (font sizes → --text-*), site_set_spacing_scale (spacing → --space-*), site_set_font_tokens (typefaces → var(--<font-var>); pass googleFamily to install a web font). These are create-or-update — re-running with the same slug/variable patches in place.
 - Then REFERENCE the tokens in your CSS: color:var(--primary), font-size:var(--text-l), gap:var(--space-m), font-family:var(--font-heading). Don't emit raw hex/rgb, raw px for type/spacing, or a raw font-family when a token exists or should exist — make the token, then reference it. A few well-chosen tokens up front keep every section visually consistent.
@@ -158,12 +197,36 @@ function buildDynamicSuffix(snap: SiteAgentSnapshot): string {
 }
 
 /**
+ * True when the open page was parsed out of a file on disk rather than built
+ * in the CMS.
+ *
+ * Two independent signals, because either one alone has a hole: the synthetic
+ * `<pageId>:body` root every imported page carries (`isStudioPageRootId`),
+ * which answers even for an EMPTY imported page with no children to ask; and
+ * any node id that decodes to a source location, which answers when the root
+ * itself is source-derived. `Array.prototype.some` short-circuits on the first
+ * match, so the common case reads one key.
+ */
+function isStudioSourceTree(snap: SiteAgentSnapshot): boolean {
+  if (isStudioPageRootId(snap.page.rootNodeId)) return true
+  return Object.keys(snap.page.nodes).some(isSourceDerivedNodeId)
+}
+
+/** The static (cacheable) half of the prompt, with the building block that matches this page's source of truth. */
+function staticPrefixFor(snap: SiteAgentSnapshot): string {
+  const building = isStudioSourceTree(snap) ? STUDIO_BUILDING_BLOCK : CMS_BUILDING_BLOCK
+  return `${STATIC_PROMPT_HEAD}${building}
+
+${STATIC_PROMPT_TAIL}`
+}
+
+/**
  * Build the site-scope system prompt as the cacheable 3-element form.
  * Drivers consume `string[]` directly — see `AiStreamRequest.systemPrompt`.
  */
 export function buildSiteSystemPrompt(snap: SiteAgentSnapshot): string[] {
   return [
-    STATIC_PROMPT_PREFIX,
+    staticPrefixFor(snap),
     SYSTEM_PROMPT_DYNAMIC_BOUNDARY,
     buildDynamicSuffix(snap),
   ]
