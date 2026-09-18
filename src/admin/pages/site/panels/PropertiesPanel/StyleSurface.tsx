@@ -47,6 +47,14 @@
  *     file used to compute for it.
  *   - The one full-column notice for the genuine "nothing here is writable"
  *     case — role permission, or every reachable target locked.
+ *
+ * ## Each section is its own failure domain
+ *
+ * `panel-40` — `MountedSections` wraps every entry in a `PanelBoundary`
+ * (`frame="section"`), so a section that throws during render leaves the other
+ * fifteen, the tab strip, the canvas and the layers tree untouched and renders
+ * its own header plus one line in place. See `ui/PanelBoundary`'s own doc for
+ * why the nearest boundary used to be the whole editor body.
  */
 
 import type { ReactNode } from 'react'
@@ -58,6 +66,7 @@ import { cn } from '@ui/cn'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
 import { Section } from '@ui/components/Section'
+import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
 import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
 import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
@@ -233,7 +242,17 @@ function MountedSections({ sections }: { sections: ReadonlyArray<InspectorSectio
     <>
       {sections.map((section) => (
         <div data-section-id={section.id} key={section.id}>
-          <section.Component />
+          {/* `panel-40` — one section is one failure domain. The boundary sits
+              INSIDE the `data-section-id` wrapper so a crashed section still
+              answers every existing per-section query (the measurement
+              artefact, the height gate), and its fallback occupies the
+              section's own geometry rather than collapsing the scroll around
+              it. No `resetKeys`: a section that throws on every node must not
+              be cleared silently by the next canvas click — the fallback's own
+              "Reload this panel" is the way back. */}
+          <PanelBoundary id={section.id} label={section.label} frame="section">
+            <section.Component />
+          </PanelBoundary>
         </div>
       ))}
     </>

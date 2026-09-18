@@ -46,7 +46,7 @@ See [docs/reference/database-dialects.md](database-dialects.md).
 
 | Test                                          | What it enforces                                                                 |
 |-----------------------------------------------|----------------------------------------------------------------------------------|
-| `no-vc-mode-branches-in-mutations.test.ts`    | The 11 store actions don't branch on `kind === 'visualComponent'`. Routing happens in `mutateActiveTree`. |
+| `no-vc-mode-branches-in-mutations.test.ts`    | The 13 named store actions don't branch on `kind === 'visualComponent'`. Routing happens in `mutateActiveTree`. `ACTION_PATHS` maps the ones that live outside `nodeActions.ts` (`groupActions.ts`, `visibilityActions.ts`). |
 | `visual-components-mutation-contract.test.ts` | VC tree mutations preserve the slot-instance / slot-outlet invariants.           |
 | `centralized-site-mutation-history.test.ts`   | Every mutation flows through one entry-point so undo / redo stays consistent.    |
 | `no-vc-in-site-shell.test.ts`                 | `SiteShellSchema` does not declare `visualComponents` / `pages`. They live in `data_rows`. |
@@ -129,7 +129,7 @@ See [docs/reference/ui-primitives.md](ui-primitives.md).
 | `component-system-placement.test.ts`          | Every VC insertion flow (toolbar picker, context menu) routes through `insertComponentRef`; Site Explorer must not expose a component-to-canvas drag source, and direct `insertNode`/`addNodeToVc` with `'base.visual-component-ref'` is forbidden in placement files. |
 | `task414-wrap-to-container.test.ts`           | Wrap-to-container action creates defaulted wrappers and preserves tree structure. |
 | `task427-preview-class-css.test.ts`           | Preview-class CSS injection matches publisher output.                            |
-| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag. |
+| `error-boundary-coverage.test.ts`             | Every workspace page / major surface is wrapped in an `ErrorBoundary` with a unique `location` tag, and every Studio panel / inspector tab / inspector section mounts a `PanelBoundary` (`panel-40`). |
 | `canvas-overlay-pointerdown.test.ts`          | No canvas overlay (comment popover, etc.) calls `event.stopPropagation()` in `onPointerDown`. `@use-gesture`'s `filterTaps` suppresses the following `click` for anything it classifies as a drag, at the React root — an overlay that swallows `pointerdown` first leaves use-gesture's tap state stale and it then eats every subsequent click in the canvas. Guard by target instead. |
 | `single-drag-mechanism.test.ts`               | `@dnd-kit/core` and native HTML5 `dataTransfer` DnD are each pinned to an explicit allowlist of the files that already use them (D2, `STUDIO-FIGMA-PARITY-PLAN.md`) — a new surface reaching for either fails the gate. Not yet a "one mechanism" assertion; see [docs/reference/canvas-dnd.md](canvas-dnd.md). |
 | `comment-selector-stability.test.ts`          | Every exported `select*` in `commentSelectors.ts` returns a stored reference or primitive, never a value built in the selector body (source scan for array-builder calls, plus a behavioural `===` re-invocation check) — a selector that mints a new array every read loops Zustand/React into "Maximum update depth exceeded". |

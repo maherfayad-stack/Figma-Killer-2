@@ -84,13 +84,18 @@ for a `for (const page of X.pages)` loop.
 Every mutation in `src/core/page-tree/mutations.ts` takes a `NodeTree<TNode>` and
 is **tree-agnostic** — it knows nothing about pages vs Visual Components.
 
-The 11 named store actions are one-liners over `mutateActiveTree`:
+The 13 named store actions are one-liners over `mutateActiveTree`:
 
 ```
 insertNode · deleteNode · updateNodeProps · setBreakpointOverride ·
-clearBreakpointOverride · renameNode · toggleNodeLocked · toggleNodeHidden ·
-moveNode · duplicateNode · wrapNode
+clearBreakpointOverride · renameNode · setNodesLocked · setNodesHidden ·
+moveNode · duplicateNode · wrapNode · groupNodes · ungroupNode
 ```
+
+`setNodesLocked`/`setNodesHidden` (`site/visibilityActions.ts`) take an
+ABSOLUTE value over N ids, not a toggle: a selection that disagrees has no
+honest toggle, and a caller that loops one pushes N history entries for one
+gesture (`panel-40`).
 
 **They must not contain a `kind === 'visualComponent'` branch.**
 Gate: `no-vc-mode-branches-in-mutations.test.ts`.

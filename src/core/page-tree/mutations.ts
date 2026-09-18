@@ -156,16 +156,37 @@ export function renameNode(tree: NodeTree<PageNode>, nodeId: string, label: stri
   node.label = label.trim() || undefined
 }
 
+/**
+ * Set a node's structural lock to an ABSOLUTE value.
+ *
+ * The absolute form is what a fan-out over N nodes needs: "lock all of these"
+ * has one answer, while N independent toggles over a selection that disagrees
+ * just swaps which half is locked. `toggleNodeLocked` below is this function
+ * with the node's own current value read first.
+ */
+export function setNodeLocked(tree: NodeTree<PageNode>, nodeId: string, locked: boolean): void {
+  const node = tree.nodes[nodeId]
+  if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+  node.locked = locked
+}
+
+/** Set a node's canvas visibility to an ABSOLUTE value. See `setNodeLocked`. */
+export function setNodeHidden(tree: NodeTree<PageNode>, nodeId: string, hidden: boolean): void {
+  const node = tree.nodes[nodeId]
+  if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
+  node.hidden = hidden
+}
+
 export function toggleNodeLocked(tree: NodeTree<PageNode>, nodeId: string): void {
   const node = tree.nodes[nodeId]
   if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-  node.locked = !node.locked
+  setNodeLocked(tree, nodeId, !node.locked)
 }
 
 export function toggleNodeHidden(tree: NodeTree<PageNode>, nodeId: string): void {
   const node = tree.nodes[nodeId]
   if (!node) throw new Error(`[PageTree] Node "${nodeId}" not found`)
-  node.hidden = !node.hidden
+  setNodeHidden(tree, nodeId, !node.hidden)
 }
 
 // ---------------------------------------------------------------------------

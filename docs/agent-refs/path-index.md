@@ -372,7 +372,9 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `tests/e2e/` | Playwright. Studio-relevant specs only. |
 | 🟡 `tests/e2e/studio-feel-phase0.e2e.ts` | The plan's Phase 0 exit dogfood, machine-checked. Four of its seven cases are `test.fail()` with the defect named — see `docs/e2e/README.md`. |
 | 🟡 `tests/e2e/helpers/studioFixtureProject.ts` | Copy a workspace project, open the copy, read its `.tsx` off disk, delete it. Any spec that drives a gesture which WRITES the user's source starts here. |
-| 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. |
+| 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. Mounted by `PanelBoundary`, once per seam, named after that seam's `location`. |
+| 🟢 `src/admin/pages/site/ui/PanelBoundary/` | ONE editor panel / inspector tab / inspector section = ONE failure domain (`panel-40`). `frame="panel"` draws its own title row; `frame="section"` reuses the `Section` primitive's header. Mounted by `InspectorShell`, `StyleSurface`, `LeftSidebar`, `RightSidebar`, `AdminCanvasEditorBody`. |
+| 🟢 `src/admin/pages/site/store/slices/site/visibilityActions.ts` | `setNodesHidden` / `setNodesLocked` — the two named tree-mutation actions that fan `node.hidden`/`node.locked` over N ids in ONE history entry. Absolute, never a toggle. |
 
 ## Not ours (dormant CMS)
 

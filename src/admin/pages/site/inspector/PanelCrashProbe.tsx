@@ -20,6 +20,10 @@
  *      `import.meta.env.DEV` is replaced with the literal `false` in a
  *      production build, so the element is dropped and this module's import
  *      becomes unused — it is not in the production bundle at all.
+ *      That mount site is `PanelBoundary` (`site/ui/PanelBoundary/`), which is
+ *      also the thing under test: every panel and every inspector section gets
+ *      a probe named after its own boundary `location`, so a spec can crash
+ *      exactly one of them.
  *   2. The listener that can arm it is itself behind `import.meta.env.DEV`, so
  *      even if a future caller mounted it unguarded, the event could never
  *      arm it outside a dev build.
@@ -30,8 +34,12 @@
  * Usage from a spec
  * ─────────────────
  *   await page.evaluate(() =>
- *     window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector' })),
+ *     window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'panel:design' })),
  *   )
+ *
+ * `detail` is the boundary's `location`: `panel:<id>` for a whole panel or
+ * inspector tab (`panel:design`, `panel:explorer`), `inspector:<sectionId>`
+ * for one Design-tab section (`inspector:fill`).
  */
 import { useEffect, useState } from 'react'
 

@@ -47,9 +47,9 @@
  * `useSelectionModel()`/`useInspectorCommit()` are scoped to, it goes
  * through `setNodeInlineStyles` directly rather than `commit.commitStyle` —
  * the same posture `LayerSection.tsx` already established for
- * `toggleNodeHidden`/`toggleNodeLocked` (store actions outside the single-
- * node style-commit contract are read directly, not routed through a model
- * built for the SELECTED node's own bag).
+ * `setNodesHidden`/`setNodesLocked` (store actions outside the single-node
+ * style-commit contract are read directly, not routed through a model built
+ * for the SELECTED node's own bag).
  *
  * `alignSelf`/`justifySelf` had a second, pre-existing live UI at the time
  * this section landed: the old `LayoutSection/LayoutSettingsButton.tsx`'s

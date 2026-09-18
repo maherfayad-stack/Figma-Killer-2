@@ -219,7 +219,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.toggleLock',
       title: 'Toggle layer lock',
-      subtitle: 'Lock or unlock the selected layer',
+      subtitle: 'Lock or unlock every selected layer',
       group: 'editor',
       iconName: 'lock-solid',
       keywords: ['layer', 'lock', 'unlock', 'protect'],
@@ -228,13 +228,20 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // `panel-40` — the whole selection, not just the anchor, and one
+        // absolute write so a selection that disagrees converges instead of
+        // swapping halves. "Any still unlocked" wins, the same rule the
+        // Layers context menu and the inspector's Layer row use.
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().toggleNodeLocked(nodeId)
+          const state = useEditorStore.getState()
+          const page = state.site?.pages.find((p) => p.id === state.activePageId)
+          const lock = nodeIds.some((id) => !page?.nodes[id]?.locked)
+          state.setNodesLocked([...nodeIds], lock)
         } catch (err) {
-          console.error('[spotlight] toggleNodeLocked failed:', err)
+          console.error('[spotlight] setNodesLocked failed:', err)
         }
       },
     },
@@ -243,7 +250,7 @@ export function getLayersCommands(): Command[] {
     {
       id: 'layers.toggleVisibility',
       title: 'Toggle layer visibility',
-      subtitle: 'Hide or show the selected layer',
+      subtitle: 'Hide or show every selected layer',
       group: 'editor',
       iconName: 'eye-solid',
       keywords: ['layer', 'hide', 'show', 'visibility', 'visible', 'invisible'],
@@ -252,13 +259,17 @@ export function getLayersCommands(): Command[] {
       when: hasSelection,
       run: async (ctx) => {
         ctx.closeSpotlight()
-        const nodeId = ctx.editor?.selectedNodeIds[ctx.editor.selectedNodeIds.length - 1]
-        if (!nodeId) return
+        // `panel-40` — see `layers.toggleLock` above. "Any still visible" wins.
+        const nodeIds = ctx.editor?.selectedNodeIds ?? []
+        if (nodeIds.length === 0) return
         try {
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().toggleNodeHidden(nodeId)
+          const state = useEditorStore.getState()
+          const page = state.site?.pages.find((p) => p.id === state.activePageId)
+          const hide = nodeIds.some((id) => !page?.nodes[id]?.hidden)
+          state.setNodesHidden([...nodeIds], hide)
         } catch (err) {
-          console.error('[spotlight] toggleNodeHidden failed:', err)
+          console.error('[spotlight] setNodesHidden failed:', err)
         }
       },
     },

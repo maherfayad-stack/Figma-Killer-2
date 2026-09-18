@@ -351,7 +351,7 @@ function mutateActiveTree(fn: (tree: NodeTree<PageNode>) => void): void {
 }
 ```
 
-The 11 named tree-mutation actions on the store (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`, `duplicateNode`, `wrapNode`) are **one-liners that call `mutateActiveTree`**. They MUST NOT contain their own `kind === 'visualComponent'` branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
+The 13 named tree-mutation actions on the store (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `setNodesLocked`, `setNodesHidden`, `moveNode`, `duplicateNode`, `wrapNode`, `groupNodes`, `ungroupNode`) are **one-liners that call `mutateActiveTree`**. They MUST NOT contain their own `kind === 'visualComponent'` branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
 
 Why this matters: page trees and VC trees both have shape `NodeTree<TNode>`. The tree-agnostic mutations in `src/core/page-tree/mutations.ts` work on any `NodeTree`. The store doesn't need to know which kind of tree it's mutating — that's the sole job of `mutateActiveTree`.
 

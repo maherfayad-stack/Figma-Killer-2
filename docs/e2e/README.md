@@ -249,15 +249,21 @@ work that was never folded into that matrix at all — each spec below cites the
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
 
-#### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
+#### `studio-feel-phase0.e2e.ts` runs three cases that are EXPECTED to fail
 
 This spec is the plan's exit dogfood, so it asserts what the product was
-promised to do, not what it currently does. Four cases carry `test.fail()` with
-the defect and its owning `STATE.md` entry named in a docblock directly above
-them, and Playwright fails the run if one of them starts **passing** — so a fix
-cannot land silently and the annotation cannot rot. A run where all eight
-report `ok`/`x` is a clean run; read the `[phase0] …` annotations for the
-measurements.
+promised to do, not what it currently does. The remaining cases carry
+`test.fail()` with the defect and its owning `STATE.md` entry named in a
+docblock directly above them, and Playwright fails the run if one of them starts
+**passing** — so a fix cannot land silently and the annotation cannot rot. A run
+where all eight report `ok`/`x` is a clean run; read the `[phase0] …`
+annotations for the measurements.
+
+**Case 5 ("a panel that throws") was the first to graduate.** `panel-40` gave
+every editor panel, inspector tab and inspector section its own `PanelBoundary`
+(`docs/reference/error-boundaries.md`), so the case now asserts rather than
+documents. Its probe event names the boundary's own `location`
+(`detail: 'panel:design'`), not a bare panel word.
 
 It also writes to a project's real `.tsx`, so `helpers/studioFixtureProject.ts`
 copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each

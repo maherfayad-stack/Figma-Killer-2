@@ -1,0 +1,77 @@
+/*
+ * PanelBoundary fallback — occupies the hole the crashed panel/section left.
+ *
+ * Geometry is deliberately small: a section fallback lands inside the Design
+ * tab's 900px budget (`docs/features/inspector.md` §6), so it is one wrapping
+ * row — a line of copy and the reset action — and never taller than the
+ * section it replaced at rest.
+ *
+ * Colour: `--danger-light` on the leading glyph only. The surface stays
+ * achromatic (`--bg-surface-2`), because a crashed panel is a state, not an
+ * identity.
+ */
+
+.body {
+    box-sizing: border-box;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--inspector-space-s) var(--inspector-space-m);
+    padding: var(--inspector-space-m) var(--inspector-pad-x);
+    background: var(--bg-surface-2);
+    border-radius: var(--radius);
+    color: var(--text);
+}
+
+.message {
+    flex: 1 1 160px;
+    min-width: 0;
+    display: flex;
+    align-items: flex-start;
+    gap: var(--inspector-space-s);
+    margin: 0;
+    color: var(--text-bright);
+    font-size: var(--text-xs);
+    line-height: 1.45;
+    overflow-wrap: anywhere;
+}
+
+.icon {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    margin-top: var(--space-px);
+    color: var(--danger-light);
+}
+
+.cause {
+    color: var(--text-muted);
+}
+
+/*
+ * `frame="panel"` — a whole panel or inspector tab. It fills the slot it was
+ * given rather than collapsing to its content, so the sidebar keeps its width
+ * and the panel's neighbours do not reflow.
+ */
+
+.panelFrame {
+    box-sizing: border-box;
+    display: flex;
+    flex-direction: column;
+    gap: var(--inspector-space-s);
+    min-height: 0;
+    flex: 1;
+    padding: var(--inspector-space-m) var(--inspector-pad-x);
+}
+
+.panelTitle {
+    color: var(--text-muted);
+    font-size: var(--text-2xs);
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}

@@ -1717,10 +1717,18 @@ construction rather than silently writing the CSS initial into layers the user
 never touched. Removing one of those rows clears the property from every
 selected layer, in one history entry (§9.1).
 
-Two things this pass deliberately left alone, both recorded in `panel-38`:
-`node.hidden` / `node.locked` in Layer still read and toggle the **anchor**
-only — a structural fan-out gap needing a store action over N ids, not a Mixed
-one — and `commitProp` still stops at one node (§9.0).
+`panel-40` closed the first of the two gaps `panel-38` recorded here.
+`node.hidden` / `node.locked` in Layer now fan out over the whole selection
+through `setNodesHidden` / `setNodesLocked` — absolute over N ids, one history
+entry — and both buttons carry a Mixed state built the same way the CSS
+visibility toggle's is: **no indeterminate glyph**, the disagreement named in
+the accessible label, the button unpressed, and the first click agreeing the
+selection ("any still visible → hide them all"). A per-node toggle could not
+do that last part: N independent toggles over a selection that disagrees just
+swap which half is hidden. The store action is therefore absolute rather than
+a toggle — see `store/slices/site/visibilityActions.ts`.
+
+Still open from that entry: `commitProp` stops at one node (§9.0).
 
 ### §9.4 Two targets, and the gate between them
 
@@ -1980,6 +1988,44 @@ store half.
 
 ---
 
+## §12. A section that throws takes only itself down
+
+Every mounted `INSPECTOR_SECTIONS` entry is wrapped in a `PanelBoundary`
+(`src/admin/pages/site/ui/PanelBoundary/`, `frame="section"`), and each of the
+three `InspectorShell` tabs is wrapped in one too (`frame="panel"`).
+
+Before `panel-40` the nearest boundary above the inspector was
+`AdminCanvasLayout`'s `LazyChunkBoundary location="site-editor-body"`, which
+wraps the canvas and every panel together. `verify-3` case 5 measured what that
+meant: one section throwing replaced the whole editor body with "Editor chunk
+failed to load" — the canvas and the canvas notch went with it.
+
+What a crashed section looks like now:
+
+- its own `Section` header row, unchanged, so the scroll does not jump;
+- one line, *"Fill stopped responding."* (plus the error message in dev);
+- a **Reload this panel** `Button` that remounts just that section;
+- **no toast** — `ErrorBoundary` is silent by default and nothing here opts
+  back in (Z2);
+- exactly one console line, `[error-boundary:inspector:fill]`.
+
+Two consequences for work in this area:
+
+1. **Every manifest entry carries a `label`.** The section's own component is
+   precisely what is NOT running when the boundary has to name it, so the name
+   lives in `sections/index.ts`, not in the component. A new entry without one
+   fails `error-boundary-coverage.test.ts`.
+2. **A section boundary takes no `resetKeys`.** A section that throws on every
+   node must not be cleared silently by the next click on the canvas — that
+   would make a permanent crash look like a flicker.
+
+The dev-only `PanelCrashProbe` mounted inside each boundary is how a browser
+spec crashes exactly one of them:
+`window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector:fill' }))`.
+It is erased from a production build at its mount site.
+
+---
+
 ## Gates that bite work in this area
 
 `css-token-policy`, `no-css-var-fallbacks`, `button-primitive-usage` (popovers
@@ -1998,6 +2044,10 @@ again, and once more into `fillRowDescriptors.tsx` (the `FillEntryData`
 taxonomy, popover titles and `describeLayer`), `FillEntryPopover.tsx` (the one
 switch over row kinds) and `GradientEditor.tsx` when §9.3's Mixed contract
 landed — `panel-38`).
+
+`error-boundary-coverage` gained a `panel-40` block: every panel seam mounts a
+`PanelBoundary`, `InspectorShell` wraps all three tabs, the component never opts
+out of `silentToast`, and every `INSPECTOR_SECTIONS` entry carries a `label`.
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3

@@ -221,6 +221,8 @@ export {
   setBreakpointOverride,
   clearBreakpointOverride,
   renameNode,
+  setNodeLocked,
+  setNodeHidden,
   toggleNodeLocked,
   toggleNodeHidden,
   moveNode,

@@ -205,7 +205,7 @@ type NodeTree<TNode> = {
 
 Defined in `src/core/page-tree/treeSchema.ts` (single source of truth). Mutations operate on any `NodeTree` generically via `src/core/page-tree/mutations.ts`.
 
-Routing to the active tree (page vs. VC mode) is the **sole** job of `mutateActiveTree(fn)` in `src/admin/pages/site/store/slices/site/helpers.ts`. The 11 named tree-mutation store actions in `src/admin/pages/site/store/slices/site/nodeActions.ts` (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`, `duplicateNode`, `wrapNode`) are one-liners that call `mutateActiveTree`. They must not contain their own `kind === 'visualComponent'` routing branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
+Routing to the active tree (page vs. VC mode) is the **sole** job of `mutateActiveTree(fn)` in `src/admin/pages/site/store/slices/site/helpers.ts`. The 13 named tree-mutation store actions (`insertNode`, `deleteNode`, `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`, `setNodesLocked`, `setNodesHidden`, `moveNode`, `duplicateNode`, `wrapNode`, `groupNodes`, `ungroupNode`) are one-liners that call `mutateActiveTree`. Most live in `src/admin/pages/site/store/slices/site/nodeActions.ts`; `groupNodes`/`ungroupNode` are in `groupActions.ts` and `setNodesLocked`/`setNodesHidden` in `visibilityActions.ts`. They must not contain their own `kind === 'visualComponent'` routing branch — gated by `no-vc-mode-branches-in-mutations.test.ts`.
 
 See [docs/reference/page-tree.md](reference/page-tree.md) for the type shape and mutation cookbook.
 

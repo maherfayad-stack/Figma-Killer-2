@@ -753,9 +753,10 @@ Collected from the wave-2 handoffs. Each names the entry that found it.
   the user's repo and a React hydration error (`struct-10`); the wrapper tag must follow the HTML
   content model, and a second group after an ungroup must work. (b) five rapid duplicate presses
   write ONE copy, because the concurrency guard refuses presses 2–5 (`store-11`/`store-12`) —
-  structural writes must QUEUE and coalesce, not refuse. (c) the inspector has no error boundary
-  of its own, so a panel throw takes out canvas and panels together (`store-12` Z2);
-  `PanelCrashProbe.tsx` is in the tree for it. (d) selection after duplicate/group — #171 should
+  structural writes must QUEUE and coalesce, not refuse. ~~(c) the inspector has no error boundary
+  of its own, so a panel throw takes out canvas and panels together~~ — **done (`panel-40`)**:
+  `PanelBoundary` wraps every panel, every inspector tab and every inspector section, case 5's
+  `test.fail()` is off. (d) selection after duplicate/group — #171 should
   have closed this; re-run the spec and flip `test.fail()` off where green.
 - **Undo for the structural family** (`canvas-20` landmine 10): cross-frame drag, file drop,
   duplicate, insert, wrap and group write source with no history entry, so "one undo is one step"
@@ -768,7 +769,10 @@ Collected from the wave-2 handoffs. Each names the entry that found it.
   (−40px everywhere), folding unset module props (−72px on F4, but it collides with
   `visual-builder` and `reliability` e2e), pairing Layout's align pad with the gap fields
   (−84px on F3).
-- **Layer hidden/locked over N ids** (`panel-38`): a store action for the fan-out, not a Mixed fix.
+- ~~**Layer hidden/locked over N ids** (`panel-38`): a store action for the fan-out, not a Mixed
+  fix.~~ — **done (`panel-40`)**: `setNodesHidden`/`setNodesLocked` replaced the per-node toggles;
+  the Layers context menu, the Spotlight commands and the inspector's Layer row all fan out in ONE
+  history entry, with a Mixed label when the selection disagrees.
 - **Filter `site_*` write tools out of a Studio-scoped connector** (`store-13`): the CMS
   toolset's system prompt still tells the model to use `site_insert_html`, which now refuses.
 - **`subPaths: true` is not fail-closed on a GET** (`sec-16`): a new GET under `deploy/` or

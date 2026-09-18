@@ -118,11 +118,14 @@ Every mutation in `src/core/page-tree/mutations.ts` is **tree-agnostic**. The on
 place that knows which tree is active is `resolveActiveTreeTarget`
 (`store/slices/site/helpers.ts`), used through `mutateActiveTree(fn)`.
 
-The 11 named store actions (`insertNode`, `deleteNode`, `updateNodeProps`,
+The 13 named store actions (`insertNode`, `deleteNode`, `updateNodeProps`,
 `setBreakpointOverride`, `clearBreakpointOverride`, `renameNode`,
-`toggleNodeLocked`, `toggleNodeHidden`, `moveNode`, `duplicateNode`, `wrapNode`)
-are one-liners over `mutateActiveTree`. **They must not contain a
-`kind === 'visualComponent'` branch.**
+`setNodesLocked`, `setNodesHidden`, `moveNode`, `duplicateNode`, `wrapNode`,
+`groupNodes`, `ungroupNode`) are one-liners over `mutateActiveTree`. **They must
+not contain a `kind === 'visualComponent'` branch.** Two of them live in their
+own modules: `groupNodes`/`ungroupNode` in `site/groupActions.ts`,
+`setNodesLocked`/`setNodesHidden` in `site/visibilityActions.ts` — extend the
+gate's `ACTION_PATHS` when a named action moves.
 **Gate:** `no-vc-mode-branches-in-mutations.test.ts`.
 
 **A structural action on a studio-imported tree must write source or refuse —

@@ -10,6 +10,7 @@ The codebase uses **one** error boundary primitive — `src/ui/components/ErrorB
 
 - Primitive: `<ErrorBoundary location="...">` from `@ui/components/ErrorBoundary`.
 - Required placements (gated): admin shell, per-route, canvas, per-node renderer, plugin page, plugin editor panel, plugin canvas overlay.
+- Plus the **per-panel and per-section** seams in the Studio editor, all mounted through one component: `PanelBoundary` (`src/admin/pages/site/ui/PanelBoundary/`). See "Editor panels and inspector sections" below.
 - React 19 root callbacks (`onCaughtError`, `onUncaughtError`, `onRecoverableError`) wired in `src/admin/main.tsx`.
 - Caught errors log with `[<module>]` prefix and render the fallback **in place** — they do not toast. Only `admin-shell` opts back in (`silentToast={false}`), because its catch leaves nothing else on screen to read.
 - `flattenErrorChain(err)` walks `error.cause` so domain-typed errors surface their full provenance.
@@ -144,6 +145,71 @@ Same idea, scoped to plugin-registered editor panels.
 ```
 
 For `editor.canvas` permission overlays (annotation pins, custom selection adornments).
+
+---
+
+## Editor panels and inspector sections — `PanelBoundary`
+
+`src/admin/pages/site/ui/PanelBoundary/`.
+
+### Why it exists
+
+Until `panel-40` the nearest boundary above every Studio panel was
+`AdminCanvasLayout`'s `LazyChunkBoundary location="site-editor-body"`, which
+wraps the canvas **and** every panel together. `verify-3` case 5 measured the
+consequence in a real browser: one inspector section throwing replaced the
+whole editor body with "Editor chunk failed to load" — not the panel's own
+fallback, and not a true statement either, since no chunk failed to load.
+
+Track Z's `Z2` had already made the primitive render in place and stop
+toasting. What was missing was a boundary **at** the panel seam.
+
+### The two frames
+
+```tsx
+<PanelBoundary id="explorer" label="Explorer" frame="panel">…</PanelBoundary>
+<PanelBoundary id="fill"     label="Fill"     frame="section">…</PanelBoundary>
+```
+
+- `frame="panel"` — a whole panel or inspector tab. Renders its own title row,
+  one line, and the reset action. `location` is `panel:<id>`.
+- `frame="section"` — one `INSPECTOR_SECTIONS` entry in the Design tab. Reuses
+  the `Section` primitive so the header row is byte-identical to the one the
+  working section draws, and only the body is replaced. `location` is
+  `inspector:<id>`.
+
+The section label comes from the manifest's `label` field, not from the
+component: a section's own component is exactly what is NOT running when the
+boundary has to name it.
+
+### Where it is mounted
+
+| File | Seams |
+|---|---|
+| `inspector/InspectorShell.tsx` | `panel:design`, `panel:prototype`, `panel:inspect` |
+| `panels/PropertiesPanel/StyleSurface.tsx` | `inspector:<sectionId>`, one per mounted section |
+| `sidebars/LeftSidebar/LeftSidebar.tsx` | `panel:explorer`, `panel:content`, `panel:assets`, `panel:selectors`, `panel:framework`, `panel:dependencies`, `panel:git`, `panel:plugin`, `panel:agent` |
+| `sidebars/RightSidebar/RightSidebar.tsx` | `panel:properties`, `panel:comments` |
+| `layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx` | `panel:properties-floating` |
+
+### Rules
+
+- **No `silentToast`.** Silence is the default; opting out here would turn one
+  crashed section into a red card in the corner *as well as* the fallback.
+- **One console line per catch**, `[error-boundary:inspector:<id>]`, emitted by
+  the primitive's own `logErrorChain`. Do not add a second `console.error` —
+  `studio-feel-phase0.e2e.ts` case 7's allowlist is pinned to that prefix, and
+  a second line is the exact noise Track Z removes.
+- **No `resetKeys` on a section.** A section that throws on every node must not
+  be cleared silently by the next canvas click; the fallback's own "Reload this
+  panel" is the way back.
+- Each boundary mounts a dev-only `PanelCrashProbe` named after its own
+  `location`, so a spec can crash exactly one of them:
+  `window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'panel:design' }))`.
+
+Gated by the `panel-40` block in `error-boundary-coverage.test.ts`, which
+checks the mount sites (the `location` is composed at runtime, so there is no
+literal string to scan for).
 
 ---
 

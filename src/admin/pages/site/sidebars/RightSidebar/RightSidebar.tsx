@@ -3,6 +3,7 @@ import { selectRightSidebarExpanded, useEditorStore } from '@site/store/store'
 import { PropertiesPanel } from '@site/panels/PropertiesPanel'
 import { CommentsPanel } from '@site/panels/CommentsPanel'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
+import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import type { RightSidebarTab } from '@site/store/slices/uiSlice'
 import styles from './RightSidebar.module.css'
@@ -142,7 +143,9 @@ export function RightSidebar({ mode }: RightSidebarProps) {
 
         {showComments ? (
           <div className={styles.panelSlot} data-testid="right-sidebar-panel-slot">
-            <CommentsPanel />
+            <PanelBoundary id="comments" label="Comments" frame="panel">
+              <CommentsPanel />
+            </PanelBoundary>
           </div>
         ) : (
           mode === 'site' &&
@@ -160,7 +163,14 @@ export function RightSidebar({ mode }: RightSidebarProps) {
                 vs. Comments) is a different, still-real choice: which PANEL
                 you're looking at, not which layer of the same selection.
               */}
-              <PropertiesPanel variant="docked" />
+              {/* `panel-40` — the panel's own chrome (header, class picker,
+                  target chips) is inside this boundary; `InspectorShell` adds
+                  a second one per TAB and `StyleSurface` a third per SECTION,
+                  so the smallest thing that can disappear is the smallest
+                  thing that broke. */}
+              <PanelBoundary id="properties" label="Properties" frame="panel">
+                <PropertiesPanel variant="docked" />
+              </PanelBoundary>
             </div>
           )
         )}

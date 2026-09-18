@@ -21,7 +21,7 @@
  *
  * ## Two different hides
  *
- * The PRIMARY eye writes `toggleNodeHidden` — Penpot's real semantics,
+ * The PRIMARY eye writes `setNodesHidden` — Penpot's real semantics,
  * removing the node from the page entirely. A SECONDARY, visually
  * de-emphasized eye (rule 3 — "rare options live in a popover on the field
  * they modify") writes CSS `visibility: hidden`, which keeps the element's
@@ -33,8 +33,8 @@
  *
  * ## The lock icon
  *
- * `toggleNodeLocked` had ZERO existing UI call sites anywhere in the admin
- * before this section (`toggleNodeHidden` already had one, in
+ * The structural lock had ZERO existing UI call sites anywhere in the admin
+ * before this section (hiding already had one, in
  * `LayerNodeContextMenu.tsx`) — this is genuinely new surface, not a
  * re-skin. `pixel-art-icons` has no unlocked/open counterpart to
  * `lock-solid`, so `UnlockedIcon` is hand-drawn in
@@ -73,10 +73,16 @@
  * gets no indeterminate glyph — the same call §9.3 makes for `AlignGrid` and
  * Clip content — and clicking it hides every selected layer.
  *
- * `node.hidden` / `node.locked` are NOT multi-select aware: both buttons read
- * and toggle the ANCHOR only. That is a structural fan-out gap, not a Mixed
- * one (it needs a store action over N ids, the way `setNodesInlineStyles` is
- * for styles), and it is recorded in `STATE.md` `panel-38`.
+ * `node.hidden` / `node.locked` fan out over the WHOLE selection
+ * (`panel-40`, closing `panel-38`'s recorded landmine). Both buttons write
+ * `setNodesHidden` / `setNodesLocked` — one absolute value, one history entry
+ * — and both carry a Mixed state: a selection where some layers are hidden
+ * and some are not shows the eye unpressed and names the disagreement in its
+ * label, and clicking it hides every selected layer. That is the same call
+ * `docs/features/inspector.md` §9.3 already makes for the CSS-visibility
+ * toggle, `AlignGrid` and Clip content: no indeterminate glyph, the first
+ * edit agrees them. A toggle per node would only swap which half is hidden,
+ * which is why the store action is absolute rather than a toggle.
  */
 import { useRef, useState } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -145,19 +151,44 @@ function toPercentString(value: unknown): string | Mixed | undefined {
 export function LayerSection() {
   const model = useSelectionModel()
   const commit = useInspectorCommit(model)
-  const toggleNodeHidden = useEditorStore((s) => s.toggleNodeHidden)
-  const toggleNodeLocked = useEditorStore((s) => s.toggleNodeLocked)
+  const setNodesHidden = useEditorStore((s) => s.setNodesHidden)
+  const setNodesLocked = useEditorStore((s) => s.setNodesLocked)
   const canEditStructure = useEditorPermissions().canEditStructure
 
   const [blendMenuOpen, setBlendMenuOpen] = useState(false)
   const blendTriggerRef = useRef<HTMLButtonElement>(null)
 
-  const { selectedNodeId, selectedNode, assignedClassRules, activeContextId, computedValues } = model
+  const { selectedNodeId, selectedNode, selectedNodes, assignedClassRules, activeContextId, computedValues } = model
 
   if (!selectedNodeId || !selectedNode) return null
 
-  const isHidden = selectedNode.hidden === true
-  const isLocked = selectedNode.locked === true
+  // The structural facts are read from the LIVE selection, never from the
+  // collapsed anchor: `selectionModel` collapses `inlineStyles`/`codeProps`
+  // across a multi-selection, but `hidden`/`locked` are not style cells and
+  // carry no `MIXED` sentinel — the disagreement has to be counted here.
+  const structuralTargetIds = selectedNodes.length > 0 ? selectedNodes.map((n) => n.id) : [selectedNodeId]
+  const hiddenCount = selectedNodes.filter((n) => n.hidden === true).length
+  const lockedCount = selectedNodes.filter((n) => n.locked === true).length
+  const total = selectedNodes.length || 1
+  const isHidden = selectedNodes.length > 0 ? hiddenCount === total : selectedNode.hidden === true
+  const isLocked = selectedNodes.length > 0 ? lockedCount === total : selectedNode.locked === true
+  const hiddenMixed = hiddenCount > 0 && hiddenCount < total
+  const lockedMixed = lockedCount > 0 && lockedCount < total
+  // Figma's contract for a mixed field: the next edit agrees the selection.
+  // "Any still visible" → hide them all; "any still unlocked" → lock them all
+  // — the same rule `LayerNodeContextMenu` and the Spotlight commands use.
+  const nextHidden = !isHidden
+  const nextLocked = !isLocked
+  const hiddenLabel = hiddenMixed
+    ? `Hide on canvas — currently ${MIXED_PLACEHOLDER}`
+    : isHidden
+      ? 'Show on canvas'
+      : 'Hide on canvas'
+  const lockedLabel = lockedMixed
+    ? `Lock element — currently ${MIXED_PLACEHOLDER}`
+    : isLocked
+      ? 'Unlock element'
+      : 'Lock element'
 
   // The same per-property code lock `StyleSectionsComposer.tsx`'s own
   // banner reads — ported verbatim, scoped to this section's two CSS
@@ -217,10 +248,10 @@ export function LayerSection() {
         size="xs"
         iconOnly
         pressed={isHidden}
-        aria-label={isHidden ? 'Show on canvas' : 'Hide on canvas'}
-        tooltip={isHidden ? 'Show on canvas' : 'Hide on canvas'}
+        aria-label={hiddenLabel}
+        tooltip={hiddenLabel}
         data-testid="layer-visibility-toggle"
-        onClick={() => toggleNodeHidden(selectedNodeId)}
+        onClick={() => setNodesHidden(structuralTargetIds, nextHidden)}
       >
         {isHidden ? (
           <EyeOffSolidIcon size={14} aria-hidden="true" />
@@ -234,10 +265,10 @@ export function LayerSection() {
           size="xs"
           iconOnly
           pressed={isLocked}
-          aria-label={isLocked ? 'Unlock element' : 'Lock element'}
-          tooltip={isLocked ? 'Unlock element' : 'Lock element'}
+          aria-label={lockedLabel}
+          tooltip={lockedLabel}
           data-testid="layer-lock-toggle"
-          onClick={() => toggleNodeLocked(selectedNodeId)}
+          onClick={() => setNodesLocked(structuralTargetIds, nextLocked)}
         >
           {isLocked ? (
             <LockSolidIcon size={14} aria-hidden="true" />
