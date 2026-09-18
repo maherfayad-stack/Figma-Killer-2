@@ -69,8 +69,9 @@
  *   POST   /admin/api/studio/page   body: { dir?, name? }
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *
- * Routes owned by `studio/trashRoutes.ts` (a `STUDIO_SESSION_SUB_ROUTERS`
- * entry — its two writes are capability-gated, so it needs the `DbClient`):
+ * Routes owned by `studio/trashRoutes.ts` (an ordinary sub-router — its two
+ * writes require `studio.write`, declared in `studio/routeCapabilities.ts`
+ * rather than checked in the module):
  *
  *   GET  /admin/api/studio/trash
  *   POST /admin/api/studio/trash/restore  body: { entry }
@@ -90,8 +91,8 @@
  *       absent means "no font-library change", never "clear it". 400 on an
  *       invalid shape.
  *
- * Routes owned by a sub-router (see `STUDIO_SUB_ROUTERS` below), documented
- * in the module they live in rather than here:
+ * Routes owned by a sub-router (the two lists live in `studio/subRouters.ts`),
+ * documented in the module they live in rather than here:
  *
  *   POST /admin/api/studio/import-github          → `studio/githubImportRoutes.ts`
  *   GET  /admin/api/studio/import-github/status   → the same module
@@ -297,111 +298,17 @@ import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
-import { tryServeStudioProbe } from './studio/projectProbe'
-import { tryServeStudioInstall } from './studio/installDeps'
-import { tryServeStudioIngest } from './studio/importUpload'
-import { tryServeStudioAssetUpload } from './studio/assetUpload'
-import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
-import { tryServeStudioComponentBundle } from './studio/componentBundle'
-import { tryServeStudioTokens } from './studio/tokenExtract'
-import { tryServeStudioTrustTier } from './studio/trustTier'
-import { tryServeStudioLiveOriginInfo } from './studio/liveOriginInfo'
-import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
-import { tryServeStudioDesignSystemMigrate } from './studio/designSystemMigrate'
-import { tryServeStudioExtractComponent } from './studio/extractComponent'
-import { tryServeStudioPreviewAxes } from './studio/previewAxes'
-import { tryServeStudioLocalizedPage } from './studio/localizedPage'
-import { tryServeStudioComponents } from './studio/components'
-import { tryServeStudioIcons } from './studio/iconCatalog'
-import { tryServeStudioProjectAssets } from './studio/projectAssets'
-import { tryServeStudioTranslations } from './studio/translations'
-import { tryServeStudioI18nSetup } from './studio/i18nSetup'
-import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
-import { tryServeStudioTrashRoutes } from './studio/trashRoutes'
-import { tryServeStudioGithubImport } from './studio/githubImportRoutes'
-import { tryServeStudioReloadScope } from './studio/reloadScope'
-import { tryServeStudioComments } from './studio/commentsRoutes'
-import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
-import { tryServeStudioShares } from './studio/shareRoutes'
-import { tryServeStudioPrototype } from './studio/prototypeRoutes'
-import { tryServeStudioGit } from './studio/git'
-import { tryServeStudioGitSync } from './studio/gitSyncRoutes'
-import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
-import { tryServeStudioGitRemote } from './studio/gitRemoteRoutes'
-import { tryServeStudioDeploy } from './studio/deploy'
-import { tryServeStudioDevServer } from './studio/devServer'
-import { tryServeStudioStories } from './studio/storiesRoutes'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
+import { STUDIO_SESSION_SUB_ROUTERS, STUDIO_SUB_ROUTERS } from './studio/subRouters'
 import type { DbClient } from '../db/client'
-
-/**
- * Sub-routers for the newer studio namespaces, each owning one concern and its
- * own `/admin/api/studio/<name>` paths. They are consulted before this module's
- * own route table below.
- *
- * Route handling lives with the feature rather than in this file for the same
- * reason `server/router.ts` composes an array of `tryServe*` handlers instead
- * of one switch: a single shared route table is the file every concurrent
- * change has to touch, and it grows without bound. Each entry returns `null`
- * for a path it does not own, so ordering here is not load-bearing.
- */
 import {
   BoardsPostBodySchema,
   FrameDefaultsBodySchema,
   FrameworkPostBodySchema,
   SaveBodySchema,
 } from './studio/studioRouteBodies'
-
-const STUDIO_SUB_ROUTERS = [
-  tryServeStudioProbe,
-  tryServeStudioGithubImport,
-  tryServeStudioInstall,
-  tryServeStudioIngest,
-  tryServeStudioAssetUpload,
-  tryServeStudioReferenceUpload,
-  tryServeStudioComponentBundle,
-  tryServeStudioTrustTier,
-  tryServeStudioLiveOriginInfo,
-  tryServeStudioStyleCompileConsent,
-  tryServeStudioDesignSystemMigrate,
-  tryServeStudioTokens,
-  tryServeStudioExtractComponent,
-  tryServeStudioPreviewAxes,
-  tryServeStudioLocalizedPage,
-  tryServeStudioComponents,
-  tryServeStudioIcons,
-  tryServeStudioProjectAssets,
-  tryServeStudioTranslations,
-  tryServeStudioI18nSetup,
-  tryServeStudioReloadScope,
-  tryServeStudioPrototype,
-  tryServeStudioGit,
-  tryServeStudioGitRemote,
-  tryServeStudioGitSync,
-  tryServeStudioDeploy,
-  tryServeStudioDevServer,
-  tryServeStudioStories,
-  tryServeStudioTrashRoutes,
-] as const
-
-/**
- * The same, for sub-routers that additionally need the `DbClient` and the
- * signed-in `AuthUser` because each acts ON BEHALF OF somebody (a byline, a
- * share link's owner, a capture's fallback tab, a GitHub credential) rather
- * than merely reading a project directory.
- *
- * The user arrives already authenticated: `gateStudioRequest` resolved it for
- * the whole surface, so nothing in this list calls an auth helper of its own.
- */
-const STUDIO_SESSION_SUB_ROUTERS = [
-  tryServeStudioGithubAuth,
-  tryServeStudioComments,
-  tryServeStudioProjectRoutes,
-  tryServeStudioShares,
-  tryServeStudioNodeExport,
-] as const
 
 /**
  * The answer every route in this file gives to a failure it did not expect —
