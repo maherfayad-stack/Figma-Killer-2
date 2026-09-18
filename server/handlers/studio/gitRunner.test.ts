@@ -63,4 +63,21 @@ describe('clientSafeGitError', () => {
     expect(clientSafeGitError(failed('   '), 'nope')).toBe('nope')
     expect(clientSafeGitError({ ...failed(''), timedOut: true }, 'Push failed')).toContain('did not finish in time')
   })
+
+  /**
+   * git prints LF, but a `core.autocrlf` filter, a pager, or a wrapper on the
+   * user's PATH can hand back CRLF — and this elision is per LINE. A bare
+   * `'\n'` split leaves the `\r` at the end of each line, which is harmless for
+   * a path in the middle and NOT harmless for one at the end of a line, since
+   * the elided string is then compared and re-joined around it.
+   */
+  it('elides a path the same way in a CRLF stream, and hands back LF', () => {
+    const root = resolve(projectsRootDir())
+    const lf = [`error: cannot stage '${join(root, 'demo', 'a.tsx')}'`, `error: cannot stage '${join(root, 'demo', 'b.tsx')}'`].join('\n')
+    const crlf = lf.replace(/\n/g, '\r\n')
+
+    expect(clientSafeGitError(failed(crlf), 'nope')).toBe(clientSafeGitError(failed(lf), 'nope'))
+    expect(clientSafeGitError(failed(crlf), 'nope')).not.toContain(root)
+    expect(clientSafeGitError(failed(crlf), 'nope')).not.toContain('\r')
+  })
 })

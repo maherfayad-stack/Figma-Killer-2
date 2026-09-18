@@ -59,6 +59,7 @@
 import { existsSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { resolve } from 'node:path'
+import { splitLines } from '@core/utils/lineEndings'
 import { projectsRootDir } from '../studioProjects'
 import { writeAskpassScript } from './gitAskpass'
 import {
@@ -268,8 +269,7 @@ export function clientSafeGitError(result: GitRunResult, fallback: string): stri
   const root = resolve(projectsRootDir())
   const home = homedir()
   const temp = resolve(tmpdir())
-  return raw
-    .split('\n')
+  return splitLines(raw)
     // Workspace first: it usually sits INSIDE the home directory, and eliding
     // the outer one first would leave `<home>/studio-workspace/...` behind.
     .map((line) => elideRoot(elideRoot(elideRoot(line, root, '<workspace>'), home, '<home>'), temp, '<temp>'))

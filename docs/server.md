@@ -798,6 +798,50 @@ See [docs/reference/typebox-patterns.md](reference/typebox-patterns.md) for boun
 
 ---
 
+## Line endings — subprocess output
+
+Studio runs other people's command-line tools on the user's machine: `git`,
+`bun`/`npm`/`pnpm`, `tsc`, `vercel`, `netlify`, the project's own dev server,
+the `claude` CLI. **On Windows those tools print CRLF.** A `text.split('\n')`
+leaves a `\r` glued to the end of every line, and the damage lands on whatever
+the LAST field of that line happens to be — which is silent: no throw, no log,
+just a value that compares unequal to the one it should equal.
+
+Three real instances, all fixed:
+
+| Read | What the `\r` did |
+|---|---|
+| `for-each-ref` `%(HEAD)` (`parseGitBranchRefs`) | `head === '*'` false for every branch → the panel reports no current branch |
+| `log --format=…%x1e` (`parseGitLogRecords`) | the record separator's own newline is `\r\n`, `/^\n/` misses it, every sha after the first is 41 characters |
+| `tsc --pretty false` (`parseTscDiagnostics`) | the header pattern ends `(.*)$`, and `.` does not match `\r` |
+
+**The rule:** any file under `server/` that reads captured subprocess output
+cuts it with `splitLines` — or normalises it with `toLf` before an `/m`-anchored
+regex — from `@core/utils/lineEndings`, the same pure-string leaf the parser
+uses for the user's source files. Never a bare `'\n'` split, and never a
+hand-rolled `.replace(/\r$/, '')` at one call site. Gated by
+`src/__tests__/architecture/subprocess-output-line-endings.test.ts`, which
+scans every file that imports a subprocess runner plus the named pure parsers
+(`gitOutputParse.ts`, `tscDiagnostics.ts`, `deployProviders.ts`).
+
+Two things the rule deliberately does not cover:
+
+- **Incremental NDJSON framing over a live stream** (`claudeCliSpawn.ts`,
+  `claudeCliWarmSession.ts`, which frame on `buffer.indexOf('\n')`). You cannot
+  `splitLines` a stream that has not finished arriving, and both hand each
+  framed line to `JSON.parse`, for which a trailing `\r` is legal whitespace.
+- **`devServer.ts`'s URL discovery**, which matches `URL_PATTERN` against raw
+  CHUNKS rather than lines. Its tail is `[^\s"'<>]*` and `\r` is `\s`, so the
+  carriage return can never be swallowed into the host. Asserted by a CRLF
+  transcript test rather than assumed.
+
+Writing `'\n'` is untouched — Studio emits LF, always. Only reads are
+constrained. Line endings inside the USER's own source files are a different
+(and larger) contract: see
+[docs/features/studio-import.md](features/studio-import.md).
+
+---
+
 ## Related
 
 - [docs/architecture.md](architecture.md) — system overview

@@ -32,6 +32,8 @@
  */
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
+import { splitLines } from '@core/utils/lineEndings'
+import { GIT_BRANCH_REF_FORMAT, parseGitBranchRefs, type GitBranchSummary } from './gitOutputParse'
 import { clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_MS } from './gitRunner'
 import {
   assertUsableBranchName,
@@ -48,22 +50,6 @@ import {
   type GitOperationFailure,
 } from './gitOperations'
 
-export interface GitBranchSummary {
-  /** Short name — `main` for a local branch, `origin/main` for a remote-tracking one. */
-  name: string
-  /** `true` for a `refs/remotes/…` ref. The panel offers these as "check out a copy of", never as a thing to commit onto. */
-  remote: boolean
-  /** The one branch HEAD points at. Always exactly one, or none on a detached HEAD. */
-  current: boolean
-  /** Configured upstream (`origin/main`), or `null`. Always `null` for a remote-tracking ref. */
-  upstream: string | null
-  /** Commits on this branch not on its upstream. `null` when there is no upstream to compare against. */
-  ahead: number | null
-  behind: number | null
-  /** The upstream is configured but no longer exists on the remote — git's own `gone`. */
-  upstreamGone: boolean
-}
-
 export interface GitBranchList {
   branches: GitBranchSummary[]
   /** The checked-out branch, or `null` on a detached HEAD. */
@@ -76,26 +62,6 @@ export interface GitBranchList {
    * `git remote set-head`.
    */
   defaultBranch: string | null
-}
-
-/** `%xx` in a `for-each-ref` format is a raw byte — 0x1F separates fields, and no ref name may contain a control character. */
-const REF_FIELD_SEP = ''
-
-const BRANCH_REF_FORMAT = [
-  '%(refname)',
-  '%(refname:short)',
-  '%(upstream:short)',
-  '%(upstream:track,nobracket)',
-  '%(HEAD)',
-].join('%1f')
-
-/** `ahead 2, behind 1` / `ahead 3` / `behind 4` / `gone` / empty — git's `%(upstream:track,nobracket)`. */
-function parseUpstreamTrack(track: string): { ahead: number | null; behind: number | null; gone: boolean } {
-  if (track === 'gone') return { ahead: null, behind: null, gone: true }
-  const ahead = /ahead (\d+)/.exec(track)
-  const behind = /behind (\d+)/.exec(track)
-  if (!ahead && !behind) return { ahead: null, behind: null, gone: false }
-  return { ahead: ahead ? Number(ahead[1]) : 0, behind: behind ? Number(behind[1]) : 0, gone: false }
 }
 
 /**
@@ -114,33 +80,10 @@ function parseUpstreamTrack(track: string): { ahead: number | null; behind: numb
  * Fetch button is what makes it fresher.
  */
 export async function listGitBranches(dir: string): Promise<GitBranchList | GitOperationFailure> {
-  const result = await runGit(dir, ['for-each-ref', `--format=${BRANCH_REF_FORMAT}`, 'refs/heads', 'refs/remotes'])
+  const result = await runGit(dir, ['for-each-ref', `--format=${GIT_BRANCH_REF_FORMAT}`, 'refs/heads', 'refs/remotes'])
   if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not list branches'))
 
-  const branches: GitBranchSummary[] = []
-  let current: string | null = null
-  for (const line of result.stdout.split('\n')) {
-    if (!line.trim()) continue
-    const [refname, short, upstream, track, head] = line.split(REF_FIELD_SEP)
-    if (!refname || !short) continue
-    // `origin/HEAD` is a symbolic ref to another entry in this same list, not
-    // a branch anyone can check out. It is read separately, below.
-    if (refname.endsWith('/HEAD')) continue
-    const remote = refname.startsWith('refs/remotes/')
-    const isCurrent = head === '*'
-    if (isCurrent) current = short
-    const { ahead, behind, gone } = parseUpstreamTrack((track ?? '').trim())
-    branches.push({
-      name: short,
-      remote,
-      current: isCurrent,
-      upstream: remote ? null : upstream || null,
-      ahead,
-      behind,
-      upstreamGone: gone,
-    })
-  }
-
+  const { branches, current } = parseGitBranchRefs(result.stdout)
   return { branches, current, defaultBranch: await readDefaultBranch(dir) }
 }
 
@@ -603,8 +546,7 @@ export async function readPullRequestContext(dir: string): Promise<GitPullReques
 export async function readBranchCommitSubjects(dir: string, base: string, head: string): Promise<string[]> {
   const result = await runGit(dir, ['log', `--max-count=${MAX_LOG_COMMITS}`, '--format=%s', `origin/${base}..${head}`])
   if (!result.ok) return []
-  return result.stdout
-    .split('\n')
+  return splitLines(result.stdout)
     .map((line) => line.trim())
     .filter((line) => line.length > 0)
 }

@@ -1,8 +1,27 @@
 /**
- * gitStatusParse — `git status --porcelain=v2 --branch -z` into a typed shape,
- * server-side. Pure: no filesystem, no subprocess, no `dir`. Every branch of
- * this parser is exercised by `gitStatusParse.test.ts` against real captured
- * git output.
+ * gitOutputParse — git's stdout, turned into typed structures. Pure: no
+ * filesystem, no subprocess, no `dir`. Every branch of every parser here is
+ * exercised by `gitOutputParse.test.ts` against real captured git output.
+ *
+ * Four commands are read here, and they are read here rather than inline in
+ * `gitOperations.ts`/`gitSyncOperations.ts` for one reason: **a parser that
+ * takes a `string` can be driven with a transcript.** `runGit` spawns the
+ * real `git`, and the real `git` on this machine will not print the output a
+ * regression needs (a CRLF stream, a detached HEAD, a `gone` upstream) on
+ * demand. Splitting the parse out is what makes those cases testable at all.
+ *
+ *   - `status --porcelain=v2 --branch -z` → {@link parseGitStatusPorcelainV2}
+ *   - `remote -v`                         → {@link parseGitRemoteLines}
+ *   - `log --format=…`                    → {@link parseGitLogRecords}
+ *   - `for-each-ref --format=…`           → {@link parseGitBranchRefs}
+ *
+ * ## Line endings
+ *
+ * Every line-wise read here goes through `splitLines`/`toLf`. git itself
+ * prints LF, but a `core.autocrlf` filter, a pager, or a wrapper on the user's
+ * `PATH` can turn that into CRLF, and the `\r` then lands on whatever the LAST
+ * field of a line happens to be — `%(HEAD)`, a commit sha, a remote's kind.
+ * Gated by `src/__tests__/architecture/subprocess-output-line-endings.test.ts`.
  *
  * ## Why v2, and why `-z`
  *
@@ -36,6 +55,8 @@
  * Ignored (`!`) records are never requested (`--porcelain=v2` does not list
  * them without `--ignored`) and are skipped defensively if they ever appear.
  */
+
+import { splitLines, toLf } from '@core/utils/lineEndings'
 
 /** What the index says about a path, relative to HEAD. `null` when the index matches HEAD. */
 export type GitChangeKind = 'added' | 'modified' | 'deleted' | 'renamed' | 'copied' | 'type-changed'
@@ -233,4 +254,153 @@ function fieldsAfter(record: string, count: number): string {
     index = next + 1
   }
   return record.slice(index)
+}
+
+// ---------------------------------------------------------------------------
+// `git remote -v`
+// ---------------------------------------------------------------------------
+
+export interface GitRemote {
+  name: string
+  fetchUrl: string
+  pushUrl: string
+}
+
+/**
+ * `git remote -v`'s two lines per remote (`<name>\t<url> (fetch)` and the
+ * `(push)` twin) folded into one record per name.
+ *
+ * Unfiltered: a project that already had three remotes when the user opened it
+ * should SEE three, even though Studio will only ever write `origin`.
+ */
+export function parseGitRemoteLines(stdout: string): GitRemote[] {
+  const byName = new Map<string, GitRemote>()
+  for (const line of splitLines(stdout)) {
+    // `<name>\t<url> (fetch|push)` — tab-separated by git's own porcelain.
+    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
+    if (!match) continue
+    const [, name, url, kind] = match
+    const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
+    if (kind === 'fetch') existing.fetchUrl = url
+    else existing.pushUrl = url
+    byName.set(name, existing)
+  }
+  return [...byName.values()]
+}
+
+// ---------------------------------------------------------------------------
+// `git log --format=%H%x1f%h%x1f%an%x1f%aI%x1f%s%x1e`
+// ---------------------------------------------------------------------------
+
+/** ASCII unit/record separators — chosen for `git log --format` because neither can occur in a commit subject, author name, or ISO date. */
+const FIELD_SEP = ''
+const RECORD_SEP = ''
+
+/** The `--format` string {@link parseGitLogRecords} reads. Defined beside the parser so the two can never drift apart. */
+export const GIT_LOG_FORMAT = ['%H', '%h', '%an', '%aI', '%s'].join('%x1f') + '%x1e'
+
+export interface GitLogEntry {
+  sha: string
+  shortSha: string
+  author: string
+  /** ISO-8601 with offset (`%aI`) — the client formats it; the server never guesses a locale. */
+  date: string
+  subject: string
+}
+
+/**
+ * One entry per `%x1e`-terminated record, in the order `git log` printed them.
+ *
+ * `toLf` FIRST, and this is the whole reason this parser has a test: `git log`
+ * writes its own newline AFTER the record separator, so every record but the
+ * first begins with that newline and has it stripped below. On a CRLF stream
+ * the leading break is `\r\n`, `/^\n/` misses it, and the surviving `\r` lands
+ * at the front of `%H` — every commit but the first gets a 41-character sha
+ * that matches nothing the panel can act on.
+ */
+export function parseGitLogRecords(stdout: string): GitLogEntry[] {
+  return toLf(stdout)
+    .split(RECORD_SEP)
+    .map((record) => record.replace(/^\n/, ''))
+    .filter((record) => record.length > 0)
+    .flatMap((record) => {
+      const [sha, shortSha, author, date, subject] = record.split(FIELD_SEP)
+      if (!sha || !shortSha) return []
+      return [{ sha, shortSha, author: author ?? '', date: date ?? '', subject: subject ?? '' }]
+    })
+}
+
+// ---------------------------------------------------------------------------
+// `git for-each-ref --format=…`
+// ---------------------------------------------------------------------------
+
+export interface GitBranchSummary {
+  /** Short name — `main` for a local branch, `origin/main` for a remote-tracking one. */
+  name: string
+  /** `true` for a `refs/remotes/…` ref. The panel offers these as "check out a copy of", never as a thing to commit onto. */
+  remote: boolean
+  /** The one branch HEAD points at. Always exactly one, or none on a detached HEAD. */
+  current: boolean
+  /** Configured upstream (`origin/main`), or `null`. Always `null` for a remote-tracking ref. */
+  upstream: string | null
+  /** Commits on this branch not on its upstream. `null` when there is no upstream to compare against. */
+  ahead: number | null
+  behind: number | null
+  /** The upstream is configured but no longer exists on the remote — git's own `gone`. */
+  upstreamGone: boolean
+}
+
+/** The `--format` string {@link parseGitBranchRefs} reads. `%1f` is a raw byte, and no ref name may contain a control character. */
+export const GIT_BRANCH_REF_FORMAT = [
+  '%(refname)',
+  '%(refname:short)',
+  '%(upstream:short)',
+  '%(upstream:track,nobracket)',
+  '%(HEAD)',
+].join('%1f')
+
+const REF_FIELD_SEP = ''
+
+/** `ahead 2, behind 1` / `ahead 3` / `behind 4` / `gone` / empty — git's `%(upstream:track,nobracket)`. */
+function parseUpstreamTrack(track: string): { ahead: number | null; behind: number | null; gone: boolean } {
+  if (track === 'gone') return { ahead: null, behind: null, gone: true }
+  const ahead = /ahead (\d+)/.exec(track)
+  const behind = /behind (\d+)/.exec(track)
+  if (!ahead && !behind) return { ahead: null, behind: null, gone: false }
+  return { ahead: ahead ? Number(ahead[1]) : 0, behind: behind ? Number(behind[1]) : 0, gone: false }
+}
+
+/**
+ * Every ref {@link GIT_BRANCH_REF_FORMAT} printed, plus which one is checked
+ * out. `current` is `null` on a detached HEAD, which is a normal answer.
+ *
+ * `splitLines`, not a bare `'\n'` split: `%(HEAD)` is the LAST field of the
+ * format, so a trailing `\r` makes `head === '*'` false for every branch and
+ * the panel reports no current branch at all.
+ */
+export function parseGitBranchRefs(stdout: string): { branches: GitBranchSummary[]; current: string | null } {
+  const branches: GitBranchSummary[] = []
+  let current: string | null = null
+  for (const line of splitLines(stdout)) {
+    if (!line.trim()) continue
+    const [refname, short, upstream, track, head] = line.split(REF_FIELD_SEP)
+    if (!refname || !short) continue
+    // `origin/HEAD` is a symbolic ref to another entry in this same list, not
+    // a branch anyone can check out. It is read separately by its caller.
+    if (refname.endsWith('/HEAD')) continue
+    const remote = refname.startsWith('refs/remotes/')
+    const isCurrent = head === '*'
+    if (isCurrent) current = short
+    const { ahead, behind, gone } = parseUpstreamTrack((track ?? '').trim())
+    branches.push({
+      name: short,
+      remote,
+      current: isCurrent,
+      upstream: remote ? null : upstream || null,
+      ahead,
+      behind,
+      upstreamGone: gone,
+    })
+  }
+  return { branches, current }
 }

@@ -1390,6 +1390,12 @@ where a `.gitattributes` in Studio's own repo cannot help.
 **The rule: anything that reads a file line-wise uses `splitLines` from
 `@core/utils/lineEndings`, never `text.split('\n')`.**
 
+The same leaf, and the same rule, cover the other CRLF source on a Windows
+machine: the stdout of the command-line tools Studio spawns against the user's
+repo (`git`, `tsc`, `vercel`/`netlify`, a package manager). That half is
+[docs/server.md](../server.md) → "Line endings — subprocess output", gated
+separately by `subprocess-output-line-endings.test.ts`.
+
 ### The writing half
 
 Every codemod builds its inserted text with `'\n'` — the indent helpers in

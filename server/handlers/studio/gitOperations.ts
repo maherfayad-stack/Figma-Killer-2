@@ -76,6 +76,7 @@
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { splitLines } from '@core/utils/lineEndings'
 import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
@@ -84,15 +85,20 @@ import {
   GIT_NETWORK_TIMEOUT_MS,
   type GitRunResult,
 } from './gitRunner'
-import { parseGitStatusPorcelainV2, type GitStatus, type GitStatusEntry } from './gitStatusParse'
+import {
+  GIT_LOG_FORMAT,
+  parseGitLogRecords,
+  parseGitRemoteLines,
+  parseGitStatusPorcelainV2,
+  type GitLogEntry,
+  type GitRemote,
+  type GitStatus,
+  type GitStatusEntry,
+} from './gitOutputParse'
 import { readAllTurnWrites } from './turnWriteLog'
 
 /** Enough history for "what happened recently" without turning the log route into a repository export. */
 export const MAX_LOG_COMMITS = 50
-
-/** ASCII unit/record separators — chosen for `git log --format` because neither can occur in a commit subject, author name, or ISO date. */
-const FIELD_SEP = '\u001f'
-const RECORD_SEP = '\u001e'
 
 /** A refusal any operation can produce. `message` is already client-safe (no absolute paths, bounded length). */
 export interface GitOperationFailure {
@@ -181,7 +187,7 @@ export async function readGitStatus(dir: string): Promise<GitProjectStatus | Git
 export async function hasOriginRemote(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote'])
   if (!result.ok) return false
-  return result.stdout.split('\n').some((line) => line.trim() === 'origin')
+  return splitLines(result.stdout).some((line) => line.trim() === 'origin')
 }
 
 /**
@@ -210,14 +216,8 @@ export async function hasOriginRemote(dir: string): Promise<boolean> {
 export async function originAcceptsStoredGithubToken(dir: string): Promise<boolean> {
   const result = await runGit(dir, ['remote', 'get-url', '--push', 'origin'])
   if (!result.ok) return false
-  const url = result.stdout.trim().split('\n')[0]?.trim() ?? ''
+  const url = splitLines(result.stdout.trim())[0]?.trim() ?? ''
   return parseGithubRemoteUrl(url) !== null
-}
-
-export interface GitRemote {
-  name: string
-  fetchUrl: string
-  pushUrl: string
 }
 
 /**
@@ -227,24 +227,12 @@ export interface GitRemote {
  * user opened it should SEE three, even though Studio will only ever write
  * `origin`. Hiding them would make the panel disagree with the user's
  * terminal, which is the failure mode `excludedCount` exists to avoid
- * elsewhere in this module.
+ * elsewhere in this module. The reading itself is `parseGitRemoteLines`.
  */
 export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperationFailure> {
   const result = await runGit(dir, ['remote', '-v'])
   if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the remotes'))
-
-  const byName = new Map<string, GitRemote>()
-  for (const line of result.stdout.split('\n')) {
-    // `<name>\t<url> (fetch|push)` — tab-separated by git's own porcelain.
-    const match = /^(\S+)\t(\S+)\s+\((fetch|push)\)$/.exec(line.trim())
-    if (!match) continue
-    const [, name, url, kind] = match
-    const existing = byName.get(name) ?? { name, fetchUrl: '', pushUrl: '' }
-    if (kind === 'fetch') existing.fetchUrl = url
-    else existing.pushUrl = url
-    byName.set(name, existing)
-  }
-  return [...byName.values()]
+  return parseGitRemoteLines(result.stdout)
 }
 
 /**
@@ -335,34 +323,16 @@ async function isUntracked(dir: string, relPath: string): Promise<boolean> {
   return !result.ok
 }
 
-export interface GitLogEntry {
-  sha: string
-  shortSha: string
-  author: string
-  /** ISO-8601 with offset (`%aI`) — the client formats it; the server never guesses a locale. */
-  date: string
-  subject: string
-}
-
-/** Recent history for the panel's log view. A repository with no commits yet returns an empty list, not a failure. */
+/** Recent history for the panel's log view. A repository with no commits yet returns an empty list, not a failure. The reading itself is `parseGitLogRecords`. */
 export async function readGitLog(dir: string, limit: number): Promise<GitLogEntry[] | GitOperationFailure> {
   const capped = Math.max(1, Math.min(Math.trunc(limit), MAX_LOG_COMMITS))
-  const format = ['%H', '%h', '%an', '%aI', '%s'].join('%x1f') + '%x1e'
-  const result = await runGit(dir, ['log', `--max-count=${capped}`, `--format=${format}`])
+  const result = await runGit(dir, ['log', `--max-count=${capped}`, `--format=${GIT_LOG_FORMAT}`])
   if (!result.ok) {
     // A fresh repository has no HEAD; `git log` fails there and that is not an error worth surfacing.
     if (/does not have any commits yet|unknown revision/i.test(result.stderr)) return []
     return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the commit log'))
   }
-  return result.stdout
-    .split(RECORD_SEP)
-    .map((record) => record.replace(/^\n/, ''))
-    .filter((record) => record.length > 0)
-    .flatMap((record) => {
-      const [sha, shortSha, author, date, subject] = record.split(FIELD_SEP)
-      if (!sha || !shortSha) return []
-      return [{ sha, shortSha, author: author ?? '', date: date ?? '', subject: subject ?? '' }]
-    })
+  return parseGitLogRecords(result.stdout)
 }
 
 /**

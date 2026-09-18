@@ -153,6 +153,22 @@ describe('ensureDevServer', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  it('discovers the same URL when the dev server prints CRLF — a Windows shell wrapper', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-crlf-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    // `URL_PATTERN`'s tail is `[^\s"'<>]*` and `\r` IS `\s`, so the `\r` can
+    // never be swallowed into the host. Asserted rather than assumed: this is
+    // the one subprocess reader under `server/` that matches against raw
+    // CHUNKS instead of lines, so it is the one `splitLines` cannot protect.
+    const { proc } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\r\n', '  ➜  Local:   http://localhost:5173/\r\n'] })
+
+    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.baseUrl).toBe('http://localhost:5173')
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-timeout-')
     writePackageJson(tmpDir, { dev: 'some-slow-thing' })

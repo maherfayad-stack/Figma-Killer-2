@@ -10,7 +10,7 @@
  *       → `{ isRepo, status: { branch, entries, excludedCount, hasOrigin } | null }`
  *       `isRepo: false` is a NORMAL answer, not an error — it is what makes the
  *       panel offer `init`. `entries` carries staged/unstaged/untracked/unmerged
- *       per path (see `gitStatusParse.ts`).
+ *       per path (see `gitOutputParse.ts`).
  *
  *   GET  /admin/api/studio/git/diff?dir=<abs>&file=<workspace-rel>
  *       → `{ file, staged, unstaged, untracked, truncated }` — both halves of
@@ -51,7 +51,7 @@
  * Routing only: dir resolution, body validation, mapping a typed
  * `GitOperationFailure` onto an HTTP status. Every git invocation lives in
  * `gitOperations.ts`, the spawn discipline and the repository guard in
- * `gitRunner.ts`, the porcelain parser in `gitStatusParse.ts`, and every
+ * `gitRunner.ts`, the porcelain parser in `gitOutputParse.ts`, and every
  * judgement of a caller-supplied string in `gitPaths.ts`. Nothing here builds
  * an argv.
  *
