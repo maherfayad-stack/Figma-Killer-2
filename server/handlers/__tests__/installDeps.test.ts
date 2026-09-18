@@ -27,6 +27,7 @@ import {
   type PublicInstallJob,
 } from '../studio/installDeps'
 import { detectPackageManager } from '../studio/packageManager'
+import { readStudioMeta } from '../studio/studioMeta'
 import { readInstallJobFile, writeInstallJobFile, type PersistedInstallJob } from '../studio/installJobStore'
 import { projectsRootDir } from '../studioProjects'
 import { ProjectDirOutsideWorkspaceError } from '../studioProjects'
@@ -590,8 +591,35 @@ describe('install job durability (.studio/install-job.json)', () => {
     expect(doneRecord?.log).toContain('ok')
   })
 
+  it('writes the sidecar at the PROJECT root on a monorepo, never inside the app it installs in', async () => {
+    // `sec-15`'s informational, closed. `resolveAppRoot` walks to the nested
+    // `package.json`, so the install SPAWNS in `<project>/apps/web` — and
+    // before `sec-18` that is where the record went, creating a second
+    // `.studio/` directory inside the user's own git-tracked application.
+    const appRoot = path.join(tmpDir, 'apps', 'web')
+    fs.mkdirSync(appRoot, { recursive: true })
+    fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'web' }), 'utf8')
+
+    const { spawn } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0, stdout: 'ok' }).proc)
+    const timer = makeInertTimer()
+    const jobId = startInstallJob(tmpDir, { spawn, ...timer })
+    await waitForSettle(jobId)
+
+    // Neither the job record NOR the post-install profile re-probe may put a
+    // `.studio/` inside the user's own application.
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
+    expect(readStudioMeta(tmpDir).profile).toBeDefined()
+    const record = readInstallJobFile(tmpDir)
+    expect(record?.id).toBe(jobId)
+    // The record still NAMES the app root — that is where the package manager
+    // ran, and it is what a poller asked about.
+    expect(record?.dir).toBe(path.resolve(appRoot))
+    // …and the route's own by-id fallback finds it from the PROJECT dir.
+    expect(resolveInstallJobStatus(jobId, path.resolve(tmpDir))?.id).toBe(jobId)
+  })
+
   it('resolveInstallJobStatus resolves an orphaned persisted "running" record — no matching in-memory job, simulating a server restart — to "interrupted", never a phantom "running"', () => {
-    writeInstallJobFile(orphanRecord({ pid: 424242 }))
+    writeInstallJobFile(tmpDir, orphanRecord({ pid: 424242 }))
 
     const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
     expect(resolved?.status).toBe('interrupted')
@@ -603,7 +631,7 @@ describe('install job durability (.studio/install-job.json)', () => {
   })
 
   it('resolveInstallJobStatus leaves an already-terminal persisted record untouched', () => {
-    writeInstallJobFile(orphanRecord({ status: 'done', exitCode: 0, finishedAt: Date.now(), warnings: ['pre-existing'] }))
+    writeInstallJobFile(tmpDir, orphanRecord({ status: 'done', exitCode: 0, finishedAt: Date.now(), warnings: ['pre-existing'] }))
 
     const resolved = resolveInstallJobStatus('orphan-job-id', path.resolve(tmpDir))
     expect(resolved?.status).toBe('done')
@@ -611,12 +639,12 @@ describe('install job durability (.studio/install-job.json)', () => {
   })
 
   it('resolveInstallJobStatus returns null when the id matches neither memory nor what is persisted at dir', () => {
-    writeInstallJobFile(orphanRecord({ id: 'some-other-job', status: 'done' }))
+    writeInstallJobFile(tmpDir, orphanRecord({ id: 'some-other-job', status: 'done' }))
     expect(resolveInstallJobStatus('completely-unknown-id', path.resolve(tmpDir))).toBeNull()
   })
 
   it('probeInstallStatus surfaces the persisted job, resolving an orphaned "running" record honestly', () => {
-    writeInstallJobFile(orphanRecord({ packageManager: 'npm', log: 'installing…' }))
+    writeInstallJobFile(tmpDir, orphanRecord({ packageManager: 'npm', log: 'installing…' }))
 
     const status = probeInstallStatus(tmpDir)
     expect(status.job?.id).toBe('orphan-job-id')
@@ -704,7 +732,7 @@ describe('tryServeStudioInstall', () => {
     fs.mkdirSync(root, { recursive: true })
     const insideDir = fs.mkdtempSync(path.join(root, '__installdeps_test_durable_'))
     try {
-      writeInstallJobFile({
+      writeInstallJobFile(insideDir, {
         id: 'restart-sim-job',
         dir: path.resolve(insideDir),
         packageManager: 'bun',

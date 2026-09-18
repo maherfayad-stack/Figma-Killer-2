@@ -1,6 +1,8 @@
 /**
  * gitPaths — every string a client hands the git routes, judged before it can
- * reach an argv array.
+ * reach an argv array; and, in one direction-reversed case
+ * ({@link redactRemoteUrlCredentials}), a string git already holds, judged
+ * before it can reach the client.
  *
  * Four separate untrusted shapes reach `git`, and each has its own way of
  * being weaponised:
@@ -285,4 +287,58 @@ export function githubProjectFolderName(remote: GithubRemote): string {
 export function isAcceptableCommitMessage(message: string): boolean {
   const trimmed = message.trim()
   return trimmed.length > 0 && trimmed.length <= 4096 && !trimmed.includes('\u0000')
+}
+
+/**
+ * Strips the credential out of a remote URL before it can leave the server.
+ *
+ * `GET /admin/api/studio/git/remotes` is a `site.read` route — the capability
+ * the **Client** role holds — and `git remote -v` prints whatever is in
+ * `.git/config` verbatim. Studio's own `setOriginRemote` re-composes through
+ * `parseGithubRemoteUrl` and never writes a credential into a remote, but a
+ * repository cloned OUTSIDE Studio routinely carries one:
+ * `https://x-access-token:<token>@github.com/o/r` is what a GitHub Actions
+ * checkout leaves behind, and `https://<pat>@github.com/o/r` is what a
+ * `git clone` with a pasted token leaves behind. Reported by `sec-16` as the
+ * one place a stored credential could surface at `site.read`; closed here.
+ *
+ * Two rules, and the difference between them is not cosmetic:
+ *
+ *   - **http/https — the whole userinfo goes.** There is no such thing as a
+ *     non-secret username in an HTTP git remote: a token with no password
+ *     half (`https://ghp_…@github.com/o/r`) is the single most common shape,
+ *     so keeping "just the username" would keep exactly the secret.
+ *   - **every other scheme — only the password goes.** `ssh://git@github.com/
+ *     o/r`'s `git` is the SSH *account*, carries nothing secret, and removing
+ *     it would make the panel disagree with the user's terminal, which is the
+ *     failure mode `excludedCount` exists to avoid elsewhere in this module.
+ *
+ * The scp-like form (`git@github.com:o/r.git`) has no `scheme://` and
+ * therefore no userinfo syntax at all — returned untouched.
+ *
+ * Done textually rather than with `new URL`, which normalises, re-encodes and
+ * can round-trip a URL git accepts into one it does not.
+ */
+export function redactRemoteUrlCredentials(url: string): string {
+  const scheme = /^([A-Za-z][A-Za-z0-9+.-]*:\/\/)/.exec(url)?.[1]
+  if (!scheme) return url
+
+  const rest = url.slice(scheme.length)
+  const authorityEnd = rest.search(/[/?#]/)
+  const authority = authorityEnd === -1 ? rest : rest.slice(0, authorityEnd)
+  const tail = authorityEnd === -1 ? '' : rest.slice(authorityEnd)
+
+  // Last `@`, not first: userinfo may not legally contain one, and splitting
+  // on the last is what every URL parser does with a malformed authority.
+  const at = authority.lastIndexOf('@')
+  if (at === -1) return url
+  const userinfo = authority.slice(0, at)
+  const host = authority.slice(at + 1)
+
+  const lower = scheme.toLowerCase()
+  if (lower === 'http://' || lower === 'https://') return `${scheme}${host}${tail}`
+
+  const colon = userinfo.indexOf(':')
+  if (colon === -1) return url
+  return `${scheme}${userinfo.slice(0, colon)}@${host}${tail}`
 }

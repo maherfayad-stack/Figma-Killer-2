@@ -28,6 +28,15 @@
  * SECURITY — this is a write path into the user's repo, so every input is
  * adversarial, not just the happy path:
  *
+ *   - AUTHORIZATION AND CSRF ARE THE ROUTE TABLE'S, not this file's:
+ *     `routeCapabilities.ts` declares `asset-upload` as `mutate:
+ *     'studio.write'` with no `read`, and `routeGate.ts` enforces both that
+ *     and `originAllowed` before this function is ever called. `sec-17`'s
+ *     landmine 2 recorded this route as "the only studio asset route with
+ *     neither check" — that was true against a base with no table, and stopped
+ *     being true when `sec-14` landed one. Do not add a second, local check:
+ *     two policies for one route is what the table exists to prevent.
+ *
  *   - `targetDir` gets the full guard set `resolveStudioAssetResponse` (the
  *     READ side) already established: absolute/UNC/drive-letter rejection,
  *     `..`/empty segments on EITHER separator, `EXCLUDED_WORKSPACE_DIR_NAMES`,

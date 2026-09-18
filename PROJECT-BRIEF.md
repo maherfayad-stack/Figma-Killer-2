@@ -559,9 +559,15 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     fusing the two would force a role to hand its agent commit rights just to
     give a human the Version control panel. This closed `sec-05` finding 2; the
     posture is still single-operator by default (the Owner role holds every
-    capability in the table), so it is a real gate, not a login flow. Full
-    write-up: `docs/server.md` → "Per-request capability gating on the Studio
-    routes".
+    capability in the table), so it is a real gate, not a login flow.
+    **Every entry is an EXACT path, per verb** — there are no namespaces, so
+    `git/<new-action>` and `dev-server/restart` 404 rather than inheriting
+    `site.read` (`sec-16`'s hole, closed by `sec-18`). The one dynamic shape
+    is `jobId` on `install`/`deploy`, matched against the UUID those
+    registries mint. Adding a verb without a table row fails the build, and so
+    does adding a METHOD to an existing route whose table row declares that
+    method class `null`. Full write-up: `docs/server.md` → "Per-request
+    capability gating on the Studio routes".
 
 ---
 

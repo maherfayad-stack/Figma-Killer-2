@@ -4,8 +4,9 @@
  */
 import { describe, expect, it, afterEach } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
+import { readFileProtection } from '../../ai/credentials/fileProtection.testHelpers'
 import {
   InvalidClaudeCliUserIdError,
   assertSafeClaudeCliUserId,
@@ -79,30 +80,36 @@ describe('resolveClaudeCliConfigDir', () => {
 })
 
 describe('ensureClaudeCliConfigDir', () => {
-  it('creates the directory mode 0700 (idempotent)', () => {
+  it('creates the directory, private in the terms this platform enforces (idempotent)', async () => {
     const root = scratchRoot()
-    const dir = ensureClaudeCliConfigDir(root, 'user-abc')
+    const dir = await ensureClaudeCliConfigDir(root, 'user-abc')
     expect(existsSync(dir)).toBe(true)
-    if (process.platform !== 'win32') {
-      const mode = statSync(dir).mode & 0o777
-      expect(mode).toBe(0o700)
+    if (process.platform === 'win32') {
+      // `sec-18` — this is where the CLI writes `.credentials.json`, and
+      // `chmod` does not protect it on Windows. A single ACE naming this
+      // account is the guarantee the platform actually enforces.
+      const acl = readFileProtection(join(dir, '.')).acl
+      expect(acl).toHaveLength(1)
+      expect(acl[0]).toContain(userInfo().username)
+    } else {
+      expect(statSync(dir).mode & 0o777).toBe(0o700)
     }
     // Calling again must not throw and must return the same path.
-    const again = ensureClaudeCliConfigDir(root, 'user-abc')
+    const again = await ensureClaudeCliConfigDir(root, 'user-abc')
     expect(again).toBe(dir)
   })
 
-  it('never creates the directory outside dataRoot for a malicious userId', () => {
+  it('never creates the directory outside dataRoot for a malicious userId', async () => {
     const root = scratchRoot()
-    expect(() => ensureClaudeCliConfigDir(root, '../escape')).toThrow()
+    await expect(ensureClaudeCliConfigDir(root, '../escape')).rejects.toThrow()
     expect(existsSync(join(root, '..', 'escape'))).toBe(false)
   })
 })
 
 describe('deleteClaudeCliConfigDir', () => {
-  it('removes an existing directory and everything the CLI wrote into it', () => {
+  it('removes an existing directory and everything the CLI wrote into it', async () => {
     const root = scratchRoot()
-    const dir = ensureClaudeCliConfigDir(root, 'user-to-delete')
+    const dir = await ensureClaudeCliConfigDir(root, 'user-to-delete')
     expect(existsSync(dir)).toBe(true)
     deleteClaudeCliConfigDir(root, 'user-to-delete')
     expect(existsSync(dir)).toBe(false)

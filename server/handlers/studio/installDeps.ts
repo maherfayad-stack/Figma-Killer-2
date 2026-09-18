@@ -26,7 +26,7 @@
  * Jobs live in an in-memory `Map<jobId, JobRecord>` while THIS process can
  * observe them — but the dev server runs under `bun --watch`, so any file
  * edit restarts the process and empties that map. Every job is ALSO mirrored
- * to `<appRoot>/.studio/install-job.json` (`installJobStore.ts`) at start and
+ * to `<projectDir>/.studio/install-job.json` (`installJobStore.ts`) at start and
  * at completion, so a restart mid-install doesn't strand the client polling a
  * `jobId` that 404s forever. A record found on disk with no matching
  * in-memory entry (the process that owned it is gone) resolves to the
@@ -389,8 +389,19 @@ async function runInstallJob(
     // Failure here must not fail the install: the job DID succeed, and
     // `resolveProjectProfile` heals a stale cache on the next read anyway.
     // This re-probe is the fast path, not the only path.
+    //
+    // `job.projectDir`, NOT `job.dir`. `probeProject` takes the PROJECT
+    // directory and finds the app root itself (`detectAppRoot`), and
+    // `mergeStudioMeta` writes the profile into the project's own `.studio/`
+    // — which is where every reader looks. Passing the app root here was
+    // wrong twice on a monorepo (`sec-18`): it re-detected an app root
+    // RELATIVE to the app root, so the cached profile's paths were wrong, and
+    // it wrote them into a second `.studio/meta.json` inside the user's
+    // git-tracked application that nothing ever reads — leaving the very
+    // "zero registered package components" defect this re-probe exists to fix
+    // still present on exactly the imports most likely to hit it.
     try {
-      reprobeProjectProfile(job.dir)
+      reprobeProjectProfile(job.projectDir)
     } catch (err) {
       console.error('[studio:install] post-install re-probe failed:', err)
     }
@@ -398,7 +409,7 @@ async function runInstallJob(
     job.status = 'failed'
   }
   // Terminal write — the durability net a restart falls back to.
-  writeInstallJobFile(toPersistedRecord(job))
+  writeInstallJobFile(job.projectDir, toPersistedRecord(job))
 }
 
 /**
@@ -456,7 +467,7 @@ export function startInstallJob(
   // terminal record, `resolvePersistedJobStatus` still finds THIS record on
   // the next status query and correctly resolves it to 'interrupted' rather
   // than a job no one has ever heard of.
-  writeInstallJobFile(toPersistedRecord(job))
+  writeInstallJobFile(job.projectDir, toPersistedRecord(job))
 
   const opts = {
     timeoutMs: overrides.timeoutMs ?? DEFAULT_TIMEOUT_MS,
@@ -469,7 +480,7 @@ export function startInstallJob(
     console.error('[studio:install]', err)
     job.status = 'failed'
     job.finishedAt = Date.now()
-    writeInstallJobFile(toPersistedRecord(job))
+    writeInstallJobFile(job.projectDir, toPersistedRecord(job))
   })
 
   return id
@@ -504,9 +515,11 @@ export function getInstallJob(id: string): PublicInstallJob | null {
 
 /**
  * The one place that reconciles "found in memory" vs. "found on disk, but
- * the process that started it is gone." `appRoot` is the job's own spawn
- * `cwd` (`resolveAppRoot`'s result, already resolved/containment-checked by
- * the caller) — where `.studio/install-job.json` lives.
+ * the process that started it is gone." `projectDir` is the PROJECT directory
+ * (already resolved/containment-checked by the caller) — where
+ * `.studio/install-job.json` lives, because every `.studio/` sidecar is keyed
+ * on the project and never on the app root (`server-25`; see
+ * `installJobStore.ts`'s own doc for the monorepo defect that made it so).
  *
  * - In-memory hit: return it live (this IS the process that owns the job;
  *   its log/status are still growing).
@@ -519,8 +532,8 @@ export function getInstallJob(id: string): PublicInstallJob | null {
  * - Not in memory, persisted terminal status: return it as-is — a genuinely
  *   completed job surviving a restart, reported truthfully.
  */
-function resolvePersistedJobStatus(appRoot: string): PublicInstallJob | null {
-  const persisted = readInstallJobFile(appRoot)
+function resolvePersistedJobStatus(projectDir: string): PublicInstallJob | null {
+  const persisted = readInstallJobFile(projectDir)
   if (!persisted) return null
 
   const live = jobs.get(persisted.id)
@@ -537,16 +550,16 @@ function resolvePersistedJobStatus(appRoot: string): PublicInstallJob | null {
       `The server restarted while this install was running${persisted.pid !== null ? ` (pid ${persisted.pid})` : ''} — its outcome could not be observed. Check whether dependencies actually landed, then retry if not.`,
     ],
   }
-  writeInstallJobFile(interrupted)
+  writeInstallJobFile(projectDir, interrupted)
   return toPublicJobFromPersisted(interrupted)
 }
 
-/** By-id lookup with the disk fallback: in-memory first, then `.studio/install-job.json` under `appRootDir` (already resolved + containment-checked by the caller) when `appRootDir` is given and the id matches what's persisted there. `null` maps to a 404 at the route. */
-export function resolveInstallJobStatus(id: string, appRootDir?: string): PublicInstallJob | null {
+/** By-id lookup with the disk fallback: in-memory first, then `.studio/install-job.json` under `projectDir` (already resolved + containment-checked by the caller) when `projectDir` is given and the id matches what's persisted there. `null` maps to a 404 at the route. */
+export function resolveInstallJobStatus(id: string, projectDir?: string): PublicInstallJob | null {
   const live = getInstallJob(id)
   if (live) return live
-  if (!appRootDir) return null
-  const resolved = resolvePersistedJobStatus(appRootDir)
+  if (!projectDir) return null
+  const resolved = resolvePersistedJobStatus(projectDir)
   return resolved && resolved.id === id ? resolved : null
 }
 
@@ -634,18 +647,20 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
     // consulted to find `.studio/install-job.json` when THIS process has no
     // live memory of the job (e.g. it restarted since the job started). A
     // malformed/unsafe `dir` degrades to the in-memory-only lookup rather
-    // than 404ing the whole request over an optional param.
-    let appRootDir: string | undefined
+    // than 404ing the whole request over an optional param. The PROJECT
+    // directory, not `resolveAppRoot(dir)`: the sidecar is Studio's own and
+    // lives at the project root even when the app does not.
+    let projectDir: string | undefined
     const dirParam = url.searchParams.get('dir')
     if (dirParam) {
       try {
         const dir = resolveProjectDir(dirParam)
-        if (isDirWithinWorkspace(dir)) appRootDir = resolveAppRoot(dir)
+        if (isDirWithinWorkspace(dir)) projectDir = dir
       } catch {
-        // fall through with appRootDir left undefined
+        // fall through with projectDir left undefined
       }
     }
-    const job = resolveInstallJobStatus(id, appRootDir)
+    const job = resolveInstallJobStatus(id, projectDir)
     if (!job) return new Response('Not found', { status: 404 })
     return jsonResponse(job)
   }

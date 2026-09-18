@@ -329,7 +329,7 @@ export async function* streamClaudeCli(
 
   let configDir: string
   try {
-    configDir = ensureClaudeCliConfigDir(options.dataRoot ?? resolveClaudeCliDataRoot(), req.toolContextBase.userId)
+    configDir = await ensureClaudeCliConfigDir(options.dataRoot ?? resolveClaudeCliDataRoot(), req.toolContextBase.userId)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     yield { type: 'error', message: `Could not prepare the Claude CLI environment: ${detail}` }

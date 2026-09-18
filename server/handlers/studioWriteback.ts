@@ -101,6 +101,7 @@ export {
 // re-exported here because this is the front door every caller already uses.
 export {
   studioEditLocation,
+  canonicalSourceRel,
   isWritableSourceRel,
   isSharedSourceNodeId,
   orderStudioEditsForApply,
@@ -179,7 +180,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     }
   }
 
-  const target = studioEditLocation(edit.nodeId)
+  const target = studioEditLocation(dir, edit.nodeId)
   if (!target) return { applied: false } // synthetic node (e.g. body) — no source location
   const loc = { file: join(dir, target.rel), line: target.line, col: target.col }
 
@@ -279,9 +280,9 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // names an existing child of the container the element is landing in. A
       // foreign anchor is therefore dropped (append is an honest position),
       // exactly as `insert`/`reparent` treat theirs.
-      const destination = studioEditLocation(edit.parentNodeId)
+      const destination = studioEditLocation(dir, edit.parentNodeId)
       const anchorId = edit.anchorNodeId
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const result = applyTransplantEdit(
         loc,
         edit,
@@ -316,16 +317,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `applyStructuralEdit`'s call (a reparent refuses `cross-file`; an
       // insert appends).
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const parentId = 'parentNodeId' in edit ? edit.parentNodeId : undefined
-      const destination = parentId ? studioEditLocation(parentId) : null
+      const destination = parentId ? studioEditLocation(dir, parentId) : null
       // K3 — a `group` names the REST of its run. Same decoder, same guard,
       // same same-file filter as the anchor above; `applyStructuralEdit`
       // refuses when the filter dropped any of them, because a group that
       // quietly wrapped the subset that happened to be in this file would be
       // a write the user never asked for.
       const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
-        .map((nodeId) => studioEditLocation(nodeId))
+        .map((nodeId) => studioEditLocation(dir, nodeId))
         .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
       const result = applyStructuralEdit(
         loc,
@@ -372,7 +373,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `studioSlotWriteback.ts`'s own doc) — same cross-file guard
       // `move`/`insert` already apply above.
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const result = applySlotEdit(loc, edit, anchor && anchor.rel === target.rel ? anchor : null, dir, target.rel)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       // `applied` reads straight from the codemod's own answer (E2.2 — a
@@ -407,7 +408,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
  * place that knows the ordering/dedup/shift rules.
  */
 export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]): StudioEditBatchResult {
-  const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
+  const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, edits))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
   const touchedFiles = new Set<string>()
@@ -581,7 +582,7 @@ function recordCreatedPosition(
   nodeId: string,
   created: { line: number; col: number },
 ): void {
-  const location = studioEditLocation(nodeId)
+  const location = studioEditLocation(dir, nodeId)
   const file = studioEditFile(dir, nodeId)
   if (!location || !file) return
   into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })

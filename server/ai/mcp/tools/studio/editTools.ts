@@ -222,7 +222,7 @@ const codemodTool: AiTool = {
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
-    const loc = studioEditLocation(nodeId)
+    const loc = studioEditLocation(dir, nodeId)
     if (!loc) {
       return toolRefusal(
         'no-writable-location',

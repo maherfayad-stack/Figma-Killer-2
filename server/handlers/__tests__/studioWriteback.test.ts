@@ -18,7 +18,14 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { applyStudioEdit, applyStudioEditBatch, isSharedSourceNodeId, studioEditLocation } from '../studioWriteback'
+import {
+  applyStudioEdit,
+  applyStudioEditBatch,
+  canonicalSourceRel,
+  dedupeStudioEdits,
+  isSharedSourceNodeId,
+  studioEditLocation,
+} from '../studioWriteback'
 import { locateTag } from '../../../src/core/ast-codemods/__tests__/fixtureLocation'
 
 let tmpDir: string
@@ -42,7 +49,7 @@ const read = (relPath: string): string =>
 
 describe('studioEditLocation — writable-path guard', () => {
   it('accepts an ordinary workspace-relative source path', () => {
-    expect(studioEditLocation('src/screens/Home.jsx:10:5')).toEqual({
+    expect(studioEditLocation(tmpDir, 'src/screens/Home.jsx:10:5')).toEqual({
       rel: 'src/screens/Home.jsx',
       line: 10,
       col: 5,
@@ -50,7 +57,7 @@ describe('studioEditLocation — writable-path guard', () => {
   })
 
   it('accepts a dictionary module, which is where resolved copy lives', () => {
-    expect(studioEditLocation('src/i18n/translations.js:142:18')).toEqual({
+    expect(studioEditLocation(tmpDir, 'src/i18n/translations.js:142:18')).toEqual({
       rel: 'src/i18n/translations.js',
       line: 142,
       col: 18,
@@ -58,7 +65,7 @@ describe('studioEditLocation — writable-path guard', () => {
   })
 
   it('still resolves a composite (inlined) id to the component file', () => {
-    expect(studioEditLocation('pages/Home.jsx:77:19~components/Icon.jsx:3:6')).toEqual({
+    expect(studioEditLocation(tmpDir, 'pages/Home.jsx:77:19~components/Icon.jsx:3:6')).toEqual({
       rel: 'components/Icon.jsx',
       line: 3,
       col: 6,
@@ -74,7 +81,7 @@ describe('studioEditLocation — writable-path guard', () => {
     ['windows absolute', 'C:/Windows/win.ini:1:1'],
     ['empty segment', 'src/a//b.tsx:1:1'],
   ])('refuses %s', (_label, nodeId) => {
-    expect(studioEditLocation(nodeId)).toBeNull()
+    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
   })
 
   it.each([
@@ -83,7 +90,86 @@ describe('studioEditLocation — writable-path guard', () => {
     ['lockfile', 'bun.lock:1:1'],
     ['stylesheet', 'src/app.css:1:1'],
   ])('refuses %s — a writeback belongs on app source only', (_label, nodeId) => {
-    expect(studioEditLocation(nodeId)).toBeNull()
+    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
+  })
+})
+
+/**
+ * `sec-17` landmine 4, closed. The guard used to be purely lexical, so it had
+ * no opinion about two `rel`s that name ONE file — and two spellings do. The
+ * consequence was `transplantJsxElement` writing the destination and then
+ * clobbering it with the origin's text minus the moved element, reporting
+ * `{ ok: true }` over markup that now exists nowhere. `sec-17` fixed that one
+ * codemod; these drive the property itself.
+ */
+describe('studioEditLocation — two spellings of one file collapse to one target', () => {
+  it('canonicalises the casing a case-insensitive filesystem actually stores', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+
+    const asStored = studioEditLocation(tmpDir, 'pages/Home.tsx:1:27')
+    const asLowercased = studioEditLocation(tmpDir, 'pages/home.tsx:1:27')
+    expect(asStored?.rel).toBe('pages/Home.tsx')
+
+    // On a case-SENSITIVE filesystem `pages/home.tsx` is a different file that
+    // does not exist, so it keeps its lexical spelling and the two stay
+    // distinct — which is correct there. On Windows/macOS they are one file
+    // and must decode to one target.
+    const oneFile = fs.existsSync(path.join(tmpDir, 'pages', 'home.tsx'))
+    if (oneFile) expect(asLowercased?.rel).toBe('pages/Home.tsx')
+    else expect(asLowercased?.rel).toBe('pages/home.tsx')
+  })
+
+  it('resolves a symlinked directory back to the real one', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+    // A junction on Windows, a directory symlink elsewhere — the shape git
+    // stores and an imported repo carries.
+    let linked = true
+    try {
+      fs.symlinkSync(path.join(tmpDir, 'pages'), path.join(tmpDir, 'mirror'), 'junction')
+    } catch {
+      linked = false // unprivileged POSIX without symlink permission
+    }
+    if (!linked) return
+
+    expect(studioEditLocation(tmpDir, 'mirror/Home.tsx:1:27')?.rel).toBe('pages/Home.tsx')
+  })
+
+  it('dedupes two aliases of one file to a single edit', () => {
+    write('pages/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+    const deduped = dedupeStudioEdits(tmpDir, [
+      { kind: 'text', nodeId: 'pages/Home.tsx:1:27', text: 'first' },
+      { kind: 'text', nodeId: 'pages/home.tsx:1:27', text: 'second' },
+    ])
+
+    const oneFile = fs.existsSync(path.join(tmpDir, 'pages', 'home.tsx'))
+    expect(deduped).toHaveLength(oneFile ? 1 : 2)
+    if (oneFile) expect(deduped[0]).toMatchObject({ text: 'second' })
+  })
+
+  it('refuses a source symlink that points OUT of the project', () => {
+    // Lexically impeccable — no `..`, not absolute, a source extension — and
+    // written straight through the old guard.
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-outside-'))
+    try {
+      fs.writeFileSync(path.join(outside, 'secret.tsx'), 'export const secret = 1\n', 'utf8')
+      fs.mkdirSync(path.join(tmpDir, 'pages'), { recursive: true })
+      let linked = true
+      try {
+        fs.symlinkSync(path.join(outside, 'secret.tsx'), path.join(tmpDir, 'pages', 'escape.tsx'), 'file')
+      } catch {
+        linked = false
+      }
+      if (!linked) return
+
+      expect(studioEditLocation(tmpDir, 'pages/escape.tsx:1:1')).toBeNull()
+      expect(canonicalSourceRel(tmpDir, 'pages/escape.tsx')).toBeNull()
+      // …and the edit that would have used it writes nothing.
+      const result = applyStudioEdit(tmpDir, { kind: 'text', nodeId: 'pages/escape.tsx:1:1', text: 'pwned' })
+      expect(result.applied).toBe(false)
+      expect(fs.readFileSync(path.join(outside, 'secret.tsx'), 'utf8')).toBe('export const secret = 1\n')
+    } finally {
+      fs.rmSync(outside, { recursive: true, force: true })
+    }
   })
 })
 

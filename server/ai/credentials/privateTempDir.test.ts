@@ -9,7 +9,7 @@
  * the platform call: on Windows the real `icacls` runs.
  */
 import { afterAll, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { readFileProtection } from './fileProtection.testHelpers'
@@ -17,8 +17,10 @@ import {
   PRIVATE_DIR_MODE,
   PRIVATE_FILE_MODE,
   createPrivateTempDir,
+  ensurePrivateDirectory,
   restrictDirectoryToCurrentUser,
   writePrivateFileExclusive,
+  writePrivateFileReplacing,
 } from './privateTempDir'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 
@@ -211,5 +213,99 @@ describe('restrictDirectoryToCurrentUser — the Windows branch, driven explicit
     expect(String(logged[0]?.[0])).toContain('[ai/privateTempDir]')
     // The log says what happened and names no secret and no account.
     expect(String(logged[0]?.[0])).toContain('inherited ACL')
+  })
+})
+
+/**
+ * `sec-18` — the persistent-directory and rewritable-file halves, added so
+ * `mcpServerSecretStore.ts`, `cliMcpConnectionProbe.ts` and `claudeCliEnv.ts`
+ * stop each rolling their own `mkdirSync({ mode })` + `chmodSync`, which is
+ * the POSIX-only protection this whole module exists because of.
+ */
+describe('ensurePrivateDirectory', () => {
+  it('creates every missing level and protects the leaf in the terms this platform enforces', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'studio-private-ensure-'))
+    created.push(root)
+    const leaf = join(root, 'user-123', 'project-key')
+
+    expect(await ensurePrivateDirectory(leaf)).toBe(true)
+    expect(existsSync(leaf)).toBe(true)
+
+    const file = join(leaf, 'server.json')
+    writePrivateFileExclusive(file, '{"ciphertext":"not-a-real-secret"}')
+    const protection = readFileProtection(file)
+    if (process.platform === 'win32') {
+      expect(protection.acl).toHaveLength(1)
+      expect(protection.acl[0]).toEndWith(`${userInfo().username}:(I)(F)`)
+    } else {
+      expect(protection.dirMode).toBe(PRIVATE_DIR_MODE)
+      expect(protection.fileMode).toBe(PRIVATE_FILE_MODE)
+    }
+  })
+
+  it('is a no-op that spawns nothing when the directory already exists', async () => {
+    const dir = await makeDir()
+    const { spawn, calls } = fakeIcacls(0)
+    expect(await ensurePrivateDirectory(dir, { spawn })).toBe(true)
+    // The steady-state path: the second and every later secret write creates
+    // no directory, so it must not pay for a subprocess either.
+    expect(calls).toHaveLength(0)
+  })
+
+  it('reports failure when the platform call refuses, so the caller can fail closed', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'studio-private-ensure-fail-'))
+    created.push(root)
+    const { spawn } = fakeIcacls(5)
+    const originalError = console.error
+    console.error = () => {
+      // the refusal's own log is asserted elsewhere
+    }
+    try {
+      const applied = await ensurePrivateDirectory(join(root, 'leaf'), { spawn })
+      // On POSIX `chmodSync` really runs and really succeeds, so the injected
+      // `icacls` failure only reaches the answer on Windows.
+      expect(applied).toBe(process.platform !== 'win32')
+    } finally {
+      console.error = originalError
+    }
+  })
+})
+
+describe('writePrivateFileReplacing — a secret store that is legitimately rewritten', () => {
+  it('replaces the previous contents', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-replace-'))
+    created.push(dir)
+    const path = join(dir, 'server.json')
+    writePrivateFileReplacing(path, '{"v":1}')
+    writePrivateFileReplacing(path, '{"v":2}')
+    expect(readFileSync(path, 'utf8')).toBe('{"v":2}')
+    if (process.platform !== 'win32') expect(readFileProtection(path).fileMode).toBe(PRIVATE_FILE_MODE)
+  })
+
+  it('leaves no staging file behind', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-replace-clean-'))
+    created.push(dir)
+    writePrivateFileReplacing(join(dir, 'server.json'), '{"v":1}')
+    expect(readdirSync(dir)).toEqual(['server.json'])
+  })
+
+  it('never writes into a file another principal already owns — the rename brings its OWN object', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-replace-dacl-'))
+    created.push(dir)
+    const path = join(dir, 'server.json')
+    writeFileSync(path, 'PLANTED')
+    if (process.platform === 'win32') {
+      expect(Bun.spawnSync(['icacls', path, '/grant', 'BUILTIN\\Users:(R)']).exitCode).toBe(0)
+      expect(readFileProtection(path).acl.some((ace) => ace.startsWith('BUILTIN\\Users:'))).toBe(true)
+    }
+
+    writePrivateFileReplacing(path, '{"ciphertext":"not-a-real-secret"}')
+
+    expect(readFileSync(path, 'utf8')).toBe('{"ciphertext":"not-a-real-secret"}')
+    // A plain truncating write would have kept the planted DACL. The rename
+    // replaces the OBJECT, so the attacker's ACE is gone with it.
+    if (process.platform === 'win32') {
+      expect(readFileProtection(path).acl.some((ace) => ace.startsWith('BUILTIN\\Users:'))).toBe(false)
+    }
   })
 })

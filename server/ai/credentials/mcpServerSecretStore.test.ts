@@ -1,7 +1,9 @@
 import { describe, expect, it, beforeEach, afterEach } from 'bun:test'
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join, resolve } from 'node:path'
+import { userInfo } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
+import { readFileProtection } from './fileProtection.testHelpers'
 import {
   setMcpServerSecret,
   getMcpServerSecret,
@@ -116,5 +118,62 @@ describe('mcpServerSecretStore', () => {
     await expect(getMcpServerSecret('user-1', 'proj-a', 'figma', 'TOKEN', dataRoot)).rejects.toThrow(
       McpServerSecretKeyMismatchError,
     )
+  })
+})
+
+/**
+ * `sec-18` — the ON-DISK protection, not the encryption. The envelope is
+ * ciphertext plus a key fingerprint, which is why `server-25` and `sec-15`
+ * both recorded this store as "less urgent, still open": it was protected by
+ * `mkdirSync({ mode })` + `chmodSync`, which is real on POSIX and decides
+ * nothing on Windows.
+ */
+describe('mcpServerSecretStore — how the file is protected on disk', () => {
+  let dataRoot: string
+
+  beforeEach(() => {
+    dataRoot = mkdtempSync(join(tmpdir(), 'mcp-server-secrets-acl-'))
+  })
+
+  afterEach(() => {
+    rmSync(dataRoot, { recursive: true, force: true })
+  })
+
+  it('leaves the envelope openable only by this account', async () => {
+    await setMcpServerSecret('user-1', 'my-project', 'figma', 'FIGMA_TOKEN', 'sk-not-a-real-token', dataRoot)
+    const path = join(dataRoot, 'user-1', 'my-project', 'figma.json')
+    const protection = readFileProtection(path)
+
+    if (process.platform === 'win32') {
+      expect(protection.acl).toHaveLength(1)
+      expect(protection.acl[0]).toContain(userInfo().username)
+    } else {
+      expect(protection.fileMode).toBe(0o600)
+      expect(protection.dirMode).toBe(0o700)
+    }
+  })
+
+  it('does not write into a file another principal planted — the rewrite brings its own object', async () => {
+    const path = join(dataRoot, 'user-1', 'my-project', 'figma.json')
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, '{}')
+    if (process.platform === 'win32') {
+      expect(Bun.spawnSync(['icacls', path, '/grant', 'BUILTIN\\Users:(R)']).exitCode).toBe(0)
+    }
+
+    await setMcpServerSecret('user-1', 'my-project', 'figma', 'FIGMA_TOKEN', 'sk-not-a-real-token', dataRoot)
+
+    expect(await getMcpServerSecret('user-1', 'my-project', 'figma', 'FIGMA_TOKEN', dataRoot)).toBe('sk-not-a-real-token')
+    if (process.platform === 'win32') {
+      // A truncating `writeFileSync` would have kept the planted ACE, because
+      // truncation does not reset a DACL (`sec-15`, measured).
+      expect(readFileProtection(path).acl.some((ace) => ace.startsWith('BUILTIN\\Users:'))).toBe(false)
+    }
+  })
+
+  it('leaves no staging file behind after a rewrite', async () => {
+    await setMcpServerSecret('user-1', 'my-project', 'figma', 'A', 'one', dataRoot)
+    await setMcpServerSecret('user-1', 'my-project', 'figma', 'B', 'two', dataRoot)
+    expect(readdirSync(join(dataRoot, 'user-1', 'my-project'))).toEqual(['figma.json'])
   })
 })
