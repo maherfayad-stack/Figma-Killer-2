@@ -386,6 +386,9 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. Mounted by `PanelBoundary`, once per seam, named after that seam's `location`. |
 | 🟢 `src/admin/pages/site/ui/PanelBoundary/` | ONE editor panel / inspector tab / inspector section = ONE failure domain (`panel-40`). `frame="panel"` draws its own title row; `frame="section"` reuses the `Section` primitive's header. Mounted by `InspectorShell`, `StyleSurface`, `LeftSidebar`, `RightSidebar`, `AdminCanvasEditorBody`. |
 | 🟢 `src/admin/pages/site/store/slices/site/visibilityActions.ts` | `setNodesHidden` / `setNodesLocked` — the two named tree-mutation actions that fan `node.hidden`/`node.locked` over N ids in ONE history entry. Absolute, never a toggle. |
+| 🟡 `tests/e2e/github-sync.e2e.ts` | The G8 dogfood against a REAL private GitHub repository — the only spec that talks to a third party. Self-skips without `gh auth token`. Three cases are `test.fail()` naming `proto-01`. |
+| 🟡 `tests/e2e/helpers/githubScratchRepo.ts` | Create/seed/read/destroy a throwaway private GitHub repo, and run `git` with gh's credential for one invocation. The token never enters this process except for the one `fill()` step 1 needs. |
+| 🟡 `src/admin/pages/site/inspector/PanelCrashProbe.tsx` | Dev-only, build-time-erased seam that makes a panel throw on demand, so Z2's "renders in place, never toasts" is checkable in a browser. |
 
 ## Not ours (dormant CMS)
 
