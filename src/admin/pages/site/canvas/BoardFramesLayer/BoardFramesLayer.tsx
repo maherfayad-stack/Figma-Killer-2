@@ -65,53 +65,37 @@
  * `BreakpointSelectionOverlay` queries each frame's own iframe document by
  * node id.
  *
- * Virtualization: a live `BreakpointFrame` (iframe + full `NodeRenderer`
- * tree) is only mounted for frames whose board-space rect intersects the
- * current viewport, inflated by `FRAME_VIEWPORT_MARGIN` (see
+ * Virtualization + the mount pool: a live `BreakpointFrame` (iframe + full
+ * `NodeRenderer` tree) is only mounted for frames whose board-space rect
+ * intersects the current viewport, inflated by `FRAME_VIEWPORT_MARGIN` (see
  * `frameVirtualization.ts`) so scrolling/panning doesn't pop iframes in and
- * out right at the edge, PLUS the recently-departed frames the mount pool
- * still holds (`frameMountPool.ts`, S1) — leaving the viewport no longer
- * throws a document away, so panning back to where you just were costs
- * nothing at all. The pool is capped at `max(8, onScreen + 4)` and evicts
- * least-recently-on-screen, because each live frame is a whole document with
- * its own copy of every stylesheet. Frames outside both sets render a static
- * placeholder body instead — no iframe, no animation. Only the BODY is swapped: the outer
- * `.frame` div, its position (`--frame-x/--frame-y`), the drag header, and
- * its title/rename/context-menu all stay mounted and functional on
- * placeholders too, so position, activation, drag, rename, and removal work
- * regardless of on-screen state. `key={frame.id}` on the list (WS-10 Phase 2
- * — was `page.id`, which two "duplicate as variant" frames of one page would
+ * out right at the edge, PLUS the recently-departed frames the pool still
+ * holds (`framePool.ts`) — leaving the viewport no longer throws a document
+ * away, so panning back to where you just were costs nothing at all.
+ * Eviction is least-recently-on-screen, and the budget is the ONE thing that
+ * varies: `framePoolBudget('portal', n)` for the same-origin `srcDoc` frames
+ * every Tier 0/1 board renders, `framePoolBudget('live', n)` for the Tier-2
+ * (`trust === 'run-project'`) frames whose `LiveBoardFrame` is a fallback
+ * document AND a cross-origin bridge iframe against a real dev-server
+ * process. There is one pool, one retention list and one budget per render —
+ * see `framePool.ts` for why there used to be two, and what each budget is
+ * measured against.
+ *
+ * Frames outside the pool render a static placeholder body instead — no
+ * iframe, no animation. Only the BODY is swapped: the outer `.frame` div,
+ * its position (`--frame-x/--frame-y`), the drag header, and its
+ * title/rename/context-menu all stay mounted and functional on placeholders
+ * too, so position, activation, drag, rename, and removal work regardless of
+ * on-screen state. `key={frame.id}` on the list (WS-10 Phase 2 — was
+ * `page.id`, which two "duplicate as variant" frames of one page would
  * collide on) ensures React cleanly (re)mounts a fresh iframe when a frame
  * re-enters the viewport, and gives each variant its own component identity.
  *
- * Live-frame pool (L8 Phase B, `perf-06`, STATE.md): a SEPARATE, additive
- * concern from the virtualization above, gated on `trust === 'run-project'`
- * — Tier 0/1 boards keep TODAY'S "every on-screen frame mounts, every
- * offscreen frame is a poster, unconditionally" behavior byte-for-byte,
- * forever. `isOnScreen` alone answers "does this frame's placeholder vs. its
- * full `BreakpointFrame` render?" — cheap for Tier 0/1's same-origin portal
- * iframes, and it stays the ONLY signal `BoardFrameView` gets for those
- * boards (`isLiveMounted` is passed as `undefined` below when
- * `trust !== 'run-project'`, so `BoardFrameView`'s own `isLiveMounted ??
- * isOnScreen` fallback reproduces the pre-pool behavior exactly). A Tier-2
- * frame's live bridge iframe is a real, expensive, cross-origin dev-server
- * connection, so on a Tier-2 board a SECOND, decoupled flag governs whether
- * a specific frame keeps its bridge iframe hot: every on-screen frame is
- * always hot, plus up to `LIVE_FRAME_POOL_SIZE` more
- * recently-visible-but-now-offscreen frames (an LRU warm cache — panning
- * back to a recently-seen screen shows it live immediately instead of
- * re-booting). `computeHotFrameIds` (pure, see `liveFramePool.ts`) computes
- * this every render from this render's visible ids plus the PREVIOUS
- * render's hot-set, stored in `previousHotFrameIds` STATE (not a ref —
- * `react-hooks/refs`, part of this repo's React Compiler lint set, flags
- * reading `ref.current` during render; `useState` plus the "adjust state
- * during rendering" escape hatch — react.dev's own documented pattern for
- * exactly this "remember what the last render computed" need — is the
- * compiler-legal shape used below). The hot-set
- * itself is computed unconditionally every render (cheap, trust-independent
- * — see the comment at its call site for why bothering to gate the
- * COMPUTATION itself would just be extra branching for no real savings);
- * only the PROP threaded to each `BoardFrameView` is trust-gated.
+ * The retention list lives in `useState` (not a ref — `react-hooks/refs`,
+ * part of this repo's React Compiler lint set, flags reading `ref.current`
+ * during render) and is advanced DURING render through react.dev's
+ * "adjusting state when something changes" pattern; the `key` tag on it is
+ * what stops that looping. See the call site.
  *
  * Self-gates on `selectHasActiveBoard`: renders nothing outside studio board
  * mode, so `CanvasTransformLayer` can always mount it without an extra check.
@@ -148,8 +132,7 @@ import { CanvasViewportActionsContext } from '../CanvasContexts'
 import { AddPagePicker } from './AddPagePicker'
 import { FRAME_WIDTH, FRAME_HEIGHT, FRAME_HEADER_HEIGHT } from '@core/studio-board'
 import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
-import { computeHotFrameIds, LIVE_FRAME_POOL_SIZE } from './liveFramePool'
-import { nextFrameRetention, sameFrameRetention } from './frameMountPool'
+import { nextFramePool, sameFramePool, type FrameMountCost } from './framePool'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useMarqueeSelection } from './useMarqueeSelection'
@@ -162,24 +145,18 @@ import styles from './BoardFramesLayer.module.css'
 // exceeded" render loop once anything downstream reacts to the selected value).
 const EMPTY_PAGES: (Page | null)[] = []
 
-/** L8 Phase B (`perf-06`) — content equality for the live-frame pool's "did the hot-set actually change" check (see the "Adjust state during rendering" comment at its call site). Order-sensitive: `computeHotFrameIds`'s output order IS the LRU record the next call reads back. */
-function sameFrameIdOrder(a: readonly string[], b: readonly string[]): boolean {
-  if (a.length !== b.length) return false
-  return a.every((id, i) => id === b[i])
-}
-
 /** Stable empty retention, for the same "never a fresh literal" reason. */
 const EMPTY_RETENTION: string[] = []
 
 /**
- * The mount pool's retention order, tagged with the on-screen set it was
- * derived from. The tag is what lets the derivation happen during render
- * without looping — see the `useState` below.
+ * The pool's membership, tagged with the inputs it was derived from. The tag
+ * is what lets the derivation happen during render without looping — see the
+ * `useState` below.
  */
 interface FrameRetention {
-  /** The `onScreenKey` this order was computed for. */
+  /** The `poolKey` this membership was computed for — on-screen ids plus the frame cost. */
   key: string
-  /** Most-recently-on-screen first. See `frameMountPool.ts`. */
+  /** Most-recently-on-screen first. See `framePool.ts`. */
   ids: string[]
 }
 
@@ -236,10 +213,18 @@ export function BoardFramesLayer() {
     return () => observer.disconnect()
   }, [viewportActions])
 
-  // S1 — the mount pool's retention order (most-recently-on-screen first).
-  // See `frameMountPool.ts`; the derivation itself is below, next to the
-  // on-screen set it needs.
+  // The pool's membership (most-recently-on-screen first). See
+  // `framePool.ts`; the derivation itself is below, next to the on-screen set
+  // it needs.
   const [retention, setRetention] = useState<FrameRetention>(INITIAL_RETENTION)
+  // What one mounted frame costs on this board, and therefore how big the
+  // pool may be. A Tier-2 frame is a `LiveBoardFrame`: a fallback document
+  // AND a cross-origin bridge iframe against a real dev-server process, so it
+  // gets the capped `'live'` budget; every other board's frames are cheap
+  // same-origin portal frames. This is the ONLY place the trust tier touches
+  // mounting.
+  const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
+  const frameCost: FrameMountCost = trust === 'run-project' ? 'live' : 'portal'
 
   // Resolved frames + the viewport intersection test, hoisted ABOVE this
   // component's `hasActiveBoard` early return because the retention effect
@@ -260,7 +245,10 @@ export function BoardFramesLayer() {
       ),
     )
     .map(({ frame }) => frame.id)
-  const onScreenKey = onScreenFrameIds.join('|')
+  // Tagged with the cost too: auto-promotion to Tier 2 (and its Undo) can
+  // flip the budget under a board that has not panned at all, and the pool
+  // has to be recomputed when it does.
+  const poolKey = `${frameCost}:${onScreenFrameIds.join('|')}`
 
   // Advance the retention DURING render, React's documented "adjusting state
   // when something changes" pattern, rather than from an effect.
@@ -272,16 +260,17 @@ export function BoardFramesLayer() {
   // component's own render makes React discard the in-progress pass and
   // re-run it immediately: one commit, no effect, nothing to tear.
   //
-  // `key` is the guard that stops it looping. It is the JOINED on-screen ids,
-  // not the array, because a fresh array identity every render would make
-  // "did membership change?" always true — and the whole point is that a pan
-  // which moved no frame across the margin changes nothing at all.
-  let retainedFrameIds = retention.ids
-  if (retention.key !== onScreenKey) {
+  // `key` is the guard that stops it looping. It is the JOINED on-screen ids
+  // (plus the cost), not the array, because a fresh array identity every
+  // render would make "did membership change?" always true — and the whole
+  // point is that a pan which moved no frame across the margin changes
+  // nothing at all.
+  let pooledFrameIds = retention.ids
+  if (retention.key !== poolKey) {
     const known = new Set(framesWithPages.map(({ frame }) => frame.id))
-    const next = nextFrameRetention(retention.ids, onScreenFrameIds, known)
-    retainedFrameIds = sameFrameRetention(retention.ids, next) ? retention.ids : next
-    setRetention({ key: onScreenKey, ids: retainedFrameIds })
+    const next = nextFramePool(retention.ids, onScreenFrameIds, known, frameCost)
+    pooledFrameIds = sameFramePool(retention.ids, next) ? retention.ids : next
+    setRetention({ key: poolKey, ids: pooledFrameIds })
   }
 
   // Marquee drag (WS-7.1) — screen-space rect, portaled outside the
@@ -291,35 +280,15 @@ export function BoardFramesLayer() {
   // its "are we on a studio board?" gate — `.layer` renders in board mode only.
   const layerRef = useRef<HTMLDivElement>(null)
   const marqueeRect = useMarqueeSelection(viewportActions?.canvasRootRef, layerRef)
-  // Live-frame pool's OWN trust gate (see the module doc) — `undefined` here
-  // is what makes Tier 0/1 boards byte-for-byte unaffected below.
-  const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-
-  // Live-frame pool (L8 Phase B) — see the module doc's "Live-frame pool"
-  // note. It reads the SAME `onScreenFrameIds` S1's mount pool derived above:
-  // both pools answer "which frames are on screen, plus which recently were",
-  // and computing the viewport intersection twice per render would be two
-  // passes that can disagree. S1's retention governs every portal frame;
-  // this capped hot set governs a Tier-2 frame, which costs a process.
-  const [previousHotFrameIds, setPreviousHotFrameIds] = useState<string[]>([])
-  const hotFrameIds = computeHotFrameIds(onScreenFrameIds, previousHotFrameIds, LIVE_FRAME_POOL_SIZE)
-  // "Adjust state during rendering" (react.dev) — only calls `setState` when
-  // the computed hot-set actually differs in content from what's stored, so
-  // this terminates in one extra render rather than looping: the next call
-  // to `computeHotFrameIds` with `previousHotFrameIds === hotFrameIds`'s
-  // content produces the SAME `hotFrameIds` again (deterministic given the
-  // same `onScreenFrameIds`), which then compares equal and skips the call.
-  if (!sameFrameIdOrder(hotFrameIds, previousHotFrameIds)) {
-    setPreviousHotFrameIds(hotFrameIds)
-  }
-  const hotFrameIdSet = new Set(hotFrameIds)
 
   if (!hasActiveBoard) return null
 
   const onScreenFrameIdSet = new Set(onScreenFrameIds)
-  // Live = on screen, plus whatever the pool still holds. A retained frame is
-  // invisible; it is mounted purely so coming back is free.
-  const liveFrameIds = new Set([...onScreenFrameIds, ...retainedFrameIds])
+  // The pool list already leads with every on-screen id (both budgets are
+  // `>= onScreenIds.length`, so the truncation can only bite into the
+  // retained tail), so this set IS "which frames hold an iframe". A pooled
+  // frame is invisible; it is mounted purely so coming back is free.
+  const pooledFrameIdSet = new Set(pooledFrameIds)
 
   // One bounding box around the whole multi-selection (board-space, so it
   // lives inside `.layer` and pans/zooms with the frames it encloses).
@@ -378,8 +347,7 @@ export function BoardFramesLayer() {
               isActive={page.id === activePageId}
               isSelected={selectedFrameIds.includes(page.id)}
               isOnScreen={onScreenFrameIdSet.has(frame.id)}
-              isMounted={liveFrameIds.has(frame.id)}
-              isLiveMounted={trust === 'run-project' ? hotFrameIdSet.has(frame.id) : undefined}
+              isMounted={pooledFrameIdSet.has(frame.id)}
             />
           )
         })

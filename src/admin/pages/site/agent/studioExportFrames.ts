@@ -65,7 +65,7 @@ import type { EditorStore } from '@site/store/types'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { FRAME_WIDTH, FRAME_HEIGHT } from '@core/studio-board'
 import { getAgentStoreApi } from './storeRef'
-import { captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
+import { agentRenderFrameMountReason, captureAgentRenderSnapshot, waitForAgentRenderFrame } from './renderEvidence'
 import { settleCaptureDocument } from '../canvas/canvasCaptureSettle'
 
 type StudioExportFramesInput = Static<typeof StudioExportFramesInputSchema>
@@ -166,10 +166,17 @@ async function exportFrames(input: StudioExportFramesInput): Promise<AiToolOutpu
         FRAME_MOUNT_TIMEOUT_MS,
       )
       if (!mounted) {
+        // Say WHY, from the one module that decides it (`framePool.ts`). The
+        // pan above should have put this frame on screen, so `offscreen` here
+        // means the mount pool never took it and the board's viewport read is
+        // the thing to look at; `on-screen`/`pooled` means the frame IS
+        // mounted and it is the staged node tree (`perf-08`) that never
+        // landed. Those are different bugs and used to read identically.
+        const mountReason = agentRenderFrameMountReason(pageId)
         results.push({
           pageId,
           ok: false,
-          error: `Frame for page ${pageId} did not mount within ${FRAME_MOUNT_TIMEOUT_MS}ms (frame size ${frameWidth}x${frameHeight}).`,
+          error: `Frame for page ${pageId} did not become ready within ${FRAME_MOUNT_TIMEOUT_MS}ms (frame size ${frameWidth}x${frameHeight}, mount state: ${mountReason ?? 'not on the board'}).`,
         })
         continue
       }

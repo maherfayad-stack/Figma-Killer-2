@@ -1051,14 +1051,50 @@ streams store updates continuously). Measured: staged, the transient frame's
 body held **0 children for the whole 5 s `waitForAgentRenderFrame` window** and
 the capture failed with "did not become ready".
 
-**`frameMountPool.ts` — leaving the viewport no longer throws a document
-away.** A departed frame stays mounted while the pool has room
-(`max(8, onScreen + 4)`, evicted least-recently-on-screen), so panning back to
-where you just were costs nothing. The cap is a memory ceiling, not a target:
-each live frame is a whole document with its own copy of every stylesheet.
-`BoardFrameView` takes `isOnScreen` (drives poster CAPTURE — the picture has to
-be taken while the frame is genuinely visible) and `isMounted` (drives the live
-frame) as two separate props for this reason.
+### `framePool.ts` — the ONE module that answers "is frame X mounted, and why"
+
+**Leaving the viewport no longer throws a document away.** A departed frame
+stays mounted while the pool has room, evicted least-recently-on-screen, so
+panning back to where you just were costs nothing. The cap is a memory ceiling,
+not a target: each live frame is a whole document with its own copy of every
+stylesheet.
+
+There were two pools until `perf-9` merged them — S1's `frameMountPool.ts` for
+portal frames and L8 Phase B's `liveFramePool.ts` for Tier-2 live frames. They
+ran the same algorithm and differed only in budget, `BoardFramesLayer` computed
+both on every render and threw one away, and `BoardFrameView` re-derived which
+applied from the trust tier (`isLiveMounted ?? isMounted ?? isOnScreen`). Now
+there is one policy, parameterised by what a frame **costs**:
+
+| `FrameMountCost` | A mounted frame is | Budget |
+|---|---|---|
+| `'portal'` (Tier 0/1) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
+| `'live'` (Tier 2) | `LiveBoardFrame`: a Tier-0 fallback document **and** a cross-origin bridge iframe against a real dev-server process — two documents until it reports ready | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+
+The cost is derived from the trust tier in `BoardFramesLayer` and **nowhere
+else**; the tier no longer reaches mounting at all. One retention list, one
+`useState`, one budget per render. Switching tier (Tier-2 auto-promotion, or
+its Undo) is part of the retention key, so the pool resizes without a pan.
+
+`resolveFrameMount({ isOnScreen, isPooled })` is the single per-frame answer,
+returning `{ mounted, reason }` where `reason` is `on-screen` / `pooled` /
+`offscreen`. `BoardFrameView` stamps it on the frame element as
+**`data-frame-mount`**, so the answer is legible from the DOM — to
+`src/__tests__/canvas/framePoolMountReason.test.tsx` (which asserts the mounted
+count against `framePoolBudget` at every step of a scripted pan across a
+24-frame board, for both costs), to `agentRenderFrameMountReason` in
+`agent/renderEvidence.ts` (so a timed-out `studio_export_frames` says whether
+the frame was never pooled or was mounted-but-not-ready), and to a human
+dogfooding a pan with devtools open.
+
+`isPooled` — and `BoardFrameView`'s `isMounted` prop — are **optional**, and
+must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
+while visible", and making it required silently renders nothing at all for
+every such caller with no `tsc` error (`meta-14` landmine 1;
+`boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
+prop because it drives poster CAPTURE — the picture has to be taken while the
+frame is genuinely visible, which is a different question from whether it holds
+an iframe.
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:
