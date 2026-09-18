@@ -17,6 +17,7 @@
  * writeback all read one verdict, which is what keeps a lifted refusal from
  * being lifted in one surface and forgotten in another.
  */
+import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
 import { isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
 import { getParent } from './selectors'
 import {
@@ -347,10 +348,22 @@ export type StructuralGroupPreview =
  * A selection of ONE is a legitimate group and returns a one-element commit:
  * the store writes it through the existing single-element `wrap`, so ⌘G on one
  * node is the write that already shipped.
+ *
+ * `htmlTagOf` (`struct-11`) is the caller's answer to "what intrinsic HTML
+ * element is this node?" — injected rather than derived here for the reason
+ * `parsedPageToSitePage`'s resolvers are: the mapping lives in the module
+ * registry, and `@core/page-tree` must not depend on `@core/module-engine`.
+ * With it, a group that could only produce invalid markup (a `<div>` inside a
+ * `<p>`, a container inside a `<ul>`) is refused HERE — before the round trip,
+ * with a dialog and a way forward. Without it the check is simply not made and
+ * the codemod is still the authority: `wrapJsxElements` asks the same question
+ * of the real AST and refuses there. A resolver that cannot name a tag returns
+ * `null`, which is read as "no opinion" and never as a refusal.
  */
 export function previewStructuralGroup(
   tree: NodeTree<PageNode>,
   nodeIds: readonly string[],
+  htmlTagOf?: (node: PageNode) => string | null,
 ): StructuralGroupPreview {
   const nodes = nodeIds.map((id) => tree.nodes[id]).filter((node): node is PageNode => node !== undefined)
   if (nodes.length === 0) return { ok: true, commit: null }
@@ -403,7 +416,43 @@ export function previewStructuralGroup(
 
   // Ordered by the CHILD LIST, not by the order the user clicked: the wrapper
   // is written around a span, and a span runs in source order.
-  return { ok: true, commit: parent.children.filter((childId) => selected.has(childId)) }
+  const commit = parent.children.filter((childId) => selected.has(childId))
+
+  if (htmlTagOf) {
+    const choice = chooseGroupWrapperTag({
+      ancestorTags: ancestorHtmlTags(tree, parent, htmlTagOf),
+      memberTags: commit.map((id) => (tree.nodes[id] ? htmlTagOf(tree.nodes[id]!) : null)),
+    })
+    // `nodeId` is the PARENT, not a member: the element a person has to look
+    // at to understand this refusal is the one whose content model forbids the
+    // container, and `origin`/"Open it in code" point at whatever `nodeId`
+    // names.
+    if (!choice.ok) return { ok: false, refusal: { reason: 'content-model', message: choice.message }, nodeId: parent.id }
+  }
+
+  return { ok: true, commit }
+}
+
+/**
+ * The tags above `parent`, immediate parent first, for
+ * `resolveContentModel`'s walk. Stops at the first node whose tag the caller
+ * cannot name — a component's children land inside markup that is in another
+ * file, so nothing above it is the real parent either.
+ */
+function ancestorHtmlTags(
+  tree: NodeTree<PageNode>,
+  parent: PageNode,
+  htmlTagOf: (node: PageNode) => string | null,
+): (string | null)[] {
+  const tags: (string | null)[] = []
+  let current: PageNode | undefined = parent
+  while (current) {
+    const tag = htmlTagOf(current)
+    tags.push(tag)
+    if (tag === null) return tags
+    current = getParent(tree, current.id) ?? undefined
+  }
+  return tags
 }
 
 /**
