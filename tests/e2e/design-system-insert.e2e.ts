@@ -2,7 +2,10 @@ import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
+  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
+  openFixtureBoard,
+  panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -46,8 +49,6 @@ import {
  * asserts would hold. Only the RESOLVED path matters, so the stub below does
  * not have to be the real design system — Studio never renders from it.
  */
-
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const DS = '../design-system'
 
 /**
@@ -88,19 +89,26 @@ test.afterAll(() => {
   if (fixture) removeFixtureProject(fixture)
 })
 
-/** Open the studio board on the fixture — safe to write because it is in the run's throwaway workspace copy. */
-async function openStudioBoard(page: Page, projectDir: string): Promise<FrameLocator> {
-  await page.addInitScript((dir: string) => {
-    window.localStorage.setItem('studio:studio:dir', dir)
-    window.localStorage.setItem('studio:studio', '1')
-    window.localStorage.setItem('studio-editor-prefs', JSON.stringify({ autoSave: true }))
-  }, projectDir)
-
-  await page.goto('/admin/site?studio')
-  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
+/**
+ * Open the board on the fixture - safe to write because it lives in this
+ * run's throwaway workspace copy.
+ *
+ * `openFixtureBoard` rather than a private `goto`: the canvas has no scroll
+ * container, so where a frame LANDS is decided by a "center on open" pass that
+ * races the arrival of the page documents it centres on. On a cold load the
+ * board can settle pointed somewhere with no frame in it, and every assertion
+ * about what the frame renders then fails for a reason that has nothing to do
+ * with the component under test. The shared opener resets the view with the
+ * product's own Ctrl+0 first.
+ */
+async function openStudioBoard(page: Page): Promise<FrameLocator> {
+  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = page.locator('[data-page-id]').first()
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 30_000 })
+  await panIntoView(page, canvasRoot, frame)
+  await expect(
+    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    'the fixture frame never mounted a live canvas iframe after being panned into view',
+  ).toBeVisible({ timeout: 60_000 })
   return frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
 }
 
@@ -109,7 +117,7 @@ test.describe('design-system components on a studio board', () => {
   test.setTimeout(180_000)
 
   test('package CSS actually applies — the reset must not outrank @layer vendor', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixture.dir)
+    const contentFrame = await openStudioBoard(page)
 
     const button = contentFrame.locator('button.btn').first()
     await expect(button).toBeVisible({ timeout: 15_000 })
@@ -149,7 +157,7 @@ test.describe('design-system components on a studio board', () => {
   })
 
   test('inserting a component from the picker writes the .tsx and comes back as a real node', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixture.dir)
+    const contentFrame = await openStudioBoard(page)
     expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
 
     // The Assets panel replaced the full-screen inserter dialog. It is docked,

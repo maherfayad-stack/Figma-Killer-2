@@ -17437,3 +17437,43 @@ entry id. Nothing was discarded.
 - `2026-09-02` — canvas-14 — every agent turn broke the canvas until a manual refresh: the reload applied pages against the PREVIOUS stylesheet
 
 </details>
+
+## `e2e-1` — the cold-suite triage (2026-09-19, orchestrator)
+
+**Branch** `test/e2e-cold-suite-triage`, PR #192 (draft → `main`), commit `909920ed`.
+Record: **`docs/e2e/COLD-SUITE-TRIAGE.md`** — every one of the 68 failures mapped to a cause
+with the product file that proves it.
+
+**Baseline** on the wave-3 head: `68 unexpected / 49 expected / 14 skipped`, 1.1 h.
+"Expected" includes the `test.fail()`-annotated cases, so github-sync 2b/6b/8 and agent-turn's
+fidelity case are already-owned defects, not part of the 68.
+
+**Durable facts a future agent must not rediscover:**
+
+1. **A studio spec must open the board with `openFixtureBoard`, never its own `goto`.** The
+   canvas has no scroll container; where a frame lands is decided by a "center on open" pass
+   that races the arrival of the page documents it centres on. On a cold load the board settles
+   pointed somewhere with no frame in it, `page.mouse.click(box.x + w/2, …)` lands on empty
+   canvas, and the failure reads like a product bug ("selecting X did not bind the Style
+   panel", "the element never appeared in the layers tree"). `openFixtureBoard` presses the
+   product's own **Ctrl+0**; `panIntoView` puts the target under the pointer. Three specs had
+   private copies without either, and that alone accounted for 4 of the 7 Studio-native reds.
+2. **The single-selection write target is the ClassPicker pill, not `StyleTargetChip`.**
+   panel-41 (wave 3) deleted `WriteTargetRow`; `StyleTargetChip` now renders only for a
+   multi-selection (`MultiSelectTargetBar.tsx`). Use `class-chip-<name>`, and read writability
+   off the enclosing `write-target-chip-<classId>`'s `data-locked`.
+3. **Size lives in Measures.** `MIGRATED_SECTION_PROPERTIES` absorbed the old `position` +
+   `size` + `appearance` sections; `MeasuresSection` renders `SizeSection` and is always
+   mounted. Width is `css-size-input-width` → `textbox[name="Width"]`.
+4. **A same-file reparent is a WRITE, not a refusal** (W4-1, `moveJsxElement.ts`), and a
+   cross-file one is `transplantJsxElement.ts`. The refusal that survives is about scope
+   (`freeVariablesOutOfScopeAt`). No e2e covers the scope refusal — that gap is open.
+5. **The e2e suite's CMS half tests a product with no UI.** `openExplorerTab`/`createPage` drive
+   an Explorer tab row and a name+slug dialog that no longer exist (`ExplorerPanel.tsx` says so
+   in its own docblock; `AddPagePicker` takes neither), and the Studio toolbar has **no Publish
+   action at all** — `toolbar-publish-actions-trigger` appears nowhere in `src/`. That is ~56
+   tests across 15 files. Deciding re-point vs delete, test by test, is the open work.
+
+**Next step:** the owner decides whether to rewrite the CMS half of the suite against the board
+model. Until then the cold suite cannot be green, and §8's last DoD line stays unmet — but it is
+now unmet for a reason that is written down rather than unknown.
