@@ -354,7 +354,7 @@ describe('applyStudioEdit', () => {
     // already rewrote.
     const nodeA = `a.tsx:2:11${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
     const nodeB = `b.tsx:9:4${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
-    const deduped = dedupeStudioEdits([
+    const deduped = dedupeStudioEdits(tmpDir, [
       { kind: 'prop', nodeId: nodeA, prop: 'title', value: 'First' },
       { kind: 'prop', nodeId: nodeB, prop: 'title', value: 'Second' },
     ])
@@ -365,7 +365,7 @@ describe('applyStudioEdit', () => {
 
   it('keeps edits to DIFFERENT props on the same location', () => {
     const nodeId = `a.tsx:2:11${INLINE_ID_SEPARATOR}components/Icon.tsx:2:11`
-    const deduped = dedupeStudioEdits([
+    const deduped = dedupeStudioEdits(tmpDir, [
       { kind: 'prop', nodeId, prop: 'title', value: 'T' },
       { kind: 'prop', nodeId, prop: 'alt', value: 'A' },
     ])
@@ -379,7 +379,7 @@ describe('applyStudioEdit', () => {
     // elements. Collapsing them dropped all but the last with nothing
     // reporting the loss — see `dedupeStudioEdits`' "Why `insert` is exempt".
     const nodeId = 'Home.tsx:5:6'
-    const deduped = dedupeStudioEdits([
+    const deduped = dedupeStudioEdits(tmpDir, [
       { kind: 'insert', nodeId, name: 'header' },
       { kind: 'insert', nodeId, name: 'main' },
       { kind: 'insert', nodeId, name: 'footer' },
@@ -390,7 +390,7 @@ describe('applyStudioEdit', () => {
 
   it('still collapses a repeated non-insert structural edit on one location', () => {
     const nodeId = 'Home.tsx:5:6'
-    const deduped = dedupeStudioEdits([
+    const deduped = dedupeStudioEdits(tmpDir, [
       { kind: 'delete', nodeId },
       { kind: 'delete', nodeId },
     ])

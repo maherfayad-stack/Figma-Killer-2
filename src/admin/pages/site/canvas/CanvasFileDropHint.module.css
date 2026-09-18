@@ -1,0 +1,22 @@
+/* The board-level layer an OS file drag paints its cursor chip into when the
+   pointer is NOT over a frame (`canvasFileDragPreview.ts`).
+
+   A sibling of `CanvasTransformLayer`, never inside it — the same
+   untransformed chrome tier the rulers and the notch sit in. That is the whole
+   point: over the empty board there is no frame, so there is no frame-space
+   layer for the chip to live in, and pinning it to the pointer in plain client
+   coordinates is the only honest placement left.
+
+   `--canvas-zoom` is declared here because the chip the painter creates
+   (`.dragGhost`, from BreakpointSelectionOverlay.module.css) counter-scales by
+   `1 / var(--canvas-zoom)` — it is authored for a layer INSIDE the canvas
+   transform. Outside it there is nothing to counter, and an unresolved custom
+   property would invalidate the whole `transform` and drop the chip in the
+   corner. One means "this layer does not scale". */
+.fileDropHint {
+    --canvas-zoom: 1;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    overflow: hidden;
+}

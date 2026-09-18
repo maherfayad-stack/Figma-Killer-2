@@ -6,6 +6,7 @@ import {
   countSourceOccurrences,
   createFixtureProject,
   decodeNodeSourceLocation,
+  readFixtureTrustMeta,
   findSiblingRun,
   firstLeafNode,
   frameForPage,
@@ -87,6 +88,30 @@ import {
 
 const FIXTURE_NAME = '__e2e-phase0'
 
+/**
+ * Case 8's corpus: the smallest project `resolveLiveCapability` answers
+ * `{ capable: true }` for. `test4` has no `vite.config.*`, so the auto-promotion
+ * rule cannot be observed on it at all — see that fixture's own README.
+ */
+const LIVE_FIXTURE_SOURCE = '__vite-live-fixture'
+const LIVE_FIXTURE_NAME = '__e2e-phase0-vite'
+
+/**
+ * The one error case 8 expects, pinned to the exact log line and tied to the
+ * reason the fixture cannot avoid it. Same rule as `CONSOLE_ALLOWLIST` below:
+ * an entry that stops describing the run starts hiding whatever it matches next.
+ */
+const LIVE_CONSOLE_ALLOWLIST: readonly { pattern: RegExp; why: string }[] = [
+  {
+    pattern: /\[useDevServerPrewarm\] could not prewarm the dev server/,
+    why:
+      'reaching Tier 2 starts the project\'s real dev server, and `__vite-live-fixture` ships a lockfile ' +
+      'but no `node_modules` on purpose — committing an installed tree is what .gitignore\'s ' +
+      'studio-workspace section exists to prevent. The frame half of this decision is the `test.fail()` ' +
+      'case that follows.',
+  },
+]
+
 /** The board frame every canvas case drives — see this file's header for why. */
 const DOGFOOD_PAGE_ID = 'sms'
 
@@ -156,31 +181,29 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 1 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). Two of this case's claims do not hold on the
-   * wave-1 tree, both measured:
+   * FIXED by `store-14`, so this is no longer an expected failure. Both
+   * defects `verify-3` measured here are closed:
    *
-   *   a. **Four of the five presses are dropped, not queued.**
-   *      `guardAgainstConcurrentStructuralCommit` (`store-11`, documented at
-   *      the top of `studioStructuralCommits.ts`) refuses presses 2–5 while the
-   *      first write is in flight, so a five-press burst adds ONE copy to the
-   *      `.tsx`. The refusal collapses onto a single `×4` warning card, which
-   *      is Z1 working — but "I pressed it five times and got one" is the
-   *      gesture failing.
-   *   b. **Nothing is selected afterwards.** On a studio-imported tree
-   *      `duplicateNode` returns `''` (the copy's id is the `line:col` the
-   *      codemod has not written yet), so `useCanvasNodeShortcuts` selects
-   *      nothing — `keys-01`'s own "Open follow-up: selecting a source-backed
-   *      duplicate/insert after the resync needs `commitStructural` to report
-   *      created node ids".
+   *   a. **The four later presses are QUEUED, not dropped.** `store-11`'s
+   *      guard used to refuse presses 2–5 while the first write was in flight
+   *      ("Still writing your last change"), so a five-press burst added ONE
+   *      copy. `structuralCommitQueue.ts` parks each of them as a thunk
+   *      instead and re-runs it — re-planned against the tree the previous
+   *      resync left behind — the moment the wire is clear. The serialization
+   *      that closed the original double-write race is intact; only the
+   *      refusal is gone.
+   *   b. **The last copy is selected.** `store-13` made the save route report
+   *      `createdNodeIds`; `store-14` made the route actually forward them (it
+   *      never did), so `pendingStructuralOutcome.ts` has something to hand the
+   *      resync.
    *
-   * Owners: `store-12`/`store-11` for (a) — serializing a burst instead of
-   * refusing it is a queueing design decision, not a local edit — and
-   * `keys-01` for (b).
+   * The toast assertions are unchanged and are still the tightest part of this
+   * case: five successes collapse onto ONE card (Z1), and there should now be
+   * ZERO warning cards where there used to be one carrying a ×4 counter.
    */
   test('⌘D five times inside 300ms makes five siblings, five copies in the file, and one collapsed toast', async ({
     page,
   }) => {
-    test.fail()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
     const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -515,33 +538,31 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 4 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). ⌘G and ⌘⇧G do write real source and do round-trip
-   * exactly — both measured here. Three other claims do not hold:
+   * GREEN as of wave 3, and it took both halves. `verify-3` recorded three
+   * defects here; each was owned by a different layer and each is now closed:
    *
-   *   a. **The wrapper is always a `<div>`, wherever it lands.** Grouping two
-   *      inline `<span>`s that live inside a `<p>` writes `<div>` into
-   *      phrasing content, which React reports in the console as "In HTML,
-   *      <div> cannot be a descendant of <p>. This will cause a hydration
-   *      error." Studio wrote markup that breaks the user's real app. The
-   *      wrapper tag is hard-coded at K3's call sites (`runGroupShortcut` →
-   *      `groupNodes`, `name: 'div'`); picking `<span>` in a phrasing context
-   *      is a parser-side decision, not a keybinding one.
-   *   b. **The new wrapper is not selected.** After ⌘G the selection is still
-   *      the node that was selected before it — `commitStructural` does not
-   *      report created node ids, the same root cause as case 1's (b) and
-   *      `keys-01`'s own open follow-up.
-   *   c. **A second ⌘G in the same session writes nothing**, which is why the
-   *      ⌘Z claim below cannot be reached at all. The annotations record what
-   *      the editor said when it happened.
-   *
-   * Owners: `struct-10` (K3 — the wrapper tag and the second-gesture stall)
-   * and `keys-01` (the selection). None of the three is a small edit inside one
-   * file.
+   *   a. **The wrapper tag was always `<div>`**, so grouping two inline
+   *      `<span>`s inside a `<p>` wrote `<div>` into phrasing content and
+   *      React reported a hydration error in the user's own app. Closed by
+   *      `struct-11`: the tag follows the HTML content model
+   *      (`@core/utils/htmlContentModel`), so this run groups into a `<span>`,
+   *      asserted below. Case 7's console gate was red for exactly those two
+   *      React errors and is an ordinary pass because of this.
+   *   b. **The new wrapper was not selected.** Closed: `store-13` made the
+   *      batch report created node ids and `store-14` made `/save` forward
+   *      them, so ⌘G ends with the group selected. It occupies the first
+   *      sibling's old `line:col`, which is why the assertion below compares
+   *      its TAG rather than its id (`meta-16` landmine 7).
+   *   c. **A second ⌘G in the same session wrote nothing.** Closed: that was
+   *      `store-11`'s in-flight refusal; gestures now queue
+   *      (`structuralCommitQueue.ts`) instead of being dropped.
+   *   — and the ⌘Z claim, unreachable before (c) was fixed, holds too: a group
+   *      written to source records a patch-free history entry whose inverse is
+   *      an `ungroup`, and one ⌘Z posts it.
    */
   test('⌘G groups two siblings into real source, ⌘⇧G takes it back, and ⌘Z undoes each in one step', async ({
     page,
   }) => {
-    test.fail()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
     const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -587,22 +608,41 @@ test.describe('Phase 0 exit dogfood', () => {
       .soft(grouped, '⌘G did not change the .tsx — a group is a source write, not a canvas-only regrouping')
       .not.toBe(before)
 
+    // `struct-11` — the container's TAG. This run sits inside a `<span>`
+    // inside a `<p>`, i.e. phrasing content, where a `<div>` is invalid HTML
+    // and React says so twice in the user's own console. The wrapper takes the
+    // first member's old line, so its own tag is the first thing on it.
+    const wrapperLine = sourceLineAt(grouped, location.line).trim()
+    annotate('the tag ⌘G wrote', wrapperLine)
+    expect
+      .soft(
+        wrapperLine,
+        'the container ⌘G wrote into phrasing content is not a <span> — a <div> here is markup the app reports as a hydration error',
+      )
+      .toMatch(/^<span>/)
+
     // The group itself is the selection, so ⌘⇧G is the very next thing a hand
-    // can press.
+    // can press. Compared by TAG, not by id: the wrapper legitimately occupies
+    // the first sibling's old `line:col`, so "is it a member of
+    // `siblingsBefore`" is undecidable (`meta-16` landmine 7). What is
+    // decidable is that the selected node is the container that was just
+    // written — the only `<span>` with no attributes on that line.
     const wrapperId = await contentFrame
       .locator(SELECTION_RING)
       .first()
       .getAttribute('data-canvas-overlay-node-id')
     annotate('selected after ⌘G', wrapperId ?? '(nothing)')
+    annotate('siblings before ⌘G', siblingsBefore.join(', '))
     expect
       .soft(wrapperId, '⌘G left nothing selected, so the group it just made is not what the inspector is pointed at')
       .not.toBeNull()
+    const selectedLocation = wrapperId === null ? null : decodeNodeSourceLocation(wrapperId)
     expect
       .soft(
-        siblingsBefore.includes(wrapperId ?? ''),
-        `⌘G left the selection on a node that existed before the group (${wrapperId}) — the new wrapper was never selected`,
+        selectedLocation === null ? '(no source location)' : sourceLineAt(grouped, selectedLocation.line).trim(),
+        `⌘G left the selection on something other than the container it just wrote (${wrapperId})`,
       )
-      .toBe(false)
+      .toMatch(/^<span>/)
 
     await canvasRoot.focus()
     await page.keyboard.press('Control+Shift+g')
@@ -640,6 +680,18 @@ test.describe('Phase 0 exit dogfood', () => {
     expect
       .soft(regrouped, 'the second ⌘G did not write anything, so there is nothing for ⌘Z to undo')
       .toBe(true)
+
+    // Wait for the BOARD to catch up, not just the file. A source write's
+    // history entry is pushed by the resync drain (`applyStructuralWriteOutcome`,
+    // called immediately after `patchPages`) — the same drain that moves the
+    // selection onto the new wrapper. Two rings means the shift-click selection
+    // is still standing and the resync has not landed; pressing ⌘Z there would
+    // find an empty undo stack and do nothing, which reads as "undo is broken"
+    // rather than "the spec was early".
+    await expect(
+      contentFrame.locator(SELECTION_RING),
+      'the second ⌘G never put the selection on its new wrapper, so its undo entry had not been recorded either',
+    ).toHaveCount(1, { timeout: 60_000 })
 
     await page.keyboard.press('Control+z')
     const undone = await settle(() => readNodeSourceFile(fixture, location), before)
@@ -849,17 +901,21 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 7 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). The only errors this run produces that the
-   * allowlist does not cover are React's two complaints about case 4's ⌘G:
-   * "In HTML, <div> cannot be a descendant of <p>" and "<p> cannot contain a
-   * nested <div>". They are not test noise — they are React reporting that
-   * Studio just wrote invalid HTML into the user's file (case 4's finding (a),
-   * owner `struct-10`). Allowlisting them would be exactly the "detect the
-   * errors I did not see" failure this plan is named after, so they stay
-   * unexplained and this case stays red until the wrapper tag is fixed.
+   * GREEN since `struct-11`. It was red for exactly one reason: React's two
+   * complaints about case 4's ⌘G — "In HTML, <div> cannot be a descendant of
+   * <p>" and "<p> cannot contain a nested <div>". They were never test noise;
+   * they were React reporting that Studio had just written invalid HTML into
+   * the user's file. Allowlisting them would have been precisely the "detect
+   * the errors I did not see" failure this plan is named after, so they stayed
+   * unexplained and this case stayed `test.fail()` until the wrapper tag was
+   * fixed at the source. It is fixed (case 4 asserts the tag), the two errors
+   * are gone, and the `test.fail()` is gone with them — leaving it would make
+   * Playwright fail the run for passing.
+   *
+   * This case is now the file's backstop: any NEW error, from any case, is a
+   * real failure here. The allowlist is not the place to answer one.
    */
   test('the whole dogfood produced no unexplained console errors', async () => {
-    test.fail()
     const unexplained = consoleEvents.filter(
       (event) => !CONSOLE_ALLOWLIST.some((entry) => entry.pattern.test(event.text)),
     )
@@ -884,6 +940,170 @@ test.describe('Phase 0 exit dogfood', () => {
         'a CONSOLE_ALLOWLIST entry matched nothing in this run. Either the case that used to produce it ' +
           'no longer does (delete the entry) or the case stopped running (fix the case).',
       ).toEqual([])
+    }
+  })
+
+  // ── 8 ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * §6 decision 2 — **a Vite project with a lockfile is promoted to
+   * `run-project` on FIRST OPEN, once ever, with a visible Undo.**
+   *
+   * This is the only place in Studio where the trust tier moves without a human
+   * clicking anything, which makes it the only place where losing a gate is
+   * SILENT: a build that stopped checking "is it Vite", or stopped writing the
+   * once-only latch, or stopped stopping the dev server on Undo, looks exactly
+   * like this one on screen. So the three things asserted here are all
+   * refusals, not features:
+   *
+   *   a. the promotion happens AND says so — a Tier-2 promotion the user is
+   *      never told about is the override without the thing that justifies it;
+   *   b. Undo writes `static` back, and `trustAutoPromotedAt` STAYS SET — the
+   *      latch is what stops a project whose owner said no from being
+   *      auto-promoted again on the next open;
+   *   c. re-opening the project after the Undo does NOT promote it again and
+   *      does NOT show the notice. (b) is the byte on disk; (c) is the
+   *      behaviour that byte exists to produce, and only (c) fails if the
+   *      client stops reading the latch.
+   *
+   * ## Why this case runs LAST, and on its own fixture
+   *
+   * It is the only case in this file that does not drive `test4`: auto-promotion
+   * is a property of the PROJECT, and `test4` has no `vite.config.*`, so nothing
+   * about it can be observed there. `studio-workspace/__vite-live-fixture` is
+   * the smallest project `resolveLiveCapability` answers `{ capable: true }` for
+   * — its README lists each of its five files against the condition it
+   * satisfies.
+   *
+   * It is declared after case 7 on purpose. Reaching Tier 2 makes
+   * `useDevServerPrewarm` try to start the project's real dev server, and the
+   * fixture deliberately ships no `node_modules` (committing one is what
+   * `.gitignore`'s studio-workspace section exists to prevent), so that attempt
+   * fails and logs. Feeding that into case 7's file-wide console budget would
+   * mean allowlisting a real error there for a reason that has nothing to do
+   * with the dogfood; instead this case carries its own recorder and its own
+   * one-entry allowlist, pinned to that exact message.
+   */
+  test('a Vite project with a lockfile promotes itself to Tier 2 on first open, and Undo takes it back for good', async ({
+    page,
+  }) => {
+    const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
+    test.skip(
+      !live.ready,
+      `studio-workspace/${LIVE_FIXTURE_SOURCE} is not present on disk, so the throwaway copy could not be made`,
+    )
+
+    const liveConsole: RecordedConsoleEvent[] = []
+    recordConsoleErrors(page, liveConsole, 'auto-promote')
+
+    try {
+      await startToastRecorder(page)
+      await openFixtureBoard(page, live, { autoSave: false })
+
+      // (a) The promotion, and the notice that makes it defensible.
+      const notice = page.getByTestId('live-auto-promote-notice')
+      await expect(
+        notice,
+        'a Vite project with a lockfile opened without announcing that Studio promoted it to Tier 2',
+      ).toBeVisible({ timeout: 60_000 })
+      await expect(notice).toContainText('Running your app live')
+
+      await settle(() => readFixtureTrustMeta(live).trust, 'run-project')
+      const promoted = readFixtureTrustMeta(live)
+      annotate('trust after first open', JSON.stringify(promoted))
+      expect(promoted.trust, 'first open did not write run-project into .studio/meta.json').toBe('run-project')
+      expect(promoted.trustAutoPromoted, 'the promotion did not record that its ORIGIN was Studio').toBe(true)
+      expect(
+        typeof promoted.trustAutoPromotedAt,
+        'the once-only latch (trustAutoPromotedAt) was never written',
+      ).toBe('number')
+
+      // The pill is the permanent, session-independent statement of the same
+      // fact — `sec-10`'s "revocable, not just undoable".
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'live')
+
+      // (b) Undo — back to static, latch deliberately left set.
+      await page.getByTestId('live-auto-promote-undo').click()
+      const undone = await settle(() => readFixtureTrustMeta(live).trust, 'static')
+      annotate('trust after Undo', JSON.stringify(readFixtureTrustMeta(live)))
+      expect(undone, 'Undo did not put the project back to static').toBe('static')
+      expect(
+        readFixtureTrustMeta(live).trustAutoPromotedAt,
+        'Undo cleared the once-only latch, so the next open would promote this project all over again — ' +
+          'the latch is the whole reason the override is bounded',
+      ).toBe(promoted.trustAutoPromotedAt)
+
+      // Read the toast log BEFORE the reload — the recorder lives in the page,
+      // and a reload takes it with it.
+      //
+      // Zero error toasts across promote + undo. An automatic promotion the
+      // user did not ask for must not be able to put an error in front of them;
+      // `LiveAutoPromoteNotice` logs its failures instead, deliberately.
+      const toasts = await readToastRecorder(page)
+      annotate('toast cards during promote + undo', JSON.stringify(toasts.map((t) => `${t.kind}:${t.title}`)))
+      expect(
+        toasts.filter((t) => t.kind === 'error').map((t) => t.title),
+        'the automatic promotion path put an error toast in front of the user',
+      ).toEqual([])
+
+      // (c) The latch as BEHAVIOUR, not just as a byte: open it again.
+      await page.reload()
+      await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'static', {
+        timeout: 30_000,
+      })
+      await expect(
+        page.getByTestId('live-auto-promote-notice'),
+        'the project was auto-promoted a SECOND time — the latch is not being read',
+      ).toBeHidden()
+      expect(
+        readFixtureTrustMeta(live).trust,
+        'a second open re-promoted a project whose owner clicked Undo',
+      ).toBe('static')
+
+      const unexplained = liveConsole.filter(
+        (event) => !LIVE_CONSOLE_ALLOWLIST.some((entry) => entry.pattern.test(event.text)),
+      )
+      expect(
+        unexplained.map((event) => `[${event.source}] ${event.text}`),
+        'the auto-promotion flow logged an error this case does not expect',
+      ).toEqual([])
+    } finally {
+      removeFixtureProject(live)
+    }
+  })
+
+  /**
+   * The LIVE FRAME half of §6 decision 2, which this machine cannot satisfy.
+   *
+   * Tier 2 means the frames are rendered by the project's OWN dev server
+   * (`server/handlers/studio/devServer.ts` + `server/liveOrigin.ts`), and a dev
+   * server needs an installed dependency tree. `__vite-live-fixture` ships a
+   * lockfile and no `node_modules` on purpose — committing an installed tree
+   * into this repository is precisely what `.gitignore`'s studio-workspace
+   * section exists to prevent ("the missing rule cost 140,894 committed
+   * lines"), and the fixture's README says so.
+   *
+   * Marked `test.fail()` rather than skipped: a skip is invisible in a summary,
+   * and Playwright fails the run if this starts PASSING — so whoever gives this
+   * fixture a real install (or points the case at a project that has one) finds
+   * out here rather than discovering later that nothing checked it.
+   */
+  test('a promoted project renders its frames from its own dev server', async ({ page }) => {
+    test.fail()
+    const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
+    test.skip(!live.ready, `studio-workspace/${LIVE_FIXTURE_SOURCE} is not present on disk`)
+    try {
+      await openFixtureBoard(page, live, { autoSave: false })
+      await expect(page.getByTestId('live-auto-promote-notice')).toBeVisible({ timeout: 60_000 })
+      // A live frame is a different element from a design-mode canvas frame:
+      // it is the project's own document, proxied through `/p/<projectKey>/`.
+      await expect(
+        page.locator('iframe[data-live-frame="true"]').first(),
+        'no live frame mounted — the dev server never came up (this fixture has no node_modules)',
+      ).toBeVisible({ timeout: 60_000 })
+    } finally {
+      removeFixtureProject(live)
     }
   })
 })

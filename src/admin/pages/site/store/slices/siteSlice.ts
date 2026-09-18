@@ -25,6 +25,7 @@
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { buildSiteHelpers } from './site/helpers'
 import { createUndoRedoActions } from './site/undoRedoActions'
+import { createStructuralSourceHistoryActions } from './site/structuralSourceHistory'
 import { createLifecycleActions } from './site/lifecycleActions'
 import { createPageActions } from './site/pageActions'
 import { createExplorerActions } from './site/explorerActions'
@@ -79,6 +80,7 @@ export const createSiteSlice: EditorStoreSliceCreator<SiteSlice> = (set, get) =>
 
     // ─── Action surface ──────────────────────────────────────────────────────
     ...createUndoRedoActions(helpers),
+    ...createStructuralSourceHistoryActions(helpers),
     ...createLifecycleActions(helpers),
     ...createPageActions(helpers),
     ...createExplorerActions(helpers),

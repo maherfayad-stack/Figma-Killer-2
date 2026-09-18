@@ -18,7 +18,7 @@ import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/compon
 import type { StyleRule } from '@core/page-tree'
 import { explainCssRuleConstraint } from '@core/page-tree'
 import { resolveConstraintAction } from '@site/store/constraintActions'
-import type { StructuralRefusalDialogState } from '@site/store/slices/uiSlice'
+import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
 import {
   reportStyleRulePlanRefusals,
   resetRefusalToasts,

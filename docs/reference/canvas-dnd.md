@@ -57,9 +57,21 @@ topology below first.
   a "duplicate as variant" sibling keeps going through `moveNodes`. See
   "[Dragging an element BETWEEN frames](../agent-refs/canvas-internals.md)" in
   canvas-internals.
+- **A drag SHOWS THE REFLOW it would cause.** While an element is in flight,
+  the siblings that would make room for it slide aside — ghost boxes in the
+  frame's own drag layer, travelling by the exact distance the real siblings
+  would (`canvasReflowPreview.ts` decides, `canvasDragPainter.ts` animates).
+  Nothing in the user's own DOM is touched, nothing is written until
+  `pointerup`, and the preview stands down entirely for the three layouts its
+  packing model does not describe. See
+  "[The reflow preview (K6)](#the-reflow-preview-k6)".
 - **An image file dropped from the OPERATING SYSTEM onto a frame becomes an
   `<img src alt>`** (D2 G15) — one upload into the project's own `public/`,
-  then one structural insert at the drop point. This is the canvas's one
+  then one structural insert at the drop point. **The verdict arrives before
+  release**: over a frame, the same drop line an element drag shows plus a
+  cursor chip naming the format; over the empty board, a chip saying
+  "Drop onto a frame"; for a non-image, the refusal, while the file is still in
+  the air. See "[The file-drag preview (G15)](#the-file-drag-preview-g15)". This is the canvas's one
   native-HTML5 gesture, by necessity: a file from outside the browser is only
   ever delivered through `DataTransfer.files`. Dropping on the empty board, or
   dropping a non-image, is a refusal toast and no write. Inside a design
@@ -404,7 +416,7 @@ modifier state at **release**.
 ```
 duplicateNodesTo
   └─ writeDuplicateToSource(ids, { parentId, index })
-       ├─ guardAgainstConcurrentStructuralCommit()   ← same store-11 guard as ⌘D
+       ├─ deferWhileStructuralCommitInFlight(…)      ← same store-14 queue as ⌘D
        ├─ planSourceDuplicateTo(tree, ids, parentId, index)
        └─ commitStudioDuplicate([nodeId], { parentNodeId, anchorNodeId, position })
             └─ POST /studio/save  { kind: 'duplicate', nodeId, parentNodeId, … }
@@ -553,6 +565,110 @@ value is unchanged. Same division of labour as the selector-affinity ring
 pool (`syncSelectorHighlightRings`), for the same reason: a pointermove must
 not cost a React commit. Insert-source overlays (`useCanvasInsertionDrag`)
 still render from React — they are not in a per-pointermove path.
+
+There is a SECOND, board-level layer: `CanvasFileDropHint`, a sibling of
+`CanvasTransformLayer` in untransformed parent-document space. It exists for
+exactly one case — an OS file drag over the empty board, where there is no
+frame and therefore no frame layer to put a chip in, and where a chip painted
+into some frame's layer would be clipped by that frame's `overflow: hidden`
+viewport. It declares `--canvas-zoom: 1` in its own rule because the ghost the
+painter creates counter-scales by `1 / var(--canvas-zoom)` and there is nothing
+to counter outside the transform.
+
+---
+
+## The reflow preview (K6)
+
+While an element drag is in flight, the siblings that would MAKE ROOM for the
+drop slide out of the way. `canvasReflowPreview.ts` decides which and how far;
+`canvasDragPainter.ts` moves them.
+
+**The real siblings never move.** What travels is a pooled ghost box drawn over
+each one, in the frame's own drag layer — the parent document, not the iframe.
+Writing a `transform` onto the user's own element would create a containing
+block and a stacking context inside their page mid-gesture (changing what their
+`%` chains and `backdrop-filter`s resolve against), and an abandoned gesture
+would leave it behind. Same reasoning `smartAnimateFlip.ts` records for the
+prototype player's own FLIP.
+
+**Zero layout reads.** Every rect comes from the drag session's
+already-measured `frameCandidateIndex`, and the answer is recomputed only when
+the resolved `(parent, index)` actually changes — a pointer moving inside one
+drop zone costs nothing. Zero React commits, like everything else the drag
+draws.
+
+**The packing model.** A container's children are packed along ONE axis with a
+uniform gap (read off the first pair). The final order is computed the way
+`moveNode` computes it — remove the dragged run first, then splice at
+`newIndex`, which is what that index counts — and each remaining child is
+re-packed from the container's content start using its OWN extent. Heterogeneous
+child sizes are therefore exact. Both containers are previewed for a same-frame
+reparent (the destination opens, the origin closes); a cross-frame drop previews
+the DESTINATION only, because the origin frame's layer is not the one being
+painted. Alt opens without closing: a copy removes nothing.
+
+**Three silences, all deliberate.** It returns nothing — no animation, no
+guess — when a child has no measured box (`display: contents`, a fragment),
+when the children are not monotonic along the axis (a wrapped flex line, a
+multi-row grid, an absolutely-positioned child), or when the parent is
+`reversed` (`row-reverse` / `column-reverse` / an RTL row, where DOM order and
+visual order disagree). The drop line still says exactly where the element
+lands; no sibling claims to move somewhere it would not.
+
+**The animation.** WAAPI, ~120ms, `translate` only. WAAPI rather than a CSS
+transition because a transition interpolates from the previous computed style,
+which an element created in the same task does not have and which nothing in
+the write phase may read anyway; retargeting mid-travel reads the eased
+`getComputedTiming().progress` off the running animation instead of off the
+DOM. `translate` rather than `transform` because `transform` is the rect
+channel — sharing them would make a re-measure slide the box across the frame.
+The pool is fixed (`REFLOW_SHIFT_LIMIT`) and created with the rest of the drag
+chrome; boxes hide with `opacity` and `data-shifting`, never `display: none`,
+because a `display: none` element cannot travel. `prefers-reduced-motion` is
+asked in script (`playbackMotion.ts`'s `prefersReducedMotion`), since the
+global CSS clamp cannot see a scripted animation.
+
+---
+
+## The file-drag preview (G15)
+
+An OS file drag answers before release, through the same painter and the same
+layers an element drag uses. `canvasFileDragPreview.ts` decides;
+`useCanvasFileDrop` runs one rAF per `dragover` and paints. Zero React commits
+— the hook holds no state at all.
+
+| Where the pointer is | What is drawn |
+|---|---|
+| Over a container in a frame | The drop line an element drag would show, plus a cursor chip naming the format ("PNG image") |
+| Over a frame, nothing can hold a child | The refused-position box and "Nothing here can hold an image" |
+| Over the empty board | "Drop onto a frame", in the board-level hint layer |
+| A non-image, anywhere | The refusal naming the declared type, and NO drop line |
+| More than one file | "One image at a time" |
+
+**One verdict, two moments.** Every refusal comes from `canvasFileDrop.ts` —
+`refuseDroppedFile` for the file itself, `CANVAS_FILE_DROP_REFUSAL` for the two
+that need geometry. The preview is not a second rule that agrees; it is the
+same rule asked earlier, so the chip and the toast cannot drift. A
+`CanvasFileDropRefusal` carries both a one-line `headline` (the chip) and the
+whole `message` (the toast).
+
+**The chip cannot name the file, and must not pretend to.** Before `drop` the
+drag data store is in the HTML spec's *protected mode*: `DataTransfer.files` is
+empty and `DataTransferItem.getAsFile()` returns `null`. Only `items[i].kind`
+and `items[i].type` are readable — a count and a declared MIME type, **no name
+and no size**. `DroppedFileFacts` is that reduced shape, and both halves of the
+gesture are written against it.
+
+**The board machinery is the element drag's own.**
+`measureBoardDropSurfaces` / `refreshBoardDropSurfaces` /
+`resolveForeignFrameDrop` answer exactly the questions a file drag asks and
+already cache on the right signals; a file drag has no origin frame to be
+foreign to, so it passes `originPageId: null`. There is no second viewport test.
+
+**Three teardown events, not one.** `drop` ends a gesture that landed,
+`dragleave` with `relatedTarget === null` one that left the window, and
+`dragend` one the source abandoned (Escape, or a release outside the browser).
+Miss any and the chip is left painted over the board.
 
 ---
 

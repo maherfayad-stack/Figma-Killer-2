@@ -38,8 +38,9 @@
  * check code" technique.
  */
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const CANVAS_DIR = join(REPO_ROOT, 'src/admin/pages/site/canvas')
@@ -98,21 +99,7 @@ const ALLOWLIST = new Set([
 
 const BANNED_PATTERNS: RegExp[] = [/\bcontentDocument\b/, /\bcontentWindow\b/]
 
-function collectFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.tmp' || entry === 'dist') continue
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      out.push(...collectFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 /** Blanks out `/* *\/` block comments and `//` line comments while preserving line/column positions, so prose mentioning "Document" never trips the scan below — same technique `live-origin-isolation.test.ts` uses for "cookie". */
 function stripComments(src: string): string {
@@ -135,7 +122,7 @@ describe('frame-document-adapter isolation gate', () => {
     for (const file of files) {
       const relPath = relative(REPO_ROOT, file).replaceAll('\\', '/')
       if (ALLOWLIST.has(relPath)) continue
-      const codeOnly = stripComments(readFileSync(file, 'utf8'))
+      const codeOnly = stripComments(readSource(file))
       const lines = codeOnly.split('\n')
       lines.forEach((line, index) => {
         for (const pattern of BANNED_PATTERNS) {

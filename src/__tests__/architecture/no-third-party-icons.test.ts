@@ -33,8 +33,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -43,20 +44,8 @@ const SRC_ROOT = join(import.meta.dir, '../../')
 // File walker (shared pattern from no-anthropic-sdk.test.ts)
 // ---------------------------------------------------------------------------
 
-function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] =>
+  walkSourceTree(dir, exts)
 
 // Scan production source only — not __tests__ (test files contain banned
 // strings as regex patterns and would false-positive).
@@ -123,7 +112,7 @@ describe('Constraint #348 — No third-party icon libraries in production src/',
     const allFiles = collectProdFiles()
     const bannedPkg = BANNED_PACKAGES[0] // lucide-react
     const violations = allFiles.filter((f) => {
-      try { return bannedPkg.pattern.test(readFileSync(f, 'utf8')) } catch { return false }
+      try { return bannedPkg.pattern.test(readSource(f)) } catch { return false }
     })
     if (violations.length > 0) {
       const rel = violations.map((f) => toPosixPath(f.replace(SRC_ROOT, 'src/')))
@@ -144,7 +133,7 @@ describe('Constraint #348 — No third-party icon libraries in production src/',
     for (const bannedPkg of BANNED_PACKAGES) {
       for (const f of allFiles) {
         try {
-          if (bannedPkg.pattern.test(readFileSync(f, 'utf8'))) {
+          if (bannedPkg.pattern.test(readSource(f))) {
             allViolations.push({ file: toPosixPath(f.replace(SRC_ROOT, 'src/')), pkg: bannedPkg.name })
           }
         } catch {

@@ -55,7 +55,8 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
 import { join, relative, sep } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
@@ -157,13 +158,14 @@ const GRANDFATHERED: Record<string, number> = {
   // how the process starts) moved whole to `bootstrapTemplates.ts`, leaving
   // this file the per-screen/board templates (what a user looks at). Under
   // CEILING, so it is held by the normal ceiling rule now.
-  // `src/admin/pages/site/store/slices/uiSlice.ts` (723): R2's
-  // `structuralRefusalDialog` state + `dismissStructuralRefusalDialog`
-  // pushed this over CEILING. Candidate split: the refusal-dialog slice of
-  // ui state has no relationship to the rest of `uiSlice.ts` and could move
-  // to its own slice file following the pattern other dialog/modal state
-  // already uses elsewhere in this store.
-  'src/admin/pages/site/store/slices/uiSlice.ts': 723,
+  // src/admin/pages/site/store/slices/uiSlice.ts graduated (723 → 685) when
+  // `canvas-21` performed the split this note had already named: the
+  // `StructuralRefusalDialogState` shape — which is not really UI state, but
+  // the far end of a store action's refusal, carrying live handler closures —
+  // moved whole to `slices/structuralRefusalDialogState.ts`. The slice keeps
+  // the field; the contract has its own module, which is also what the three
+  // consumers outside the slice were already importing it for. Under CEILING,
+  // so it is held by the normal ceiling rule now.
 }
 
 // ---------------------------------------------------------------------------
@@ -171,27 +173,15 @@ const GRANDFATHERED: Record<string, number> = {
 // ---------------------------------------------------------------------------
 
 /** Recursively collect gated `.ts`/`.tsx` modules under a root, repo-relative. */
-function collectModules(absRoot: string): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry)
-      const stat = statSync(abs)
-      if (stat.isDirectory()) {
-        // Test code is exercised by other gates and is allowed to be long
-        // (large fixture-heavy suites); this gate targets shipped modules.
-        if (entry === '__tests__' || entry === 'node_modules') continue
-        walk(abs)
-        continue
-      }
-      if (!entry.endsWith('.ts') && !entry.endsWith('.tsx')) continue
-      if (entry.endsWith('.test.ts') || entry.endsWith('.test.tsx')) continue
-      out.push(relative(REPO_ROOT, abs).split(sep).join('/'))
-    }
-  }
-  walk(absRoot)
-  return out
-}
+const collectModules = (absRoot: string): string[] =>
+  walkSourceTree(absRoot, ['.ts', '.tsx'])
+    .map((abs) => relative(REPO_ROOT, abs).split(sep).join('/'))
+    // Test code is exercised by other gates and is allowed to be long
+    // (large fixture-heavy suites); this gate targets shipped modules.
+    .filter(
+      (rel) =>
+        !rel.includes('/__tests__/') && !rel.endsWith('.test.ts') && !rel.endsWith('.test.tsx'),
+    )
 
 /** Line count identical to `wc -l`: the number of newline characters. */
 function lineCount(repoRelPath: string): number {

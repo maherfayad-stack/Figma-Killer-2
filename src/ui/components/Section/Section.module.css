@@ -177,6 +177,23 @@
     padding: 0 var(--inspector-pad-x) var(--inspector-space-m);
 }
 
+/*
+ * A flush section's neighbours are spaced by the parent's own grid gap, so
+ * this bottom padding was a SECOND separator stacked on the first: an open
+ * section's last row sat 16px above the next section's divider while a
+ * collapsed header sat 8px above it. Two sections, two different boundaries,
+ * for no stated reason — and 8px is the between-section step
+ * `docs/audits/penpot-inspector-baseline/02-measurements.md` actually
+ * measures. Dropping it makes every boundary the same 8px and gives an open
+ * section its own height back (panel-41).
+ *
+ * Non-flush sections (GitPanel, FrameworkScalePanel) keep it: nothing there
+ * supplies a gap, so the padding IS their boundary.
+ */
+.sectionFlush .sectionContent {
+    padding-bottom: 0;
+}
+
 /**
  * sectionBody — grid wrapper for property rows inside a Section.
  *

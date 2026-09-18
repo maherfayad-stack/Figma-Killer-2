@@ -51,6 +51,7 @@ import {
   resolveContainerAnchor,
   resolveSourceContainer,
   type EditConstraint,
+  type EditConstraintAction,
   type NodeTree,
   type PageNode,
   type StructuralMoveCommit,
@@ -59,6 +60,7 @@ import {
 import { pushToast } from '@ui/components/Toast'
 import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
 import { openSourceFile, type SourceFileOpener } from '../../openSourceFile'
+import { nodeHtmlTag } from './nodeHtmlTag'
 import type { EditorStoreSetter } from './types'
 
 /**
@@ -357,12 +359,17 @@ export function planSourceWrap(
  * `commit` is the run in SOURCE order. One id in it is an ordinary single
  * `wrap`; several are `wrapJsxElements`' one-container-around-a-span. `null`
  * means an ordinary CMS tree — mutate it and do not write.
+ *
+ * `nodeHtmlTag` is the second thing the store adds (`struct-11`): the rule
+ * needs to know which HTML element each node is before it can say whether a
+ * container may legally go around them, and that mapping lives in the module
+ * registry rather than in `@core/page-tree`.
  */
 export function planSourceGroup(
   tree: NodeTree<PageNode>,
   nodeIds: readonly string[],
 ): StructuralPlan<string[]> {
-  const preview = previewStructuralGroup(tree, nodeIds)
+  const preview = previewStructuralGroup(tree, nodeIds, nodeHtmlTag)
   if (preview.ok) return { ok: true, commit: preview.commit }
   // The member the refusal is about when it is about one (a `.map` row inside
   // an otherwise fine run) — that node is where `origin` and the retry closure
@@ -440,11 +447,57 @@ export function planSourceTransplant(
   const node = preview.nodeId === undefined
     ? undefined
     : (originTree.nodes[preview.nodeId] ?? destinationTree.nodes[preview.nodeId])
+  const constraint = describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) })
   return {
     ok: false,
-    constraint: describeStructuralRefusal({ refusal: preview.refusal, ...(node ? { node } : {}) }),
+    constraint: offersCopyInstead(originTree, nodeIds, destinationTree, newParentId, newIndex, copy)
+      ? { ...constraint, actions: [...constraint.actions, DUPLICATE_INTO_FRAME_ACTION] }
+      : constraint,
     ...(node ? { nodeId: node.id } : {}),
   }
+}
+
+/**
+ * D2 G3's one remedy: the refused MOVE, re-issued as a copy.
+ *
+ * The label says what the button does rather than naming the mechanism,
+ * because a user who has just been told "moving this would change every place
+ * it is used" is being offered the thing that does not.
+ */
+const DUPLICATE_INTO_FRAME_ACTION: EditConstraintAction = {
+  label: 'Duplicate into frame instead',
+  kind: 'duplicate-into-frame',
+}
+
+/**
+ * Whether the SAME gesture with Alt held would be allowed — the only honest
+ * basis for offering "Duplicate into frame instead".
+ *
+ * It re-asks `previewStructuralTransplant`, the identical function that just
+ * refused, rather than testing the refusal's reason against a list here: the
+ * rule about which refusals a copy escapes belongs in the engine
+ * (`copyEscapesOriginRefusal`), and a second copy of it in the store is exactly
+ * the hand-kept-in-sync duplication `planSourceMove`'s own doc was written to
+ * stop repeating. A gesture that was ALREADY a copy has nothing to offer — it
+ * refused with Alt already held.
+ */
+function offersCopyInstead(
+  originTree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  destinationTree: NodeTree<PageNode>,
+  newParentId: string,
+  newIndex: number,
+  copy: boolean,
+): boolean {
+  if (copy) return false
+  return previewStructuralTransplant({
+    originTree,
+    nodeIds,
+    destinationTree,
+    newParentId,
+    newIndex,
+    copy: true,
+  }).ok
 }
 
 /** Titles the refusal toasts use, one per gesture. Matches the `Detach refused` / `Swap refused` vocabulary. */
@@ -470,6 +523,16 @@ export const STRUCTURAL_REFUSAL_TITLE = {
    * regardless, so one refusal vocabulary reaches the user.
    */
   freeMove: 'Cannot place this by hand',
+  /**
+   * `store-14` — ⌘Z / ⌘⇧Z on a gesture that wrote the user's source. Its own
+   * titles because the user is not being told a gesture was refused; they are
+   * being told their last change is still there. That has to interrupt, which
+   * is why the sentence behind it always names the file (`stale-undo` carries
+   * a jump-to-source action, so this reaches `RefusalDialog`, not a toast that
+   * dismisses itself while they look away).
+   */
+  undo: 'Undo refused',
+  redo: 'Redo refused',
 } as const
 
 /**
@@ -527,6 +590,13 @@ export function presentStructuralRefusal(
      */
     retry?: (newNodeId: string) => void
     /**
+     * D2 G3 — the `duplicate-into-frame` remedy's handler, when the refusing
+     * gesture had one to offer. Travels to the dialog on its state, because
+     * the destination it closes over cannot be rebuilt from a node id — see
+     * `StructuralRefusalDialogState.duplicateIntoFrame`.
+     */
+    duplicateIntoFrame?: () => void
+    /**
      * The store's own `get`. Supplied by every real call site; what makes the
      * toast's/dialog's jump-to-source button possible from inside a store
      * action without importing the composed store (see `openSourceFile`'s
@@ -549,6 +619,7 @@ export function presentStructuralRefusal(
         constraint,
         ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
         ...(context.retry ? { retry: context.retry } : {}),
+        ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
       }
     })
     return

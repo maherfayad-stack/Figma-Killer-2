@@ -25,8 +25,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SITE_DIR = join(import.meta.dir, '../../admin/pages/site')
@@ -97,17 +98,7 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
   ],
 ])
 
-function collectTsFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (full.includes('node_modules')) continue
-    if (statSync(full).isDirectory()) results.push(...collectTsFiles(full))
-    else if (['.ts', '.tsx'].includes(extname(entry))) results.push(full)
-  }
-  return results
-}
+const collectTsFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 /** Any `<something>.addEventListener('keydown'`, in either quote style. */
 const KEYDOWN_LISTENER = /addEventListener\(\s*['"]keydown['"]/
@@ -121,7 +112,7 @@ const KEYDOWN_LISTENER = /addEventListener\(\s*['"]keydown['"]/
  */
 const SITE_SOURCES: ReadonlyArray<{ rel: string; source: string }> = collectTsFiles(SITE_DIR)
   .filter((file) => !file.endsWith('.test.ts') && !file.endsWith('.test.tsx'))
-  .map((file) => ({ rel: toPosixPath(relative(SITE_DIR, file)), source: readFileSync(file, 'utf8') }))
+  .map((file) => ({ rel: toPosixPath(relative(SITE_DIR, file)), source: readSource(file) }))
 
 function filesAttachingKeydown(): string[] {
   const canvasPrefix = `${toPosixPath(relative(SITE_DIR, CANVAS_DIR))}/`

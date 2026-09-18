@@ -53,7 +53,7 @@ export async function tryServeStudioExtractComponent(req: Request, _url: URL, pa
     if (!body) return badRequest('invalid extract-component body')
     const dir = resolveProjectDir(body.dir)
 
-    const target = studioEditLocation(body.nodeId)
+    const target = studioEditLocation(dir, body.nodeId)
     if (!target) {
       // Mirrors `applyStudioEdit`'s own "no writable source location" outcome
       // for every other edit kind — a synthetic/unresolvable node id is not

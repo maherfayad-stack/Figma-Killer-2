@@ -92,7 +92,7 @@ async function handleStatus(req: Request, db: DbClient): Promise<Response> {
 
   let configDir: string
   try {
-    configDir = ensureClaudeCliConfigDir(resolveClaudeCliDataRoot(), userOrResponse.id)
+    configDir = await ensureClaudeCliConfigDir(resolveClaudeCliDataRoot(), userOrResponse.id)
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err)
     return jsonResponse({

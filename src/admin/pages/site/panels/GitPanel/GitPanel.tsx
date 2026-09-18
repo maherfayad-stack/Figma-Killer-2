@@ -129,7 +129,14 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
     try {
       await action()
     } catch (err) {
-      console.error(`[GitPanel] ${label} failed:`, err)
+      // A 409 is the repository's state answering — a dirty tree, a conflict,
+      // another writer holding the project. It is an expected outcome of a
+      // button this panel deliberately leaves enabled, so it is logged at WARN
+      // and only a genuine failure is logged at ERROR. Reporting every refusal
+      // at error level makes "this session logged no errors" untestable, which
+      // is the gate `tests/e2e/github-sync.e2e.ts` ends on.
+      if (isGitStateRefusal(err)) console.warn(`[GitPanel] ${label} was refused by the repository:`, err)
+      else console.error(`[GitPanel] ${label} failed:`, err)
       pushToast({
         // A 409 is the repository's state answering, not a fault — it reads as
         // a warning, and its message is already written for a human.

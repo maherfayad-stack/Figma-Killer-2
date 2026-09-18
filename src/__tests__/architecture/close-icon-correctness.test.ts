@@ -37,8 +37,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -47,20 +48,8 @@ const SRC_ROOT = join(import.meta.dir, '../../')
 // File walker (same pattern as no-third-party-icons.test.ts)
 // ---------------------------------------------------------------------------
 
-function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] =>
+  walkSourceTree(dir, exts)
 
 // Scan production source only — not __tests__ (test files contain the banned
 // pattern as regex strings and would false-positive).
@@ -96,7 +85,7 @@ describe('Close-icon correctness — no X/Twitter logo used as close button', ()
 
     const violations = allFiles.filter((f) => {
       try {
-        return X_LOGO_PATTERN.test(readFileSync(f, 'utf8'))
+        return X_LOGO_PATTERN.test(readSource(f))
       } catch {
         return false
       }
@@ -134,7 +123,7 @@ describe('Close-icon correctness — no X/Twitter logo used as close button', ()
     const dialogPath = join(SRC_ROOT, 'ui/components/Dialog/Dialog.tsx')
     let src: string
     try {
-      src = readFileSync(dialogPath, 'utf8')
+      src = readSource(dialogPath)
     } catch {
       throw new Error(`[CI-2] Dialog primitive not found at expected path: ${dialogPath}`)
     }
@@ -157,7 +146,7 @@ describe('Close-icon correctness — no X/Twitter logo used as close button', ()
     const modalPath = join(SRC_ROOT, 'admin/modals/Settings/SettingsModal.tsx')
     let src: string
     try {
-      src = readFileSync(modalPath, 'utf8')
+      src = readSource(modalPath)
     } catch {
       throw new Error(`[CI-3] SettingsModal.tsx not found at expected path: ${modalPath}`)
     }

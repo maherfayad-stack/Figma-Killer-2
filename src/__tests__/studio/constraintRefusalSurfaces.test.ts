@@ -32,7 +32,7 @@ import {
   presentStructuralRefusal,
 } from '@site/store/slices/site/structuralSourceEdits'
 import type { EditorStoreSetter } from '@site/store/slices/site/types'
-import type { StructuralRefusalDialogState } from '@site/store/slices/uiSlice'
+import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
 
 afterEach(() => {
   __resetToastBusForTests()

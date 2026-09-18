@@ -437,9 +437,15 @@ export function resolveDesignSystemImports<TProps>(
  * but could not confirm the position against the re-parsed file. The caller
  * mints the node id from it; see `createdJsxLocation.ts` for why it is never
  * guessed at.
+ *
+ * `relocated` (`store-14`) is the same coordinate for the elements this write
+ * MOVED rather than made — a `move`/`reparent`'s element in its new slot, an
+ * `ungroup`'s released children, a `transplant`'s element in the destination
+ * file. Absent for the kinds that move nothing, and subject to the identical
+ * never-guess rule.
  */
 export type StructuralEditOutcome =
-  | { ok: true; created?: CreatedJsxLocation | null }
+  | { ok: true; created?: CreatedJsxLocation | null; relocated?: readonly CreatedJsxLocation[] }
   | { ok: false; reason: string; message: string }
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
@@ -502,10 +508,18 @@ export function applyTransplantEdit(
     ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
     ...(edit.copy ? { copy: true } : {}),
   })
-  // `store-13` — the created position is in the DESTINATION file, so
+  if (!result.ok) return { ok: false, ...result.refusal }
+  // `store-13`/`store-14` — the position is in the DESTINATION file, so
   // `applyStudioEditBatch` has to mint its node id against that file rather
   // than against the edit's own `nodeId`. See its `transplant` branch.
-  return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+  //
+  // A COPY created an element; a MOVE relocated one. The two are reported
+  // through different fields because their undos differ — a copy is taken back
+  // by deleting what it made, a move by transplanting the element home — and
+  // `resolveStructuralInverse` reads exactly one of them per template.
+  return edit.copy
+    ? { ok: true, created: result.created }
+    : { ok: true, relocated: result.created ? [result.created] : [] }
 }
 
 /**
@@ -567,7 +581,9 @@ export function applyStructuralEdit(
         anchorCol: anchor.col,
         position: edit.position,
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok
+        ? { ok: true, relocated: result.relocated ? [result.relocated] : [] }
+        : { ok: false, ...result.refusal }
     }
     case 'delete': {
       const result = deleteJsxElement(loc)
@@ -650,7 +666,7 @@ export function applyStructuralEdit(
     }
     case 'ungroup': {
       const result = unwrapJsxElement(loc)
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, relocated: result.relocated } : { ok: false, ...result.refusal }
     }
     case 'reparent': {
       if (!destination) {
@@ -667,7 +683,9 @@ export function applyStructuralEdit(
         destinationCol: destination.col,
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok
+        ? { ok: true, relocated: result.relocated ? [result.relocated] : [] }
+        : { ok: false, ...result.refusal }
     }
   }
 }

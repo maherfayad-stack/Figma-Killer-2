@@ -119,9 +119,24 @@ export type StructuralRefusalReason =
   // (`unwrapJsxElement`), which is why it arrives at save time like
   // `out-of-scope` rather than from the id.
   | 'has-behaviour'
+  // `struct-11` — the container a group would write cannot legally sit where
+  // it would land, or cannot legally hold what it would hold: a `<div>` inside
+  // a `<p>`, any wrapper inside a `<ul>`, a wrapper around an `<li>`. Decided
+  // from the HTML content model (`@core/utils/htmlContentModel`) — by
+  // `previewStructuralGroup` when the caller can name the tags, and always by
+  // `wrapJsxElement`/`wrapJsxElements` against the real AST.
+  | 'content-model'
   | 'multi-select'
   | 'cross-file'
   | 'no-sibling-anchor'
+  // `store-14` — ⌘Z (or ⌘⇧Z) on a source-writing gesture whose recorded
+  // inverse no longer addresses anything in the file. The undo stack holds
+  // `rel:line:col` ids minted when the gesture landed; something that changed
+  // the file OUTSIDE the stack (an external editor, a value edit that
+  // reflowed a `style={{…}}`) invalidates them, and re-issuing the write
+  // anyway would edit whatever now sits at that line. Decided on the client,
+  // against the live tree, before anything is posted.
+  | 'stale-undo'
 
 /** A refused structural edit: the machine-readable reason plus the sentence the user reads. */
 export interface StructuralRefusal {

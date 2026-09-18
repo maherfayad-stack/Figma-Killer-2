@@ -165,6 +165,11 @@ docs/superpowers/
 #                         own README says why it is twelve frames.
 #   test4/                the Phase 0 dogfood target (plan §3) and the project
 #                         `PropertiesPanel/imageFillValue.ts` documents against
+#   __vite-live-fixture/  tests/e2e/studio-feel-phase0.e2e.ts -- the ONLY place
+#                         the trust tier moves without a human clicking
+#                         anything (plan §6 decision 2), so the only place a
+#                         lost gate is silent. Its own README says why it is
+#                         five files and why it has no node_modules.
 #
 # `test4 copy/` is deliberately NOT kept -- it is a local dogfooding duplicate,
 # and `scripts/bench/lib/liveFrameFixture.ts` degrades with a named error when
@@ -175,6 +180,7 @@ studio-workspace/*
 !studio-workspace/.ignore
 !studio-workspace/__board-perf-fixture/
 !studio-workspace/__canonical-fixture/
+!studio-workspace/__vite-live-fixture/
 !studio-workspace/test4/
 
 # Inside a kept sample project, that project's OWN generated output is still

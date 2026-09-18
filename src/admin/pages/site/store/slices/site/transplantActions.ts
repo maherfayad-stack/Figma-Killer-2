@@ -35,7 +35,8 @@
  * backstop so a caller that gets the routing wrong gets a sentence rather than
  * a cross-file codemod pointed at one file.
  */
-import { commitStudioTransplant, guardAgainstConcurrentStructuralCommit } from '@site/studio/studioStructuralCommits'
+import { commitStudioTransplant } from '@site/studio/studioStructuralCommits'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceTransplant, presentStructuralRefusal } from './structuralSourceEdits'
 import type { Page, SiteDocument } from '@core/page-tree'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -56,16 +57,32 @@ function findPage(site: SiteDocument, pageId: string): Page | null {
   return site.pages.find((page) => page.id === pageId) ?? null
 }
 
+/**
+ * The slot `nodeId` occupies in `page` right now — its parent and its index in
+ * that parent's child list.
+ *
+ * The parent falls back to the page's root and the index to the end when the
+ * node is not addressable, which is a position an append already means; a
+ * transplant whose origin cannot be named simply has an undo that puts the
+ * element back last rather than one that puts it somewhere wrong.
+ */
+function originSlot(page: Page, nodeId: string): { parentNodeId: string; index: number } {
+  const parentNodeId = page.nodes[nodeId]?.parentId ?? page.rootNodeId
+  const index = page.nodes[parentNodeId]?.children.indexOf(nodeId) ?? -1
+  return { parentNodeId, index: index < 0 ? Number.MAX_SAFE_INTEGER : index }
+}
+
 export function createTransplantActions(helpers: SiteSliceHelpers): TransplantActions {
   const { get, set } = helpers
 
   const actions: TransplantActions = {
     transplantNodes: (nodeIds, destination) => {
       if (nodeIds.length === 0) return
-      // `store-11`'s guard: this gesture has nothing optimistic on screen, so
+      // `store-14`'s queue: this gesture has nothing optimistic on screen, so
       // a second drag fired before the first one's resync would plan against
-      // the still-unshifted original and post a SECOND real write.
-      if (guardAgainstConcurrentStructuralCommit()) return
+      // the still-unshifted original and post a SECOND real write. Parked and
+      // re-planned once the first has landed, rather than refused.
+      if (deferWhileStructuralCommitInFlight(() => { actions.transplantNodes(nodeIds, destination) })) return
 
       const state = get()
       const site = state.site
@@ -90,6 +107,17 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
           // after a detach/extract remedy lands means re-issuing the same drop
           // with that id swapped for its replacement.
           retry: (newNodeId) => actions.transplantNodes([newNodeId], destination),
+          // D2 G3 — "Duplicate into frame instead": the SAME drop, with Alt's
+          // meaning. It is the same store action and therefore the same gate,
+          // the same `guardAgainstConcurrentStructuralCommit`, and the same
+          // single "Copied into <page>" toast an Alt-drag would have landed —
+          // one gesture, one write, one toast, even though the user reached it
+          // through a button. `planSourceTransplant` only attaches the action
+          // when this call will actually be allowed, so the remedy cannot
+          // bounce straight back to the refusal it was offered for.
+          ...(plan.constraint.actions.some((action) => action.kind === 'duplicate-into-frame')
+            ? { duplicateIntoFrame: () => actions.transplantNodes(nodeIds, { ...destination, copy: true }) }
+            : {}),
           getState: get,
           set,
         })
@@ -106,6 +134,13 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         position: commit.position,
         copy: commit.copy,
         destinationLabel: destinationPage.title || destinationPage.slug,
+        // `store-14` — where it came from, which is the whole of a MOVE's undo.
+        // The slot is recorded as parent + index rather than as a sibling id:
+        // every sibling below the element shifts up the moment it leaves, so a
+        // sibling id captured here would name a line that has moved by the time
+        // ⌘Z is pressed. `anchorTransplantBack` re-reads the slot from the live
+        // tree instead.
+        origin: originSlot(originPage, commit.nodeId),
       })
     },
   }

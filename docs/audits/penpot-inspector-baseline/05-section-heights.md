@@ -6,12 +6,15 @@ inspector fits in one 900px viewport with no scroll* — went unenforced for the
 whole of P3, and by the time anyone measured it the panel was ~1826px tall.
 WS-14.5 turns it into a gate; this file is the number that gate moves.
 
-> **The claim was false, the number is now measured twice, and most of the
-> gap is closed.** panel-37's first real run: **626px** of room at a 900px
+> **The claim was false, the number is now measured three times, and the gap
+> is all but closed.** panel-37's first real run: **626px** of room at a 900px
 > viewport against **960 / 1190 / 1013 / 1043px** for F1–F4 — 334–564px over.
 > panel-39's density pass: **718px** of room against **690 / 916 / 909 /
-> 773px** — **0 / 198 / 191 / 55px** over. F1 fits with 28px to spare. The
-> residual on the other three is entirely populated section content, named
+> 773px** — 0 / 198 / 191 / 55 over. panel-41's second: **746px** of room
+> against **608 / 782 / 725 / 603px** — **0 / 36 / 0 / 0**. Three of the four
+> fixtures fit outright, with 138 / 21 / 143px of headroom, and the gate is
+> asserted strictly against the room for those three. The one that does not
+> is F2, a text layer, and all 36px of it is populated section content named
 > with numbers under "What is left" below.
 
 ## Two tables, and why neither replaces the other
@@ -90,15 +93,19 @@ Shape:
 {
   "viewport": { "width": 1400, "height": 900 },
   "budget": { "source": "clientHeight of the Design tab scroll container at 900px" },
-  "populatedSectionOverflowAllowancePx": 210,
+  // ONE exception to an otherwise strict budget, for ONE fixture. panel-39's
+  // blanket `populatedSectionOverflowAllowancePx: 210` is gone — three of the
+  // four fixtures fit outright now, so a uniform slack would hide a 200px
+  // regression on any of them.
+  "overflowException": { "fixture": "f2-text", "allowancePx": 60 },
   "fixtures": {
     "f1-rectangle": {
-      "contentHeight": 690,       // what the tab renders
-      "clientHeight": 718,        // THE BUDGET — the room it has at this viewport
-      "scrollHeight": 718,        // clamps to the room; recorded, never asserted
+      "contentHeight": 608,       // what the tab renders
+      "clientHeight": 746,        // THE BUDGET — the room it has at this viewport
+      "scrollHeight": 746,        // clamps to the room; recorded, never asserted
       "overflowPx": 0,
-      "headroomPx": 28,
-      "sections": { "module": 60 } // per [data-section-id], rendered px
+      "headroomPx": 138,
+      "sections": { "module": 26 } // per [data-section-id], rendered px
     }
     // f2-text, f3-flex-board, f4-image
   }
@@ -124,12 +131,14 @@ designed. That was the panel-37 defect.
 
 ### Measured, at 1400×900 — the whole panel
 
-| Fixture | Design tab `contentHeight` | Room | Over by | panel-37 |
-|---|---:|---:|---:|---:|
-| F1 rectangle | 690 | 718 | **0** (28 spare) | 334 over |
-| F2 text | 916 | 718 | **198** | 564 over |
-| F3 flex board | 909 | 718 | **191** | 387 over |
-| F4 image | 773 | 718 | **55** | 417 over |
+| Fixture | Design tab `contentHeight` | Room | Over by | panel-39 | panel-37 |
+|---|---:|---:|---:|---:|---:|
+| F1 rectangle | 608 | 746 | **0** (138 spare) | 0 (28 spare) | 334 over |
+| F2 text | 782 | 746 | **36** | 198 over | 564 over |
+| F3 flex board | 725 | 746 | **0** (21 spare) | 191 over | 387 over |
+| F4 image | 603 | 746 | **0** (143 spare) | 55 over | 417 over |
+
+Total overflow across the four: **1702 → 444 → 36**.
 
 ### Where the room comes from
 
@@ -137,15 +146,25 @@ Measured on the docked panel at a 900px viewport, top to bottom. The scroll
 container's own box ends exactly at the window's bottom edge, so this is the
 honest "900px minus chrome" figure.
 
-| Band | panel-37 | panel-39 |
-|---|---:|---:|
-| admin top bar | 36 | 36 |
-| `PanelHeader` (the node title lives here) | 36 | 36 |
-| `InspectorShell` tab strip | 47 | 43 |
-| `FrameSizePanel` | 88 | **0** |
-| `headerClassPicker` | 67 | 67 |
-| **chrome total** | **274** | **182** |
-| **`.surface` (the Design tab's scroll container)** | **626** | **718** |
+| Band | panel-37 | panel-39 | panel-41 |
+|---|---:|---:|---:|
+| admin top bar | 36 | 36 | 36 |
+| `PanelHeader` (the node title lives here) | 36 | 36 | 36 |
+| `InspectorShell` tab strip | 47 | 43 | 43 |
+| `FrameSizePanel` | 88 | **0** | 0 |
+| `headerClassPicker` | 67 | 67 | **39** |
+| **chrome total** | **274** | **182** | **154** |
+| **`.surface` (the Design tab's scroll container)** | **626** | **718** | **746** |
+
+**panel-41's 28px** is `ClassPicker` becoming one row. The selector pills sat
+on a row of their own below the add-a-selector input; they are now the leading
+items of that same wrapping row, which is what every other tag input in the
+world does. The row still wraps — for an element with eight classes it grows,
+proportionally to real content — but for one or two it does not, which is
+every fixture in this baseline. A second, smaller correction came with it:
+the input's flex floor was large enough that `.image-layer` wrapped where
+`.board` did not, so F4's room read 723 against F3's 746. The budget must not
+move with the length of a class name.
 
 **One correction to panel-37's table.** The 88px band was recorded there as
 "node header (title + breadcrumb)". It is not — the node title is inside
@@ -163,25 +182,43 @@ cannot see (`WriteTargetRow`, the Module block) are visible here. The Module
 block now carries `data-section-id="module"`, so it is in the measured table
 proper rather than invisible to both gates.
 
-| Child | panel-37 | panel-39 |
-|---|---:|---:|
-| `WriteTargetRow` | 32 | 32 |
-| Module block (`base.text` props) | 158 | 158 |
-| `layer` | 32 | 32 |
-| `align` | 0 | 0 |
-| `measures` | 122 | 122 |
-| `layout` | 199 | **33** |
-| `fill` | 73 | 73 |
-| `stroke` | 33 | 33 |
-| `shadow` | 33 | 33 |
-| `blur` | 33 | 33 |
-| `text` | 197 | 197 |
-| `export` | 33 | 33 |
-| `more` (collapsed) | 33 | 33 |
-| **sum of children** | **978** | **812** |
-| grid gaps (11 × 12 → 11 × 8) | 132 | 88 |
-| `.surface` + `.surfaceContent` padding | 80 | **16** |
-| **total** | **1190** | **916** |
+| Child | panel-37 | panel-39 | panel-41 |
+|---|---:|---:|---:|
+| `WriteTargetRow` | 32 | 32 | **gone** |
+| Module block (`base.text` props) | 158 | 158 | **80** |
+| `layer` | 32 | 32 | 32 |
+| `align` | 0 | 0 | 0 |
+| `measures` | 122 | 122 | 122 |
+| `layout` | 199 | **33** | 33 |
+| `fill` | 73 | 73 | **65** |
+| `stroke` | 33 | 33 | 33 |
+| `shadow` | 33 | 33 | 33 |
+| `blur` | 33 | 33 | 33 |
+| `text` | 197 | 197 | **189** |
+| `export` | 33 | 33 | 33 |
+| `more` (collapsed) | 33 | 33 | 33 |
+| **sum of children** | **978** | **812** | **686** |
+| grid gaps (11 × 12 → 11 × 8 → 10 × 8) | 132 | 88 | 80 |
+| `.surface` + `.surfaceContent` padding | 80 | **16** | 16 |
+| **total** | **1190** | **916** | **782** |
+
+panel-41's three F2 lines, each with its cause:
+
+- **`WriteTargetRow` is gone** (−32, plus its gap = −40). Its two facts — a
+  target's lock reason, and which target a brand-new property lands in — now
+  ride `ClassPicker`'s own pills, which listed the same selectors 40px above
+  it. Two surfaces stating one fact about one element is the panel's own copy
+  of the write-target ambiguity WS-6.2 exists to fix.
+- **The Module block 158 → 80** (−78). Its `tag` row is a schema default this
+  `<p>`'s source never wrote, so Law 3 folds it behind the block header's
+  `1 more` disclosure (−36 with its gap); and the `text` content editor sizes
+  to the text instead of reserving four rows (90 → 54, −36). `rows` became
+  the ceiling, not the height.
+- **`fill` 73 → 65 and `text` 197 → 189** (−16 together). A flush section's
+  `.sectionContent` carried 8px of bottom padding *on top of* the parent grid
+  gap, so an open section sat 16px from the next divider while a collapsed one
+  sat 8px from it — two boundaries, two sizes, for no stated reason. 8px is
+  also the between-section step `02-measurements.md` measures.
 
 The three contributors panel-37 named, and what happened to each:
 
@@ -200,37 +237,60 @@ The three contributors panel-37 named, and what happened to each:
    admin's fluid `clamp()` scale that the inspector's own frozen-geometry rule
    exists to keep out of this panel. 80px → 16px, on every fixture.
 
+### Where F3's and F4's height went
+
+- **F3 (flex board), 191 over → fits with 21px spare.** Its `layout` section
+  went 329 → 227. Figma draws an auto-layout block as the 3×3 align pad on
+  the left with the flow and spacing fields stacked to its right; Studio
+  stacked all three, so the pad — a fixed 48×48 box — had 48px of dead column
+  beside it on a row of its own (−94px, including padding beside margin). The
+  rest is the `.sectionContent` padding fix above.
+- **F4 (image), 55 over → fits with 143px spare.** Its Module block went
+  252 → 130. `<img className src alt />` sets `src`; `loading`,
+  `fetchPriority` and `decoding` are schema defaults the JSX never wrote, so
+  Law 3 folds all three (−122px: three rows, two gaps, and the row a separate
+  "More properties" disclosure would itself have cost — the fold lives on the
+  block header, which already exists).
+
 ### What is left, and why it is not closable as density
 
-Every remaining pixel is a **populated** section — a value the user's own
-source sets, drawn once, at the 32px row height `04-token-gaps.md` measures
-off Penpot:
+One fixture, and every pixel of it is a **populated** section — a value the
+user's own source sets, drawn once, at the 32px row height `04-token-gaps.md`
+measures off Penpot.
 
-- **F2 (text), 198 over.** `text` 197 (family; weight+size; line-height+
-  letter-spacing; align — Figma's own four rows) + the 158px Module block
-  (the node's `text` content editor at 90px, plus its `tag` row).
-- **F3 (flex board), 191 over.** `layout` 329, all of it a real flex
-  container: mode row 34, flow 32, the 3×3 align pad 48, row/column gap 34,
-  padding 34, margin 34, clip content 32.
-- **F4 (image), 55 over.** The 252px Module block: a 104px image picker plus
-  `loading` / `fetchPriority` / `decoding` rows.
+**F2 (text), 36 over — 782 against 746:**
 
-Three levers remain, each with its measured number, none taken here:
+| Block | px |
+|---|---:|
+| `text` — family; weight+size; line-height+letter-spacing; align (Figma's own four rows) | 189 |
+| `measures` — W/H, CSS position mode, rotation+radius | 122 |
+| Module block — the node's own `text` content, sized to the text | 80 |
+| `fill` — the text colour the class sets | 65 |
+| `layer` — opacity, blend, visibility | 32 |
+| six collapsed one-row sections (layout, stroke, shadow, blur, export, more) | 198 |
+| gaps (10 × 8) + container padding (2 × 8) | 96 |
 
-1. **`WriteTargetRow` duplicates ClassPicker's pill stack** — 40px with its
-   gap, on every selection. Both list the element's class chips + `style=`;
-   one is read-only with lock reasons and a default-target marker, the other
-   is interactive, 40px above it. Merging them is worth 40px and removes the
-   panel's own copy of the write-target ambiguity WS-6.2 exists to fix — but
-   it is a behaviour change to the write target, not a density change.
-2. **Module props the source does not set are pre-drawn** (Law 3 says
-   otherwise). Folding rows whose key is absent from `selectedNode.props`
-   behind one disclosure inside the Module block is worth ~72px on F4 and puts
-   it inside the budget. Needs its own dogfood: `renderModuleTabContent` is
-   shared with the VC param-promotion surface, and two e2e specs drive
-   `property-control-*` rows directly.
-3. **Layout stacks what Figma pairs** — the align pad and the gap fields on
-   separate rows, likewise padding and margin. Worth ~84px on F3.
+Nothing there is pre-drawn. **One lever would close it**, and it is a parity
+change rather than a density one:
+
+- **Shadow and Blur are one section in Figma**, and in `STUDIO-IMPORT-V2-PLAN.md`
+  WS-6.1's own diagram (`Effects  shadow / blur  + −`). Studio draws two
+  collapsed one-row sections: 33px of header plus an 8px gap, a measured
+  **41px on every selection**. Merging them puts F2 at **741 against 746** and
+  every fixture strictly inside the budget. Not taken here: it is a
+  section-manifest change plus a restructure of `ShadowSection.tsx` (636
+  lines) and `BlurSection.tsx` (416), both rewritten by `panel-38` for the
+  Mixed contract, and it needs a merged add-menu over five items with their
+  own disabled rules.
+
+Two smaller observations from the same measurement:
+
+- F4's `fill` renders `forceOpen` with a body of zero rows — 33px of header
+  and nothing behind it. That is Law 1's "an empty section is not a
+  disclosure" case; fixing it is worth 8px on that fixture.
+- `measures` is 122px everywhere except F1, where `position: relative` adds
+  the TRBL grid and it becomes 199px. F1 has 138px of headroom, so it is not
+  a problem today — but it is the largest single block in the panel.
 
 ### The fixtures
 

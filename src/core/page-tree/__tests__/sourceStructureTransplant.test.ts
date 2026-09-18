@@ -269,3 +269,94 @@ describe('previewStructuralTransplant — refusals', () => {
     expect(result.refusal.message).toContain('no longer on the board')
   })
 })
+
+/**
+ * A cross-frame COPY is not a cross-frame move with a flag. `copy: true` writes
+ * one new element into the DESTINATION page's own file and leaves the origin's
+ * bytes untouched (`transplantJsxElement`), so the two refusals whose whole
+ * argument is "the change would apply to every place this is used" stop being
+ * true of it - while the two that are about the markup ITSELF do not.
+ *
+ * These four tests are the contract the "Duplicate into frame instead" remedy
+ * rests on: it is offered exactly when re-asking this function with
+ * `copy: true` comes back `ok`, so a change here changes the button, and a
+ * button that led back to the same refusal would fail these.
+ */
+describe('previewStructuralTransplant - what a COPY escapes, and what it does not', () => {
+  it('ALLOWS copying an inlined component instance - the component keeps its own markup', () => {
+    const result = previewStructuralTransplant({
+      originTree: homePage(),
+      nodeIds: [HOME_INLINED],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+      copy: true,
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.commit.copy).toBe(true)
+    expect(result.commit.nodeId).toBe(HOME_INLINED)
+  })
+
+  it('ALLOWS copying markup out of a layout file - no other page is touched', () => {
+    const origin = homePage()
+    const chrome = 'app/layout.tsx:7:5'
+    origin.nodes[chrome] = node(chrome)
+    origin.nodes[HOME_MAIN]!.children.push(chrome)
+    reindexNodeParents(origin.nodes)
+
+    expect(
+      previewStructuralTransplant({
+        originTree: origin,
+        nodeIds: [chrome],
+        destinationTree: aboutPage(),
+        newParentId: ABOUT_MAIN,
+        newIndex: 0,
+        copy: true,
+      }).ok,
+    ).toBe(true)
+
+    // The MOVE still refuses: cutting it out of the layout changes every page
+    // rendered below it.
+    const moved = previewStructuralTransplant({
+      originTree: origin,
+      nodeIds: [chrome],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+    })
+    expect(moved.ok).toBe(false)
+    if (moved.ok) return
+    expect(moved.refusal.reason).toBe('route-chrome')
+  })
+
+  it('still REFUSES copying a `.map` row - there is no source range to read', () => {
+    const result = previewStructuralTransplant({
+      originTree: homePage(),
+      nodeIds: [HOME_ROW],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+      copy: true,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.refusal.reason).toBe('list-row')
+  })
+
+  it('still REFUSES copying a parser-locked element - the code decides its shape', () => {
+    const origin = homePage()
+    origin.nodes[HOME_A] = node(HOME_A, [], 'spread props')
+    const result = previewStructuralTransplant({
+      originTree: origin,
+      nodeIds: [HOME_A],
+      destinationTree: aboutPage(),
+      newParentId: ABOUT_MAIN,
+      newIndex: 0,
+      copy: true,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.refusal.reason).toBe('code-placed')
+  })
+})

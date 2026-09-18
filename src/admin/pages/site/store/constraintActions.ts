@@ -91,6 +91,18 @@ export interface ConstraintActionContext {
    * text, the same honesty rule every other unwireable kind follows.
    */
   makeParentRelative?: (nodeId: string) => void
+  /**
+   * D2 G3 — run the refused cross-frame drop again as a COPY.
+   *
+   * Unlike every other injected handler this one takes NO arguments, because
+   * there is no argument that would name the gesture: a drop is a destination
+   * (page, container, index) the drag session no longer holds. The store
+   * action that refused closes over it and hands the closure to the dialog on
+   * its state; `RefusalDialog` passes it back down here. Absent means the
+   * action stays un-runnable and renders as plain advice text, the same
+   * honesty rule every other unwireable kind follows.
+   */
+  duplicateIntoFrame?: () => void
 }
 
 /** `Header.tsx:42` — the origin, short enough to sit inside a button label. */
@@ -156,6 +168,17 @@ export function resolveConstraintAction(
     const onSettled = context.onSettled
     return () => {
       run(nodeId)
+      onSettled?.(true)
+    }
+  }
+  // D2 G3 — the refused cross-frame drop, re-issued with Alt's meaning. The
+  // handler IS the store action that refused, so the copy rides the identical
+  // gate and lands the identical single toast.
+  if (action.kind === 'duplicate-into-frame' && context.duplicateIntoFrame) {
+    const run = context.duplicateIntoFrame
+    const onSettled = context.onSettled
+    return () => {
+      run()
       onSettled?.(true)
     }
   }

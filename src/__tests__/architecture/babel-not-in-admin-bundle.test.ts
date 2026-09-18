@@ -23,8 +23,9 @@
  *      import (which would bypass rule 1's barrel entirely).
  */
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
-import { join, extname, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'node:path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const BARREL_PATH = join(REPO_ROOT, 'src/core/studio-runtime/index.ts')
@@ -32,18 +33,7 @@ const BARREL_PATH = join(REPO_ROOT, 'src/core/studio-runtime/index.ts')
 const BANNED_IMPORT_RE =
   /from\s+['"](@babel\/core|@babel\/types|@core\/studio-runtime\/idStamp|@core\/studio-runtime\/vitePlugin|\.\.?\/.*\/(idStamp|vitePlugin))['"]/
 
-function collectFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.tmp' || entry === 'dist') continue
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) out.push(...collectFiles(full))
-    else if (['.ts', '.tsx'].includes(extname(entry))) out.push(full)
-  }
-  return out
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function repoRelative(absPath: string): string {
   return relative(REPO_ROOT, absPath).replaceAll('\\', '/')
@@ -51,7 +41,7 @@ function repoRelative(absPath: string): string {
 
 describe('babel-not-in-admin-bundle gate', () => {
   it('the studio-runtime barrel does not re-export idStamp.ts or vitePlugin.ts', () => {
-    const content = readFileSync(BARREL_PATH, 'utf8')
+    const content = readSource(BARREL_PATH)
     expect(content).not.toMatch(/from\s+['"]\.\/idStamp['"]/)
     expect(content).not.toMatch(/from\s+['"]\.\/vitePlugin['"]/)
   })
@@ -60,7 +50,7 @@ describe('babel-not-in-admin-bundle gate', () => {
     const files = collectFiles(join(REPO_ROOT, 'src/admin'))
     const violations: string[] = []
     for (const file of files) {
-      const content = readFileSync(file, 'utf8')
+      const content = readSource(file)
       if (BANNED_IMPORT_RE.test(content)) violations.push(repoRelative(file))
     }
     if (violations.length > 0) {

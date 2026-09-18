@@ -7,7 +7,8 @@ import { runMigrations } from '../../db/runMigrations'
 import type { DbClient } from '../../db/client'
 import { resolveBridgeToolResult } from '../runtime'
 import { buildMcpServer } from './server'
-import { createEditorBridgeStream } from './editorBridge'
+import { createEditorBridgeStream, editorBridgeScope } from './editorBridge'
+import { CMS_SITE_WRITE_TOOLS_WITHHELD } from './registry'
 import { registerPermissionGate } from './permissionGate'
 
 const decoder = new TextDecoder()
@@ -55,6 +56,13 @@ async function connectClient(
   return client
 }
 
+/**
+ * A real `site:<projectKey>` bridge scope — the only shape an editor bridge
+ * ever has (`editorBridgeScope`), and the scope the withheld-tools rule is
+ * about.
+ */
+const STUDIO_SCOPE = editorBridgeScope('studio-workspace/acme-marketing')
+
 let db: DbClient
 beforeEach(async () => { db = await freshDb() })
 
@@ -72,40 +80,51 @@ describe('mcp server', () => {
     await client.close()
   })
 
-  it('lists browser editing tools but errors with an open-editor hint when no editor is connected', async () => {
-    const client = await connectClient(db, ['ai.chat', 'ai.tools.write', 'site.structure.edit'])
+  it('lists relayed tools but errors with an open-editor hint when no editor is connected', async () => {
+    const client = await connectClient(db, ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit'])
     const { tools } = await client.listTools()
-    expect(tools.some((t) => t.name === 'site_insert_html')).toBe(true) // browser tool is listed
-    expect(tools.some((t) => t.name === 'site_delete_node')).toBe(true)
+    // A relayed (`bridge`) tool IS listed with no editor connected — the error
+    // arrives when it is called, not by hiding it.
+    expect(tools.some((t) => t.name === 'site_read_document')).toBe(true)
 
-    const result = await client.callTool({ name: 'site_insert_html', arguments: { html: '<p>hi</p>' } })
+    const result = await client.callTool({ name: 'site_read_document', arguments: {} })
     expect(result.isError).toBe(true)
     const text = (result.content as Array<{ type: string; text: string }>)[0].text
     expect(text).toContain('Site editor')
     await client.close()
   })
 
+  it('withholds every CMS site WRITE tool — the bridge only ever reaches a Studio project', async () => {
+    const client = await connectClient(db, ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit', 'site.style.edit', 'site.content.edit'])
+    const names = (await client.listTools()).tools.map((t) => t.name)
+    for (const withheld of CMS_SITE_WRITE_TOOLS_WITHHELD) {
+      expect(names).not.toContain(withheld)
+    }
+    // Calling one anyway is an unknown tool, not a silent relay.
+    const result = await client.callTool({ name: 'site_insert_html', arguments: { html: '<p>hi</p>' } })
+    expect(result.isError).toBe(true)
+    expect(JSON.stringify(result.content)).toContain('Unknown tool')
+    await client.close()
+  })
+
   it('routes Site browser tools to the Site workspace bridge', async () => {
     const userId = 'u1-scoped-workspace'
     const siteCtrl = new AbortController()
-    const siteReader = createEditorBridgeStream(userId, 'site', siteCtrl.signal).getReader()
+    const siteReader = createEditorBridgeStream(userId, STUDIO_SCOPE, siteCtrl.signal).getReader()
     const siteReady = await readUntil(siteReader, (event) => event.type === 'bridgeReady')
 
     const client = await connectClient(
       db,
-      ['ai.chat', 'ai.tools.write', 'site.structure.edit'],
+      ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit'],
       userId,
     )
 
-    const siteCall = client.callTool({
-      name: 'site_insert_html',
-      arguments: { parentId: 'root', html: '<p>site</p>' },
-    })
+    const siteCall = client.callTool({ name: 'site_read_document', arguments: {} })
     const siteRequest = await readUntil(siteReader, (event) => event.type === 'toolRequest')
-    expect(siteRequest.toolName).toBe('site_insert_html')
+    expect(siteRequest.toolName).toBe('site_read_document')
     resolveBridgeToolResult(siteReady.bridgeId as string, siteRequest.requestId as string, {
       ok: true,
-      data: { inserted: 1 },
+      data: { html: '<p>site</p>' },
     })
     expect((await siteCall).isError).toBeFalsy()
 
@@ -117,18 +136,15 @@ describe('mcp server', () => {
   it('returns an MCP tool error when the live editor bridge disconnects mid-call', async () => {
     const userId = 'u1-disconnected-workspace'
     const controller = new AbortController()
-    const reader = createEditorBridgeStream(userId, 'site', controller.signal).getReader()
+    const reader = createEditorBridgeStream(userId, STUDIO_SCOPE, controller.signal).getReader()
     await readUntil(reader, (event) => event.type === 'bridgeReady')
     const client = await connectClient(
       db,
-      ['ai.chat', 'ai.tools.write', 'site.structure.edit'],
+      ['ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit'],
       userId,
     )
 
-    const call = client.callTool({
-      name: 'site_insert_html',
-      arguments: { parentId: 'root', html: '<p>site</p>' },
-    })
+    const call = client.callTool({ name: 'site_read_document', arguments: {} })
     await readUntil(reader, (event) => event.type === 'toolRequest')
     controller.abort()
 

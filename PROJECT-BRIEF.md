@@ -351,6 +351,35 @@ never silently no-ops.
   (`studio_list_components`, `studio_find_component`), `studio_typecheck`,
   `studio_install_deps` and `studio_create_page`
 
+**Landed in the Figma-feel plan's waves 2 and 3** (2026-09-18 — the plan is closed; its
+"Wave 2 — landed" and "Wave 3 — landed" tables map each item to its PR and STATE entry):
+
+- **Every `/admin/api/studio/*` route is declared, not guarded.** One gate at dispatch reads
+  `server/handlers/studio/routeCapabilities.ts`: an undeclared path is a 404, a state-changing
+  method without an acceptable `Origin` is a 403, then the capability the declaration names.
+  Exact entries per verb — no prefix namespaces — and an architecture gate that scans the real
+  dispatches, so a new route that forgets its row fails the build.
+- **Structural gestures queue, keep their selection, and undo in one step.** A burst of ⌘D
+  writes every copy instead of refusing after the first; a write reports the node ids it created
+  and relocated, so the new element is selected after the resync; insert, duplicate, wrap, group,
+  ungroup, paste, cross-frame move and image drop each record an inverse and take one ⌘Z —
+  including the two-file case.
+- **⌘G can no longer write invalid markup.** The wrapper tag follows the HTML content model, so
+  grouping inline elements inside a `<p>` writes a `<span>`; a wrapper that could not be legal
+  anywhere is refused with the container named.
+- **A panel that throws takes out that panel only.** `PanelBoundary` wraps every editor panel,
+  inspector tab and inspector section with an in-place fallback and a reload button; the canvas,
+  the layer tree and the toolbar stay up, and no toast fires.
+- **CRLF is handled end to end** — the user's repository (parse and every codemod preserve the
+  file's own endings) and every line-wise read of subprocess output.
+- **The e2e stack starts itself on Windows** and runs against a throwaway copy of the workspace,
+  so a run leaves `git status` clean. The Phase 0 exit dogfood
+  (`tests/e2e/studio-feel-phase0.e2e.ts`) is seven cases, all asserting and all green. G8 is
+  driven against a real private GitHub repository (`github-sync.e2e.ts`), and one real agent turn
+  is wall-clocked (`agent-turn.e2e.ts`); both self-skip and say why when their preconditions are
+  absent. **The full cold suite is NOT green** — 64 specs are still untriaged, see the plan's
+  "What is still open after three waves".
+
 ### What does NOT work today
 
 This list is deliberately short and is the *orientation* set. The granular,
@@ -402,6 +431,12 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
   a gap in it refuses with `multi-select` — "select siblings next to each
   other" — because the wrapper would otherwise land around elements the user
   never selected. ⌘G on one element is the existing single-element `wrap`.
+  **The container's tag follows the HTML content model** (`struct-11`,
+  `@core/utils/htmlContentModel.ts`): `<span>` in phrasing content, `<div>` in
+  flow content, and a REFUSAL (`content-model`) where neither would be valid —
+  inside a `<ul>`/`<tr>`/`<select>`, or around an `<li>`/`<td>`/`<figcaption>`.
+  It used to be a hard-coded `<div>`, which put a `<div>` inside a `<p>` in a
+  real project and made React report a hydration error in the user's own app.
   **⌘⇧G refuses to dissolve a container that is doing anything but holding its
   children** (`has-behaviour`): a handler, a `ref`, a `key`, a spread, or a
   component tag rather than an intrinsic element. Only
@@ -559,9 +594,15 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     fusing the two would force a role to hand its agent commit rights just to
     give a human the Version control panel. This closed `sec-05` finding 2; the
     posture is still single-operator by default (the Owner role holds every
-    capability in the table), so it is a real gate, not a login flow. Full
-    write-up: `docs/server.md` → "Per-request capability gating on the Studio
-    routes".
+    capability in the table), so it is a real gate, not a login flow.
+    **Every entry is an EXACT path, per verb** — there are no namespaces, so
+    `git/<new-action>` and `dev-server/restart` 404 rather than inheriting
+    `site.read` (`sec-16`'s hole, closed by `sec-18`). The one dynamic shape
+    is `jobId` on `install`/`deploy`, matched against the UUID those
+    registries mint. Adding a verb without a table row fails the build, and so
+    does adding a METHOD to an existing route whose table row declares that
+    method class `null`. Full write-up: `docs/server.md` → "Per-request
+    capability gating on the Studio routes".
 
 ---
 

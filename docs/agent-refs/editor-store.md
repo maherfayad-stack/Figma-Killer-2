@@ -147,6 +147,19 @@ from `toastStructuralRefusal`) renders ONE of two things depending on whether
   reload lands — the user's delete/move/duplicate/wrap actually happens, not
   just the detach alone.
 
+A **second** closure now rides that field: `duplicateIntoFrame`, for D2 G3's
+`duplicate-into-frame` remedy. It takes no arguments, because there is no
+argument that would name the gesture — a cross-frame drop is a destination
+(page, container, index) the drag session no longer holds once `pointerup` has
+run, so `transplantActions.ts` closes over it and hands the closure to the
+dialog. `RefusalDialog` passes it down to `ConstraintActionButtons`, which
+supplies it to `resolveConstraintAction` exactly the way it supplies
+`makeParentRelative`. Pressing the button calls the SAME `transplantNodes` the
+drag called, with `copy: true` — same gate, same concurrency guard, one toast.
+`planSourceTransplant` only attaches the action when re-asking
+`previewStructuralTransplant` with `copy: true` comes back `ok`, so the remedy
+cannot bounce back to the refusal it was offered under.
+
 See `studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`".
 
 **`insertNode` does not mutate a studio tree at all.** It plans the write
@@ -166,11 +179,22 @@ element's own tag-name `line:col` (`createdJsxLocation.ts`, verified against the
 re-parsed file — an unconfirmable position reports `null`, never a guess),
 `applyStudioEditBatch` turns them into `StudioEditBatchResult.createdNodeIds`
 (the plain `rel:line:col` ids the parser will mint for the same elements), and
-`commitStructural` parks them in `pendingCreatedSelection.ts`.
+`commitStructural` parks them in `pendingStructuralOutcome.ts`.
 `usePersistence.ts` claims them on BOTH re-read paths — the narrow `patchPages`
 and the full `loadSite` — and selects them, checking every id against the O(1)
 `_nodeIdToPageIds` index first. A write whose elements did not all come back
 selects nothing rather than part of itself.
+
+**And what it MOVED (`store-14`).** `StudioEditBatchResult` gains
+`relocatedNodeIds`, the counterpart `store-13` left open. `moveJsxElement` and
+`unwrapJsxElement` now report where they put what they moved (an ungroup reports
+several — its children all move at once), and a `transplant` that MOVES reports
+through `relocated` while a COPY still reports `created`, because their undos
+differ. The board selects created ∪ relocated, so a reorder, a reparent and an
+ungroup all end pointing at what the user just moved instead of dropping the
+selection. **One wire fix went with it:** `POST /admin/api/studio/save` had never
+actually forwarded `createdNodeIds`, so `store-13`'s selection worked in its unit
+test and nowhere else.
 
 *Two details worth knowing.* The handoff is a one-slot, expiring BOX rather
 than a callback because `studioStructuralCommits.ts` sits inside the store's own
@@ -328,12 +352,31 @@ therefore NOT among the named tree-mutation actions the
 `no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
 
 Both join the `insert`/`duplicate`/`wrap`/`group` family in the other respect
-too: **nothing is shown optimistically and nothing is recorded on the undo
-stack**, because the node that appears afterwards is a freshly parsed one whose
-id is the `rel:line:col` the write produced. ⌘Z after either of them undoes
-whatever came before it, exactly as it does after ⌘D on a studio tree. Both are
-gated by `guardAgainstConcurrentStructuralCommit` for the same reason that
-family is.
+too: **nothing is shown optimistically**, because the node that appears
+afterwards is a freshly parsed one whose id is the `rel:line:col` the write
+produced. Both ride the same `structuralCommitQueue.ts` the rest of that family
+does.
+
+**The whole family is undoable (`store-14`).** It used to record nothing at all,
+so ⌘Z after a ⌘D, a ⌘G, a cross-frame drag or a file drop undid whatever came
+before it. Each gesture now records a patch-free history entry carrying its
+inverse, expressed in edit kinds that already exist — `delete` for
+insert/duplicate/paste/image-drop, `ungroup` for wrap/group, `group` for
+ungroup, `transplant` back for a cross-frame move — and ⌘Z posts it through the
+same `/save` route the gesture used. Full contract, including the two refusals
+that are deliberate and the LIFO property absolute ids rest on:
+`docs/reference/editor-history.md` → "The `source` gesture".
+
+**A gesture fired mid-commit QUEUES (`store-14`).** `store-11`'s guard refused
+it ("Still writing your last change") and `verify-3` measured the result: five
+⌘D presses inside 300 ms wrote ONE copy. The serialization — which is what
+closes the original double-write race — stays; the refusal is gone.
+`structuralCommitQueue.ts` parks the gesture as a THUNK and re-runs it the
+moment the wire is clear, so it re-reads the tree the previous resync left
+behind and re-plans from scratch rather than posting a plan built against
+stale ids. Five presses are five writes, one collapsed toast, the last copy
+selected, five undo steps. The queue holds 20; overflowing it is reported, not
+dropped.
 
 **A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
 wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the

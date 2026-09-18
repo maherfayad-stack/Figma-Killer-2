@@ -114,6 +114,38 @@ below, and the orchestrator merges it as a follow-up.
 
 ---
 
+### Wave 3 — landed
+
+Eleven work orders, merged into `integration/figma-feel-wave-3` on 2026-09-18. This was the
+last wave: the owner called the plan closed after it. Every row is a §9 item or one of the four
+defects `verify-3`'s Phase 0 spec machine-proved in wave 2.
+
+| Work order | PR | Branch | STATE |
+|---|---|---|---|
+| §9 exact route entries, sidecars, secret stores, realpath-aware decode | #183 | `fix/route-table-exact-entries-and-sidecars` | `sec-18` |
+| Phase-0 (a) — the group wrapper follows the HTML content model | #182 | `fix/group-wrapper-follows-content-model` | `struct-11` |
+| Phase-0 (b)+(d) — structural gestures queue, keep selection, and undo in one step | #185 | `feat/structural-commit-queue-and-undo` | `store-14` |
+| Phase-0 (c) — per-panel and per-section error boundaries; hidden/locked over N ids | #180 | `fix/inspector-error-boundary-and-fanout` | `panel-40` |
+| §9 the three inspector density levers; the budget becomes strict | #184 | `fix/inspector-density-levers` | `panel-41` |
+| §9 CRLF-safe subprocess output, through one helper | #179 | `fix/server-crlf-subprocess-output` | `server-26` |
+| §9 no CMS `site_*` write in a Studio-scoped catalog + ONE real agent turn, wall-clocked | #187 | `feat/agent-turn-e2e-and-connector-tool-scope` | `mcp-25` |
+| §8 DoD — G8 driven against a real private GitHub repository | #186 | `test/github-g8-dogfood-e2e` | `git-23` |
+| `canvas-19`'s open item — the drag's reflow FLIP, file-drop UX, the copy remedy | #188 | `feat/drag-flip-and-file-drop-ux` | `canvas-21` |
+| §9 `bun run test:e2e` cold on Windows, a tracked perf corpus, a clean tree | #181 | `test/e2e-windows-stack-and-corpus` | `verify-2` |
+| §9 one cached tree walk, fixture containment, the auto-promote case | #189 | `test/e2e-baseline-and-reliability` | `verify-4` |
+
+**`verify-4` is the one incomplete work order.** The account hit its weekly model limit mid-wave
+and took five agents with it; four had already pushed everything, `verify-4` had not finished the
+full cold-suite triage. What it did land is complete on its own. What it did not is the first
+item under "What is still open", below.
+
+**Two defects only the merge could find**, both fixed in the integration branch: the generated
+studio-runtime bundles were stale against the merged tree, and `server-26`'s subprocess-output
+gate built its own directory walk, which `verify-4`'s new shared-walk rule forbids — migrated
+onto the shared cache rather than allowlisted.
+
+---
+
 ## 1. The spine — why "I made this multiple times and the errors ruin it"
 
 Every previous wave fixed a defect and shipped it green. The recurring failure is not any one
@@ -744,68 +776,60 @@ integration branch was cut.
   `checkTrustTier`/`requireTrustTier` take a `projectDir` and `deployJobs.ts` stopped writing a
   second `.studio/meta.json` inside the user's own app.
 
-### Wave 3 — candidates
+### What is still open after three waves
 
-Collected from the wave-2 handoffs. Each names the entry that found it.
+The plan is closed. These are the real leftovers, each with the entry that found it. Nothing
+here is a regression; every one is work that was named rather than done.
 
-- **The four Phase-0 defects `verify-3` (#173) machine-proved**, in its own priority order:
-  (a) the group shortcut wraps inline `<span>`s inside a `<p>` in a `<div>` — invalid markup in
-  the user's repo and a React hydration error (`struct-10`); the wrapper tag must follow the HTML
-  content model, and a second group after an ungroup must work. (b) five rapid duplicate presses
-  write ONE copy, because the concurrency guard refuses presses 2–5 (`store-11`/`store-12`) —
-  structural writes must QUEUE and coalesce, not refuse. ~~(c) the inspector has no error boundary
-  of its own, so a panel throw takes out canvas and panels together~~ — **done (`panel-40`)**:
-  `PanelBoundary` wraps every panel, every inspector tab and every inspector section, case 5's
-  `test.fail()` is off. (d) selection after duplicate/group — #171 should
-  have closed this; re-run the spec and flip `test.fail()` off where green.
-- **Undo for the structural family** (`canvas-20` landmine 10): cross-frame drag, file drop,
-  duplicate, insert, wrap and group write source with no history entry, so "one undo is one step"
-  is not met. Needs #171's created ids plus a structural history entry that can name TWO files.
-- **`relocatedNodeIds`** (`store-13`): `move`/`reparent` still lose the selection after a resync
-  — the same mechanism as `createdNodeIds`, one field over. Plus a product call on what
-  `ungroup` should select.
-- **The three inspector density levers with their measured numbers** (`panel-39`,
-  `docs/features/inspector.md` §6): `WriteTargetRow` duplicates ClassPicker's pill stack
-  (−40px everywhere), folding unset module props (−72px on F4, but it collides with
-  `visual-builder` and `reliability` e2e), pairing Layout's align pad with the gap fields
-  (−84px on F3).
-- ~~**Layer hidden/locked over N ids** (`panel-38`): a store action for the fan-out, not a Mixed
-  fix.~~ — **done (`panel-40`)**: `setNodesHidden`/`setNodesLocked` replaced the per-node toggles;
-  the Layers context menu, the Spotlight commands and the inspector's Layer row all fan out in ONE
-  history entry, with a Mixed label when the selection disagrees.
-- **Filter `site_*` write tools out of a Studio-scoped connector** (`store-13`): the CMS
-  toolset's system prompt still tells the model to use `site_insert_html`, which now refuses.
-- **`subPaths: true` is not fail-closed on a GET** (`sec-16`): a new GET under `deploy/` or
-  `dev-server/` inherits `site.read`, the capability the Client role holds. The real fix is exact
-  entries plus a dynamic-id marker, and it rewrites the arch gate's literal scan.
-- **`readRemotes` redaction** (`sec-16`): a repo cloned outside Studio can carry a
-  credential-bearing remote URL in `.git/config`, readable at `site.read`.
-- **`installJobStore.ts` still writes `.studio/install-job.json` at the APP ROOT** (`sec-15`) —
-  the last sidecar of the class #166 fixed, one level over. And `createPrivateTempDir` for
-  `mcpServerSecretStore.ts`, whose 0600/0700 is POSIX-only (`server-25`).
-- **`isWritableSourceRel` is lexical, not realpath-aware** (`sec-17`): the transplant's own
-  consequence is closed, the underlying property is not.
-- **`deployRunner.ts`/`deployProviders.ts` split subprocess stdout on a bare newline**
-  (`parser-13`): a Windows `vercel`/`netlify` CLI emits CRLF; `splitLines` exists now.
-- **The whole-tree architecture scans need one cached file walk or an honest timeout**
-  (`panel-39`): `ai-driver-isolation` times out at 22 s ALONE on this checkout, which is the one
-  load-sensitive red that is not really about load.
-- **An `e2e:dev` restart-on-exit supervisor** (`perf-9`): Bun 1.3.6 segfaults running Vite on
-  this box and takes the stack down mid-run, producing `ERR_CONNECTION_REFUSED` failures that
-  read exactly like product bugs.
-- **G8 automated against a throwaway private GitHub repo** — `gh auth status` reports a token
-  with `repo` scope, so an agent can create and delete a private scratch repo and drive G1–G7
-  end to end. `GITHUB_OAUTH_CLIENT_ID` is not set, so the device flow stays human-only.
-- **Whether Admin should hold `studio.git.write`** (`sec-14`) — owner-level, document only.
+- **The full e2e baseline** (`verify-4`, cut short by the weekly model limit). A cold
+  `bun run test:e2e` starts the stack by itself now (`verify-2`) and ran **23 pass / 64 fail /
+  13 skip**, with no baseline to diff against. Two mechanical causes are confirmed by reading
+  them — specs that navigate to the Content/Data/Media workspaces PR #18 deleted, and specs whose
+  fixtures were built outside the containment root (`verify-4` moved four of them). Every
+  remaining failure needs the same triage: delete the spec, move its fixture, fix the product, or
+  annotate it with an owner. Until that is done, the CI `e2e` job runs the budget slice only.
+- **Shadow + Blur become Figma's single Effects section** (`panel-41`): a measured **41px**, and
+  the one thing standing between F2 (a text layer, 36px over) and a budget with no exceptions.
+  It is a section-manifest change plus a restructure of two files `panel-38` had just rewritten
+  for the Mixed contract, so it wants its own work order.
+- **`GET github/device/poll` writes a credential under a GET** (`sec-18`): the route is gated on
+  `site.structure.edit` now, but a GET skips the CSRF check by definition. Not exploitable today —
+  the flow is bound to `(userId, flowId)` and a Client cannot start one — and closing it means
+  changing how the gate keys CSRF, not adding a check.
+- **`GET /load` spawns the Tier-1 compiler at `site.read`** (`sec-18`, documented not gated): the
+  boundary is a capability, not a human consent, and `capabilities.md` now says so rather than
+  claiming otherwise.
+- **Whether Admin should hold `studio.git.write`** (`sec-14`) — owner-level, document only. The
+  HTTP git surface is gated on `site.structure.edit`, so Admin keeps the Version control panel
+  without gaining the agent's commit right.
+- **`ensureClaudeCliConfigDir` is fail-soft** where Studio's own secret writers fail closed
+  (`sec-18`): it restricts the directory the `claude` CLI writes its credential into and logs and
+  continues if it cannot. An owner veto turns it into a refusal.
+- **The device-flow sign-in needs `GITHUB_OAUTH_CLIENT_ID`**, which is not set on this machine, so
+  G8 ran through the paste-a-token path (`git-23`). Creating the OAuth App is the owner's.
 
 ## 8. Definition of done for the plan
 
-- Phase 0 exit dogfood passed and recorded in STATE.md.
-- `bun test`, `bun run build`, `bun run lint`, and `bun run test:e2e` green on this Windows
-  machine and in CI.
-- Every budget in S1/S2/S4/A9 asserted by a gate with a real number, not a plan target.
-- G8 dogfood recorded against a real private GitHub repository.
-- `PROJECT-BRIEF.md` §3 and the three stale plan headers corrected; `docs/features/*` updated
-  with each track; `path-index.md` lists every new file.
-- Nothing old left beside anything new: `PreviewOverlay`, the three multi-select panel files,
-  the Bun bench launch path, and the 21 per-hook key listeners are deleted, not disabled.
+Ticked at the wave-3 integration head, each line with the thing that proves it.
+
+- ~~Phase 0 exit dogfood passed and recorded in STATE.md~~ — **met.**
+  `tests/e2e/studio-feel-phase0.e2e.ts` runs all seven cases as ordinary passes; none carries
+  `test.fail()` any more. It took `panel-40`, `struct-11`, `store-13` and `store-14` to get there.
+- **`bun run build`, `bun run lint` and `bun test` green on this machine; `bun run test:e2e`
+  starts itself but is NOT green** — 64 specs still fail cold and are untriaged (first item under
+  "What is still open"). CI runs the budget slice, not the whole suite. This is the one DoD line
+  the plan does not meet.
+- ~~Every budget in S1/S2/S4/A9 asserted by a gate with a real number~~ — **met.** Zoom worst and
+  mean frame in `tests/e2e/helpers/canvasPerf.ts`; the inspector's height budget is a strict
+  runtime measurement with one named exception (`panel-41`); A9 is `AGENT_TURN_WALL_MS`, measured
+  over three real turns (`mcp-25`).
+- ~~G8 dogfood recorded against a real private GitHub repository~~ — **met, and automated.**
+  `tests/e2e/github-sync.e2e.ts` creates a private scratch repo, drives twelve claims through the
+  UI against `gh api` and a fresh clone, and deletes the repo on every path (`git-23`).
+- ~~`PROJECT-BRIEF.md` §3 and the stale plan headers corrected; `docs/features/*` updated with
+  each track; `path-index.md` lists every new file~~ — **met**, re-checked at each wave's
+  integration.
+- ~~Nothing old left beside anything new~~ — **met.** `PreviewOverlay`, the three multi-select
+  panel files, the Bun bench launch path and the 21 per-hook key listeners are deleted, not
+  disabled; wave 2 and 3 added to that list the two frame mount pools (`perf-9`), the CMS
+  `site_*` writes in the MCP catalog (`mcp-25`), and `store-11`'s in-flight refusal (`store-14`).

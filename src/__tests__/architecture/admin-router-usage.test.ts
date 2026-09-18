@@ -1,23 +1,11 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 
-function collectFiles(dir: string, exts = ['.ts', '.tsx']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.ts', '.tsx']): string[] => walkSourceTree(dir, exts)
 
 function lineNumberFor(source: string, index: number): number {
   return source.slice(0, index).split('\n').length
@@ -30,7 +18,7 @@ describe('Admin router usage', () => {
     const rawAdminHrefRe = /\bhref\s*=\s*(?:"\/admin\b|'\/admin\b|{\s*["']\/admin\b)/g
 
     for (const file of files) {
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       for (const match of source.matchAll(rawAdminHrefRe)) {
         violations.push(`${file.replace(SRC_ROOT, 'src/')}:${lineNumberFor(source, match.index ?? 0)}`)
       }
@@ -53,7 +41,7 @@ describe('Admin router usage', () => {
       ...collectFiles(join(SRC_ROOT, 'modules')),
     ]
     const violations = files.filter((file) =>
-      /from\s+['"]react-router-dom['"]/.test(readFileSync(file, 'utf8')),
+      /from\s+['"]react-router-dom['"]/.test(readSource(file)),
     )
 
     if (violations.length > 0) {
@@ -72,7 +60,7 @@ describe('Admin router usage', () => {
       ...collectFiles(join(SRC_ROOT, 'modules')),
     ]
     const violations = files.filter((file) =>
-      /from\s+['"](?:@admin\/lib\/routing|(?:[./]+)admin\/lib\/routing)['"]/.test(readFileSync(file, 'utf8')),
+      /from\s+['"](?:@admin\/lib\/routing|(?:[./]+)admin\/lib\/routing)['"]/.test(readSource(file)),
     )
 
     if (violations.length > 0) {

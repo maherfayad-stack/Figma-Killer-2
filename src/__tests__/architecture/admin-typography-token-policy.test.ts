@@ -7,8 +7,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const SCAN_ROOTS = [join(SRC_ROOT, 'admin'), join(SRC_ROOT, 'ui')]
@@ -34,20 +35,8 @@ const ADMIN_TEXT_SIZE_TOKENS = [
 const HARDCODED_FONT_SIZE_RE = /font-size\s*:\s*-?\d+(?:\.\d+)?px\s*;/g
 const HARDCODED_FONT_SHORTHAND_RE = /\bfont\s*:\s*[^;\n]*\d+(?:\.\d+)?px[^;\n]*;/g
 
-function collectModuleCss(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const info = statSync(full)
-    if (info.isDirectory()) {
-      results.push(...collectModuleCss(full))
-    } else if (extname(entry) === '.css' && entry.endsWith('.module.css')) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectModuleCss = (dir: string): string[] =>
+  walkSourceTree(dir, ['.css']).filter((f) => f.endsWith('.module.css'))
 
 /** Strip `/* ... *\/` block comments and `// ...` line comments. */
 function stripComments(source: string): string {
@@ -73,7 +62,7 @@ function findHardcodedFontSizes(filePath: string, source: string): string[] {
 
 describe('admin typography tokens', () => {
   it('declares the full admin fluid text scale in globals.css', () => {
-    const globals = readFileSync(GLOBALS_CSS, 'utf8')
+    const globals = readSource(GLOBALS_CSS)
 
     for (const token of ADMIN_TEXT_SIZE_TOKENS) {
       expect(globals).toContain(`${token}: clamp(`)
@@ -85,7 +74,7 @@ describe('admin typography tokens', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectModuleCss(root)) {
-        offenders.push(...findHardcodedFontSizes(filePath, readFileSync(filePath, 'utf8')))
+        offenders.push(...findHardcodedFontSizes(filePath, readSource(filePath)))
       }
     }
 
@@ -104,7 +93,7 @@ describe('admin typography tokens', () => {
   it('uses chrome text tokens instead of hardcoded font-size pixels in the iframe editor chrome', () => {
     const offenders = findHardcodedFontSizes(
       EDITOR_CHROME_INJECTOR,
-      readFileSync(EDITOR_CHROME_INJECTOR, 'utf8'),
+      readSource(EDITOR_CHROME_INJECTOR),
     )
 
     if (offenders.length > 0) {

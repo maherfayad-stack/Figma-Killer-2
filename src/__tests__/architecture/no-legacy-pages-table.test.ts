@@ -27,8 +27,9 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 import { pgMigrations } from '../../../server/db/migrations-pg'
 import { sqliteMigrations } from '../../../server/db/migrations-sqlite'
 
@@ -38,16 +39,7 @@ const PROJECT_ROOT = join(import.meta.dir, '../../../')
 // Helpers
 // ---------------------------------------------------------------------------
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) walk(full, out)
-    else if (extname(entry) === '.ts') out.push(full)
-  }
-  return out
-}
+const walk = (dir: string): string[] => walkSourceTree(dir, ['.ts'])
 
 /**
  * Returns true if the SQL string contains `create table pages` or
@@ -131,7 +123,7 @@ describe('no-legacy-pages-table — pages and page_versions must not exist in th
     for (const file of serverFiles) {
       let content: string
       try {
-        content = readFileSync(file, 'utf8')
+        content = readSource(file)
       } catch {
         continue
       }

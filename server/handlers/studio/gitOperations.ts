@@ -77,7 +77,7 @@ import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { splitLines } from '@core/utils/lineEndings'
-import { isArgvSafeBranchName, parseGithubRemoteUrl } from './gitPaths'
+import { isArgvSafeBranchName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
 import {
   clientSafeGitError,
@@ -221,9 +221,10 @@ export async function originAcceptsStoredGithubToken(dir: string): Promise<boole
 }
 
 /**
- * Every remote this repository has, as `git remote -v` reports them.
+ * Every remote this repository has, as `git remote -v` reports them, with any
+ * credential redacted out of the URLs — see {@link redactRemoteUrlCredentials}.
  *
- * Read-only and unfiltered: a project that already had three remotes when the
+ * Otherwise unfiltered: a project that already had three remotes when the
  * user opened it should SEE three, even though Studio will only ever write
  * `origin`. Hiding them would make the panel disagree with the user's
  * terminal, which is the failure mode `excludedCount` exists to avoid
@@ -232,7 +233,15 @@ export async function originAcceptsStoredGithubToken(dir: string): Promise<boole
 export async function readRemotes(dir: string): Promise<GitRemote[] | GitOperationFailure> {
   const result = await runGit(dir, ['remote', '-v'])
   if (!result.ok) return gitFailure('git-failed', clientSafeGitError(result, 'Could not read the remotes'))
-  return parseGitRemoteLines(result.stdout)
+  // Parsed once, CRLF-safe, by the module that owns git's output grammar; then
+  // redacted HERE and not at the route, so every consumer of this function
+  // inherits it and a second redaction at a second call site is not a second
+  // policy. A repo cloned outside Studio can carry a token in `.git/config`.
+  return parseGitRemoteLines(result.stdout).map((remote) => ({
+    ...remote,
+    fetchUrl: redactRemoteUrlCredentials(remote.fetchUrl),
+    pushUrl: redactRemoteUrlCredentials(remote.pushUrl),
+  }))
 }
 
 /**

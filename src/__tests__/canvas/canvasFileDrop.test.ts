@@ -95,16 +95,23 @@ afterEach(() => {
 
 describe('looksLikeImage — a courtesy check, never the gate', () => {
   it('accepts every image/* type', () => {
-    expect(looksLikeImage(imageFile('a.png', 'image/png'))).toBe(true)
-    expect(looksLikeImage(imageFile('a.svg', 'image/svg+xml'))).toBe(true)
+    expect(looksLikeImage({ count: 1, type: 'image/png', name: 'a.png' })).toBe(true)
+    expect(looksLikeImage({ count: 1, type: 'image/svg+xml', name: 'a.svg' })).toBe(true)
   })
 
   it('accepts a file the platform handed over with NO declared type', () => {
-    expect(looksLikeImage(imageFile('mystery', ''))).toBe(true)
+    expect(looksLikeImage({ count: 1, type: '', name: 'mystery' })).toBe(true)
   })
 
   it('rejects a declared non-image', () => {
-    expect(looksLikeImage(imageFile('report.pdf', 'application/pdf'))).toBe(false)
+    expect(looksLikeImage({ count: 1, type: 'application/pdf', name: 'report.pdf' })).toBe(false)
+  })
+
+  it('answers the same question for a drag still in the air, where there is no NAME to read', () => {
+    // Protected mode: `DataTransfer.files` is empty before `drop`, so the
+    // in-flight half only ever has a count and a declared type.
+    expect(looksLikeImage({ count: 1, type: 'image/png' })).toBe(true)
+    expect(looksLikeImage({ count: 1, type: 'application/pdf' })).toBe(false)
   })
 })
 

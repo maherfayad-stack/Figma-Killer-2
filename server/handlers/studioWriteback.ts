@@ -101,6 +101,7 @@ export {
 // re-exported here because this is the front door every caller already uses.
 export {
   studioEditLocation,
+  canonicalSourceRel,
   isWritableSourceRel,
   isSharedSourceNodeId,
   orderStudioEditsForApply,
@@ -179,7 +180,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     }
   }
 
-  const target = studioEditLocation(edit.nodeId)
+  const target = studioEditLocation(dir, edit.nodeId)
   if (!target) return { applied: false } // synthetic node (e.g. body) — no source location
   const loc = { file: join(dir, target.rel), line: target.line, col: target.col }
 
@@ -279,9 +280,9 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // names an existing child of the container the element is landing in. A
       // foreign anchor is therefore dropped (append is an honest position),
       // exactly as `insert`/`reparent` treat theirs.
-      const destination = studioEditLocation(edit.parentNodeId)
+      const destination = studioEditLocation(dir, edit.parentNodeId)
       const anchorId = edit.anchorNodeId
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const result = applyTransplantEdit(
         loc,
         edit,
@@ -291,13 +292,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
           : null,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13` — a transplant creates markup in the DESTINATION, so the
-      // position it reports is pinned to `edit.parentNodeId`'s file, not to
-      // this edit's own. `applyStudioEditBatch` reads `createdIn` for that.
+      // `store-13`/`store-14` — a transplant writes markup into the
+      // DESTINATION, so the position it reports is pinned to
+      // `edit.parentNodeId`'s file, not to this edit's own.
+      // `applyStudioEditBatch` reads `createdIn`/`relocatedIn` for that.
       return {
         applied: true,
-        ...(result.created === undefined ? {} : { created: result.created }),
-        createdIn: edit.parentNodeId,
+        ...(result.created === undefined ? {} : { created: result.created, createdIn: edit.parentNodeId }),
+        ...(result.relocated === undefined
+          ? {}
+          : { relocated: result.relocated, relocatedIn: edit.parentNodeId }),
       }
     }
     case 'move':
@@ -316,16 +320,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `applyStructuralEdit`'s call (a reparent refuses `cross-file`; an
       // insert appends).
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const parentId = 'parentNodeId' in edit ? edit.parentNodeId : undefined
-      const destination = parentId ? studioEditLocation(parentId) : null
+      const destination = parentId ? studioEditLocation(dir, parentId) : null
       // K3 — a `group` names the REST of its run. Same decoder, same guard,
       // same same-file filter as the anchor above; `applyStructuralEdit`
       // refuses when the filter dropped any of them, because a group that
       // quietly wrapped the subset that happened to be in this file would be
       // a write the user never asked for.
       const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
-        .map((nodeId) => studioEditLocation(nodeId))
+        .map((nodeId) => studioEditLocation(dir, nodeId))
         .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
       const result = applyStructuralEdit(
         loc,
@@ -340,10 +344,15 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         siblings,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13` — `created` rides straight through; only the four creating
-      // kinds set it, and `applyStudioEditBatch` is what turns it into a node
-      // id (it alone knows the batch's final line count).
-      return { applied: true, ...(result.created === undefined ? {} : { created: result.created }) }
+      // `store-13`/`store-14` — `created`/`relocated` ride straight through;
+      // only the kinds that make or move markup set them, and
+      // `applyStudioEditBatch` is what turns a position into a node id (it
+      // alone knows the batch's final line count).
+      return {
+        applied: true,
+        ...(result.created === undefined ? {} : { created: result.created }),
+        ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
+      }
     }
     case 'detach': {
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
@@ -372,7 +381,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `studioSlotWriteback.ts`'s own doc) — same cross-file guard
       // `move`/`insert` already apply above.
       const anchorId = 'anchorNodeId' in edit ? edit.anchorNodeId : undefined
-      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const anchor = anchorId ? studioEditLocation(dir, anchorId) : null
       const result = applySlotEdit(loc, edit, anchor && anchor.rel === target.rel ? anchor : null, dir, target.rel)
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
       // `applied` reads straight from the codemod's own answer (E2.2 — a
@@ -407,7 +416,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
  * place that knows the ordering/dedup/shift rules.
  */
 export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]): StudioEditBatchResult {
-  const ordered = orderStudioEditsForApply(dedupeStudioEdits(edits))
+  const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, edits))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
   const touchedFiles = new Set<string>()
@@ -458,7 +467,15 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     // in exactly the same way. The DESTINATION is deliberately not snapshotted:
     // the codemod just added imports to it, and pruning a binding that has no
     // reference yet at snapshot time would delete the one it wrote.
-    const removesMarkup = edit.kind === 'delete' || (edit.kind === 'transplant' && edit.copy !== true)
+    // `store-14` — an `ungroup` joined the list: dissolving a container can be
+    // the last use of the binding that named it, and leaving that import
+    // behind is a `noUnusedLocals` build failure in the user's repo. It is
+    // also what makes ⌘G → ⌘Z byte-exact: the group wrote the import, so its
+    // undo has to take it back out.
+    const removesMarkup =
+      edit.kind === 'delete' ||
+      edit.kind === 'ungroup' ||
+      (edit.kind === 'transplant' && edit.copy !== true)
     if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)
     if (!file || referencedBefore.has(file)) continue
@@ -478,6 +495,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   // `store-13` — where each created element sat, measured from the END of its
   // file. See `resolveCreatedNodeIds` for why that anchor and not the line.
   const createdPositions: CreatedNodePosition[] = []
+  // `store-14` — the same, for the elements a batch MOVED rather than made.
+  const relocatedPositions: CreatedNodePosition[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
@@ -489,6 +508,9 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
       } else if (outcome.applied) {
         written += 1
         if (outcome.created) recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, outcome.created)
+        for (const relocated of outcome.relocated ?? []) {
+          recordCreatedPosition(relocatedPositions, dir, outcome.relocatedIn ?? edit.nodeId, relocated)
+        }
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
@@ -544,6 +566,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
+    relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
   }
 }
 
@@ -581,7 +604,7 @@ function recordCreatedPosition(
   nodeId: string,
   created: { line: number; col: number },
 ): void {
-  const location = studioEditLocation(nodeId)
+  const location = studioEditLocation(dir, nodeId)
   const file = studioEditFile(dir, nodeId)
   if (!location || !file) return
   into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })

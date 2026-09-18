@@ -48,7 +48,12 @@ export type {
   DuplicateJsxRefusalReason,
 } from './duplicateJsxElement'
 export { wrapJsxElement } from './wrapJsxElement'
-export type { WrapJsxElementParams, WrapJsxElementResult } from './wrapJsxElement'
+export type {
+  WrapJsxElementParams,
+  WrapJsxElementResult,
+  WrapJsxRefusal,
+  WrapJsxRefusalReason,
+} from './wrapJsxElement'
 export { wrapJsxElements } from './wrapJsxElements'
 export type {
   WrapJsxElementsParams,

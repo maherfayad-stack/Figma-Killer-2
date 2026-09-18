@@ -47,13 +47,29 @@
     gap: var(--inspector-space-3xs);
 }
 
-/* Align pad + the (now two-field) gap row live on their own rows — the pad
- * is a fixed-size box (AlignGrid.module.css), so it doesn't need to share
- * a row with the gap fields the way the single-field `GapInput` once did. */
+/*
+ * The auto-layout cluster: the 3×3 align pad on the left, and the flow +
+ * gap fields STACKED to its right — Figma's own auto-layout block, and the
+ * shape `docs/features/inspector.md` §6 named as a lever with its number.
+ *
+ * Those three used to be three stacked rows (flow, pad, gap) totalling 84px
+ * even though the pad is a fixed 48×48 box (AlignGrid.module.css) with 48px
+ * of dead column beside it. Side by side the cluster is the taller of the
+ * two columns — the pad's 48 against the two stacked fields' 70 — so the
+ * section gets 14px back and the pad finally has something in its own row.
+ */
 .alignGapRow {
     display: flex;
     align-items: center;
     gap: var(--inspector-space-2xs);
+}
+
+/* The flow + gap fields take whatever the fixed-size pad leaves. */
+.alignGapFields {
+    display: grid;
+    gap: var(--inspector-space-2xs);
+    flex: 1;
+    min-width: 0;
 }
 
 /* Row gap / column gap, side by side — mirrors Penpot's own two-field row
@@ -62,6 +78,24 @@
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: var(--inspector-space-2xs);
+}
+
+/*
+ * Padding and margin share a row, the pair Figma puts side by side (it draws
+ * horizontal/vertical padding that way; margin is the CSS fact Penpot has no
+ * concept of at all — see this section's own doc). Both clusters rest as ONE
+ * linked field plus their toggle, so the pair fits a row that was previously
+ * two: 42px on every element with a layout.
+ */
+.spacingRow {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-2xs);
+}
+
+.spacingRow > * {
+    flex: 1;
+    min-width: 0;
 }
 
 /* Margin cluster + the "Box model" settings trigger, one row — same shape

@@ -116,6 +116,16 @@ const STRUCTURAL_ACTIONS: Record<StructuralRefusalReason, (node?: SourceStructur
   // wrapper's own `rel:line:col`, so this is the R1 jump every other
   // "the code decides this" refusal already offers.
   'has-behaviour': jumpToSourceAction,
+  // `struct-11` — the wrapper would be invalid HTML where it lands. `node` is
+  // the CONTAINER whose content model forbids it (the `<p>`, the `<ul>`), so
+  // "go and look at it" is both true and the fastest way to the fix: the user
+  // either moves the elements out of it or adds the container by hand.
+  'content-model': jumpToSourceAction,
+  // `store-14` — the file moved on under a stored undo. The one useful next
+  // step is to look at what changed in it, which is exactly what this action
+  // opens; without a node to point at, the sentence names the file and is the
+  // whole answer.
+  'stale-undo': jumpToSourceAction,
 }
 
 function structuralActions(

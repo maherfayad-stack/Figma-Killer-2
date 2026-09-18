@@ -24,8 +24,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
+import { join, relative } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const DRIVERS_DIR = join(REPO_ROOT, 'server/ai/drivers')
@@ -47,17 +48,7 @@ const STREAM_DRAIN_ALLOWLIST: Record<string, string> = {
     'The response is what ends them; the turn-level ceiling belongs to `toolLoop.ts`, which owns re-POSTing.',
 }
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      walk(full, out)
-      continue
-    }
-    if (extname(full) === '.ts' || extname(full) === '.tsx') out.push(full)
-  }
-  return out
-}
+const walk = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 describe('no unbounded driver loop', () => {
   it('every `for (;;)` / `while (true)` under server/ai/drivers names a ceiling or is an allowlisted stream drain', () => {
@@ -66,7 +57,7 @@ describe('no unbounded driver loop', () => {
     for (const file of walk(DRIVERS_DIR)) {
       const rel = relative(REPO_ROOT, file).replace(/\\/g, '/')
       if (rel.endsWith('.test.ts') || rel.endsWith('.test.tsx')) continue
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (!UNBOUNDED_LOOP_RE.test(source)) continue
       if (rel in STREAM_DRAIN_ALLOWLIST) continue
       if (CEILING_NAMES.some((name) => source.includes(name))) continue

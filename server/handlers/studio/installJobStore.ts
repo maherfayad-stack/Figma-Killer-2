@@ -1,6 +1,6 @@
 /**
  * installJobStore — persists the most-recently-started install job for a
- * project to `<appRoot>/.studio/install-job.json`.
+ * project to `<projectDir>/.studio/install-job.json`.
  *
  * `installDeps.ts`'s job registry is an in-process `Map`, and the dev server
  * runs under `bun --watch` — every file edit restarts the process, which
@@ -18,6 +18,26 @@
  * "nothing known," never a crash. Write is unconditional — this is
  * editor-owned operational state, not user content, so there is no
  * "reject an invalid shape" case to report back to a caller.
+ *
+ * ## The sidecar is keyed on the PROJECT directory, never the app root
+ *
+ * `server-25` established this for `.studio/meta.json` and fixed `deploy.ts`
+ * and `deployJobs.ts`; `sec-15` reported this file as the last remaining
+ * dissenter, and `sec-18` closed it. Until then `installJobFile` took the
+ * job's spawn `cwd` (`resolveAppRoot(projectDir)`), which for a monorepo
+ * import — a project whose real `package.json` sits at `<project>/apps/web` —
+ * created a SECOND `.studio/` directory INSIDE the user's own application,
+ * inside git-tracked source, that nothing else in Studio ever reads.
+ *
+ * `PersistedInstallJob.dir` still names the app root, because that is what a
+ * poller asked about; it is simply no longer where the record lives. The
+ * split is `deployJobs.JobRecord`'s, one module over.
+ *
+ * No migration and no fallback read: a record left at an old app-root
+ * location by a previous build is ignored, not read. It describes a job from a
+ * process that is already gone, so the honest answer for it is the same
+ * `null` this returns for a project that has never installed anything — and a
+ * fallback read would be a second location to reason about forever.
  *
  * Only the CURRENT process's own live `jobs` Map is ever polled while an
  * install is actually running — this file is a durability net, not a live
@@ -56,7 +76,7 @@ export type PersistedInstallJobStatus = Static<typeof PersistedInstallJobStatusS
 
 export const PersistedInstallJobSchema = Type.Object({
   id: Type.String(),
-  /** The app-root directory the job actually spawned in (`resolveAppRoot`'s result) — also where this record itself is written. */
+  /** The app-root directory the job actually spawned in (`resolveAppRoot`'s result). NOT where this record lives — see the module doc. */
   dir: Type.String(),
   packageManager: PackageManagerSchema,
   status: PersistedInstallJobStatusSchema,
@@ -71,19 +91,18 @@ export const PersistedInstallJobSchema = Type.Object({
 })
 export type PersistedInstallJob = Static<typeof PersistedInstallJobSchema>
 
-function installJobFile(dir: string): string {
-  return join(dir, '.studio', 'install-job.json')
+function installJobFile(projectDir: string): string {
+  return join(projectDir, '.studio', 'install-job.json')
 }
 
 /**
- * Reads `<dir>/.studio/install-job.json` — `dir` is the app root the job
- * spawned in. Returns `null` when the file is absent, unparsable, or fails
- * `PersistedInstallJobSchema` — a corrupted sidecar must never crash a
- * status query, it should just mean "nothing durably known," same as a
- * fresh project with no install history at all.
+ * Reads `<projectDir>/.studio/install-job.json`. Returns `null` when the file
+ * is absent, unparsable, or fails `PersistedInstallJobSchema` — a corrupted
+ * sidecar must never crash a status query, it should just mean "nothing
+ * durably known," same as a fresh project with no install history at all.
  */
-export function readInstallJobFile(dir: string): PersistedInstallJob | null {
-  const file = installJobFile(dir)
+export function readInstallJobFile(projectDir: string): PersistedInstallJob | null {
+  const file = installJobFile(projectDir)
   if (!existsSync(file)) return null
 
   let raw: unknown
@@ -97,9 +116,9 @@ export function readInstallJobFile(dir: string): PersistedInstallJob | null {
   return result.ok ? result.value : null
 }
 
-/** Writes `job` to `<job.dir>/.studio/install-job.json`, creating the sidecar dir if needed. Overwrites whatever was there — this file holds only the SINGLE most-recent job for the project (installs are not run concurrently against one project), so there is nothing else to merge with. */
-export function writeInstallJobFile(job: PersistedInstallJob): void {
-  const file = installJobFile(job.dir)
+/** Writes `job` to `<projectDir>/.studio/install-job.json`, creating the sidecar dir if needed. `projectDir` is passed rather than read off `job.dir`, which is the APP ROOT — see the module doc. Overwrites whatever was there: this file holds only the SINGLE most-recent job for the project (installs are not run concurrently against one project), so there is nothing else to merge with. */
+export function writeInstallJobFile(projectDir: string, job: PersistedInstallJob): void {
+  const file = installJobFile(projectDir)
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, JSON.stringify(job))
 }

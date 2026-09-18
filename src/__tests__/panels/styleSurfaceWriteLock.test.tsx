@@ -1,14 +1,20 @@
 /**
- * `StyleSurface`'s pre-flight write lock, end to end at the panel level.
+ * The panel's pre-flight class write lock, end to end.
  *
  * Track P / `panel-21` replaced the old exclusive Element/Class block pair
  * (and its dedicated `ClassCssLockedNotice` banner) with ONE merged
- * composer plus `WriteTargetRow`'s informational chip strip — see
- * `resolveWriteTarget.ts`. A locked class no longer disables a whole block:
- * it is struck through in the chip row, excluded from `resolveWriteTarget`'s
- * candidates, and a NEW value for a property that class would have owned
- * now lands on the element's inline layer instead — never silently
- * discarded, never claimed by a control that can't save it.
+ * composer plus an informational chip strip — see `resolveWriteTarget.ts`. A
+ * locked class no longer disables a whole block: it is struck through on its
+ * chip, excluded from `resolveWriteTarget`'s candidates, and a NEW value for
+ * a property that class would have owned now lands on the element's inline
+ * layer instead — never silently discarded, never claimed by a control that
+ * can't save it.
+ *
+ * panel-41 moved the chips themselves: they used to be `WriteTargetRow`, a
+ * read-only strip inside the Design tab's scroll container listing the same
+ * selectors `ClassPicker`'s pills already listed 40px above. The facts now
+ * ride those pills, so this file renders `ClassPicker` — same store setup,
+ * same `write-target-chip-*` test ids, same three facts.
  *
  * Three facts this file still checks:
  *
@@ -24,7 +30,7 @@
 import { describe, it, expect, afterEach, beforeEach } from 'bun:test'
 import { render, screen, cleanup } from '@testing-library/react'
 import type { StyleRule } from '@core/page-tree'
-import { StyleSurface } from '@site/panels/PropertiesPanel/StyleSurface'
+import { ClassPicker } from '@site/panels/PropertiesPanel/ClassPicker'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { useEditorStore } from '@site/store/store'
 import { makeSite, makePage, makeNode } from '../fixtures'
@@ -101,8 +107,8 @@ function loadCmsPage(cls: StyleRule) {
   return nodeId
 }
 
-function renderSurface() {
-  return render(<StyleSurface />)
+function renderSurface(nodeId: string = STUDIO_NODE_ID) {
+  return render(<ClassPicker nodeId={nodeId} />)
 }
 
 beforeEach(() => {
@@ -145,8 +151,8 @@ describe('StyleSurface — pre-flight class write lock', () => {
   })
 
   it('locks nothing outside a Studio session, where "unmapped" costs the user nothing', () => {
-    loadCmsPage(makeClass('sc-tailwind001'))
-    renderSurface()
+    const nodeId = loadCmsPage(makeClass('sc-tailwind001'))
+    renderSurface(nodeId)
     expect(screen.getByTestId('write-target-chip-sc-tailwind001').getAttribute('data-locked')).toBe('false')
   })
 })

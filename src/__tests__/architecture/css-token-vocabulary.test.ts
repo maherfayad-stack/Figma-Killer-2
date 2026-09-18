@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
 import { extname, join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
@@ -27,22 +28,7 @@ const DOC_FILES = [
 const DEPRECATED_TOKEN_RE =
   /--(?:editor-[\w-]*|rail-tint-[\w-]*|tag-pill-tint-[\w-]*|panel-(?:bg|border|shadow[\w-]*)|input-(?:bg|border|shadow)[\w-]*|tooltip-(?:bg|fg|border|shadow)|spotlight-(?:backdrop|row-selected-bg|mark-bg|mark-fg|footer-bg|destructive-fg|confirm-bg|skeleton-base|skeleton-shimmer)|code-bg)\b/g
 
-function collectFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full))
-      continue
-    }
-    if (['.css', '.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.css', '.ts', '.tsx'])
 
 function stripSourceComments(source: string): string {
   return source
@@ -63,7 +49,7 @@ describe('CSS token vocabulary — no deprecated global color token names', () =
     ]
 
     for (const filePath of files) {
-      const raw = readFileSync(filePath, 'utf8')
+      const raw = readSource(filePath)
       const source = extname(filePath) === '.md' ? raw : stripSourceComments(raw)
       for (const match of source.matchAll(DEPRECATED_TOKEN_RE)) {
         offenders.push(

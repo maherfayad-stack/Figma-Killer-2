@@ -85,8 +85,20 @@ export const GESTURE_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // the desktop rather than the keyboard.
   {
     commandId: 'canvas.dropImageFile',
-    displayName: 'Drop an image file onto a frame to add an <img>',
+    displayName: 'Drop an image file onto a frame to add an <img> — the position, and any refusal, show before you let go',
     shortcut: { mac: 'Drop a file', win: 'Drop a file' },
+    match: () => false,
+    scope: 'canvas',
+  },
+
+  // K6's reflow preview. On the sheet because the ghosted boxes are the one
+  // piece of drag chrome that could be mistaken for a change that has already
+  // happened — nothing is written until the pointer comes up, and Escape still
+  // abandons the whole gesture.
+  {
+    commandId: 'canvas.reflowPreview',
+    displayName: 'While dragging, the siblings that would make room slide aside — a preview, not a change',
+    shortcut: { mac: 'Drag', win: 'Drag' },
     match: () => false,
     scope: 'canvas',
   },

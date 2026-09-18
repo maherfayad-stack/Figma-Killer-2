@@ -34,8 +34,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -44,20 +45,8 @@ const SRC_ROOT = join(import.meta.dir, '../../')
 // File walker (shared pattern from no-anthropic-sdk.test.ts / no-third-party-icons.test.ts)
 // ---------------------------------------------------------------------------
 
-function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] =>
+  walkSourceTree(dir, exts)
 
 // Scan production source under src/. We deliberately skip `src/__tests__/`
 // — test files may contain the package names as literal patterns (this file
@@ -109,7 +98,7 @@ describe('CodeMirror lazy-load enforcement', () => {
 
       let source: string
       try {
-        source = readFileSync(file, 'utf8')
+        source = readSource(file)
       } catch {
         continue
       }

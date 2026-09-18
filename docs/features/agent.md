@@ -950,6 +950,19 @@ A rejected browser bridge is deliberately **not** recorded — a round that neve
 
 **`bench:agent-turn` reads it back.** A fifth section reports per-tool p50/p95/max/total and cache-hit rate (slowest total first — the order that answers "where did the turn go"), then grades each conversation's summed tool time against A9's two budgets: **90 s** for a creative turn with no reference to measure against, **3 min** otherwise (`AGENT_TURN_BUDGETS`). `observedMs` is Studio's own tool time, **not wall clock** — the model's thinking time is neither Studio's to measure nor Studio's to fix, and a reader who thinks otherwise reads every verdict as optimistic. The budgets assert as **warnings**, not failures, for as long as no real turn has been measured on this machine: a budget that fails a suite on a number nobody has observed trains people to ignore the suite. Every row names its `worstTool`, which is where to look first. With no log anywhere the section reports `unavailable` with the reason, the same posture the capture section takes without Chromium — it never fabricates a number.
 
+**A real turn has now been measured — `tests/e2e/agent-turn.e2e.ts` (`mcp-25`).** It drives one brief ("Make the hero heading bolder and give the hero card a subtle shadow") on a throwaway copy of `studio-workspace/__canonical-fixture`, in `balanced` fidelity, through the warm `claude` CLI — the real subprocess and the real subscription, not a fake. Four such turns on this Windows box, 2026-09-18:
+
+| run | wall ms | tool rounds | `POST /admin/api/studio/save` | files changed |
+|---|---|---|---|---|
+| 1 | 198,788 | 10 | 0 | `CanonicalScreen.module.css` |
+| 2 | 56,362 | 8 | 0 | `CanonicalScreen.module.css` |
+| 3 | 173,327 | 9 | 0 | `CanonicalScreen.module.css` |
+| 4 | 149,801 | 15 | 0 | `CanonicalScreen.module.css` + `CanonicalScreen.tsx` |
+
+`AGENT_TURN_WALL_MS` (`tests/e2e/helpers/canvasPerf.ts`) is **300,000 ms** — 1.5x the worst, rounded up. Read the 3.5x spread on an identical brief before tightening it: the slow runs are the ones where the agent reached for `studio_screenshot`, so a budget near the median would fail on the model deciding to look at its own work. It is a ratchet against a hung turn, not a target, and it does not replace `AGENT_TURN_BUDGETS` above — that grades Studio's own TOOL time, this measures the wall clock a person waits.
+
+Three things the runs settled that no unit test could: **zero writeback POSTs is the healthy shape** (the in-canvas agent writes with the CLI's native `Read`/`Write`/`Edit`, and `STUDIO_AGENT_TOOL_NAMES` does not offer it `studio_apply_edits`, so `/admin/api/studio/save` is the canvas's path and not the agent's); **no turn fanned out** — every changed file in all four was the hero's own; and the telemetry above really is written on the CLI path, 2–7 lines per turn.
+
 **The MODEL is deliberately not routed.** `req.effort` is `undefined` until the user picks one, which is exactly what makes "pinned vs default" knowable; `req.modelId` has no such tell — the session always carries a concrete model id and nothing distinguishes "the user chose Opus" from "Opus is what the credential defaulted to". Routing on that would silently demote a deliberate choice, which is the failure rule 1 exists to prevent. Model routing needs the conversation to record *why* a model id is set, which is a schema change, not a heuristic.
 
 **The choice is surfaced, not silent.** The driver emits one `routing` stream event (`{ mode, effort, shape?, reason }`) before the provider is called; `processStreamEvent` folds it onto `agentRoutedTurn` in the agent slice, and `routedTurnLabel`/`routedTurnTitle` (`agentSessionControls.ts`) render it as a read-only chip plus tooltip. Display only — never persisted to conversation history, never fed back to a model, same posture as `context` and `reasoning`. A router that quietly spends less is indistinguishable from a model having a bad day, and the user cannot pin a value back if they never saw it move.
@@ -1047,7 +1060,7 @@ Two properties of that probe matter more than the parsing:
 | Module | Responsibility |
 |---|---|
 | `server/ai/credentials/mcpOAuth.ts` | Protocol only: RFC 9728/8414 discovery, DCR, PKCE S256, the authorize URL (with the RFC 8707 `resource` indicator), and both token grants. No state, no users, no projects. Every external response is TypeBox-validated, and a 401/403 from a registration endpoint is reported as a closed allow-list rather than as a status code. |
-| `server/ai/credentials/mcpOAuthStore.ts` | The session, encrypted at rest as one reserved field (`__studio_oauth__`) in `mcpServerSecretStore` — same master key, same `keyFingerprint` rotation detection, same 0600/0700 discipline, and removing a server already deletes it. `resolveMcpOAuthHeader` refreshes **on read**, ahead of the deadline by a 60 s skew. |
+| `server/ai/credentials/mcpOAuthStore.ts` | The session, encrypted at rest as one reserved field (`__studio_oauth__`) in `mcpServerSecretStore` — same master key, same `keyFingerprint` rotation detection, same on-disk protection (`ensurePrivateDirectory` + an exclusive-create-plus-rename write through `privateTempDir.ts` — real on Windows since `sec-18`, where the old 0600/0700 was decorative), and removing a server already deletes it. `resolveMcpOAuthHeader` refreshes **on read**, ahead of the deadline by a 60 s skew. |
 | `server/ai/mcp/handlers/oauth.ts` | `POST /start` → authorize URL; `GET /callback` → code exchange + store, rendering an HTML page (a human is looking at it); `GET /status` (also returns the CLI config dir for the fallback); `DELETE` to sign out. The PKCE verifier lives in a TTL-bounded in-memory map — a restart invalidates in-flight sign-ins, which needs no cleanup path and is the correct outcome. |
 | `registeredMcpServers.ts` → `resolveOneDefinition` | Turns a live session into the `Authorization` header. An explicitly-configured header always wins. |
 
@@ -1470,6 +1483,13 @@ Anthropic allows four `cache_control` breakpoints per request and serves the lon
 Only breakpoint 1 existed before, which meant a multi-round build loop re-read the tool block and the entire conversation at full input price on every single round.
 
 `SYSTEM_PROMPT_DYNAMIC_BOUNDARY` is the literal `'__SYSTEM_PROMPT_DYNAMIC_BOUNDARY__'`, declared **once** in `server/ai/runtime/types.ts` and imported everywhere — prompt builders and every driver. A duplicate definition would silently break prompt caching on whichever driver drifted. Gated by `ai-driver-shared-helpers.test.ts`.
+
+**There are TWO static prefixes**, and `buildSiteSystemPrompt` picks between them from the snapshot's own node ids (`isStudioPageRootId` on the root, or any `rel:line:col` node id). They differ only in the building block:
+
+- a **CMS page** gets the block below, unchanged;
+- a **studio-imported page** — one parsed out of the user's `.tsx`, which is what `/admin/site` shows on this fork — gets a block that says `site_insert_html` and `site_replace_node_html` REFUSE there (`store-13`: an HTML fragment has no honest single source form, and its `<style>` half targets a stylesheet rather than the `.tsx`), and names `studio_apply_edits`' `insert` edit, `studio_codemod` and `studio_create_page` as what writes instead. `site_read_document` / `site_get_node_html` still work and their `uid`s decode to `file:line:col`, so they are how you AIM a `studio_*` edit.
+
+  Two whole prefixes rather than a contradicting line in the dynamic suffix, because element 0 is what a driver puts `cache_control` on: each branch stays internally consistent AND fully cacheable, and which branch a project takes never changes mid-conversation. Gated by `src/__tests__/agent/siteSystemPromptStudioTree.test.ts`.
 
 **Static prefix key rules** (full text lives in `server/ai/tools/site/systemPrompt.ts`):
 - **Design system first.** Establish or reuse tokens before/while building (`site_set_color_tokens`, `site_set_type_scale`, `site_set_spacing_scale`, `site_set_font_tokens`), then reference them in CSS (`var(--<slug>)`, `var(--text-l)`, `var(--space-m)`, `var(--<font-var>)`) instead of raw hex/px/font-family. The dynamic suffix's `Tokens —` line shows what already exists; `(none …)` means no design system yet.

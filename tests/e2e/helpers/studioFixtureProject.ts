@@ -26,6 +26,7 @@
  * `studio-feel-phase0.e2e.ts` needs before it can measure anything.
  */
 import { expect, type FrameLocator, type Locator, type Page } from '@playwright/test'
+import { createHash } from 'node:crypto'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './constants'
@@ -58,8 +59,99 @@ export function createFixtureProject(sourceName: string, fixtureName: string): F
   return { dir, ready: true }
 }
 
+/**
+ * A fixture project the spec AUTHORS, rather than copies — an empty directory
+ * under the workspace root, with its files written by the caller.
+ *
+ * Three specs (`css-writeback`, `structural-writeback`, `design-system-insert`)
+ * used to build their fixture with `fs.mkdtempSync(os.tmpdir())` and open it by
+ * absolute path. That cannot work: `resolveProjectDir`'s containment check
+ * rejects any directory outside the root the SERVER resolved, so the board
+ * route answers 404 and the spec fails on a timeout that reads like a product
+ * bug. The safety argument those specs make — "never write into
+ * `studio-workspace/`" — is satisfied by `WORKSPACE_ROOT` being this run's
+ * throwaway copy (`scripts/e2e-dev.ts`), which is exactly what an OS temp dir
+ * was reaching for.
+ *
+ * The name is FIXED, not per-PID, for the same reason `createFixtureProject`'s
+ * is: a crashed run's leftovers are overwritten by the next run rather than
+ * accumulating.
+ *
+ * @param fixtureName Directory name under the workspace root. Prefix it with
+ * `__` so it sorts away from real projects and never becomes the DEFAULT
+ * project (`listStudioProjects` sorts by display name and `defaultProjectDir`
+ * takes the first).
+ */
+export function createAuthoredFixtureProject(
+  fixtureName: string,
+  files: Readonly<Record<string, string>>,
+): FixtureProject {
+  const dir = path.join(WORKSPACE_ROOT, fixtureName)
+  fs.rmSync(dir, { recursive: true, force: true })
+  for (const [relative, contents] of Object.entries(files)) {
+    const target = path.join(dir, ...relative.split('/'))
+    fs.mkdirSync(path.dirname(target), { recursive: true })
+    fs.writeFileSync(target, contents, 'utf8')
+  }
+  return { dir, ready: true }
+}
+
+/**
+ * Delete the copy, retrying a Windows sharing violation.
+ *
+ * A spec that ran a real agent turn leaves a WARM `claude` process whose
+ * `cwd` IS this directory (`claudeCliSessionPool.ts` holds it for up to ten
+ * idle minutes), and Windows refuses to unlink a directory that is some
+ * process's working directory — `EPERM`, not `EBUSY`. The product's own way
+ * to end that process is deleting the conversation, which a spec should do
+ * before it gets here; this loop covers the rest (a still-draining stream, a
+ * file watcher) rather than leaving a 3 MB copy behind on the first blip.
+ *
+ * Never throws: failing to clean up a throwaway directory must not turn a
+ * green run red. The fixture name is fixed, so the next run overwrites it.
+ */
 export function removeFixtureProject(fixture: FixtureProject): void {
-  fs.rmSync(fixture.dir, { recursive: true, force: true })
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      fs.rmSync(fixture.dir, { recursive: true, force: true })
+      return
+    } catch {
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 500)
+    }
+  }
+  console.warn(`[studioFixtureProject] could not remove ${fixture.dir} — a process still holds it open.`)
+}
+
+/** The three `.studio/meta.json` fields the trust-tier contract is written in. */
+export interface FixtureTrustMeta {
+  /** Absent means Tier 0 — `trustTier.ts` defaults a missing field to `static`. */
+  trust?: string
+  /** True when the promotion's ORIGIN was Studio rather than a click. */
+  trustAutoPromoted?: boolean
+  /** Epoch ms of the ONE automatic promotion. Its presence is the latch. */
+  trustAutoPromotedAt?: number
+}
+
+/**
+ * Read the fixture's trust fields straight off disk.
+ *
+ * Deliberately the FILE and not the `/trust-tier` route: the route is the thing
+ * under test, and a gate that has stopped writing the latch would still report
+ * whatever it holds in memory. `.studio/meta.json` is where the once-only
+ * promise actually lives across a reload.
+ */
+export function readFixtureTrustMeta(fixture: FixtureProject): FixtureTrustMeta {
+  const metaPath = path.join(fixture.dir, '.studio', 'meta.json')
+  if (!fs.existsSync(metaPath)) return {}
+  const raw: unknown = JSON.parse(fs.readFileSync(metaPath, 'utf8'))
+  if (typeof raw !== 'object' || raw === null) return {}
+  const record = raw as Record<string, unknown>
+  return {
+    trust: typeof record.trust === 'string' ? record.trust : undefined,
+    trustAutoPromoted: typeof record.trustAutoPromoted === 'boolean' ? record.trustAutoPromoted : undefined,
+    trustAutoPromotedAt:
+      typeof record.trustAutoPromotedAt === 'number' ? record.trustAutoPromotedAt : undefined,
+  }
 }
 
 /**
@@ -489,4 +581,87 @@ export function recordConsoleErrors(page: Page, sink: RecordedConsoleEvent[], te
 /** CSS.escape for a value used inside an attribute selector, done in Node. */
 export function cssEscape(value: string): string {
   return value.replace(/["\\]/g, '\\$&')
+}
+
+// ─── Whole-project change detection ──────────────────────────────────────────
+
+/**
+ * Every file in the fixture, keyed by project-relative POSIX path, valued by a
+ * SHA-256 of its bytes. Diffing two of these answers "which files did that
+ * change touch" for a directory that is deliberately not a version-controlled
+ * repository.
+ *
+ * `createFixtureProject` copies a tracked corpus into a throwaway name;
+ * initialising a repository inside the copy would put a `.git` directory
+ * there, which `assertOwnGitRepo` treats as a real project repository and
+ * `studio_git_status` would then happily report on. A spec that changes what
+ * the agent can see is measuring a different product than the one that ships.
+ *
+ * What is skipped, and why each one — every entry is something STUDIO writes,
+ * not something the user or the agent authored, so counting it would report a
+ * change on every run and drown the one that matters. Measured against a real
+ * agent turn: all five of these moved while the turn's only authored edit was
+ * one stylesheet.
+ *   - `node_modules/` — not authored source, and large enough that hashing it
+ *     would dominate the spec's runtime.
+ *   - `.studio/` — Studio's own sidecar: board geometry, caches, the compiled
+ *     framework token file, the agent turn log. Opening the board writes here.
+ *   - `.git/` — defence in depth, in case a source corpus ever carries one.
+ *   - `.claude/` — the `claude` CLI's own settings plus Studio's
+ *     `.studio-generated.json` guide marker, both written when the driver
+ *     spawns a session in this directory.
+ *   - `CLAUDE.md` — written by `generateStudioProjectGuide()` at CLI spawn.
+ *   - `prototype/` — regenerated by the shell scaffolder when the board opens
+ *     (`registry.generated.jsx` and friends).
+ *
+ * Matched by NAME at any depth, not by path: a nested `CLAUDE.md` is skipped
+ * too. That is the safe direction — these names are Studio's everywhere.
+ */
+export function snapshotProjectFiles(fixture: FixtureProject): Map<string, string> {
+  const out = new Map<string, string>()
+  const walk = (absDir: string, rel: string): void => {
+    for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+      if (SNAPSHOT_SKIPPED_NAMES.has(entry.name)) continue
+      const abs = path.join(absDir, entry.name)
+      const childRel = rel ? `${rel}/${entry.name}` : entry.name
+      if (entry.isDirectory()) walk(abs, childRel)
+      else if (entry.isFile()) out.set(childRel, hashFile(abs))
+    }
+  }
+  walk(fixture.dir, '')
+  return out
+}
+
+const SNAPSHOT_SKIPPED_NAMES = new Set(['node_modules', '.studio', '.git', '.claude', 'CLAUDE.md', 'prototype'])
+
+function hashFile(abs: string): string {
+  return createHash('sha256').update(fs.readFileSync(abs)).digest('hex')
+}
+
+export interface ProjectFileChanges {
+  modified: string[]
+  added: string[]
+  removed: string[]
+}
+
+/**
+ * The project-relative paths that differ from `before`, sorted. Added, removed
+ * and modified are kept apart so a failure message says which happened — "the
+ * agent created a file" and "the agent edited a file" are different findings.
+ */
+export function changedProjectFiles(
+  fixture: FixtureProject,
+  before: Map<string, string>,
+): ProjectFileChanges {
+  const after = snapshotProjectFiles(fixture)
+  const modified: string[] = []
+  const added: string[] = []
+  const removed: string[] = []
+  for (const [rel, hash] of after) {
+    const previous = before.get(rel)
+    if (previous === undefined) added.push(rel)
+    else if (previous !== hash) modified.push(rel)
+  }
+  for (const rel of before.keys()) if (!after.has(rel)) removed.push(rel)
+  return { modified: modified.sort(), added: added.sort(), removed: removed.sort() }
 }

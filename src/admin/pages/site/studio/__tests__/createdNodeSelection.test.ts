@@ -8,7 +8,7 @@
  * exist until the codemod has written it and the board has re-read the file.
  * So the answer travels a different road — the save route reports
  * `createdNodeIds`, `commitStructural` parks them in
- * `pendingCreatedSelection.ts`, and the resync's own listener claims them.
+ * `pendingStructuralOutcome.ts`, and the resync's own listener claims them.
  *
  * Every test here drives that whole road with a stubbed network: a real
  * `duplicateNode`/`insertNode` call on a real store, a `/save` response
@@ -22,11 +22,12 @@ import '@modules/base'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { selectNodesCreatedByLastWrite } from '@site/hooks/usePersistence'
+import { applyStructuralWriteOutcome } from '@site/hooks/usePersistence'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
-import { clearPendingCreatedSelection } from '../pendingCreatedSelection'
+import { clearPendingStructuralOutcome } from '../pendingStructuralOutcome'
+import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
 
 const PAGE_ID = 'home'
@@ -68,7 +69,8 @@ describe('a structural source write selects what it created', () => {
 
   beforeEach(() => {
     __resetToastBusForTests()
-    clearPendingCreatedSelection()
+    clearPendingStructuralOutcome()
+    resetStructuralCommitQueue()
     originalFetch = globalThis.fetch
     saveCalls = []
     unregisterSave = registerEditorSave(async () => {})
@@ -88,7 +90,7 @@ describe('a structural source write selects what it created', () => {
         styleRules: detail.styleRules,
         conditions: detail.conditions,
       })
-      selectNodesCreatedByLastWrite()
+      applyStructuralWriteOutcome()
     }
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
   })
@@ -98,7 +100,8 @@ describe('a structural source write selects what it created', () => {
     unregisterSave?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
     setStudioLoadedDir(null)
-    clearPendingCreatedSelection()
+    clearPendingStructuralOutcome()
+    resetStructuralCommitQueue()
     useEditorStore.getState().clearSite()
   })
 

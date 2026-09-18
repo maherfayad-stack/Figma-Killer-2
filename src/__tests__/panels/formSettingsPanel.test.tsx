@@ -528,6 +528,13 @@ describe('renderModuleTabContent form setup slot', () => {
       expect(screen.queryByTestId('property-control-mode')).toBeNull()
       expect(screen.queryByTestId('property-control-formId')).toBeNull()
       expect(screen.queryByTestId('property-control-targetTableId')).toBeNull()
+
+      // `successBehavior` is in the schema but NOT in this node's own props,
+      // so Law 3 puts it behind the Module block's fold (panel-41) rather
+      // than pre-drawing a default. A promoted control stays gone; an unset
+      // one is one click away — the two are different facts.
+      expect(screen.queryByTestId('property-control-successBehavior')).toBeNull()
+      fireEvent.click(screen.getByTestId('module-more-properties-toggle'))
       expect(screen.getByTestId('property-control-successBehavior')).toBeDefined()
     } finally {
       globalThis.fetch = originalFetch

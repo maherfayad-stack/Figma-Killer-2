@@ -131,7 +131,9 @@ export function previewStructuralTransplant(
   }
 
   const placement = refusePlacement(node, gesture)
-  if (placement) return { ok: false, refusal: placement, nodeId: node.id }
+  if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
+    return { ok: false, refusal: placement, nodeId: node.id }
+  }
 
   const container = resolveSourceContainer(destinationTree, newParentId)
   if (!container.ok) return { ok: false, refusal: container.refusal }
@@ -207,6 +209,41 @@ export function previewStructuralTransplant(
  */
 export function isTransplantDestinationTree(destinationTree: NodeTree<PageNode>): boolean {
   return isStudioPageRootId(destinationTree.rootNodeId)
+}
+
+/**
+ * Whether a cross-frame COPY escapes an origin-side refusal a cross-frame MOVE
+ * does not.
+ *
+ * The two listed here are refusals about WHO ELSE SHARES the markup, not about
+ * the markup itself. `shared-component` says the change "would apply to every
+ * place that component is used"; `route-chrome` says it "would apply to all of
+ * them, not just this frame". Both sentences are true of a move — which cuts
+ * the element out of the component's or the layout's own file — and **false of
+ * a copy**, which under `transplantJsxElement`'s `copy: true` reads those bytes
+ * and leaves them exactly where they are, writing one new element into the
+ * DESTINATION page's own file. Refusing a copy for a consequence it does not
+ * have is precisely the kind of no-longer-true refusal `editConstraint.ts`'s
+ * own doc says is worse than none.
+ *
+ * The other two stay refused for both, because they are statements about THIS
+ * element:
+ *
+ *  - `list-row` — a `.map` row has no source range of its own at all, so a
+ *    copy has nothing to read, never mind anywhere to put it;
+ *  - `code-placed` — the code itself decides this element (a spread, a slot
+ *    fill, an SVG built in code). Those are exactly the shapes whose meaning
+ *    does not survive being lifted into another module, and a copy changes
+ *    nothing about that.
+ *
+ * This only decides whether the gesture is worth ATTEMPTING. Whether the
+ * markup can actually travel — whether it reads a binding local to the
+ * component it is being copied out of — is an AST question, answered at save
+ * time by `transplantJsxElement` as `captured-scope` / `unexported-binding`,
+ * by name. Same layering `struct-01` established everywhere else here.
+ */
+function copyEscapesOriginRefusal(reason: StructuralRefusal['reason']): boolean {
+  return reason === 'shared-component' || reason === 'route-chrome'
 }
 
 /** Lowercase the first letter of a sentence being embedded inside another one. */

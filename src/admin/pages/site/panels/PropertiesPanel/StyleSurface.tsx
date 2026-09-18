@@ -36,9 +36,6 @@
  *
  * ## What this file still owns
  *
- *   - The `WriteTargetRow` informational chip strip (presentation only, now
- *     derived from `SelectionModel.writableClasses`/`inlineWritable`/
- *     `inlineLockReason` instead of computing its own class-lock pass).
  *   - The Module section (no longer an accordion — a fixed block, matching
  *     P2 rule 2's "everything is at rest"). Export (P3 item 10) is no longer
  *     mounted here — it moved to its own `INSPECTOR_SECTIONS` manifest entry
@@ -58,16 +55,13 @@
  */
 
 import type { ReactNode } from 'react'
-import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
-import { canWriteInlineStyleForModule, isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
+import { isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
-import { cn } from '@ui/cn'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { EmptyState } from '@ui/components/EmptyState'
 import { Section } from '@ui/components/Section'
 import { PanelBoundary } from '@site/ui/PanelBoundary'
-import { WriteTargetRow, type WriteTargetChipInfo } from '@site/inspector/WriteTargetRow'
 import { MultiSelectTargetBar } from '@site/inspector/MultiSelectTargetBar'
 import { useSelectionModel, type SelectionModel } from '@site/inspector/selectionModel'
 import {
@@ -76,7 +70,6 @@ import {
   type InspectorSectionDefinition,
 } from '@site/inspector/sections'
 import styles from './StyleSurface.module.css'
-import sectionStyles from '@ui/components/Section/Section.module.css'
 
 // ---------------------------------------------------------------------------
 // Public exports
@@ -89,8 +82,7 @@ export { GeneratedUtilityLockedState }
 // ---------------------------------------------------------------------------
 
 interface StyleSurfaceProps {
-  definition?: AnyModuleDefinition | null
-  /** Pre-rendered module prop rows shown in the Module section. */
+  /** The module's whole block — header and rows (`ModuleBlock`), or `null`. */
   moduleContent?: ReactNode
   /** Called when 'Add class' is clicked in the fully-locked notice. */
   onFocusClassPicker?: () => void
@@ -100,37 +92,14 @@ interface StyleSurfaceProps {
 // StyleSurface
 // ---------------------------------------------------------------------------
 
-export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: StyleSurfaceProps) {
+export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurfaceProps) {
   const model = useSelectionModel()
-  const { selectedNodeId: nodeId, selectedNode, assignedClassRules, writableClasses, inlineWritable, inlineLockReason } = model
+  const { selectedNodeId: nodeId, assignedClassRules, writableClasses, inlineWritable, inlineLockReason } = model
 
   const permissions = useEditorPermissions()
   const canEditStyleHere = permissions.canEditStyle
 
-  // Whether `style=""` is a reachable target AT ALL for this node — distinct
-  // from `inlineWritable` (which also requires no structural source lock).
-  // A source-locked node still shows the inline chip, struck through with
-  // its lock reason (`WriteTargetRow`'s own doc); a role/module-unwritable
-  // node doesn't show it at all. Recomputed here from `model.selectedNode`
-  // rather than added to `SelectionModel`'s public shape — a cheap, narrow
-  // derivation local to this ONE presentational consumer, same posture as
-  // `commitApi.ts`'s own independent `lockedPropertySet` recomputation.
-  const inlineModuleUnwritable =
-    selectedNode?.moduleId !== undefined && !canWriteInlineStyleForModule(selectedNode.moduleId)
-  const canToggleElement = canEditStyleHere && nodeId != null && !inlineModuleUnwritable
-
-  const writeTargetChips: WriteTargetChipInfo[] = writableClasses.map((entry) => ({
-    key: entry.classId,
-    label: entry.selector,
-    lockReason: entry.lockReason,
-  }))
   const reachableClasses = writableClasses.filter((entry) => entry.lockReason === null)
-  // The chip `resolveWriteTarget` would reach for on a brand-new property
-  // with no existing declaration anywhere — see that module's "otherwise"
-  // branch, mirrored here for the informational row only.
-  const defaultTargetKey =
-    reachableClasses.length === 1 ? reachableClasses[0].classId : inlineWritable ? 'inline' : null
-
   const nothingWritable = !inlineWritable && reachableClasses.length === 0
 
   // A node whose ENTIRE assigned-class story is generated utility classes
@@ -143,10 +112,6 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
       ? assignedClassRules[0]
       : null
 
-  // definition.icon is an IconComponent — must assign to PascalCase var.
-  const ModuleIcon = definition?.icon
-  const hasModuleContent = definition != null && moduleContent != null
-
   return (
     // `data-testid` is additive/queryable-only — no visual or behavioral
     // change. `.surface` is "THE scroll container" (this file's own CSS
@@ -156,30 +121,23 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
     // build.
     <div className={styles.surface} data-testid="properties-panel-scroll">
       <div className={styles.surfaceContent}>
-        {/* One target row per cardinality. `WriteTargetRow` is informational
-            — it lists the targets ONE node's properties can resolve to. A
-            multi-selection's target is a CHOICE with a blast radius, so it
-            gets the interactive chip + gate instead, and the same row would
-            just be a second, weaker statement of the same fact. */}
-        {model.isMultiSelect ? (
-          <MultiSelectTargetBar model={model} />
-        ) : (
-          nodeId != null && (
-            <WriteTargetRow
-              classChips={writeTargetChips}
-              inlineReachable={canToggleElement}
-              inlineLockReason={inlineLockReason}
-              defaultTargetKey={defaultTargetKey}
-            />
-          )
-        )}
+        {/* A multi-selection's write target is a CHOICE with a blast radius,
+            so it gets its own interactive chip + gate here. A SINGLE
+            selection's targets are stated once, on `ClassPicker`'s own pills
+            (panel-41) — this file used to draw a second, read-only
+            `WriteTargetRow` listing the same selectors 40px below that
+            stack, which is the panel's own copy of the ambiguity WS-6.2
+            exists to fix. */}
+        {model.isMultiSelect && <MultiSelectTargetBar model={model} />}
 
         {/* Module section — P2 rule 2 ("everything is at rest"): a fixed
-            block, not an accordion. `hasModuleContent` still hides it
-            entirely when there is genuinely nothing to show (global
-            selector mode), and for a multi-selection, whose module props
+            block, not an accordion. `moduleContent` is the whole block
+            (`ModuleBlock`, built by `renderModuleTabContent`), header
+            included; this file mounts it and nothing more. It is `null` when
+            there is genuinely nothing to show (global selector mode), and is
+            not mounted at all for a multi-selection, whose module props
             belong to one call site each (`commitApi.ts`). */}
-        {hasModuleContent && !model.isMultiSelect && (
+        {moduleContent != null && !model.isMultiSelect && (
           // `data-section-id` as well as `data-style-section`: this block is
           // not an `INSPECTOR_SECTIONS` entry, which is exactly why it went
           // unbudgeted until panel-37 measured it at 158px on a text node and
@@ -188,14 +146,8 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
           // keys off `data-section-id`, so carrying one puts the Module block
           // in the same table as every real section and makes it impossible
           // to grow it again without the number showing up.
-          <div data-style-section="module" data-section-id="module">
-            <div className={styles.moduleHeader}>
-              {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
-              <span className={styles.moduleTitle}>{definition!.name}</span>
-            </div>
-            <div key={nodeId} className={cn(styles.moduleBody, sectionStyles.sectionBody)}>
-              {moduleContent}
-            </div>
+          <div key={nodeId} data-style-section="module" data-section-id="module">
+            {moduleContent}
           </div>
         )}
 

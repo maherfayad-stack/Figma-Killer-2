@@ -14,27 +14,15 @@
  * running-server test (that lives in `server/liveOrigin.test.ts`).
  */
 import { describe, expect, it } from 'bun:test'
-import { readFileSync, readdirSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const LIVE_ORIGIN_FILE = join(REPO_ROOT, 'server/liveOrigin.ts')
 
-function collectServerFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.tmp' || entry === 'dist') continue
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      out.push(...collectServerFiles(full))
-    } else if (['.ts', '.tsx', '.js', '.mts', '.mjs'].includes(extname(entry))) {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectServerFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx', '.js', '.mts', '.mjs'])
 
 /**
  * Blank out comment characters (block `/* *\/` and line `//`) while
@@ -75,7 +63,7 @@ function functionLineRange(lines: string[], functionNamePattern: RegExp): [numbe
 }
 
 describe('live-origin isolation gate', () => {
-  const source = readFileSync(LIVE_ORIGIN_FILE, 'utf8')
+  const source = readSource(LIVE_ORIGIN_FILE)
 
   it('never imports server/router.ts (handleServerRequest)', () => {
     const bannedImportRe = /from\s+['"]\.\/router['"]|require\s*\(\s*['"]\.\/router['"]\s*\)|import\s*\(\s*['"]\.\/router['"]\s*\)/
@@ -147,7 +135,7 @@ describe('live-origin isolation gate', () => {
       .filter((f) => f !== LIVE_ORIGIN_FILE)
       .filter((f) => !f.endsWith('.test.ts'))
     const callSites = allFiles.filter((file) => {
-      const content = readFileSync(file, 'utf8')
+      const content = readSource(file)
       return /startLiveOriginServer\s*\(/.test(content)
     })
     const relCallSites = callSites.map((f) => relative(REPO_ROOT, f).replaceAll('\\', '/'))

@@ -1,7 +1,10 @@
 # Studio git integration
 
-**Status:** v1 (W4-3). Needs human dogfooding against a real repository with a
-real remote before it is trusted for daily use.
+**Status:** v1 (W4-3). **Dogfooded against a real private github.com repository**
+by `tests/e2e/github-sync.e2e.ts` (the G8 script from `git-22`), which creates a
+throwaway repo per run and checks every claim against GitHub itself as well as
+against the panel. Fourteen of its seventeen cases pass; the three that do not
+are one defect outside this feature — see "What the G8 dogfood found" below.
 
 Studio's source of truth is a real React repository on disk. Until this landed,
 the editor had **zero** version-control awareness: every canvas edit was an
@@ -93,6 +96,22 @@ actually failed answers **500**. Anything rejected by a guard answers a bare
 rather than by a handler branch. `GET git/remotes` reports **all** of them,
 including ones Studio did not write: a panel that quietly disagrees with the
 user's terminal is the failure `excludedCount` exists to avoid elsewhere.
+
+**Every URL that route returns has its credential stripped first**
+(`redactRemoteUrlCredentials`, `gitOperations.ts`, applied inside
+`readRemotes` so `setOriginRemote`'s response inherits it too). Studio's own
+`setOriginRemote` re-composes through `parseGithubRemoteUrl` and never writes
+a credential into a remote — but a repository cloned OUTSIDE Studio routinely
+carries one, and `git remote -v` prints `.git/config` verbatim:
+`https://x-access-token:<token>@github.com/o/r` is what a GitHub Actions
+checkout leaves behind, `https://<pat>@github.com/o/r` what a token-pasted
+`git clone` leaves behind. `git/remotes` is a `site.read` route, so without
+this the **Client** role could read that token out of a repository the
+operator imported (`sec-16`'s informational finding). For `http`/`https` the
+whole userinfo goes, because a token with no password half is the commonest
+shape; for `ssh://` only the password does, since `git@` is the SSH account
+and removing it would make the panel disagree with the terminal. The scp-like
+`git@github.com:o/r.git` has no userinfo syntax and is untouched.
 
 **The URL is the widest-blast-radius input in this feature**, because git takes
 a *transport*, not an address: `ext::sh -c …` executes a shell command,
@@ -225,7 +244,11 @@ one.
 - **`commit-and-switch` never rolls a commit back.** If files the user did not
   tick are still dirty afterwards, the switch refuses and names them; the
   commit stands, because it is what the user asked for and undoing it silently
-  would be the surprising option.
+  would be the surprising option. *Names* them literally: `dirtyFiles` was
+  always on the wire, but the **message** — the only field `apiRequest`
+  surfaces to the browser — used to read "these files are still uncommitted",
+  which is not something a user can act on without leaving Studio for a
+  terminal. It now spells out up to four paths and summarises the rest.
 - **A commit stages exactly the named files.** `git add -A` and `git commit -a`
   are unreachable from any route. In a tool where an AI agent also writes
   files, "everything" is not a set the user has reviewed.
@@ -243,6 +266,23 @@ one.
 - **A pull never chooses how to reconcile.** The default is `--ff-only`, which
   cannot rewrite anything; rebase and merge are reachable only through an
   explicit request the panel asked the user for.
+- **A pull that STOPS still reports what it did.** A conflicting pull leaves a
+  rebase in progress and unmerged files on disk, so `SyncSection`'s failure
+  path re-reads the conflict state as well as git status. Without that the
+  panel said "Rebase failed" and showed nothing to act on until the user closed
+  and reopened it — the per-file *Keep mine / Keep theirs / Continue* list is
+  the whole point of the feature, and it was one bumped nonce away from being
+  unreachable (found by the G8 dogfood).
+- **`continue` refuses in Studio's words, not git's.** `git rebase --continue`
+  rejects a repository where any tracked file has unstaged changes — including
+  files that had nothing to do with the conflict — and says *"You must edit all
+  merge conflicts and then mark them as resolved using git add"*, which is
+  written for a terminal and is not even true by then. So
+  `continueConflictResolution` reads status first and answers a named
+  `409 dirty-tree` listing the files. The read is `readGitStatus`, **not**
+  `git diff --name-only`: measured mid-rebase, porcelain reported
+  ` M prototype/registry.generated.jsx` while `git diff --name-only` reported
+  nothing at the same instant, and `rebase --continue` agreed with porcelain.
 - **`rebase --abort` / `merge --abort` is the only new destructive verb**, and
   it sits behind the same danger-styled confirmation `restore` uses. It is
   narrower than it looks: the pull refused to start over a dirty tree, so there
@@ -312,7 +352,7 @@ the token they sign in with is stored per user, encrypted.
   Username prompt and the token to anything else. The `#!` line is what makes
   one script work on all three platforms: Git for Windows resolves the
   interpreter itself and runs the file through its own bundled `sh`.
-- **The 0600/0700 modes are a POSIX guarantee only.** On Windows Node maps
+- **The askpass script's 0600/0700 modes are a POSIX guarantee only.** On Windows Node maps
   `mode` onto the read-only attribute and nothing else — the script and its
   directory report `666` however they were asked for. What keeps the token
   private there is `%TEMP%`'s ACL (`C:\Users\<user>\AppData\Local\Temp` admits
@@ -596,6 +636,40 @@ every other read in the Studio family.
 | `server/handlers/__tests__/git.test.ts` | End-to-end against real git: edit → status → diff → branch → commit → **push to a local bare remote**. Plus the rejections: dir outside the workspace, a project with no `.git` (never Studio's own repo), the workspace root itself, unusable paths in every path-taking route, dirty-tree switch refusal, empty commit, push with no origin, no filesystem path in an error body |
 | `server/ai/mcp/tools/studio/gitTools.test.ts` | Every tool's capability declaration (each mutating one invisible with `studio.write` alone and without `ai.tools.write`; `studio_git_status` visible as an ordinary read), the exact tool list (no init/restore/pull), and each tool's refusals — including a real push to a local bare remote |
 | `src/__tests__/studio/gitDiffLines.test.ts` | Unified-diff line numbering, `---`/`+++` not read as content, hunk-header counter resets, the no-newline marker |
+| `tests/e2e/github-sync.e2e.ts` | **The G8 dogfood against a real private github.com repository** — the twelve steps a bare local remote cannot settle. Self-skips without `gh auth token`; creates and destroys its own scratch repo. See `docs/e2e/README.md` |
+
+---
+
+## What the G8 dogfood found
+
+Everything G1–G7 promised holds against real GitHub: paste-a-token sign-in, a
+*Keep history* clone of a private repository with its history and `origin`
+intact, branching over a dirty tree without losing the uncommitted work, commit
++ push landing the exact sha on GitHub, a real pull request titled with the last
+commit subject, `1↓` blocking Push with "Pull first", a fast-forward pull
+putting GitHub's bytes on disk, `1↑ 1↓` producing the rebase-or-merge question
+instead of a decision, a same-line conflict listed per file with *Keep mine*
+writing the local text, Abort restoring the branch byte for byte, the write
+lock's `busy` refusal leaving no `index.lock`, commit-and-switch keeping the
+commit while refusing the switch by name, and sign-out leaving no usable
+credential behind.
+
+Three cases do not pass, and they are all the same defect, which lives **outside
+this feature**: `loadStudioPages` calls `ensurePrototypeShell(dir)` on every
+board open (`server/handlers/studioPageLoad.ts`), writing Studio's own runnable
+preview shell — `prototype/`, `index.html`, `vite.config.js`, `package.json`,
+plus four `*.generated.*` files — into the user's working tree. None of those
+paths is in git's excluded set (`node_modules`, `dist`, `.next`, `.turbo`,
+`.git`, `.studio`), so on a freshly cloned repository **16 paths the user never
+touched are uncommitted the moment the board opens**, a successful pull
+re-dirties the tree on its own reload, and `git rebase --continue` then refuses
+because a tracked file has unstaged changes.
+
+That is not a git-panel bug and the fix is not a line in this feature: whether
+the preview shell belongs in the user's history, in their `.gitignore`, or in
+git's excluded set is a decision for the prototype-shell owner. What this
+feature does about it now is refuse *honestly* — see the `continue` bullet under
+Safety rails.
 
 ---
 

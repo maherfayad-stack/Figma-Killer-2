@@ -1,7 +1,9 @@
 /**
- * Architecture gate — every `/admin/api/studio/*` path that appears in the
- * Studio handler tree must be declared in
- * `server/handlers/studio/routeCapabilities.ts`.
+ * Architecture gate — the Studio route table is EXACT in both directions.
+ *
+ * Every `/admin/api/studio/*` path the handler tree can actually serve must be
+ * declared in `server/handlers/studio/routeCapabilities.ts`, and every
+ * declaration must name a path the handler tree actually serves.
  *
  * The runtime already fails closed: `gateStudioRequest` answers 404 for an
  * undeclared path, so a route added without a declaration is dead rather than
@@ -10,21 +12,41 @@
  *
  * It is the inverse of `cms-handlers-capability-gated.test.ts`. That one scans
  * for a *call* (`requireCapability(...)`) because the CMS tree gates per
- * handler; this one scans for a *path literal* because Studio gates per route
+ * handler; this one scans for a *route match* because Studio gates per route
  * at one dispatch point. Scanning for the call would prove nothing here —
  * correctly gated Studio sub-routers contain no auth call at all.
  *
- * Two directions are checked:
+ * ## Why this scans route MATCHES and not path literals
  *
- *   1. Every literal `'/admin/api/studio/…'` in the handler tree resolves to a
- *      declaration (the one that catches a new route).
- *   2. Every declaration is reachable from some literal (the one that catches
- *      a stale entry left behind by a deleted route — a declaration nothing
- *      serves is a capability nobody can audit).
+ * `sec-14`'s version matched every `'/admin/api/studio/…'` string literal in
+ * the tree. That was enough while the table had six `subPaths: true`
+ * namespaces, because `git/`, `github/`, `install/`, `deploy/`, `dev-server/`
+ * and `prototype/` each absorbed whatever their sub-router dispatched
+ * underneath them — and a literal scan cannot see that dispatch at all:
+ * `gitSyncRoutes.ts` matches on `action === 'conflict/resolve'` after slicing
+ * a prefix off, and `deploy.ts` matches on `` `${ROUTE_PREFIX}/status` ``.
+ * Neither is a `/admin/api/studio/…` literal.
+ *
+ * `sec-16` showed the namespaces were the one place the table stopped being
+ * fail-closed (an undeclared GET under any of them inherited `site.read`), and
+ * `sec-18` deleted them. That makes the dispatch shapes above the ONLY record
+ * of those ~30 paths, so this gate has to understand them:
+ *
+ *   - `pathname === '<literal>'`
+ *   - `pathname === CONST` / `pathname !== CONST`   (resolved from the file)
+ *   - ``pathname === `${CONST}/suffix` ``
+ *   - `action === '<literal>'`                      (CONST is the file's `…/` prefix)
+ *   - ``pathname.startsWith(`${CONST}/`)``          (the job-id shape)
+ *
+ * Each match also carries whatever `req.method === '…'` appears on the same
+ * line, which is how a GET added to a POST-only route fails the build rather
+ * than silently taking the route's `read` capability.
  */
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   resolveStudioRouteCapability,
@@ -46,92 +68,201 @@ const SHARED_ROUTE_CONSTANT_FILES = [
   join(REPO_ROOT, 'src', 'core', 'studio-share', 'shareWire.ts'),
 ]
 
-/**
- * A path literal in source. Trailing `/` is kept out of the capture so a
- * namespace root written as `'/admin/api/studio/git/'` (the shape `git.ts`
- * uses to slice an action off) resolves the same as `'/admin/api/studio/git'`.
- */
-const STUDIO_PATH_RE = /'(\/admin\/api\/studio\/[a-z0-9\-/]*)'/g
+const STUDIO_PATH_CHARS = '[a-z0-9\\-/]*'
+/** `const NAME = '/admin/api/studio/…'` */
+const CONST_LITERAL_RE = new RegExp(
+  `(?:const|let)\\s+([A-Za-z_][A-Za-z0-9_]*)\\s*=\\s*'(${STUDIO_ROUTE_PREFIX}${STUDIO_PATH_CHARS})'`,
+  'g',
+)
+/** ``const NAME = `${OTHER}/suffix` `` */
+const CONST_TEMPLATE_RE = /(?:const|let)\s+([A-Za-z_][A-Za-z0-9_]*)\s*=\s*`\$\{([A-Za-z_][A-Za-z0-9_]*)\}([a-z0-9\-/]*)`/g
+/** Any `'/admin/api/studio/…'` literal, wherever it sits. */
+const PATH_LITERAL_RE = new RegExp(`'(${STUDIO_ROUTE_PREFIX}${STUDIO_PATH_CHARS})'`, 'g')
 
-function listSourceFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stats = statSync(full)
-    if (stats.isDirectory()) {
-      if (entry === '__tests__') continue
-      out.push(...listSourceFiles(full))
-      continue
-    }
-    if (!stats.isFile() || extname(entry) !== '.ts') continue
-    if (entry.endsWith('.test.ts')) continue
-    out.push(full)
-  }
-  return out
-}
+const PATHNAME_LITERAL_RE = new RegExp(`pathname\\s*[=!]==?\\s*'(${STUDIO_ROUTE_PREFIX}${STUDIO_PATH_CHARS})'`, 'g')
+const PATHNAME_CONST_RE = /pathname\s*[=!]==?\s*([A-Za-z_][A-Za-z0-9_]*)/g
+const PATHNAME_TEMPLATE_RE = /pathname\s*[=!]==?\s*`\$\{([A-Za-z_][A-Za-z0-9_]*)\}([a-z0-9\-/]*)`/g
+const ACTION_LITERAL_RE = /action\s*===\s*'([a-z0-9\-/]*)'/g
+const STARTS_WITH_TEMPLATE_RE = /(!?)pathname\.startsWith\(`\$\{([A-Za-z_][A-Za-z0-9_]*)\}\/`\)/g
+const METHOD_RE = /req\.method\s*[=!]==?\s*'([A-Z]+)'/g
 
-interface FoundPath {
-  path: string
-  file: string
-}
+const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-function collectStudioPathLiterals(): FoundPath[] {
-  const files = [STUDIO_ENTRY, ...listSourceFiles(STUDIO_DIR), ...SHARED_ROUTE_CONSTANT_FILES]
-  const found: FoundPath[] = []
-  for (const file of files) {
+const listSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts']).filter(
+    (f) => !toPosixPath(f).includes('/__tests__/') && !f.endsWith('.test.ts'),
+  )
+
+function scannedFiles(): string[] {
+  return [STUDIO_ENTRY, ...listSourceFiles(STUDIO_DIR), ...SHARED_ROUTE_CONSTANT_FILES].filter(
     // The table itself is the declaration, not a usage — scanning it would
     // make every entry trivially justify itself.
-    if (file.endsWith('routeCapabilities.ts')) continue
-    const src = readFileSync(file, 'utf8')
-    for (const match of src.matchAll(STUDIO_PATH_RE)) {
-      const raw = match[1]!
-      const path = raw.length > STUDIO_ROUTE_PREFIX.length && raw.endsWith('/') ? raw.slice(0, -1) : raw
-      if (path === STUDIO_ROUTE_PREFIX || path === STUDIO_ROUTE_PREFIX.slice(0, -1)) continue
-      found.push({ path, file: relative(REPO_ROOT, file).replaceAll('\\', '/') })
+    (file) => !file.endsWith('routeCapabilities.ts'),
+  )
+}
+
+/**
+ * `NAME -> '/admin/api/studio/…'` for one file, plus every name that is
+ * declared EXACTLY ONCE across the whole scanned set (so an imported constant
+ * like `STUDIO_SHARES_ROUTE` resolves, while `ROUTE_PATH` — declared in ~20
+ * files with ~20 different values — deliberately does not leak between them).
+ */
+function collectConstants(sources: ReadonlyMap<string, string>): {
+  perFile: Map<string, Map<string, string>>
+  globallyUnique: Map<string, string>
+} {
+  const perFile = new Map<string, Map<string, string>>()
+  const counts = new Map<string, Set<string>>()
+
+  for (const [file, src] of sources) {
+    const local = new Map<string, string>()
+    for (const match of src.matchAll(CONST_LITERAL_RE)) local.set(match[1]!, match[2]!)
+    // A second pass so `const B = `${A}/x`` can see `A` whichever order they appear in.
+    for (const match of src.matchAll(CONST_TEMPLATE_RE)) {
+      const base = local.get(match[2]!)
+      if (base) local.set(match[1]!, `${base}${match[3]!}`)
+    }
+    perFile.set(file, local)
+    for (const [name, value] of local) {
+      const seen = counts.get(name) ?? new Set<string>()
+      seen.add(value)
+      counts.set(name, seen)
     }
   }
-  return found
+
+  const globallyUnique = new Map<string, string>()
+  for (const [name, values] of counts) {
+    if (values.size === 1) globallyUnique.set(name, [...values][0]!)
+  }
+  return { perFile, globallyUnique }
+}
+
+interface RouteMatch {
+  path: string
+  methods: string[]
+  file: string
+  line: number
+}
+
+/** Every path this handler tree can dispatch to, with the methods it dispatches on. */
+function collectRouteMatches(): { routes: RouteMatch[]; jobIdParents: Map<string, string> } {
+  const sources = new Map<string, string>()
+  for (const file of scannedFiles()) sources.set(file, readSource(file))
+  const { perFile, globallyUnique } = collectConstants(sources)
+
+  const routes: RouteMatch[] = []
+  const jobIdParents = new Map<string, string>()
+
+  for (const [file, src] of sources) {
+    const rel = relative(REPO_ROOT, file).replaceAll('\\', '/')
+    const local = perFile.get(file)!
+    const resolveName = (name: string): string | undefined => local.get(name) ?? globallyUnique.get(name)
+    // The one `'/admin/api/studio/…/'` constant in this file, if there is
+    // exactly one — the prefix an `action === '…'` comparison is relative to.
+    const prefixes = [...local.values()].filter((value) => value.endsWith('/'))
+    const actionPrefix = prefixes.length === 1 ? prefixes[0]! : undefined
+
+    src.split('\n').forEach((text, index) => {
+      const methods = [...text.matchAll(METHOD_RE)].map((m) => m[1]!)
+      const push = (path: string): void => {
+        routes.push({ path, methods, file: rel, line: index + 1 })
+      }
+
+      for (const m of text.matchAll(PATHNAME_LITERAL_RE)) push(m[1]!)
+      for (const m of text.matchAll(PATHNAME_CONST_RE)) {
+        const name = m[1]!
+        // `pathname !== X && !pathname.startsWith(`${X}/`)` is a sub-router's
+        // "do I own this whole prefix" guard, not a claim that `X` itself is
+        // a route — `dev-server` is owned but never served. A bare
+        // `pathname !== X` (`componentBundle.ts`) IS the route.
+        if (text.includes(`!pathname.startsWith(\`\${${name}}`)) continue
+        const value = resolveName(name)
+        if (value && !value.endsWith('/')) push(value)
+      }
+      for (const m of text.matchAll(PATHNAME_TEMPLATE_RE)) {
+        const base = resolveName(m[1]!)
+        if (base) push(`${base}${m[2]!}`)
+      }
+      if (actionPrefix) {
+        for (const m of text.matchAll(ACTION_LITERAL_RE)) push(`${actionPrefix}${m[1]!}`)
+      }
+      for (const m of text.matchAll(STARTS_WITH_TEMPLATE_RE)) {
+        // A NEGATED `startsWith` is the sub-router's "do I own this prefix"
+        // guard, not a route. Only a positive one dispatches on the id.
+        if (m[1] === '!') continue
+        const base = resolveName(m[2]!)
+        if (base && !base.endsWith('/')) jobIdParents.set(base, `${rel}:${index + 1}`)
+      }
+    })
+  }
+
+  return { routes, jobIdParents }
 }
 
 describe('studio-routes-capability-declared gate', () => {
   it('finds the Studio handler tree', () => {
-    const literals = collectStudioPathLiterals()
-    // A regex that silently stops matching would make this gate pass forever.
-    expect(literals.length).toBeGreaterThan(40)
+    const { routes } = collectRouteMatches()
+    // A regex that silently stopped matching would make this gate pass
+    // forever. The tree serves ~90 (path, dispatch-site) pairs today.
+    expect(routes.length).toBeGreaterThan(70)
+    expect(new Set(routes.map((route) => route.path)).size).toBeGreaterThan(60)
   })
 
-  it('every /admin/api/studio path in the handler tree has a capability declaration', () => {
+  it('every /admin/api/studio path the handler tree dispatches on has a capability declaration', () => {
     const undeclared = new Map<string, string>()
-    for (const { path, file } of collectStudioPathLiterals()) {
+    for (const { path, file, line } of collectRouteMatches().routes) {
       if (resolveStudioRouteCapability(path)) continue
-      if (!undeclared.has(path)) undeclared.set(path, file)
+      if (!undeclared.has(path)) undeclared.set(path, `${file}:${String(line)}`)
     }
 
     if (undeclared.size > 0) {
-      const lines = [...undeclared].map(([path, file]) => `  ${path}   (${file})`).join('\n')
+      const lines = [...undeclared].map(([path, at]) => `  ${path}   (${at})`).join('\n')
       throw new Error(
         `[studio-routes-capability-declared] Studio routes with no capability declaration:\n${lines}\n\n` +
         `Every /admin/api/studio/** route is gated once, at dispatch, by ` +
         `server/handlers/studio/routeGate.ts using the capability declared in ` +
         `server/handlers/studio/routeCapabilities.ts. An undeclared path answers 404 ` +
         `and never reaches its sub-router.\n` +
-        `Add an entry to STUDIO_ROUTE_CAPABILITIES naming the capability a read and a ` +
+        `Add an EXACT entry to STUDIO_ROUTE_CAPABILITIES naming the capability a read and a ` +
         `mutation of this route require (null on either side when the route has no ` +
-        `method of that class).`,
+        `method of that class). There are no namespaces — see that module's doc.`,
       )
     }
     expect(undeclared.size).toBe(0)
   })
 
-  it('every capability declaration is reachable from a route literal', () => {
-    const literals = new Set(collectStudioPathLiterals().map((entry) => entry.path))
-    const stale = STUDIO_ROUTE_CAPABILITIES.filter((entry) => {
-      if (literals.has(entry.path)) return false
-      // A namespace is justified by any literal underneath it.
-      if (entry.subPaths && [...literals].some((path) => path.startsWith(`${entry.path}/`))) return false
-      return true
-    }).map((entry) => entry.path)
+  it('every /admin/api/studio literal anywhere in the handler tree is a declared route', () => {
+    // The belt to the route-match scan's braces: a dispatch shape this file
+    // does not understand still usually leaves its path as a literal
+    // somewhere. Two exclusions, both deliberate:
+    //   - a trailing `/` marks a PREFIX constant, which is not a route;
+    //   - a `const NAME = '…'` DECLARATION is a name, not a dispatch. A
+    //     sub-router can own a prefix it never serves bare (`dev-server`),
+    //     and the route-match scan above is what decides whether a named
+    //     constant is actually dispatched on.
+    const undeclared = new Map<string, string>()
+    for (const file of scannedFiles()) {
+      const src = readSource(file)
+      const declarations: [number, number][] = []
+      for (const match of src.matchAll(CONST_LITERAL_RE)) {
+        declarations.push([match.index, match.index + match[0].length])
+      }
+      for (const match of src.matchAll(PATH_LITERAL_RE)) {
+        const path = match[1]!
+        if (path.endsWith('/')) continue
+        if (declarations.some(([start, end]) => match.index >= start && match.index < end)) continue
+        if (resolveStudioRouteCapability(path)) continue
+        undeclared.set(path, relative(REPO_ROOT, file).replaceAll('\\', '/'))
+      }
+    }
+    expect([...undeclared].map(([path, file]) => `${path} (${file})`)).toEqual([])
+  })
 
+  it('every capability declaration is reachable from a route the handler tree dispatches on', () => {
+    const { routes, jobIdParents } = collectRouteMatches()
+    const dispatched = new Set(routes.map((route) => route.path))
+
+    const stale = STUDIO_ROUTE_CAPABILITIES.filter((entry) => !dispatched.has(entry.path)).map((entry) => entry.path)
     if (stale.length > 0) {
       throw new Error(
         `[studio-routes-capability-declared] capability declarations no handler serves:\n` +
@@ -141,45 +272,54 @@ describe('studio-routes-capability-declared gate', () => {
       )
     }
     expect(stale).toHaveLength(0)
+
+    // …and the same both ways for the job-id marker, which is the ONE thing
+    // in the table that answers for a path no literal names.
+    const declaredJobIds = STUDIO_ROUTE_CAPABILITIES.filter((entry) => entry.jobId).map((entry) => entry.path).sort()
+    expect(declaredJobIds).toEqual([...jobIdParents.keys()].sort())
   })
 
-  /**
-   * `sec-16`. `subPaths: true` is the ONE place the table stops being
-   * fail-closed: an undeclared path under a namespace does not 404, it
-   * inherits the namespace's capability for its method class. That is safe
-   * for a new POST (it inherits the strict write capability) and NOT safe for
-   * a new GET, which inherits `site.read` — the capability the Client role
-   * holds. A future `GET /admin/api/studio/deploy/run` or
-   * `GET /admin/api/studio/dev-server/restart` would therefore let a
-   * read-only reviewer spawn a build or a dev server on a project already at
-   * the `run-project` tier, with no table edit to review.
-   *
-   * The right long-term shape is exact entries plus an explicit dynamic-id
-   * marker for the two namespaces that genuinely need one (`deploy/<jobId>`,
-   * `install/<jobId>`). Until then this pins the inventory so the set cannot
-   * grow, and a namespace's capabilities cannot change, without a deliberate
-   * edit here.
-   */
-  it('pins the subPaths namespaces and the capability each one hands to an undeclared sub-path', () => {
-    const namespaces = STUDIO_ROUTE_CAPABILITIES
-      .filter((entry) => entry.subPaths === true)
-      .map((entry) => [entry.path, entry.read, entry.mutate] as const)
-      .sort((a, b) => a[0].localeCompare(b[0]))
+  it('every method class the handler tree dispatches on is declared non-null', () => {
+    const wrong: string[] = []
+    for (const { path, methods, file, line } of collectRouteMatches().routes) {
+      const declaration = resolveStudioRouteCapability(path)
+      if (!declaration) continue // already reported by the test above
+      for (const method of methods) {
+        const isRead = READ_METHODS.has(method)
+        const capability = isRead ? declaration.read : declaration.mutate
+        if (capability) continue
+        wrong.push(`  ${method} ${path} — declares ${isRead ? 'read' : 'mutate'}: null (${file}:${String(line)})`)
+      }
+    }
 
-    expect(namespaces).toEqual([
-      ['/admin/api/studio/deploy', 'site.read', 'studio.run.project'],
-      ['/admin/api/studio/dev-server', 'site.read', 'studio.run.project'],
-      ['/admin/api/studio/git', 'site.read', 'site.structure.edit'],
-      ['/admin/api/studio/github', 'site.read', 'site.structure.edit'],
-      ['/admin/api/studio/install', 'site.read', 'studio.write'],
-      ['/admin/api/studio/prototype', 'site.read', 'studio.write'],
-    ])
+    if (wrong.length > 0) {
+      throw new Error(
+        `[studio-routes-capability-declared] routes dispatched on a method class the table says they do not have:\n` +
+        `${wrong.join('\n')}\n\n` +
+        `The gate answers 404 for a method class declared \`null\`, so these verbs are ` +
+        `unreachable. Name the capability that method needs in STUDIO_ROUTE_CAPABILITIES.`,
+      )
+    }
+    expect(wrong).toEqual([])
+  })
+
+  it('declares no namespace-style prefix entry', () => {
+    // `sec-16`'s finding, closed at the mechanism: an entry that answered for
+    // `${path}/<anything>` handed an undeclared GET `site.read`, the Client
+    // role's capability. `jobId` is the deliberate, UUID-shaped replacement —
+    // `deploy/run` does not resolve, `deploy/<uuid>` does.
+    const table = STUDIO_ROUTE_CAPABILITIES as readonly (Record<string, unknown> & { path: string })[]
+    expect(table.filter((entry) => 'subPaths' in entry).map((entry) => entry.path)).toEqual([])
+    expect(resolveStudioRouteCapability('/admin/api/studio/git/brand-new-verb')).toBeNull()
+    expect(resolveStudioRouteCapability('/admin/api/studio/dev-server/restart')).toBeNull()
+    expect(resolveStudioRouteCapability('/admin/api/studio/deploy/run')).toBeNull()
+    expect(resolveStudioRouteCapability('/admin/api/studio/install/anything')).toBeNull()
   })
 
   it('declares no capability outside the four write families plus site.read', () => {
     // Not a style rule — the point of the table is that a reader can see the
     // whole Studio authorization surface in one screen. A capability that
-    // appears nowhere else in it would hide in the middle of ~55 rows.
+    // appears nowhere else in it would hide in the middle of ~70 rows.
     const allowed = new Set([
       'site.read',
       'site.content.edit',
@@ -189,7 +329,7 @@ describe('studio-routes-capability-declared gate', () => {
     ])
     const unexpected = new Set<string>()
     for (const entry of STUDIO_ROUTE_CAPABILITIES) {
-      for (const capability of [entry.read, entry.mutate]) {
+      for (const capability of [entry.read, entry.mutate, entry.jobId?.read, entry.jobId?.mutate]) {
         if (capability && !allowed.has(capability)) unexpected.add(capability)
       }
     }
