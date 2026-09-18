@@ -75,6 +75,26 @@ function currentNode() {
 }
 
 /**
+ * Render the section with its body visible.
+ *
+ * panel-39 made Layout a COLLAPSED disclosure whenever the selection has no
+ * layout — `display` unset, or a value the mode buttons read as "none" — so
+ * a test about padding / margin / clip content / the settings popover on a
+ * plain block has to open it first, exactly as the user does. That IS the
+ * behaviour under test elsewhere in this file ("collapsed until a layout
+ * exists"), so it is opened here through the real header button rather than
+ * by reaching past the disclosure. A container selection renders `forceOpen`
+ * and this is a no-op.
+ */
+function renderLayout() {
+  const result = render(<LayoutSection />)
+  if (screen.queryByTestId('inspector-layout-section') === null) {
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }))
+  }
+  return result
+}
+
+/**
  * The padding cluster cycles three states (all sides -> H/V -> four sides),
  * so a test has to name the one it wants rather than flip a boolean. The
  * state is module-level and sticky per cluster id (by design — see
@@ -130,16 +150,90 @@ describe('layoutModePatch', () => {
 // 1. LayoutModeRow — resident regardless of display
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// panel-39 — one row until a layout exists
+// ---------------------------------------------------------------------------
+
+describe('LayoutSection — collapsed until a layout exists', () => {
+  it('rests as a header with "Add auto layout" and no body on a plain block', () => {
+    selectNode()
+    render(<LayoutSection />)
+
+    expect(screen.queryByTestId('inspector-layout-section')).toBeNull()
+    expect(screen.queryByTestId('css-layout-mode-row')).toBeNull()
+    expect(screen.getByTestId('inspector-layout-add')).toBeDefined()
+    // A collapsed section is not an empty one: the "remove layout" affordance
+    // is the populated state's, and must not show here.
+    expect(screen.queryByTestId('inspector-layout-remove')).toBeNull()
+  })
+
+  it('discloses the whole body — padding, margin, clip content — in one click', () => {
+    selectNode()
+    render(<LayoutSection />)
+    fireEvent.click(screen.getByRole('button', { name: 'Layout' }))
+
+    expect(screen.getByTestId('inspector-layout-section')).toBeDefined()
+    expect(screen.getByTestId('css-layout-mode-row')).toBeDefined()
+    expect(screen.getByTestId('expandable-field-cluster-padding')).toBeDefined()
+    expect(screen.getByTestId('expandable-field-cluster-margin')).toBeDefined()
+    expect(screen.getByTestId('layout-settings-trigger')).toBeDefined()
+  })
+
+  it('"Add auto layout" writes a vertical stack and opens the body at rest', () => {
+    selectNode()
+    render(<LayoutSection />)
+    fireEvent.click(screen.getByTestId('inspector-layout-add'))
+
+    expect(currentNode()?.inlineStyles?.display).toBe('flex')
+    expect(currentNode()?.inlineStyles?.flexDirection).toBe('column')
+    // `forceOpen` from here on — no second click needed.
+    expect(screen.getByTestId('inspector-layout-section')).toBeDefined()
+    expect(screen.getByTestId('inspector-layout-remove')).toBeDefined()
+  })
+
+  it('a flex container renders its body at rest, with no disclosure to open', () => {
+    selectNode({ inlineStyles: { display: 'flex' } })
+    render(<LayoutSection />)
+
+    expect(screen.getByTestId('inspector-layout-section')).toBeDefined()
+    expect(screen.queryByTestId('inspector-layout-add')).toBeNull()
+  })
+
+  it('a display the four mode buttons cannot represent still renders at rest', () => {
+    // `inline-block` is real, load-bearing, and the mode row is the only place
+    // it is visible — folding it behind a chevron would hide a set value.
+    selectNode({ inlineStyles: { display: 'inline-block' } })
+    render(<LayoutSection />)
+
+    expect(screen.getByTestId('inspector-layout-section')).toBeDefined()
+  })
+
+  it('marks a collapsed section whose padding or margin IS set', () => {
+    selectNode({ inlineStyles: { paddingTop: '8px' } })
+    render(<LayoutSection />)
+
+    expect(screen.queryByTestId('inspector-layout-section')).toBeNull()
+    expect(screen.getByTestId('inspector-layout-indicator')).toBeDefined()
+  })
+
+  it('shows no indicator when nothing in the section is set', () => {
+    selectNode()
+    render(<LayoutSection />)
+
+    expect(screen.queryByTestId('inspector-layout-indicator')).toBeNull()
+  })
+})
+
 describe('LayoutSection — LayoutModeRow (resident)', () => {
   it('renders with no layout mode set, highlighting "No auto layout"', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
 
   it('clicking Vertical stack writes display: flex + flex-direction: column in one write', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByRole('button', { name: /^vertical stack$/i }))
 
@@ -149,7 +243,7 @@ describe('LayoutSection — LayoutModeRow (resident)', () => {
 
   it('clicking Grid writes display: grid', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByRole('button', { name: /^grid$/i }))
 
@@ -164,7 +258,7 @@ describe('LayoutSection — LayoutModeRow (resident)', () => {
 describe('LayoutSection — AlignGrid (flex)', () => {
   it('clicking the center cell writes alignItems + justifyContent as center', () => {
     selectNode({ inlineStyles: { display: 'flex' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('css-align-grid-cell-1-1'))
 
@@ -176,7 +270,7 @@ describe('LayoutSection — AlignGrid (flex)', () => {
 describe('LayoutSection — AlignGrid (grid)', () => {
   it('clicking a cell writes alignItems + justifyItems (not justifyContent)', () => {
     selectNode({ inlineStyles: { display: 'grid' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('css-align-grid-cell-0-0'))
 
@@ -193,7 +287,7 @@ describe('LayoutSection — AlignGrid (grid)', () => {
 describe('LayoutSection — Layout settings popover (resident, item-level only)', () => {
   it('is reachable with no display set at all, and writes flex', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     expect(screen.queryByTestId('css-align-grid')).toBeNull()
     fireEvent.click(screen.getByTestId('layout-settings-trigger'))
@@ -208,7 +302,7 @@ describe('LayoutSection — Layout settings popover (resident, item-level only)'
 
   it('does NOT expose alignSelf/justifySelf — AlignSection owns them exclusively', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('layout-settings-trigger'))
 
@@ -220,7 +314,7 @@ describe('LayoutSection — Layout settings popover (resident, item-level only)'
 
   it('hides the container-only rows (rowGap/columnGap/flexWrap) with no display set', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('layout-settings-trigger'))
 
@@ -237,13 +331,13 @@ describe('LayoutSection — Layout settings popover (resident, item-level only)'
 describe('LayoutSection — Clip content', () => {
   it('renders regardless of display', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
     expect(screen.getByTestId('css-clip-content-checkbox')).toBeTruthy()
   })
 
   it('checking it writes overflow: hidden', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('css-clip-content-checkbox'))
 
@@ -258,7 +352,7 @@ describe('LayoutSection — Clip content', () => {
 describe('LayoutSection — flow cluster', () => {
   it('round-trips nowrap -> wrap, and clears on the way back', () => {
     selectNode({ inlineStyles: { display: 'flex' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     const toggle = screen.getByTestId('css-layout-wrap-toggle')
     expect(toggle.getAttribute('aria-pressed')).toBe('false')
@@ -269,7 +363,7 @@ describe('LayoutSection — flow cluster', () => {
 
   it('reverses the CURRENT axis, never falling back to row', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'column' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     fireEvent.click(screen.getByTestId('css-layout-reverse-toggle'))
     expect(currentNode()?.inlineStyles?.flexDirection).toBe('column-reverse')
@@ -277,7 +371,7 @@ describe('LayoutSection — flow cluster', () => {
 
   it('un-reversing writes the plain axis rather than clearing it', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'column-reverse' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     const toggle = screen.getByTestId('css-layout-reverse-toggle')
     expect(toggle.getAttribute('aria-pressed')).toBe('true')
@@ -295,7 +389,7 @@ describe('LayoutSection — flow cluster', () => {
 describe('LayoutSection — padding cluster', () => {
   it('is resident regardless of display; the H/V state shows 2 fields', () => {
     selectNode({ inlineStyles: { paddingTop: '8px', paddingBottom: '8px' } })
-    render(<LayoutSection />)
+    renderLayout()
     setPaddingState('collapsed')
 
     const fields = screen.getByTestId('expandable-field-cluster-padding-fields')
@@ -304,7 +398,7 @@ describe('LayoutSection — padding cluster', () => {
 
   it('editing the collapsed horizontal field writes both paddingLeft and paddingRight', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
     setPaddingState('collapsed')
 
     const horizontal = screen.getByTestId('css-padding-horizontal') as HTMLInputElement
@@ -317,7 +411,7 @@ describe('LayoutSection — padding cluster', () => {
 
   it('the link state is ONE field writing all four sides in a single history entry', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
     setPaddingState('all')
 
     const fields = screen.getByTestId('expandable-field-cluster-padding-fields')
@@ -349,7 +443,7 @@ describe('LayoutSection — padding cluster', () => {
 describe('LayoutSection — margin cluster', () => {
   it('is independent of the padding cluster\'s sticky expand state', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
 
     const paddingToggle = screen.getByTestId('expandable-field-cluster-padding-toggle')
     if (paddingToggle.getAttribute('aria-expanded') === 'true') fireEvent.click(paddingToggle)
@@ -361,7 +455,7 @@ describe('LayoutSection — margin cluster', () => {
 
   it('editing the collapsed horizontal field writes both marginLeft and marginRight', () => {
     selectNode()
-    render(<LayoutSection />)
+    renderLayout()
     setMarginExpanded(false)
 
     const horizontal = screen.getByTestId('css-margin-horizontal') as HTMLInputElement
@@ -374,7 +468,7 @@ describe('LayoutSection — margin cluster', () => {
 
   it('the "Box model" popover reaches all 8 padding+margin sides', () => {
     selectNode({ inlineStyles: { paddingTop: '4px', marginTop: '8px' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     expect(screen.queryByLabelText('padding top')).toBeNull()
     fireEvent.click(screen.getByTestId('spacing-box-model-trigger'))
@@ -391,7 +485,7 @@ describe('LayoutSection — margin cluster', () => {
 describe('LayoutSection — Row gap / Column gap', () => {
   it('both fields are live for a wrapping flex row', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'row', flexWrap: 'wrap' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     expect(screen.getByTestId('css-row-gap-input')).not.toHaveProperty('disabled', true)
     expect(screen.getByTestId('css-column-gap-input')).not.toHaveProperty('disabled', true)
@@ -399,7 +493,7 @@ describe('LayoutSection — Row gap / Column gap', () => {
 
   it('disables Row gap for a single, non-wrapping flex row', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'row' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     const rowGapInput = screen.getByTestId('css-row-gap-input') as HTMLInputElement
     expect(rowGapInput.disabled).toBe(true)
@@ -409,7 +503,7 @@ describe('LayoutSection — Row gap / Column gap', () => {
 
   it('disables Column gap for a single, non-wrapping flex column', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'column' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     const columnGapInput = screen.getByTestId('css-column-gap-input') as HTMLInputElement
     expect(columnGapInput.disabled).toBe(true)
@@ -419,7 +513,7 @@ describe('LayoutSection — Row gap / Column gap', () => {
 
   it('writes rowGap/columnGap as longhands, not the gap shorthand', () => {
     selectNode({ inlineStyles: { display: 'flex', flexDirection: 'row', flexWrap: 'wrap' } })
-    render(<LayoutSection />)
+    renderLayout()
 
     const rowGapInput = screen.getByTestId('css-row-gap-input') as HTMLInputElement
     fireEvent.change(rowGapInput, { target: { value: '8px' } })
@@ -437,7 +531,7 @@ describe('LayoutSection — Row gap / Column gap', () => {
 describe('LayoutSection — code-locked properties', () => {
   it('refuses a padding write when paddingTop is code-valued', () => {
     selectNode({ codeProps: ['style:paddingTop'] })
-    render(<LayoutSection />)
+    renderLayout()
     setPaddingState('expanded')
 
     const field = screen.getByTestId('css-padding-top') as HTMLInputElement

@@ -571,6 +571,12 @@ describe('StyleRuleComposer unset CSS property placeholders', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
+    // panel-39 — Layout is a collapsed disclosure until a layout exists, and
+    // this fixture's class sets no `display` at all. The mode row is one
+    // click behind the header, not gone; opening it here is what the user
+    // does, and `layoutSection.test.tsx` owns the "collapsed at rest" fact.
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
+
     const modeRow = document.querySelector('[data-testid="css-layout-mode-row"]')
     expect(modeRow).not.toBeNull()
 
@@ -616,8 +622,12 @@ describe('LayoutSection — clear via active segment X', () => {
     fireEvent.click(flexSegment)
 
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
-    // After clearing, the row falls back to "No auto layout" — pressed, because
-    // that is now a real mode rather than an empty state.
+    // panel-39 — clearing the layout folds the section back to its one-row
+    // rest state, exactly as Figma's `−` on Auto layout does. The mode row is
+    // behind the header's chevron now, and the header offers `+` again.
+    expect(screen.queryByTestId('css-layout-mode-row')).toBeNull()
+    expect(screen.getByTestId('inspector-layout-add')).toBeDefined()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
   })
@@ -641,6 +651,10 @@ describe('LayoutSection — clear via active segment X', () => {
     // otherwise the inherited base value would bleed through and the segment
     // would stay pressed (Job #1342 followup).
     expect(useEditorStore.getState().site!.styleRules[clsId].styles.display).toBeUndefined()
+    // …and the section folds back to one row (panel-39) — its body, including
+    // the four mode buttons, is one click behind the header again.
+    expect(screen.queryByTestId('css-layout-mode-row')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(screen.getByRole('button', { name: /^grid$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^horizontal stack$/i }).getAttribute('aria-pressed')).toBe('false')
     expect(screen.getByRole('button', { name: /^no auto layout$/i }).getAttribute('aria-pressed')).toBe('true')
@@ -785,8 +799,13 @@ describe('LayoutSection — grid block', () => {
     render(<PropertiesPanel />)
     fireEvent.click(screen.getByRole('button', { name: /edit class \.class-1/i }))
 
-    // Default display (unset) → no gap controls at all (`GapRow` only mounts
-    // inside the flex/grid block).
+    // Default display (unset) → Layout is folded to one row (panel-39), so
+    // open it; the point of this test is the gap rows being absent from the
+    // BODY, not the body being absent.
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
+
+    // No gap controls at all (`GapRow` only mounts inside the flex/grid
+    // block).
     expect(screen.queryByTestId('css-row-gap-input')).toBeNull()
     expect(screen.queryByTestId('css-column-gap-input')).toBeNull()
     // Item-level properties (gridColumn / gridRow / flex) remain REACHABLE
@@ -1383,6 +1402,12 @@ describe('PP-21 — Empty class: always-present sections stay resident, collapsi
     // Layout/Measures/Align are Figma's always-present blocks — their rows
     // render even before a property is assigned. No pill click needed — the
     // merged composer is live the moment the class is assigned (PP-3).
+    // panel-39 narrowed "always present" for Layout specifically: an empty
+    // class has no `display`, so Layout rests as one row with an "Add auto
+    // layout" `+` — Law 1's own shape — and discloses the mode row on click.
+    // Measures/Align are unchanged and still resident.
+    expect(document.querySelector('[data-testid="css-layout-mode-row"]')).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Layout', exact: true }))
     expect(document.querySelector('[data-testid="css-layout-mode-row"]')).not.toBeNull()
     expect(document.querySelectorAll('[data-testid^="css-property-row-"]').length).toBeGreaterThan(0)
 

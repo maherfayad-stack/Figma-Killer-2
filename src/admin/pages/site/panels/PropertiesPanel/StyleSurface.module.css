@@ -10,8 +10,20 @@
     min-height: 0;
     display: grid;
     grid-template-columns: minmax(0, 1fr);
-    padding-top: var(--space-2xl);
-    padding-bottom: var(--space-7xl);
+    /*
+     * FROZEN, not fluid — `--space-2xl`/`--space-7xl` are `clamp()`-based and
+     * rendered 15.917px / 31.848px at a 1400px window, i.e. the one place the
+     * panel's own "inspector spacing is pinned" rule (globals.css) was not
+     * applied. Worse, `--space-7xl` was on BOTH this element and
+     * `.surfaceContent` below, so the tab carried 63.7px of bottom padding —
+     * two full section headers of dead scroll, counted twice.
+     *
+     * One decision, here: `--inspector-space-m` top and bottom. Measured
+     * saving across all four baseline fixtures: 63.6px
+     * (`docs/audits/penpot-inspector-baseline/05-section-heights.md`).
+     */
+    padding-top: var(--inspector-space-m);
+    padding-bottom: var(--inspector-space-m);
     gap: 0;
     overflow-y: auto;
     overflow-x: hidden;
@@ -31,8 +43,15 @@
  * this panel's rhythm). Used to be `var(--space-px)` (1px) — sections read
  * as one continuous wall with only a 1px hairline between them, no
  * breathing room a scanning eye could use as a landmark. Now
- * `--inspector-space-xl`, the panel's between-section step — the biggest of
- * the three, so a section boundary is unmistakable while scrolling.
+ * `--inspector-space-m`, the panel's between-section step.
+ *
+ * It was `--inspector-space-xl` (12px) until panel-39 measured what twelve
+ * of those cost a text node: 132px, against the 8px section gap Figma and
+ * Penpot both draw (`docs/audits/penpot-inspector-baseline/02-measurements.
+ * md`). 8px is still twice the 4px within-group step, so the hierarchy that
+ * `fix/inspector-spacing-audit` established — within-group < between-group
+ * < between-section — survives intact; only the top step moved onto the
+ * measured reference. Saving: 44px on the F2 text fixture.
  *
  * This is also what makes each section's header sit closer to ITS OWN
  * content than to the section above it: `Section.module.css`'s
@@ -44,9 +63,8 @@
 .surfaceContent {
     display: grid;
     align-content: start;
-    gap: var(--inspector-space-xl);
+    gap: var(--inspector-space-m);
     min-width: 0;
-    padding-bottom: var(--space-7xl);
     /*
      * The rail is a sibling grid column, not an overlay, but the scroll
      * container clips on the X axis at the PANEL edge — so a section whose
