@@ -249,6 +249,38 @@ work that was never folded into that matrix at all — each spec below cites the
 | V1 (`STUDIO-FIGMA-FEEL-PLAN.md`) | Toast de-duplication under a hammered ⌘D, the Escape ladder terminating at nothing selected, the zoom frame budget on the **tracked** `test4` corpus, and (skipped until K2 lands) Alt+drag duplicating a board frame | `studio-feel.e2e.ts` |
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
 
+| A9 (`STUDIO-FIGMA-FEEL-PLAN.md`, `mcp-25`) | **ONE real agent turn**, wall-clocked: the warm `claude` CLI on a throwaway copy of `__canonical-fixture`, `balanced` fidelity — one write batch, zero tool refusals, the activity line on screen, telemetry in `.studio/agent-turns.jsonl`, and every changed file the hero's own. **Self-skips** without the `claude` binary, without Studio's CLI probe answering, or without a `claudeCli` credential on the account | `agent-turn.e2e.ts` |
+
+#### `agent-turn.e2e.ts` costs real tokens, and says so when it does not run
+
+It is the only spec in this directory that spends money: it drives the
+`claudeCli` driver, which spawns a real `claude` subprocess against the
+operator's own subscription. Three preconditions gate it, and each one names
+itself in the skip reason rather than reporting a silent pass — the binary on
+PATH, `GET /admin/api/ai/providers/claude-cli/status` not answering
+`not-installed`/`unsupported`, and a `claudeCli` credential on the signed-in
+account. Studio's L1 terminal login stores no credential row on purpose, so a
+host login alone is not enough; add the value `claude setup-token` prints under
+Settings → AI → Providers.
+
+There is a **fourth**, discovered late rather than early: if every failed tool
+call is capture-family (`studio_screenshot` / `studio_compare` /
+`studio_computed_styles` / `studio_export_frames`) and the transcript shows the
+capture browser could not run, the case skips with that reason instead of
+failing. On this Windows box `playwright-core`'s `chrome-headless-shell` hangs
+for its full 180 s launch timeout when launched from a Bun process, while the
+same binary serves the Playwright RUNNER fine — a machine, not a product
+defect, and neither a pass nor a red belongs to it.
+
+It also carries one `test.fail()`: the agent panel's fidelity control is not
+clickable at the panel's default width, because the model/effort picker's label
+overlaps it and takes the click. See `STATE.md` `mcp-25`.
+
+Every run appends what it measured to `.tmp/agent-turn-measurement.json` — wall
+ms, tool rounds, writeback POSTs, telemetry lines, failed tool labels and the
+changed-file set. That file is how `AGENT_TURN_WALL_MS` gets re-calibrated:
+three runs, budget is 1.5x the worst.
+
 #### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
 
 This spec is the plan's exit dogfood, so it asserts what the product was

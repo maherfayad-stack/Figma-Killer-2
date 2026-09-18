@@ -77,6 +77,42 @@ export const BUDGET_ZOOM_WORST_FRAME_MS = 250
  */
 export const BUDGET_ZOOM_MEAN_FRAME_MS = 35
 
+/**
+ * **How long one real agent turn may take, wall clock, Send to stream close.**
+ *
+ * Read by `tests/e2e/agent-turn.e2e.ts` (`mcp-25`) — the first gate in this
+ * repository backed by a turn that actually spent tokens. `mcp-22` shipped
+ * `AGENT_TURN_BUDGETS` (90 s creative / 3 min balanced) as plan targets and
+ * had `bench:agent-turn` WARN rather than fail against them, explicitly
+ * "until a real turn is measured". This is that measurement.
+ *
+ * ## Where 300,000 comes from
+ *
+ * Four real turns, same brief ("Make the hero heading bolder and give the hero
+ * card a subtle shadow"), same corpus (a throwaway copy of
+ * `studio-workspace/__canonical-fixture`), `balanced` fidelity, the warm
+ * `claude` CLI driver, this Windows box, 2026-09-18:
+ *
+ * | run | wall ms | tool rounds | writeback POSTs | files changed |
+ * |---|---|---|---|---|
+ * | 1 | 198,788 | 10 | 0 | the hero stylesheet |
+ * | 2 |  56,362 |  8 | 0 | the hero stylesheet |
+ * | 3 | 173,327 |  9 | 0 | the hero stylesheet |
+ * | 4 | 149,801 | 15 | 0 | the hero stylesheet + its screen |
+ *
+ * Worst 198,788 ms; 1.5x is 298,182; rounded up to a legible five minutes.
+ *
+ * The spread is 3.5x on an IDENTICAL brief, which is the number to keep in
+ * mind before tightening this: the slow runs are the ones where the agent
+ * reached for `studio_screenshot` and waited out a capture timeout, and a
+ * budget set near the median would fail on the model deciding to look at its
+ * own work. **This is a ratchet against a turn that hangs, not a target.**
+ *
+ * Re-measure by running the spec three times and reading
+ * `.tmp/agent-turn-measurement.json`, which it appends to on every run.
+ */
+export const AGENT_TURN_WALL_MS = 300_000
+
 export interface GestureProfile {
   frames: number
   worstFrameMs: number
