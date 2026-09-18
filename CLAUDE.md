@@ -255,6 +255,10 @@ Every untyped boundary uses TypeBox. Inside the boundary, code trusts the parsed
 - `apiRequest`/`readEnvelope` surface this message automatically via `responseErrorMessage(res, fallback)` (also in `@core/http`), which prefers the `{ error }` envelope, then raw response text, then the fallback.
 - Server logs use the prefix `console.error('[<module>]', err)` — example: `'[plugin:acme.workflow]'`.
 
+### Studio routes are declared, not guarded
+
+**A Studio route that is not in `server/handlers/studio/routeCapabilities.ts` does not exist — never add a `requireCapability` call inside a Studio sub-router.** Every `/admin/api/studio/*` request passes one gate (`studio/routeGate.ts`) before any sub-router: undeclared path → **404**, state-changing method without an acceptable `Origin` → **403**, then `requireCapability` with the capability the declaration names for that method class. So adding a sub-router is TWO edits (`studio/subRouters.ts` **and** `routeCapabilities.ts`), a forgotten declaration produces a dead route rather than an open one, and `studio-routes-capability-declared.test.ts` fails the build naming the path. A second check inside the handler is a second policy, and the two will drift.
+
 ### UI error handling
 
 - Async UI handlers wrap in `try/catch`. Logged errors use the prefix `console.error('[<component>] <description>:', err)`.

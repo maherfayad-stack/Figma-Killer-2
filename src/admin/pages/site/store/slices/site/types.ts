@@ -8,7 +8,7 @@
 
 import type { StoreApi } from 'zustand'
 import type { Draft } from 'mutative'
-import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
+import type { FrameworkColorToken, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
 import type {
   DecorativeSiteExplorerSectionId,
   ExplorerPathChangePlan,
@@ -61,72 +61,28 @@ export interface PatchPagesInput {
   conditions?: ConditionDef[]
 }
 
-export type ColorVariantOptions = { enabled: boolean; count: number }
+/**
+ * The framework and font token action inputs. They live in
+ * `frameworkActionInputs.ts` (this file passed the 700-line ceiling again when
+ * wave 2 landed the transplant actions) and are re-exported here so the slice
+ * keeps one front door — every consumer already imports them from `./types`.
+ */
+export type {
+  ColorVariantOptions,
+  CreateFrameworkColorTokenInput,
+  UpdateFrameworkColorTokenPatch,
+  UpdateFrameworkTypographyGroupPatch,
+  UpdateFrameworkSpacingGroupPatch,
+} from './frameworkActionInputs'
 
-export interface CreateFrameworkColorTokenInput {
-  category?: string
-  slug: string
-  lightValue: string
-  darkValue?: string
-  darkModeEnabled?: boolean
-  generateUtilities?: Partial<Record<FrameworkColorUtilityType, boolean>>
-  generateTransparent?: boolean
-  generateShades?: Partial<ColorVariantOptions>
-  generateTints?: Partial<ColorVariantOptions>
-}
-
-export type UpdateFrameworkColorTokenPatch = Partial<{
-  category: string
-  slug: string
-  lightValue: string
-  darkValue: string
-  darkModeEnabled: boolean
-  generateUtilities: Partial<Record<FrameworkColorUtilityType, boolean>>
-  generateTransparent: boolean
-  generateShades: Partial<ColorVariantOptions>
-  generateTints: Partial<ColorVariantOptions>
-  order: number
-}>
-
-export type UpdateFrameworkTypographyGroupPatch = Partial<{
-  name: string
-  namingConvention: string
-  steps: string
-  baseScaleIndex: number
-  mode: FrameworkScaleMode
-  isDisabled: boolean
-  /** Patch into the `min` breakpoint config — fields are merged, untouched fields preserved. */
-  min: Partial<FrameworkTypographyGroup['min']>
-  max: Partial<FrameworkTypographyGroup['max']>
-  manualSizes: FrameworkScaleManualSize[]
-}>
-
-export type UpdateFrameworkSpacingGroupPatch = Partial<{
-  name: string
-  namingConvention: string
-  steps: string
-  baseScaleIndex: number
-  mode: FrameworkScaleMode
-  isDisabled: boolean
-  min: Partial<FrameworkSpacingGroup['min']>
-  max: Partial<FrameworkSpacingGroup['max']>
-  manualSizes: FrameworkScaleManualSize[]
-}>
-
-interface CreateFontTokenInput {
-  name: string
-  variable?: string
-  familyId?: string | null
-  fallback?: string
-}
-
-type UpdateFontTokenPatch = Partial<{
-  name: string
-  variable: string
-  familyId: string | null
-  fallback: string
-  order: number
-}>
+import type {
+  CreateFontTokenInput,
+  CreateFrameworkColorTokenInput,
+  UpdateFontTokenPatch,
+  UpdateFrameworkColorTokenPatch,
+  UpdateFrameworkSpacingGroupPatch,
+  UpdateFrameworkTypographyGroupPatch,
+} from './frameworkActionInputs'
 
 /**
  * The undo-stack shapes. They live in `historyTypes.ts` (this file passed the
