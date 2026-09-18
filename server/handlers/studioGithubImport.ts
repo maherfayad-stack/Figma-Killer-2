@@ -104,6 +104,13 @@ export function parseGithubRepoUrl(input: string): { owner: string; repo: string
   }
   if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null
   if (!GITHUB_HOSTS.has(parsed.hostname.toLowerCase())) return null
+  // No userinfo, matching `parseGithubRemoteUrl`. A pasted
+  // `https://ghp_…@github.com/owner/repo` carries a credential in a field this
+  // function then silently DROPS — the zipball fetch is built from the parsed
+  // owner/repo and authenticates from the body's own `token`, so the import
+  // would go out unauthenticated and 404 on the private repo the user was
+  // trying to reach. Refusing says so; accepting-and-ignoring does not.
+  if (parsed.username || parsed.password) return null
 
   const segments = parsed.pathname.split('/').filter((segment) => segment.length > 0)
   if (segments.length < 2) return null

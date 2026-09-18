@@ -9,7 +9,7 @@
  * the platform call: on Windows the real `icacls` runs.
  */
 import { afterAll, describe, expect, it } from 'bun:test'
-import { existsSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { dirname, join } from 'node:path'
 import { readFileProtection } from './fileProtection.testHelpers'
@@ -18,6 +18,7 @@ import {
   PRIVATE_FILE_MODE,
   createPrivateTempDir,
   restrictDirectoryToCurrentUser,
+  writePrivateFileExclusive,
 } from './privateTempDir'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
 
@@ -97,6 +98,75 @@ describe('createPrivateTempDir', () => {
     const b = await makeDir()
     expect(a).not.toBe(b)
     expect(dirname(a)).toBe(dirname(b))
+  })
+})
+
+describe('writePrivateFileExclusive — the pre-create attack, driven', () => {
+  it('refuses a name that already exists instead of truncating it', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-temp-exists-'))
+    created.push(dir)
+    const path = join(dir, 'mcp-config.json')
+    // The attacker's object: it exists BEFORE the secret is written, which in
+    // the real race is the `mkdtemp` → `icacls` window.
+    writeFileSync(path, 'PLANTED')
+
+    expect(() => {
+      writePrivateFileExclusive(path, '{"token":"sk-live-not-a-real-token"}')
+    }).toThrow(/EEXIST/)
+
+    // The whole point: the secret is NOT in the attacker's file.
+    expect(readFileSync(path, 'utf8')).toBe('PLANTED')
+  })
+
+  it('writes normally when the name is free', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-temp-free-'))
+    created.push(dir)
+    const path = join(dir, 'mcp-config.json')
+    writePrivateFileExclusive(path, '{"ok":true}')
+    expect(readFileSync(path, 'utf8')).toBe('{"ok":true}')
+    if (process.platform !== 'win32') expect(readFileProtection(path).fileMode).toBe(PRIVATE_FILE_MODE)
+  })
+
+  it('refuses a name taken by a DIRECTORY too — a planted directory is not a write target either', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-temp-dirname-'))
+    created.push(dir)
+    const path = join(dir, 'mcp-config.json')
+    mkdirSync(path)
+    expect(() => {
+      writePrivateFileExclusive(path, '{"token":"sk-live-not-a-real-token"}')
+    }).toThrow()
+  })
+})
+
+describe('the pre-created file keeps its own DACL through the parent restriction', () => {
+  const windowsOnly = process.platform === 'win32' ? it : it.skip
+
+  // This is the measurement that makes the exclusive create load-bearing
+  // rather than defensive styling: `/inheritance:r` on the PARENT does not
+  // remove an explicit ACE from a child that already exists, so if the write
+  // were a plain `'w'` truncate, the secret would land in an object another
+  // principal can read.
+  windowsOnly('so a plain truncating write would put the secret in a readable file', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'studio-private-temp-dacl-'))
+    created.push(dir)
+    const path = join(dir, 'mcp-config.json')
+    writeFileSync(path, 'PLANTED')
+    // `BUILTIN\Users` stands in for "some other principal on this machine".
+    const granted = Bun.spawnSync(['icacls', path, '/grant', 'BUILTIN\\Users:(R)'])
+    expect(granted.exitCode).toBe(0)
+
+    expect(await restrictDirectoryToCurrentUser(dir)).toBe(true)
+
+    // The directory is single-ACE — the restriction worked…
+    expect(readFileProtection(dir).acl).toHaveLength(1)
+    // …and the planted FILE still grants the other principal read anyway.
+    expect(readFileProtection(path).acl.some((ace) => ace.startsWith('BUILTIN\\Users:'))).toBe(true)
+
+    // Which is exactly why the write refuses this name.
+    expect(() => {
+      writePrivateFileExclusive(path, '{"token":"sk-live-not-a-real-token"}')
+    }).toThrow(/EEXIST/)
+    expect(readFileSync(path, 'utf8')).toBe('PLANTED')
   })
 })
 

@@ -21,6 +21,7 @@ import {
   parseGithubRepoUrl,
   runGithubImport,
 } from '../studioGithubImport'
+import { parseGithubRemoteUrl } from '../studio/gitPaths'
 
 describe('parseGithubRepoUrl', () => {
   it('parses a plain repo URL', () => {
@@ -98,6 +99,29 @@ describe('parseGithubRepoUrl', () => {
     ]) {
       expect(parseGithubRepoUrl(hostile)).toBeNull()
     }
+  })
+
+  /**
+   * `parseGithubRemoteUrl` has refused userinfo since G2 — it persists a
+   * credential into `.git/config`. This parser accepted it and silently
+   * dropped it, which is the worse failure of the two for the user: the
+   * zipball fetch is built from the parsed owner/repo and authenticates from
+   * the request body's own `token`, so a pasted
+   * `https://ghp_…@github.com/acme/private` went out unauthenticated and came
+   * back "not found" for a repository that exists. Both forms refuse it now.
+   */
+  it('rejects a URL carrying userinfo, exactly as the git routes do', () => {
+    for (const hostile of [
+      'https://ghp_0123456789abcdef@github.com/acme/widgets',
+      'https://user:pass@github.com/acme/widgets',
+      'https://user@github.com/acme/widgets',
+      'https://:pass@github.com/acme/widgets',
+    ]) {
+      expect(parseGithubRepoUrl(hostile)).toBeNull()
+      expect(parseGithubRemoteUrl(hostile)).toBeNull()
+    }
+    // The same URL without the credential is still accepted.
+    expect(parseGithubRepoUrl('https://github.com/acme/widgets')).toEqual({ owner: 'acme', repo: 'widgets' })
   })
 
   it('still accepts `.github`, dotted and underscored names, and the exact ceilings', () => {

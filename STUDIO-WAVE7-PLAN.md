@@ -500,7 +500,7 @@ holes need closing.
    *workspace-bound* connector, refuse an explicit `dir` differing from
    `ctx.workspaceDir` (unbound external MCP clients keep the permissive
    behavior). Extend `studio-tool-project-dir.test.ts`.
-4. **Warm pool**: key `${userId} ${conversationId}` (the editorBridge
+4. **Warm pool**: key `${userId}\u0000${conversationId}` (the editorBridge
    idiom); add `userId` to the fingerprint; per-user pool cap (2) under the
    global 8 so one busy user can't evict everyone; attachment root becomes
    `sha256(userId + '\0' + conversationId)`.
