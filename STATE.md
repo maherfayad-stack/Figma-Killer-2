@@ -3768,8 +3768,120 @@ insert palette, which is where a user can act on it.
 
 ---
 
+### meta-16 — wave 2 integrated: 13 merges, 6 named reds closed, `verify-2` never opened a PR
+
+- **Agent:** studio-implementer (integrator), own worktree
+- **Stage:** done — PR #178 MERGED into `feat/alm-figma-killer-studio-shell` as `be13d46f` (2026-09-18, orchestrator). `verify-2` lands as a follow-up merge.
+- **Branch + PR:** `integration/figma-feel-wave-2` @ `87ac5658` → draft **PR #178** against `feat/alm-figma-killer-studio-shell` — https://github.com/maherfayad-stack/Figma-Killer-2/pull/178
+- **Updated:** 2026-09-18
+- **Goal:** merge wave 2's ten work-order PRs plus four security reviews in dependency order onto one branch, resolve every conflict by keeping both sides' intent, do the integration work no single PR could, and verify with real numbers.
+
+---
+
+## Done so far
+
+Base `11f17093`. Thirteen `--no-ff` merges; each review PR merged into its feature branch first so a review and the work it reviewed land in one commit.
+
+| # | PR | Work order | Merge SHA |
+|---|---|---|---|
+| 1 | #176 review of #167 (`sec-16`) → `feat/studio-route-capability-gating` | `e1f2be41` | |
+| 2 | **#167** (`sec-14`) per-request capability gating on every Studio route | `8e77c696` | |
+| 3 | #174 review of #166 (`sec-15`) → `fix/server-tier-dir-and-windows-reds` | `4d903272` | |
+| 4 | **#166** (`server-25`) one trust-tier directory, GitHub-legal repo segments, a Windows-private agent secret | `85553d7b` | |
+| 5 | **#168** (`mcp-24`) the four named MCP reds + the real canvas-parity gap | `daefc439` | |
+| 6 | **#169** (`parser-13`) CRLF-safe parsing and codemods for users' repos | `df3b1636` | |
+| 7 | **#171** (`store-13`) structural writes report the ids they create | `cc1e52c5` | |
+| 8 | #177 review of #172 (`sec-17`) → `feat/cross-frame-drag-and-file-drop` | `a65990fa` | |
+| 9 | **#172** (`canvas-20`) cross-frame element drag + OS image-file drop | `a3953b3c` | |
+| 10 | **#175** (`perf-9`) one frame mount pool | `e5180c4d` | |
+| 11 | **#165** (`panel-38`) FillSection tells the truth about Mixed | `7140094f` | |
+| 12 | **#170** (`panel-39`) the Design tab fits 900px; one budget, not four ratchets | `8fc52fff` | |
+| 13 | **#173** (`verify-3`) the Phase 0 exit dogfood, machine-checked | `46df118f` | |
+
+Integration commits on top: `dfb77061` (module-size re-count, plan record, one CLAUDE.md line) and `87ac5658` (four path-index rows). 228 files, +17,927 / −2,691.
+
+### Conflict calls — five, every one keeping both sides
+
+1. **`server/handlers/__tests__/studio.test.ts`** (#166): `sec-14` swapped the `tryServeStudio` import for the session harness, `server-25` added `packageModuleId`. Kept both, dropped `tryServeStudio` — nothing calls it directly now and an unused import is a lint error.
+2. **`docs/server.md`** (#166): `sec-14` rewrote the "single-operator posture" section into a "the gate ran" section; `server-25` edited the pre-gate version of the same block. Took `sec-14`'s structure (the route-guard inventory, "there is no gate for this", and "capability gating is the first follow-up wave" are all false statements now) and carried `server-25`'s two real additions into it: the `checkTrustTier` half of the trust-tier row, and the whole "the trust tier is read off the PROJECT directory, always" paragraph. **Deliberately did NOT carry `server-25`'s "Cookie scope" row** — its text says "nothing on these routes reads the cookie", which the gate made untrue.
+3. **`PROJECT-BRIEF.md`** (#169): both edited traps 15 and 16. Kept `parser-13`'s appended half of trap 15 (the user's-repo side, and the `EolPreservingFileSystem` seam) and `sec-14`'s replacement trap 16 (the capability table). `parser-13`'s trap 16 was the old "most Studio routes have no per-request auth" text, made false in the same wave.
+4. **`docs/agent-refs/path-index.md`** (#172): one `ast-codemods/` row, two additions — `store-13`'s `createdJsxLocation.ts` clause and `canvas-20`'s `transplantJsxElement` clause. Merged into one row carrying both.
+5. **`server/handlers/studio.ts`** (#172): `canvas-20` added an import + a `STUDIO_SUB_ROUTERS` line; `sec-14` had moved both arrays out of the file. Took `sec-14`'s side and re-homed the registration — which was not a one-line move, see below.
+
+`BoardFrameView.tsx` (#175 vs #172) did not conflict at all: `canvas-20` registers its drop surface from `BreakpointSelectionOverlay`, not from the mount layer. `InspectorShell.tsx` (#173) and `InspectorShell.module.css` (#170) are two different files.
+
+### Integration work no single PR could do
+
+- **`asset-drop` became a `routeCapabilities.ts` declaration, not an inline check** (inside `a3953b3c`). `sec-17` added `originAllowed` + `requireCapability` inline against a base with no table; `routeGate.ts`'s own doc forbids a second policy inside a sub-router. Added `{ path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' }`; deleted the inline pair, the `deps.authorize` seam and `defaultAuthorize`; moved the sub-router from `STUDIO_SESSION_SUB_ROUTERS` back to the plain `STUDIO_SUB_ROUTERS` list (it no longer needs the `DbClient`, so it now has `asset-upload`'s exact shape). **`sec-17`'s three authorization tests are kept** and now drive the real gate through `tryServeStudio` via a new `serveAnonymous` on `studioRouteHarness.ts` — which is what preserves their value over `studioRouteGate.test.ts`'s table walk: they assert the refusal left nothing on disk. `sec-17` asked me to verify `save`, `asset-upload` and `asset` are covered by #167's table — **they are**, all three are declarations.
+- **`transplantJsxElement` reports `created`** (inside `a3953b3c`), per #171's contract. This produced no type error — `TransplantJsxElementResult` is its own type — so it would have been silently missing. A cross-frame move creates markup in the DESTINATION, but `recordCreatedPosition` keys the file off `edit.nodeId`, which for a transplant is the ORIGIN, the file the markup just left. `StudioEditApplyOutcome` gained `createdIn` (only `transplant` sets it) and the batch mints the id against that file. New end-to-end test asserts the id equals what the parser will mint on the next read.
+- **The 700-line ceiling, paid not grandfathered** (`dfb77061`). `site/types.ts` came out of the wave at **713**: `store-13` shrank it to 663, `canvas-20`'s two transplant actions + `TransplantDestination` pushed it back over. Seven framework/font token input shapes moved to `frameworkActionInputs.ts`, re-exported from `types.ts` — the same escape `historyTypes.ts` already took from the same file. **713 → 669.**
+- **Plan + rule book** (`dfb77061`): a "Wave 2 — landed" table, §9 struck item by item with what closed it (every agent strike kept), a "Wave 3 — candidates" list from the ten handoffs. `CLAUDE.md` gains the rule sec-14's gate needs.
+- **`path-index.md`** (`87ac5658`): four modules the wave added but nobody indexed — `subRouters.ts`, `lineEndings.ts`, `eolFileSystem.ts`, `preserveLineEndings.ts`.
+
+---
+
+## Decisions
+
+1. **`asset-drop`'s auth lives in the table, and `sec-17`'s tests survive it.** The alternative — keeping the inline pair because it was security-reviewed — would have shipped two policies inside the one PR whose purpose was to make there be one. The tests were re-pointed, not deleted, because they assert something the table walk cannot.
+2. **`server-25`'s "Cookie scope" doc row was dropped, not merged.** Keeping both sides' *intent* is the rule; that row's intent ("nothing here reads a cookie") is a fact #167 falsified in the same wave.
+3. **`transplant`'s created id needed a new field, not a widened one.** Reusing `edit.nodeId` for the file would have silently pointed at the origin; a `createdIn` that only one kind sets makes the exception visible at the call site.
+4. **Three CLAUDE.md edits were asked for; only one was needed.** The `bun run test:e2e`-as-fourth-gate line was already there (`meta-14` added it), and §Mutation API already says **13**, not 11 — `parser-13`, `canvas-20` and `struct-10` all flagged the 11 from a stale copy of the file. Do not re-open it.
+5. **`studio-feel.e2e.ts`'s private helpers were NOT de-duplicated onto `verify-3`'s `studioFixtureProject.ts`.** The brief's own rule is that `verify-2`'s throwaway-copy mechanism wins where both exist; picking the other one now would have to be undone. It is a follow-up to `verify-2`'s merge.
+6. **No `test.fail()` was flipped off.** None of the four Phase-0 expected failures started passing — see Verification for why #171's created ids do not close case 1 or case 4.
+
+---
+
+## Landmines
+
+1. **`verify-2` never opened a PR and never pushed its branch.** Polled `gh pr list --state all --head test/e2e-windows-stack-and-corpus` at 05:46, 06:52, 07:09, 07:10 and through a 20-minute window — empty every time; `git branch -r` has no such branch. Its local branch HAS moved (`63abfadc`, "the preflight gate follows dev.ts's spawn call to spawnStackChild"), so work exists — it is unpushed. Three §9 items stay open and the branch is unmerged. **The orchestrator merges it as a follow-up.**
+2. **`bun run test` died without a summary three times before it finished once.** Each death was at a different file, and each time the last thing printed was `src/__tests__/server/cmsPlugins.test.ts`'s leaked plugin-scheduler tick (`Unhandled SQL: select s.* from plugin_schedules …`). Two stray `bun.exe` processes (1.34 GB and 886 MB RSS) were left behind by a probe of that file, which hangs indefinitely when run alone. **Check `tasklist | grep bun` before blaming the suite**: the run completed on the attempt after I killed them. This is a real, pre-existing test-infrastructure defect and a good wave-3 candidate.
+3. **Bun 1.3.6 segfaulted Vite mid-e2e-run**, exactly as `perf-9` recorded: `panic(main thread): Segmentation fault at address 0xFFFFFFFFFFFFFFFF`, RSS 1.62 GB / peak 2.12 GB, after 54 s. It produced two `ERR_CONNECTION_RESET`/`ERR_CONNECTION_REFUSED` failures in `inspector-height.e2e.ts` that look exactly like product failures and are not. A three-line restart-on-exit supervisor around `bun run e2e:dev` fixed it (`scratchpad/meta16-stack.sh`); the supervised run needed zero restarts and went 4/4.
+4. **`bun test --parallel=4 <path>` is a SUBSTRING filter, not a prefix.** `bun test --parallel=4 server` also runs `src/__tests__/server/**`, and `src/__tests__/studio` also runs `src/__tests__/studio-runtime`. Slice totals cannot be summed into a suite total; I used the one complete full run for the numbers and the slices only as green/red evidence.
+5. **`transplantJsxElement` returning `created` produced NO type error**, because its result type is its own. #171's type change only forces the four codemods that share `Insert/Duplicate/Wrap` result types. Any future codemod that creates markup has to be wired up by hand, not by the compiler.
+6. **`git checkout -b <feature-branch> origin/<same>` fails in this worktree** — the branch already exists, checked out in the agent's own worktree — and if you chained it with `&&` the merge still runs, on whatever branch you were on. I merged `origin/review/pr-167` straight onto the integration branch that way and had to `git reset --hard`. Use a differently-named local copy (`int/pr-NNN`).
+7. **`phase0` case 4's selection soft-assertion is now undecidable**, not failing. It asserts the post-⌘G selection is not a member of `siblingsBefore`, but the wrapper ⌘G writes legitimately occupies the first sibling's old `line:col` (`pages/SMS.tsx:54:18`). Whoever fixes the ⌘G defects must change that assertion to compare the TAG. The case is still correctly `test.fail()` — it also fails on the second ⌘G writing nothing.
+8. **`STATE.md` was not touched**, per the brief. Ten wave-2 handoffs plus this one need transcribing by whoever owns the file. `mcp-24` additionally asks that `sec-13`'s "`guardProject`'s `outside-workspace` branch is dead" finding be corrected — it is reachable through the workspace root, and there are now two tests for it.
+
+---
+
+## Verification (real numbers, `87ac5658`, Windows 11, Bun 1.3.6)
+
+- `bun run build` (`tsc -b && vite build`) — **exit 0**, 24.20 s.
+- `bun run lint` — **exit 0**, zero errors.
+- `bun test src/__tests__/architecture` — **623 pass / 0 fail**, 124 files, 42.1 s (quiet). `meta-14`'s 611 + 12 new gates.
+- `studio-runtime:check` · `icons:check` · `bootstrap:check` · `alm:check` — all **fresh**.
+- Whole-tree byte scan for NUL / BOM — **0 hits**; `no-nul-bytes-in-source.test.ts` green.
+- `module-size-budgets` — **5 / 0**. `studioSourceWrites.ts` 675 · `FillSectionParts.tsx` 660 · `fsCodemodAdapter.ts` 700 · `types.ts` 669 · `studioStructuralCommits.ts` 593.
+- **`bun run test` — 14,129 pass / 2 skip / 5 fail / 1 error / 172,981 expect() / 1,268 files / 738 s.** (`meta-14` baseline: 13,636 / 2 / 6 / 0 over 1,241.) **All six of `standing-01`'s named pre-existing reds are gone.** The five failures are the 5 s-timeout cluster and each passes alone, verified: `server/ai/mcp/capture` **38 / 0**, `git.test.ts` **39 / 0**, `localizedPage.test.ts` **4 / 0**. The one `error` is `cmsPlugins.test.ts`'s leaked scheduler — pre-existing, outside the diff, landmine 2.
+- **`bun run test:e2e` COLD — still fails**, as expected without `verify-2`: the CMS binds, Vite never does, `Timed out waiting 300000ms from config.webServer`. `verify-01` finding 3, unchanged.
+- Browser, hand-started stack on **5241 / 3241**, `VITE_ALLOWED_ORIGIN=http://127.0.0.1:5241`, `E2E_REUSE_SERVER=1`, under the restart supervisor:
+  - `inspector-height.e2e.ts` — **4 passed** (40.1 s).
+  - `studio-feel-phase0.e2e.ts` — **8 passed** (3.6 m): 4 real + the 4 documented `test.fail()`. Case 1 still `copies added to source: 1` with `warning×4, success`; case 4 still `second ⌘G wrote something for ⌘Z to undo: false`.
+  - `studio-feel.e2e.ts` — **3 passed, 1 skipped**. Zoom worst frame **23.9 ms** (budget 250), mean **16.7 ms** (budget 35), 2/134 over 20 ms, 18 frames-layer mutations, 13 transform-layer style writes.
+  - `studio-board-perf.e2e.ts` — **skipped**, no tracked ≥9-frame corpus (`verify-2`'s).
+- `git status --porcelain` **empty** afterwards; `studio-workspace/` restored, the untracked `framework.json` removed, and `05-section-heights.json` came back with **no content hunks** — `panel-39`'s measurements reproduce on the merged tree.
+
+**Nothing in this branch is red.** The two things not green are both `verify-2`'s and both unmerged.
+
+---
+
+## Human action needed
+
+1. **Review and merge PR #178.** Then merge `verify-2` as a follow-up when its PR appears, and do the two things that come with it: re-point `verify-3`'s `studioFixtureProject.ts` at `verify-2`'s throwaway-copy mechanism, and de-duplicate `studio-feel.e2e.ts`'s private helpers onto one helper.
+2. **Dogfood the four visual changes**, all at `/admin/site` on a source-backed project — every one of these is a thing no static gate can see:
+   - **`panel-39`, a ~900px-tall window.** Select a plain `<div>`: **Layout** must be ONE row with a `+` on the right and a chevron on hover, and the whole Design tab must fit with no scrollbar. Click the `+` — it writes `display: flex; flex-direction: column` and the section opens and stays open. **This is the gesture most likely to feel wrong; say so if it does.** Then deselect everything inside a frame: the frame's device-preset + W/H strip now appears above "Select an element…" instead of above the inspector.
+   - **`panel-38`, with a MULTI-selection** (Shift-click a second layer). Two text layers with different colours → Fill's **Text** row is present and reads **Mixed**, with no `%` field. Two layers with different `box-shadow` → the Shadow row reads **Mixed** and **the string `Symbol(studio-mixed-value)` must not appear anywhere**. A single selection must look byte-identical to before.
+   - **`canvas-20` + `sec-17`, two frames showing DIFFERENT pages side by side at 50%.** Drag an element from frame A into a container in frame B: the drop line must appear inside **B** and A's must vanish; expect one "Moved into another frame" toast and the element in B's `.tsx` with its import carried. **New this integration: the copy should also be SELECTED afterwards** — that is the transplant `created` wiring, and it is the one thing no test in this branch drives end to end through the UI. Then drop a PNG on a frame (lands in `public/`, one `<img>` written at the drop point) and drag a **link** onto a frame — the frame must not change at all.
+   - **`perf-9`, a board with 12+ frames.** Pan one column away and back: frames you just left must not blink or re-flash a poster. `data-frame-mount` on a frame wrapper you panned away from reads `"pooled"`, then `"offscreen"` further out, then `"on-screen"` on the way back — with the same `<iframe>` DOM node.
+3. **Decide the two postures the reviews changed**, both flagged for a human veto: `writeMcpConfigFile` now fails **CLOSED** where #166 chose fail-soft (a machine where `icacls` cannot run loses MCP tools for that turn instead of writing the bearer token somewhere it failed to lock down — `sec-15`), and whether the Admin role should hold `studio.git.write` (`sec-14`; it does not, and #167 did not change that).
+4. **Wave 3 is listed in the plan** under "Wave 3 — candidates", ordered with `verify-3`'s four machine-proved Phase-0 defects first. `STATE.md` still needs the eleven wave-2 handoffs transcribed, including `sec-13`'s correction (landmine 8).
+
+**Next step for whoever picks this up:** nothing is unfinished here. If you are continuing, it is `verify-2`'s merge (landmine 1) followed by wave 3's dispatch from the plan's §9 candidate list.
+
+---
+
 ### meta-15 — wave 2 of the Figma-feel plan dispatched: eleven parallel work orders from §9
-- **Agent:** orchestrator (main session) · **Stage:** in flight · **Updated:** 2026-09-18
+- **Agent:** orchestrator (main session) · **Stage:** done — integrated by `meta-16` (PR #178) and merged as `be13d46f`; `verify-2` pending as a follow-up · **Updated:** 2026-09-18
 - **Base:** `27616ba8` = `feat/alm-figma-killer-studio-shell` after the `--no-ff` merge of PR #162 (wave 1). Clean merge, no conflicts; verification numbers are `meta-14`'s (the merge added only STATE.md commits on the shell side).
 - **Cleanup that preceded it:** review PRs #156/#157/#159/#161 closed as merged-via-#162; PRs #90–#98 and #127 (branches already contained in the shell branch) closed; 74 wave-1 remote branches + 85 remote branches whose PRs were squash-merged to `main` deleted; all local branches and the integration worktree removed. The remote now holds `main`, the shell branch, and two older branches with open PRs against `main` (#99 `feat/inspector-selection-model`, #86 `fix/ci-lint-and-server-suites`) that only the owner should decide on.
 - **Work orders (one Opus agent each, own worktree, draft PR → shell branch, handoff to scratch; `standing-05`):** `sec-14` per-route `requireCapability` + CSRF on every mutating Studio route (§6 decision 7) · `store-13` structural commits report created ids so ⌘D/Alt+drag/⌘G select the source-backed copy after resync, and `insertImportedNodes` never orphans (`mcp-21`) · `parser-13` CRLF-preserving codemods + `/?
