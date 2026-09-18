@@ -25,9 +25,10 @@
  *     reproduced in the report.
  *   - **The fixture is the spec's fixture.** The old synthetic 50-frame/20k-node
  *     project generator lived here only to feed the Bun-launched browser; it is
- *     gone with it. The spec runs against `studio-workspace/maherfayad-stack-eSIM`
- *     and skips itself if that project is absent — which this module reports as
- *     "no signal", never as a pass.
+ *     gone with it. The spec runs against the committed twelve-frame board at
+ *     `studio-workspace/__board-perf-fixture` and FAILS (no longer skips) if it
+ *     is absent. The skip handling below stays as a backstop — a run that
+ *     measured nothing must never be reported as a pass, whatever caused it.
  *   - **The server is the spec's server.** `playwright.config.ts`'s `webServer`
  *     starts `bun run e2e:dev` (disposable `.tmp/e2e-*` DB + uploads), so this
  *     module no longer boots one.
@@ -188,7 +189,7 @@ export const studioBoardBench: BenchModule = {
   name: 'studio-board',
   title: 'Studio board (real corpus, Playwright runner) — canvas perf gate',
   description:
-    "Runs tests/e2e/studio-board-perf.e2e.ts through Playwright's Node runner and reports its measurements. The spec owns the budgets; a breached budget fails this bench. Skips (no signal, never a pass) when the Playwright CLI or the corpus project is absent.",
+    "Runs tests/e2e/studio-board-perf.e2e.ts through Playwright's Node runner and reports its measurements. The spec owns the budgets; a breached budget fails this bench. Skips (no signal, never a pass) when the Playwright CLI is absent.",
 
   async run(ctx: BenchContext): Promise<BenchResult> {
     if (!existsSync(PLAYWRIGHT_CLI)) {
@@ -262,7 +263,7 @@ export const studioBoardBench: BenchModule = {
       return skippedResult(
         this.name,
         this.title,
-        `${SPEC_PATH} skipped itself — the corpus project it measures is not present on this disk`,
+        `${SPEC_PATH} did not run a single test — every one of them was skipped, so nothing was measured`,
       )
     }
 

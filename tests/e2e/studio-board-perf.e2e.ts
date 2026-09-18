@@ -1,5 +1,10 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
-import { BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
+import {
+  BUDGET_ZOOM_MEAN_FRAME_MS,
+  BUDGET_ZOOM_WORST_FRAME_MS,
+  profileGesture,
+  readBoardCounts,
+} from './helpers/canvasPerf'
 
 /**
  * Real-browser perf measurement for `perf-01` (WS-5.3 / WS-5.4).
@@ -19,9 +24,27 @@ import { BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './h
  * and the `perf-01` `STATE.md` entry.
  *
  * The Playwright **test runner** spawns Node, not Bun, so this file is where
- * canvas frame time is actually measurable. It runs against the REAL corpus
- * (`studio-workspace/maherfayad-stack-eSIM`, 15 pages / ~803 nodes) and
- * read-only — it pans, zooms and counts, and never writes to the project.
+ * canvas frame time is actually measurable.
+ *
+ * ## The corpus, and why it changed
+ *
+ * This spec used to measure `studio-workspace/maherfayad-stack-eSIM`, which is
+ * **not tracked by git** — so on every CI run and every machine but the one it
+ * was written on, it called `test.skip` and measured nothing (`verify-01`
+ * finding 1). It now runs against `studio-workspace/__board-perf-fixture`, a
+ * committed twelve-frame board whose own README explains its shape, and it
+ * **fails rather than skips** when that board is missing: a perf gate that can
+ * silently opt out is not a gate.
+ *
+ * Twelve frames is the floor, not a preference. `frameMountPool.ts` keeps
+ * `max(8, onScreen + 4)` frames mounted, so a board of eight or fewer has every
+ * frame mounted at all times and a zoom across a virtualization boundary mounts
+ * nothing — which is exactly the trap `studio-feel.e2e.ts` falls into on the
+ * three-frame `test4` (see `BUDGET_ZOOM_WORST_FRAME_MS`'s docblock).
+ *
+ * Read-only against the project: it pans, zooms and counts, and never writes.
+ * The run's whole workspace is a throwaway copy in any case
+ * (`tests/e2e/helpers/constants.ts`'s `WORKSPACE_ROOT`).
  *
  * The frame-timing instrumentation (`profileGesture`, `readBoardCounts`) AND
  * the zoom budgets live in `helpers/canvasPerf.ts`, so `studio-feel.e2e.ts`
@@ -46,7 +69,7 @@ import { BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './h
  *   silently no-op.
  */
 
-const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
+const PROJECT_FOLDER_NAME = '__board-perf-fixture'
 
 /**
  * Budgets, every one of them derived from a real run of this spec against
@@ -59,6 +82,13 @@ const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
 const BUDGET_PAN_WORST_FRAME_MS = 40
 /** Observed 0 in every run. A handful would be unrelated chrome; a re-render storm is hundreds. */
 const BUDGET_PAN_LAYER_MUTATIONS = 10
+
+/**
+ * How long the board is left alone so `framePosterQueue` can drain all twelve
+ * frames before the poster pan. Not a budget and not a guess — see the comment
+ * at its one use for the arithmetic it comes from.
+ */
+const POSTER_QUEUE_DRAIN_MS = 4_000
 
 
 interface StudioProjectSummary {
@@ -76,7 +106,7 @@ async function findProjectDir(page: Page, folderName: string): Promise<string | 
   return match?.dir ?? null
 }
 
-async function openEsimBoard(page: Page, projectDir: string): Promise<Locator> {
+async function openPerfBoard(page: Page, projectDir: string): Promise<Locator> {
   await page.addInitScript((dir: string) => {
     window.localStorage.setItem('studio:studio:dir', dir)
     window.localStorage.setItem('studio:studio', '1')
@@ -151,12 +181,19 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     page,
   }) => {
     const projectDir = await findProjectDir(page, PROJECT_FOLDER_NAME)
-    if (!projectDir) {
-      test.skip(true, `studio-workspace/${PROJECT_FOLDER_NAME} is not present on disk for this run`)
-      return
-    }
+    // Deliberately NOT `test.skip`. The corpus is committed to this repository
+    // now, so "it is not on disk" means the fixture was deleted or the server
+    // is reading a different workspace root — both of which must fail loudly.
+    // The previous skip is why this file measured nothing for seven weeks.
+    expect(
+      projectDir,
+      `studio-workspace/${PROJECT_FOLDER_NAME} was not listed by /admin/api/studio/projects. ` +
+        'That fixture is tracked by git and is the whole corpus of this gate — restore it, or ' +
+        'check that the e2e stack is pointed at a workspace root that contains it ' +
+        '(STUDIO_WORKSPACE_DIR, set by scripts/e2e-dev.ts).',
+    ).not.toBeNull()
 
-    const canvasRoot = await openEsimBoard(page, projectDir)
+    const canvasRoot = await openPerfBoard(page, projectDir!)
     // Posters capture on a settle timer (`useFramePosterCapture.ts`), and the
     // board's initial mount churn has to finish before "at rest" means
     // anything. One settle window covers both.
@@ -245,11 +282,28 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     expect(zoom.transformWrites).toBeGreaterThan(0)
     // Ratchet on a known defect — see BUDGET_ZOOM_WORST_FRAME_MS's docblock.
     expect(zoom.worstFrameMs).toBeLessThan(BUDGET_ZOOM_WORST_FRAME_MS)
+    // The frames that are NOT paying for a mount. Asserted here as well as in
+    // `studio-feel.e2e.ts` on purpose: this is the board where the gesture
+    // really does mount frames, so the mean is the honest "everything else
+    // stayed smooth while it did" number.
+    expect(zoom.meanFrameMs).toBeLessThan(BUDGET_ZOOM_MEAN_FRAME_MS)
 
     // ── WS-5.3 — the frozen poster ─────────────────────────────────────────
     // A frame the user has already looked at must NOT come back as an empty
     // box once it leaves the viewport. Pan hard until at least one
     // previously-live frame goes offscreen, then look at what it renders.
+    //
+    // First, let the poster queue actually run. `framePosterQueue` waits
+    // `QUIET_PERIOD_MS` (700 ms) after the last arrival or input event, then
+    // drains SERIALLY — one `html-to-image` rasterization per macrotask, each
+    // measured at ~85 ms, plus a 32 ms gap. Twelve frames is therefore about
+    // 700 + 12 × 117 ≈ 2.1 s of quiet before the last poster is cached, and a
+    // frame that leaves the viewport before its turn has its request WITHDRAWN
+    // (the `cancelFramePoster` cleanup in `useFramePosterCapture`). Waiting too
+    // little here does not make the assertion below flaky — it makes it
+    // impossible, which is exactly what it did at 800 ms on this board: 0/4.
+    await page.waitForTimeout(POSTER_QUEUE_DRAIN_MS)
+
     const liveBefore = Object.entries(await readFrameStates(page))
       .filter(([, state]) => state === 'live')
       .map(([id]) => id)
@@ -274,12 +328,18 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     // period plus a serial capture or two.
     await page.waitForTimeout(3000)
     const afterSettle = await readFrameStates(page)
-    if (departed.length > 0) {
-      const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
-      annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
-      // The WS-5.3 acceptance criterion.
-      expect(withPoster.length).toBeGreaterThan(0)
-    }
+    // Unconditional, not `if (departed.length > 0)`. On the committed
+    // twelve-frame fixture this pan always pushes frames out of the pool, so a
+    // run where nothing departed means the pan stopped working — and the old
+    // guard turned exactly that into a silent pass.
+    expect(
+      departed.length,
+      'the poster pan pushed no previously-live frame offscreen, so the poster criterion was never exercised',
+    ).toBeGreaterThan(0)
+    const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
+    annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
+    // The WS-5.3 acceptance criterion.
+    expect(withPoster.length).toBeGreaterThan(0)
 
     // ── The "before" state, measured rather than assumed ───────────────────
     // Reset the view (Ctrl+0 → `useCanvas.ts`'s `resetCanvasView`) so the

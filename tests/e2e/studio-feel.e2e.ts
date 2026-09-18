@@ -2,6 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BUDGET_ZOOM_MEAN_FRAME_MS, BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
+import { WORKSPACE_ROOT } from './helpers/constants'
 
 /**
  * `STUDIO-FIGMA-FEEL-PLAN.md` V1 — the browser gate for "does this feel like a
@@ -32,12 +33,16 @@ import { BUDGET_ZOOM_MEAN_FRAME_MS, BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, 
  *      A test that silently passes because the feature is missing is worse than
  *      no test.
  *
- * SAFETY — ⌘D **writes to the user's `.tsx`**. This spec therefore never opens
- * `studio-workspace/test4` itself: `beforeAll` copies it to the ephemeral
- * `studio-workspace/__e2e-studio-feel/` and every test opens the copy, which
- * `afterAll` removes. The copy must live under `studio-workspace/` (not
- * `.tmp/`) or `resolveProjectDir`'s containment check 404s it — the same
- * constraint `scripts/bench/lib/liveFrameFixture.ts` documents.
+ * SAFETY — ⌘D **writes to the user's `.tsx`**. Two layers keep that off the
+ * tracked tree. The run's whole workspace is already a throwaway copy
+ * (`WORKSPACE_ROOT`, made by `scripts/e2e-dev.ts`), and on top of that this
+ * spec still never opens that copy's `test4` directly: `beforeAll` copies it to
+ * `__e2e-studio-feel/` and every test opens THAT, which `afterAll` removes.
+ * The second layer is not redundant — specs share one workspace for the whole
+ * serial run, so a spec that structurally edits `test4` would change what every
+ * later spec reads. The copy must live under the workspace root (not `.tmp/`)
+ * or `resolveProjectDir`'s containment check 404s it — the same constraint
+ * `scripts/bench/lib/liveFrameFixture.ts` documents.
  */
 
 const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
@@ -49,13 +54,6 @@ const SELECTION_RING = '[data-canvas-selection-ring="true"]'
  */
 const ALT_DUPLICATE_MARKER = '[data-gesture="alt-duplicate"]'
 
-/**
- * Both the test process and the server resolve the workspace root from the
- * process cwd (`projectsRootDir()` is `cwd + 'studio-workspace'`), and both
- * are started from the repo root — by `bun run test:e2e`, by the CI job, and
- * by `scripts/bench/studioBoard.bench.ts`'s explicit `cwd`.
- */
-const WORKSPACE_ROOT = path.resolve(process.cwd(), 'studio-workspace')
 const SOURCE_PROJECT_DIR = path.join(WORKSPACE_ROOT, 'test4')
 /** Fixed name, not per-PID: a crashed run's leftovers are visibly overwritten rather than accumulating. */
 const FIXTURE_DIR = path.join(WORKSPACE_ROOT, '__e2e-studio-feel')
