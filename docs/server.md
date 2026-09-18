@@ -406,7 +406,21 @@ Two things still protect a route below the gate, and both still matter:
 | Protection | Where | What it stops |
 |---|---|---|
 | Path containment | `resolveProjectDir` → `isRealpathContainedAllowingMissing` (`server/handlers/studioProjects.ts`); `ProjectDirOutsideWorkspaceError` becomes one 404 in the router's top-level catch (`server/router.ts`) | Reading or writing any path outside `studio-workspace/` |
-| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts`), called by `deploy.ts` and `devServer.ts` | Running the user's project below `trust === 'run-project'` — a 409, not a 401. The capability answers "may this operator run project code"; the tier answers "may THIS project be run". Neither is sufficient alone |
+| Trust tier | `requireTrustTier` (`server/handlers/studio/trustGate.ts`), called by `deploy.ts` and `devServer.ts`; `checkTrustTier` is its transport-free half, used by `deploy.ts`'s status route and by `studio_render_reference` | Running the user's project below `trust === 'run-project'` — a 409, not a 401. The capability answers "may this operator run project code"; the tier answers "may THIS project be run". Neither is sufficient alone |
+
+**The trust tier is read off the PROJECT directory, always.** `.studio/` is a
+project-directory sidecar — it is created where `resolveProjectDir` lands, it
+is in `EXCLUDED_WORKSPACE_DIR_NAMES`, and all ~60 `readStudioMeta` call sites
+key on it. A monorepo import whose real `package.json` sits at
+`<project>/apps/web` has `resolveAppRoot(dir) !== dir`, and
+`<project>/apps/web/.studio/meta.json` does not exist — so a gate keyed on the
+app root answers Tier 0 forever and the project can never be deployed. That was
+a live defect in `deploy.ts` (`sec-12`), fixed by giving `checkTrustTier` /
+`requireTrustTier` a `projectDir` parameter and moving `deployJobs.ts`'s
+`lastDeploy` record back to the project directory. The app root remains correct
+for everything that touches the project's **code** — the install cwd,
+`node_modules`, `vercel.json`/`netlify.toml` detection, the provider CLI's
+working directory — and is never correct for Studio's own sidecar.
 
 One related weakness is **not** closed by this work: `studio_render_reference` (`server/ai/mcp/tools/studio/referenceRender.ts`) reaches the dev server through the MCP tool surface, which has its own connector-capability model rather than this gate.
 

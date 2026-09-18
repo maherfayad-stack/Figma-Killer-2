@@ -171,6 +171,67 @@ describe('parseGithubRemoteUrl', () => {
     expect(parseGithubRemoteUrl('https://github.com/octocat/hello\nworld')).toBeNull()
     expect(parseGithubRemoteUrl(`https://github.com/octocat/${'a'.repeat(600)}`)).toBeNull()
   })
+
+  /**
+   * `sec-13`, informational finding: `..` matches `[A-Za-z0-9_.-]+`, so the
+   * SSH form accepted `git@github.com:../repo.git` and handed a `..` owner to
+   * every string the pair is later composed into. The HTTPS form only ever
+   * survived it by accident — `new URL` normalises `..` out of a pathname — so
+   * both forms are driven here, and the HTTPS cases are the ones that prove
+   * the RULE is now doing the work rather than the normalisation.
+   */
+  it('refuses a dots-only owner or repo in BOTH URL forms', () => {
+    for (const hostile of [
+      'git@github.com:../hello-world.git',
+      'git@github.com:./hello-world.git',
+      'git@github.com:.../hello-world.git',
+      'git@github.com:octocat/...git',
+      'git@github.com:octocat/.....git',
+      'git@github.com:../...git',
+      'https://github.com/../hello-world',
+      'https://github.com/./hello-world',
+      'https://github.com/octocat/..',
+      'https://github.com/octocat/.',
+      'https://github.com/%2e%2e/hello-world',
+    ]) {
+      expect(parseGithubRemoteUrl(hostile)).toBeNull()
+    }
+  })
+
+  it('refuses an owner or repo GitHub itself could never issue', () => {
+    for (const hostile of [
+      // A leading `-` makes the derived `<owner>-<repo>` folder name argv-flag-shaped.
+      'git@github.com:-octocat/hello-world.git',
+      'https://github.com/-octocat/hello-world',
+      'git@github.com:octocat/-hello-world.git',
+      'https://github.com/octocat/-hello-world',
+      // GitHub owners may not end in `-` either.
+      'https://github.com/octocat-/hello-world',
+      // GitHub's own ceilings: 39 for an owner, 100 for a repository.
+      `https://github.com/${'a'.repeat(40)}/hello-world`,
+      `https://github.com/octocat/${'a'.repeat(101)}`,
+      `git@github.com:${'a'.repeat(40)}/hello-world.git`,
+    ]) {
+      expect(parseGithubRemoteUrl(hostile)).toBeNull()
+    }
+  })
+
+  it('still accepts the legal names that LOOK like the rejected ones', () => {
+    // `.github` is GitHub's own organisation-profile repository; a leading dot
+    // on a repo is legal, only an all-dots segment is not.
+    expect(parseGithubRemoteUrl('https://github.com/octocat/.github')).toEqual({
+      owner: 'octocat',
+      repo: '.github',
+      url: 'https://github.com/octocat/.github.git',
+      protocol: 'https',
+    })
+    expect(parseGithubRemoteUrl('git@github.com:octocat/.github.git')?.repo).toBe('.github')
+    // Dots, underscores and inner hyphens inside a name are all fine.
+    expect(parseGithubRemoteUrl('https://github.com/my-org/socket.io')?.repo).toBe('socket.io')
+    expect(parseGithubRemoteUrl('https://github.com/my_org/hello_world')?.owner).toBe('my_org')
+    // Exactly at the ceilings, not over them.
+    expect(parseGithubRemoteUrl(`https://github.com/${'a'.repeat(39)}/${'b'.repeat(100)}`)?.owner).toBe('a'.repeat(39))
+  })
 })
 
 // ---------------------------------------------------------------------------

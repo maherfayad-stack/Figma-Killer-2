@@ -105,6 +105,23 @@ exactly two shapes — `https://github.com/<owner>/<repo>` and
 (`https://user:pass@…`) is refused: it would persist a credential in plaintext
 into `.git/config`.
 
+`<owner>` and `<repo>` are judged by `isGithubOwnerSegment` /
+`isGithubRepoSegment` (`studio/gitPaths.ts`), not by a bare charset test. The
+charset `[A-Za-z0-9_.-]` excludes `/`, `:`, `@`, whitespace and control
+characters, but it does **not** exclude `.` or `..` — which are path
+instructions, not names — so the SSH form used to accept
+`git@github.com:../repo.git` and the HTTPS form was only saved by `new URL`
+normalising the pathname (`sec-13`, informational). The rule now refuses a
+dots-only segment, a leading or trailing `-` on an owner, a leading `-` on a
+repository (which would make the derived `<owner>-<repo>` project folder name
+argv-flag-shaped), and anything past GitHub's own ceilings of 39 and 100
+characters. `.github`, `socket.io` and `my_org` still parse. The zipball
+import's `parseGithubRepoUrl` (`server/handlers/studioGithubImport.ts`) calls
+the same two functions, so the two entry paths cannot disagree about what a
+repository is called — and, since `sec-15`, it refuses userinfo for the same
+reason this parser does, rather than accepting a URL carrying a credential and
+silently dropping it.
+
 `POST git/clone` is the **Clone (keeps history)** alternative to the zipball
 import, as a polled job with the same shape and the same terminal
 `ImportSummary`. `git clone --filter=blob:none` — a partial clone, so a

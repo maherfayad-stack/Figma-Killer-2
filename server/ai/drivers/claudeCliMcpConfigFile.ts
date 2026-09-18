@@ -18,23 +18,40 @@
  * TIME (the `mode` passed to `writeFileSync`'s underlying `open()` call, not
  * a `chmodSync` applied after a default-mode create — a create-then-chmod
  * sequence has a window where the file is briefly world/group-readable, and
- * that window is exactly when another local process could read it), inside
- * a fresh 0700 directory, and pass `--mcp-config <path>` instead. The CLI
- * runs as the same OS user and reads the path itself; nothing else on the
- * machine can list the directory or open the file. One directory per TURN —
- * mirrors `claudeCliAttachments.ts`'s staging discipline exactly (`os.tmpdir()`,
+ * that window is exactly when another local process could read it), created
+ * EXCLUSIVELY (`writePrivateFileExclusive` — `O_CREAT | O_EXCL`, so a name
+ * something else got there first cannot be written into; see that function
+ * for the pre-create attack it refuses), inside a directory that was made
+ * private BEFORE the file was written into it (`createPrivateTempDir`,
+ * `../credentials/privateTempDir.ts` — 0700 on POSIX, a single-ACE DACL via
+ * `icacls` on Windows, where `chmod` decides nothing), and pass
+ * `--mcp-config <path>` instead. The CLI runs as the same OS user and reads
+ * the path itself; nothing else on the machine can list the directory or open
+ * the file.
+ *
+ * That last sentence is a guarantee, so this module refuses rather than
+ * weakening it: if the directory restriction did NOT apply, no secret is
+ * written at all. The directory is deleted and the write throws, which
+ * `tryWriteMcpConfigFile` turns into the already-designed degradation — the
+ * turn runs WITHOUT MCP tools. A capability is lost; a token is never put
+ * somewhere whose access control we failed to set.
+ *
+ * One directory per TURN — mirrors
+ * `claudeCliAttachments.ts`'s staging discipline exactly (`os.tmpdir()`,
  * never `studio-workspace/**`, since every path under that root is git-tracked
  * and this is turn-scoped working data, not project content) — created here,
  * deleted by the driver's own `finally` block regardless of how the turn
  * ends (success, error, or the subprocess being killed on abort).
  */
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { rmSync } from 'node:fs'
 import { join } from 'node:path'
+import {
+  createPrivateTempDir,
+  writePrivateFileExclusive,
+  type PrivateTempDirOptions,
+} from '../credentials/privateTempDir'
 
 const MCP_CONFIG_DIR_PREFIX = 'studio-claude-cli-mcp-config-'
-const MCP_CONFIG_DIR_MODE = 0o700
-const MCP_CONFIG_FILE_MODE = 0o600
 const MCP_CONFIG_FILE_NAME = 'mcp-config.json'
 
 export interface McpConfigFile {
@@ -59,10 +76,19 @@ export interface McpConfigFile {
  * Here rather than in the driver so the warm and cold paths cannot drift on
  * what a write failure means — the one thing that must never differ between
  * them is whether a secret file failing to appear is fatal.
+ *
+ * `options` carries `privateTempDir.ts`'s own `spawn` seam and is deliberately
+ * NOT wired to the driver's `options.spawn`: that seam stands in for the
+ * `claude` binary, and handing it the ACL call would both pollute a test's
+ * recorded argv and make the protection report success without ever running.
+ * A test that wants to assert the protection has to let the real call run.
  */
-export function tryWriteMcpConfigFile(config: unknown): McpConfigFile | null {
+export async function tryWriteMcpConfigFile(
+  config: unknown,
+  options: PrivateTempDirOptions = {},
+): Promise<McpConfigFile | null> {
   try {
-    return writeMcpConfigFile(config)
+    return await writeMcpConfigFile(config, options)
   } catch (err) {
     console.error('[ai/claudeCli] failed to write the MCP config file — continuing without tools:', err)
     return null
@@ -71,33 +97,40 @@ export function tryWriteMcpConfigFile(config: unknown): McpConfigFile | null {
 
 /**
  * Serialise `config` to a fresh, private temp file and return its path.
- * Throws if the directory or file cannot be created — the caller
- * (`streamClaudeCli`) treats that as a soft failure, the same "continue
- * without tools" posture a connector-mint failure already gets, never a
- * reason to fail the whole turn.
+ *
+ * Throws if the directory could not be RESTRICTED, or if the file could not
+ * be created exclusively, or if the write itself failed — and takes the
+ * directory with it on the way out, so a refusal never leaves a half-made
+ * staging dir behind in `os.tmpdir()`. The caller (`streamClaudeCli`,
+ * `claudeCliWarmTurn`) treats every one of those as a soft failure, the same
+ * "continue without tools" posture a connector-mint failure already gets,
+ * never a reason to fail the whole turn.
  */
-export function writeMcpConfigFile(config: unknown): McpConfigFile {
-  const dir = mkdtempSync(join(tmpdir(), MCP_CONFIG_DIR_PREFIX))
-  try {
-    chmodSync(dir, MCP_CONFIG_DIR_MODE)
-  } catch {
-    // Best-effort on platforms without POSIX mode bits (Windows) — same
-    // posture claudeCliAttachments.ts's staging directory already takes.
-  }
+export async function writeMcpConfigFile(
+  config: unknown,
+  options: PrivateTempDirOptions = {},
+): Promise<McpConfigFile> {
+  // The directory is restricted BEFORE the secret is written into it. On NTFS
+  // a new file inherits its parent's inheritable ACEs at creation, so this
+  // ordering is what makes the Windows guarantee hold — and the EXCLUSIVE
+  // create below is what makes it hold with no window, by refusing a name
+  // that already existed rather than inheriting its DACL.
+  const { dir, restricted } = await createPrivateTempDir(MCP_CONFIG_DIR_PREFIX, options)
 
-  const path = join(dir, MCP_CONFIG_FILE_NAME)
-  // `mode` here is the create-time permission — the file never exists with
-  // any wider mode, not even for an instant. The redundant chmodSync below
-  // only matters if a future caller ever reused an existing path (this one
-  // never does, since `dir` is freshly minted above), kept for parity with
-  // `mcpServerSecretStore.ts`'s identical belt-and-braces.
-  writeFileSync(path, JSON.stringify(config), { mode: MCP_CONFIG_FILE_MODE })
   try {
-    chmodSync(path, MCP_CONFIG_FILE_MODE)
-  } catch {
-    // Best-effort — see above.
+    if (!restricted) {
+      // Fail closed. The alternative is writing a live connector bearer token
+      // — and, once a registered MCP server is approved, a third-party PAT —
+      // into a directory whose access control we just failed to set.
+      throw new Error('the staging directory could not be restricted to this user')
+    }
+    const path = join(dir, MCP_CONFIG_FILE_NAME)
+    writePrivateFileExclusive(path, JSON.stringify(config))
+    return { dir, path }
+  } catch (err) {
+    cleanupMcpConfigFile(dir)
+    throw err
   }
-  return { dir, path }
 }
 
 /**

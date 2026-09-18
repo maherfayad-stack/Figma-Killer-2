@@ -68,16 +68,37 @@ export const TRUST_TIER_REQUIRED_CODE = 'trust-tier-required'
 
 /**
  * Reads `.studio/meta.json`'s `trust` field (defaulting to Tier 0, same as
- * every other `readStudioMeta(...).trust` reader) off whatever directory the
- * caller passes, and reports whether it equals `required` exactly.
+ * every other `readStudioMeta(...).trust` reader) and reports whether it
+ * equals `required` exactly.
+ *
+ * ## `projectDir`, never an app root — this is the whole contract
+ *
+ * `.studio/` is a **project-directory** sidecar. It is created at the
+ * directory `resolveProjectDir` returns, it is listed in
+ * `EXCLUDED_WORKSPACE_DIR_NAMES` so nothing ever walks into it, and every one
+ * of the ~60 `readStudioMeta` call sites in this tree keys on the project
+ * directory. A monorepo import whose real `package.json` sits at
+ * `<project>/apps/web` has an app root (`resolveAppRoot`) that is NOT the
+ * project directory — and `<project>/apps/web/.studio/meta.json` does not
+ * exist, so reading the tier there silently answers Tier 0 forever.
+ *
+ * That was a real, shipped defect, not a hypothetical: `deploy.ts` read the
+ * tier off `resolveAppRoot(dir)` while `devServer.ts` and `referenceRender.ts`
+ * read the project directory, so a monorepo project could be promoted to Tier
+ * 2, boot a dev server, and still never deploy (`sec-12`). Both callers now
+ * pass the project directory and the parameter is named for it.
+ *
+ * The app root is still the right answer for everything that needs the
+ * project's CODE — the install cwd, `node_modules`, the provider CLI's working
+ * directory. It is never the right answer for Studio's own sidecar.
  *
  * Transport-free on purpose: an HTTP route renders this as a 409
  * (`requireTrustTier`), an agent tool renders it as a structured refusal.
  * Neither re-reads the meta file itself, so the two can never disagree about
  * what a project's tier is.
  */
-export function checkTrustTier(dir: string, required: TrustTier): TrustTierCheck {
-  const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
+export function checkTrustTier(projectDir: string, required: TrustTier): TrustTierCheck {
+  const trust = readStudioMeta(projectDir).trust ?? DEFAULT_TRUST_TIER
   if (trust !== required) return { ok: false, trust, required }
   return { ok: true, trust }
 }
@@ -87,16 +108,11 @@ export function checkTrustTier(dir: string, required: TrustTier): TrustTierCheck
  * `code: 'trust-tier-required'` unless the project's tier equals `required`
  * exactly.
  *
- * `dir` is deliberately whatever the caller already resolved `.studio/
- * meta.json` from before this extraction — for most routes that is the
- * project directory itself (`.studio/` always lives there, never at a nested
- * app root), which is what `devServer.ts` passes. `deploy.ts`'s pre-
- * extraction check read it off the project's resolved APP ROOT instead;
- * that call site is preserved unchanged here (extraction must not silently
- * change deploy's existing behavior) — see that module's call site.
+ * `projectDir` is the PROJECT directory — see {@link checkTrustTier} for why
+ * an app root is never acceptable here.
  */
-export function requireTrustTier(dir: string, required: TrustTier, message: string): TrustTierGateResult {
-  const check = checkTrustTier(dir, required)
+export function requireTrustTier(projectDir: string, required: TrustTier, message: string): TrustTierGateResult {
+  const check = checkTrustTier(projectDir, required)
   if (!check.ok) {
     return {
       ok: false,

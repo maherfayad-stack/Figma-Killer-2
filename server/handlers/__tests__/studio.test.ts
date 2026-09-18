@@ -18,6 +18,7 @@ import * as os from 'node:os'
 import * as path from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
 import { INLINE_ID_SEPARATOR, checkCanonicalJsx, parsePageFile } from '@core/page-parser'
+import { packageModuleId } from '@core/module-engine'
 import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
 import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
 import { assignPageIds, pageIdFromRelPath } from '../studioPageIds'
@@ -920,7 +921,7 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       'pages/marketing/Landing.tsx',
       [
         "import Header from '../../components/Header'",
-        "import { Button } from '@alm-design/design-system'",
+        "import { Button } from '@acme/ui'",
         'export default function Landing() {',
         '  return (',
         '    <div>',
@@ -973,10 +974,20 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
     expect(headerSpan!.id.startsWith(`${headerNodeId}~`)).toBe(true)
 
     // Package component: bare specifier, stays a read-only prop surface.
-    const buttonNodeId = nodeByModule('alm.Button')
+    //
+    // The module id is `packageModuleId('@acme/ui', 'Button')` — NAMESPACED by
+    // the package, so two packages exporting a `Button` cannot collide. This
+    // assertion used to read `nodeByModule('alm.Button')` against an
+    // `@alm-design/design-system` import, from the era when that npm was
+    // special-cased into the `alm.*` namespace. `standing-07` retired that:
+    // the design system is built in (vendored, rendered as `alm.*` at Tier 0,
+    // never a project dependency) and the `pkg.*` path now serves genuinely
+    // third-party packages only — so the fixture names a third-party package
+    // and asserts the derivation rather than a literal that can drift.
+    const buttonNodeId = nodeByModule(packageModuleId('@acme/ui', 'Button'))
     expect(body.componentSources[buttonNodeId]).toEqual({
       kind: 'package',
-      specifier: '@alm-design/design-system',
+      specifier: '@acme/ui',
     })
 
     // Node identity stays file-scoped: the OUTER div's id is namespaced by
@@ -1184,7 +1195,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     write(
       'pages/About.tsx',
       [
-        "import { Button } from '@alm-design/design-system'",
+        "import { Button } from '@acme/ui'",
         'export default function About() {',
         '  return <Button label="Go" />',
         '}',
@@ -1205,7 +1216,7 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
     // up in the meta line, because componentSources is genuinely
     // project-wide and a filtered load never skips recomputing it.
     const values = Object.values(body.componentSources)
-    expect(values.some((s) => s.kind === 'package' && s.specifier === '@alm-design/design-system')).toBe(true)
+    expect(values.some((s) => s.kind === 'package' && s.specifier === '@acme/ui')).toBe(true)
   })
 
   it('an empty pageIds value is a 400, not "no filter"', async () => {

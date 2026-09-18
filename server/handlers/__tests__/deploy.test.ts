@@ -29,6 +29,7 @@ import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProje
 import { tryServeStudioDeploy } from '../studio/deploy'
 import { detectDeployProviders, parseAuthProbe, parsePreviewUrl, mentionsUnlinkedProject } from '../studio/deployProviders'
 import { resolveDeployJob, startDeployJob } from '../studio/deployJobs'
+import { resolveAppRoot } from '../studio/appRoot'
 import { readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
 import type { SpawnedProcessLike, SubprocessSpawnFn } from '../studio/subprocessRunner'
 
@@ -45,6 +46,23 @@ function makeProjectDir(): string {
   created.push(dir)
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'deploy-fixture', version: '0.0.0' }))
   return dir
+}
+
+/**
+ * A monorepo import: the real `package.json` is at `<project>/apps/web`, and
+ * the project directory itself has none. `detectAppRoot` resolves the app root
+ * to `apps/web`, so `resolveAppRoot(dir) !== dir` — the shape that made every
+ * app-root-keyed read of `.studio/meta.json` answer Tier 0 forever (`sec-12`).
+ */
+function makeMonorepoProjectDir(): { dir: string; appRoot: string } {
+  const root = projectsRootDir()
+  fs.mkdirSync(root, { recursive: true })
+  const dir = fs.mkdtempSync(path.join(root, '__deploy_mono_'))
+  created.push(dir)
+  const appRoot = path.join(dir, 'apps', 'web')
+  fs.mkdirSync(appRoot, { recursive: true })
+  fs.writeFileSync(path.join(appRoot, 'package.json'), JSON.stringify({ name: 'mono-web', version: '0.0.0' }))
+  return { dir, appRoot }
 }
 
 afterAll(() => {
@@ -80,10 +98,12 @@ interface FakeResponse {
  * that was actually run. Everything before `Bun.spawn` is the real code path —
  * env construction, the byte cap, the timeout race, the output parsing.
  */
-function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnFn; calls: string[][] } {
+function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnFn; calls: string[][]; cwds: string[] } {
   const calls: string[][] = []
-  const spawn: SubprocessSpawnFn = (argv) => {
+  const cwds: string[] = []
+  const spawn: SubprocessSpawnFn = (argv, options) => {
     calls.push([...argv])
+    cwds.push(options.cwd)
     const response = table[argv.join(' ')] ?? { code: 127, stderr: `unexpected argv: ${argv.join(' ')}` }
     const proc: SpawnedProcessLike = {
       stdout: streamOf(response.stdout ?? ''),
@@ -95,7 +115,7 @@ function fakeCli(table: Record<string, FakeResponse>): { spawn: SubprocessSpawnF
     }
     return proc
   }
-  return { spawn, calls }
+  return { spawn, calls, cwds }
 }
 
 async function waitForJob(id: string, dir: string) {
@@ -305,6 +325,75 @@ describe('the trust-tier gate', () => {
     // The detection is a file read and is always answered; the CLI probe is not.
     expect(body.detection.detected).toBe('vercel')
     expect(body.providers).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 3b — the gate reads the PROJECT directory, never the app root (`sec-12`)
+// ---------------------------------------------------------------------------
+
+describe('the trust-tier gate on a monorepo import (app root !== project dir)', () => {
+  it('lets a Tier-2 monorepo project deploy — the tier is read where .studio/ actually is', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    expect(resolveAppRoot(dir)).toBe(appRoot)
+    // The promotion writes the ONE sidecar, at the project directory.
+    writeStudioMeta(dir, { trust: 'run-project' })
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
+
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(200)
+    const body = (await res!.json()) as { jobId: string }
+    expect(typeof body.jobId).toBe('string')
+  })
+
+  it('still refuses that same monorepo project at Tier 1 — the fix did not widen the gate', async () => {
+    const { dir } = makeMonorepoProjectDir()
+    writeStudioMeta(dir, { trust: 'render-packages' })
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(409)
+    const body = (await res!.json()) as { code: string; error: string }
+    expect(body.code).toBe('trust-tier-required')
+  })
+
+  it('and at Tier 0, with no .studio/meta.json at all', async () => {
+    const { dir } = makeMonorepoProjectDir()
+    const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
+    expect(res?.status).toBe(409)
+  })
+
+  it('reports canDeploy: true for a Tier-2 monorepo on the status route', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    fs.writeFileSync(path.join(appRoot, 'vercel.json'), '{}')
+    writeStudioMeta(dir, { trust: 'run-project' })
+
+    const res = await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(dir)}`)
+    expect(res?.status).toBe(200)
+    const body = (await res!.json()) as { trust: string; canDeploy: boolean; detection: { detected: string | null } }
+    expect(body.trust).toBe('run-project')
+    expect(body.canDeploy).toBe(true)
+    // The detection still reads the APP ROOT — that half was never wrong.
+    expect(body.detection.detected).toBe('vercel')
+  })
+
+  it('runs the CLI in the app root but records lastDeploy in the project’s own .studio/', async () => {
+    const { dir, appRoot } = makeMonorepoProjectDir()
+    writeStudioMeta(dir, { trust: 'run-project' })
+
+    const { spawn, cwds } = fakeCli({
+      'vercel whoami': { stdout: 'studio-tester\n' },
+      'vercel build': { stdout: 'Build Completed in .vercel/output\n' },
+      'vercel deploy --prebuilt': { stderr: VERCEL_DEPLOY_OUTPUT },
+    })
+
+    const id = await startDeployJob(dir, 'vercel', { spawn })
+    const job = await waitForJob(id, dir)
+    expect(job.status).toBe('succeeded')
+
+    // Every subprocess ran where package.json is…
+    expect(new Set(cwds)).toEqual(new Set([appRoot]))
+    // …and the record landed where every other reader of the sidecar looks.
+    expect(readStudioMeta(dir).lastDeploy?.id).toBe(id)
+    expect(fs.existsSync(path.join(appRoot, '.studio'))).toBe(false)
   })
 })
 

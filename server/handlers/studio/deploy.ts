@@ -68,8 +68,8 @@ import {
   startDeployJob,
   type ProviderProbe,
 } from './deployJobs'
-import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
-import { requireTrustTier } from './trustGate'
+import type { TrustTier } from './studioMeta'
+import { checkTrustTier, requireTrustTier } from './trustGate'
 
 const ROUTE_PREFIX = '/admin/api/studio/deploy'
 
@@ -116,10 +116,16 @@ async function serveStatus(url: URL): Promise<Response> {
   const guard = assertDeployableProject(resolveProjectDir(url.searchParams.get('dir')))
   if (!guard.ok) return NOT_FOUND()
 
+  // The tier is read off the PROJECT directory (`.studio/` lives there and
+  // nowhere else); the provider detection and the CLI probe are read off the
+  // APP ROOT (`vercel.json`/`netlify.toml` sit beside `package.json`, which in
+  // a monorepo import is not the project directory). Conflating the two is
+  // what made a monorepo undeployable — see `trustGate.ts`'s contract.
   const appRoot = resolveAppRoot(guard.dir)
-  const trust = readStudioMeta(appRoot).trust ?? DEFAULT_TRUST_TIER
+  const check = checkTrustTier(guard.dir, REQUIRED_TRUST_TIER)
+  const trust = check.trust
   const detection = detectDeployProviders(appRoot)
-  const canDeploy = trust === REQUIRED_TRUST_TIER
+  const canDeploy = check.ok
 
   // Below the gate, nothing is spawned: the panel gets the tier and the
   // file-based detection, which is all it needs to explain itself honestly.
@@ -166,8 +172,7 @@ async function serveStart(req: Request): Promise<Response> {
   const guard = assertDeployableProject(resolveProjectDir(body.dir))
   if (!guard.ok) return NOT_FOUND()
 
-  const appRoot = resolveAppRoot(guard.dir)
-  const gate = requireTrustTier(appRoot, REQUIRED_TRUST_TIER, TRUST_REFUSAL_MESSAGE)
+  const gate = requireTrustTier(guard.dir, REQUIRED_TRUST_TIER, TRUST_REFUSAL_MESSAGE)
   if (!gate.ok) return gate.response
 
   const jobId = await startDeployJob(guard.dir, body.provider)
