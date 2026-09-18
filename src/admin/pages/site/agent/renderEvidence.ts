@@ -9,6 +9,7 @@ import type {
 } from './types'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { effectiveCaptureRatio, type CapturePurpose } from '@core/ai'
+import { readFrameMountReason, type FrameMountReason } from '../canvas/BoardFramesLayer/framePool'
 
 const MAX_TEXT_LENGTH = 300
 const MAX_COMPUTED_BACKGROUND_IMAGE_LENGTH = 500
@@ -226,6 +227,25 @@ export function findAgentRenderFrame({
     if (!requireReady || isAgentRenderFrameReady(frame, requestId)) return frame
   }
   return null
+}
+
+/**
+ * Why the board is (or is not) holding an iframe for `pageId` right now —
+ * read back from `BoardFrameView`'s `data-frame-mount` stamp, which is
+ * written from the ONE mount decision (`framePool.ts`'s `resolveFrameMount`).
+ *
+ * `findAgentRenderFrame` above deliberately does NOT consult this: a frame
+ * the pool holds offscreen is a perfectly capturable frame, and a capture
+ * must never be refused for being out of view. This exists so that when a
+ * capture times out, the caller can say WHY instead of "did not mount" — the
+ * two real causes (the frame is not pooled at all, versus it is mounted but
+ * its staged node tree has not landed) look identical from the outside and
+ * cost very different things to fix. `null` means the board is not rendering
+ * that page at all.
+ */
+export function agentRenderFrameMountReason(pageId: string): FrameMountReason | null {
+  if (typeof document === 'undefined') return null
+  return readFrameMountReason(document.querySelector(`[data-page-id="${cssAttrEscape(pageId)}"]`))
 }
 
 /** Wait for React to mount and commit an exact canvas iframe. */

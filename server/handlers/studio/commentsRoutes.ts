@@ -11,24 +11,20 @@
  *
  * WHY THIS IS NOT IN `STUDIO_SUB_ROUTERS`
  * ───────────────────────────────────────
- * Every other studio sub-router takes `(req, url, pathname)`. These two routes
- * need a fourth thing none of the others do — the `DbClient`, to resolve the
- * session cookie into the user whose name goes on the comment. `tryServeStudio`
- * already receives the runtime and simply never used it, so it calls this
- * module directly rather than through the uniform loop. Widening all eighteen
- * sub-router signatures to carry a dependency one of them needs would be churn
- * in eighteen files that parallel work is editing.
+ * Every other studio sub-router takes `(req, url, pathname)`. The POST needs a
+ * fourth thing none of the others do — the signed-in `AuthUser`, whose name
+ * goes on the comment. It arrives in `StudioSessionRuntime`, already resolved
+ * by `routeGate.ts`; this module authenticates nothing itself.
  *
- * AUTH: unlike the rest of `/admin/api/studio/*`, both routes REQUIRE a
- * session. Not caution for its own sake — a comment carries a byline, and an
- * unauthenticated write has no honest one to carry. Any authenticated role
- * may read and write, the **Client** role (`site.content.edit` only) very
- * much included: that role is the reviewer this feature exists for, and
- * gating comments above it would defeat the point.
+ * AUTH: `routeCapabilities.ts` declares `site.read` to read and
+ * `site.content.edit` to write. The write capability is deliberately the
+ * lowest editing one: the **Client** role holds it, that role is the reviewer
+ * this feature exists for, and gating comments above it would defeat the
+ * point. A comment also carries a byline, which is why an anonymous write was
+ * never an option — there would be no honest name to put on it.
  */
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { requireAuthenticatedUser } from '../../auth/authz'
-import type { DbClient } from '../../db/client'
+import type { StudioSessionRuntime } from './routeGate'
 import { Type } from '@core/utils/typeboxHelpers'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import {
@@ -46,15 +42,13 @@ const CommentsPostBodySchema = Type.Object({
 
 export async function tryServeStudioComments(
   req: Request,
-  runtime: { db: DbClient },
+  runtime: StudioSessionRuntime,
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
   if (pathname !== '/admin/api/studio/comments') return null
 
   if (req.method === 'GET') {
-    const user = await requireAuthenticatedUser(req, runtime.db)
-    if (user instanceof Response) return user
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
       return jsonResponse({ dir, comments: readCommentsFile(dir) })
@@ -65,8 +59,7 @@ export async function tryServeStudioComments(
   }
 
   if (req.method === 'POST') {
-    const user = await requireAuthenticatedUser(req, runtime.db)
-    if (user instanceof Response) return user
+    const user = runtime.user
     try {
       const body = await readValidatedBody(req, CommentsPostBodySchema)
       if (!body) return badRequest('invalid comments body')

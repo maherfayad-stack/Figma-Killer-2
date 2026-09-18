@@ -1,7 +1,28 @@
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+/**
+ * Studio project MCP tools, against a temp workspace of this file's OWN.
+ *
+ * `src/__tests__/setup.ts` points `STUDIO_WORKSPACE_DIR` at the bare OS temp
+ * directory for the whole suite, which is right for the ~50 files whose
+ * fixture project just needs to survive `resolveProjectDir`'s containment
+ * check. It is wrong for `studio_list_projects`, whose entire job is to
+ * enumerate the workspace root and probe a profile for every project in it:
+ * against `os.tmpdir()` that walks every stray directory on the machine and
+ * runs `resolveProjectProfile` over each, which took 21–33 s here and blew
+ * the 5 s per-test timeout whenever anything else was running. It also meant
+ * the one assertion could not be about the listing's CONTENT — there was no
+ * knowing what would be in it — so the test named "lists the project by
+ * folder name" only ever checked that an array came back.
+ *
+ * A root of this file's own makes the listing deterministic, fast, and
+ * actually about its own name. Setup.ts documents this as the sanctioned
+ * escape (`projectsRootDir()` re-reads the variable on every call precisely
+ * so a file can do it).
+ */
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import { projectsRootDir } from '../../../../handlers/studioProjects'
 import { studioProjectMcpTools } from './projectTools'
 
 function tool(name: string) {
@@ -16,11 +37,31 @@ function write(root: string, relPath: string, contents: string): void {
   fs.writeFileSync(full, contents, 'utf8')
 }
 
+/** `realpathSync` because Windows' and macOS' temp roots are both reached through a link, and the containment guard resolves real paths on both sides. */
+const workspaceRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-mcp-workspace-')))
+const priorWorkspaceDir = process.env.STUDIO_WORKSPACE_DIR
+
 describe('studio project MCP tools', () => {
   let tmpDir: string
 
+  beforeAll(() => {
+    process.env.STUDIO_WORKSPACE_DIR = workspaceRoot
+  })
+
+  afterAll(() => {
+    // Restored rather than deleted: `bun test` runs several files per worker
+    // process, and leaving it set would relocate the workspace for whichever
+    // file runs next.
+    if (priorWorkspaceDir === undefined) delete process.env.STUDIO_WORKSPACE_DIR
+    else process.env.STUDIO_WORKSPACE_DIR = priorWorkspaceDir
+    fs.rmSync(workspaceRoot, { recursive: true, force: true })
+  })
+
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-mcp-project-'))
+    // Inside the workspace root, so every tool's containment check accepts it
+    // — and so the project this file creates is the ONLY thing
+    // `studio_list_projects` can find.
+    tmpDir = fs.mkdtempSync(path.join(projectsRootDir(), 'studio-mcp-project-'))
     write(
       tmpDir,
       'pages/Home.tsx',
@@ -41,15 +82,17 @@ describe('studio project MCP tools', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('studio_list_projects lists the project by folder name', async () => {
-    // listStudioProjects scans studio-workspace/, not an arbitrary tmp dir —
-    // this tool's own contract, so just assert the handler runs and shapes
-    // its output without throwing (the real corpus scan is covered by
-    // studioProjects.test.ts).
+  it('studio_list_projects lists the project by folder name, with its page count and trust tier', async () => {
     const result = (await tool('studio_list_projects').handler!({}, {} as never)) as {
-      projects: Array<{ dir: string; name: string; pageCount: number }>
+      projects: Array<{ dir: string; name: string; pageCount: number; trust: string }>
     }
-    expect(Array.isArray(result.projects)).toBe(true)
+    expect(result.projects.map((p) => p.name)).toEqual([path.basename(tmpDir)])
+    const listed = result.projects[0]!
+    expect(listed.dir).toBe(tmpDir)
+    expect(listed.pageCount).toBe(1)
+    // Never inferred from what is on disk: an unprobed project is Tier 0, and
+    // this listing is one of the places an agent decides what it may run.
+    expect(listed.trust).toBe('static')
   })
 
   it('studio_project_profile probes a fresh project', async () => {

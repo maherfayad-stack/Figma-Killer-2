@@ -63,7 +63,7 @@
  * second, looser path for agents.
  */
 import { Type } from '@core/utils/typeboxHelpers'
-import { toolRefusal } from '@core/ai'
+import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   commitFiles,
@@ -86,6 +86,7 @@ import {
 import { assertOwnGitRepo } from '../../../../handlers/studio/gitRunner'
 import { githubCompareUrl, openGithubPullRequest } from '../../../../handlers/studio/githubPullRequest'
 import { getGithubTokenForUser } from '../../../../handlers/studio/githubToken'
+import { ProjectDirOutsideWorkspaceError } from '../../../../handlers/studioProjects'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 
 const InputSchema = Type.Object(
@@ -122,31 +123,11 @@ const studioGitCommitTool: AiTool = {
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, message, files } = input as { dir?: string; message: string; files: string[] }
 
-    // `resolveToolProjectDir` THROWS for a dir outside `studio-workspace/`
-    // (`ProjectDirOutsideWorkspaceError`) — this tool's own description
-    // promises "a structured, non-throwing failure", and it already declares
-    // the `outside-workspace` code below, so letting that throw escape broke
-    // the contract the code was written for: the agent got an exception it
-    // could not read instead of a refusal it could act on.
-    let projectDir: string
-    try {
-      projectDir = resolveToolProjectDir(dirInput, ctx)
-    } catch {
-      return {
-        ok: false,
-        code: 'outside-workspace',
-        error: 'That directory is not a Studio project.',
-      }
-    }
-
-    const guard = assertOwnGitRepo(projectDir)
-    if (!guard.ok) {
-      return guard.reason === 'not-a-repository'
-        ? toolRefusal('not-a-repository', 'This project has no git repository of its own, so there is nothing to commit to.', {
-            remedy: 'Ask the user to create one from the Version control panel — you may not create it yourself, so this same call will keep refusing until they do.',
-          })
-        : toolRefusal('outside-workspace', 'That directory is not a Studio project.')
-    }
+    // One guard for the whole family — see `guardProject`. It owns both the
+    // containment throw and the `.git` check, so this tool's own copy of both
+    // is gone rather than kept in sync by hand.
+    const guard = guardProject(dirInput, ctx)
+    if (!guard.ok) return guard
 
     const trimmed = message.trim()
     if (!isAcceptableCommitMessage(trimmed)) {
@@ -188,26 +169,57 @@ const studioGitCommitTool: AiTool = {
 // ---------------------------------------------------------------------------
 
 /**
- * The repository guard, as a tool RESULT rather than a throw.
+ * The repository guard for EVERY tool in this file, as a tool RESULT rather
+ * than a throw.
  *
- * Every tool here needs the same two sentences, and an agent that gets a
- * structured `{ ok: false, code }` can act on it (ask the user to create a
- * repository) where a thrown error just ends the turn. `null` means the guard
- * passed and `dir` is usable.
+ * Each of these tools promises "a structured, non-throwing failure" in its own
+ * description, and an agent that gets `{ ok: false, code }` can act on it (ask
+ * the user to create a repository) where a thrown error just ends the turn. So
+ * the guard owns both halves of "can this directory be operated on":
+ *
+ *   - `resolveToolProjectDir` THROWS `ProjectDirOutsideWorkspaceError` for a
+ *     `dir` outside `studio-workspace/`. Caught here, once, for all five
+ *     tools — before this, only `studio_git_commit` caught it, and the other
+ *     four handed the agent a raw exception.
+ *   - `assertOwnGitRepo` then answers `outside-workspace` or
+ *     `not-a-repository`. `outside-workspace` is NOT dead behind that catch,
+ *     contrary to `sec-13`'s informational note: `resolveProjectDir` accepts
+ *     the workspace ROOT (and returns it when no `dir` is given and the
+ *     workspace holds no projects), and the root is not a project.
+ *     `gitTools.test.ts` drives both paths.
+ *
+ * `ProjectDirMismatchError` — a workspace-bound connector naming a project
+ * other than its turn's — deliberately keeps throwing, as it does in every
+ * other Studio tool. Its message names both projects and the next action;
+ * flattening it into `outside-workspace`, which is what `studio_git_commit`'s
+ * old bare `catch {}` did, told the agent a project that exists does not.
  */
 function guardProject(dirInput: string | undefined, ctx: ToolContext):
   | { ok: true; dir: string }
-  | { ok: false; code: string; error: string } {
-  const guard = assertOwnGitRepo(resolveToolProjectDir(dirInput, ctx))
-  if (guard.ok) return { ok: true, dir: guard.dir }
-  return {
-    ok: false,
-    code: guard.reason === 'not-a-repository' ? 'not-a-repository' : 'outside-workspace',
-    error:
-      guard.reason === 'not-a-repository'
-        ? 'This project has no git repository of its own. Ask the user to create one from the Version control panel — you may not create it yourself.'
-        : 'That directory is not a Studio project.',
+  | ToolRefusal {
+  let projectDir: string
+  try {
+    projectDir = resolveToolProjectDir(dirInput, ctx)
+  } catch (err) {
+    if (!(err instanceof ProjectDirOutsideWorkspaceError)) throw err
+    return outsideWorkspaceRefusal()
   }
+
+  const guard = assertOwnGitRepo(projectDir)
+  if (guard.ok) return { ok: true, dir: guard.dir }
+  return guard.reason === 'not-a-repository'
+    ? toolRefusal('not-a-repository', 'This project has no git repository of its own.', {
+        remedy:
+          'Ask the user to create one from the Version control panel — you may not create it yourself, so this same call will keep refusing until they do.',
+      })
+    : outsideWorkspaceRefusal()
+}
+
+/** One wording for the one meaning, so the two ways of reaching it cannot drift apart. */
+function outsideWorkspaceRefusal(): ToolRefusal {
+  return toolRefusal('outside-workspace', 'That directory is not a Studio project.', {
+    remedy: 'Omit `dir` to use the project this turn is about.',
+  })
 }
 
 const DirOnlyInputSchema = Type.Object(

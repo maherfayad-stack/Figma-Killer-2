@@ -21,6 +21,7 @@ import {
   parseGithubRepoUrl,
   runGithubImport,
 } from '../studioGithubImport'
+import { parseGithubRemoteUrl } from '../studio/gitPaths'
 
 describe('parseGithubRepoUrl', () => {
   it('parses a plain repo URL', () => {
@@ -76,6 +77,60 @@ describe('parseGithubRepoUrl', () => {
 
   it('rejects an owner/repo with unsafe characters', () => {
     expect(parseGithubRepoUrl('https://github.com/acme/wid$gets')).toBeNull()
+  })
+
+  /**
+   * The zipball import shares the git routes' owner/repo judgement
+   * (`studio/gitPaths.ts`) rather than keeping its own charset copy, so the
+   * two cannot disagree about what a repository is called. These drive the
+   * rules the charset alone never had (`sec-13`).
+   */
+  it('rejects a dots-only owner or repo, and a name GitHub could never issue', () => {
+    for (const hostile of [
+      'https://github.com/./widgets',
+      'https://github.com/acme/..',
+      'https://github.com/acme/.',
+      'https://github.com/%2e%2e/widgets',
+      'https://github.com/-acme/widgets',
+      'https://github.com/acme-/widgets',
+      'https://github.com/acme/-widgets',
+      `https://github.com/${'a'.repeat(40)}/widgets`,
+      `https://github.com/acme/${'a'.repeat(101)}`,
+    ]) {
+      expect(parseGithubRepoUrl(hostile)).toBeNull()
+    }
+  })
+
+  /**
+   * `parseGithubRemoteUrl` has refused userinfo since G2 — it persists a
+   * credential into `.git/config`. This parser accepted it and silently
+   * dropped it, which is the worse failure of the two for the user: the
+   * zipball fetch is built from the parsed owner/repo and authenticates from
+   * the request body's own `token`, so a pasted
+   * `https://ghp_…@github.com/acme/private` went out unauthenticated and came
+   * back "not found" for a repository that exists. Both forms refuse it now.
+   */
+  it('rejects a URL carrying userinfo, exactly as the git routes do', () => {
+    for (const hostile of [
+      'https://ghp_0123456789abcdef@github.com/acme/widgets',
+      'https://user:pass@github.com/acme/widgets',
+      'https://user@github.com/acme/widgets',
+      'https://:pass@github.com/acme/widgets',
+    ]) {
+      expect(parseGithubRepoUrl(hostile)).toBeNull()
+      expect(parseGithubRemoteUrl(hostile)).toBeNull()
+    }
+    // The same URL without the credential is still accepted.
+    expect(parseGithubRepoUrl('https://github.com/acme/widgets')).toEqual({ owner: 'acme', repo: 'widgets' })
+  })
+
+  it('still accepts `.github`, dotted and underscored names, and the exact ceilings', () => {
+    expect(parseGithubRepoUrl('https://github.com/acme/.github')).toEqual({ owner: 'acme', repo: '.github' })
+    expect(parseGithubRepoUrl('https://github.com/my_org/socket.io')).toEqual({ owner: 'my_org', repo: 'socket.io' })
+    expect(parseGithubRepoUrl(`https://github.com/${'a'.repeat(39)}/${'b'.repeat(100)}`)).toEqual({
+      owner: 'a'.repeat(39),
+      repo: 'b'.repeat(100),
+    })
   })
 })
 

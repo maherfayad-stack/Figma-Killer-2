@@ -66,7 +66,7 @@ describe('duplicateJsxElement', () => {
     const file = writeFixture(PAGE)
     const first = locateTag(PAGE, 'p', 1)
 
-    expect(duplicateJsxElement({ file, ...first })).toEqual({ ok: true })
+    expect(duplicateJsxElement({ file, ...first })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '      <p className="first">First</p>\n',
@@ -79,7 +79,7 @@ describe('duplicateJsxElement', () => {
     const file = writeFixture(PAGE)
     const third = locateTag(PAGE, 'Third')
 
-    expect(duplicateJsxElement({ file, ...third })).toEqual({ ok: true })
+    expect(duplicateJsxElement({ file, ...third })).toMatchObject({ ok: true })
     const block = '      <Third\n        label="third"\n        tone="quiet"\n      />\n'
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE.replace(block, block + block))
   })
@@ -88,7 +88,7 @@ describe('duplicateJsxElement', () => {
     const file = writeFixture(PAGE)
     const a = locateTag(PAGE, 'a', 1)
 
-    expect(duplicateJsxElement({ file, ...a })).toEqual({ ok: true })
+    expect(duplicateJsxElement({ file, ...a })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '<footer><a href="/a">A</a><a href="/b">B</a></footer>',
@@ -108,7 +108,7 @@ describe('duplicateJsxElement', () => {
 }
 `
     const file = writeFixture(source)
-    expect(duplicateJsxElement({ file, ...locateTag(source, 'h1') })).toEqual({ ok: true })
+    expect(duplicateJsxElement({ file, ...locateTag(source, 'h1') })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace('      <h1>Title</h1>\n', '      <h1>Title</h1>\n      <h1>Title</h1>\n'),
     )
@@ -182,7 +182,7 @@ describe('duplicateJsxElement — the duplicate-to form (K2)', () => {
       ...destination(locateTag(source, 'aside')),
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace(
         '        <span>kept</span>\n',
@@ -214,7 +214,7 @@ describe('duplicateJsxElement — the duplicate-to form (K2)', () => {
       position: 'before',
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace(
         '        <span>kept</span>\n',
@@ -245,7 +245,7 @@ describe('duplicateJsxElement — the duplicate-to form (K2)', () => {
       ...destination(locateTag(source, 'aside')),
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace(
         '        <span>kept</span>\n',
@@ -271,7 +271,7 @@ describe('duplicateJsxElement — the duplicate-to form (K2)', () => {
       ...destination(locateTag(source, 'aside')),
     })
 
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       source.replace('      <aside />\n', '      <aside>\n        <p>First</p>\n      </aside>\n'),
     )
@@ -367,7 +367,7 @@ describe('wrapJsxElement', () => {
     const file = writeFixture(PAGE)
     const first = locateTag(PAGE, 'p', 1)
 
-    expect(wrapJsxElement({ file, ...first, name: 'div' })).toEqual({ ok: true })
+    expect(wrapJsxElement({ file, ...first, name: 'div' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '      <p className="first">First</p>',
@@ -380,7 +380,7 @@ describe('wrapJsxElement', () => {
     const file = writeFixture(PAGE)
     const third = locateTag(PAGE, 'Third')
 
-    expect(wrapJsxElement({ file, ...third, name: 'section' })).toEqual({ ok: true })
+    expect(wrapJsxElement({ file, ...third, name: 'section' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace(
         '      <Third\n        label="third"\n        tone="quiet"\n      />',
@@ -393,7 +393,7 @@ describe('wrapJsxElement', () => {
     const file = writeFixture(PAGE)
     const b = locateTag(PAGE, 'a', 2)
 
-    expect(wrapJsxElement({ file, ...b, name: 'span' })).toEqual({ ok: true })
+    expect(wrapJsxElement({ file, ...b, name: 'span' })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace('<a href="/b">B</a></footer>', '<span><a href="/b">B</a></span></footer>'),
     )
@@ -405,7 +405,7 @@ describe('wrapJsxElement', () => {
 
     expect(
       wrapJsxElement({ file, ...first, name: 'Stack', importSpecifier: '@acme/ui' }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
     const after = fs.readFileSync(file, 'utf8')
     expect(after).toContain("import { Stack } from '@acme/ui'\n")
     expect(after).toContain('      <Stack>\n        <p className="first">First</p>\n      </Stack>')

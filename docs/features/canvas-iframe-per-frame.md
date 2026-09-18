@@ -103,18 +103,31 @@ rasterization** of frames that had just arrived.
 
 ### The mount pool — a departed frame keeps its document
 
-`frameMountPool.ts` decides which frames hold a live iframe: everything
-`isFrameOnScreen` says is visible, **plus** the recently-departed frames the
-pool still has room for. Panning back to where you just were therefore
-remounts nothing at all. The pool is `max(8, onScreen + 4)` live frames and
-evicts least-recently-on-screen; the cap exists because each live frame is a
-whole document carrying its own parsed copy of every injected stylesheet, so an
-uncapped pool would end a pan across a 40-frame board with 40 of them resident.
+`framePool.ts` is the one module that decides which frames hold a live iframe:
+everything `isFrameOnScreen` says is visible, **plus** the recently-departed
+frames the pool still has room for. Panning back to where you just were
+therefore remounts nothing at all. Eviction is least-recently-on-screen, and
+the cap exists because each mounted frame is a whole document carrying its own
+parsed copy of every injected stylesheet, so an uncapped pool would end a pan
+across a 40-frame board with 40 of them resident.
+
+The budget is the one thing that varies, and it varies by what a frame **costs**
+on this board — a Tier 0/1 portal frame is one cheap same-origin `srcDoc`
+document (`max(8, onScreen + 4)`, a floor with headroom); a Tier-2 frame is a
+`LiveBoardFrame`, which is a fallback document **and** a cross-origin bridge
+iframe against a real dev-server process (`max(onScreen, 8)`, a ceiling only
+the visible set may exceed). The trust tier picks the cost in
+`BoardFramesLayer` and touches mounting nowhere else.
 
 `BoardFrameView` takes two separate props as a result: `isOnScreen` (the
 viewport test — drives poster CAPTURE, which has to happen while the frame is
-genuinely visible and settled) and `isMounted` (on screen ∪ pooled — drives the
-live frame, the auto-height box, and the empty-page hint).
+genuinely visible and settled) and `isMounted` (is the pool holding it — drives
+the live frame, the auto-height box, and the empty-page hint). It resolves them
+through `resolveFrameMount`, and stamps the answer's reason onto the frame
+element as `data-frame-mount` (`on-screen` / `pooled` / `offscreen`), which is
+how a test, the agent's capture path and a human with devtools open all read
+the same answer. `isMounted` is **optional** and defaults to `isOnScreen`; see
+`docs/agent-refs/canvas-internals.md` §Perf for why that is load-bearing.
 
 The active viewport context (highlighted, drives style override routing) is tracked by `activeBreakpointId` in `canvasSlice`.
 

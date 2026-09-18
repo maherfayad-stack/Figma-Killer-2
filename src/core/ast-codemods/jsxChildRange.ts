@@ -28,7 +28,6 @@
  * element child's `getStart()`/`getEnd()` are exactly its own bytes — there is
  * no leading-trivia ambiguity to reason about.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
 import { Node, SyntaxKind, type SourceFile } from 'ts-morph'
 import { findJsxElementAtLocation, type JsxOpeningLikeElement } from './locateJsxElement'
 
@@ -176,24 +175,38 @@ export function spliceRange(text: string, start: number, end: number, at: number
  * That mismatch is a refusal, not something to reconcile: every offset a
  * structural edit splices at came from the parsed text, so writing them into a
  * different string is precisely how a codemod cuts a file in the wrong place.
- * It also catches the quieter failure — a project configured to normalize
- * newlines or re-add a byte-order mark on save would rewrite the whole file as
- * a side effect of moving one element, which is the reformatting defect these
- * codemods exist to avoid.
+ * It also catches the quieter failure — a project configured to re-add a
+ * byte-order mark on save would rewrite the whole file as a side effect of
+ * moving one element, which is the reformatting defect these codemods exist
+ * to avoid.
+ *
+ * The read goes through the PROJECT's file system, not `node:fs`, and that is
+ * load-bearing: `EolPreservingFileSystem` (see `@core/page-parser`) is what
+ * hands ts-morph LF-only text for a CRLF checkout, so reading the raw bytes
+ * here would compare `"…\r\n"` against `"…\n"` and refuse every structural
+ * edit in a Windows-checked-out repository. Comparing through the same host
+ * keeps the guard about what it is about — stale source — and leaves the line
+ * ending to the one layer that owns it.
  */
 export function verbatimSourceText(sourceFile: SourceFile, file: string): string | null {
   const parsed = sourceFile.getFullText()
   let onDisk: string
   try {
-    onDisk = readFileSync(file, 'utf8')
+    onDisk = sourceFile.getProject().getFileSystem().readFileSync(file, 'utf8')
   } catch {
     return null
   }
   return onDisk === parsed ? parsed : null
 }
 
-/** Write spliced bytes back verbatim and re-sync the parsed copy so a shared project stays honest. */
+/**
+ * Write spliced bytes back verbatim and re-sync the parsed copy so a shared
+ * project stays honest.
+ *
+ * Also through the project's file system: `text` is LF, and the host puts the
+ * file's own ending back on the way out (an LF file's bytes are unchanged).
+ */
 export function writeVerbatimSource(sourceFile: SourceFile, file: string, text: string): void {
-  writeFileSync(file, text, 'utf8')
+  sourceFile.getProject().getFileSystem().writeFileSync(file, text)
   sourceFile.refreshFromFileSystemSync()
 }

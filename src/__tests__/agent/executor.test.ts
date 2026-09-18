@@ -275,7 +275,8 @@ describe('executeAgentTool — insertHtml', () => {
       html: '<p>Test</p>',
     })
     expectToolError(result)
-    expect(result.error).toContain('not found')
+    // The store's own refusal, forwarded verbatim — see `htmlImportFailure`.
+    expect(result.error).toContain('no longer on the board')
   })
 
   it('appends at a given index position', async () => {

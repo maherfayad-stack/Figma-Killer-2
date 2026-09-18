@@ -238,11 +238,17 @@ The full argv:
 ```
 claude -p <prompt> --output-format stream-json --verbose --model <id>
   --effort medium --permission-mode <'acceptEdits' with a project open | 'default'> --tools <'Read,Write,Edit,Glob,Grep' | 'Read' | ''>
-  [--mcp-config <path to a private 0600 temp file>] --strict-mcp-config
+  [--mcp-config <path to a private temp file>] --strict-mcp-config
   --session-id <uuid> | --resume <uuid>
 ```
 
 `--mcp-config`'s value is a filesystem path, not inline JSON — see the "MCP tool routing" paragraph below for why.
+
+**"Private" means something different per platform, and both halves are real.** On Linux and macOS the directory is `0700` and the file `0600`, set at creation. On Windows `chmod` decides nothing — Node maps it onto the single read-only attribute and `statSync` reports `0o666` back whatever was asked for — so `createPrivateTempDir` (`server/ai/credentials/privateTempDir.ts`) runs `icacls <dir> /inheritance:r /grant:r "<user>:(OI)(CI)(F)"` through the bounded subprocess runner instead, **before** the secret is written into the directory: on NTFS a new file inherits its parent's inheritable ACEs at creation, so the config file never exists with a wider ACL. The resulting DACL is a single entry naming this user, with `SYSTEM` and `BUILTIN\Administrators` removed.
+
+Two things make that guarantee hold rather than merely be likely (`sec-15`). The config file is created with `O_CREAT | O_EXCL` (`writePrivateFileExclusive`), not a plain truncating write: `mkdtempSync` creates the directory with the ACL it *inherits* and only then does `icacls` narrow it, and `/inheritance:r` on the parent does **not** strip an explicit ACE from a child that already exists — so a file planted in that window, with a DACL granting the planter read, would be opened-and-truncated and would receive the secret. `O_EXCL` refuses the name instead. And a failed `icacls` is a **refusal to write the secret at all**: `writeMcpConfigFile` deletes the staging directory and throws, which `tryWriteMcpConfigFile` turns into the same degradation a failed connector mint already gets — the turn runs without MCP tools. A capability is lost; a token is never written into a directory whose access control Studio failed to set.
+
+`claudeCli.test.ts` asserts the mode bits on POSIX and the DACL on Windows; it used to assert `0o600` on both, which is why it sat in `standing-01`'s failure bucket. `claudeCliMcpConfigFile.test.ts` drives the refusals — a planted file, a failed restriction, a failed write — and asserts no staging directory survives any of them.
 
 **Native tool surface.** The spawned session used to carry NO `--tools`/`--allowedTools` restriction at all — the top-level `claude` process could reach every native built-in directly, bypassing the containment checks the MCP tools enforce. `resolveNativeToolAllowlist` (`claudeCliToolSurface.ts`) now computes the allowlist fresh per turn and never omits the flag: `Read,Write,Edit,Glob,Grep,Task` when a real, containment-checked project is open (the agent's authoring path — see "The agent authors files" below); `Read` alone when no project is open but this turn staged an attachment; `''` otherwise. `Bash` is withheld unconditionally, on every turn, at every trust tier, in every permission mode — trust tiers gate MCP-mediated capabilities like `studio_install_deps`, and neither has ever gated a raw shell. What bounds a native write is the process, not the tool list: `cwd` is the validated project directory, and the CLI refuses a write outside it plus whatever `--add-dir` pre-authorises (this turn's attachment staging directory, nothing else). `--tools` is a hard availability list, independent of and prior to `--permission-mode`, so it holds even under a user-selected `bypassPermissions`.
 
@@ -256,7 +262,7 @@ claude -p <prompt> --output-format stream-json --verbose --model <id>
 
 **`--effort`/`--permission-mode` (step 2).** `--effort` ships wired with a fixed default (`medium`) — a real, explicitly requested requirement, not a nicety, even though no session-controls UI exists yet (WS-12 §5.2 owns that). `--permission-mode` accepts exactly WS-12 §5.2's four modes (`default | acceptEdits | plan | bypassPermissions`) plus `auto`/`dontAsk` (confirmed via `--help`) — a 1:1 mapping with no translation layer whenever that UI ships. Only `'default'` is used today. **`bypassPermissions`/`--dangerously-skip-permissions` is never passed by this driver, under any condition** — that is a hard constraint, not a default that could be flipped by a future options object.
 
-**MCP tool routing (step 3).** `req.tools` (Studio's generic `AiTool[]` list) is never forwarded to the CLI directly — it wouldn't mean anything to it. Instead, before spawning, `server/ai/mcp/sessionConnector.ts`'s `mintClaudeCliSessionConnector()` mints a fresh MCP connector scoped to the caller's own capabilities (privilege-floor rule: never more than the caller holds) with a 1-day TTL floor, by calling the connector store directly rather than the admin `handlers/connectors.ts` endpoint — that endpoint requires `requireStepUp` (a fresh-MFA-like re-auth), which is designed for a human consciously minting a long-lived credential, not a server minting one per chat message. `buildMcpConfig` assembles `{"mcpServers":{"studio":{"type":"http","url":"http://127.0.0.1:<port>/_studio/mcp","headers":{"Authorization":"Bearer <token>"}}}}` — Studio's own `/_studio/mcp` endpoint, on this same running process — but the subprocess is launched with `--mcp-config <path>`, NOT that JSON inline: `writeMcpConfigFile` (`claudeCliMcpConfigFile.ts`) serialises it to a file created with mode 0600 at open time (never chmod'd after — that would leave a window where the file is briefly wider than 0600) inside a fresh 0700 `os.tmpdir()` directory, and the driver's own `finally` block deletes that directory unconditionally when the turn ends — success, error, or the subprocess killed on abort. This exists because `ps -eo command` prints a process's full argv to any local process, no privilege required; an inline `--mcp-config` would print this bearer token — and, once a project/registered server is approved, a real third-party secret like a Figma PAT — to that output in plaintext, silently defeating `mcpServerSecretStore.ts` encrypting the exact same values at rest. So the CLI's own MCP client discovers Studio's real toolset through the SAME `(userId, scope)` live editor bridge an external Claude Code connector uses (see `mcp-connectors.md`), with zero duplicated tool-routing code, and without the secret ever touching argv. `--strict-mcp-config` is **mandatory** whether or not a connector was minted: without it the CLI merges the user's own `~/.claude.json` and the project's `.mcp.json` and connects to whatever it finds there — Studio ships exactly the toolset it intends and no more. The token is revoked in a `finally` block when the turn ends — scoped to and expiring with the single turn, never reused. If minting fails (a transient connector-store hiccup) or the config file can't be written, the turn degrades to tools-less rather than failing outright — the same fail-soft posture step 1 shipped with.
+**MCP tool routing (step 3).** `req.tools` (Studio's generic `AiTool[]` list) is never forwarded to the CLI directly — it wouldn't mean anything to it. Instead, before spawning, `server/ai/mcp/sessionConnector.ts`'s `mintClaudeCliSessionConnector()` mints a fresh MCP connector scoped to the caller's own capabilities (privilege-floor rule: never more than the caller holds) with a 1-day TTL floor, by calling the connector store directly rather than the admin `handlers/connectors.ts` endpoint — that endpoint requires `requireStepUp` (a fresh-MFA-like re-auth), which is designed for a human consciously minting a long-lived credential, not a server minting one per chat message. `buildMcpConfig` assembles `{"mcpServers":{"studio":{"type":"http","url":"http://127.0.0.1:<port>/_studio/mcp","headers":{"Authorization":"Bearer <token>"}}}}` — Studio's own `/_studio/mcp` endpoint, on this same running process — but the subprocess is launched with `--mcp-config <path>`, NOT that JSON inline: `writeMcpConfigFile` (`claudeCliMcpConfigFile.ts`) serialises it to a file created with mode 0600 at open time (never chmod'd after — that would leave a window where the file is briefly wider than 0600) inside a fresh `os.tmpdir()` directory that `createPrivateTempDir` (`server/ai/credentials/privateTempDir.ts`) has already made private, and the driver's own `finally` block deletes that directory unconditionally when the turn ends — success, error, or the subprocess killed on abort. This exists because `ps -eo command` prints a process's full argv to any local process, no privilege required; an inline `--mcp-config` would print this bearer token — and, once a project/registered server is approved, a real third-party secret like a Figma PAT — to that output in plaintext, silently defeating `mcpServerSecretStore.ts` encrypting the exact same values at rest. So the CLI's own MCP client discovers Studio's real toolset through the SAME `(userId, scope)` live editor bridge an external Claude Code connector uses (see `mcp-connectors.md`), with zero duplicated tool-routing code, and without the secret ever touching argv. `--strict-mcp-config` is **mandatory** whether or not a connector was minted: without it the CLI merges the user's own `~/.claude.json` and the project's `.mcp.json` and connects to whatever it finds there — Studio ships exactly the toolset it intends and no more. The token is revoked in a `finally` block when the turn ends — scoped to and expiring with the single turn, never reused. If minting fails (a transient connector-store hiccup) or the config file can't be written, the turn degrades to tools-less rather than failing outright — the same fail-soft posture step 1 shipped with.
 
 **The loop-ownership fork.** Every HTTP driver is a thin adapter: `runToolLoop` (`drivers/http/toolLoop.ts`) owns the multi-turn agent loop, tool dispatch, and retries. `claudeCli.ts` does not call `runToolLoop` at all — the `claude` subprocess owns its own agent loop internally, now genuinely exercising tools via the MCP routing above. Turn structure, retries, and tool-permission prompts are the CLI's, not Studio's. That is a permanent, documented behavioural fork from every other driver, not an oversight.
 
@@ -539,6 +545,21 @@ of consent for delegated work. There is deliberately **no** `init`, `restore`,
 `pull`, `merge`, `rebase` or conflict-resolution tool: each of those can
 overwrite work the user has on screen and cannot see being overwritten, which
 is exactly why the Version control panel shows them a list instead.
+
+All five share one guard, `guardProject` in `gitTools.ts`, and it owns both
+halves of "can this directory be operated on": it catches
+`ProjectDirOutsideWorkspaceError` (which `resolveToolProjectDir` throws for a
+`dir` outside `studio-workspace/`) and then runs `assertOwnGitRepo`, so every
+tool in the family answers a structured `outside-workspace` /
+`not-a-repository` refusal rather than a raw exception — which only
+`studio_git_commit` used to do. `outside-workspace` is reachable two ways, and
+both are tested: the caught throw, and the workspace **root** itself, which
+`resolveProjectDir` accepts (it is what you get with no `dir` in an empty
+workspace) and which is not a project. `ProjectDirMismatchError` — a
+workspace-bound connector naming a project other than its turn's —
+deliberately still throws, as it does in every other Studio tool: its message
+names both projects and the next action, and flattening it into
+`outside-workspace` told the agent a project that exists does not.
 
 **Non-Studio MCP tools.** `get_context` (`mcp/tools/contextTool.ts`) is the orientation call for the CMS half: it reports whether the Site editor is connected — every browser tool needs it — and which templates wrap pages, so an agent knows what its authored markup is *in addition to*. Headless; call it first when a browser tool answers "open the workspace". `mcp_list_project_servers` and `mcp_propose_server` (`mcpServerTool.ts`) cover external MCP servers: the first lists every project-declared (`.mcp.json`) and Studio-registered server with its approval state and its *secret field names* — never a secret value; the second registers a proposal that is saved **unapproved and cannot be approved by any tool or agent**, so the honest report to the user is "proposed, needs your review", never "set up". `site_read_styles` and `site_list_breakpoints` (`styleTools.ts`) are headless replacements for their snapshot-backed `site_*` siblings, which read a browser-posted snapshot that is `null` over MCP; `site_publish` (`publishTool.ts`) is the one explicitly capability-gated write that leaves draft state. The CMS `site_*` toolset itself is tabulated under [Tools](#tools) below.
 
@@ -1056,6 +1077,20 @@ Both frame tools address a frame by `pageId` (the id every other Studio tool alr
 
 The matrix now has **zero `missing` rows** — every editor action a Studio project agent needs is either a real tool or explicitly, permanently withheld with a stated reason (trust-tier promotion, undo/redo, viewport pan/zoom/marquee, project deletion, a raw shell command, a full-file overwrite — see the six `withheld` rows in `parityMatrix.ts` for why each one stays that way on purpose).
 
+`studio_import_figma_frame` has its own row — *arm a screen against a supplied design*. The user's version of that action is two gestures: attach the design through the reference-upload panel (`uploadDesignReference.ts` → `POST /admin/api/studio/reference-upload`), then drag the board frame to the design's own size so the comparison is exact rather than resampled. The tool exists because the ORDER was what a weaker model got wrong, not any single leg — see its own section above.
+
+#### Headless-only tools
+
+The gate runs the matrix backwards too: every registered `mutates: true` tool must be named by some row. A tool that genuinely has no canvas counterpart declares **`headlessOnly`** on its own `AiTool` definition — a sentence saying why — and the gate reads that field. There is deliberately no allowlist inside `parityMatrix.test.ts`: a name on a list in a test file is a gate switched off, while a sentence on the tool is a claim the next reader can check. Declaring `headlessOnly` **and** appearing in a parity row fails the gate, because one of the two statements is then untrue.
+
+<!-- headless-only-tools:start -->
+
+| Tool | Why there is no canvas action to be parity with |
+|---|---|
+| `studio_plan_variants` | Nothing in the editor plans variants. Its only artefact is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER turn can edit variant B's recorded density instead of re-rolling the set. The editor's equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all. |
+
+<!-- headless-only-tools:end -->
+
 ---
 
 ## Flow
@@ -1121,7 +1156,7 @@ Browser: processStreamEvent(event) in streamEvents.ts
     ├─→ 'bridgeReady'   → store bridgeId in closure
     ├─→ 'toolRequest'   → executeAgentTool(toolName, input)  (executor.ts)
     │       – TypeBox-validates input
-    │       – e.g. runInsertHtml → importHtml(html) → insertImportedNodes(parentId, …)
+    │       – e.g. runInsertHtml (htmlTools.ts) → importHtml(html) → insertImportedNodes(parentId, …)
     │       → POST /admin/api/ai/tool-result { bridgeId, requestId, result }
     │       → server resolves pending waiter → driver sees tool_result → continues
     └─→ 'text' / 'toolCall' / 'toolResult' / 'done'  → update agentSlice.agentMessages
@@ -1268,6 +1303,16 @@ Styling rides on the `html` payload — there is no separate `classes` parameter
 - inline `style="…"` attributes → the node's inline styles.
 
 `insertImportedNodes` then links every `class=` token on the imported nodes to its registry class id in the same undo step, so `class="hero-section"` renders and is styleable whether its styles came from a `<style>` rule or an automatically-created bare class. See [html-import.md → Class linking](html-import.md#class-linking-name--id).
+
+**Both tools refuse outright on a studio-imported board (`mcp-21`, fixed in `store-13`).** On a project whose source of truth is a real React repository, importing HTML produced nodes carrying nanoid ids that no codemod can write back: the elements appeared on the canvas and the next parse deleted them, with nothing said. Reachable with no UI at all — an external MCP connector holding `ai.tools.write` calls both tools through the editor bridge.
+
+There is no source write to route them to instead, and the reason is structural rather than a gap waiting to be closed:
+
+1. The importer's rule table maps HTML onto ~15 base modules, and exactly two of them — `base.container` and `base.text` — can say what they are in a user's repo (`ModuleDefinition.sourceIntrinsic`). A link, a button, an image, every form control, `<studio-loop>` and `<studio-outlet>` have no JSX form Studio may write. Writing the part that can be written and dropping the rest is a half-applied patch.
+2. The `<style>` block belongs in a stylesheet, not in the `.tsx`, so one call would have to land two writes in two files or leave the structure unstyled.
+3. The tools' own answer — `nodeIds` / `created`, so the caller can address a nested node — cannot be produced by a source write: those ids are the `line:col`s the codemod emits and do not exist until the board has re-read the file, which is after the tool has returned.
+
+The refusal names the path that does write real code: `studio_apply_edits`' `insert` edit, which writes JSX into the file and returns an addressable node id. `site_replace_node_html` asks BEFORE deleting the target's children (`refuseImportedNodesInto`), so a refused replace never leaves the node empty.
 
 **Authoring CSS with `site_apply_css`.** The required `operation` discriminator makes destructive intent explicit:
 

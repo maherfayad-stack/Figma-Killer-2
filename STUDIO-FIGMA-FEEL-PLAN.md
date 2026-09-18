@@ -82,8 +82,35 @@ that carried it and the STATE.md entry that explains it.
 | G3 · G4 · G5 · G6 · G7 | #160 | `feat/branches-pull-pr` (contains #151 + #157) | `git-22` |
 | — security review of #160 | #161 | `review/pr-160` | — |
 
-Not yet landed: **G8** (the dogfood against a real private repository) and the Phase 0
-exit dogfood, both of which need a human at a browser.
+Not yet landed after wave 1: **G8** (the dogfood against a real private repository) and the
+Phase 0 exit dogfood. Wave 2 machine-checked the second of those; G8 still needs a human.
+
+---
+
+### Wave 2 — landed
+
+Ten work orders plus four security reviews, merged into `integration/figma-feel-wave-2` on
+2026-09-18. Every row is a §9 backlog item or a Figma-hands gesture the wave-1 tracks left open.
+
+| Work order | PR | Branch | STATE |
+|---|---|---|---|
+| §9 per-route capability gating (§6 decision 7, `sec-05` finding 2) | #167 | `feat/studio-route-capability-gating` | `sec-14` |
+| — security review of #167 | #176 | `review/pr-167` | `sec-16` |
+| §9 `deploy.ts` trust dir · GitHub-legal repo segments · two Windows reds | #166 | `fix/server-tier-dir-and-windows-reds` | `server-25` |
+| — security review of #166 | #174 | `review/pr-166` | `sec-15` |
+| §9 `parityMatrix` gap · `compare.test.ts` arity · `studio_list_projects` · the git guard | #168 | `fix/mcp-named-reds-and-parity-gap` | `mcp-24` |
+| §9 CRLF-safe parsing and codemods for USERS' repos | #169 | `fix/crlf-safe-parse-and-codemods` | `parser-13` |
+| §9 created ids from `commitStructural` (K7 follow-up) + `insertImportedNodes` (`mcp-21`) | #171 | `feat/structural-commits-report-created-ids` | `store-13` |
+| D2 G3 + G15 — cross-frame element drag, OS image-file drop | #172 | `feat/cross-frame-drag-and-file-drop` | `canvas-20` |
+| — security review of #172 | #177 | `review/pr-172` | `sec-17` |
+| `meta-14`'s deferred design call — ONE frame mount pool | #175 | `refactor/one-frame-mount-pool` | `perf-9` |
+| §9 `FillSection` Mixed through the one selection model | #165 | `fix/fill-section-mixed` | `panel-38` |
+| S5 acceptance — the Design tab fits 900px; the height ratchet becomes one budget | #170 | `fix/inspector-design-tab-fits-900` | `panel-39` |
+| §8 DoD line 1 — the Phase 0 exit dogfood as a Playwright spec | #173 | `test/phase0-exit-dogfood-e2e` | `verify-3` |
+
+**Not in this wave:** `verify-2` (`bun run test:e2e` cold on Windows + a tracked ≥9-frame perf
+corpus) had no PR open when the integration branch was cut — its three §9 items are still open
+below, and the orchestrator merges it as a follow-up.
 
 ---
 
@@ -659,37 +686,113 @@ Ranked by how likely they are to hit you on an ordinary day. Each maps to a work
 
 ## 9. Follow-up wave after this plan
 
-- **Per-request capability gating on every Studio route** (§6 decision 7, `sec-05` finding 2):
-  `requireCapability` in `tryServeStudio`'s dispatch, one sub-router at a time, before any
-  multi-user deployment.
-- **`insertImportedNodes` writes nodes no source write follows** (`mcp-21`): `site_insert_html` /
-  `site_replace_node_html` merge nanoid nodes into a studio-imported tree with no source write,
-  and the next parse deletes them. Route through a source insert, or refuse on a studio tree.
-- **CRLF-safe parsing for USERS' repos** (`server-24`): `.gitattributes` removed the exposure for
-  Studio's own vendored tree, but Studio parses other people's repositories, which can be CRLF.
-  Every structural codemod also still writes `\n`, so a CRLF file loses `\r` on rewritten lines
-  (`struct-10` landmine 7).
+Wave 2 (the table under "Wave 2 — landed") closed eight of the eleven items this section
+carried. The three still open all belong to `verify-2`, whose PR was not open when the wave-2
+integration branch was cut.
+
+- ~~**Per-request capability gating on every Studio route**~~ — **done, `sec-14` (#167) +
+  `sec-16` (#176).** Not "one sub-router at a time": one gate at dispatch, keyed by a table
+  (`server/handlers/studio/routeCapabilities.ts`). An undeclared path answers 404, so a new
+  route that forgets its declaration is dead rather than open, and an architecture gate fails
+  the build naming it. The review found and closed a HIGH one namespace over — the
+  `/admin/api/design-import/*` routes authenticated nothing — and made a missing `Origin`
+  consult `Sec-Fetch-Site` instead of passing unconditionally.
+- ~~**`insertImportedNodes` writes nodes no source write follows** (`mcp-21`)~~ — **done,
+  `store-13` (#171).** It REFUSES on a studio tree, by name, and the refusal reaches both the
+  modal and the tool. A source insert was genuinely unavailable: only two of the importer's
+  ~15 target modules implement `sourceIntrinsic`, and the `<style>` half of the payload targets
+  a different file. `pasteNode` became a real source duplicate in the same change.
+- ~~**CRLF-safe parsing for USERS' repos** (`server-24`)~~ — **done, `parser-13` (#169).** One
+  seam, not dozens of newline literals: `EolPreservingFileSystem` normalises to LF on read and
+  re-applies the file's own dominant ending on write, so every ts-morph and postcss codemod is
+  fixed at once. `verbatimSourceText` had to move off `node:fs` or every structural edit in a
+  Windows checkout would have refused as `stale-source`.
 - **Playwright cannot start the stack on Windows** (`verify-01` finding 3): `webServer` spawns
   `bun run e2e:dev` and Vite never binds on 5174 (4/4); by hand it comes up in ~25 s. Workaround
-  today is `E2E_REUSE_SERVER=1` against a hand-started server.
+  today is `E2E_REUSE_SERVER=1` against a hand-started server. **`verify-2`'s, still open.**
 - **The perf spec has no corpus on a clean checkout** (`verify-01` finding 1):
   `studio-workspace/maherfayad-stack-eSIM` is untracked, so `studio-board-perf.e2e.ts` self-skips.
   Repoint it at a tracked board of **at least 9 frames** — below that the mount pool keeps every
-  frame mounted and there is no mount left to measure.
+  frame mounted and there is no mount left to measure. **`verify-2`'s, still open.** `perf-9`
+  took its nine-frame measurement by temporarily widening `studio-workspace/test4` to 12 frames,
+  which is the cheapest path until the corpus is tracked.
 - **e2e dirties `test4`** (`verify-01` finding 4): `auth.setup.ts` rewrites `lastOpenedAt` and
-  `prototype/*`. Point the setup at a throwaway copy.
-- **Select a source-backed duplicate/insert after resync** (`keys-01` K7 follow-up): needs
-  `commitStructural` to report the created node ids; ⌘D selects on the in-memory path only.
-- **`FillSection` Mixed re-wiring** (`panel-36`): the section dropped its `isMixed` handling on a
-  then-true premise. It under-states rather than lying; the row-by-row table is
-  `docs/features/inspector.md` §9.3.
-- **`compare.test.ts:370`** carries the stale arity `readPassingCompare(dir, pageId)` — missing
-  `userKey` (`mcp-22`).
-- **`parityMatrix` gap** (`test-05`): `studio_plan_variants` and `studio_import_figma_frame` have
-  no canvas-parity row. A real content gap, not a test bug.
-- **`deploy.ts` reads the trust tier off the APP ROOT** while `devServer.ts` and
-  `referenceRender.ts` read the project dir, so a monorepo can never deploy (`sec-12`,
-  fail-closed, pre-existing).
+  `prototype/*`. Point the setup at a throwaway copy. **`verify-2`'s, still open.** `verify-3`
+  shipped `tests/e2e/helpers/studioFixtureProject.ts`, which copies the fixture per CASE for its
+  own spec; de-duplicating `studio-feel.e2e.ts`'s private copies onto one helper is the merge
+  job that comes with `verify-2`.
+- ~~**Select a source-backed duplicate/insert after resync** (`keys-01` K7 follow-up)~~ —
+  **done, `store-13` (#171).** The four creating codemods return a `CreatedJsxLocation` verified
+  against the re-parsed file, the save route answers `createdNodeIds`, and the editor claims them
+  on both re-read paths. Integration extended it to `transplant` (#172's cross-frame move), whose
+  created element lands in the DESTINATION file.
+- ~~**`FillSection` Mixed re-wiring** (`panel-36`)~~ — **done, `panel-38`.** Re-wired row by row
+  through the one multi-select model, and the audit it asked for found the same dropped-sentinel
+  pattern in Layer, Shadow and Blur. Shadow was not under-stating: `String(MIXED)` put
+  `Symbol(studio-mixed-value)` in a raw field offering to write it to disk. The row-by-row table
+  is `docs/features/inspector.md` §9.3. Still open from that audit: `node.hidden`/`node.locked`
+  in Layer toggle the ANCHOR only under a multi-selection — a structural fan-out gap needing a
+  store action over N ids, not a Mixed one.
+- ~~**`compare.test.ts:370`** carries the stale arity `readPassingCompare(dir, pageId)`~~ —
+  **done, `mcp-24` (#168).** Both call sites derive the `userKey`. The missing argument had also
+  made its "does NOT record a failing verdict" sibling pass for entirely the wrong reason.
+- ~~**`parityMatrix` gap** (`test-05`)~~ — **done, `mcp-24` (#168).**
+  `studio_import_figma_frame` got a row; `studio_plan_variants` genuinely has no canvas path and
+  now says so on the TOOL, through a new `AiTool.headlessOnly` field the gate and the docs both
+  read. No allowlist was added to the test.
+- ~~**`deploy.ts` reads the trust tier off the APP ROOT**~~ — **done, `server-25` (#166).**
+  `checkTrustTier`/`requireTrustTier` take a `projectDir` and `deployJobs.ts` stopped writing a
+  second `.studio/meta.json` inside the user's own app.
+
+### Wave 3 — candidates
+
+Collected from the wave-2 handoffs. Each names the entry that found it.
+
+- **The four Phase-0 defects `verify-3` (#173) machine-proved**, in its own priority order:
+  (a) the group shortcut wraps inline `<span>`s inside a `<p>` in a `<div>` — invalid markup in
+  the user's repo and a React hydration error (`struct-10`); the wrapper tag must follow the HTML
+  content model, and a second group after an ungroup must work. (b) five rapid duplicate presses
+  write ONE copy, because the concurrency guard refuses presses 2–5 (`store-11`/`store-12`) —
+  structural writes must QUEUE and coalesce, not refuse. (c) the inspector has no error boundary
+  of its own, so a panel throw takes out canvas and panels together (`store-12` Z2);
+  `PanelCrashProbe.tsx` is in the tree for it. (d) selection after duplicate/group — #171 should
+  have closed this; re-run the spec and flip `test.fail()` off where green.
+- **Undo for the structural family** (`canvas-20` landmine 10): cross-frame drag, file drop,
+  duplicate, insert, wrap and group write source with no history entry, so "one undo is one step"
+  is not met. Needs #171's created ids plus a structural history entry that can name TWO files.
+- **`relocatedNodeIds`** (`store-13`): `move`/`reparent` still lose the selection after a resync
+  — the same mechanism as `createdNodeIds`, one field over. Plus a product call on what
+  `ungroup` should select.
+- **The three inspector density levers with their measured numbers** (`panel-39`,
+  `docs/features/inspector.md` §6): `WriteTargetRow` duplicates ClassPicker's pill stack
+  (−40px everywhere), folding unset module props (−72px on F4, but it collides with
+  `visual-builder` and `reliability` e2e), pairing Layout's align pad with the gap fields
+  (−84px on F3).
+- **Layer hidden/locked over N ids** (`panel-38`): a store action for the fan-out, not a Mixed fix.
+- **Filter `site_*` write tools out of a Studio-scoped connector** (`store-13`): the CMS
+  toolset's system prompt still tells the model to use `site_insert_html`, which now refuses.
+- **`subPaths: true` is not fail-closed on a GET** (`sec-16`): a new GET under `deploy/` or
+  `dev-server/` inherits `site.read`, the capability the Client role holds. The real fix is exact
+  entries plus a dynamic-id marker, and it rewrites the arch gate's literal scan.
+- **`readRemotes` redaction** (`sec-16`): a repo cloned outside Studio can carry a
+  credential-bearing remote URL in `.git/config`, readable at `site.read`.
+- **`installJobStore.ts` still writes `.studio/install-job.json` at the APP ROOT** (`sec-15`) —
+  the last sidecar of the class #166 fixed, one level over. And `createPrivateTempDir` for
+  `mcpServerSecretStore.ts`, whose 0600/0700 is POSIX-only (`server-25`).
+- **`isWritableSourceRel` is lexical, not realpath-aware** (`sec-17`): the transplant's own
+  consequence is closed, the underlying property is not.
+- **`deployRunner.ts`/`deployProviders.ts` split subprocess stdout on a bare newline**
+  (`parser-13`): a Windows `vercel`/`netlify` CLI emits CRLF; `splitLines` exists now.
+- **The whole-tree architecture scans need one cached file walk or an honest timeout**
+  (`panel-39`): `ai-driver-isolation` times out at 22 s ALONE on this checkout, which is the one
+  load-sensitive red that is not really about load.
+- **An `e2e:dev` restart-on-exit supervisor** (`perf-9`): Bun 1.3.6 segfaults running Vite on
+  this box and takes the stack down mid-run, producing `ERR_CONNECTION_REFUSED` failures that
+  read exactly like product bugs.
+- **G8 automated against a throwaway private GitHub repo** — `gh auth status` reports a token
+  with `repo` scope, so an agent can create and delete a private scratch repo and drive G1–G7
+  end to end. `GITHUB_OAUTH_CLIENT_ID` is not set, so the device flow stays human-only.
+- **Whether Admin should hold `studio.git.write`** (`sec-14`) — owner-level, document only.
 
 ## 8. Definition of done for the plan
 

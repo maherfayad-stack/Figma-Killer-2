@@ -32,6 +32,7 @@
  * the same posture `insertJsxIntoSlotProp` takes on an ambiguous slot.
  */
 import { writeFileSync } from 'node:fs'
+import { applyLineEnding, detectLineEnding, toLf } from '@core/utils/lineEndings'
 import { join } from 'node:path'
 import { IndentationText, Node, Project, QuoteKind, type ObjectLiteralExpression } from 'ts-morph'
 import { readTextCapped } from './cappedFileRead'
@@ -88,7 +89,11 @@ function writeDictionaryFile(
     // 2-space, single-quote style rather than ts-morph's 4-space default.
     manipulationSettings: { quoteKind: QuoteKind.Single, indentationText: IndentationText.TwoSpaces },
   })
-  const sourceFile = project.createSourceFile('dictionary.tsx', text)
+  // The dictionary is a file in the user's repo, so it keeps its own line
+  // ending: parse LF-only (ts-morph prints the nested objects it creates with
+  // `\n`) and restore the file's ending at the single write below.
+  const eol = detectLineEnding(text)
+  const sourceFile = project.createSourceFile('dictionary.tsx', toLf(text))
   const root = findLocaleRootLiteral(sourceFile, localeKeys)
   if (!root) return { ok: false, message: 'Studio could not find the locale table in the dictionary file.' }
 
@@ -125,7 +130,7 @@ function writeDictionaryFile(
     parent.addPropertyAssignment({ name: leafName, initializer: stringLiteral(value) })
   }
 
-  writeFileSync(absFile, sourceFile.getFullText(), 'utf8')
+  writeFileSync(absFile, applyLineEnding(sourceFile.getFullText(), eol), 'utf8')
   return { ok: true }
 }
 

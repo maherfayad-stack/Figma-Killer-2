@@ -20,6 +20,7 @@
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
+import { setPendingCreatedSelection } from './pendingCreatedSelection'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { postEdits, type InsertPropValue } from './studioSaveRequests'
 
@@ -174,6 +175,56 @@ export async function commitStudioReparent(reparent: {
       },
     ],
     'Move refused',
+  )
+}
+
+/**
+ * D2 G3 — an element leaving the file it is written in and landing in a
+ * container in another one: the commit behind a drag that crossed a frame
+ * boundary.
+ *
+ * ONE edit, not a delete plus an insert. Two edits would be two writes the
+ * batch could land half of, and the second one has no markup to insert —
+ * the element's own source text only exists in the file the first one just
+ * removed it from. `transplantJsxElement` reads both ends, refuses before
+ * writing either, and writes both.
+ *
+ * Nothing is moved on the canvas first, for `commitStudioDuplicate`'s reason
+ * one step further: the element's id IS its `rel:line:col`, so the node that
+ * appears in the destination frame is a DIFFERENT node from the one that left
+ * the origin frame, and no optimistic tree edit could mint it. The resync
+ * covers both files (the batch reports both as touched), so the two frames
+ * update together.
+ *
+ * The success toast is pushed here for the same reason the duplicate's is:
+ * until the write lands there is nothing on screen to report.
+ */
+export async function commitStudioTransplant(transplant: {
+  nodeId: string
+  parentNodeId: string
+  anchorNodeId: string | null
+  position: 'before' | 'after'
+  copy: boolean
+  /** What the toast says the element landed in — the destination page's own title. */
+  destinationLabel: string
+}): Promise<void> {
+  await commitStructural(
+    [
+      {
+        kind: 'transplant',
+        nodeId: transplant.nodeId,
+        parentNodeId: transplant.parentNodeId,
+        ...(transplant.anchorNodeId
+          ? { anchorNodeId: transplant.anchorNodeId, position: transplant.position }
+          : {}),
+        ...(transplant.copy ? { copy: true } : {}),
+      },
+    ],
+    'Cannot move this between frames',
+    {
+      title: transplant.copy ? 'Copied into another frame' : 'Moved into another frame',
+      body: `Written to ${transplant.destinationLabel}.`,
+    },
   )
 }
 
@@ -496,6 +547,22 @@ async function commitStructuralBody(
           : 'The code no longer has an element at the position the canvas was showing.',
       })
     }
+    // `store-13` — what this write CREATED, claimed by the re-read below.
+    //
+    // Set BEFORE the resync, not after, because the narrow path applies its
+    // patch synchronously inside `resyncBoardAfterWrite` (it dispatches an
+    // admin event that `usePersistence` handles on the spot) — an answer left
+    // until afterwards would arrive one beat too late. Set on EVERY landed
+    // write, including the ones that create nothing: an empty list clears the
+    // slot, so a move can never inherit the copy a duplicate left behind.
+    //
+    // `insert`/`duplicate`/`wrap`/`group` are the only kinds that fill it, and
+    // on a studio-imported tree they are only ever reached from an editor
+    // gesture or an agent tool that has already navigated the canvas to the
+    // node it is editing. There is no user selection to steal either way: the
+    // resync re-mints every id the write shifted, and `patchPages` drops a
+    // selection that no longer resolves.
+    if (willReload) setPendingCreatedSelection(result.createdNodeIds ?? [])
     // trap #5 — reload only when a write actually landed. Nothing reaching
     // disk means there is nothing to resync FROM; reloading anyway would
     // replace whatever the canvas is currently (optimistically) showing with

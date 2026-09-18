@@ -109,6 +109,21 @@ cases its own header. Emptiness is still judged **across every context**,
 not just the active breakpoint — a value living on another tab is still the
 user's own work and must never be hidden behind a `+`.
 
+**Layout is the one section that rests as a *collapsed disclosure* rather
+than an empty header, and that is deliberate (`STATE.md` panel-39).** The
+law's "no chevron, no body" clause is about a section with nothing behind it.
+Layout on a plain block is not that: `overflow` ("Clip content"), padding,
+margin and the item-level `flex`/`gridColumn`/`gridRow` are real, working CSS
+on any element regardless of its own `display`, and `Section`'s `empty` prop
+would delete them. So Layout rests at **one row** like every other unused
+section — a title, an "Add auto layout" `+`, and an indicator dot if anything
+it claims IS set — but its chevron discloses a real body in one click. The
+cost of getting this wrong was measured: rendering that body unconditionally
+was 199px on every selection with no layout at all, the single largest line
+item in the Design tab's overflow of its 900px budget (§6). This exception is
+for a section whose controls apply to every node; a section that genuinely
+has nothing to show still takes `empty`.
+
 **"Nothing is applied" means nothing STORED — Fill is the one section (so
 far) where that alone is not the whole story.** `STATE.md` `panel-30`: a
 node whose `background-color` resolves through an ambient/global CSS rule
@@ -204,9 +219,11 @@ id because the panel remounts on every selection change.
 
 ### Law 5 — The mode chooses the fields (F3, F4, F6, F7, F29)
 
-A frame with no auto-layout shows W/H and Clip content. Turn on vertical
-auto-layout and the align pad, gap and padding appear. Switch to grid and the
-track cell replaces the align pad. Nothing is disabled-but-visible; it is absent.
+A frame with no auto-layout shows W/H, and Clip content one click inside the
+collapsed Layout row (Law 1's own exception, above). Turn on vertical
+auto-layout and the section opens with the align pad, gap and padding.
+Switch to grid and the track cell replaces the align pad. Nothing is
+disabled-but-visible; it is absent.
 
 This already held for `display: flex | grid` (`LayoutSection.tsx`) and for
 `position` offsets (`PositionSection.tsx`). **This law is already law here.**
@@ -873,8 +890,8 @@ P3's last item folded the remaining "no Penpot home" concerns into their own
 `INSPECTOR_SECTIONS` manifest entries — the same one-continuously-scrolling
 column every other section renders in, no separate tab. **S5 then moved four
 of them off the Design tab's always-mounted height**, because none of them is
-something a designer reaches for often enough to pay 164px for on every
-selection (see §6):
+something a designer reaches for often enough to pay 152px for on every
+selection (164px before panel-39 moved the section gap to 8px — see §6):
 
 | order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
@@ -1202,21 +1219,23 @@ edge, not an oversight.
 
 ## §6. The measurement gate
 
-> **Closed** (`STATE.md` `panel-27`, Track P's P6). This section used to
-> describe a pre-P3 panel — a category rail (`--inspector-rail-w`,
-> `StyleCategoryRail`) beside a `StyleSectionsEditor` call, and a budget table
-> keyed by the OLD category names (Position/Size/Layout/Appearance/
-> Typography/Fill/Stroke/Effects). Both are gone from the single-node
-> surface: P1 deleted the rail entirely (`SelectorInspector.tsx`'s separate
-> ambient/global surface is the only place `StyleCategoryRail` still mounts),
-> and P3 replaced the category registry with the
-> `INSPECTOR_SECTIONS` manifest (`src/admin/pages/site/inspector/sections/
-> index.ts`) `StyleSurface.tsx` mounts as one continuous scroll. Rewritten
-> below against that current reality, with real measured numbers — not the
-> old table's, and not guessed. S5 (WS-14.5) then cut 164px of always-mounted
+> **Closed** (`STATE.md` `panel-27`, Track P's P6), then re-measured twice.
+> This section used to describe a pre-P3 panel — a category rail
+> (`--inspector-rail-w`, `StyleCategoryRail`) beside a `StyleSectionsEditor`
+> call, and a budget table keyed by the OLD category names (Position/Size/
+> Layout/Appearance/Typography/Fill/Stroke/Effects). Both are gone from the
+> single-node surface: P1 deleted the rail entirely
+> (`SelectorInspector.tsx`'s separate ambient/global surface is the only
+> place `StyleCategoryRail` still mounts), and P3 replaced the category
+> registry with the `INSPECTOR_SECTIONS` manifest
+> (`src/admin/pages/site/inspector/sections/index.ts`) `StyleSurface.tsx`
+> mounts as one continuous scroll. S5 (WS-14.5) cut 164px of always-mounted
 > Design-tab height and gave the 900px number a spec — which, when it was
-> finally run (panel-37), showed the number is still **334–564px out of
-> reach**. Both facts are below; the gate ratchets the measured heights.
+> finally run (panel-37), showed the tab was still **334–564px out of
+> reach**. panel-39 is the density pass that answered it: the overflow is
+> now **0 / 198 / 191 / 55px** on F1–F4, the gate asserts one real budget
+> instead of four ratchets, and what is left is named, measured, and
+> attributable to populated sections.
 
 Do not start a density change without a baseline, and do not close one without
 a re-measure. Fabricated height numbers are how a density plan drifts.
@@ -1228,7 +1247,7 @@ environment builds a DOM but does not lay it out — `scrollHeight`/
 full explanation):
 
 - **`src/__tests__/inspector/measurement.test.ts`** (`bun test`, static) —
-  asserts the manifest shape (15 entries, in order, `order` 0–14 with no gaps
+  asserts the manifest shape (16 entries, in order, `order` 0–15 with no gaps
   or dupes, plus which entries carry `tabs`/`designGroup`), the frozen
   `--inspector-*` token table (`--inspector-row-h`/`--inspector-header-h` =
   32px each, no `clamp()`/`vw`, no section CSS module reaching back into the
@@ -1237,24 +1256,26 @@ full explanation):
   own minimal/collapsed-state row count, read from its source — now summed
   into a **Design-tab total** for the F2 text fixture.
 - **`tests/e2e/inspector-height.e2e.ts`** (Playwright) — WS-14.5, the real
-  half: a **measured per-fixture ceiling** on the Design tab's `scrollHeight`
-  at 900px for all four baseline fixtures (F1 rectangle, F2 text, F3 flex
-  board, F4 image), plus a check that the four Studio-extras sections are
-  folded at rest and one click reaches them. It writes the MEASURED per-
-  section height table — and the live overflow against the 900px target — to
-  `docs/audits/penpot-inspector-baseline/05-section-heights.json`. Every
-  locator in it is scoped to the ACTIVE Design tab
-  (`[data-inspector-tab="design"]:not([hidden])`); see "The Design tab does
-  not fit 900px" below for why that matters and what the ceiling replaced.
+  half: **one budget** — the room the docked panel has at a 900px window,
+  read at runtime as `clientHeight` — asserted against the Design tab's own
+  `contentHeight` for all four baseline fixtures (F1 rectangle, F2 text,
+  F3 flex board, F4 image), plus two structural tests that pin the folds that
+  budget depends on (the four Studio-extras sections behind one More
+  disclosure; Layout as one row until a layout exists). It writes the
+  MEASURED per-section height table — and the live overflow against the 900px
+  target — to `docs/audits/penpot-inspector-baseline/05-section-heights.json`.
+  Every locator in it is scoped to the ACTIVE Design tab
+  (`[data-inspector-tab="design"]:not([hidden])`); see "The 900px budget"
+  below for why that matters and what the budget replaced.
 - **`tests/e2e/inspector-panel-measurement.e2e.ts`** (Playwright) — the older
   gate, still live and measuring different things: row rhythm, the 260px
   width invariant, and click counts, at its own tall viewport.
 
-### The Design tab does not fit 900px — the measured gap (panel-37)
+### The 900px budget, and the 344px panel-39 gave back
 
-**S5 wrote the gate above and never ran it** (`STATE.md` panel-36 says so in
-as many words). Its first real execution, during wave-1 integration, found
-two different things:
+**S5 wrote the gate and never ran it** (`STATE.md` panel-36 says so in as many
+words). Its first real execution, during wave-1 integration, found two
+different things:
 
 1. **A scoping bug in the spec.** It asked the whole document for
    `[data-section-id="transform"]` and expected 0. `InspectorShell` mounts all
@@ -1263,42 +1284,129 @@ two different things:
    `transform`/`animations`/`interaction` declare `tabs: ['design',
    'prototype']`, so the Prototype tab's hidden copy satisfied the locator.
    Fixed in the spec, not the shell: an assertion about the Design tab must
-   say so. `InspectorShell` now carries a `data-inspector-tab` attribute
+   say so. `InspectorShell` carries a `data-inspector-tab` attribute
    (additive, queryable-only, same posture as `data-section-id`) so callers
    scope with `[data-inspector-tab="design"]:not([hidden])` instead of relying
    on which tabs happen to be mounted.
 
-2. **The 900px claim is false.** Measured at 1400×900 on the docked panel, the
-   Design tab's scroll container has **626px** of room — which is the honest
-   "900px minus chrome" figure: 36 (admin top bar) + 36 (`PanelHeader`) + 47
-   (tab strip) + 88 (node header) + 67 (ClassPicker) = 274px, and `.surface`'s
-   own box reaches the window's bottom edge. Against that:
+2. **The 900px claim was false.** Measured at 1400×900 on the docked panel,
+   the Design tab's scroll container had **626px** of room against
+   `scrollHeight`s of 960 / 1190 / 1013 / 1043px — 334–564px over.
 
-   | Fixture | `scrollHeight` | Room | Over by |
-   |---|---:|---:|---:|
-   | F1 rectangle | 960 | 626 | **334** |
-   | F2 text | 1190 | 626 | **564** |
-   | F3 flex board | 1013 | 626 | **387** |
-   | F4 image | 1043 | 626 | **417** |
+#### What panel-39 changed, with the measured number for each
 
-   Folding the four Studio extras away is worth 164px. The gap is 334–564px.
-   No chrome tuning closes it, and re-deriving the room a second way only
-   restates 626.
+Four changes, no capability removed and nothing more than one click away:
 
-So the gate asserts a **ratchet** — today's measured `scrollHeight` per
-fixture, +24px of cross-machine slack — instead of a fit that does not happen.
-It still goes red on exactly the regression it was built for: un-folding the
-More disclosure pushes F1 from 960 to 1093, past its 984 limit, and the scoped
-`toHaveCount(0)` catches the same change independently. The 900px target is
-not dropped — every run records `clientHeight` and the live `overflowPx` into
-`05-section-heights.json`, and that file's own "Where F2's 1190px goes" table
-names the three largest contributors: `layout` costing 199px on a node with no
-layout (a Law 1 violation `LayoutSection.tsx`'s own doc currently defends), the
-unbudgeted 158px Module block, and a duplicated `padding-bottom:
-var(--space-7xl)` on both `.surface` and `.surfaceContent`. Closing it is a
-density work order, not a gate fix.
+| Change | Where | Measured |
+|---|---|---:|
+| Layout rests as one row until a layout exists | `LayoutSection.tsx` | **−167px** on F1/F2/F4 |
+| `padding-bottom: var(--space-7xl)` de-duplicated off `.surfaceContent`, both container paddings frozen to `--inspector-space-m` | `StyleSurface.module.css` | **−63.6px** everywhere |
+| Between-section gap 12px → Figma's/Penpot's measured 8px | `.surfaceContent` gap | **−44px** on F2 |
+| `FrameSizePanel` moved to the nothing-selected state; tab strip block padding trimmed | `PropertiesPanelBody.tsx`, `InspectorShell.module.css` | **+92px of room** |
 
-**What S5 did buy, and what the old claim was.** The old F28 claim
+The audit's own chrome table had one band mislabelled, and correcting it is
+what made the fourth row possible: the 88px it called "node header (title +
+breadcrumb)" is `FrameSizePanel`, the board FRAME's device preset and W/H.
+The node title lives inside `PanelHeader`'s own 36px. `FrameSizePanel` was
+rendering above every single-node selection, four rows above the unrelated
+W/H pair `MeasuresSection` draws for the node itself.
+
+| Band | panel-37 | panel-39 |
+|---|---:|---:|
+| admin top bar | 36 | 36 |
+| `PanelHeader` (incl. the node title) | 36 | 36 |
+| `InspectorShell` tab strip | 47 | 43 |
+| `FrameSizePanel` | 88 | 0 |
+| `headerClassPicker` | 67 | 67 |
+| **chrome** | **274** | **182** |
+| **room for the Design tab** | **626** | **718** |
+
+#### Where it landed
+
+| Fixture | `contentHeight` | Room | Over | Was |
+|---|---:|---:|---:|---:|
+| F1 rectangle | 690 | 718 | **0** (28px spare) | 334 over |
+| F2 text | 916 | 718 | 198 | 564 over |
+| F3 flex board | 909 | 718 | 191 | 387 over |
+| F4 image | 773 | 718 | 55 | 417 over |
+
+`contentHeight`, not `scrollHeight`: `scrollHeight` is
+`max(clientHeight, content)`, so it reports the room itself for a tab that
+fits and can show neither headroom nor a fitting fixture creeping back toward
+the limit. The gate measures the flow's own box plus the scroll container's
+padding instead.
+
+#### What the residual is, and why it is not closable here
+
+Every remaining pixel is a **populated** section — a value the user's own
+source sets, rendered once, at the 32px row height Penpot measures
+(`04-token-gaps.md`):
+
+- **F2 (text), 198 over.** Its Text section is 197px (family; weight+size;
+  line-height+letter-spacing; align — Figma's own four rows) and its Module
+  block 158px (the node's `text` content editor, 90px, plus its `tag` row).
+  Both are the node's actual values.
+- **F3 (flex board), 191 over.** Its Layout section is 329px, all of it a real
+  flex container's settings: mode row, flow, the 3×3 align pad, row/column
+  gap, padding, margin, clip content.
+- **F4 (image), 55 over.** Its Module block is 252px: a 104px image picker
+  plus `loading` / `fetchPriority` / `decoding` rows.
+
+Closing any of those means collapsing a section that has values in it, which
+is a different decision from the density work and is not made here. The three
+levers, each with its measured number, are in "Open density levers" below.
+
+#### The gate: one budget, stated once
+
+`tests/e2e/inspector-height.e2e.ts` no longer pins four per-fixture ceilings.
+It asserts **the room the panel actually has** — `clientHeight`, read at
+runtime off the same element it is judging, so reclaiming chrome moves the
+budget by itself — plus exactly one named allowance,
+`POPULATED_SECTION_OVERFLOW_PX` (210), for the one cause above. Raising that
+number means declaring a new cause in this section, in the same change.
+
+Because one uniform allowance cannot also be a tight per-fixture ratchet, the
+two regressions that produced the original overflow are pinned as
+**structure** instead of as magic numbers, in two further tests:
+
+- the four Studio-extras sections are folded behind one More disclosure at
+  rest, and one click reaches all four (worth 152px);
+- Layout renders no body on a node with no layout, offers "Add auto layout",
+  discloses its whole body in one click, and a flex container still renders
+  that body at rest (worth 167px).
+
+The per-fixture numbers stay in
+`docs/audits/penpot-inspector-baseline/05-section-heights.json` as data,
+never as thresholds, alongside a per-`data-section-id` table that now
+includes the **Module block** — `StyleSurface.tsx` gives it
+`data-section-id="module"` precisely because being outside the manifest is
+why it went unbudgeted until panel-37 measured it.
+
+#### Open density levers, with numbers
+
+Not done here, each named so the next pass starts from a measurement rather
+than a guess:
+
+1. **The write-target row duplicates the ClassPicker's pill stack** — 32px
+   plus a gap, 40px on every selection. `WriteTargetRow` lists the element's
+   class chips + `style=` read-only, with lock reasons and the default
+   target; `ClassPicker`'s `SelectorPillStack`, 40px above it, lists the same
+   chips interactively. Merging the two facts onto one row is worth 40px AND
+   removes the panel's own version of the ambiguity WS-6.2 exists to fix.
+   It was left alone here because it is a behaviour change to the write
+   target, not a density change.
+2. **Module props the source does not set are pre-drawn** — Law 3 says
+   optional fields are added, never pre-drawn. Folding the prop rows whose
+   key is absent from `selectedNode.props` behind one disclosure inside the
+   Module block is worth ~72px on F4 and would put it inside the budget. It
+   needs its own dogfood: `renderModuleTabContent` is shared with the VC
+   param-promotion surface, and `tests/e2e/visual-builder.e2e.ts` /
+   `reliability.e2e.ts` both drive `property-control-*` rows directly.
+3. **Layout stacks what Figma pairs** — the 3×3 align pad and the gap fields
+   sit on separate rows, as do padding and margin. Figma puts each pair side
+   by side. Worth ~84px on F3.
+
+**What S5 bought, and what the old claim was.** The old F28 claim
 ("a text node's entire inspector… fits in one 900px viewport with no scroll")
 was measured against **seven** pre-P3 categories. P3 item 11 (`STATE.md`
 `panel-25`, "Studio extras") added six more always-mounted sections nobody
@@ -1306,26 +1414,32 @@ had budgeted for, and `fix/inspector-spacing-audit`'s real between-section
 gap grew it further: the F2 text node measured **~1826px** at that spec's own
 2100px-tall viewport. S5 did not shrink a single control to fix that. It moved
 `transform`/`animations`/`interaction`/`customProperties` behind one collapsed
-**More** disclosure and deleted the retired `attributes` code outright, which
-removes **164px** of always-mounted Design-tab height — computed from the
-frozen tokens and asserted in the static half:
+**More** disclosure and deleted the retired `attributes` code outright —
+computed from the frozen tokens and asserted in the static half:
 
-| | Design-tab sections, F2 text, at rest |
+| Design-tab sections, F2 text, at rest | px |
 |---|---:|
-| 11 inline sections + 4 Studio extras inline | **920px** |
-| 10 inline sections + 1 collapsed `More` header | **756px** |
+| 11 inline sections + 4 Studio extras inline (pre-S5) | 920 |
+| 10 inline sections + 1 collapsed `More` header (S5) | 756 |
+| …at panel-39's 8px section gap | 716 |
+| …with Layout collapsed until a layout exists (panel-39) | **612** |
 
-`docs/audits/penpot-inspector-baseline/05-section-heights.md` carries the
-full per-section table, both computed and measured, and explains why neither
-replaces the other.
+The More fold is worth **152px** at the 8px gap (it was 164 at 12px — three
+fewer gaps × 4px); collapsing Layout is worth a further **104px** in this
+computed model and a measured **167px** in a real browser, because the real
+body carries a flex/grid block and a settings row a row count does not try to
+predict. `docs/audits/penpot-inspector-baseline/05-section-heights.md`
+carries the full per-section table, both computed and measured, and explains
+why neither replaces the other.
 
-**The panel chrome is not in that number and cannot be.** The write-target
-chip row, ClassPicker, the Module block, and `.surface`'s own padding are
-fluid `--space-*` values with no fixed px, so no static sum can see them.
-That is exactly why the height assertion is a Playwright spec measuring the
-real scroll container, not an arithmetic claim — and it is how panel-37 found
-that the chrome is 274px and the Module block alone is another 158px on a
-text node, neither of which the 756px computed total has ever contained.
+**The panel chrome is not in that number, and one part of it now is.** The
+write-target chip row, ClassPicker and `.surface`'s own padding have no fixed
+row count for a static sum to see — which is exactly why the height assertion
+is a Playwright spec measuring the real scroll container rather than an
+arithmetic claim. The Module block used to be in that list and is not any
+more: it carries `data-section-id="module"`, so it appears in the measured
+artefact's per-section table (158px on a text node, 252px on an image) and
+can no longer grow unnoticed by both gates at once.
 
 **The width invariant still holds, verbatim in spirit.** Every section
 shrinks or truncates rather than overflowing its column — the e2e spec
@@ -1545,11 +1659,13 @@ bespoke sections built on it) gets Mixed placeholders for free.
 cell through `readString` used to see `undefined` for `MIXED` and render its
 ordinary *unset* state — an empty field, an unpressed toggle group — which is
 indistinguishable from "nobody set this" and one keystroke from flattening a
-disagreement the user was never shown. Two helpers in `styleValueUtils.ts`
+disagreement the user was never shown. Three helpers in `styleValueUtils.ts`
 close it: `pickMixedString` (the cell read that PRESERVES the sentinel, used
-by the corner/side clusters in Appearance and Stroke) and `isMixedStyleValue`
-(is this field's stored cell mixed, or its effective one when nothing is
-stored — the placeholder layer). Every section is wired:
+by the corner/side clusters in Appearance and Stroke), `pickMixedCell` (the
+same read typed for `ClassPropertyRow`'s `value`, which replaced the
+`as string | number` casts that type-laundered a Symbol into a value), and
+`isMixedStyleValue` (is this field's stored cell mixed, or its effective one
+when nothing is stored — the placeholder layer). Every section is wired:
 
 | Section | Mixed surface |
 |---|---|
@@ -1559,17 +1675,52 @@ stored — the placeholder layer). Every section is wired:
 | Size | W/H and every revealed constraint (`AddablePropertyField` already took `MIXED`) |
 | Typography | text-align and vertical-align groups; every other row via `StackedPropertyGrid` |
 | Appearance | opacity, and all five corner-radius fields |
-| Fill | the entry stays (it used to vanish) and reads "Mixed"; its editor is a mixed `ColorValueInput` |
 | Stroke | weight, colour, style, and stroke position |
+| Fill · Layer · Shadow · Blur | the four `PropertyList` sections — see the table below |
 
 `String(MIXED)` was the other half of the bug: `hasStyleValue` is true for a
 Symbol, so Position and Size would have printed `Symbol(studio-mixed-value)`
 into their fields. Both now test `isMixed` before stringifying.
 
-**Deliberately not given a Mixed state:** `AlignGrid`'s 3×3 and Clip content's
-checkbox. Neither primitive has an indeterminate affordance, and inventing one
-for a 9-cell grid is a design decision, not a wire-up. Both render unset, as
-before.
+**Deliberately not given a Mixed state:** `AlignGrid`'s 3×3, Clip content's
+checkbox, and Layer's CSS-visibility eye. None of those primitives has an
+indeterminate affordance, and inventing one for a 9-cell grid is a design
+decision, not a wire-up. All three render unset; the eye names the
+disagreement in its accessible label instead, and clicking it agrees every
+selected layer, which is the Figma contract for a mixed field.
+
+#### The four `PropertyList` sections (`panel-38`)
+
+Fill, Layer, Shadow and Blur are the sections whose body is a **list of rows
+derived from a value**, not a fixed grid of fields. They shipped with the
+sentinel dropped, and each failed a different way — a row can *disappear*
+here, which a grid of fields cannot do:
+
+| Section | What it did before | What it does now |
+|---|---|---|
+| **Fill** — Text / Solid fill | The row VANISHED (`readString` → `undefined` → not stored → not shown) | The row stays; its `ColorValueInput` reads "Mixed" and its `%` opacity cell is dropped (no single alpha channel to show, and `ColorOpacityField` has no mixed state) |
+| **Fill** — Content fit | Trailing value blank | Trailing value reads "Mixed"; the popover's `ClassPropertyRow`s carry the sentinel to their own controls |
+| **Fill** — background layers | `parseBackgroundLayers` read the Symbol as "no layers", so the stack silently vanished | ONE row reading "Mixed" replaces the per-layer rows — there is no shared stack, so there is no layer to number, reorder, or blend. Its popover is `BackgroundDeclarationsBody`, which writes `background-image` and each satellite **whole**. The two layer-add buttons disable: "insert at index 0" over a list that does not exist is a replace wearing an add's icon |
+| **Fill** — a satellite alone | Read as the CSS initial | A stack the layers AGREE on keeps its per-layer rows; only the disagreeing satellite goes whole-declaration, because splicing index N of a list nobody shares would write the initial into every *other* layer of every selected node |
+| **Fill** — `background` shorthand | The row VANISHED | The row stays; its raw field reads "Mixed" |
+| **Layer** — opacity | `toPercentString` collapsed the Symbol before `resolveStyleFieldDisplay` (which already knew `MIXED`) could see it, so five opacities read the `100%` fallback | The sentinel passes through untouched and the `ScrubInput` reads "Mixed" |
+| **Layer** — blend mode | Trigger read "Blend mode" as if unset; the menu ticked `normal` | Trigger reads "Blend mode: Mixed"; no menu option is claimed |
+| **Layer** — CSS visibility | Read "not hidden" | The label names the disagreement (see the deliberate-omission note above) |
+| **Shadow** | **Lied.** `String(MIXED)` is a legal expression, so `parseShadowValue` answered `{ kind: 'raw', raw: 'Symbol(studio-mixed-value)' }` — a raw text field showing that string and offering to write it to the user's stylesheet | `parseShadowValue` takes `Mixed` and answers a fourth arm, `{ kind: 'mixed' }`, which the compiler forces every consumer to handle. One row per property reads "Mixed"; its popover writes the whole declaration to all N; the matching add-menu items disable |
+| **Blur** | NO row at all, under a `Section` Law 1 had already forced open — a populated section with an empty body, and "Add layer blur" still enabled beside it | One row per property reads "Mixed", with the same whole-declaration popover; the add items disable off the raw cell |
+
+The shared shape across all four: **when a list-valued property disagrees,
+collapse the list into one row and edit the whole declaration.** A
+multi-selection has no shared layer *index*, so every per-index gesture
+(reorder, per-layer blend, "add at 0", "remove layer 2") is refused by
+construction rather than silently writing the CSS initial into layers the user
+never touched. Removing one of those rows clears the property from every
+selected layer, in one history entry (§9.1).
+
+Two things this pass deliberately left alone, both recorded in `panel-38`:
+`node.hidden` / `node.locked` in Layer still read and toggle the **anchor**
+only — a structural fan-out gap needing a store action over N ids, not a Mixed
+one — and `commitProp` still stops at one node (§9.0).
 
 ### §9.4 Two targets, and the gate between them
 
@@ -1843,7 +1994,10 @@ into `FillColorField.tsx` (the colour rows' own chrome — `ColorFieldRow`,
 object itself), and `colorWriteTargetNote.ts` (the shared note-string
 builder, its own file because `react-refresh/only-export-components` forbids
 mixing a plain function export with a component export) when G6.2b grew it
-again).
+again, and once more into `fillRowDescriptors.tsx` (the `FillEntryData`
+taxonomy, popover titles and `describeLayer`), `FillEntryPopover.tsx` (the one
+switch over row kinds) and `GradientEditor.tsx` when §9.3's Mixed contract
+landed — `panel-38`).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3

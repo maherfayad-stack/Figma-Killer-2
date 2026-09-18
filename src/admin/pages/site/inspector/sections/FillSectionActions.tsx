@@ -40,15 +40,32 @@ interface FillSectionActionsProps {
    */
   textVisible: boolean
   colorVisible: boolean
+  /**
+   * The selected layers declare DIFFERENT `background-image` values
+   * (`docs/features/inspector.md` §9.3). Inserting "at index 0" would write
+   * one list over every selected layer's own, which is a replace wearing an
+   * add's icon — so the two layer buttons disable and say so.
+   */
+  layersMixed: boolean
   onChange: (property: keyof CSSPropertyBag, value: string | number | undefined) => void
 }
 
-export function FillSectionActions({ storedStyles, textVisible, colorVisible, onChange }: FillSectionActionsProps) {
+export function FillSectionActions({
+  storedStyles,
+  textVisible,
+  colorVisible,
+  layersMixed,
+  onChange,
+}: FillSectionActionsProps) {
   const model = parseBackgroundLayers(storedStyles)
   // A refused layer list has no known layer count, so there is no honest
   // index to insert at. The button stays visible and says why rather than
   // silently doing nothing.
-  const layersRefused = model.spine.kind === 'raw'
+  const layersBlockedReason = layersMixed
+    ? 'The selected layers have different background images — add a layer with one of them selected'
+    : model.spine.kind === 'raw'
+      ? 'This background-image is edited as raw text, so a layer cannot be added here'
+      : undefined
 
   const imageButtonRef = useRef<HTMLButtonElement | null>(null)
   const [picking, setPicking] = useState(false)
@@ -117,12 +134,8 @@ export function FillSectionActions({ storedStyles, textVisible, colorVisible, on
         size="xs"
         iconOnly
         aria-label="Add gradient fill"
-        tooltip={
-          layersRefused
-            ? 'This background-image is edited as raw text, so a layer cannot be added here'
-            : 'Add gradient fill'
-        }
-        disabled={layersRefused}
+        tooltip={layersBlockedReason ?? 'Add gradient fill'}
+        disabled={layersBlockedReason != null}
         data-testid="fill-section-add-gradient"
         onClick={addLayer}
       >
@@ -134,12 +147,8 @@ export function FillSectionActions({ storedStyles, textVisible, colorVisible, on
         size="xs"
         iconOnly
         aria-label="Add image fill"
-        tooltip={
-          layersRefused
-            ? 'This background-image is edited as raw text, so a layer cannot be added here'
-            : 'Add image fill'
-        }
-        disabled={layersRefused}
+        tooltip={layersBlockedReason ?? 'Add image fill'}
+        disabled={layersBlockedReason != null}
         pressed={picking}
         data-testid="fill-section-add-image"
         onClick={() => (picking ? closePicker() : setPicking(true))}

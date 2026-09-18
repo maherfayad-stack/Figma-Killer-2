@@ -31,6 +31,15 @@
  * event types to the parent (using the original drag's pointerId so the
  * parent's session-id assumptions still line up).
  *
+ * OS file drop
+ * ────────────
+ * D2 G15. A `dragover`/`drop` carrying files from the desktop is re-dispatched
+ * on the iframe element so the board's own handler sees it. EVERY drag in a
+ * design frame's document is cancelled there — files or not — so the browser
+ * cannot navigate that document to whatever was dropped on it. The rule and
+ * its reasoning live in `canvasFrameDragRelay.ts`; this file owns only when
+ * it is installed.
+ *
  * Keyboard
  * ────────
  * Clicking a node to select it focuses the iframe, so subsequent keystrokes go
@@ -65,6 +74,7 @@
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
+import { installFrameDragRelay } from './canvasFrameDragRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -128,6 +138,27 @@ export function useIframeEventForwarding(
     return () => {
       iframeDoc.removeEventListener('wheel', onWheel)
     }
+  }, [adapter, iframeRef, isLive])
+
+  // ── Forward an OS FILE drag/drop to the board (D2 G15) ────────────────
+  // A native `dragover`/`drop` does not cross the iframe boundary, and a
+  // frame is exactly where an image dropped from the desktop is meant to
+  // land. `useCanvasFileDrop` listens on the parent `window`, so the pair is
+  // re-dispatched on the iframe ELEMENT there and bubbles up to it.
+  //
+  // The rule itself — cancel EVERY drop's default so the browser cannot
+  // navigate the frame's document away, relay only the file-carrying ones —
+  // lives in `canvasFrameDragRelay.ts`, which is where its reasoning and its
+  // test are. This effect is only its lifecycle.
+  useEffect(() => {
+    // Live frames belong to the running app: a drop there is the app's.
+    if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    const iframe = iframeRef.current
+    if (!iframe) return
+    return installFrameDragRelay(iframeDoc, iframe)
   }, [adapter, iframeRef, isLive])
 
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────

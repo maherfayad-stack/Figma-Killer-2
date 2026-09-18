@@ -63,6 +63,7 @@
 import { Project } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
+import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { resolveChildPlacement } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
 import {
@@ -119,7 +120,16 @@ export interface InsertJsxElementParams {
   project?: Project
 }
 
-export type InsertJsxElementResult = { ok: true } | { ok: false; refusal: InsertJsxRefusal }
+/**
+ * `created` is the NEW element's own tag-name `line:col` in the file this call
+ * just wrote — the half of the answer the caller cannot derive, because the
+ * element has no node id until the board re-parses. `null` when the write
+ * landed but its position could not be confirmed against the re-parsed file;
+ * see `createdJsxLocation.ts` for why that is never guessed at.
+ */
+export type InsertJsxElementResult =
+  | { ok: true; created: CreatedJsxLocation | null }
+  | { ok: false; refusal: InsertJsxRefusal }
 
 export function insertJsxElement(params: InsertJsxElementParams): InsertJsxElementResult {
   const { file, line, col, name, importSpecifier, children } = params
@@ -144,8 +154,8 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   // to `<div />` and refusing on it would be a false positive. Checked for
   // every component in the subtree, not just the root.
   const imports = collectSubtreeImports({ name, props: params.props, importSpecifier, children })
-  for (const [componentName, specifier] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, specifier)
+  for (const [componentName, requirement] of imports) {
+    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
     if (binding) {
       return refuse(
         'binding-conflict',
@@ -180,5 +190,10 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   const importEdits = resolveImportEdits(sourceFile, verbatim, imports)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
-  return { ok: true }
+  // Only the IMPORT edits move the splice point: they sit above the JSX, and
+  // the placement edit's own start is the thing being located.
+  return {
+    ok: true,
+    created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, placement.edit.start), placement.edit.text),
+  }
 }

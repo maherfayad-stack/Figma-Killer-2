@@ -155,16 +155,65 @@ export function isCommitSha(value: string): boolean {
  *   `https://github.com/<owner>/<repo>`   (`.git` and a trailing `/` tolerated)
  *   `git@github.com:<owner>/<repo>.git`
  *
- * `<owner>` and `<repo>` are GitHub's own safe segment charset
- * (`[A-Za-z0-9_.-]`), which excludes `/`, `:`, `@`, whitespace, and every
- * control character — so a parsed pair can never re-compose into a different
- * transport. No userinfo is accepted in the HTTPS form: a URL carrying
- * `user:password@` would persist a credential in plaintext into the project's
- * `.git/config`, which is the exact thing G2 exists to avoid.
+ * `<owner>` and `<repo>` are judged by `isGithubOwnerSegment` /
+ * `isGithubRepoSegment`, not by a bare charset test. The charset
+ * (`[A-Za-z0-9_.-]`) excludes `/`, `:`, `@`, whitespace, and every control
+ * character, so a parsed pair can never re-compose into a different transport
+ * — but it does NOT exclude `.` or `..`, which are path instructions rather
+ * than names. Those two functions do. No userinfo is accepted in the HTTPS
+ * form either: a URL carrying `user:password@` would persist a credential in
+ * plaintext into the project's `.git/config`, which is the exact thing G2
+ * exists to avoid.
  */
 const GITHUB_REMOTE_HOSTS = new Set(['github.com', 'www.github.com'])
-const SAFE_REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/
 const GITHUB_SSH_REMOTE_RE = /^git@github\.com:([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\.git$/
+
+/** GitHub's own ceilings: 39 characters for a user or organisation, 100 for a repository. */
+const GITHUB_OWNER_MAX_LENGTH = 39
+const GITHUB_REPO_MAX_LENGTH = 100
+
+const SAFE_REPO_SEGMENT = /^[A-Za-z0-9_.-]+$/
+/** `.`, `..`, `...` — a segment made of nothing but dots. Never a repository; always a path instruction. */
+const DOTS_ONLY_SEGMENT = /^\.+$/
+
+/**
+ * Is this a GitHub-legal owner (user or organisation) segment?
+ *
+ * The charset alone was not enough, and this is not hypothetical: `sec-13`
+ * found that the SSH form accepted `git@github.com:../hello-world.git`,
+ * because `..` matches `[A-Za-z0-9_.-]+` and the HTTPS branch's protection
+ * against it was an accident of `new URL` normalising the pathname, not a
+ * rule anyone had written down. A `..` owner reshapes every string the pair is
+ * later composed into — the `api.github.com/repos/<owner>/<repo>` URL
+ * `githubPullRequest.ts` builds, and the `<owner>-<repo>` project folder name
+ * `githubProjectFolderName` derives.
+ *
+ * So: no dots-only segment, no leading or trailing `-` (which GitHub itself
+ * rejects, and which would make the derived folder name argv-flag-shaped), and
+ * GitHub's own length ceiling.
+ */
+export function isGithubOwnerSegment(value: string): boolean {
+  if (!value || value.length > GITHUB_OWNER_MAX_LENGTH) return false
+  if (!SAFE_REPO_SEGMENT.test(value)) return false
+  if (DOTS_ONLY_SEGMENT.test(value)) return false
+  if (value.startsWith('-') || value.endsWith('-')) return false
+  return true
+}
+
+/**
+ * Is this a GitHub-legal repository segment? Same reasoning as
+ * {@link isGithubOwnerSegment}, with the repository charset's genuine extra
+ * latitude preserved: a leading dot is legal (`.github` is GitHub's own
+ * convention for an organisation profile repository), so only a segment made
+ * ENTIRELY of dots is refused.
+ */
+export function isGithubRepoSegment(value: string): boolean {
+  if (!value || value.length > GITHUB_REPO_MAX_LENGTH) return false
+  if (!SAFE_REPO_SEGMENT.test(value)) return false
+  if (DOTS_ONLY_SEGMENT.test(value)) return false
+  if (value.startsWith('-')) return false
+  return true
+}
 
 export interface GithubRemote {
   owner: string
@@ -189,7 +238,7 @@ export function parseGithubRemoteUrl(input: string): GithubRemote | null {
   if (ssh) {
     const owner = ssh[1]
     const repo = ssh[2].replace(/\.git$/i, '')
-    if (!repo || !SAFE_REPO_SEGMENT.test(repo)) return null
+    if (!isGithubOwnerSegment(owner) || !isGithubRepoSegment(repo)) return null
     return { owner, repo, url: `git@github.com:${owner}/${repo}.git`, protocol: 'ssh' }
   }
 
@@ -211,7 +260,7 @@ export function parseGithubRemoteUrl(input: string): GithubRemote | null {
   if (segments.length !== 2) return null
   const owner = segments[0]
   const repo = segments[1].replace(/\.git$/i, '')
-  if (!SAFE_REPO_SEGMENT.test(owner) || !repo || !SAFE_REPO_SEGMENT.test(repo)) return null
+  if (!isGithubOwnerSegment(owner) || !isGithubRepoSegment(repo)) return null
 
   return { owner, repo, url: `https://github.com/${owner}/${repo}.git`, protocol: 'https' }
 }

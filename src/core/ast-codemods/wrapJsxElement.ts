@@ -42,6 +42,7 @@ import {
 import { indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
 import { refuse, validateSubtree, type InsertJsxRefusal } from './jsxSubtree'
+import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 
 export interface WrapJsxElementParams {
   file: string
@@ -61,7 +62,10 @@ export interface WrapJsxElementParams {
   project?: Project
 }
 
-export type WrapJsxElementResult = { ok: true } | { ok: false; refusal: InsertJsxRefusal }
+/** `created` is the WRAPPER's own tag-name `line:col` — see `createdJsxLocation.ts`. */
+export type WrapJsxElementResult =
+  | { ok: true; created: CreatedJsxLocation | null }
+  | { ok: false; refusal: InsertJsxRefusal }
 
 export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResult {
   const { file, line, col, name, importSpecifier } = params
@@ -116,7 +120,7 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
   const importEdits = resolveImportEdits(
     sourceFile,
     verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[name, importSpecifier]]),
+    importSpecifier === undefined ? new Map() : new Map([[name, { specifier: importSpecifier }]]),
   )
 
   writeVerbatimSource(
@@ -124,5 +128,5 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
     file,
     applyTextEdits(verbatim, [{ start: elementStart, end: elementEnd, text: wrapped }, ...importEdits]),
   )
-  return { ok: true }
+  return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, elementStart), wrapped) }
 }

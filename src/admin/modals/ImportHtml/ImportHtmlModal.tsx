@@ -256,13 +256,17 @@ export function ImportHtmlModal() {
         styleRules: rules,
         conditions,
       })
-      if (inserted.length === 0) {
-        setErrorMsg('The selected parent does not accept children.')
+      if (!inserted.ok) {
+        // The store already toasted its own refusal where it had one; this
+        // repeats the sentence inline because the dialog is still open and the
+        // toast is behind it.
+        setErrorMsg(inserted.message)
         return
       }
+      const rootCount = inserted.rootIds.length
 
       // Build toast body: node count + added-selector / stripped detail.
-      const toastTitle = `Imported ${inserted.length} ${inserted.length === 1 ? 'node' : 'nodes'}`
+      const toastTitle = `Imported ${rootCount} ${rootCount === 1 ? 'node' : 'nodes'}`
       const detailParts: string[] = []
       if (rules.length) {
         detailParts.push(`${rules.length} CSS selector${rules.length > 1 ? 's' : ''}`)

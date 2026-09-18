@@ -25,8 +25,11 @@
  * user — the grant it mints records one (`captureToken.ts`), and the live-tab
  * fallback relays to that user's own editor workspace. There is no honest
  * anonymous answer to "photograph this for whom". `node-jsx` reads project
- * source; it takes the same gate rather than being the one studio route that
- * hands a repository's contents to an unauthenticated caller.
+ * source, so it takes the same session.
+ *
+ * Both are POSTs that mutate nothing, which is why `routeCapabilities.ts`
+ * declares `site.read` as their state-changing capability: the verb is POST
+ * only because a node id set does not belong in a query string.
  *
  * The SVG half of the Export section is deliberately not here. Whether a node
  * has an honest vector form is a fact about the parse the browser is already
@@ -36,8 +39,7 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
-import { requireAuthenticatedUser } from '../../auth/authz'
-import type { DbClient } from '../../db/client'
+import type { StudioSessionRuntime } from './routeGate'
 import { projectsRootDir, resolveProjectDir } from '../studioProjects'
 import { isRealpathContained } from './workspacePackageResolve'
 import { exportNodePng } from './nodeExportCapture'
@@ -78,15 +80,14 @@ function resolveContainedDir(dir: string | undefined): string | null {
 /** `POST /admin/api/studio/node-png` and `POST /admin/api/studio/node-jsx` — see module doc. */
 export async function tryServeStudioNodeExport(
   req: Request,
-  runtime: { db: DbClient },
+  runtime: StudioSessionRuntime,
   _url: URL,
   pathname: string,
 ): Promise<Response | null> {
   if (pathname !== NODE_PNG_PATH && pathname !== NODE_JSX_PATH) return null
   if (req.method !== 'POST') return null
 
-  const user = await requireAuthenticatedUser(req, runtime.db)
-  if (user instanceof Response) return user
+  const user = runtime.user
 
   try {
     if (pathname === NODE_PNG_PATH) {

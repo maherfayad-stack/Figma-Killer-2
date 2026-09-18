@@ -63,6 +63,14 @@
  * renders and commits for a multi-selection through exactly the same reads
  * and `useInspectorCommit` calls it uses for one. See `selectionModel.ts`'s
  * own "Multi-select" doc.
+ *
+ * With ONE exception this file does own: `readString` collapses the `MIXED`
+ * Symbol to `undefined`, so a disagreeing `filter` produced NO row at all
+ * under a `Section` that Law 1 had already forced open — a populated section
+ * with an empty body, and an "Add layer blur" item still enabled beside it.
+ * Both properties now test the raw cell and draw one row reading "Mixed",
+ * whose popover writes the whole declaration to every selected layer
+ * (`docs/features/inspector.md` §9.3).
  */
 import { useRef, useState, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
@@ -77,6 +85,7 @@ import { Section } from '@ui/components/Section'
 import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { ClassPropertyRow } from '../../panels/PropertiesPanel/ClassPropertyRow'
 import { hasStyleValue, readString } from '../../panels/PropertiesPanel/styleValueUtils'
+import { isMixed, MIXED, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -102,6 +111,8 @@ type BlurEntryData =
   | { kind: 'layerBlurRaw'; raw: string }
   | { kind: 'backgroundBlur'; radius: string }
   | { kind: 'backgroundBlurRaw'; raw: string }
+  /** A multi-selection whose members disagree on this filter — see §9.3. */
+  | { kind: 'blurMixed'; property: 'filter' | 'backdropFilter' }
 
 export function BlurSection() {
   const model = useSelectionModel()
@@ -157,8 +168,15 @@ export function BlurSection() {
 
   const onClearPreview = commit.clearStylePreview
 
-  const layerBlurDisabled = readString(storedStyles, 'filter') != null
-  const backgroundBlurDisabled = readString(storedStyles, 'backdropFilter') != null
+  // `hasStyleValue` on the RAW cell, not `readString`: for a multi-selection
+  // that disagrees the cell is the `MIXED` Symbol, which `readString`
+  // collapses to `undefined` — so "Add layer blur" used to stay enabled and
+  // would have replaced every selected layer's own filter
+  // (`docs/features/inspector.md` §9.3).
+  const filterMixed = isMixed(storedStyles.filter)
+  const backdropMixed = isMixed(storedStyles.backdropFilter)
+  const layerBlurDisabled = hasStyleValue(storedStyles.filter)
+  const backgroundBlurDisabled = hasStyleValue(storedStyles.backdropFilter)
 
   function addLayerBlur() {
     onChange('filter', 'blur(4px)')
@@ -220,7 +238,15 @@ export function BlurSection() {
 
   const entries: PropertyListEntry<BlurEntryData>[] = []
 
-  if (filterBlurRadius !== undefined) {
+  if (filterMixed) {
+    entries.push({
+      id: 'filter-mixed',
+      label: 'Filter',
+      summary: 'Filter',
+      value: MIXED_PLACEHOLDER,
+      data: { kind: 'blurMixed', property: 'filter' },
+    })
+  } else if (filterBlurRadius !== undefined) {
     entries.push({
       id: 'layer-blur',
       label: 'Layer blur',
@@ -238,7 +264,15 @@ export function BlurSection() {
     })
   }
 
-  if (backdropBlurRadius !== undefined) {
+  if (backdropMixed) {
+    entries.push({
+      id: 'backdrop-mixed',
+      label: 'Backdrop filter',
+      summary: 'Backdrop filter',
+      value: MIXED_PLACEHOLDER,
+      data: { kind: 'blurMixed', property: 'backdropFilter' },
+    })
+  } else if (backdropBlurRadius !== undefined) {
     entries.push({
       id: 'background-blur',
       label: 'Background blur',
@@ -262,6 +296,11 @@ export function BlurSection() {
 
   function handleRemove(entry: PropertyListEntry<BlurEntryData>) {
     const { data } = entry
+    if (data.kind === 'blurMixed') {
+      // Clears the property from every selected layer, one history entry.
+      onRemove(data.property)
+      return
+    }
     if (data.kind === 'layerBlur' || data.kind === 'layerBlurRaw') {
       onRemove('filter')
       return
@@ -345,19 +384,25 @@ function BlurEditorPopover({
     )
   }
 
-  // `layerBlurRaw` / `backgroundBlurRaw` — honest refusal, reuses `ClassPropertyRow`.
-  const property: keyof CSSPropertyBag = data.kind === 'layerBlurRaw' ? 'filter' : 'backdropFilter'
+  // `layerBlurRaw` / `backgroundBlurRaw` / `blurMixed` — the same honest
+  // shape: the whole declaration as one field, with the reason above it.
+  // `ClassPropertyRow` turns the `MIXED` sentinel into its control's own
+  // "Mixed" placeholder, so nothing ever stringifies the Symbol.
+  const property: keyof CSSPropertyBag =
+    data.kind === 'blurMixed' ? data.property : data.kind === 'layerBlurRaw' ? 'filter' : 'backdropFilter'
   const reason =
-    data.kind === 'layerBlurRaw'
-      ? 'This filter is more than a single blur(), so it stays as text.'
-      : 'This backdrop-filter is more than a single blur(), so it stays as text.'
+    data.kind === 'blurMixed'
+      ? 'The selected layers set different values here. Typing one writes it to every selected layer.'
+      : data.kind === 'layerBlurRaw'
+        ? 'This filter is more than a single blur(), so it stays as text.'
+        : 'This backdrop-filter is more than a single blur(), so it stays as text.'
   return (
     <InspectorPopover id={id} anchorRef={anchorRef} onClose={onClose} title={label} width={248}>
       <div className={styles.rawEditor}>
         <p className={styles.rawEditorReason}>{reason}</p>
         <ClassPropertyRow
           property={property}
-          value={data.raw}
+          value={data.kind === 'blurMixed' ? MIXED : data.raw}
           isSet
           layout="stacked"
           onChange={onChange}

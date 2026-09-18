@@ -49,6 +49,7 @@ export {
 } from './designSystemDir'
 export { createWorkspaceProject, resolveComponentSources, resolveExportedDeclaration } from './componentSources'
 export type { ComponentSource } from './componentSources'
+export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export {
   findNamedComponentDeclaration,
   inlineLocalComponents,

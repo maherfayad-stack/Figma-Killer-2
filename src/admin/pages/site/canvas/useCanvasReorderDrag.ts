@@ -49,32 +49,21 @@
  * `refreshFrameCandidateIndex`.
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { registry } from '@core/module-engine'
-import { getNodeDisplayName } from '@core/page-tree'
-import type { NodeTree, PageNode } from '@core/page-tree'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import type { CanvasDropResolution } from './canvasDnd'
-import { resolveCanvasDropTarget } from './canvasDnd'
+import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { measureBoardDropSurfaces } from './canvasDragBoard'
+import { commitCanvasDrag } from './canvasDragCommit'
 import {
-  buildFrameCandidateIndex,
-  constrainToDragAxis,
-  indexLocalPoint,
-  refreshFrameCandidateIndex,
-  type CanvasDragOrigin,
-  type ClientPoint,
-  type FrameCandidateIndex,
-} from './canvasDragSession'
-import { autoPanDelta } from './canvasDragAutoPan'
+  DRAG_ACTIVATE_PX,
+  EMPTY_RESOLUTION,
+  EMPTY_TRANSPLANT_RESOLUTION,
+  dragLabel,
+  resolveDraggedIds,
+  runCanvasDragFrame,
+  type DragSession,
+} from './canvasDragFrame'
+import { buildFrameCandidateIndex, type CanvasDragOrigin } from './canvasDragSession'
 import { paintCanvasDrag } from './canvasDragPainter'
-import {
-  clearFreeMovePreview,
-  freeMoveStylePatch,
-  paintFreeMoveFrame,
-  presentFreeMoveRefusal,
-  resolveFreeMove,
-  type FreeMoveResolution,
-  type FreeMoveStep,
-} from './canvasFreeMove'
+import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
@@ -116,6 +105,14 @@ interface UseCanvasReorderDragOptions {
   selectedNodeIds: readonly string[]
   /** Frame that owns this overlay, for frame-scoped selection (`selectedNodeFrameId`). */
   frameId?: string | null
+  /**
+   * D2 G3 — the PAGE this frame renders, which is the file a drag out of it
+   * would be moving markup from. `null`/absent on a surface with no page of
+   * its own (a CMS breakpoint frame, a test harness): the board branch then
+   * stays off entirely and the drag behaves exactly as it did before
+   * cross-frame drops existed.
+   */
+  pageId?: string | null
   /** The selection toolbar's hand-grab handle is available (structural edit + a selection). */
   enabled: boolean
   /**
@@ -135,102 +132,13 @@ interface UseCanvasReorderDragOptions {
   transformRef?: React.RefObject<CanvasTransform>
 }
 
-interface DragSession {
-  draggedId: string
-  draggedIds: string[]
-  /**
-   * The page tree as it was when the gesture opened. Captured, not re-read
-   * per move: a reorder drag writes nothing until `pointerup`, so the tree
-   * cannot change under it — and the COMMIT re-reads the live store anyway
-   * (`moveNodes` resolves its own plan), so a mid-drag resync can only cost a
-   * stale PREVIEW, never a wrong write.
-   */
-  tree: NodeTree<PageNode>
-  /** Measured once; refreshed only on a real reflow or a real transform change. */
-  index: FrameCandidateIndex
-  /** Where the pointer went down — the origin the activation threshold measures from. */
-  origin: ClientPoint
-  /** Latest pointer position, in PARENT-document client coordinates. */
-  point: ClientPoint
-  /** Shift was held at the last pointer event — constrain to one axis. */
-  axisLocked: boolean
-  /**
-   * K2 — Alt was held at the last pointer event: the drop writes a COPY into
-   * the resolved position instead of moving the original there.
-   *
-   * Read per event, never latched at `pointerdown`, so releasing Alt mid-drag
-   * reverts the gesture to a move (and pressing it mid-drag turns a move into
-   * a copy) — which is what every design tool does, and what makes the `+`
-   * badge on the ghost an honest readout rather than a decoration.
-   */
-  duplicating: boolean
-  /**
-   * K6 — ⌘/Ctrl was held at the last pointer event: the user is asking to
-   * place this element by COORDINATES rather than in the child order. Read
-   * per event like Alt, so the gesture can change its mind.
-   */
-  freeRequested: boolean
-  /**
-   * The cached free-move answer, and the modifier state it was taken under.
-   * `undefined` means "not asked yet"; `null` means "this is an ordinary
-   * reorder". Cached because it reads computed style, which is a layout read —
-   * and re-taken whenever the modifier flips, because that is the one input
-   * that can change it mid-gesture.
-   */
-  free?: FreeMoveResolution | null
-  freeWanted?: boolean
-  /** The last painted free-move step — exactly what `pointerup` commits. */
-  freeStep: FreeMoveStep | null
-  /**
-   * False until the pointer has travelled `DRAG_ACTIVATE_PX` from the origin.
-   * While false the session resolves no drop target, runs no auto-pan, and
-   * commits no move on pointerup — see `DRAG_ACTIVATE_PX`.
-   */
-  active: boolean
-  /**
-   * Node to select when the gesture becomes a real drag, or `null`.
-   *
-   * Set only by the body-drag path, and only when the pressed element was NOT
-   * already part of the selection. Selecting on POINTERDOWN would make a press
-   * that turns out to be a click select twice (once here, once from
-   * `NodeRenderer`'s click) and would fight Cmd/Shift-click's modifier
-   * semantics; selecting on ACTIVATION leaves the click path untouched and
-   * still puts the ring on what the user is dragging.
-   */
-  selectOnActivate: string | null
-  /** Frame the drag started in, so the activation selection stays frame-scoped. */
-  frameId: string | null
-  /** What the ghost says — resolved once, from the tree captured above. */
-  label: string
-  /** The last resolution painted, and what `pointerup` commits. */
-  resolution: CanvasDropResolution
-}
-
-/**
- * How far the pointer must travel before a press on the drag handle becomes a
- * drag. Below this the gesture is a click and commits nothing.
- *
- * Without a threshold the session went live on pointerdown, so a plain click on
- * the handle was a completed zero-distance drag: a couple of pixels of hand
- * jitter is enough for one `pointermove` to resolve a drop target, and pointerup
- * then committed `moveNodes` to it. The selected element reparented itself under
- * a click the user meant as a click — it appeared to jump away on its own.
- *
- * 4px is the usual activation distance for this gesture (`@dnd-kit`'s
- * `activationConstraint: { distance: … }`, which the DOM-panel tree uses); it is
- * under the ~5px of travel a deliberate drag covers in its first frames and over
- * anything a click produces.
- */
-const DRAG_ACTIVATE_PX = 4
-
-const EMPTY_RESOLUTION: CanvasDropResolution = { target: null, invalid: null }
-
 export function useCanvasReorderDrag({
   viewportRef,
   iframeElement,
   overlayRoot,
   selectedNodeIds,
   frameId = null,
+  pageId = null,
   enabled,
   bodyDragEnabled,
   panBy,
@@ -256,75 +164,29 @@ export function useCanvasReorderDrag({
   const [dragging, setDragging] = useState(false)
 
   /**
-   * The single rAF. It runs the WHOLE visual half of the gesture — refresh,
-   * resolve, auto-pan, paint — and re-arms itself only while auto-pan is
-   * still moving the canvas, so a stationary pointer costs nothing.
-   *
-   * READ phase then WRITE phase, never interleaved: `refreshFrameCandidateIndex`
-   * is the only thing here that can touch layout, and it runs before the first
-   * style write.
+   * The single rAF. `canvasDragFrame.ts` owns what it DOES — refresh, resolve
+   * the frame under the pointer, resolve the drop, paint — and this owns the
+   * three refs it needs from React plus the one store read a cross-frame drop
+   * makes (the destination page's tree, on frame ENTRY only, never per move).
    */
   const runFrame = () => {
     frameRef.current = null
     const session = sessionRef.current
     const viewport = viewportRef.current
     if (!session || !viewport) return
-
-    // ── READ ────────────────────────────────────────────────────────────
-    refreshFrameCandidateIndex(
-      session.index,
+    runCanvasDragFrame(session, {
       viewport,
-      session.tree,
-      iframeElement,
-      transformRef?.current ?? null,
-    )
-    const screenPoint = session.axisLocked
-      ? constrainToDragAxis(session.origin, session.point)
-      : session.point
-    const point = indexLocalPoint(session.index, screenPoint)
-    const ghost = { point, label: session.label, duplicating: session.duplicating }
-
-    // K6 — a FREE move (an already-positioned element, or ⌘ held inside a
-    // positioned parent) does not resolve a drop target at all: it writes a
-    // position. Nothing below this branch runs for one, including the auto-pan
-    // — a coordinate drag stays inside the container it is positioned in.
-    const free = readSessionFreeMove(session, iframeElement)
-    if (free) {
-      const origin = indexLocalPoint(session.index, session.origin)
-      session.freeStep = paintFreeMoveFrame({
-        layer: dropLayerRef.current,
-        resolution: free,
-        draggedId: session.draggedId,
-        rect: session.index.candidates.find((c) => c.nodeId === session.draggedId)?.rect,
-        dx: point.x - origin.x,
-        dy: point.y - origin.y,
-        ghost,
-      })
-      return
-    }
-
-    session.resolution = resolveCanvasDropTarget({
-      tree: session.tree,
-      draggedId: session.draggedId,
-      draggedIds: session.draggedIds,
-      candidates: session.index.candidates,
-      point,
-      zoom: session.index.scale,
-      canHaveChildren,
+      iframe: iframeElement,
+      dropLayer: dropLayerRef.current,
+      canvasRoot: canvasRootRef?.current ?? null,
+      transform: transformRef?.current ?? null,
+      ...(panBy ? { panBy } : {}),
+      scheduleFrame: () => scheduleFrame(),
+      readPage: (pageId) => {
+        const site = useEditorStore.getState().site
+        return site ? lookupCanvasPageById(site, pageId) : null
+      },
     })
-
-    const pan = autoPanDelta(canvasRootRef?.current ?? null, screenPoint)
-
-    // ── WRITE ───────────────────────────────────────────────────────────
-    paintCanvasDrag(dropLayerRef.current, { ...session.resolution, ghost })
-
-    if (pan && panBy) {
-      panBy(pan.dx, pan.dy)
-      // The layer moved under a stationary pointer, so the next frame must
-      // re-resolve even if no pointermove arrives. `refreshFrameCandidateIndex`
-      // picks the new origin up from `transformRef` on its own.
-      scheduleFrame()
-    }
   }
 
   const scheduleFrame = () => {
@@ -343,7 +205,13 @@ export function useCanvasReorderDrag({
     // again, the style prop not having changed from its point of view).
     const previewed = sessionRef.current?.free
     if (previewed?.ok) clearFreeMovePreview(previewed.plan)
+    // D2 G3 — the chrome may be sitting in ANOTHER frame's layer (the pointer
+    // was over a different screen when the gesture ended). Clear whichever one
+    // was last painted as well as this frame's own, so nothing is ever left
+    // behind in a frame the session no longer owns.
+    const painted = sessionRef.current?.paintedLayer ?? null
     sessionRef.current = null
+    if (painted && painted !== dropLayerRef.current) paintCanvasDrag(painted, null)
     paintCanvasDrag(dropLayerRef.current, null)
     teardownRef.current?.()
     teardownRef.current = null
@@ -428,27 +296,31 @@ export function useCanvasReorderDrag({
       runFrame()
     }
 
-    const target = session.resolution.target
-    // K2 — the modifier state at RELEASE decides, which is the only reading
-    // that matches what the ghost was showing the instant before.
-    const duplicating = session.duplicating || event.altKey
-    // K6 — a free move commits a POSITION, never a reorder. Captured before
-    // `resetDrag` drops the session (and the preview with it).
-    const free = session.free
-    const freeStep = session.freeStep
-    const draggedId = session.draggedId
+    // Everything the commit needs, captured BEFORE `resetDrag` drops the
+    // session (and, for a free move, the preview with it).
+    const commit = {
+      draggedId: session.draggedId,
+      resolution: session.resolution,
+      free: session.free,
+      freeStep: session.freeStep,
+      // K2 — the modifier state at RELEASE decides, which is the only reading
+      // that matches what the ghost was showing the instant before.
+      duplicating: session.duplicating || event.altKey,
+      // D2 G3 — the pointer was over a frame showing another page, and that
+      // frame's own verdict said the drop may land.
+      foreign:
+        session.foreign && session.foreignResolution.target && session.originPageId
+          ? {
+              originPageId: session.originPageId,
+              pageId: session.foreign.pageId,
+              target: session.foreignResolution.target,
+            }
+          : null,
+    }
     resetDrag()
 
     try {
-      const store = useEditorStore.getState()
-      if (free) {
-        if (!free.ok) presentFreeMoveRefusal(free.refusal)
-        else if (freeStep) store.setNodeInlineStyles(draggedId, freeMoveStylePatch(free.plan, freeStep))
-        return
-      }
-      if (!target) return
-      if (duplicating) store.duplicateNodesTo(target.draggedIds, target.parentId, target.index)
-      else store.moveNodes(target.draggedIds, target.parentId, target.index)
+      commitCanvasDrag(commit)
     } catch (err) {
       console.warn('[canvas-dnd] Ignored stale canvas drag target:', err)
     }
@@ -521,9 +393,22 @@ export function useCanvasReorderDrag({
       active: false,
       selectOnActivate: origin.selectOnActivate,
       frameId: origin.frameId,
+      // D2 G3 — the page the dragged markup is written in. Read from the
+      // FRAME rather than from `activePageId`: a cross-frame drag activates
+      // the destination frame on the way (`openPageInCanvas` fires from
+      // `onPointerDownCapture`), so the active page is already the wrong end
+      // of the gesture by the time it commits.
+      originPageId: pageId,
       label: dragLabel(tree, draggedIds, draggedId),
       resolution: EMPTY_RESOLUTION,
-    }
+      // Every mounted frame's client rect, measured once like the candidate
+      // index above and refreshed on the same two signals — see
+      // `canvasDragBoard.ts`.
+      board: measureBoardDropSurfaces(transformRef?.current ?? null),
+      foreign: null,
+      foreignResolution: EMPTY_TRANSPLANT_RESOLUTION,
+      paintedLayer: null,
+    } satisfies DragSession
 
     // Cross-frame drag signal. Every iframe's pointer relay (see
     // `IframeFrameSurface`) reads `data-studio-canvas-dragging` on the parent
@@ -637,64 +522,4 @@ export function useCanvasReorderDrag({
      */
     dragging,
   }
-}
-
-/**
- * K6 — whether this session is a free move, cached on the session.
- *
- * `resolveFreeMove` reads computed style, which is a layout read, so it must
- * not run per frame. The cache is keyed on the MODIFIER state it was taken
- * under, because that is the one input that can flip the answer mid-gesture:
- * press ⌘ and a reorder becomes a placement, release it and it goes back.
- */
-function readSessionFreeMove(
-  session: DragSession,
-  iframe: HTMLIFrameElement | null,
-): FreeMoveResolution | null {
-  if (session.free !== undefined && session.freeWanted === session.freeRequested) return session.free
-  const doc = resolvePortalDocument(iframe)
-  session.freeWanted = session.freeRequested
-  session.free = doc
-    ? resolveFreeMove({
-        doc,
-        tree: session.tree,
-        nodeId: session.draggedId,
-        candidates: session.index.candidates,
-        modifierHeld: session.freeRequested,
-      })
-    : null
-  return session.free
-}
-
-function resolveDraggedIds(
-  tree: NodeTree<PageNode>,
-  selectedNodeIds: readonly string[],
-): string[] {
-  const result: string[] = []
-  for (const id of selectedNodeIds) {
-    const node = tree.nodes[id]
-    if (!node) return []
-    if (id === tree.rootNodeId) return []
-    if (node.locked) return []
-    result.push(id)
-  }
-  return result
-}
-
-/**
- * What the ghost says: the node's own display name, or how many are moving.
- *
- * Visual components are passed `undefined` deliberately — a
- * `base.visual-component-ref` falls back to its module name, which is the
- * right level of detail for a label that exists for half a second, and
- * reading the VC list would mean a second store read per gesture for it.
- */
-function dragLabel(tree: NodeTree<PageNode>, draggedIds: string[], draggedId: string): string {
-  if (draggedIds.length > 1) return `${draggedIds.length} layers`
-  const node = tree.nodes[draggedId]
-  return node ? getNodeDisplayName(node, registry.get(node.moduleId), undefined) : 'Layer'
-}
-
-function canHaveChildren(moduleId: string): boolean {
-  return registry.get(moduleId)?.canHaveChildren === true
 }

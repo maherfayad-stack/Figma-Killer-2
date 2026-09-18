@@ -8,7 +8,7 @@
 
 import type { StoreApi } from 'zustand'
 import type { Draft } from 'mutative'
-import type { FrameworkColorToken, FrameworkColorUtilityType, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkScaleMode, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
+import type { FrameworkColorToken, FrameworkPreferencesSettings, FrameworkScaleManualSize, FrameworkSettings, FrameworkSpacingClassGenerator, FrameworkSpacingGroup, FrameworkTypographyClassGenerator, FrameworkTypographyGroup } from '@core/framework-schema'
 import type {
   DecorativeSiteExplorerSectionId,
   ExplorerPathChangePlan,
@@ -31,6 +31,7 @@ import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { SlotOwnerEntry } from './nodeIndex'
+import type { ImportedNodesResult } from './importedNodesResult'
 
 
 // ---------------------------------------------------------------------------
@@ -60,72 +61,28 @@ export interface PatchPagesInput {
   conditions?: ConditionDef[]
 }
 
-export type ColorVariantOptions = { enabled: boolean; count: number }
+/**
+ * The framework and font token action inputs. They live in
+ * `frameworkActionInputs.ts` (this file passed the 700-line ceiling again when
+ * wave 2 landed the transplant actions) and are re-exported here so the slice
+ * keeps one front door — every consumer already imports them from `./types`.
+ */
+export type {
+  ColorVariantOptions,
+  CreateFrameworkColorTokenInput,
+  UpdateFrameworkColorTokenPatch,
+  UpdateFrameworkTypographyGroupPatch,
+  UpdateFrameworkSpacingGroupPatch,
+} from './frameworkActionInputs'
 
-export interface CreateFrameworkColorTokenInput {
-  category?: string
-  slug: string
-  lightValue: string
-  darkValue?: string
-  darkModeEnabled?: boolean
-  generateUtilities?: Partial<Record<FrameworkColorUtilityType, boolean>>
-  generateTransparent?: boolean
-  generateShades?: Partial<ColorVariantOptions>
-  generateTints?: Partial<ColorVariantOptions>
-}
-
-export type UpdateFrameworkColorTokenPatch = Partial<{
-  category: string
-  slug: string
-  lightValue: string
-  darkValue: string
-  darkModeEnabled: boolean
-  generateUtilities: Partial<Record<FrameworkColorUtilityType, boolean>>
-  generateTransparent: boolean
-  generateShades: Partial<ColorVariantOptions>
-  generateTints: Partial<ColorVariantOptions>
-  order: number
-}>
-
-export type UpdateFrameworkTypographyGroupPatch = Partial<{
-  name: string
-  namingConvention: string
-  steps: string
-  baseScaleIndex: number
-  mode: FrameworkScaleMode
-  isDisabled: boolean
-  /** Patch into the `min` breakpoint config — fields are merged, untouched fields preserved. */
-  min: Partial<FrameworkTypographyGroup['min']>
-  max: Partial<FrameworkTypographyGroup['max']>
-  manualSizes: FrameworkScaleManualSize[]
-}>
-
-export type UpdateFrameworkSpacingGroupPatch = Partial<{
-  name: string
-  namingConvention: string
-  steps: string
-  baseScaleIndex: number
-  mode: FrameworkScaleMode
-  isDisabled: boolean
-  min: Partial<FrameworkSpacingGroup['min']>
-  max: Partial<FrameworkSpacingGroup['max']>
-  manualSizes: FrameworkScaleManualSize[]
-}>
-
-interface CreateFontTokenInput {
-  name: string
-  variable?: string
-  familyId?: string | null
-  fallback?: string
-}
-
-type UpdateFontTokenPatch = Partial<{
-  name: string
-  variable: string
-  familyId: string | null
-  fallback: string
-  order: number
-}>
+import type {
+  CreateFontTokenInput,
+  CreateFrameworkColorTokenInput,
+  UpdateFontTokenPatch,
+  UpdateFrameworkColorTokenPatch,
+  UpdateFrameworkSpacingGroupPatch,
+  UpdateFrameworkTypographyGroupPatch,
+} from './frameworkActionInputs'
 
 /**
  * The undo-stack shapes. They live in `historyTypes.ts` (this file passed the
@@ -247,7 +204,10 @@ export interface SiteSlice {
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
    * Merges all `fragment.nodes` into the tree and wires `fragment.rootIds` as children
    * of `parentId` at `opts.index` (appended when omitted). One undo step.
-   * Returns the inserted root IDs, or an empty array when the parent does not accept children.
+   * `ok: false` when nothing was inserted, carrying the reason — the parent
+   * does not accept children, or (`mcp-21`) this is a studio-imported tree,
+   * where a block of HTML has no honest source form and a merged fragment
+   * would be deleted by the next parse. See `refuseImportedNodesInto`.
    *
    * `opts.styleRules` / `opts.conditions` are rules parsed from `<style>` blocks
    * in the imported HTML (via `cssToStyleRules`); they are committed into the
@@ -258,7 +218,20 @@ export interface SiteSlice {
     parentId: string,
     fragment: ImportFragment,
     opts?: { index?: number; styleRules?: NewStyleRule[]; conditions?: ConditionDef[] },
-  ) => string[]
+  ) => ImportedNodesResult
+
+  /**
+   * `mcp-21` — why an HTML import cannot land under `parentId`, or `null` when
+   * it can. Presents the refusal as it answers, exactly as `insertImportedNodes`
+   * does, so asking first costs the user nothing extra.
+   *
+   * Exists because `site_replace_node_html` DELETES the target's existing
+   * children before inserting: without a way to ask first, a refused replace
+   * on a studio-imported tree emptied the node and then wrote nothing — the
+   * half-applied outcome this store refuses everywhere else. Every other
+   * caller can simply read `insertImportedNodes`' own result.
+   */
+  refuseImportedNodesInto: (parentId: string) => string | null
 
   /**
    * Insert a `base.visual-component-ref` node into the active document.
@@ -353,6 +326,34 @@ export interface SiteSlice {
    * exist until the commit's resync brings them in).
    */
   duplicateNodesTo: (nodeIds: string[], newParentId: string, newIndex: number) => string[]
+  /**
+   * D2 G3 — the element leaves the page it is written in and lands in a
+   * container on ANOTHER page: a drag that crossed a board-frame boundary.
+   *
+   * Returns nothing, and mutates no tree. A cross-PAGE move is two files, so
+   * there is no in-memory equivalent to fall back to and no node id to hand
+   * back — the element that appears in the destination frame is a different
+   * node from the one that left, with the `rel:line:col` id the write
+   * produces. Either the source takes the write (and the commit's resync
+   * brings both pages back) or the gesture refuses out loud. See
+   * `transplantActions.ts`.
+   */
+  transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
+  /**
+   * D2 G15 — the `<img src alt>` a file dropped from the operating system
+   * becomes, written into the page the drop landed on.
+   *
+   * Names its page rather than using the active one: a dropped file lands
+   * wherever the pointer was, and the frame under a drop was never activated
+   * by a pointerdown because there was no pointerdown. See
+   * `imageDropActions.ts`.
+   */
+  insertImageIntoPage: (
+    pageId: string,
+    parentId: string,
+    index: number,
+    image: { src: string; alt: string },
+  ) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor
@@ -572,6 +573,28 @@ export type SiteMutationResult = void | boolean
  * one function it takes.
  */
 export type EditorStoreSetter = (recipe: SiteSliceRecipe) => void
+
+/**
+ * Where a cross-frame drop landed, and where it came from — the argument
+ * `transplantNodes` takes.
+ *
+ * `originPageId` is named explicitly rather than derived from the active
+ * document: a cross-frame drag ACTIVATES the destination frame on the way
+ * (`openPageInCanvas` fires from `onPointerDownCapture`), so by the time the
+ * drop commits, "the active page" is already the wrong end of the gesture.
+ */
+export interface TransplantDestination {
+  /** The page the dragged element is written in. */
+  originPageId: string
+  /** The page the drop landed in — a DIFFERENT page. */
+  pageId: string
+  /** The container the drop resolved to, in `pageId`'s tree. */
+  parentId: string
+  /** Where among that container's canvas children the drop landed. */
+  index: number
+  /** Alt held: copy across frames instead of moving. */
+  copy?: boolean
+}
 
 export interface SiteSliceHelpers {
   /** Raw set/get from the slice creator. Use only when no helper covers the case. */

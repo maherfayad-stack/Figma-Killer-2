@@ -31,9 +31,10 @@
  */
 import { existsSync } from 'node:fs'
 import * as path from 'node:path'
-import { Node, Project, type SourceFile } from 'ts-morph'
+import { NewLineKind, Node, Project, type SourceFile } from 'ts-morph'
 import type { ParsedPage } from './types'
 import { isDesignSystemPath } from './designSystemDir'
+import { EolPreservingFileSystem } from './eolFileSystem'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
 
 export type ComponentSource =
@@ -75,6 +76,15 @@ export function createWorkspaceProject(workspaceRoot: string): Project {
     useInMemoryFileSystem: false,
     skipAddingFilesFromTsConfig: true,
     compilerOptions: { allowJs: true },
+    // The user's repo may be a CRLF checkout. `EolPreservingFileSystem` hands
+    // ts-morph LF-only text so a page tree cannot depend on which way Git
+    // checked the repo out, and puts each file's own ending back at the one
+    // moment bytes reach the disk. See `./eolFileSystem`.
+    fileSystem: new EolPreservingFileSystem(),
+    // Codemods write through this project too; pin the printer to the same
+    // LF the file system normalises to, so the single place a line ending is
+    // decided stays the file system.
+    manipulationSettings: { newLineKind: NewLineKind.LineFeed },
     ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
   })
 

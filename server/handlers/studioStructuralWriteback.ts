@@ -1,9 +1,16 @@
 /**
  * studioStructuralWriteback — the studio edit kinds that change WHERE markup is
  * rather than what it says: `move`, `delete`, `insert` (`struct-01`,
- * `struct-02`), `duplicate`, `wrap` and `reparent` (W4-1), and `group` /
- * `ungroup` (K3). Their schemas and their dispatch into `@core/ast-codemods`,
- * in one place.
+ * `struct-02`), `duplicate`, `wrap` and `reparent` (W4-1), `group` /
+ * `ungroup` (K3), and `transplant` (D2 G3). Their schemas and their dispatch
+ * into `@core/ast-codemods`, in one place.
+ *
+ * `transplant` is the one kind with its OWN entry point
+ * ({@link applyTransplantEdit}) rather than a branch of
+ * {@link applyStructuralEdit}: its destination is in a DIFFERENT FILE, which
+ * that function's same-file `{ line, col }` parameters cannot express. It is
+ * excluded from `applyStructuralEdit`'s parameter type, so routing it to the
+ * wrong one does not compile.
  *
  * Split out of `studioWriteback.ts` for the same reason `studioCssWriteback.ts`
  * was: that module owns the VALUE edits, which all share one shape — decode a
@@ -33,9 +40,11 @@ import {
   duplicateJsxElement,
   insertJsxElement,
   moveJsxElement,
+  transplantJsxElement,
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
+  type CreatedJsxLocation,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -299,6 +308,37 @@ const ReparentEditSchema = Type.Object({
   position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
 })
 
+/**
+ * One element moved (or copied) into a container in a DIFFERENT FILE (D2 G3)
+ * — `transplantJsxElement`, the write behind dragging an element out of one
+ * board frame and dropping it into another.
+ *
+ * `parentNodeId` is the new container, and unlike every other structural kind
+ * it is EXPECTED to decode to a different file from `nodeId`; a
+ * `parentNodeId` in the same file is an ordinary `reparent` and this kind
+ * refuses it rather than quietly doing the other write. The optional
+ * `anchorNodeId`/`position` name an existing child of the destination to land
+ * beside, and belong to the DESTINATION's file — they are decoded against it,
+ * not against the moved element's.
+ *
+ * `copy` is K2's Alt+drag extended across frames: the destination half is
+ * written and the origin's markup is left exactly where it is.
+ *
+ * Unlike `reparent`, cross-file is the POINT here rather than the refusal, so
+ * the two residual questions only the AST can answer arrive from the codemod:
+ * `captured-scope` (the markup reads a binding local to the component it is
+ * leaving) and `binding-conflict` (the destination already means something
+ * else by a name the move would carry).
+ */
+const TransplantEditSchema = Type.Object({
+  kind: Type.Literal('transplant'),
+  nodeId: Type.String(),
+  parentNodeId: Type.String(),
+  anchorNodeId: Type.Optional(Type.String()),
+  position: Type.Optional(Type.Union([Type.Literal('before'), Type.Literal('after')])),
+  copy: Type.Optional(Type.Boolean()),
+})
+
 /** The structural edit kinds, folded into `StudioEditSchema` by `studioWriteback.ts`. */
 export const StructuralEditSchemas = [
   MoveEditSchema,
@@ -309,6 +349,7 @@ export const StructuralEditSchemas = [
   GroupEditSchema,
   UngroupEditSchema,
   ReparentEditSchema,
+  TransplantEditSchema,
 ] as const
 
 export const StructuralEditSchema = Type.Union([...StructuralEditSchemas])
@@ -385,8 +426,21 @@ export function resolveDesignSystemImports<TProps>(
   })
 }
 
-/** Applied, or refused with a reason the caller turns into a `StudioEditRefusalError`. */
-export type StructuralEditOutcome = { ok: true } | { ok: false; reason: string; message: string }
+/**
+ * Applied, or refused with a reason the caller turns into a
+ * `StudioEditRefusalError`.
+ *
+ * `created` (`store-13`) is the tag-name `line:col` of the element this write
+ * brought into existence — an `insert`'s new child, a `duplicate`'s copy, a
+ * `wrap`/`group`'s container. Absent for the kinds that create nothing
+ * (`move`, `delete`, `reparent`, `ungroup`), and `null` when the codemod wrote
+ * but could not confirm the position against the re-parsed file. The caller
+ * mints the node id from it; see `createdJsxLocation.ts` for why it is never
+ * guessed at.
+ */
+export type StructuralEditOutcome =
+  | { ok: true; created?: CreatedJsxLocation | null }
+  | { ok: false; reason: string; message: string }
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
@@ -398,8 +452,60 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
     kind === 'wrap' ||
     kind === 'group' ||
     kind === 'ungroup' ||
-    kind === 'reparent'
+    kind === 'reparent' ||
+    kind === 'transplant'
   )
+}
+
+/** A decoded, already path-guarded location in a file OTHER than the edit's own target. */
+export interface ForeignJsxLocation {
+  file: string
+  line: number
+  col: number
+}
+
+/**
+ * D2 G3 — run the cross-file move. Its own entry point rather than another
+ * branch of {@link applyStructuralEdit} because it is the one structural kind
+ * whose second and third locations are in a DIFFERENT FILE: every other kind
+ * takes `{ line, col }` pairs that are only meaningful alongside `loc.file`,
+ * and widening that shared parameter to carry a file would make eight
+ * same-file kinds read as if they might not be.
+ *
+ * `destination` is the already-decoded, already-path-guarded container in the
+ * other file; `anchor` is an existing child of it (decoded against the
+ * DESTINATION's file, never the origin's). A `null` destination is the
+ * caller's guard having refused the id — the same fail-closed reading
+ * `applyStructuralEdit` gives its own `null`s.
+ */
+export function applyTransplantEdit(
+  loc: JsxLocation,
+  edit: Extract<StructuralEdit, { kind: 'transplant' }>,
+  destination: ForeignJsxLocation | null,
+  anchor: ForeignJsxLocation | null,
+): StructuralEditOutcome {
+  if (!destination) {
+    return {
+      ok: false,
+      reason: 'not-found',
+      message:
+        'The frame this element would move into is no longer backed by a file Studio can write. Reload the project and try again.',
+    }
+  }
+  const result = transplantJsxElement({
+    file: loc.file,
+    line: loc.line,
+    col: loc.col,
+    destinationFile: destination.file,
+    destinationLine: destination.line,
+    destinationCol: destination.col,
+    ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
+    ...(edit.copy ? { copy: true } : {}),
+  })
+  // `store-13` — the created position is in the DESTINATION file, so
+  // `applyStudioEditBatch` has to mint its node id against that file rather
+  // than against the edit's own `nodeId`. See its `transplant` branch.
+  return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
 }
 
 /**
@@ -432,7 +538,14 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
  */
 export function applyStructuralEdit(
   loc: JsxLocation,
-  edit: StructuralEdit,
+  /**
+   * Every structural kind EXCEPT `transplant`, whose second and third
+   * locations are in another file and which therefore has its own entry point
+   * ({@link applyTransplantEdit}). Excluded in the TYPE rather than handled by
+   * a dead branch here, so the switch below stays exhaustive and a caller that
+   * routes a transplant to the wrong function does not compile.
+   */
+  edit: Exclude<StructuralEdit, { kind: 'transplant' }>,
   anchor: { line: number; col: number } | null,
   destination: { line: number; col: number } | null,
   targetRel: string,
@@ -479,7 +592,7 @@ export function applyStructuralEdit(
         ...(importSpecifier === undefined ? {} : { importSpecifier }),
         ...(children === undefined ? {} : { children }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'duplicate': {
       // K2 — `parentNodeId` present means Alt+drag: the copy goes INTO that
@@ -501,7 +614,7 @@ export function applyStructuralEdit(
         ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
         ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
@@ -510,7 +623,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'group': {
       // The run's REST arrive as their own decoded locations (`siblings`) —
@@ -533,7 +646,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'ungroup': {
       const result = unwrapJsxElement(loc)

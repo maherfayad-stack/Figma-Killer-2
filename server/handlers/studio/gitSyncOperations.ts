@@ -417,7 +417,7 @@ export async function readConflictState(dir: string): Promise<GitConflictState> 
   const kind = await conflictKind(dir)
   if (!kind) return { kind: null, files: [] }
   const result = await runGit(dir, ['diff', '--name-only', '--diff-filter=U', '-z'])
-  return { kind, files: result.ok ? result.stdout.split(' ').filter(Boolean) : [] }
+  return { kind, files: result.ok ? result.stdout.split('\u0000').filter(Boolean) : [] }
 }
 
 async function conflictKind(dir: string): Promise<'rebase' | 'merge' | null> {

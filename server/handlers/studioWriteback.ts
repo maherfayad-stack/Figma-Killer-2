@@ -9,7 +9,7 @@
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
  * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
- * 'reparent' | 'insert-slot' |
+ * 'reparent' | 'transplant' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
  * `studioEditSchemas.ts` (split out for the
  * `module-size-budgets` ceiling) and is re-exported below verbatim, so every
@@ -26,8 +26,8 @@
  *   - `studioCssWriteback.ts` — `css`. Its target is a FILE + SELECTOR rather
  *     than a decoded `line:col`, and it writes through a postcss CST.
  *   - `studioStructuralWriteback.ts` — `move` / `delete` / `insert` /
- *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent`. These change
- *     WHERE markup is: they
+ *     `duplicate` / `wrap` / `group` / `ungroup` / `reparent` / `transplant`.
+ *     These change WHERE markup is: they
  *     take a second and sometimes a third location (an anchor sibling, a
  *     destination parent), they change the file's line count (invalidating
  *     every id below them, which is why `isSharedSourceNodeId` always reports
@@ -64,6 +64,7 @@ import {
   setStyledDeclaration,
   swapComponentInstance,
 } from '@core/ast-codemods'
+import { buildSourceNodeId } from '@core/page-tree'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
@@ -73,7 +74,7 @@ import {
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
-import { applyStructuralEdit } from './studioStructuralWriteback'
+import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   isRefusingEditKind,
@@ -266,6 +267,39 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     case 'tag':
       setJsxTagName({ ...loc, tag: edit.tag })
       return { applied: true }
+    case 'transplant': {
+      // D2 G3 — the ONE structural kind whose destination is deliberately in a
+      // DIFFERENT file, so its ends are decoded WITHOUT the same-file filter
+      // every other kind applies. They still go through `studioEditLocation`,
+      // which is where the containment and app-source guards live, so a
+      // hand-crafted `parentNodeId` still cannot name a file outside the
+      // workspace or one that is not app source.
+      //
+      // The ANCHOR belongs to the destination's file, not the origin's: it
+      // names an existing child of the container the element is landing in. A
+      // foreign anchor is therefore dropped (append is an honest position),
+      // exactly as `insert`/`reparent` treat theirs.
+      const destination = studioEditLocation(edit.parentNodeId)
+      const anchorId = edit.anchorNodeId
+      const anchor = anchorId ? studioEditLocation(anchorId) : null
+      const result = applyTransplantEdit(
+        loc,
+        edit,
+        destination ? { file: join(dir, destination.rel), line: destination.line, col: destination.col } : null,
+        anchor && destination && anchor.rel === destination.rel
+          ? { file: join(dir, anchor.rel), line: anchor.line, col: anchor.col }
+          : null,
+      )
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      // `store-13` — a transplant creates markup in the DESTINATION, so the
+      // position it reports is pinned to `edit.parentNodeId`'s file, not to
+      // this edit's own. `applyStudioEditBatch` reads `createdIn` for that.
+      return {
+        applied: true,
+        ...(result.created === undefined ? {} : { created: result.created }),
+        createdIn: edit.parentNodeId,
+      }
+    }
     case 'move':
     case 'delete':
     case 'insert':
@@ -306,7 +340,10 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         siblings,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      return { applied: true }
+      // `store-13` — `created` rides straight through; only the four creating
+      // kinds set it, and `applyStudioEditBatch` is what turns it into a node
+      // id (it alone knows the batch's final line count).
+      return { applied: true, ...(result.created === undefined ? {} : { created: result.created }) }
     }
     case 'detach': {
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
@@ -384,10 +421,18 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     // `studioEditFile` because this kind's write target is a FILE +
     // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
     if (edit.kind === 'css' && edit.op === 'create') touchedFiles.add(join(dir, edit.pageFile))
+    // D2 G3 — a transplant writes TWO files, and only the origin is named by
+    // `edit.nodeId`. The destination has to be in this set or the batch's
+    // line-count-shift check would report `shifted: false` for a write that
+    // moved every id in the file the element landed in.
+    if (edit.kind === 'transplant') {
+      const destination = studioEditFile(dir, edit.parentNodeId)
+      if (destination) touchedFiles.add(destination)
+    }
   }
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
-    lineCountBefore.set(file, existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0)
+    lineCountBefore.set(file, countLines(file))
   }
 
   // Which import bindings each file a DELETE touches references before anything
@@ -408,7 +453,13 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   const importPrune = createImportPruneSession()
   const referencedBefore = new Map<string, ReadonlySet<string>>()
   for (const edit of ordered) {
-    if (edit.kind !== 'delete') continue
+    // D2 G3 — a transplant that MOVES (not copies) removes markup from the
+    // origin file exactly as a delete does, so it can orphan an import there
+    // in exactly the same way. The DESTINATION is deliberately not snapshotted:
+    // the codemod just added imports to it, and pruning a binding that has no
+    // reference yet at snapshot time would delete the one it wrote.
+    const removesMarkup = edit.kind === 'delete' || (edit.kind === 'transplant' && edit.copy !== true)
+    if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)
     if (!file || referencedBefore.has(file)) continue
     if (isPrunableSourceFile(file) && existsSync(file)) {
@@ -424,6 +475,9 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
   const unexplainedSkips: StudioEditUnexplainedSkip[] = []
+  // `store-13` — where each created element sat, measured from the END of its
+  // file. See `resolveCreatedNodeIds` for why that anchor and not the line.
+  const createdPositions: CreatedNodePosition[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
@@ -434,6 +488,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         // already carries the blast radius the caller asked to see.
       } else if (outcome.applied) {
         written += 1
+        if (outcome.created) recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, outcome.created)
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
@@ -459,12 +514,11 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   }
 
   let shifted = false
+  const lineCountAfter = new Map<string, number>()
   for (const file of touchedFiles) {
-    const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
-    if (after !== lineCountBefore.get(file)) {
-      shifted = true
-      break
-    }
+    const after = countLines(file)
+    lineCountAfter.set(file, after)
+    if (after !== lineCountBefore.get(file)) shifted = true
   }
 
   // W7-3 — the project's launcher preview is now out of date. Debounced and
@@ -489,7 +543,70 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     addSlotPropDetails,
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
+    createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
   }
+}
+
+/** Lines in `file`, or 0 when it does not exist — the one reading every line-count comparison here uses. */
+function countLines(file: string): number {
+  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
+}
+
+/**
+ * `store-13` — one element a batch created, pinned to a coordinate that later
+ * edits in the same batch cannot invalidate.
+ *
+ * `linesFromEnd` is the file's line count at the moment this edit finished,
+ * minus the created element's line. `orderStudioEditsForApply` applies a batch
+ * BOTTOM-TO-TOP, so every edit that runs after this one sits strictly ABOVE
+ * the element just created: it can only add or remove lines before it, which
+ * moves the element's absolute line and leaves its distance from the end of
+ * the file exactly as it was. Recording the absolute line instead would report
+ * a stale position for every created element but the last — reachable today
+ * with a multi-selection ⌘D.
+ */
+interface CreatedNodePosition {
+  /** Workspace-relative POSIX path — the head of the node id. */
+  rel: string
+  /** Absolute path, for the final line count. */
+  file: string
+  col: number
+  linesFromEnd: number
+}
+
+/** Pin one `created` location to the file it landed in. Skips an edit whose id no longer decodes — there is no honest node id to mint from it. */
+function recordCreatedPosition(
+  into: CreatedNodePosition[],
+  dir: string,
+  nodeId: string,
+  created: { line: number; col: number },
+): void {
+  const location = studioEditLocation(nodeId)
+  const file = studioEditFile(dir, nodeId)
+  if (!location || !file) return
+  into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })
+}
+
+/**
+ * The created elements' node ids, re-derived against the file as the WHOLE
+ * batch left it — the plain `rel:line:col` the parser will mint for the same
+ * element on its next read (`buildSourceNodeId`, so this cannot drift from the
+ * parser's own spelling).
+ *
+ * A file missing from `lineCountAfter` never happens for a created element (it
+ * was written, so it is in `touchedFiles`), but is skipped rather than guessed.
+ */
+function resolveCreatedNodeIds(
+  positions: readonly CreatedNodePosition[],
+  lineCountAfter: ReadonlyMap<string, number>,
+): string[] {
+  const ids: string[] = []
+  for (const position of positions) {
+    const after = lineCountAfter.get(position.file)
+    if (after === undefined) continue
+    ids.push(buildSourceNodeId(position.rel, after - position.linesFromEnd, position.col))
+  }
+  return ids
 }
 
 /**

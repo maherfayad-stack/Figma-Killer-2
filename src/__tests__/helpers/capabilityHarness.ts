@@ -4,6 +4,8 @@ import { SESSION_COOKIE_NAME } from '../../../server/auth/tokens'
 import type { DbClient } from '../../../server/db'
 import { handleCmsRequest, type CmsHandlerOptions } from '../../../server/handlers/cms'
 import { tryHandleAi } from '../../../server/ai/handlers'
+import { tryServeStudio } from '../../../server/handlers/studio'
+import { ProjectDirOutsideWorkspaceError } from '../../../server/handlers/studioProjects'
 import { createTestDb, type TestDb } from './createTestDb'
 
 const CAPABILITY_TEST_PASSWORD = 'long-enough-password'
@@ -25,6 +27,14 @@ interface TestRoleUser {
 export interface CapabilityTestHarness extends TestDb {
   cms(path: string, options?: HarnessRequestInit): Promise<Response>
   ai(path: string, options?: HarnessRequestInit): Promise<Response>
+  /**
+   * Drive one `/admin/api/studio/*` request through `tryServeStudio` — i.e.
+   * through `routeGate.ts`, the way the real router does. A `null` (the path
+   * is not Studio's) becomes a 404 so callers always get a `Response`.
+   */
+  studio(path: string, options?: HarnessRequestInit): Promise<Response>
+  /** The same, for a `Request` the caller built itself (multipart bodies, odd headers). */
+  studioRequest(req: Request): Promise<Response>
   setupOwner(): Promise<string>
   sessionForEmail(email: string): Promise<string>
   stepUp(cookie: string): Promise<string>
@@ -110,6 +120,26 @@ export async function createCapabilityTestHarness(
     const response = await tryHandleAi(req, db, new URL(req.url))
     return response ?? new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
   }
+
+  const studioRequest = async (req: Request) => {
+    const url = new URL(req.url)
+    try {
+      const response = await tryServeStudio(req, { db }, url, url.pathname)
+      return response ?? new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+    } catch (err) {
+      // `server/router.ts` owns exactly one thrown case: a `dir` outside
+      // `studio-workspace/` is answered 404 there, not by the handler that
+      // raised it. Mirrored here so a harness response means what a real
+      // response means.
+      if (err instanceof ProjectDirOutsideWorkspaceError) {
+        return new Response(JSON.stringify({ error: 'Not found' }), { status: 404 })
+      }
+      throw err
+    }
+  }
+
+  const studio = (path: string, requestOptions: HarnessRequestInit = {}) =>
+    studioRequest(buildRequest(path, requestOptions))
 
   async function sessionForEmail(email: string): Promise<string> {
     const res = await cms('/admin/api/cms/login', {
@@ -216,6 +246,8 @@ export async function createCapabilityTestHarness(
     ...testDb,
     cms,
     ai,
+    studio,
+    studioRequest,
     setupOwner,
     sessionForEmail,
     stepUp,

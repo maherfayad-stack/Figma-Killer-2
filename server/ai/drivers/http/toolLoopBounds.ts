@@ -88,12 +88,19 @@ function canonicalJson(value: unknown): string {
  * outcome instead of guessing at a refusal.
  *
  * The payload is carried in BOTH `data` and, serialized, inside `error` — and
- * that is not redundancy. Every provider adapter renders a failed tool result
- * as its `error` string alone and drops `data` (`anthropic.ts`'s
- * `toolOutputToContent`, and the same shape in `chatCompletions.ts` /
- * `responses-shared.ts`), so `data` is what Studio's own transcript and UI
- * keep, and the `error` text is the only thing the MODEL ever sees. A
- * machine-readable code the model cannot read would be no code at all.
+ * that is not redundancy. Every consumer that hands a tool result to a model
+ * renders a failed one as its `error` string alone and drops `data`:
+ * `anthropic.ts`'s `toolOutputToContent`, the same shape in
+ * `chatCompletions.ts` / `responses-shared.ts`, and `mcp/server.ts`'s
+ * `CallToolResult` builder for every external MCP client. So `data` is what
+ * Studio's own transcript and UI keep, and the `error` text is the only thing
+ * the MODEL ever sees. A machine-readable code the model cannot read would be
+ * no code at all.
+ *
+ * That premise is now pinned by
+ * `src/__tests__/architecture/failed-tool-result-drops-data.test.ts` rather
+ * than by this paragraph: if a renderer ever starts carrying `data`, the gate
+ * fails and names the serialised copy below as the one to delete. Never both.
  */
 export function duplicateCallOutput(toolName: string, prior: AiToolOutput): AiToolOutput {
   const payload = { code: DUPLICATE_CALL_CODE, toolName, priorResult: boundedPriorResult(prior) }

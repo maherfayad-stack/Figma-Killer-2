@@ -532,19 +532,36 @@ Read this list twice. Each item is a real defect that shipped and had to be fixe
     alm:sync` *overwrites* the real design-system manifest with 39 propless
     components — `vendorDocs.ts` matches headings with `/^(#{1,6})\s+(.*)$/`,
     and JavaScript's `.` does not match `\r`. Never add a `-text` or CRLF rule
-    for those paths.
-16. **Most `/admin/api/studio/*` routes have no per-request auth at all.** Studio
-    is a single-operator tool: the only thing every Studio route enforces is
-    path containment (`resolveProjectDir`), and the namespace does not even run
-    the CSRF origin check the CMS and AI dispatchers run. Ten routes carry a
-    real guard — delete/duplicate/sample/trash-restore/trash-purge on
-    `requireCapability('studio.write')`, onboarding/comments/node-export/shares
-    on `requireAuthenticatedUser`. Do not read a neighbouring ungated route as
-    permission to ship another one, do not assume `req` has a session behind it,
-    and never expose this server to an untrusted network. The full posture,
-    with paths: `docs/server.md` → "Single-operator posture on the Studio
-    routes". Closing it is the first follow-up wave in
-    `STUDIO-FIGMA-FEEL-PLAN.md` §9.
+    for those paths. **The USER's repo is the other half of this**, and it is
+    not `.gitattributes`-fixable: `parser-13` put the one seam in
+    `EolPreservingFileSystem` (`src/core/page-parser/eolFileSystem.ts`) — every
+    disk-backed ts-morph `Project` reads LF-only and writes the file's own
+    ending back, and anything reading a user file line-wise uses `splitLines`
+    from `@core/utils/lineEndings`, never `text.split('\n')`. See
+    `docs/features/studio-import.md` → "Line endings".
+16. **A Studio route that is not in the capability table does not exist.**
+    Every `/admin/api/studio/*` request passes `gateStudioRequest`
+    (`server/handlers/studio/routeGate.ts`) before any sub-router: the path
+    must be declared in `server/handlers/studio/routeCapabilities.ts`, a
+    state-changing method must pass the CSRF `Origin` check, and the caller
+    must hold the capability that declaration names for this method class.
+    An undeclared path answers **404** — so adding a route without adding a
+    table line produces a dead route, not an open one, and
+    `studio-routes-capability-declared.test.ts` fails the build for it. The
+    gate resolves the `AuthUser` once and hands it to the session sub-routers
+    in `StudioSessionRuntime`; **never add a `requireCapability` call inside a
+    Studio sub-router** — a second policy is a policy that drifts. Capabilities
+    map by effect: `site.read` to read, `studio.write` for the project's files,
+    `studio.run.project` for anything that runs somebody's code (dev server,
+    deploy, trust promotion), `site.structure.edit` for git history and the
+    GitHub credential, `site.content.edit` for comments and shares.
+    `studio.git.write` is NOT a route capability — it gates the agent tool, and
+    fusing the two would force a role to hand its agent commit rights just to
+    give a human the Version control panel. This closed `sec-05` finding 2; the
+    posture is still single-operator by default (the Owner role holds every
+    capability in the table), so it is a real gate, not a login flow. Full
+    write-up: `docs/server.md` → "Per-request capability gating on the Studio
+    routes".
 
 ---
 

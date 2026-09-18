@@ -33,12 +33,27 @@ describe('Single-install CMS architecture', () => {
       /\bsite picker\b/i,
     ]
 
+    /**
+     * `cross-site` is also a `Sec-Fetch-Site` HEADER VALUE, and that meaning
+     * has nothing to do with CMS tenancy — it is the browser saying "another
+     * site caused this request". `sec-16` made `originAllowed` read it, so
+     * that one word now appears in the CSRF check and in the test that drives
+     * it. Named here, per file and per pattern, rather than softening the
+     * pattern for the whole tree: a new file that says `cross-site` still
+     * fails until someone justifies it in this list.
+     */
+    const allowed = new Map<string, RegExp>([
+      [join('server', 'auth', 'security.ts'), /\bcross-site\b/i],
+      [join('server', 'handlers', '__tests__', 'designImport.test.ts'), /\bcross-site\b/i],
+    ])
+
     const offenders: string[] = []
     for (const root of RUNTIME_SOURCE_ROOTS) {
       for (const file of new Bun.Glob('**/*.{ts,tsx}').scanSync(join(ROOT, root))) {
         const path = join(root, file)
         const src = read(path)
         for (const pattern of forbidden) {
+          if (allowed.get(path)?.source === pattern.source) continue
           if (pattern.test(src)) offenders.push(`${path}: ${pattern}`)
         }
       }

@@ -82,6 +82,7 @@ import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
+import { registerCanvasDropSurface, unregisterCanvasDropSurface } from './canvasDropSurfaceRegistry'
 import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
@@ -332,6 +333,8 @@ export function BreakpointSelectionOverlay({
     overlayRoot,
     selectedNodeIds,
     frameId,
+    // D2 G3 — which FILE a drag out of this frame is moving markup from.
+    pageId: framePageId,
     enabled: showToolbar,
     bodyDragEnabled: canEditStructureHere,
     panBy: viewportActions?.panBy,
@@ -339,6 +342,35 @@ export function BreakpointSelectionOverlay({
     // D1's LIVE transform — see `canvasDragSession.ts` for why not the store's.
     transformRef: viewportActions?.transformRef,
   })
+
+  // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
+  //
+  // Registration is the viewport test: this overlay only exists for a frame
+  // that is mounted, which `frameVirtualization.ts` (plus the mount pool)
+  // already decided. There is deliberately no second on-screen check here, and
+  // no store selector enumerating frames — a drag reads this list on every
+  // animation frame, and a `useEditorStore` selector that scanned the board
+  // would re-run on every unrelated store change.
+  //
+  // Gated on `canEditStructureHere` so a read-only session, or a frame whose
+  // breakpoint is not the active one, is never offered as a drop target. The
+  // refs are read through a closure rather than captured, because
+  // `dropLayerRef` is populated by React AFTER this effect runs on the first
+  // commit and `iframeElement` is replaced wholesale on a frame reload.
+  useEffect(() => {
+    if (!canEditStructureHere || !framePageId) return
+    const viewport = viewportRef.current
+    if (!viewport) return
+    const key = {}
+    registerCanvasDropSurface(key, {
+      frameId,
+      pageId: framePageId,
+      viewport,
+      iframe: iframeElement,
+      dropLayer: () => reorderDrag.dropLayerRef.current,
+    })
+    return () => unregisterCanvasDropSurface(key)
+  }, [canEditStructureHere, framePageId, frameId, iframeElement, viewportRef, reorderDrag.dropLayerRef])
 
   // One measurement pass. Reads the freshest selection / hover / toolbar inputs
   // from the latest render closure via useEffectEvent, so the scheduler effect

@@ -568,11 +568,92 @@ label, the media explorer keeps its own thumbnail card.
 
 ---
 
+## Dragging an element BETWEEN frames (D2 G3)
+
+A drag that leaves the frame it started in and lands in another one is a move
+whose two ends are in two different FILES. Three modules make that work, and
+each of them exists because the same-frame drag's assumptions stop holding at
+the frame boundary:
+
+- **`canvasDropSurfaceRegistry.ts`** — every mounted design frame publishes
+  itself (viewport, iframe, page id, its own drag layer) while
+  `BreakpointSelectionOverlay` is mounted. Registration IS the viewport test:
+  only a frame `frameVirtualization.ts` (plus the mount pool) decided to mount
+  has an overlay at all, so there is no second on-screen check. It is
+  module-scoped, **never a store selector** — a drag reads it on every
+  animation frame.
+- **`canvasDragBoard.ts`** — every registered frame's client rect, measured
+  ONCE per gesture and refreshed on exactly two signals: the LIVE transform
+  moved (auto-pan slides the board under a still pointer) or the registry
+  version changed (auto-panning to the edge mounts frames that did not exist
+  when the drag started). A frame's CANDIDATES are measured lazily, the first
+  time the pointer enters it.
+- **`canvasDragFrame.ts`** — one animation frame of the gesture, including the
+  branch that resolves and paints in another frame.
+
+Three things are load-bearing and easy to get wrong:
+
+1. **Chrome is painted in the frame the pointer is OVER.** `.viewport` is
+   `overflow: hidden`, so a cross-frame drop line drawn into the origin frame's
+   layer is drawn where nobody can see it. `session.paintedLayer` clears the
+   frame being left before the new one is written.
+2. **Resolution happens in the DESTINATION frame's own space**, against that
+   frame's own candidate index — so nothing needs converting between frames.
+3. **A cross-frame drop resolves as an INSERT, not a move.** The dragged
+   element is not in that tree, so a move resolver's cycle and self-drop guards
+   have nothing to check. The verdict comes from
+   `previewStructuralTransplant`, painted as the same refusal chip a same-frame
+   refusal already shows, while the pointer is still down.
+
+**`pageId`, never `frameId`, decides whether a drop is cross-frame.** Two frames
+can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
+a drop between those two is an ordinary same-file reparent that must keep going
+through `moveNodes`.
+
+The write is one `transplant` edit (`transplantJsxElement`), not a delete plus
+an insert: two edits are two writes the batch could land half of, and the second
+has no markup to insert — the element's source text only exists in the file the
+first one just removed it from. Alt held copies instead of moving. Nothing is
+moved on the canvas first, because the node that appears in the destination
+frame is a DIFFERENT node from the one that left (its id is the `rel:line:col`
+the write produces); the commit's resync covers both files, which the batch
+reports as touched.
+
+---
+
+## Dropping a file from the operating system (D2 G15)
+
+`useCanvasFileDrop` (mounted once at `CanvasRoot`, not per frame) plus
+`canvasFileDrop.ts` (the decision) plus a relay in
+`useIframeEventForwarding.ts`.
+
+**Native HTML5 drag-and-drop, by necessity.** A file that originates outside
+the browser is only ever delivered through `DataTransfer.files`; there is no
+pointer-event form of this gesture. Both the hook and the relay are on
+`single-drag-mechanism.test.ts`'s allowlist for that reason, and the DECISION
+half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
+
+- `dragover` **must** be cancelled or `drop` is never delivered — and is
+  cancelled only for a drag carrying files, so an in-page `@dnd-kit` drag is
+  untouched.
+- The relay re-dispatches both events on the iframe ELEMENT and cancels them
+  inside the frame, so the browser does not navigate that frame's document to
+  the dropped file.
+- Every refusal is decided before the network is touched: the empty board
+  ("Drop the image onto a frame"), several files at once, a declared
+  non-image. One toast, no write.
+- The bytes land through `POST /admin/api/studio/asset-drop` in the project's
+  own `public/` — the one directory every framework serves from the site root,
+  and therefore the only one that can back a literal `<img src>`. See that
+  module's doc for why `src/assets/` cannot.
+
+---
+
 ## Events across the iframe boundary
 
 React synthetic events bubble through the **fiber** tree, so React handlers work
 normally. **Native** listeners on the parent `window`/`document` never see iframe
-events. Four cases are bridged explicitly:
+events. Five cases are bridged explicitly:
 
 1. **Wheel** — re-dispatched on the iframe element so pan/zoom works.
 2. **Pointer** — forwarded during space-pan and active reorder drags. The one
@@ -585,7 +666,16 @@ events. Four cases are bridged explicitly:
 3. **Keyboard** — a cloned `keydown` is dispatched on the **parent `document`**
    (not the iframe element — that would double-fire the canvas-root handler that
    already gets it via fiber bubbling). `Tab` is blocked, never forwarded.
-4. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
+4. **OS file drag/drop** (D2 G15, `canvasFrameDragRelay.ts`) — **every**
+   `dragover`/`drop` in a design frame's document is cancelled there, because
+   the browser's default is to navigate the document that received it and that
+   tears the portal's React root out. A dropped LINK is as destructive as a
+   dropped file, so the cancel is unconditional (`sec-17`); only the
+   **file-carrying** ones are then re-dispatched on the iframe element for
+   `useCanvasFileDrop`. Design frames only — a live (Tier 2) frame's document
+   belongs to the running app. An in-page `@dnd-kit` drag is pointer-based and
+   untouched.
+5. **Overlay dismiss** — `ContextMenu` attaches dismiss listeners to every
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
 
@@ -961,14 +1051,50 @@ streams store updates continuously). Measured: staged, the transient frame's
 body held **0 children for the whole 5 s `waitForAgentRenderFrame` window** and
 the capture failed with "did not become ready".
 
-**`frameMountPool.ts` — leaving the viewport no longer throws a document
-away.** A departed frame stays mounted while the pool has room
-(`max(8, onScreen + 4)`, evicted least-recently-on-screen), so panning back to
-where you just were costs nothing. The cap is a memory ceiling, not a target:
-each live frame is a whole document with its own copy of every stylesheet.
-`BoardFrameView` takes `isOnScreen` (drives poster CAPTURE — the picture has to
-be taken while the frame is genuinely visible) and `isMounted` (drives the live
-frame) as two separate props for this reason.
+### `framePool.ts` — the ONE module that answers "is frame X mounted, and why"
+
+**Leaving the viewport no longer throws a document away.** A departed frame
+stays mounted while the pool has room, evicted least-recently-on-screen, so
+panning back to where you just were costs nothing. The cap is a memory ceiling,
+not a target: each live frame is a whole document with its own copy of every
+stylesheet.
+
+There were two pools until `perf-9` merged them — S1's `frameMountPool.ts` for
+portal frames and L8 Phase B's `liveFramePool.ts` for Tier-2 live frames. They
+ran the same algorithm and differed only in budget, `BoardFramesLayer` computed
+both on every render and threw one away, and `BoardFrameView` re-derived which
+applied from the trust tier (`isLiveMounted ?? isMounted ?? isOnScreen`). Now
+there is one policy, parameterised by what a frame **costs**:
+
+| `FrameMountCost` | A mounted frame is | Budget |
+|---|---|---|
+| `'portal'` (Tier 0/1) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
+| `'live'` (Tier 2) | `LiveBoardFrame`: a Tier-0 fallback document **and** a cross-origin bridge iframe against a real dev-server process — two documents until it reports ready | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+
+The cost is derived from the trust tier in `BoardFramesLayer` and **nowhere
+else**; the tier no longer reaches mounting at all. One retention list, one
+`useState`, one budget per render. Switching tier (Tier-2 auto-promotion, or
+its Undo) is part of the retention key, so the pool resizes without a pan.
+
+`resolveFrameMount({ isOnScreen, isPooled })` is the single per-frame answer,
+returning `{ mounted, reason }` where `reason` is `on-screen` / `pooled` /
+`offscreen`. `BoardFrameView` stamps it on the frame element as
+**`data-frame-mount`**, so the answer is legible from the DOM — to
+`src/__tests__/canvas/framePoolMountReason.test.tsx` (which asserts the mounted
+count against `framePoolBudget` at every step of a scripted pan across a
+24-frame board, for both costs), to `agentRenderFrameMountReason` in
+`agent/renderEvidence.ts` (so a timed-out `studio_export_frames` says whether
+the frame was never pooled or was mounted-but-not-ready), and to a human
+dogfooding a pan with devtools open.
+
+`isPooled` — and `BoardFrameView`'s `isMounted` prop — are **optional**, and
+must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
+while visible", and making it required silently renders nothing at all for
+every such caller with no `tsc` error (`meta-14` landmine 1;
+`boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
+prop because it drives poster CAPTURE — the picture has to be taken while the
+frame is genuinely visible, which is a different question from whether it holds
+an iframe.
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:

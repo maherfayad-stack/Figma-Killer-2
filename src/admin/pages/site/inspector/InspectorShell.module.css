@@ -5,8 +5,16 @@
   flex: 1;
 }
 
+/*
+ * The tab strip is chrome above the Design tab's scroll container, so every
+ * pixel here comes straight out of the 900px budget
+ * (`docs/features/inspector.md` §6). `--inspector-space-2xs` block padding
+ * puts it at 43px against Figma's ~40px tab row; the inline padding stays on
+ * `--inspector-pad-x` so the segmented control lines up with every section
+ * header below it.
+ */
 .tabBar {
-  padding: var(--inspector-space-s) var(--inspector-pad-x);
+  padding: var(--inspector-space-2xs) var(--inspector-pad-x);
   border-bottom: 1px solid var(--inspector-divider);
 }
 

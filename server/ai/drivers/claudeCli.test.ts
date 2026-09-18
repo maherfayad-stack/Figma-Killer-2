@@ -5,8 +5,8 @@
  * database). Fixtures use the exact CLI event shapes WS-11 §4.0 verified.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY, type AiMessage } from '../runtime/types'
 import type { AiResolvedCredential, AiStreamRequest } from './types'
@@ -24,6 +24,7 @@ import { claudeCliProjectDirName, claudeCliSessionId } from './claudeCliSession'
 import type { ClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { getPermissionGate } from '../mcp/permissionGate'
 import { disposeAllWarmSessions } from './claudeCliSessionPool'
+import { readFileProtection, type FileProtection } from '../credentials/fileProtection.testHelpers'
 
 let dataRoot: string
 let projectsRoot: string
@@ -945,20 +946,18 @@ describe('streamClaudeCli — MCP tool routing (WS-11 step 3)', () => {
 // temp file instead; this block pins the file's permissions, its location,
 // and that it is always deleted, on every exit path.
 describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
-  it('writes the MCP config to a 0600 file — never inline JSON on the command line', async () => {
+  it('writes the MCP config to a private file — never inline JSON on the command line', async () => {
     let capturedArgv: string[] = []
-    let modeAtSpawnTime: number | undefined
-    let dirModeAtSpawnTime: number | undefined
+    let protectionAtSpawnTime: FileProtection | undefined
     const spawn = fakeCliSpawn({
       stdoutLines: [{ type: 'result', is_error: false, usage: { input_tokens: 1, output_tokens: 1 } }],
       onSpawn: (argv) => {
         capturedArgv = argv
         const path = argv[argv.indexOf('--mcp-config') + 1]!
-        // Checked INSIDE onSpawn — the driver's own `finally` deletes the
-        // file once the turn ends, so checking afterward would always see
+        // Captured INSIDE onSpawn — the driver's own `finally` deletes the
+        // file once the turn ends, so reading afterward would always see
         // it already gone.
-        modeAtSpawnTime = statSync(path).mode & 0o777
-        dirModeAtSpawnTime = statSync(join(path, '..')).mode & 0o777
+        protectionAtSpawnTime = readFileProtection(path)
       },
     })
     await collect(baseRequest(), testOptions({ spawn }))
@@ -967,8 +966,27 @@ describe('streamClaudeCli — MCP config file (secret-exposure fix)', () => {
     const mcpConfigValue = capturedArgv[capturedArgv.indexOf('--mcp-config') + 1]!
     expect(mcpConfigValue.startsWith('{')).toBe(false)
     expect(mcpConfigValue).toContain('studio-claude-cli-mcp-config-')
-    expect(modeAtSpawnTime).toBe(0o600)
-    expect(dirModeAtSpawnTime).toBe(0o700)
+
+    // The protection is asserted in the terms the PLATFORM actually enforces.
+    // On POSIX that is the mode bits. On Windows `chmod` decides nothing —
+    // Node maps it onto the read-only attribute and `statSync` reports 0o666
+    // back whatever was asked for — so the mode is not evidence of anything
+    // and the DACL is. This test used to assert 0o600 on both, which is why
+    // it was red on Windows (`standing-01`): it was asserting a guarantee the
+    // platform never made, against a product that was not making it either.
+    // Both halves are now real.
+    if (process.platform === 'win32') {
+      // Exactly ONE access-control entry, and it is this user with full
+      // control, inherited from the directory the driver locked down before
+      // writing the secret into it. `icacls` prints the resolved account,
+      // which is domain-qualified (`MACHINE\Admin`) on a real machine, so the
+      // assertion is on the account's tail rather than on a literal.
+      expect(protectionAtSpawnTime?.acl).toHaveLength(1)
+      expect(protectionAtSpawnTime?.acl[0]).toEndWith(`${userInfo().username}:(I)(F)`)
+    } else {
+      expect(protectionAtSpawnTime?.fileMode).toBe(0o600)
+      expect(protectionAtSpawnTime?.dirMode).toBe(0o700)
+    }
   })
 
   it('writes the config file to os.tmpdir(), never inside studio-workspace/ (every path there is git-tracked)', async () => {

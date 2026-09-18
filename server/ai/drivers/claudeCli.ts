@@ -524,7 +524,7 @@ export async function* streamClaudeCli(
     // turn to "no MCP tools", the same fail-soft posture a connector-mint
     // failure already gets, rather than aborting the whole turn.
     const mcpConfigFile = turn.connector
-      ? tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
+      ? await tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
       : null
 
     try {

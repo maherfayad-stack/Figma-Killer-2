@@ -32,6 +32,14 @@ export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
+// D2 G3 — the cross-FILE move `moveJsxElement` deliberately refuses.
+export { transplantJsxElement } from './transplantJsxElement'
+export type {
+  TransplantJsxElementParams,
+  TransplantJsxElementResult,
+  TransplantJsxRefusal,
+  TransplantJsxRefusalReason,
+} from './transplantJsxElement'
 export { duplicateJsxElement } from './duplicateJsxElement'
 export type {
   DuplicateJsxElementParams,
@@ -64,6 +72,7 @@ export type {
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'
 export type {

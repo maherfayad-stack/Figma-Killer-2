@@ -107,10 +107,14 @@
  * WHERE THE REST LIVES
  * ---------------------
  * This file owns which ROWS exist. `FillSectionParts.tsx` draws the opacity
- * field and the layer/gradient/content-fit popover bodies. `FillColorField.tsx`
+ * field and the layer/gradient/content-fit popover bodies;
+ * `FillEntryPopover.tsx` is the one switch that picks which of those a row
+ * opens; `fillRowDescriptors.tsx` owns the row taxonomy (`FillEntryData`),
+ * each kind's popover title, and how a background layer reads in the list.
+ * `FillColorField.tsx`
  * owns the colour rows' own chrome; `buildColorFillEntry.tsx` builds the row
  * object itself; `colorWriteTargetNote.ts` is the shared note-string builder —
- * all three split out purely for `module-size-budgets.test.ts`. `backgroundLayers.ts`,
+ * all split out purely for `module-size-budgets.test.ts`. `backgroundLayers.ts`,
  * `fillModel.ts`, `gradientValue.ts`, `imageFillValue.ts` stay in
  * `panels/PropertiesPanel/`, unchanged, per the P3 work order's own
  * instruction to reuse them verbatim.
@@ -130,14 +134,32 @@
  * one in the manifest) is the multi-only companion that answers "what
  * colours is this selection made of" across properties.
  *
- * KNOWN GAP, disclosed rather than silently shipped: this file dropped the
- * pre-P3 `isMixed`/`MIXED_PLACEHOLDER` handling when it was written, on the
- * then-true premise that it could never see a multi-selection. A disagreeing
- * fill therefore renders this section's ordinary UNSET state rather than the
- * word "Mixed" (`readString` returns `undefined` for the sentinel, so nothing
- * stringifies a Symbol and nothing lies about a value — it just under-states
- * the disagreement). Re-wiring it is `docs/features/inspector.md` §9.3's
- * table, one row per field, and belongs with whoever next owns this file.
+ * MIXED, ROW BY ROW (`docs/features/inspector.md` §9.3)
+ * -----------------------------------------------------
+ * The collapsed bag holds the `MIXED` Symbol wherever the selected layers
+ * disagree, and `readString` returns `undefined` for a Symbol — so until this
+ * was wired, a disagreeing fill rendered this section's ordinary UNSET state
+ * and a row could vanish entirely. Nothing lied, but "nobody set a fill" and
+ * "five layers set five different fills" looked identical, one keystroke from
+ * flattening the second into the first. Every row now reads the RAW cell:
+ *
+ *   - **Text** / **Solid fill** — the row stays and its `ColorValueInput`
+ *     reads "Mixed"; the `%` opacity cell is dropped (there is no single
+ *     alpha to show). Typing or picking a colour writes it to all N.
+ *   - **Content fit** — the row's trailing value reads "Mixed"; its popover's
+ *     `ClassPropertyRow`s carry the sentinel through to their own controls.
+ *   - **Background layers** — a disagreeing `background-image` has NO shared
+ *     stack, so the per-layer rows collapse into ONE "Mixed" row whose
+ *     popover writes each background declaration whole
+ *     (`BackgroundDeclarationsBody`). The header's two layer-add buttons
+ *     disable: "insert at index 0" would be a replace wearing an add's icon.
+ *     A stack the layers AGREE on keeps its per-layer rows, and only the
+ *     disagreeing satellite goes whole-declaration.
+ *   - **Background shorthand** — the row stays and its raw field reads
+ *     "Mixed".
+ *
+ * Removing any of those rows clears the property from every selected layer,
+ * in one history entry (`setNodesInlineStyles`, §9.1).
  *
  * LOCKED (CODE-VALUED) PROPERTIES
  * --------------------------------
@@ -146,29 +168,22 @@
  * of `StyleSectionsComposer.tsx`'s top-level check every migrated section
  * reproduces (no composer aggregates the whole bag anymore).
  */
-import { useState, type ReactNode, type RefObject } from 'react'
+import { useState, type RefObject } from 'react'
 import type { CSSPropertyBag } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { PropertyList, type PropertyListEntry } from '@ui/components/PropertyList'
-import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { Section } from '@ui/components/Section'
 import { Image2SolidIcon } from 'pixel-art-icons/icons/image-2-solid'
 import { PaintBucketSolidIcon } from 'pixel-art-icons/icons/paint-bucket-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { readString, hasStyleValue } from '../../panels/PropertiesPanel/styleValueUtils'
-import {
-  BackgroundImageRawBody,
-  BackgroundLayerPopoverBody,
-  ContentFitPopoverBody,
-  ImageSwatch,
-  LayerBlendSelect,
-  OrphanSatellitesBody,
-  ShorthandEscapeHatchBody,
-} from './FillSectionParts'
-import { ColorWriteRefusalBody } from './FillColorField'
+import { isMixed, MIXED_PLACEHOLDER } from '@ui/components/MixedValue'
+import { LayerBlendSelect } from './FillSectionParts'
 import { buildColorFillEntry } from './buildColorFillEntry'
 import { colorWriteTargetNote } from './colorWriteTargetNote'
 import { FillSectionActions } from './FillSectionActions'
+import { FillEntryPopover } from './FillEntryPopover'
+import { describeLayer, mixedLayersEntry, type FillEntryData } from './fillRowDescriptors'
 import { writeBackgroundModel } from './writeBackgroundModel'
 import {
   BACKGROUND_SATELLITE_PROPS,
@@ -176,9 +191,9 @@ import {
   parseBackgroundLayers,
   removeBackgroundLayer,
   type BackgroundModel,
+  type BackgroundSatelliteProp,
 } from '../../panels/PropertiesPanel/backgroundLayers'
 import { CONTENT_FIT_PROPS } from '../../panels/PropertiesPanel/fillModel'
-import { parseGradient, isUrlImageValue, extractUrlPayload } from '../../panels/PropertiesPanel/gradientValue'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { buildContextOnlyClassChain, buildCollapsedCurrentStyles, buildCollapsedStoredStyles } from '../collapsedStyleBag'
@@ -210,15 +225,6 @@ const FILL_PROPERTIES: ReadonlyArray<keyof CSSPropertyBag> = [
 // ---------------------------------------------------------------------------
 // FillSection — the manifest section
 // ---------------------------------------------------------------------------
-
-type FillEntryData =
-  | { kind: 'text' }
-  | { kind: 'contentFit' }
-  | { kind: 'layer'; index: number }
-  | { kind: 'layersRaw'; raw: string; reason: string }
-  | { kind: 'orphanSatellites' }
-  | { kind: 'color' }
-  | { kind: 'shorthand' }
 
 export function FillSection() {
   const model = useSelectionModel()
@@ -262,10 +268,17 @@ export function FillSection() {
   // bag declares the property, not merely whether it exists somewhere in the
   // node's effective chain). Also feeds the two rows' own display below —
   // computed once, not twice.
+  //
+  // `hasStyleValue` is asked about the RAW cell, not `readString`'s output:
+  // for a multi-selection that disagrees the cell is the `MIXED` Symbol,
+  // which `readString` collapses to `undefined`. Reading "stored" off that
+  // is what made a disagreeing colour row vanish (§9.3).
+  const textMixed = isMixed(storedStyles.color)
   const textValue = readString(storedStyles, 'color')
-  const textStored = hasStyleValue(textValue)
+  const textStored = hasStyleValue(storedStyles.color)
+  const colorMixed = isMixed(storedStyles.backgroundColor)
   const colorValue = readString(storedStyles, 'backgroundColor')
-  const colorStored = hasStyleValue(colorValue)
+  const colorStored = hasStyleValue(storedStyles.backgroundColor)
 
   // Law 1 (`docs/features/inspector-disclosure.md` §4 G1): whether ANYTHING
   // Fill claims is set, on the active tab OR any other breakpoint/condition
@@ -329,7 +342,7 @@ export function FillSection() {
   // to know whether the row is VISIBLE (stored or muted), not merely stored.
   const textMutedValue = !textStored && textColorRendersUnstored ? readString(currentStyles, 'color') : undefined
   const showTextEntry = textStored || textMutedValue !== undefined
-  const textDisplayValue = textStored ? textValue : textMutedValue
+  const textDisplayValue = (textStored ? textValue : textMutedValue) ?? ''
   // panel-32: is the muted value a REAL declaration elsewhere (base, or
   // another breakpoint/condition), as opposed to pure inheritance/UA
   // rendering with nothing declared anywhere? Drives the popover's
@@ -339,7 +352,7 @@ export function FillSection() {
   const colorMutedValue =
     !colorStored && backgroundColorRendersUnstored ? readString(currentStyles, 'backgroundColor') : undefined
   const showColorEntry = colorStored || colorMutedValue !== undefined
-  const colorDisplayValue = colorStored ? colorValue : colorMutedValue
+  const colorDisplayValue = (colorStored ? colorValue : colorMutedValue) ?? ''
   const colorDeclaredElsewhere =
     !colorStored && (provenanceByProperty.get('backgroundColor')?.sources.length ?? 0) > 0
 
@@ -358,11 +371,20 @@ export function FillSection() {
   const textNote = colorWriteTargetNote(textStored, textDeclaredElsewhere, textWriteTarget)
   const colorNote = colorWriteTargetNote(colorStored, colorDeclaredElsewhere, colorWriteTarget)
 
+  // The background-layer stack, as the SELECTION sees it. A disagreeing
+  // `background-image` has no shared stack at all; a disagreeing satellite
+  // still sits on a stack everyone shares — see this file's MIXED doc.
+  const layersMixed = isMixed(storedStyles.backgroundImage)
+  const mixedSatellites = new Set<BackgroundSatelliteProp>(
+    BACKGROUND_SATELLITE_PROPS.filter((prop) => isMixed(storedStyles[prop])),
+  )
+
   const fillActions = (
     <FillSectionActions
       storedStyles={storedStyles}
       textVisible={showTextEntry}
       colorVisible={showColorEntry}
+      layersMixed={layersMixed}
       onChange={onChange}
     />
   )
@@ -378,18 +400,25 @@ export function FillSection() {
 
   const parsedModel = parseBackgroundLayers(storedStyles)
   const layers = parsedModel.spine.kind === 'layers' ? parsedModel.spine.layers : []
+  // `layersMixed` owns the whole background block when it is true — the
+  // satellites travel with it into that row's own popover, rather than
+  // splitting the same disagreement across two rows.
   const orphanSatellites =
+    !layersMixed &&
     parsedModel.spine.kind !== 'layers' &&
-    BACKGROUND_SATELLITE_PROPS.some((prop) => parsedModel.satellites[prop].kind !== 'unset')
+    (mixedSatellites.size > 0 ||
+      BACKGROUND_SATELLITE_PROPS.some((prop) => parsedModel.satellites[prop].kind !== 'unset'))
 
   function write(next: BackgroundModel) {
     writeBackgroundModel(parsedModel, next, onChange)
   }
 
   const contentFitVisible = CONTENT_FIT_PROPS.some((prop) => hasStyleValue(storedStyles[prop]))
+  const contentFitMixed = CONTENT_FIT_PROPS.some((prop) => isMixed(storedStyles[prop]))
 
+  const shorthandMixed = isMixed(storedStyles.background)
   const shorthandValue = readString(storedStyles, 'background')
-  const showShorthandEntry = hasStyleValue(shorthandValue)
+  const showShorthandEntry = hasStyleValue(storedStyles.background)
 
   // ---- entries ------------------------------------------------------------
   const entries: PropertyListEntry<FillEntryData>[] = []
@@ -399,8 +428,8 @@ export function FillSection() {
       buildColorFillEntry({
         id: 'fill-text', label: 'Text', property: 'color', data: { kind: 'text' },
         ariaLabel: 'Text colour', swatchLabel: 'Text colour swatch', opacityAriaLabel: 'Text colour opacity',
-        displayValue: textDisplayValue!, resolvedColor: textResolvedColor, refused: textRefused,
-        stored: textStored, mutedValue: textMutedValue, note: textNote,
+        displayValue: textDisplayValue, resolvedColor: textResolvedColor, refused: textRefused,
+        mixed: textMixed, stored: textStored, mutedValue: textMutedValue, note: textNote,
         onCommit: onChange, onPreview: previewProperty, onClearPreview,
       }),
     )
@@ -412,14 +441,16 @@ export function FillSection() {
       label: 'Content fit',
       leading: <Image2SolidIcon size={14} aria-hidden="true" />,
       summary: 'Content fit',
-      value: readString(storedStyles, 'objectFit'),
+      value: contentFitMixed ? MIXED_PLACEHOLDER : readString(storedStyles, 'objectFit'),
       data: { kind: 'contentFit' },
     })
   }
 
   // The layer block — its start index is what `handleReorder` clamps drags to.
   const layerStart = entries.length
-  if (parsedModel.spine.kind === 'layers') {
+  if (layersMixed) {
+    entries.push(mixedLayersEntry())
+  } else if (parsedModel.spine.kind === 'layers') {
     layers.forEach((image, index) => {
       const described = describeLayer(image, index, layers.length)
       entries.push({
@@ -429,7 +460,14 @@ export function FillSection() {
         summary: described.summary,
         // Figma shows a fill's blend mode ON the fill row. `LayerBlendSelect`
         // explains why `background-blend-mode` is the only honest target.
-        value: <LayerBlendSelect model={parsedModel} index={index} onModelChange={write} />,
+        value: (
+          <LayerBlendSelect
+            model={parsedModel}
+            index={index}
+            mixed={mixedSatellites.has('backgroundBlendMode')}
+            onModelChange={write}
+          />
+        ),
         data: { kind: 'layer', index },
       })
     })
@@ -454,15 +492,16 @@ export function FillSection() {
       data: { kind: 'orphanSatellites' },
     })
   }
-  const layerCount = parsedModel.spine.kind === 'layers' ? layers.length : 0
+  // A mixed stack has no order to drag, so it contributes no reorderable rows.
+  const layerCount = !layersMixed && parsedModel.spine.kind === 'layers' ? layers.length : 0
 
   if (showColorEntry) {
     entries.push(
       buildColorFillEntry({
         id: 'fill-color', label: 'Solid fill', property: 'backgroundColor', data: { kind: 'color' },
         ariaLabel: 'Solid fill colour', swatchLabel: 'Solid fill colour swatch', opacityAriaLabel: 'Solid fill opacity',
-        displayValue: colorDisplayValue!, resolvedColor: colorResolvedColor, refused: colorRefused,
-        stored: colorStored, mutedValue: colorMutedValue, note: colorNote,
+        displayValue: colorDisplayValue, resolvedColor: colorResolvedColor, refused: colorRefused,
+        mixed: colorMixed, stored: colorStored, mutedValue: colorMutedValue, note: colorNote,
         onCommit: onChange, onPreview: previewProperty, onClearPreview,
       }),
     )
@@ -473,7 +512,7 @@ export function FillSection() {
       id: 'fill-shorthand',
       label: 'Background shorthand',
       leading: <CodeIcon size={14} aria-hidden="true" />,
-      summary: shorthandValue,
+      summary: shorthandMixed ? MIXED_PLACEHOLDER : shorthandValue,
       data: { kind: 'shorthand' },
     })
   }
@@ -515,6 +554,12 @@ export function FillSection() {
       case 'layersRaw':
         onChange('backgroundImage', undefined)
         break
+      case 'mixedLayers':
+        // The whole background block travels with this row (its popover owns
+        // the satellites too), so removing it clears the whole block from
+        // every selected layer — one history entry, `setNodesInlineStyles`.
+        clearSet(['backgroundImage', ...BACKGROUND_SATELLITE_PROPS])
+        break
       case 'orphanSatellites':
         // ONLY the satellites. `background-image` has its own row (a raw
         // one, or a layer list), and removing "Background sizing" must not
@@ -554,145 +599,28 @@ export function FillSection() {
         />
 
         {editing && editingEntry && (
-          <InspectorPopover
-            id={editing.id}
+          <FillEntryPopover
+            entry={editingEntry}
             anchorRef={editing.anchorRef}
             onClose={() => setEditing(null)}
-            title={popoverTitle(editingEntry)}
-            width={editingEntry.data.kind === 'layer' ? 264 : undefined}
-          >
-            {editingEntry.data.kind === 'text' && textWriteTarget?.kind === 'none' && (
-              <ColorWriteRefusalBody
-                ariaLabel="Text colour"
-                swatchLabel="Text colour swatch"
-                value={textMutedValue}
-                reason={textWriteTarget.reason}
-              />
-            )}
-
-            {editingEntry.data.kind === 'color' && colorWriteTarget?.kind === 'none' && (
-              <ColorWriteRefusalBody
-                ariaLabel="Solid fill colour"
-                swatchLabel="Solid fill colour swatch"
-                value={colorMutedValue}
-                reason={colorWriteTarget.reason}
-              />
-            )}
-
-            {editingEntry.data.kind === 'layer' && (
-              <BackgroundLayerPopoverBody
-                model={parsedModel}
-                index={editingEntry.data.index}
-                onModelChange={write}
-                onChange={onChange}
-              />
-            )}
-
-            {editingEntry.data.kind === 'layersRaw' && (
-              <BackgroundImageRawBody
-                value={editingEntry.data.raw}
-                reason={editingEntry.data.reason}
-                onChange={(next) => onChange('backgroundImage', next || undefined)}
-              />
-            )}
-
-            {editingEntry.data.kind === 'orphanSatellites' && (
-              <OrphanSatellitesBody
-                hasRefusedLayers={parsedModel.spine.kind === 'raw'}
-                storedStyles={storedStyles}
-                currentStyles={currentStyles}
-                activeTab={contextKey}
-                onChange={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
-              />
-            )}
-
-            {editingEntry.data.kind === 'contentFit' && (
-              <ContentFitPopoverBody
-                storedStyles={storedStyles}
-                currentStyles={currentStyles}
-                activeTab={contextKey}
-                onChange={onChange}
-                onPreview={previewProperty}
-                onClearPreview={onClearPreview}
-              />
-            )}
-
-            {editingEntry.data.kind === 'shorthand' && (
-              <ShorthandEscapeHatchBody
-                value={shorthandValue}
-                onChange={(next) => onChange('background', next || undefined)}
-              />
-            )}
-          </InspectorPopover>
+            parsedModel={parsedModel}
+            mixedSatellites={mixedSatellites}
+            shorthandMixed={shorthandMixed}
+            textWriteTarget={textWriteTarget}
+            colorWriteTarget={colorWriteTarget}
+            textMutedValue={textMutedValue}
+            colorMutedValue={colorMutedValue}
+            storedStyles={storedStyles}
+            currentStyles={currentStyles}
+            activeTab={contextKey}
+            shorthandValue={shorthandValue}
+            onModelChange={write}
+            onChange={onChange}
+            onPreview={previewProperty}
+            onClearPreview={onClearPreview}
+          />
         )}
       </div>
     </Section>
   )
-}
-
-// ---------------------------------------------------------------------------
-// Row summaries
-// ---------------------------------------------------------------------------
-
-const POPOVER_TITLES: Record<FillEntryData['kind'], string> = {
-  text: 'Text colour',
-  contentFit: 'Content fit',
-  layer: 'Background layer',
-  layersRaw: 'Background image (raw CSS)',
-  orphanSatellites: 'Background sizing',
-  color: 'Solid fill',
-  shorthand: 'Background (raw CSS)',
-}
-
-function popoverTitle(entry: PropertyListEntry<FillEntryData>): string {
-  return entry.data.kind === 'layer' ? entry.label : POPOVER_TITLES[entry.data.kind]
-}
-
-/**
- * How one `background-image` layer reads in the list. The layer NUMBER is
- * only drawn when there is more than one — a single-layer background is just
- * "the" fill, and numbering it invents a stack the user does not have.
- */
-function describeLayer(
-  image: string,
-  index: number,
-  total: number,
-): { label: string; summary: ReactNode; leading: ReactNode } {
-  const suffix = total > 1 ? ` ${index + 1}` : ''
-
-  if (image.trim().toLowerCase() === 'none') {
-    return {
-      label: `Empty layer${suffix}`,
-      summary: 'Empty layer',
-      leading: <CodeIcon size={14} aria-hidden="true" />,
-    }
-  }
-
-  if (isUrlImageValue(image)) {
-    return {
-      label: `Image fill${suffix}`,
-      summary: extractUrlPayload(image) || 'Image',
-      leading: <ImageSwatch image={image} />,
-    }
-  }
-
-  const parsed = parseGradient(image)
-  if (parsed.ok) {
-    const kindLabel = parsed.gradient.kind === 'linear' ? 'Linear gradient' : 'Radial gradient'
-    return {
-      label: `${kindLabel} fill${suffix}`,
-      // The stop count used to live in the row's trailing `value` slot, which
-      // the layer's blend select now occupies.
-      summary: `${kindLabel} · ${parsed.gradient.stops.length} stops`,
-      leading: <ImageSwatch image={image} />,
-    }
-  }
-
-  return {
-    label: `Image fill${suffix}`,
-    summary: 'Custom (raw CSS)',
-    leading: <CodeIcon size={14} aria-hidden="true" />,
-  }
 }

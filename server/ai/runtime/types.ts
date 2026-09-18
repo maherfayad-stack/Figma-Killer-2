@@ -130,6 +130,24 @@ export interface AiTool {
    */
   readonly mutates?: boolean
   /**
+   * Why this mutating tool has NO canvas-parity path — one sentence, stated
+   * on the tool rather than in a test's allowlist.
+   *
+   * `STUDIO_CANVAS_PARITY_MATRIX` requires every `mutates: true` tool to map
+   * to a real editor action. A tool whose only artefact is Studio's own agent
+   * bookkeeping has no such action, and the honest answer is to say so HERE,
+   * where the next person to read the tool sees it, instead of adding its
+   * name to a list inside `parityMatrix.test.ts` that nothing makes them
+   * justify. The gate reads this field and `docs/features/agent.md` renders
+   * it, so "headless-only" is a documented property of the tool, not a
+   * silently-suppressed gate failure.
+   *
+   * Declaring it and appearing in a parity row are mutually exclusive — the
+   * gate fails on a tool that claims both, because one of the two statements
+   * is then untrue.
+   */
+  readonly headlessOnly?: string
+  /**
    * Capabilities that gate this tool, mirroring its HTTP-route equivalent.
    * ANY-OF semantics: the caller needs at least one. Undefined / empty means
    * the tool is reachable by any `ai.chat` caller (e.g. tools that only read
