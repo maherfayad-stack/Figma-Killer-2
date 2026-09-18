@@ -680,9 +680,13 @@ Ranked by how likely they are to hit you on an ordinary day. Each maps to a work
   `prototype/*`. Point the setup at a throwaway copy.
 - **Select a source-backed duplicate/insert after resync** (`keys-01` K7 follow-up): needs
   `commitStructural` to report the created node ids; ⌘D selects on the in-memory path only.
-- **`FillSection` Mixed re-wiring** (`panel-36`): the section dropped its `isMixed` handling on a
-  then-true premise. It under-states rather than lying; the row-by-row table is
-  `docs/features/inspector.md` §9.3.
+- ~~**`FillSection` Mixed re-wiring** (`panel-36`)~~ — **done, `panel-38`.** Re-wired row by row
+  through the one multi-select model, and the audit it asked for found the same dropped-sentinel
+  pattern in Layer, Shadow and Blur. Shadow was not under-stating: `String(MIXED)` put
+  `Symbol(studio-mixed-value)` in a raw field offering to write it to disk. The row-by-row table
+  is `docs/features/inspector.md` §9.3. Still open from that audit: `node.hidden`/`node.locked`
+  in Layer toggle the ANCHOR only under a multi-selection — a structural fan-out gap needing a
+  store action over N ids, not a Mixed one.
 - **`compare.test.ts:370`** carries the stale arity `readPassingCompare(dir, pageId)` — missing
   `userKey` (`mcp-22`).
 - **`parityMatrix` gap** (`test-05`): `studio_plan_variants` and `studio_import_figma_frame` have

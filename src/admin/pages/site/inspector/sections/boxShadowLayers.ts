@@ -33,6 +33,7 @@
  */
 
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { isMixed, type Mixed } from '@ui/components/MixedValue'
 
 // ---------------------------------------------------------------------------
 // Domain type — schema is the source of truth (no parallel `interface`).
@@ -64,15 +65,19 @@ export const BoxShadowLayerSchema = Type.Object({
 export type BoxShadowLayer = Static<typeof BoxShadowLayerSchema>
 
 /**
- * The three ways `ShadowSection` can render a stored `box-shadow` value.
- * `'empty'` and `'raw'` both carry no editable layers, but they are NOT the
- * same thing — `'raw'` means the user has a real value that this module
- * refuses to restructure, and it must still render (as text), never vanish.
+ * The four ways `ShadowSection` can render a stored `box-shadow` value.
+ * `'empty'`, `'raw'` and `'mixed'` all carry no editable layers, but they are
+ * three different facts — `'raw'` means the user has a real value that this
+ * module refuses to restructure, and it must still render (as text), never
+ * vanish; `'mixed'` means a multi-selection whose members declare DIFFERENT
+ * shadows, which has no shared layer stack at all
+ * (`docs/features/inspector.md` §9.3).
  */
 export type BoxShadowParseResult =
   | { kind: 'empty' }
   | { kind: 'layers'; layers: BoxShadowLayer[] }
   | { kind: 'raw'; raw: string; reason: string }
+  | { kind: 'mixed' }
 
 /**
  * Which shadow property is being read. `box-shadow` and `text-shadow` share
@@ -264,11 +269,18 @@ export function serializeBoxShadowLayers(layers: readonly BoxShadowLayer[]): str
  * `grammar` picks which shadow property is being read: `box-shadow` (up to
  * four lengths, `inset` allowed) or `text-shadow` (up to three lengths, no
  * `inset`) — see `ShadowGrammar`.
+ *
+ * The `MIXED` sentinel is tested FIRST and for its own sake. It is a Symbol,
+ * and `String(Symbol)` is a legal expression, so before this check a
+ * multi-selection that disagreed produced `{ kind: 'raw', raw:
+ * 'Symbol(studio-mixed-value)' }` — a raw text field offering to write that
+ * string into the user's stylesheet (`docs/features/inspector.md` §9.3).
  */
 export function parseShadowValue(
-  value: string | number | undefined | null,
+  value: string | number | Mixed | undefined | null,
   grammar: ShadowGrammar = BOX_SHADOW_GRAMMAR,
 ): BoxShadowParseResult {
+  if (isMixed(value)) return { kind: 'mixed' }
   if (value == null) return { kind: 'empty' }
   const trimmed = String(value).trim()
   if (trimmed === '' || trimmed.toLowerCase() === 'none') return { kind: 'empty' }

@@ -33,6 +33,14 @@ export function buildColorFillEntry<TData>(opts: {
   resolvedColor: string | undefined
   /** `writeTarget.kind === 'none'` — no honest place for a new declaration to land. */
   refused: boolean
+  /**
+   * The selected layers disagree on this colour (`docs/features/inspector.md`
+   * §9.3). The row STAYS — it used to vanish, because `readString` collapses
+   * the `MIXED` Symbol to `undefined` — and reads "Mixed". Its `%` opacity
+   * cell is dropped: there is no single alpha channel to show, and
+   * `ColorOpacityField` has no mixed state of its own.
+   */
+  mixed: boolean
   stored: boolean
   /** Only meaningful when `!stored` — committing this exact value again writes nothing. */
   mutedValue: string | undefined
@@ -53,6 +61,7 @@ export function buildColorFillEntry<TData>(opts: {
     displayValue,
     resolvedColor,
     refused,
+    mixed,
     stored,
     mutedValue,
     note,
@@ -73,8 +82,9 @@ export function buildColorFillEntry<TData>(opts: {
         property={property}
         ariaLabel={ariaLabel}
         swatchLabel={swatchLabel}
-        value={displayValue}
-        resolvedValue={resolvedColor}
+        value={mixed ? '' : displayValue}
+        mixed={mixed}
+        resolvedValue={mixed ? undefined : resolvedColor}
         skipIfEquals={stored ? undefined : mutedValue}
         notice={note ? <SourceConstraintNotice hasWritableLocation writeTargetNote={note} /> : undefined}
         onCommit={onCommit}
@@ -82,7 +92,9 @@ export function buildColorFillEntry<TData>(opts: {
         onClearPreview={onClearPreview}
       />
     ),
-    value: <ColorOpacityField value={displayValue} ariaLabel={opacityAriaLabel} onChange={(next) => onCommit(property, next)} />,
+    value: mixed ? undefined : (
+      <ColorOpacityField value={displayValue} ariaLabel={opacityAriaLabel} onChange={(next) => onCommit(property, next)} />
+    ),
     data,
     muted: !stored,
     removable: stored,

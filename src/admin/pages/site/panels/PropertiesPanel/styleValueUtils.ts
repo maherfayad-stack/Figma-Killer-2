@@ -44,6 +44,23 @@ export function pickMixedString(value: unknown): string | Mixed {
   return ''
 }
 
+/**
+ * The raw cell, typed exactly as `ClassPropertyRow`'s `value` prop wants it
+ * and PRESERVING the `MIXED` sentinel.
+ *
+ * `pickMixedString` is the sibling for a control that only speaks strings; it
+ * stringifies a number as `${n}px`, which is wrong for a row that hands the
+ * number straight to a numeric control. Callers used to reach for
+ * `styles[prop] as string | number`, which type-launders a Symbol into a
+ * value the row would then have to stringify — the exact cast §9.3 calls the
+ * other half of the Mixed bug.
+ */
+export function pickMixedCell(value: unknown): string | number | Mixed | undefined {
+  if (isMixed(value)) return MIXED
+  if (typeof value === 'string' || typeof value === 'number') return value
+  return undefined
+}
+
 /** `MIXED` narrowed away — for the call sites that need a plain string. */
 export function plainString(value: string | Mixed | undefined): string {
   return value === undefined || isMixed(value) ? '' : value
