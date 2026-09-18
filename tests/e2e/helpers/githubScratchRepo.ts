@@ -143,6 +143,27 @@ export function githubCredentialAvailable(): boolean {
   return run('gh', ['auth', 'token'], { timeoutMs: 30_000 }).ok
 }
 
+/**
+ * Whether the token may DELETE a repository — the precondition that makes the
+ * scratch repo throwaway rather than permanent.
+ *
+ * `gh repo delete` needs the `delete_repo` scope, which a `repo`-scoped token
+ * does not carry and which only an interactive `gh auth refresh -s delete_repo`
+ * can add. Without it the archive fallback runs and the repository STAYS on the
+ * account, so a spec that ran twenty times left twenty repositories behind —
+ * measured, on this machine, before this check existed. The spec therefore
+ * refuses to CREATE what it cannot remove: it skips, naming the one command
+ * that fixes it, instead of accumulating.
+ *
+ * Read from the token's own scope list rather than by attempting a delete,
+ * because the cheap probe for a delete is a repository that has to exist first.
+ */
+export function githubDeleteScopeAvailable(): boolean {
+  const status = run('gh', ['auth', 'status'], { timeoutMs: 30_000 })
+  return /delete_repo/.test(`${status.stdout}
+${status.stderr}`)
+}
+
 /** The login of the account `gh` is signed in as. */
 export function githubLogin(): string {
   return gh(['api', 'user', '--jq', '.login'])
@@ -199,6 +220,14 @@ export interface ScratchRepo {
  * the delete is refused.
  */
 export function createScratchRepo(): ScratchRepo {
+  // Never create what this token cannot delete — see githubDeleteScopeAvailable.
+  if (!githubDeleteScopeAvailable()) {
+    throw new Error(
+      'refusing to create a scratch repository: the gh token has no delete_repo scope, so the spec ' +
+        'could not remove it afterwards. Run `gh auth refresh -h github.com -s delete_repo` and re-run. ' +
+        'This spec should have skipped itself before reaching here.',
+    )
+  }
   const owner = githubLogin()
   const name = `${SCRATCH_REPO_PREFIX}${Date.now()}`
   const full = `${owner}/${name}`

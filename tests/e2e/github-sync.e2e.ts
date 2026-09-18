@@ -62,6 +62,7 @@ import {
   git,
   gitOut,
   githubCredentialAvailable,
+  githubDeleteScopeAvailable,
   listRemotePullRequests,
   localBranch,
   localHeadSha,
@@ -136,7 +137,10 @@ let openedPullRequest: number | null = null
  */
 const scaffoldingRewrites: Array<{ when: string; paths: string[] }> = []
 
-const available = githubCredentialAvailable()
+// Two preconditions, not one. A token that can CREATE a repository but not delete
+// it leaves the scratch repository on the account for good — twenty-two of them,
+// measured, before this gate existed. The spec would rather not run.
+const available = githubCredentialAvailable() && githubDeleteScopeAvailable()
 
 // ─── Console / pageerror recorder ────────────────────────────────────────────
 
@@ -476,8 +480,10 @@ test.describe('G8 — Studio against a real private GitHub repository', () => {
 
   test.skip(
     !available,
-    'gh auth token failed: this machine has no GitHub credential, so the G8 dogfood cannot run. ' +
-      'Run `gh auth login` (scope: repo) and re-run — see docs/e2e/README.md.',
+    'the G8 dogfood needs a GitHub credential that can also DELETE: `gh auth token` must succeed and ' +
+      'the token must carry the `delete_repo` scope, or the throwaway repository this spec creates would ' +
+      'stay on the account. Run `gh auth login` then `gh auth refresh -h github.com -s delete_repo` and ' +
+      're-run — see docs/e2e/README.md.',
   )
 
   test.beforeAll(async ({ browser }: { browser: Browser }) => {

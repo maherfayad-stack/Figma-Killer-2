@@ -297,6 +297,20 @@ work that was never folded into that matrix at all — each spec below cites the
 
 | A9 (`STUDIO-FIGMA-FEEL-PLAN.md`, `mcp-25`) | **ONE real agent turn**, wall-clocked: the warm `claude` CLI on a throwaway copy of `__canonical-fixture`, `balanced` fidelity — one write batch, zero tool refusals, the activity line on screen, telemetry in `.studio/agent-turns.jsonl`, and every changed file the hero's own. **Self-skips** without the `claude` binary, without Studio's CLI probe answering, or without a `claudeCli` credential on the account | `agent-turn.e2e.ts` |
 
+#### `github-sync.e2e.ts` refuses to run unless it can clean up
+
+It creates a real private repository on the signed-in account, so it needs two
+things, not one: `gh auth token` must succeed AND the token must carry the
+`delete_repo` scope. A `repo`-scoped token can create the repository and cannot
+remove it — the spec archives it as a fallback and it stays on the account for
+good. That is not hypothetical: twenty-two archived `studio-g8-scratch-*`
+repositories accumulated on this machine's account before the scope was made a
+precondition. The skip reason names the one command that fixes it:
+
+```sh
+gh auth refresh -h github.com -s delete_repo
+```
+
 #### `agent-turn.e2e.ts` costs real tokens, and says so when it does not run
 
 It is the only spec in this directory that spends money: it drives the
