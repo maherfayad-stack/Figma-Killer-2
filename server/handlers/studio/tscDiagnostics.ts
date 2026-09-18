@@ -21,7 +21,14 @@
  * A "Found N errors." trailer (only some `tsc` versions print one) and any
  * blank line are dropped rather than folded into whatever diagnostic came
  * before them.
+ *
+ * Lines are cut with {@link splitLines}, never a bare `'\n'` — `tsc` on
+ * Windows prints CRLF, and a trailing `\r` would sit inside the `(.*)$`
+ * message capture of every header line. See the "Line endings" section of
+ * `docs/server.md`.
  */
+
+import { splitLines } from '@core/utils/lineEndings'
 
 export interface TscDiagnostic {
   /** Project-relative POSIX path, exactly as `tsc` printed it (its `cwd` is always the project root — see `typecheck.ts`). */
@@ -42,8 +49,7 @@ export function parseTscDiagnostics(output: string): TscDiagnostic[] {
   const diagnostics: TscDiagnostic[] = []
   let current: TscDiagnostic | undefined
 
-  for (const rawLine of output.split('\n')) {
-    const line = rawLine.replace(/\r$/, '')
+  for (const line of splitLines(output)) {
     const header = DIAGNOSTIC_HEADER_RE.exec(line)
     if (header) {
       const [, file, lineNo, col, severity, code, message] = header

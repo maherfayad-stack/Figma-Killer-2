@@ -18,7 +18,7 @@ URL.**
 |---|---|---|
 | Route | `server/handlers/studio/deploy.ts` | Dir resolution, body validation, **the trust-tier gate** |
 | Jobs | `server/handlers/studio/deployJobs.ts` | The check → build → deploy pipeline, the in-memory job registry, the persisted record |
-| Knowledge | `server/handlers/studio/deployProviders.ts` | Provider detection, the allowed argv per provider, reading the CLIs' output back. Pure. |
+| Knowledge | `server/handlers/studio/deployProviders.ts` | Provider detection, the allowed argv per provider, reading the CLIs' output back. Pure. Every read normalises with `toLf` first — both CLIs are Node programs and print CRLF on Windows (see [docs/server.md](../server.md) → "Line endings — subprocess output"). |
 | Subprocess | `server/handlers/studio/deployRunner.ts` | `Bun.spawn` discipline, env allowlist, timeouts, containment |
 | Persisted shape | `server/handlers/studio/deploySchema.ts` | `LastDeploy`, the additive `.studio/meta.json` field |
 | Wire contract | `src/admin/pages/site/studio/deployRequests.ts` | TypeBox schemas + `apiRequest` calls |

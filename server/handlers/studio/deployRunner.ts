@@ -45,6 +45,7 @@
  * of a project that was never put under version control are legitimate.
  */
 import { resolve } from 'node:path'
+import { splitLines } from '@core/utils/lineEndings'
 import { projectsRootDir } from '../studioProjects'
 import { assertWithinWorkspace, type GitRepoGuardResult } from './gitRunner'
 import {
@@ -151,6 +152,10 @@ export async function runDeployCli(
  * paths (they name the server's filesystem layout), no unbounded length. Both
  * CLIs print the project's build output path on success and on failure, so this
  * is not a rare edge — it is every run.
+ *
+ * Cut with {@link splitLines} and re-joined with `\n`: a Windows `vercel`/
+ * `netlify` CLI prints CRLF, and the result is display text for a browser,
+ * where the `\r` is noise at best.
  */
 export function clientSafeDeployOutput(result: DeployRunResult, fallback: string): string {
   if (result.notInstalled) return fallback
@@ -158,8 +163,7 @@ export function clientSafeDeployOutput(result: DeployRunResult, fallback: string
   const raw = `${result.stdout}\n${result.stderr}`.trim()
   if (!raw) return fallback
   const root = resolve(projectsRootDir())
-  return raw
-    .split('\n')
+  return splitLines(raw)
     .map((line) => line.split(root).join('<workspace>'))
     .join('\n')
     .slice(0, 20_000)

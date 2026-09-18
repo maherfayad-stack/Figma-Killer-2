@@ -164,6 +164,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
   account name, and without it a signed-in MCP server silently reports
   `! Needs authentication` and a turn gets zero of its tools). Pinned by
   `subprocessRunner.test.ts`; the story is `mcp-16` in `STATE.md`.
+- **Reading a subprocess's output is line-wise, and on Windows those lines are
+  CRLF.** Cut captured stdout/stderr with `splitLines` — or normalise with
+  `toLf` before an `/m`-anchored regex — from `@core/utils/lineEndings`. Never
+  a bare `'\n'` split, never a per-call-site `.replace(/\r$/, '')`. The `\r`
+  lands on the LAST field of a line and is silent: `%(HEAD) === '*'` goes
+  false for every branch, a commit sha becomes 41 characters. Gated by
+  `subprocess-output-line-endings.test.ts`; the rule and its two documented
+  exceptions are in [docs/server.md](../server.md) → "Line endings —
+  subprocess output".
 
 ---
 

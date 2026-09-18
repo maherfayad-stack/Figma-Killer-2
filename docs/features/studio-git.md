@@ -27,7 +27,7 @@ same panel.
 | Subprocess + guard | `server/handlers/studio/gitRunner.ts` | `Bun.spawn` discipline, env allowlist, the "is this the project's own repository" guard, the one-shot credential handover |
 | Credential handover | `server/handlers/studio/gitAskpass.ts` | The one-shot `GIT_ASKPASS` script and the token charset it refuses |
 | Write lock | `server/handlers/studio/projectWriteLock.ts` | One writer per project — saves, scaffolds, installs and git verbs |
-| Parser | `server/handlers/studio/gitStatusParse.ts` | `--porcelain=v2 --branch -z` → typed status. Pure. |
+| Parsers | `server/handlers/studio/gitOutputParse.ts` | git's stdout → typed structures: `--porcelain=v2 --branch -z` status, `remote -v`, `log --format=…`, `for-each-ref`. Pure, and CRLF-safe through `splitLines`/`toLf` (see [docs/server.md](../server.md) → "Line endings — subprocess output"). |
 | Input judgement | `server/handlers/studio/gitPaths.ts` | Every caller-supplied path, branch name, sha, message, **remote URL** |
 | Remotes + clone | `server/handlers/studio/gitRemoteRoutes.ts` | `git/remotes`, `git/remote`, `git/clone` |
 | Clone job | `server/handlers/studio/gitClone.ts` | Target derivation, refusals, partial-clone cleanup, the polled job store |
@@ -588,7 +588,7 @@ every other read in the Studio family.
 
 | File | Covers |
 |---|---|
-| `server/handlers/__tests__/gitStatusParse.test.ts` | The porcelain-v2 parser against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types |
+| `server/handlers/__tests__/gitOutputParse.test.ts` | All four parsers against real captured output: renames spanning two NUL fields, paths with spaces, initial/detached/diverged branch headers, unmerged records, unknown record types; the two-line-per-remote fold; the `%x1e` log record shape; `%(HEAD)`, `gone`, and the excluded `origin/HEAD`. Plus a CRLF twin of each transcript — the `\r` lands on `%(HEAD)` and on the sha after every record separator, and both are silent |
 | `server/handlers/__tests__/gitPaths.test.ts` | Every rejection: traversal on both separators, absolute/UNC/drive-letter paths, excluded directories, **symlink escape** (leaf and parent), flag-looking branch names, revision expressions where a sha is required |
 | `server/handlers/__tests__/githubPullRequest.test.ts` | The GitHub call with an injected `fetch`: the token reaches the `Authorization` header and no other field, no token means a named refusal carrying the compare URL and NO request at all, GitHub's own message passes through, and 4xx/5xx map to different codes |
 | `server/handlers/__tests__/gitSyncRoutes.test.ts` | The branch list against a local bare remote (upstream, ahead/behind, a `gone` upstream, `origin/HEAD` excluded), commit-and-switch and its dirty-remainder refusal, fetch/pull against a second working copy of the same bare remote, the pull-request context on both remote URL shapes and its `supported: false` states, the `diverged` and `dirty-tree` refusals, a REAL conflicted rebase and merge — including that “Keep mine” keeps the user's bytes in BOTH — continue/abort, and the same rejection set as `git.test.ts` |

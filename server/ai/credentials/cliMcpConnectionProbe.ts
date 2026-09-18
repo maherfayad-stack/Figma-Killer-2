@@ -62,6 +62,7 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { splitLines } from '@core/utils/lineEndings'
 import {
   minimalSubprocessEnv,
   runCappedSubprocess,
@@ -107,7 +108,7 @@ const cache = new Map<string, CacheEntry>()
  */
 export function parseCliMcpList(stdout: string): CliMcpConnections {
   const connections = new Map<string, CliMcpConnectionState>()
-  for (const rawLine of stdout.split('\n')) {
+  for (const rawLine of splitLines(stdout)) {
     const line = rawLine.trim()
     const separator = line.indexOf(': ')
     if (separator <= 0) continue

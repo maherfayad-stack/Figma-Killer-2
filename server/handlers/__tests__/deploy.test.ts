@@ -28,6 +28,7 @@ import * as path from 'node:path'
 import { ProjectDirOutsideWorkspaceError, projectsRootDir } from '../studioProjects'
 import { tryServeStudioDeploy } from '../studio/deploy'
 import { detectDeployProviders, parseAuthProbe, parsePreviewUrl, mentionsUnlinkedProject } from '../studio/deployProviders'
+import { clientSafeDeployOutput } from '../studio/deployRunner'
 import { resolveDeployJob, startDeployJob } from '../studio/deployJobs'
 import { resolveAppRoot } from '../studio/appRoot'
 import { readStudioMeta, writeStudioMeta } from '../studio/studioMeta'
@@ -283,6 +284,83 @@ describe('auth probe parsing', () => {
     expect(mentionsUnlinkedProject("Error: Your codebase isn't linked to a project on Vercel.")).toBe(true)
     expect(mentionsUnlinkedProject('It looks like this folder is not linked to a site. Run `netlify link`.')).toBe(true)
     expect(mentionsUnlinkedProject('Deploy is live!')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2b — the same transcripts, on a Windows CLI (CRLF)
+//
+// `vercel`/`netlify` are Node CLIs; on Windows their stdout is CRLF. Every
+// read below is anchored with `/m` or cut into lines, and both were previously
+// a bare `'\n'`/`$` away from carrying a `\r` into a URL, an account name, or a
+// line of the log the panel shows. The rule is now `toLf`/`splitLines` at the
+// read, and these assert the transcripts agree.
+// ---------------------------------------------------------------------------
+
+/** LF → CRLF, the way a Windows CLI writes the same output. */
+function asCrlf(text: string): string {
+  return text.replace(/\n/g, '\r\n')
+}
+
+describe('a CRLF CLI transcript is read exactly like its LF twin', () => {
+  it('finds the same Vercel preview URL', () => {
+    expect(parsePreviewUrl('vercel', '', asCrlf(VERCEL_DEPLOY_OUTPUT))).toBe(
+      parsePreviewUrl('vercel', '', VERCEL_DEPLOY_OUTPUT),
+    )
+    expect(parsePreviewUrl('vercel', '', asCrlf(VERCEL_DEPLOY_OUTPUT))).toBe(
+      'https://preview-fixture-8kqvj2s1-studio.vercel.app',
+    )
+  })
+
+  it('finds the same bare-URL Vercel fallback, whose pattern is anchored at end of line', () => {
+    const bare = 'https://preview-fixture-8kqvj2s1-studio.vercel.app\n'
+    expect(parsePreviewUrl('vercel', asCrlf(bare), '')).toBe(parsePreviewUrl('vercel', bare, ''))
+  })
+
+  it('finds the same Netlify draft URL', () => {
+    expect(parsePreviewUrl('netlify', asCrlf(NETLIFY_DEPLOY_OUTPUT), '')).toBe(
+      parsePreviewUrl('netlify', NETLIFY_DEPLOY_OUTPUT, ''),
+    )
+  })
+
+  it('still refuses to invent a URL', () => {
+    expect(parsePreviewUrl('vercel', asCrlf('Error: build failed\n'), '')).toBeNull()
+    expect(parsePreviewUrl('netlify', asCrlf('Build logs: https://app.netlify.com/sites/x/deploys/1\n'), '')).toBeNull()
+  })
+
+  it('reads the same Vercel account off whoami — the account IS the whole line', () => {
+    expect(parseAuthProbe('vercel', { stdout: 'studio-tester\r\n', stderr: '> 0.1s\r\n', exitCode: 0 })).toEqual({
+      authenticated: true,
+      account: 'studio-tester',
+    })
+  })
+
+  it('reads the same Netlify account off the Email: row', () => {
+    expect(parseAuthProbe('netlify', { stdout: asCrlf(NETLIFY_STATUS_OUTPUT), stderr: '', exitCode: 0 })).toEqual(
+      parseAuthProbe('netlify', { stdout: NETLIFY_STATUS_OUTPUT, stderr: '', exitCode: 0 }),
+    )
+  })
+
+  it('still reads a signed-out CLI that exits 0', () => {
+    expect(
+      parseAuthProbe('netlify', {
+        stdout: "You are not currently logged in. Please log in with `netlify login`.\r\n",
+        stderr: '',
+        exitCode: 0,
+      }),
+    ).toEqual({ authenticated: false, account: null })
+  })
+
+  it('redacts the workspace root out of a CRLF log, and hands back LF', () => {
+    const root = projectsRootDir()
+    const raw = `Deploy path: ${root}\\preview-fixture\\dist\nDone`
+    const safe = clientSafeDeployOutput(
+      { stdout: asCrlf(raw), stderr: '', stdoutTruncated: false, stderrTruncated: false, exitCode: 0, timedOut: false, ok: true, notInstalled: false },
+      'Deploy failed',
+    )
+    expect(safe).not.toContain(root)
+    expect(safe).toContain('<workspace>')
+    expect(safe).not.toContain('\r')
   })
 })
 

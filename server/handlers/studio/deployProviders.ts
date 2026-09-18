@@ -27,6 +27,7 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { splitLines, toLf } from '@core/utils/lineEndings'
 import type { DeployProvider } from './deploySchema'
 
 // ---------------------------------------------------------------------------
@@ -159,7 +160,7 @@ export function stripAnsi(text: string): string {
  * streams are searched.
  */
 export function parsePreviewUrl(provider: DeployProvider, stdout: string, stderr: string): string | null {
-  const text = stripAnsi(`${stdout}\n${stderr}`)
+  const text = toLf(stripAnsi(`${stdout}\n${stderr}`))
   for (const pattern of PREVIEW_URL_PATTERNS[provider]) {
     const match = pattern.exec(text)
     const url = match?.[1]
@@ -207,8 +208,11 @@ export function parseAuthProbe(
   provider: DeployProvider,
   result: { stdout: string; stderr: string; exitCode: number | null },
 ): ProviderAuthState {
-  const stdout = stripAnsi(result.stdout)
-  const combined = `${stdout}\n${stripAnsi(result.stderr)}`
+  // `toLf` before the `/m`-anchored reads below: a Windows CLI prints CRLF, and
+  // whether `\r` happens to fall inside a `\s*$` tail is an accident of each
+  // pattern rather than a rule. Normalising once makes it a rule.
+  const stdout = toLf(stripAnsi(result.stdout))
+  const combined = `${stdout}\n${toLf(stripAnsi(result.stderr))}`
   if (/not (currently )?logged in|no existing credentials|please log ?in|not authenticated/i.test(combined)) {
     return { authenticated: false, account: null }
   }
@@ -217,8 +221,7 @@ export function parseAuthProbe(
     if (result.exitCode !== 0) return { authenticated: false, account: null }
     // `vercel whoami` prints the username alone on stdout; the `> ` progress
     // lines it writes go to stderr.
-    const account = stdout
-      .split('\n')
+    const account = splitLines(stdout)
       .map((line) => line.trim())
       .find((line) => line.length > 0 && !line.startsWith('>')) ?? null
     return { authenticated: account !== null, account }
