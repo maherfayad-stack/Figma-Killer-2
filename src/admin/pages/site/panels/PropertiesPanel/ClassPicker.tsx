@@ -1,4 +1,17 @@
-/** ClassPicker — selector chip manager for the selected element. */
+/**
+ * ClassPicker — selector chip manager for the selected element, and (since
+ * panel-41) the panel's ONE statement of where a style edit lands.
+ *
+ * The write-target facts — which selector is locked and why, and which one a
+ * brand-new property saves to by default — used to be a second, read-only
+ * chip row (`WriteTargetRow`) drawn inside the Design tab's scroll container,
+ * 40px below this stack, listing the same selectors again. Two surfaces for
+ * one fact is the panel's own copy of the write-target ambiguity WS-6.2
+ * exists to fix; the facts now ride the interactive pills that were already
+ * here, and the pills share one row with the input instead of taking a band
+ * of their own. See `SelectorPillStack.tsx`'s `SelectorPillTargetInfo` and
+ * `docs/features/inspector.md` §6 for the height this buys back.
+ */
 
 import {
   useState,
@@ -13,7 +26,14 @@ import {
 } from 'react'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useEditorPreference } from '@site/preferences/editorPreferences'
-import { classifySelectorCreateInput, isSourceDerivedNodeId, styleRuleSelector, type StyleRule } from '@core/page-tree'
+import {
+  canWriteInlineStyleForModule,
+  classifySelectorCreateInput,
+  isSourceDerivedNodeId,
+  styleRuleSelector,
+  type StyleRule,
+} from '@core/page-tree'
+import { useSelectionModel } from '@site/inspector/selectionModel'
 import { recordClassUsage } from '@site/preferences/classUsage'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
@@ -23,10 +43,10 @@ import {
 } from './selectorPickerModel'
 import {
   SelectorInputArea,
-  SelectorPillStack,
   SelectorSuggestionsPortal,
   UnmatchedSelectorNotice,
 } from './ClassPickerParts'
+import { SelectorPillStack, type SelectorPillTargetInfo } from './SelectorPillStack'
 import { classPickerUiReducer, initialClassPickerUiState } from './classPickerUiState'
 import { escapeCssAttributeValue } from '@site/canvas/canvasNodeLookup'
 import { useClassPickerDerivedState } from './useClassPickerDerivedState'
@@ -177,6 +197,34 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
 
   const contextClass = contextMenu ? site?.styleRules[contextMenu.classId] ?? null : null
   const contextClassIndex = contextMenu ? visibleAssignedIds.indexOf(contextMenu.classId) : -1
+
+  // ── Write-target facts, per pill (panel-41) ────────────────────────────────
+  // `SelectionModel` already resolves every one of these for the sections
+  // below; this reads them rather than re-deriving a second opinion. The
+  // `inlineReachable` line is the one derivation that is not on the model —
+  // "is `style=` a target AT ALL" is distinct from `inlineWritable` ("and is
+  // it unlocked"), and a source-locked element still shows the chip, struck
+  // through with its reason. It was computed in `StyleSurface.tsx` for
+  // exactly this row before the row moved here.
+  const { writableClasses, inlineWritable, inlineLockReason } = useSelectionModel()
+  const inlineReachable = node?.moduleId === undefined || canWriteInlineStyleForModule(node.moduleId)
+  const reachableClasses = writableClasses.filter((entry) => entry.lockReason === null)
+  // The chip `resolveWriteTarget` reaches for on a brand-new property with no
+  // existing declaration anywhere — mirrored from that module's "otherwise"
+  // branch, for the informational mark only.
+  const defaultTargetKey =
+    reachableClasses.length === 1 ? reachableClasses[0].classId : inlineWritable ? 'inline' : null
+  const targetInfo: Record<string, SelectorPillTargetInfo> = {}
+  for (const entry of writableClasses) {
+    targetInfo[entry.classId] = {
+      lockReason: entry.lockReason,
+      isDefault: defaultTargetKey === entry.classId,
+    }
+  }
+  targetInfo.inline = {
+    lockReason: inlineLockReason,
+    isDefault: defaultTargetKey === 'inline',
+  }
 
   const openSuggestions = () => dispatchUi({ type: 'openSuggestions' })
 
@@ -390,6 +438,24 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
       <SelectorInputArea
         inputRowRef={inputRowRef}
         inputRef={inputRef}
+        pills={
+          <SelectorPillStack
+            pills={selectorModel.pills}
+            showInlinePill={showInlinePill}
+            inlineReachable={inlineReachable}
+            inlineStyleEditing={inlineStyleEditing}
+            targetInfo={targetInfo}
+            onToggleRule={(ruleId, active) => setActiveClass(active ? null : ruleId)}
+            onClassContextMenu={openClassContextMenu}
+            onKeyboardClassContextMenu={openKeyboardClassContextMenu}
+            onRemoveClass={removeAssignedClass}
+            onToggleInline={() => setInlineStyleEditing(!inlineStyleEditing)}
+            onClearInline={() => {
+              clearNodeInlineStyles(nodeId)
+              setInlineStyleEditing(false)
+            }}
+          />
+        }
         trailingAction={trailingAction}
         query={query}
         hasSubmittableQuery={hasSubmittableQuery}
@@ -438,21 +504,6 @@ export function ClassPicker({ nodeId, trailingAction, ref }: ClassPickerProps) {
           onUndo={handleUndoUnmatchedSelector}
         />
       )}
-
-      <SelectorPillStack
-        pills={selectorModel.pills}
-        showInlinePill={showInlinePill}
-        inlineStyleEditing={inlineStyleEditing}
-        onToggleRule={(ruleId, active) => setActiveClass(active ? null : ruleId)}
-        onClassContextMenu={openClassContextMenu}
-        onKeyboardClassContextMenu={openKeyboardClassContextMenu}
-        onRemoveClass={removeAssignedClass}
-        onToggleInline={() => setInlineStyleEditing(!inlineStyleEditing)}
-        onClearInline={() => {
-          clearNodeInlineStyles(nodeId)
-          setInlineStyleEditing(false)
-        }}
-      />
     </div>
   )
 }

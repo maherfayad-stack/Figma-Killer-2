@@ -1,0 +1,53 @@
+/* ModuleBlock — the Design tab's Module section (moved out of StyleSurface). */
+
+/*
+ * This mini-section is hand-rolled rather than `<Section>` (it has no
+ * disclosure toggle of its own), so — unlike every real `INSPECTOR_SECTIONS`
+ * entry — nothing here automatically supplies `--inspector-pad-x`.
+ *
+ * The block padding is `--inspector-space-2xs` top and bottom, the panel's
+ * within-group step, NOT the 10px it used to carry: every other section's
+ * title sits in a 32px header row whose only vertical space is the shared
+ * between-section gap, and this one was paying for a second, larger one.
+ */
+.header {
+    display: flex;
+    align-items: center;
+    gap: var(--inspector-space-2xs);
+    padding: var(--inspector-space-2xs) var(--inspector-pad-x);
+    color: var(--text-subtle);
+}
+
+.title {
+    font-size: var(--text-2xs);
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+/* The Law-3 fold, flush right of the title — the section-header "actions"
+   slot shape every real `<Section>` already uses. */
+.foldToggle.foldToggle {
+    margin-inline-start: auto;
+    gap: var(--inspector-space-4xs);
+    color: var(--text-subtle);
+    font-size: var(--text-2xs);
+    font-weight: 650;
+    text-transform: none;
+    letter-spacing: 0;
+}
+
+.chevron {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: transform 120ms ease;
+}
+
+.chevronOpen {
+    transform: rotate(90deg);
+}
+
+.body {
+    padding-inline: var(--inspector-pad-x);
+}

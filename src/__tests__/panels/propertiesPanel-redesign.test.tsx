@@ -155,7 +155,7 @@ describe('PP-2 — ClassPicker visible immediately on element selection', () => 
 // it's assigned, with no pill click and no locked-preview teaser in between.
 describe('PP-3 — an assigned, writable class is immediately editable, no pill click', () => {
   it('the style sections render as soon as a class is assigned — no "Add class" teaser', () => {
-    const { nodeId } = loadSiteWithClasses(1)
+    const { nodeId, classIds } = loadSiteWithClasses(1)
     selectNode(nodeId)
     render(<PropertiesPanel />)
 
@@ -166,9 +166,10 @@ describe('PP-3 — an assigned, writable class is immediately editable, no pill 
     expect(screen.queryByText(/add a class to start styling this element/i)).toBeNull()
     expect(document.querySelector('[data-section-id="layout"]')).not.toBeNull()
 
-    // The write-target chip strip names the assigned class.
-    const row = screen.getByTestId('write-target-row')
-    expect(row.textContent).toContain('.class-1')
+    // The write-target facts ride ClassPicker's own pills now (panel-41) —
+    // there is no second, read-only chip row inside the scroll container.
+    expect(screen.queryByTestId('write-target-row')).toBeNull()
+    expect(screen.getByTestId(`write-target-chip-${classIds[0]}`).textContent).toContain('.class-1')
   })
 })
 
@@ -1217,11 +1218,14 @@ describe('HF-2 — no cross-class value leak in the merged composer', () => {
     expect(row).not.toBeNull()
     expect((row?.querySelector('input') as HTMLInputElement | null)?.value).toBe('serif')
 
-    // The write-target row names BOTH classes — cls2 carries nothing, so it
-    // is not itself claiming the value.
-    const writeTargetRow = screen.getByTestId('write-target-row')
-    expect(writeTargetRow.textContent).toContain('.class-1-isolation')
-    expect(writeTargetRow.textContent).toContain('.class-2-isolation')
+    // Both classes are named as write targets on ClassPicker's own pills —
+    // cls2 carries nothing, so it is not itself claiming the value.
+    expect(screen.getByTestId(`write-target-chip-${cls1.id}`).textContent).toContain(
+      '.class-1-isolation',
+    )
+    expect(screen.getByTestId(`write-target-chip-${cls2.id}`).textContent).toContain(
+      '.class-2-isolation',
+    )
   })
 })
 

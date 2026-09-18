@@ -118,34 +118,8 @@
     padding: 0;
 }
 
-/* ── Module section — a fixed block, not an accordion (P2 rule 2) ──────── */
-/* This mini-section is hand-rolled rather than `<Section>` (it has no
-   disclosure toggle), so — unlike every real `INSPECTOR_SECTIONS` entry —
-   nothing here automatically supplies `--inspector-pad-x`. `.moduleHeader`
-   already applied it, just under the WRONG token name
-   (`--inspector-space-xl` — 12px today by coincidence, not by contract).
-   `.moduleBody` below is the fix that actually mattered: it was missing
-   entirely, so a module's own declared props (rendered through
-   `PropertyControlRenderer`/`ParamPromotableRow`, both zero-self-padding)
-   sat flush against the raw panel edge while this header sat 12px in. */
-.moduleHeader {
-    display: flex;
-    align-items: center;
-    gap: var(--inspector-space-2xs);
-    padding: var(--inspector-space-l) var(--inspector-pad-x) var(--inspector-space-2xs);
-    color: var(--text-subtle);
-}
-
-.moduleBody {
-    padding-inline: var(--inspector-pad-x);
-}
-
-.moduleTitle {
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
-}
+/* The Module section's own chrome moved out with the markup, to
+   `ModuleBlock.module.css` beside the component that renders it. */
 
 /* ────────────────────────────────────────────────────────────────────────────
    LockedStylePreview

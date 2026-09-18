@@ -34,34 +34,39 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * **88 `FrameSizePanel`** + 67 ClassPicker — that band was mislabelled "node
  * header (title + breadcrumb)" in the first artefact; the node title lives
  * inside `PanelHeader`'s own 36px). panel-39 moved `FrameSizePanel` to the
- * nothing-selected state it describes and trimmed the tab strip, so the
- * room is now **718px** and the chrome **182px**.
+ * nothing-selected state it describes and trimmed the tab strip; panel-41
+ * folded the selector pills into ClassPicker's own row (67 → 39). The room
+ * is now **746px** and the chrome **154px**.
  *
- * ## The one declared allowance, and why it is not four ceilings
+ * ## The budget is strict, with exactly one named exception
  *
- * `POPULATED_SECTION_OVERFLOW_PX` is the single number this gate tolerates
- * on top of the budget, and it has one named cause: **a selection whose
- * Layout or Text section is populated does not fit a 900px window at
- * Figma/Penpot row density, and cannot be made to without collapsing a
- * section that has real values in it.** Measured after panel-39, at
+ * panel-39's blanket `POPULATED_SECTION_OVERFLOW_PX = 210` is gone: three of
+ * the four fixtures now fit the room outright, so a 210px slack on all four
+ * would hide a 200px regression on any of them. Measured after panel-41, at
  * 1400x900 (`contentHeight`, not `scrollHeight` — see the assertion's own
  * comment for why the clamped one cannot show headroom):
  *
- *   | Fixture | content | room | over | was (panel-37) |
+ *   | Fixture | content | room | over | was (panel-39) |
  *   |---|---:|---:|---:|---:|
- *   | F1 rectangle | 690 | 718 | **0** (28 spare) | 334 over |
- *   | F2 text | 916 | 718 | 198 | 564 over |
- *   | F3 flex board | 909 | 718 | 191 | 387 over |
- *   | F4 image | 773 | 718 | 55 | 417 over |
+ *   | F1 rectangle | 608 | 746 | **0** (138 spare) | 0 (28 spare) |
+ *   | F2 text | 782 | 746 | **36** | 198 over |
+ *   | F3 flex board | 725 | 746 | **0** (21 spare) | 191 over |
+ *   | F4 image | 603 | 746 | **0** (143 spare) | 55 over |
  *
- * F2's overflow is its 197px Text section plus its 158px Module block (the
- * node's own `text` content editor); F3's is its 329px populated Layout
- * section; F4's is its 252px Module block (a 104px image picker plus three
- * `loading`/`fetchPriority`/`decoding` rows). Every one of those is a value
- * the user's source actually sets, rendered once. The allowance is therefore
- * ONE documented number for ONE documented cause — raise it and you are
- * declaring a new cause in `docs/features/inspector.md` §6; the per-fixture
- * numbers stay in the artefact as data, never as thresholds.
+ * The one exception is **F2**, and `TEXT_LAYER_OVERFLOW_PX` states its size.
+ * Its cause, with numbers: a text layer's Design tab carries 488px of values
+ * the user's source actually sets — Text 189 (Figma's own four typography
+ * rows), Measures 122, Fill 65, Layer 32, and an 80px Module block holding
+ * the node's own `text` content — plus 198px of six one-row collapsed
+ * sections, 80px of gaps and 16px of container padding. Nothing there is
+ * pre-drawn; closing the last 36px means either collapsing a section that
+ * has values in it, or merging Shadow + Blur into Figma's single **Effects**
+ * section (WS-6.1's own diagram), which is worth a measured 41px and is a
+ * section-manifest restructure, not a density change. See
+ * `docs/features/inspector.md` §6.
+ *
+ * Every other fixture is asserted STRICTLY against the room. Adding a second
+ * exception means naming its cause in §6, in the same change.
  *
  * ## Scoping — the panel-37 defect, still load-bearing
  *
@@ -118,19 +123,21 @@ const FIXTURE_PROJECT_NAME = `ws145-e2e-${Date.now().toString(36)}-${Math.random
 const HEIGHT_BUDGET_VIEWPORT = { width: 1400, height: 900 } as const
 
 /**
- * The ONE allowance this gate grants on top of the budget, for the one cause
- * named in this file's header: a selection whose Layout or Text section is
- * POPULATED overflows a 900px window, and closing that would mean collapsing
- * a section holding values the user set. Measured worst case after panel-39
- * is F2 text at 198px over; this is that number with room for the sub-pixel
- * and font-metric differences between machines.
+ * The ONE exception to the strict budget, and it belongs to ONE fixture —
+ * see this file's header for the per-section numbers behind it. Measured
+ * after panel-41 the F2 text node is 36px over; this is that number with
+ * room for the sub-pixel and font-metric differences between machines.
  *
- * It is deliberately far below the 164px the More disclosure is worth
- * (`src/__tests__/inspector/measurement.test.ts` computes that number) PLUS
- * the 167px the collapsed Layout section is worth, so un-folding either
- * still trips this gate on every fixture.
+ * It is deliberately far below the 152px the More disclosure is worth
+ * (`src/__tests__/inspector/measurement.test.ts` computes that number), the
+ * 167px the collapsed Layout section is worth, and the 122px the Module
+ * block's Law-3 fold is worth on an image, so un-folding any of them still
+ * trips this gate — on F2 as well as on the three strict fixtures.
  */
-const POPULATED_SECTION_OVERFLOW_PX = 210
+const TEXT_LAYER_OVERFLOW_PX = 60
+
+/** The fixture `TEXT_LAYER_OVERFLOW_PX` applies to, and the only one. */
+const OVERFLOW_EXCEPTION_FIXTURE_ID = 'f2-text'
 
 /**
  * The `designGroup: 'more'` entries of `INSPECTOR_SECTIONS` — the four that
@@ -398,11 +405,14 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
         'THE BUDGET is `clientHeight` — the room the panel actually has at this viewport, ' +
         'i.e. 900px minus all chrome — read at runtime, not a literal. `contentHeight` is ' +
         'what the tab renders (`scrollHeight` clamps to the room and so cannot show headroom; ' +
-        'this does). `overflowPx` is `contentHeight - clientHeight`, and the gate allows it up ' +
-        'to ONE documented number for ONE documented cause: a populated Layout or Text section. ' +
-        'See 05-section-heights.md and docs/features/inspector.md §6.',
+        'this does). `overflowPx` is `contentHeight - clientHeight`, and the gate asserts it ' +
+        'is ZERO for every fixture but one: the F2 text node, whose cause is named in ' +
+        '05-section-heights.md and docs/features/inspector.md §6.',
       budget: { source: 'clientHeight of the Design tab scroll container at 900px' },
-      populatedSectionOverflowAllowancePx: POPULATED_SECTION_OVERFLOW_PX,
+      overflowException: {
+        fixture: OVERFLOW_EXCEPTION_FIXTURE_ID,
+        allowancePx: TEXT_LAYER_OVERFLOW_PX,
+      },
       fixtures: {},
     }
     const fixtures = table.fixtures as Record<string, unknown>
@@ -444,14 +454,20 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
         sections,
       }
 
+      // Strict for every fixture but the one declared exception. A second
+      // exception is a new cause, and a new cause belongs in
+      // `docs/features/inspector.md` §6 before it belongs here.
+      const allowance =
+        fixture.id === OVERFLOW_EXCEPTION_FIXTURE_ID ? TEXT_LAYER_OVERFLOW_PX : 0
       expect(
         contentHeight,
         `${fixture.id}: the Design tab is past its budget — contentHeight=${contentHeight}, ` +
-          `room at 900px=${clientHeight}, allowance=${POPULATED_SECTION_OVERFLOW_PX} for a ` +
-          'populated Layout/Text section. The budget is the room itself; the allowance has ONE ' +
-          'documented cause (docs/features/inspector.md §6). Raising it means declaring a new ' +
-          `cause there, in the same change. Per-section heights: ${JSON.stringify(sections)}`,
-      ).toBeLessThanOrEqual(clientHeight + POPULATED_SECTION_OVERFLOW_PX)
+          `room at 900px=${clientHeight}, allowance=${allowance}. The budget is the room ` +
+          'itself, asserted strictly; only the F2 text node has a declared allowance, and its ' +
+          'cause is named in docs/features/inspector.md §6. Closing an overflow here means ' +
+          'folding something that is pre-drawn, not widening this number. Per-section ' +
+          `heights: ${JSON.stringify(sections)}`,
+      ).toBeLessThanOrEqual(clientHeight + allowance)
     }
 
     // Last, so a failure above never overwrites a good baseline.
@@ -509,13 +525,13 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
 
   /**
    * The STRUCTURAL half of the budget (panel-39). The numeric assertion above
-   * grants one allowance for populated content, which by construction cannot
-   * also be a tight per-fixture ratchet — so the two regressions that produced
-   * the original 334–564px overflow are pinned as structure instead of as
-   * magic numbers: the four Studio extras stay folded (the test above), and
-   * the Layout section stays one row until a layout exists (this one, worth a
-   * measured 167px on every selection that is not itself a flex/grid
-   * container).
+   * is strict now, but a height number still cannot say WHICH fold was
+   * deleted when it goes red — so the folds the budget rests on are pinned as
+   * structure as well: the four Studio extras stay folded (the test above),
+   * the Module block folds the props the source does not set (below, worth a
+   * measured 122px on the image fixture), and the Layout section stays one
+   * row until a layout exists (this one, worth a measured 167px on every
+   * selection that is not itself a flex/grid container).
    */
   test('Layout is one row until a layout exists, and the full body is one click away', async ({
     page,
@@ -552,5 +568,52 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
       designSection(page, 'layout').getByTestId('inspector-layout-section'),
       'a flex container must render its Layout body at rest',
     ).toBeVisible({ timeout: 15_000 })
+  })
+
+  /**
+   * The Module block's Law-3 fold (panel-41), against a real parsed file
+   * rather than a hand-built prop bag — which is the whole point: the
+   * partition asks what the USER'S SOURCE sets, and only a real parse can
+   * produce a node whose `props` carry `src` but not `loading`.
+   *
+   * `<img className="image-layer" src="./fixture.svg" alt="Fixture" />` sets
+   * `src`; `loading`, `fetchPriority` and `decoding` are schema defaults the
+   * JSX never wrote. Worth a measured 122px on this fixture (three rows, two
+   * gaps, and the row a separate "More properties" disclosure would have
+   * cost).
+   */
+  test('the Module block folds the props the source does not set, and one click reaches them', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
+    const canvasRoot = await openStudioBoard(page, fixtureDir)
+    const frame = page.locator('[data-page-id]').first()
+    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+
+    await clickLayer(page, canvasRoot, contentFrame.locator('.image-layer').first())
+    const moduleBlock = designSection(page, 'module')
+    await expect(moduleBlock).toBeVisible({ timeout: 15_000 })
+
+    // The source sets `src`, so the image picker is resident.
+    await expect(
+      moduleBlock.getByTestId('image-source-src'),
+      'the image the source DOES set is not at rest — the fold must never hide a value',
+    ).toBeVisible()
+
+    for (const key of ['loading', 'fetchPriority', 'decoding']) {
+      await expect(
+        moduleBlock.getByTestId(`property-control-${key}`),
+        `${key} is pre-drawn at rest — the JSX never wrote it (Law 3)`,
+      ).toHaveCount(0)
+    }
+
+    // One click, same test ids — a fold, not a deletion.
+    await moduleBlock.getByTestId('module-more-properties-toggle').click()
+    for (const key of ['loading', 'fetchPriority', 'decoding']) {
+      await expect(
+        moduleBlock.getByTestId(`property-control-${key}`),
+        `${key} did not appear after opening the Module block's fold`,
+      ).toHaveCount(1)
+    }
   })
 })

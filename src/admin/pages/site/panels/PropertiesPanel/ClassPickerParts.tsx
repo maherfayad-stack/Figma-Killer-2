@@ -1,4 +1,4 @@
-import type { KeyboardEvent, MouseEvent, ReactNode, RefObject } from 'react'
+import type { KeyboardEvent, ReactNode, RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
@@ -7,184 +7,27 @@ import { CornerDownLeftIcon } from 'pixel-art-icons/icons/corner-down-left'
 import { UndoIcon } from 'pixel-art-icons/icons/undo'
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { cn } from '@ui/cn'
-import { TagPill } from '@ui/components/TagPill'
 import {
   classKindSelector,
   generatedClassKindLabel,
   styleRuleDisplaySelector,
   type StyleRule,
 } from '@core/page-tree'
-import type { SelectorPillItem, SelectorSuggestionItem } from './selectorPickerModel'
+import type { SelectorSuggestionItem } from './selectorPickerModel'
 import styles from './ClassPicker.module.css'
 
 const SELECTOR_SUGGESTIONS_MAX_WIDTH = 520
 
-interface AssignedClassPillProps {
-  cls: StyleRule
-  isActive: boolean
-  onToggle: () => void
-  onContextMenu: (event: MouseEvent<HTMLElement>) => void
-  onKeyboardContextMenu: (event: KeyboardEvent<HTMLElement>) => void
-  onRemove: () => void
-}
-
-function AssignedClassPill({
-  cls,
-  isActive,
-  onToggle,
-  onContextMenu,
-  onKeyboardContextMenu,
-  onRemove,
-}: AssignedClassPillProps) {
-  const selectorLabel = styleRuleDisplaySelector(cls)
-  const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onToggle()
-      return
-    }
-    onKeyboardContextMenu(e)
-  }
-
-  return (
-    <TagPill
-      label={selectorLabel}
-      active={isActive}
-      onClick={onToggle}
-      onMainKeyDown={handleKeyDown}
-      onContextMenu={onContextMenu}
-      onRemove={onRemove}
-      mainAriaLabel={`${isActive ? 'Deselect' : 'Edit'} class ${selectorLabel}`}
-      removeAriaLabel={`Remove class ${selectorLabel}`}
-      removeTooltip="Remove from this element"
-      mainTestId={`class-chip-${cls.name}`}
-      removeTestId={`class-chip-remove-${cls.name}`}
-    />
-  )
-}
-
-function AmbientSelectorPill({
-  pill,
-  onToggle,
-}: {
-  pill: SelectorPillItem
-  onToggle: () => void
-}) {
-  const selectorLabel = styleRuleDisplaySelector(pill.rule)
-  const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onToggle()
-    }
-  }
-
-  return (
-    <TagPill
-      label={selectorLabel}
-      active={pill.active}
-      onClick={onToggle}
-      onMainKeyDown={handleKeyDown}
-      mainAriaLabel={`${pill.active ? 'Deselect' : 'Edit'} selector ${selectorLabel}`}
-      mainTestId={`selector-chip-${pill.rule.id}`}
-    />
-  )
-}
-
-function InlineStylePill({
-  isActive,
-  onToggle,
-  onRemove,
-}: {
-  isActive: boolean
-  onToggle: () => void
-  onRemove: () => void
-}) {
-  const handleKeyDown = (e: KeyboardEvent<HTMLElement>) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault()
-      onToggle()
-    }
-  }
-
-  return (
-    <TagPill
-      label="Inline"
-      active={isActive}
-      muted
-      onClick={onToggle}
-      onMainKeyDown={handleKeyDown}
-      onRemove={onRemove}
-      mainAriaLabel={`${isActive ? 'Stop editing' : 'Edit'} inline styles`}
-      removeAriaLabel="Clear inline styles"
-      removeTooltip="Clear inline styles"
-      mainTestId="inline-style-pill"
-      removeTestId="inline-style-pill-remove"
-    />
-  )
-}
-
-interface SelectorPillStackProps {
-  pills: readonly SelectorPillItem[]
-  showInlinePill: boolean
-  inlineStyleEditing: boolean
-  onToggleRule: (ruleId: string, active: boolean) => void
-  onClassContextMenu: (classId: string, event: MouseEvent<HTMLElement>) => void
-  onKeyboardClassContextMenu: (classId: string, event: KeyboardEvent<HTMLElement>) => void
-  onRemoveClass: (classId: string) => void
-  onToggleInline: () => void
-  onClearInline: () => void
-}
-
-export function SelectorPillStack({
-  pills,
-  showInlinePill,
-  inlineStyleEditing,
-  onToggleRule,
-  onClassContextMenu,
-  onKeyboardClassContextMenu,
-  onRemoveClass,
-  onToggleInline,
-  onClearInline,
-}: SelectorPillStackProps) {
-  if (pills.length === 0 && !showInlinePill) return null
-
-  return (
-    <div className={styles.pillsContainer}>
-      {pills.map((pill) => (
-        pill.rule.kind === 'ambient'
-          ? (
-              <AmbientSelectorPill
-                key={pill.rule.id}
-                pill={pill}
-                onToggle={() => onToggleRule(pill.rule.id, pill.active)}
-              />
-            )
-          : (
-              <AssignedClassPill
-                key={pill.rule.id}
-                cls={pill.rule}
-                isActive={pill.active}
-                onToggle={() => onToggleRule(pill.rule.id, pill.active)}
-                onContextMenu={(e) => onClassContextMenu(pill.rule.id, e)}
-                onKeyboardContextMenu={(e) => onKeyboardClassContextMenu(pill.rule.id, e)}
-                onRemove={() => onRemoveClass(pill.rule.id)}
-              />
-            )
-      ))}
-      {showInlinePill && (
-        <InlineStylePill
-          isActive={inlineStyleEditing}
-          onToggle={onToggleInline}
-          onRemove={onClearInline}
-        />
-      )}
-    </div>
-  )
-}
-
 interface SelectorInputAreaProps {
   inputRowRef: RefObject<HTMLDivElement | null>
   inputRef: RefObject<HTMLInputElement | null>
+  /**
+   * The selector pills, rendered as the LEADING items of this same row
+   * (panel-41). They used to sit on their own row below, which cost the panel
+   * a second band of chrome above the scroll container for a control that is
+   * a tag input in every other product that has one.
+   */
+  pills?: ReactNode
   trailingAction?: ReactNode
   query: string
   hasSubmittableQuery: boolean
@@ -199,6 +42,7 @@ interface SelectorInputAreaProps {
 export function SelectorInputArea({
   inputRowRef,
   inputRef,
+  pills,
   trailingAction,
   query,
   hasSubmittableQuery,
@@ -210,7 +54,9 @@ export function SelectorInputArea({
   children,
 }: SelectorInputAreaProps) {
   return (
-    <div ref={inputRowRef} className={styles.inputRow} data-with-action={trailingAction != null}>
+    <div ref={inputRowRef} className={styles.inputRow}>
+      {pills}
+      <span className={styles.inputCell}>
       <Input
         ref={inputRef}
         type="text"
@@ -242,6 +88,7 @@ export function SelectorInputArea({
           </Button>
         }
       />
+      </span>
 
       {trailingAction}
       {children}

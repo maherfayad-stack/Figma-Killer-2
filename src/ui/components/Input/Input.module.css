@@ -70,6 +70,34 @@
     resize: both;
 }
 
+/*
+ * `autoGrow` — the box is as tall as its VALUE, not as tall as `rows`.
+ *
+ * An inspector row holding a one-line string used to reserve four lines: the
+ * Design tab's Module block spent 90px on a 25-character text prop, which is
+ * one of the numbers the 900px budget could not afford
+ * (`docs/features/inspector.md` §6). `rows` becomes the ceiling instead of
+ * the height, so the field starts at one line, grows as it is typed into, and
+ * scrolls once it reaches `rows`.
+ *
+ * `field-sizing: content` is the whole mechanism — no wrapper element, no
+ * measurement effect, nothing to keep in sync with the value. Where it is not
+ * supported the `rows` attribute still applies and the field renders exactly
+ * as it did before this existed, so the degradation is "the old height", not
+ * a broken control.
+ *
+ * `--textarea-max-rows` is set as a custom property by the component from the
+ * same `rows` prop; the declaration here is its default, so no `var()`
+ * fallback is needed. The `+ 2px` is the field's own top and bottom border.
+ */
+.textareaAutoGrow {
+    --textarea-max-rows: 3;
+    field-sizing: content;
+    max-height: calc(var(--textarea-max-rows) * 1.5em + 2 * var(--space-xs) + 2px);
+    overflow-y: auto;
+    resize: none;
+}
+
 .invalid {
     border-color: var(--danger);
 }
