@@ -143,6 +143,39 @@ describe('studio-routes-capability-declared gate', () => {
     expect(stale).toHaveLength(0)
   })
 
+  /**
+   * `sec-16`. `subPaths: true` is the ONE place the table stops being
+   * fail-closed: an undeclared path under a namespace does not 404, it
+   * inherits the namespace's capability for its method class. That is safe
+   * for a new POST (it inherits the strict write capability) and NOT safe for
+   * a new GET, which inherits `site.read` — the capability the Client role
+   * holds. A future `GET /admin/api/studio/deploy/run` or
+   * `GET /admin/api/studio/dev-server/restart` would therefore let a
+   * read-only reviewer spawn a build or a dev server on a project already at
+   * the `run-project` tier, with no table edit to review.
+   *
+   * The right long-term shape is exact entries plus an explicit dynamic-id
+   * marker for the two namespaces that genuinely need one (`deploy/<jobId>`,
+   * `install/<jobId>`). Until then this pins the inventory so the set cannot
+   * grow, and a namespace's capabilities cannot change, without a deliberate
+   * edit here.
+   */
+  it('pins the subPaths namespaces and the capability each one hands to an undeclared sub-path', () => {
+    const namespaces = STUDIO_ROUTE_CAPABILITIES
+      .filter((entry) => entry.subPaths === true)
+      .map((entry) => [entry.path, entry.read, entry.mutate] as const)
+      .sort((a, b) => a[0].localeCompare(b[0]))
+
+    expect(namespaces).toEqual([
+      ['/admin/api/studio/deploy', 'site.read', 'studio.run.project'],
+      ['/admin/api/studio/dev-server', 'site.read', 'studio.run.project'],
+      ['/admin/api/studio/git', 'site.read', 'site.structure.edit'],
+      ['/admin/api/studio/github', 'site.read', 'site.structure.edit'],
+      ['/admin/api/studio/install', 'site.read', 'studio.write'],
+      ['/admin/api/studio/prototype', 'site.read', 'studio.write'],
+    ])
+  })
+
   it('declares no capability outside the four write families plus site.read', () => {
     // Not a style rule — the point of the table is that a reader can see the
     // whole Studio authorization surface in one screen. A capability that

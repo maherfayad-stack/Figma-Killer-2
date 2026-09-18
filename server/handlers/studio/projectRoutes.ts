@@ -238,10 +238,10 @@ export async function tryServeStudioProjectRoutes(
   // into `studio-workspace/.trash/`, because `studio-workspace/<project>/` is
   // the user's own repository with no other copy. See `./projectTrash.ts`.
   if (pathname === '/admin/api/studio/delete' && req.method === 'POST') {
-    // The only capability check in this file. Deleting a project is the most
-    // destructive thing this API can do, so it does not ship ungated — even
-    // though its neighbours here still are, which is a real gap and not a
-    // precedent this route is following.
+    // `studio.write`, declared in `routeCapabilities.ts` and required by
+    // `routeGate.ts` before this function is entered — as it now is for every
+    // route in this file. The "its neighbours are ungated" caveat this comment
+    // used to carry described the surface before that gate existed.
     try {
       const body = await readValidatedBody(req, DeleteProjectBodySchema)
       if (!body) return badRequest('invalid delete body')
@@ -259,9 +259,9 @@ export async function tryServeStudioProjectRoutes(
     }
   }
 
-  // Copy a project beside itself. Gated for the same reason `/delete` is:
-  // this one writes an entire second repository to the user's disk, and the
-  // ungated neighbours below are a known gap, not a precedent.
+  // Copy a project beside itself. `studio.write` for the same reason
+  // `/delete` takes it: this one writes an entire second repository to the
+  // user's disk.
   if (pathname === '/admin/api/studio/duplicate' && req.method === 'POST') {
     try {
       const body = await readValidatedBody(req, DuplicateProjectBodySchema)
