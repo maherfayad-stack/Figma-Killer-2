@@ -313,6 +313,17 @@ Selected-layer shortcuts are command shortcuts too. `⌘C` / `Ctrl+C`, `⌘X` / 
 | `C` | Comment mode |
 | `⌘]` / `⌘[` | Move the selected layer up / down among its siblings (alias of `⌥↑` / `⌥↓`) |
 | `⌘⇧L` | Lock / unlock the selected layer |
+| `⌘G` | Group the selection into one container (`K3`). On a source-backed board this WRITES the container into the `.tsx`, around a contiguous run of siblings only |
+| `⌘⇧G` | Ungroup — dissolve the selected container, its children taking its place |
+
+`⌘G` does not always write a `<div>`. The container's tag follows the HTML
+content model of what is above it and what is inside it (`struct-11`,
+`@core/utils/htmlContentModel.ts`): a `<span>` in phrasing content — inside a
+`<p>`, an `<h2>`, a `<label>`, another `<span>` — a `<div>` in flow content,
+and a refusal naming the reason where neither would be valid (inside a `<ul>`,
+a `<tr>` or a `<select>`, or around an `<li>`, a `<td>`, a `<figcaption>`).
+Grouping is not a formatting gesture on this board; it edits the user's real
+markup, and invalid markup is a runtime error in their app.
 
 The bare letters are safe to bind because each `match` rejects **every** modifier and every one carries `ignoreInEditableField` — so `⌘K` stays the palette, `⌘R` stays rename, and typing an `o` in any field is just an `o`. The two latched tools toggle on their own key; Escape also disarms, but only as a second chance (with anything selected the `node` rung claims Escape first, to deselect).
 

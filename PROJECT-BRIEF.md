@@ -402,6 +402,12 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
   a gap in it refuses with `multi-select` — "select siblings next to each
   other" — because the wrapper would otherwise land around elements the user
   never selected. ⌘G on one element is the existing single-element `wrap`.
+  **The container's tag follows the HTML content model** (`struct-11`,
+  `@core/utils/htmlContentModel.ts`): `<span>` in phrasing content, `<div>` in
+  flow content, and a REFUSAL (`content-model`) where neither would be valid —
+  inside a `<ul>`/`<tr>`/`<select>`, or around an `<li>`/`<td>`/`<figcaption>`.
+  It used to be a hard-coded `<div>`, which put a `<div>` inside a `<p>` in a
+  real project and made React report a hydration error in the user's own app.
   **⌘⇧G refuses to dissolve a container that is doing anything but holding its
   children** (`has-behaviour`): a handler, a `ref`, a `key`, a spread, or a
   component tag rather than an intrinsic element. Only

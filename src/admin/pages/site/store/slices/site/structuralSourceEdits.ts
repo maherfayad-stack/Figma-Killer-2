@@ -59,6 +59,7 @@ import {
 import { pushToast } from '@ui/components/Toast'
 import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
 import { openSourceFile, type SourceFileOpener } from '../../openSourceFile'
+import { nodeHtmlTag } from './nodeHtmlTag'
 import type { EditorStoreSetter } from './types'
 
 /**
@@ -357,12 +358,17 @@ export function planSourceWrap(
  * `commit` is the run in SOURCE order. One id in it is an ordinary single
  * `wrap`; several are `wrapJsxElements`' one-container-around-a-span. `null`
  * means an ordinary CMS tree — mutate it and do not write.
+ *
+ * `nodeHtmlTag` is the second thing the store adds (`struct-11`): the rule
+ * needs to know which HTML element each node is before it can say whether a
+ * container may legally go around them, and that mapping lives in the module
+ * registry rather than in `@core/page-tree`.
  */
 export function planSourceGroup(
   tree: NodeTree<PageNode>,
   nodeIds: readonly string[],
 ): StructuralPlan<string[]> {
-  const preview = previewStructuralGroup(tree, nodeIds)
+  const preview = previewStructuralGroup(tree, nodeIds, nodeHtmlTag)
   if (preview.ok) return { ok: true, commit: preview.commit }
   // The member the refusal is about when it is about one (a `.map` row inside
   // an otherwise fine run) — that node is where `origin` and the retry closure

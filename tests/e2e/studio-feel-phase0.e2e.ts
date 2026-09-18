@@ -515,28 +515,38 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 4 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). ⌘G and ⌘⇧G do write real source and do round-trip
-   * exactly — both measured here. Three other claims do not hold:
+   * DEFECT (expected failure). Four of this case's six claims now hold, and
+   * the two that do not have moved owners — read the list before assuming the
+   * red means what it used to.
    *
-   *   a. **The wrapper is always a `<div>`, wherever it lands.** Grouping two
-   *      inline `<span>`s that live inside a `<p>` writes `<div>` into
-   *      phrasing content, which React reports in the console as "In HTML,
-   *      <div> cannot be a descendant of <p>. This will cause a hydration
-   *      error." Studio wrote markup that breaks the user's real app. The
-   *      wrapper tag is hard-coded at K3's call sites (`runGroupShortcut` →
-   *      `groupNodes`, `name: 'div'`); picking `<span>` in a phrasing context
-   *      is a parser-side decision, not a keybinding one.
-   *   b. **The new wrapper is not selected.** After ⌘G the selection is still
-   *      the node that was selected before it — `commitStructural` does not
-   *      report created node ids, the same root cause as case 1's (b) and
-   *      `keys-01`'s own open follow-up.
-   *   c. **A second ⌘G in the same session writes nothing**, which is why the
-   *      ⌘Z claim below cannot be reached at all. The annotations record what
-   *      the editor said when it happened.
+   * HOLDS: ⌘G writes real source · ⌘⇧G takes the file back byte for byte ·
+   * the new wrapper IS the selection (`store-13`'s created ids; it occupies
+   * the first sibling's old `line:col`, which is why the assertion below
+   * compares its TAG rather than its id — `meta-16` landmine 7) · **the tag
+   * follows the HTML content model** (`struct-11`). That last one was the
+   * worst finding in this file: the run this case groups lives inside a
+   * `<span>` inside a `<p>`, and the old hard-coded `<div>` made React report
+   * "In HTML, <div> cannot be a descendant of <p>. This will cause a hydration
+   * error." in the user's own app. It is a `<span>` now, asserted below, and
+   * case 7 is green because of it.
    *
-   * Owners: `struct-10` (K3 — the wrapper tag and the second-gesture stall)
-   * and `keys-01` (the selection). None of the three is a small edit inside one
-   * file.
+   * STILL RED, both owned by the structural-commit layer rather than by the
+   * codemods:
+   *
+   *   a. **A second ⌘G fired while the ungroup's resync is still in flight is
+   *      REFUSED**, with "Still writing your last change" —
+   *      `guardAgainstConcurrentStructuralCommit`. Measured: the guard clears
+   *      on its own and the identical gesture succeeds first time once the
+   *      resync has landed, so this is a race, not a stuck flag. The fix is
+   *      the same one case 1 needs: structural writes must QUEUE, not refuse
+   *      (`STUDIO-FIGMA-FEEL-PLAN.md` wave 3, `store-11`/`store-12`).
+   *   b. **A group has no undo entry at all.** `structuralHistory.ts` records
+   *      an inverse write for `move` and refuses one for `delete`; `group`
+   *      pushes nothing, so the ⌘Z below cannot take the file back. That is
+   *      "undo for the structural family" (`canvas-20` landmine 10), also
+   *      wave 3.
+   *
+   * Neither is a parser change, and neither is a small edit inside one file.
    */
   test('⌘G groups two siblings into real source, ⌘⇧G takes it back, and ⌘Z undoes each in one step', async ({
     page,
@@ -587,22 +597,41 @@ test.describe('Phase 0 exit dogfood', () => {
       .soft(grouped, '⌘G did not change the .tsx — a group is a source write, not a canvas-only regrouping')
       .not.toBe(before)
 
+    // `struct-11` — the container's TAG. This run sits inside a `<span>`
+    // inside a `<p>`, i.e. phrasing content, where a `<div>` is invalid HTML
+    // and React says so twice in the user's own console. The wrapper takes the
+    // first member's old line, so its own tag is the first thing on it.
+    const wrapperLine = sourceLineAt(grouped, location.line).trim()
+    annotate('the tag ⌘G wrote', wrapperLine)
+    expect
+      .soft(
+        wrapperLine,
+        'the container ⌘G wrote into phrasing content is not a <span> — a <div> here is markup the app reports as a hydration error',
+      )
+      .toMatch(/^<span>/)
+
     // The group itself is the selection, so ⌘⇧G is the very next thing a hand
-    // can press.
+    // can press. Compared by TAG, not by id: the wrapper legitimately occupies
+    // the first sibling's old `line:col`, so "is it a member of
+    // `siblingsBefore`" is undecidable (`meta-16` landmine 7). What is
+    // decidable is that the selected node is the container that was just
+    // written — the only `<span>` with no attributes on that line.
     const wrapperId = await contentFrame
       .locator(SELECTION_RING)
       .first()
       .getAttribute('data-canvas-overlay-node-id')
     annotate('selected after ⌘G', wrapperId ?? '(nothing)')
+    annotate('siblings before ⌘G', siblingsBefore.join(', '))
     expect
       .soft(wrapperId, '⌘G left nothing selected, so the group it just made is not what the inspector is pointed at')
       .not.toBeNull()
+    const selectedLocation = wrapperId === null ? null : decodeNodeSourceLocation(wrapperId)
     expect
       .soft(
-        siblingsBefore.includes(wrapperId ?? ''),
-        `⌘G left the selection on a node that existed before the group (${wrapperId}) — the new wrapper was never selected`,
+        selectedLocation === null ? '(no source location)' : sourceLineAt(grouped, selectedLocation.line).trim(),
+        `⌘G left the selection on something other than the container it just wrote (${wrapperId})`,
       )
-      .toBe(false)
+      .toMatch(/^<span>/)
 
     await canvasRoot.focus()
     await page.keyboard.press('Control+Shift+g')
@@ -849,17 +878,21 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 7 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). The only errors this run produces that the
-   * allowlist does not cover are React's two complaints about case 4's ⌘G:
-   * "In HTML, <div> cannot be a descendant of <p>" and "<p> cannot contain a
-   * nested <div>". They are not test noise — they are React reporting that
-   * Studio just wrote invalid HTML into the user's file (case 4's finding (a),
-   * owner `struct-10`). Allowlisting them would be exactly the "detect the
-   * errors I did not see" failure this plan is named after, so they stay
-   * unexplained and this case stays red until the wrapper tag is fixed.
+   * GREEN since `struct-11`. It was red for exactly one reason: React's two
+   * complaints about case 4's ⌘G — "In HTML, <div> cannot be a descendant of
+   * <p>" and "<p> cannot contain a nested <div>". They were never test noise;
+   * they were React reporting that Studio had just written invalid HTML into
+   * the user's file. Allowlisting them would have been precisely the "detect
+   * the errors I did not see" failure this plan is named after, so they stayed
+   * unexplained and this case stayed `test.fail()` until the wrapper tag was
+   * fixed at the source. It is fixed (case 4 asserts the tag), the two errors
+   * are gone, and the `test.fail()` is gone with them — leaving it would make
+   * Playwright fail the run for passing.
+   *
+   * This case is now the file's backstop: any NEW error, from any case, is a
+   * real failure here. The allowlist is not the place to answer one.
    */
   test('the whole dogfood produced no unexplained console errors', async () => {
-    test.fail()
     const unexplained = consoleEvents.filter(
       (event) => !CONSOLE_ALLOWLIST.some((entry) => entry.pattern.test(event.text)),
     )

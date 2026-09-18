@@ -265,6 +265,17 @@ every editor panel, inspector tab and inspector section its own `PanelBoundary`
 documents. Its probe event names the boundary's own `location`
 (`detail: 'panel:design'`), not a bare panel word.
 
+**It was four until `struct-11`.** Case 7 ("no unexplained console errors") was
+red for exactly one reason: React's two complaints that ⌘G had written a
+`<div>` into a `<p>` in the user's own file. The wrapper tag now follows the
+HTML content model, those errors are gone, and case 7 is an ordinary pass and
+the file's backstop — any NEW error from any case fails there. Case 4 is still
+`test.fail()`, on two claims that moved owners rather than the one it was
+written for: a second ⌘G fired while the previous write's resync is in flight
+is refused (the structural-commit QUEUE, wave 3) and a group has no undo entry
+at all (`structuralHistory.ts` records one for `move` only). Its docblock is
+the current list; read it before assuming the red still means the wrapper tag.
+
 It also writes to a project's real `.tsx`, so `helpers/studioFixtureProject.ts`
 copies `studio-workspace/test4` to `studio-workspace/__e2e-phase0` **before each
 case** and removes it afterwards. Per-case, not per-file: a shared copy made

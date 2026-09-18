@@ -30,6 +30,17 @@
  *
  * An element that shares its line with a sibling (`<div><a/><b/></div>`) is
  * wrapped in place, on that line, with no reindentation at all.
+ *
+ * THE WRAPPER'S TAG IS NOT THE CALLER'S TO FIX (`struct-11`)
+ * ---------------------------------------------------------
+ * `name` used to be written verbatim, and every caller said `div`. Wrapping an
+ * inline `<span>` that lives inside a `<p>` therefore wrote a `<div>` into
+ * phrasing content — invalid HTML, and a hydration error React reports in the
+ * user's own console. `div` and `span` are the two interchangeable containers,
+ * so a caller naming either is asking for "a box" and gets whichever one is
+ * legal here; any other name is the caller's own choice and is checked rather
+ * than re-spelled. A context that admits no wrapper at all (inside a `<ul>`,
+ * around an `<li>`) refuses with `content-model`. See `wrapperContentModel.ts`.
  */
 import { type Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -41,7 +52,8 @@ import {
 } from './jsxChildRange'
 import { indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
-import { refuse, validateSubtree, type InsertJsxRefusal } from './jsxSubtree'
+import { validateSubtree, type InsertJsxRefusalReason } from './jsxSubtree'
+import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 
 export interface WrapJsxElementParams {
@@ -62,10 +74,30 @@ export interface WrapJsxElementParams {
   project?: Project
 }
 
+/**
+ * Why a wrap could not be written. `content-model` (`struct-11`) is this
+ * codemod's own, shared with `wrapJsxElements`: the container would be invalid
+ * HTML where it lands (a `<div>` inside a `<p>`) or around what it holds. It
+ * is NOT in `InsertJsxRefusalReason`, because an insert, a move and a
+ * duplicate cannot refuse for it — they relocate markup the file already has
+ * rather than inventing a wrapper.
+ */
+export type WrapJsxRefusalReason = InsertJsxRefusalReason | 'content-model'
+
+export interface WrapJsxRefusal {
+  reason: WrapJsxRefusalReason
+  /** Human-readable, suitable for a toast. */
+  message: string
+}
+
 /** `created` is the WRAPPER's own tag-name `line:col` — see `createdJsxLocation.ts`. */
 export type WrapJsxElementResult =
   | { ok: true; created: CreatedJsxLocation | null }
-  | { ok: false; refusal: InsertJsxRefusal }
+  | { ok: false; refusal: WrapJsxRefusal }
+
+function refuse(reason: WrapJsxRefusalReason, message: string): { ok: false; refusal: WrapJsxRefusal } {
+  return { ok: false, refusal: { reason, message } }
+}
 
 export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResult {
   const { file, line, col, name, importSpecifier } = params
@@ -81,6 +113,17 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
 
   const target = resolveJsxChildRange(sourceFile, line, col)
   if (!target.ok) return refuse(target.reason, target.message)
+
+  // `struct-11` — WHAT the wrapper is, decided from where it lands and what it
+  // holds. A generic `div`/`span` is re-picked from the HTML content model;
+  // anything else is checked and refused rather than re-spelled. See
+  // `wrapperContentModel.ts` for the rule and the defect it closes.
+  const wrapper = resolveWrapperTag(name, importSpecifier, {
+    ancestorTags: ancestorTagNames(target.range.parent),
+    memberTags: [intrinsicTagName(target.range.element)],
+  })
+  if (!wrapper.ok) return refuse(wrapper.refusal.reason, wrapper.refusal.message)
+  const tag = wrapper.name
 
   if (importSpecifier !== undefined) {
     const binding = conflictingBinding(sourceFile, name, importSpecifier)
@@ -111,16 +154,16 @@ export function wrapJsxElement(params: WrapJsxElementParams): WrapJsxElementResu
 
   const wrapped = target.range.wholeLine
     ? [
-        `<${name}>`,
+        `<${tag}>`,
         `${baseIndent}${unit}${reindentBlock(subtree, baseIndent, baseIndent + unit)}`,
-        `${baseIndent}</${name}>`,
+        `${baseIndent}</${tag}>`,
       ].join('\n')
-    : `<${name}>${subtree}</${name}>`
+    : `<${tag}>${subtree}</${tag}>`
 
   const importEdits = resolveImportEdits(
     sourceFile,
     verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[name, { specifier: importSpecifier }]]),
+    importSpecifier === undefined ? new Map() : new Map([[tag, { specifier: importSpecifier }]]),
   )
 
   writeVerbatimSource(

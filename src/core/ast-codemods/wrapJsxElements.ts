@@ -31,6 +31,13 @@
  * TEXT between the endpoints is carried, because it is inert, visible, and
  * leaving it outside would REORDER it out of the group rather than group.
  *
+ * THE CONTAINER'S TAG FOLLOWS THE HTML CONTENT MODEL (`struct-11`). The caller
+ * names `div`; this writes `div` or `span`, whichever is legal between the
+ * parent above the run and the elements in it, and refuses (`content-model`)
+ * when neither is — grouping two `<li>`s, or anything inside a `<ul>`. The
+ * rule is `@core/utils/htmlContentModel`; the two facts it needs are collected
+ * from the AST by `wrapperContentModel.ts`.
+ *
  * INDENTATION, AND THE ONE PLACE IT MOVES. Exactly `wrapJsxElement`'s rule:
  * the wrapped span gains one level (`reindentBlock` — leading whitespace only),
  * every line outside it is untouched to the byte, and a run that shares one
@@ -50,8 +57,10 @@ import {
 } from './jsxChildRange'
 import { elementChildren, indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
-import { validateSubtree, type InsertJsxRefusalReason } from './jsxSubtree'
+import { validateSubtree } from './jsxSubtree'
+import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
+import { ancestorTagNames, intrinsicTagName, resolveWrapperTag } from './wrapperContentModel'
 
 export interface WrapJsxElementsParams {
   file: string
@@ -80,8 +89,9 @@ export interface WrapJsxElementsParams {
 export type WrapJsxElementsRefusalReason =
   // Everything an insert can refuse (`not-found`, `no-jsx-parent`,
   // `expression-child`, `stale-source`, `not-siblings`, `binding-conflict`,
-  // `unsafe-tag`, …) — the wrapper is written through the same gates.
-  | InsertJsxRefusalReason
+  // `unsafe-tag`, …) plus `content-model` — the wrapper is written through the
+  // same gates as `wrapJsxElement`, and refuses for the same extra reason.
+  | WrapJsxRefusalReason
   | 'not-contiguous'
   | 'mixed-indentation'
   | 'no-targets'
@@ -120,6 +130,17 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const run = resolveRun(sourceFile, targets)
   if (!run.ok) return run
 
+  // `struct-11` — WHAT the container is, decided from where it lands and what
+  // it holds rather than hard-coded by the caller. A generic `div`/`span` is
+  // re-picked from the HTML content model; anything else is checked and
+  // refused rather than re-spelled. See `wrapperContentModel.ts`.
+  const wrapper = resolveWrapperTag(name, importSpecifier, {
+    ancestorTags: ancestorTagNames(run.ranges[0]!.parent),
+    memberTags: run.ranges.map((range) => intrinsicTagName(range.element)),
+  })
+  if (!wrapper.ok) return refuseWrap(wrapper.refusal.reason, wrapper.refusal.message)
+  const tag = wrapper.name
+
   if (importSpecifier !== undefined) {
     const binding = conflictingBinding(sourceFile, name, importSpecifier)
     if (binding) {
@@ -156,17 +177,17 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
         end: last.end,
         text:
           [
-            `${baseIndent}<${name}>`,
+            `${baseIndent}<${tag}>`,
             `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
-            `${baseIndent}</${name}>`,
+            `${baseIndent}</${tag}>`,
           ].join('\n') + '\n',
       }
-    : { start: spanStart, end: spanEnd, text: `<${name}>${span}</${name}>` }
+    : { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
 
   const importEdits = resolveImportEdits(
     sourceFile,
     verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[name, { specifier: importSpecifier }]]),
+    importSpecifier === undefined ? new Map() : new Map([[tag, { specifier: importSpecifier }]]),
   )
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
