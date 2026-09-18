@@ -31,6 +31,7 @@ import type { NewStyleRule, SiteImportTransaction } from '@core/siteImport'
 import type { FrameworkChangeImpact, FrameworkPreset } from '@core/framework'
 import type { EditorStore } from '@site/store/types'
 import type { SlotOwnerEntry } from './nodeIndex'
+import type { ImportedNodesResult } from './importedNodesResult'
 
 
 // ---------------------------------------------------------------------------
@@ -247,7 +248,10 @@ export interface SiteSlice {
    * Insert a fragment of imported HTML nodes into the active tree under `parentId`.
    * Merges all `fragment.nodes` into the tree and wires `fragment.rootIds` as children
    * of `parentId` at `opts.index` (appended when omitted). One undo step.
-   * Returns the inserted root IDs, or an empty array when the parent does not accept children.
+   * `ok: false` when nothing was inserted, carrying the reason — the parent
+   * does not accept children, or (`mcp-21`) this is a studio-imported tree,
+   * where a block of HTML has no honest source form and a merged fragment
+   * would be deleted by the next parse. See `refuseImportedNodesInto`.
    *
    * `opts.styleRules` / `opts.conditions` are rules parsed from `<style>` blocks
    * in the imported HTML (via `cssToStyleRules`); they are committed into the
@@ -258,7 +262,20 @@ export interface SiteSlice {
     parentId: string,
     fragment: ImportFragment,
     opts?: { index?: number; styleRules?: NewStyleRule[]; conditions?: ConditionDef[] },
-  ) => string[]
+  ) => ImportedNodesResult
+
+  /**
+   * `mcp-21` — why an HTML import cannot land under `parentId`, or `null` when
+   * it can. Presents the refusal as it answers, exactly as `insertImportedNodes`
+   * does, so asking first costs the user nothing extra.
+   *
+   * Exists because `site_replace_node_html` DELETES the target's existing
+   * children before inserting: without a way to ask first, a refused replace
+   * on a studio-imported tree emptied the node and then wrote nothing — the
+   * half-applied outcome this store refuses everywhere else. Every other
+   * caller can simply read `insertImportedNodes`' own result.
+   */
+  refuseImportedNodesInto: (parentId: string) => string | null
 
   /**
    * Insert a `base.visual-component-ref` node into the active document.
