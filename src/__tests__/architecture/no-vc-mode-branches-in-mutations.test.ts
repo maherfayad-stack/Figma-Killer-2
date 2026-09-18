@@ -68,9 +68,12 @@ describe('Gate 1 — mutations.ts has no VC mode branch', () => {
  *
  * `groupNodes`/`ungroupNode` (K3 — ⌘G / ⌘⇧G) are the 12th and 13th. They live
  * in `groupActions.ts` rather than `nodeActions.ts` — the same split
- * `deleteNodes` already has — so the action → file map below is what this gate
- * walks. A named action's HOME is not the invariant; delegating to
- * `mutateActiveTree` instead of branching on the document kind is.
+ * `deleteNodes` already has — and `setNodesHidden`/`setNodesLocked` live in
+ * `visibilityActions.ts` for the same reason — so the action → file map below
+ * is what this gate walks. A named action's HOME is not the invariant;
+ * delegating to `mutateActiveTree` (directly or through
+ * `mutateTreesForNodeIds`, which routes through it) instead of branching on
+ * the document kind is.
  *
  * `insertComponentRef` is intentionally excluded — it uses `kind === 'visualComponent'`
  * for the cycle guard (not tree routing), and it is not a raw tree-mutation action.
@@ -84,8 +87,8 @@ const NAMED_TREE_MUTATION_ACTIONS: string[] = [
   'setBreakpointOverride',
   'clearBreakpointOverride',
   'renameNode',
-  'toggleNodeLocked',
-  'toggleNodeHidden',
+  'setNodesLocked',
+  'setNodesHidden',
   'moveNode',
   'duplicateNode',
   'wrapNode',
@@ -107,6 +110,13 @@ const NODE_ACTIONS_PATH = 'src/admin/pages/site/store/slices/site/nodeActions.ts
 const ACTION_PATHS: Record<string, string> = {
   groupNodes: 'src/admin/pages/site/store/slices/site/groupActions.ts',
   ungroupNode: 'src/admin/pages/site/store/slices/site/groupActions.ts',
+  // `panel-40` — `setNodesHidden`/`setNodesLocked` replaced the per-node
+  // `toggleNodeHidden`/`toggleNodeLocked` so the Layers tree, the inspector's
+  // Layer row and the Spotlight commands fan out over a whole selection in ONE
+  // history entry instead of acting on the anchor. Still 13 named actions; two
+  // of the names changed.
+  setNodesHidden: 'src/admin/pages/site/store/slices/site/visibilityActions.ts',
+  setNodesLocked: 'src/admin/pages/site/store/slices/site/visibilityActions.ts',
 }
 
 /** The file that owns a named action's body. */

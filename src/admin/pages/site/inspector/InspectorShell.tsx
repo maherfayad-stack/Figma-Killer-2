@@ -46,13 +46,24 @@
  * caller scopes with `[data-inspector-tab="design"]:not([hidden])` instead
  * of relying on which tabs happen to be mounted today. `STATE.md` panel-37
  * is the defect that made this explicit.
+ *
+ * ## Each tab is its own failure domain
+ *
+ * `panel-40` — every tab's content is wrapped in a `PanelBoundary`, so a
+ * throw inside Prototype leaves Design, the canvas, the layers tree and the
+ * toolbar exactly where they were, and the fallback renders in the tab's own
+ * geometry. Before this, the nearest boundary was `AdminCanvasLayout`'s
+ * `LazyChunkBoundary location="site-editor-body"` — canvas and panels
+ * together — so one section throwing replaced the whole editor body
+ * (`verify-3` case 5). The Design tab's SECTIONS have a second, inner
+ * boundary each; see `StyleSurface.tsx`'s mount loop.
  */
 import { useState, type ReactNode } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { SegmentedControl } from '@ui/components/SegmentedControl'
 import { PrototypePanel } from '@site/panels/PrototypePanel'
 import { InspectPanel } from '@site/panels/InspectPanel'
-import { PanelCrashProbe } from './PanelCrashProbe'
+import { PanelBoundary } from '@site/ui/PanelBoundary'
 import styles from './InspectorShell.module.css'
 
 export type InspectorTab = 'design' | 'prototype' | 'inspect'
@@ -96,19 +107,19 @@ export function InspectorShell({ designContent }: InspectorShellProps) {
         />
       </div>
       <div className={styles.tabContent} data-inspector-tab="design" hidden={tab !== 'design'}>
-        {/* Dev-only, build-time-erased: the only way a browser test can make a
-            panel throw and check Z2's "renders in place, never toasts"
-            contract. `import.meta.env.DEV` is replaced with `false` in a
-            production build, which drops both the element and the import.
-            See `PanelCrashProbe.tsx`'s own header. */}
-        {import.meta.env.DEV && <PanelCrashProbe panel="inspector" />}
-        {designContent}
+        <PanelBoundary id="design" label="Design" frame="panel">
+          {designContent}
+        </PanelBoundary>
       </div>
       <div className={styles.tabContent} data-inspector-tab="prototype" hidden={tab !== 'prototype'}>
-        <PrototypePanel />
+        <PanelBoundary id="prototype" label="Prototype" frame="panel">
+          <PrototypePanel />
+        </PanelBoundary>
       </div>
       <div className={styles.tabContent} data-inspector-tab="inspect" hidden={tab !== 'inspect'}>
-        <InspectPanel />
+        <PanelBoundary id="inspect" label="Inspect" frame="panel">
+          <InspectPanel />
+        </PanelBoundary>
       </div>
     </div>
   )

@@ -3,7 +3,7 @@
  *
  * The 13 named tree-mutation actions (`insertNode`, `deleteNode`,
  * `updateNodeProps`, `setBreakpointOverride`, `clearBreakpointOverride`,
- * `renameNode`, `toggleNodeLocked`, `toggleNodeHidden`, `moveNode`,
+ * `renameNode`, `setNodesLocked`, `setNodesHidden`, `moveNode`,
  * `duplicateNode`, `wrapNode`, and K3's `groupNodes`/`ungroupNode` — the last
  * two in `groupActions.ts`) all delegate to `mutateActiveTree(fn)` and
  * MUST NOT contain their own `kind === 'visualComponent'` branch — that
@@ -28,8 +28,6 @@ import {
   setBreakpointOverride,
   clearBreakpointOverride,
   renameNode,
-  toggleNodeLocked,
-  toggleNodeHidden,
   moveNodes,
   wrapNode,
   wrapNodes,
@@ -49,6 +47,7 @@ import { createGroupActions } from './groupActions'
 import { createTransplantActions } from './transplantActions'
 import { createImageDropActions } from './imageDropActions'
 import { createInlineStyleActions } from './inlineStyleActions'
+import { createVisibilityActions } from './visibilityActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
@@ -77,8 +76,8 @@ type NodeActions = Pick<
   | 'setBreakpointOverride'
   | 'clearBreakpointOverride'
   | 'renameNode'
-  | 'toggleNodeLocked'
-  | 'toggleNodeHidden'
+  | 'setNodesLocked'
+  | 'setNodesHidden'
   | 'moveNode'
   | 'moveNodes'
   | 'duplicateNode'
@@ -430,19 +429,11 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       })
     },
 
-    toggleNodeLocked: (nodeId) => {
-      mutateActiveTree((tree) => {
-        toggleNodeLocked(tree, nodeId)
-        return true
-      })
-    },
-
-    toggleNodeHidden: (nodeId) => {
-      mutateActiveTree((tree) => {
-        toggleNodeHidden(tree, nodeId)
-        return true
-      })
-    },
+    // `panel-40` — hide/lock fan out over a whole selection in ONE history
+    // entry. Their own module for the reason `inlineStyleActions.ts` has one:
+    // they write a node that already exists and touch no tree structure and no
+    // source file. See `visibilityActions.ts`.
+    ...createVisibilityActions(helpers),
 
     moveNode: (nodeId, newParentId, newIndex) => {
       actions.moveNodes([nodeId], newParentId, newIndex)

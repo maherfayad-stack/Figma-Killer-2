@@ -655,24 +655,22 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 5 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * DEFECT (expected failure). `Z2` says every seam except `admin-shell`
-   * "renders an in-place fallback ... instead of the toast", and `store-12`
-   * shipped that for the seven boundaries
-   * `src/__tests__/architecture/error-boundary-coverage.test.ts` enumerates.
-   * **The inspector is not one of them.** The nearest boundary above it is
-   * `AdminCanvasLayout`'s `LazyChunkBoundary location="site-editor-body"`,
-   * which wraps the canvas and every panel together — so a panel that throws
-   * takes the whole editor body down and replaces it with "Editor chunk failed
-   * to load", which is neither the panel's own fallback nor a true statement.
+   * FIXED by `panel-40`. `Z2` says every seam except `admin-shell` "renders an
+   * in-place fallback ... instead of the toast", and `store-12` shipped that
+   * behaviour on the boundary primitive — but the inspector had no boundary of
+   * its own, so the nearest one was `AdminCanvasLayout`'s `LazyChunkBoundary
+   * location="site-editor-body"`, wrapping the canvas and every panel
+   * together. This case measured the consequence: the fallback rendered, and
+   * `canvas-root` and `canvas-notch` were GONE with it.
    *
-   * Owner: `store-12` (Z2). The fix is a per-panel seam plus the matching row
-   * in `error-boundary-coverage.test.ts` — small, but it is a NEW architectural
-   * boundary, which is the panel owner's call rather than a test author's.
+   * `PanelBoundary` (`src/admin/pages/site/ui/PanelBoundary/`) is now mounted
+   * per panel, per inspector tab and per Design-tab section, and it is also
+   * where `PanelCrashProbe` lives — so `detail` names the boundary's own
+   * `location` (`panel:design`) rather than a bare panel word.
    */
   test('a panel that throws renders its own in-place fallback, and nothing else moves', async ({
     page,
   }) => {
-    test.fail()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
     const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
@@ -693,7 +691,7 @@ test.describe('Phase 0 exit dogfood', () => {
     // purpose; it is erased from a production build at its mount site. See its
     // header for both gates.
     await page.evaluate(() => {
-      window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'inspector' }))
+      window.dispatchEvent(new CustomEvent('studio:panel-crash-probe', { detail: 'panel:design' }))
     })
 
     const fallback = page.locator('[role="alert"][data-error-location]')

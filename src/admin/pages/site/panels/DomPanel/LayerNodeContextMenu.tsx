@@ -332,13 +332,10 @@ export function LayerNodeContextMenu({
   }
 
   const dispatchToggleHidden = () => {
-    const { toggleNodeHidden } = useEditorStore.getState()
-    for (const id of hideActionTargetIds) {
-      const currentHidden = Boolean(activePage?.nodes[id]?.hidden)
-      if (currentHidden !== shouldHideSelection) {
-        toggleNodeHidden(id)
-      }
-    }
+    // `panel-40` — one absolute write over the whole selection, so hiding six
+    // layers is ONE undo step. This used to loop a per-node toggle, which
+    // pushed one history entry (and one dirty mark) per layer.
+    useEditorStore.getState().setNodesHidden(hideActionTargetIds, shouldHideSelection)
     onClose()
   }
 

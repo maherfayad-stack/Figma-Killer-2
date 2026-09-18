@@ -1,3 +1,14 @@
+/**
+ * LeftSidebar — the rail plus one mounted panel per rail entry.
+ *
+ * `panel-40` — every panel mount is wrapped in its own `PanelBoundary`, so a
+ * panel that throws during render (the Layers tree hitting a malformed node,
+ * the Git panel on an unreadable `.git/config`) renders its own in-place
+ * fallback and leaves the canvas, the inspector and the toolbar exactly where
+ * they were. Before that, the nearest boundary was `AdminCanvasLayout`'s
+ * `LazyChunkBoundary location="site-editor-body"`, which wraps the canvas and
+ * every panel together — `verify-3` case 5 measured the consequence.
+ */
 import { lazy, Suspense, useRef, type CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import type { LeftSidebarPanelId } from '@site/store/slices/uiSlice'
@@ -7,6 +18,7 @@ import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { ExplorerPanel } from '@site/panels/ExplorerPanel'
 import { DependenciesPanel } from '@site/panels/DependenciesPanel'
 import { PanelRail } from '@site/sidebars/PanelRail'
+import { PanelBoundary } from '@site/ui/PanelBoundary'
 import { PluginEditorPanel } from '@site/panels/PluginEditorPanel'
 import { SelectorsPanel } from '@site/panels/SelectorsPanel'
 import { GitPanel } from '@site/panels/GitPanel'
@@ -135,7 +147,9 @@ export function LeftSidebar({
               editing tools; each respects its own read-only state internally
               (e.g. TreeNode disables drag + context menu via `editable`). */}
           <div className={styles.panelMount} hidden={effectiveActivePanel !== 'explorer'}>
-            <ExplorerPanel editable={editable} />
+            <PanelBoundary id="explorer" label="Explorer" frame="panel">
+              <ExplorerPanel editable={editable} />
+            </PanelBoundary>
           </div>
           {/* Content — the project's own locale dictionary as an editable
               en/ar table. Read-only-safe tier: it reads the project's
@@ -155,9 +169,11 @@ export function LeftSidebar({
               have rewritten the user's source. */}
           {effectiveActivePanel === 'content' ? (
             <div className={styles.panelMount}>
-              <Suspense fallback={null}>
-                <ContentPanel />
-              </Suspense>
+              <PanelBoundary id="content" label="Content" frame="panel">
+                <Suspense fallback={null}>
+                  <ContentPanel />
+                </Suspense>
+              </PanelBoundary>
             </div>
           ) : null}
           {/* Editor-only panels — only mounted when the caller can perform
@@ -171,30 +187,42 @@ export function LeftSidebar({
                   and `openAssetsSearch()` always has a live subscriber to
                   hand focus to. */}
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'assets'}>
-                <AssetsPanel />
+                <PanelBoundary id="assets" label="Assets" frame="panel">
+                  <AssetsPanel />
+                </PanelBoundary>
               </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'selectors'}>
-                <SelectorsPanel variant="docked" />
+                <PanelBoundary id="selectors" label="Classes" frame="panel">
+                  <SelectorsPanel variant="docked" />
+                </PanelBoundary>
               </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'framework'}>
-                <FrameworkPanel />
+                <PanelBoundary id="framework" label="Framework" frame="panel">
+                  <FrameworkPanel />
+                </PanelBoundary>
               </div>
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'dependencies'}>
-                <DependenciesPanel variant="docked" />
+                <PanelBoundary id="dependencies" label="Dependencies" frame="panel">
+                  <DependenciesPanel variant="docked" />
+                </PanelBoundary>
               </div>
               {/* Version control. Hidden-but-mounted like its siblings so a
                   half-typed commit message survives a tab switch — the panel's
                   own status read is gated on `gitPanelOpen`, so being mounted
                   costs no subprocess while it is not the active panel. */}
               <div className={styles.panelMount} hidden={effectiveActivePanel !== 'git'}>
-                <GitPanel variant="docked" />
+                <PanelBoundary id="git" label="Version control" frame="panel">
+                  <GitPanel variant="docked" />
+                </PanelBoundary>
               </div>
               {effectivePluginPanelId !== null && (
                 <div
                   className={styles.panelMount}
                   data-testid="left-sidebar-plugin-panel-mount"
                 >
-                  <PluginEditorPanel panelId={effectivePluginPanelId} />
+                  <PanelBoundary id="plugin" label="Plugin panel" frame="panel" resetKeys={[effectivePluginPanelId]}>
+                    <PluginEditorPanel panelId={effectivePluginPanelId} />
+                  </PanelBoundary>
                 </div>
               )}
             </>
@@ -213,9 +241,11 @@ export function LeftSidebar({
                   prefix and can't see through the dual API. */}
               {/* eslint-disable-next-line react-compiler/react-compiler */}
               <AgentStoreProvider store={useEditorStore}>
-                <Suspense fallback={null}>
-                  <AgentPanel variant="docked" />
-                </Suspense>
+                <PanelBoundary id="agent" label="AI assistant" frame="panel">
+                  <Suspense fallback={null}>
+                    <AgentPanel variant="docked" />
+                  </Suspense>
+                </PanelBoundary>
               </AgentStoreProvider>
             </div>
           )}

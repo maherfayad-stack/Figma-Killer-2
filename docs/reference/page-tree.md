@@ -116,8 +116,10 @@ All mutations live in `src/core/page-tree/mutations.ts`. They take a `NodeTree<P
 | `setBreakpointOverride(tree, nodeId, breakpointId, patch)`        | Shallow-merge `patch` into the node's breakpoint overrides for `breakpointId` |
 | `clearBreakpointOverride(tree, nodeId, breakpointId)`             | Remove ALL overrides for `breakpointId` on that node       |
 | `renameNode(tree, nodeId, label)`                                 | Set the user-facing `label`                                 |
-| `toggleNodeLocked(tree, nodeId)`                                  | Flip `locked`                                               |
-| `toggleNodeHidden(tree, nodeId)`                                  | Flip `hidden`                                               |
+| `setNodeLocked(tree, nodeId, locked)`                             | Set `locked` to an absolute value                           |
+| `setNodeHidden(tree, nodeId, hidden)`                             | Set `hidden` to an absolute value                           |
+| `toggleNodeLocked(tree, nodeId)`                                  | Flip `locked` (the `applyTreeOperation` op kind)            |
+| `toggleNodeHidden(tree, nodeId)`                                  | Flip `hidden` (the `applyTreeOperation` op kind)            |
 | `moveNode(tree, nodeId, newParentId, newIndex)`                   | Re-parent + re-order                                        |
 | `moveNodes(tree, nodeIds, newParentId, newIndex)`                 | Same, multi-select                                          |
 | `buildSubtreeNodeIdMap(rootNodeId, nodes)`                        | Build a `Map<oldId, newId>` for all nodes reachable from `rootNodeId`. Used by callers that need the id map before pasting (e.g. to remap scoped class `scope.nodeId`). |
@@ -190,14 +192,17 @@ The editor store at `src/admin/pages/site/store/` has 13 named tree-mutation act
 ```text
 insertNode, deleteNode, updateNodeProps,
 setBreakpointOverride, clearBreakpointOverride,
-renameNode, toggleNodeLocked, toggleNodeHidden,
+renameNode, setNodesLocked, setNodesHidden,
 moveNode, duplicateNode, wrapNode,
 groupNodes, ungroupNode
 ```
 
 `groupNodes`/`ungroupNode` (K3 — ⌘G / ⌘⇧G) live in
 `site/groupActions.ts` rather than `site/nodeActions.ts`, the same split
-`deleteNodes` already has. A named action's HOME is not the invariant;
+`deleteNodes` already has, and `setNodesLocked`/`setNodesHidden` live in
+`site/visibilityActions.ts`. Those two take an absolute value over N ids in
+ONE history entry; the per-node `toggleNode*` core mutations remain, but only
+as the `applyTreeOperation` op kinds plugins dispatch (`panel-40`). A named action's HOME is not the invariant;
 delegating to `mutateActiveTree` instead of branching on the document kind is.
 
 Every one of them is a **one-liner** that delegates to `mutateActiveTree(fn)`, which routes via `resolveActiveTreeTarget` — the sole implementation of the page-mode vs. VC-mode branch:

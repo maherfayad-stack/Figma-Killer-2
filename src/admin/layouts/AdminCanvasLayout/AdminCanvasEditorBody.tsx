@@ -19,6 +19,7 @@ import { LayoutNameDialog } from '@admin/pages/site/dialogs/LayoutNameDialog'
 import { PropertiesPanel } from '@admin/pages/site/panels/PropertiesPanel'
 import { LeftSidebar } from '@admin/pages/site/sidebars/LeftSidebar'
 import { RightSidebar } from '@admin/pages/site/sidebars/RightSidebar'
+import { PanelBoundary } from '@admin/pages/site/ui/PanelBoundary'
 import { selectRightSidebarExpanded, useEditorStore } from '@admin/pages/site/store/store'
 import { useNarrowEditorChrome } from '@site/layout/responsiveChrome'
 import { ConfirmDeleteProvider } from '@admin/shared/dialogs/ConfirmDeleteDialog'
@@ -133,7 +134,14 @@ export function AdminCanvasEditorBody({
                   <CanvasRoot editable={canEditDraftSite} />
                 )}
                 {/* Properties can be unpinned into the floating draggable overlay. */}
-                {canSaveSite && propertiesPanelMode === 'floating' && <PropertiesPanel variant="floating" />}
+                {canSaveSite && propertiesPanelMode === 'floating' && (
+                  // `panel-40` — same seam as the docked mount in
+                  // `RightSidebar`: an undocked inspector that throws must not
+                  // take the canvas underneath it down.
+                  <PanelBoundary id="properties-floating" label="Properties" frame="panel">
+                    <PropertiesPanel variant="floating" />
+                  </PanelBoundary>
+                )}
               </div>
             </div>
             {/* `mode` tells the RightSidebar which expansion model to use:

@@ -92,6 +92,14 @@ export type InspectorSectionDesignGroup = 'primary' | 'more'
 
 export interface InspectorSectionDefinition {
   id: string
+  /**
+   * The section's human-readable name — the string its own `Section` header
+   * draws, or (for the two headerless rows, Layer and Align) the name a user
+   * would call it. `panel-40` added it because a section's own component is
+   * exactly what is NOT running when its `PanelBoundary` has to name it in a
+   * fallback; reading the title off the crashed component is not an option.
+   */
+  label: string
   order: number
   /** Which `InspectorShell` tabs mount this section. Defaults to `['design']`. */
   tabs?: ReadonlyArray<InspectorSectionTab>
@@ -105,23 +113,23 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Layer (P3 item 1, `STATE.md` `panel-25`) — Penpot's first, unlabeled
   // content row: opacity/blend/hide/lock. Order 0 — it renders above the
   // rest of the (not yet migrated) curated bag.
-  { id: 'layer', order: 0, appliesTo: (m) => m.selectedNode != null, Component: LayerSection },
+  { id: 'layer', label: 'Layer', order: 0, appliesTo: (m) => m.selectedNode != null, Component: LayerSection },
   // Align (P3 item 2) — Penpot's own standalone align/distribute row.
-  { id: 'align', order: 1, appliesTo: (m) => m.selectedNode != null, Component: AlignSection },
+  { id: 'align', label: 'Align', order: 1, appliesTo: (m) => m.selectedNode != null, Component: AlignSection },
   // Measures (P3 item 3) — W/H/X/Y, rotation, radius, Hug/Fill, Constraints
   // vs. FLEX ELEMENT face. See MeasuresSection.tsx's own doc header.
-  { id: 'measures', order: 2, appliesTo: (m) => m.selectedNode != null, Component: MeasuresSection },
+  { id: 'measures', label: 'Measures', order: 2, appliesTo: (m) => m.selectedNode != null, Component: MeasuresSection },
   // Layout (P3 item 4) — the flex/grid CONTAINER's own settings. Rendered
   // for every selected node (Fill/Stroke-style residency, per the P0
   // f1-rectangle screenshot's own collapsed-empty "LAYOUT +" row) — see
   // LayoutSection.tsx's own doc for why this section never fully hides its
   // body once mounted, unlike Penpot's literal empty convention.
-  { id: 'layout', order: 3, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
+  { id: 'layout', label: 'Layout', order: 3, appliesTo: (m) => m.selectedNode != null, Component: LayoutSection },
   // Fill (P3 item 5) — text colour / solid fill / background-image layers /
   // content fit, in CSS paint order. Any selected node can carry a fill
   // (matches the old `FillSection`'s own unconditional mount inside
   // `StyleSectionsEditor` — no node kind ever excluded it).
-  { id: 'fill', order: 4, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
+  { id: 'fill', label: 'Fill', order: 4, appliesTo: (m) => m.selectedNode != null, Component: FillSection },
   // Selection colours (WS-14.4 / G6.4) — the colours a MULTI-selection is
   // made of, across properties, each recolourable everywhere it appears.
   // Directly under Fill, which is the per-property answer to the same
@@ -129,6 +137,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Fill already says everything this would.
   {
     id: 'selectionColors',
+    label: 'Selection colours',
     order: 5,
     appliesTo: (m) => m.isMultiSelect && m.selectedNodes.length > 1,
     Component: SelectionColorsSection,
@@ -139,36 +148,37 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // the old `StrokeSection`'s own unconditional mount inside
   // `StyleSectionsEditor` via the `border` entry — no node kind ever
   // excluded it).
-  { id: 'stroke', order: 6, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
+  { id: 'stroke', label: 'Stroke', order: 6, appliesTo: (m) => m.selectedNode != null, Component: StrokeSection },
   // Shadow (P3 item 7) — `box-shadow` / `text-shadow` layers, split out of
   // the old `EffectsSection.tsx`. Any selected node can carry a shadow
   // (matches the old `effects` entry's own unconditional mount — no node
   // kind ever excluded it).
-  { id: 'shadow', order: 7, appliesTo: (m) => m.selectedNode != null, Component: ShadowSection },
+  { id: 'shadow', label: 'Shadow', order: 7, appliesTo: (m) => m.selectedNode != null, Component: ShadowSection },
   // Blur (P3 item 8) — `filter: blur()` ("Layer blur") / `backdrop-filter:
   // blur()` ("Background blur"), the other half of the old `EffectsSection.
   // tsx` split.
-  { id: 'blur', order: 8, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
+  { id: 'blur', label: 'Blur', order: 8, appliesTo: (m) => m.selectedNode != null, Component: BlurSection },
   // Text (P3 item 9) — family/weight/size/line-height/letter-spacing/align/
   // vertical-align, split out of the old `typography` entry. The first
   // section in this series gated on more than "a node is selected" —
   // `isTextNode` (`styleSectionOrder.ts`, reused not duplicated) — since
   // Text only means something on a text-capable node.
-  { id: 'text', order: 9, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
+  { id: 'text', label: 'Text', order: 9, appliesTo: (m) => m.selectedNode != null && isTextNode(m.selectedNode), Component: TextSection },
   // Export (P3 item 10) — PNG/SVG of a node, Copy CSS, Copy JSX. Node-level,
   // not a set of CSS properties, so unlike every other entry here it never
   // wrote to `classStyleSections.ts` in the first place (see
   // `ExportSection.tsx`'s own doc for why).
-  { id: 'export', order: 10, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
+  { id: 'export', label: 'Export', order: 10, appliesTo: (m) => m.selectedNode != null, Component: ExportSection },
   // Component (P3 item 11, `STATE.md` `panel-25`, Studio extras) — call-site
   // props for a selected `studio.instance` node. The only one of the Studio-
   // extras entries with a node-KIND predicate, not just "a node is selected".
-  { id: 'component', order: 11, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
+  { id: 'component', label: 'Component', order: 11, appliesTo: (m) => m.selectedNode?.moduleId === 'studio.instance', Component: ComponentSection },
   // Transform (P3 item 11) — `transform`/`transformOrigin`. Expanded in
   // Prototype, behind Design's More disclosure. See the `tabs`/`designGroup`
   // docs above.
   {
     id: 'transform',
+    label: 'Transform',
     order: 12,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
@@ -178,6 +188,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // Animations (P3 item 11) — `animation*`/`transition`.
   {
     id: 'animations',
+    label: 'Animations',
     order: 13,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
@@ -188,6 +199,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // `scrollBehavior`.
   {
     id: 'interaction',
+    label: 'Interaction',
     order: 14,
     tabs: ['design', 'prototype'],
     designGroup: 'more',
@@ -202,6 +214,7 @@ export const INSPECTOR_SECTIONS: InspectorSectionDefinition[] = [
   // the rarest surface in the panel.
   {
     id: 'customProperties',
+    label: 'Custom properties',
     order: 15,
     designGroup: 'more',
     appliesTo: (m) => m.selectedNode != null,

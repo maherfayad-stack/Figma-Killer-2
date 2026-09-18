@@ -304,8 +304,15 @@ export interface SiteSlice {
   setBreakpointOverride: (nodeId: string, breakpointId: string, patch: Record<string, unknown>) => void
   clearBreakpointOverride: (nodeId: string, breakpointId: string) => void
   renameNode: (nodeId: string, label: string) => void
-  toggleNodeLocked: (nodeId: string) => void
-  toggleNodeHidden: (nodeId: string) => void
+  /**
+   * Lock or unlock every id in one history entry. Absolute, not a toggle —
+   * see `visibilityActions.ts` for why a selection that disagrees has no
+   * honest toggle. Callers decide the next state; `LayerSection` and the
+   * Layers context menu both use "if any is still unlocked, lock them all".
+   */
+  setNodesLocked: (nodeIds: string[], locked: boolean) => void
+  /** Hide or show every id on the canvas in one history entry. See `setNodesLocked`. */
+  setNodesHidden: (nodeIds: string[], hidden: boolean) => void
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void

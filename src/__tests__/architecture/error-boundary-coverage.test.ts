@@ -13,6 +13,16 @@
  *   - plugin-editor-panel   — third-party plugin editor sidebar panel
  *   - plugin-canvas-overlay — third-party plugin canvas overlay slot
  *
+ * Plus the per-PANEL and per-SECTION seams `panel-40` added, all of them
+ * mounted through one component (`src/admin/pages/site/ui/PanelBoundary/`)
+ * whose `location` is built at runtime (`panel:<id>` / `inspector:<id>`), so
+ * they are gated by their MOUNT SITES rather than by a literal location
+ * string — see the `PanelBoundary` block at the bottom of this file. Before
+ * them, the nearest boundary above every editor panel was
+ * `LazyChunkBoundary location="site-editor-body"`, which wraps the canvas and
+ * every panel together: one section throwing replaced the whole editor body
+ * (`verify-3` case 5).
+ *
  * Plus the React 19 root-level error callbacks on the single `createRoot`
  * call in `src/admin/main.tsx`:
  *
@@ -210,5 +220,100 @@ describe('Error boundary coverage gate', () => {
     const source = readFileSync(MAIN_FILE, 'utf8')
     expect(source).toMatch(/logErrorChain/)
     expect(source).toMatch(/flattenErrorChain/)
+  })
+})
+
+// ── panel-40: every editor panel and every inspector section is its own seam ─
+//
+// `PanelBoundary` is the single mount point. Its `location` is composed at
+// runtime, so these assertions gate the MOUNT SITES and the component's own
+// contract instead of a literal `location="..."` string.
+
+const PANEL_BOUNDARY_PATH = 'admin/pages/site/ui/PanelBoundary/PanelBoundary.tsx'
+
+/** Every file that must mount at least one `<PanelBoundary>`, and why. */
+const PANEL_BOUNDARY_MOUNTS: Array<{ file: string; why: string }> = [
+  {
+    file: 'admin/pages/site/inspector/InspectorShell.tsx',
+    why: 'one boundary per inspector tab — Design, Prototype, Inspect',
+  },
+  {
+    file: 'admin/pages/site/panels/PropertiesPanel/StyleSurface.tsx',
+    why: 'one boundary per mounted INSPECTOR_SECTIONS entry',
+  },
+  {
+    file: 'admin/pages/site/sidebars/LeftSidebar/LeftSidebar.tsx',
+    why: 'one boundary per left-sidebar panel mount (layers, assets, git, …)',
+  },
+  {
+    file: 'admin/pages/site/sidebars/RightSidebar/RightSidebar.tsx',
+    why: 'the docked Properties panel and the Comments panel',
+  },
+  {
+    file: 'admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx',
+    why: 'the undocked (floating) Properties panel',
+  },
+]
+
+describe('panel-40 — per-panel and per-section boundaries', () => {
+  it('every panel seam mounts a PanelBoundary', () => {
+    const failures: string[] = []
+    for (const { file, why } of PANEL_BOUNDARY_MOUNTS) {
+      const source = read(file)
+      if (!/<PanelBoundary[\s>]/.test(source)) {
+        failures.push(`${file} — no <PanelBoundary> (${why})`)
+      }
+      if (!/from\s+['"][^'"]*ui\/PanelBoundary['"]/.test(source)) {
+        failures.push(`${file} — does not import PanelBoundary from its barrel`)
+      }
+    }
+    if (failures.length > 0) {
+      throw new Error(
+        '[Error boundary coverage] a panel seam lost its boundary:\n' +
+          failures.map((f) => `  - ${f}`).join('\n') +
+          '\n\nA panel without one falls back to LazyChunkBoundary ' +
+          '("site-editor-body"), which takes the canvas down with it.',
+      )
+    }
+    expect(failures).toEqual([])
+  })
+
+  it('InspectorShell wraps all three tabs, not just Design', () => {
+    const source = read('admin/pages/site/inspector/InspectorShell.tsx')
+    for (const id of ['design', 'prototype', 'inspect']) {
+      expect(source).toMatch(new RegExp(`<PanelBoundary\\s+id="${id}"`))
+    }
+  })
+
+  it('PanelBoundary builds on the shared primitive and never toasts', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/from\s+['"]@ui\/components\/ErrorBoundary['"]/)
+    expect(source).toMatch(/<ErrorBoundary/)
+    // Silence is the default (Z2). An explicit opt-out here would turn one
+    // crashed section into a red card in the corner as well as the fallback.
+    expect(source).not.toMatch(/silentToast/)
+  })
+
+  it('PanelBoundary renders in place, names the seam, and offers a reset', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/role="alert"/)
+    expect(source).toMatch(/data-error-location=\{location\}/)
+    expect(source).toMatch(/Reload this panel/)
+    expect(source).toMatch(/onClick=\{onReset\}/)
+  })
+
+  it('the crash probe is mounted only behind import.meta.env.DEV', () => {
+    const source = read(PANEL_BOUNDARY_PATH)
+    expect(source).toMatch(/import\.meta\.env\.DEV\s*&&\s*<PanelCrashProbe/)
+  })
+
+  it('every INSPECTOR_SECTIONS entry carries the label a fallback needs', () => {
+    const source = read('admin/pages/site/inspector/sections/index.ts')
+    const ids = [...source.matchAll(/\bid:\s*'([^']+)'/g)].map((m) => m[1])
+    const labelled = [...source.matchAll(/\blabel:\s*'([^']+)'/g)].length
+    expect(ids.length).toBeGreaterThan(0)
+    // A section's own component is exactly what is NOT running when the
+    // boundary has to name it, so the label lives in the manifest.
+    expect(labelled).toBe(ids.length)
   })
 })
