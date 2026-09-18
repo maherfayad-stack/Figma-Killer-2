@@ -291,13 +291,16 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
           : null,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13` — a transplant creates markup in the DESTINATION, so the
-      // position it reports is pinned to `edit.parentNodeId`'s file, not to
-      // this edit's own. `applyStudioEditBatch` reads `createdIn` for that.
+      // `store-13`/`store-14` — a transplant writes markup into the
+      // DESTINATION, so the position it reports is pinned to
+      // `edit.parentNodeId`'s file, not to this edit's own.
+      // `applyStudioEditBatch` reads `createdIn`/`relocatedIn` for that.
       return {
         applied: true,
-        ...(result.created === undefined ? {} : { created: result.created }),
-        createdIn: edit.parentNodeId,
+        ...(result.created === undefined ? {} : { created: result.created, createdIn: edit.parentNodeId }),
+        ...(result.relocated === undefined
+          ? {}
+          : { relocated: result.relocated, relocatedIn: edit.parentNodeId }),
       }
     }
     case 'move':
@@ -340,10 +343,15 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         siblings,
       )
       if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
-      // `store-13` — `created` rides straight through; only the four creating
-      // kinds set it, and `applyStudioEditBatch` is what turns it into a node
-      // id (it alone knows the batch's final line count).
-      return { applied: true, ...(result.created === undefined ? {} : { created: result.created }) }
+      // `store-13`/`store-14` — `created`/`relocated` ride straight through;
+      // only the kinds that make or move markup set them, and
+      // `applyStudioEditBatch` is what turns a position into a node id (it
+      // alone knows the batch's final line count).
+      return {
+        applied: true,
+        ...(result.created === undefined ? {} : { created: result.created }),
+        ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
+      }
     }
     case 'detach': {
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
@@ -458,7 +466,15 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     // in exactly the same way. The DESTINATION is deliberately not snapshotted:
     // the codemod just added imports to it, and pruning a binding that has no
     // reference yet at snapshot time would delete the one it wrote.
-    const removesMarkup = edit.kind === 'delete' || (edit.kind === 'transplant' && edit.copy !== true)
+    // `store-14` — an `ungroup` joined the list: dissolving a container can be
+    // the last use of the binding that named it, and leaving that import
+    // behind is a `noUnusedLocals` build failure in the user's repo. It is
+    // also what makes ⌘G → ⌘Z byte-exact: the group wrote the import, so its
+    // undo has to take it back out.
+    const removesMarkup =
+      edit.kind === 'delete' ||
+      edit.kind === 'ungroup' ||
+      (edit.kind === 'transplant' && edit.copy !== true)
     if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)
     if (!file || referencedBefore.has(file)) continue
@@ -478,6 +494,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   // `store-13` — where each created element sat, measured from the END of its
   // file. See `resolveCreatedNodeIds` for why that anchor and not the line.
   const createdPositions: CreatedNodePosition[] = []
+  // `store-14` — the same, for the elements a batch MOVED rather than made.
+  const relocatedPositions: CreatedNodePosition[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
@@ -489,6 +507,9 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
       } else if (outcome.applied) {
         written += 1
         if (outcome.created) recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, outcome.created)
+        for (const relocated of outcome.relocated ?? []) {
+          recordCreatedPosition(relocatedPositions, dir, outcome.relocatedIn ?? edit.nodeId, relocated)
+        }
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
@@ -544,6 +565,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
+    relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
   }
 }
 

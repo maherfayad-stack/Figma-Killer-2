@@ -41,7 +41,7 @@ import type { PersistenceSaveStatus } from '@site/hooks/usePersistence'
 import {
   isStructuralCommitInFlight,
   subscribeStructuralCommitInFlight,
-} from '@site/studio/studioStructuralCommits'
+} from '@site/studio/structuralCommitQueue'
 import styles from './SaveStatusChip.module.css'
 
 interface SaveStatusChipProps {

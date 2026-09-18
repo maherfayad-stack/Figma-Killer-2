@@ -14,6 +14,7 @@
  */
 import type { Patches } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
+import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 
 /**
  * One undoable transaction, stored as Mutative patch pairs scoped to the
@@ -105,3 +106,20 @@ export interface StructuralHistoryMove {
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
   | { gesture: 'delete' }
+  | StructuralSourceHistory
+
+/**
+ * `store-14` — a gesture that wrote the user's markup and mutated NO tree:
+ * insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, the
+ * `<img>` an OS file drop becomes.
+ *
+ * These never reached the stack before, so ⌘Z after one of them undid whatever
+ * came before it. The entry carries no patches at all — there is nothing in
+ * `site` to replay, because the document that changed is the `.tsx` — only the
+ * gesture's own forward edits and the inverse resolved against what the write
+ * reported making. `structuralSourceHistory.ts` owns both halves.
+ */
+export interface StructuralSourceHistory {
+  gesture: 'source'
+  source: StructuralSourceGesture
+}

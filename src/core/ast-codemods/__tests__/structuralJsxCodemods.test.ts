@@ -73,7 +73,7 @@ describe('moveJsxElement', () => {
       anchorCol: second.col,
       position: 'after',
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
 
     // The moved line, and nothing else. The comment stays put, the blank line
     // keeps its place in the sequence, `<Third>` keeps its wrapping.
@@ -98,7 +98,7 @@ describe('moveJsxElement', () => {
       anchorCol: first.col,
       position: 'before',
     })
-    expect(result).toEqual({ ok: true })
+    expect(result).toMatchObject({ ok: true })
 
     const block = '      <Third\n        label="third"\n      />\n'
     expect(fs.readFileSync(file, 'utf8')).toBe(
@@ -114,7 +114,7 @@ describe('moveJsxElement', () => {
 
     expect(
       moveJsxElement({ file, line: a.line, col: a.col, anchorLine: b.line, anchorCol: b.col, position: 'after' }),
-    ).toEqual({ ok: true })
+    ).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       'export default () => <div><b>B</b><a href="/a">A</a></div>\n',
     )
@@ -243,7 +243,7 @@ describe('deleteJsxElement', () => {
     const file = writeFixture(PAGE)
     const second = locateTag(PAGE, 'p', 2)
 
-    expect(deleteJsxElement({ file, line: second.line, col: second.col })).toEqual({ ok: true })
+    expect(deleteJsxElement({ file, line: second.line, col: second.col })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE.replace('      <p className="second">Second</p>\n', ''))
   })
 
@@ -256,7 +256,7 @@ describe('deleteJsxElement', () => {
     const file = writeFixture(PAGE)
     const third = locateTag(PAGE, 'Third')
 
-    expect(deleteJsxElement({ file, line: third.line, col: third.col })).toEqual({ ok: true })
+    expect(deleteJsxElement({ file, line: third.line, col: third.col })).toMatchObject({ ok: true })
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace('      <Third\n        label="third"\n      />\n', ''),
     )

@@ -46,6 +46,7 @@ import {
   type JsxChildRangeReason,
 } from './jsxChildRange'
 import { lineIndentAt } from './jsxChildPlacement'
+import { createdJsxLocationsIn, type CreatedJsxLocation } from './createdJsxLocation'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 
 export interface UnwrapJsxElementParams {
@@ -71,7 +72,19 @@ export interface UnwrapJsxRefusal {
 
 type UnwrapJsxRefused = { ok: false; refusal: UnwrapJsxRefusal }
 
-export type UnwrapJsxElementResult = { ok: true } | UnwrapJsxRefused
+/**
+ * `relocated` (`store-14`) is the tag-name `line:col` of every child the
+ * wrapper handed back, in source order — the ids the parser will mint for them
+ * on the next read.
+ *
+ * An ungroup creates nothing and it is the one write that RELOCATES several
+ * elements at once, which is both why the board used to be left with nothing
+ * selected after ⌘⇧G and why its own undo (a group around the same run) needs
+ * them. Empty for a self-closing wrapper, which hands nothing back.
+ */
+export type UnwrapJsxElementResult =
+  | { ok: true; relocated: CreatedJsxLocation[] }
+  | UnwrapJsxRefused
 
 function refuseUnwrap(reason: UnwrapJsxRefusalReason, message: string): UnwrapJsxRefused {
   return { ok: false, refusal: { reason, message } }
@@ -115,16 +128,13 @@ export function unwrapJsxElement(params: UnwrapJsxElementParams): UnwrapJsxEleme
     ? hoistedLines(verbatim, inner, element.getStart())
     : inner
 
-  writeVerbatimSource(
-    sourceFile,
-    file,
-    applyTextEdits(verbatim, [
-      wholeLine
-        ? { start, end, text }
-        : { start: element.getStart(), end: element.getEnd(), text },
-    ]),
-  )
-  return { ok: true }
+  const edit = wholeLine
+    ? { start, end, text }
+    : { start: element.getStart(), end: element.getEnd(), text }
+  writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit]))
+  // One edit, so nothing shifts its own start: the released children occupy
+  // exactly `[edit.start, edit.start + text.length)` in the re-parsed file.
+  return { ok: true, relocated: createdJsxLocationsIn(sourceFile, edit.start, edit.start + text.length) }
 }
 
 /**

@@ -1,0 +1,394 @@
+/**
+ * `store-14` — ⌘Z takes back a gesture that wrote the user's markup, in one
+ * step, through the same writeback route the gesture used.
+ *
+ * Before this, the whole source-writing family — insert, duplicate, wrap,
+ * group, ungroup, paste, cross-frame transplant, the `<img>` an OS file drop
+ * becomes — mutated no tree, pushed no history entry, and left ⌘Z undoing
+ * whatever came before it (`canvas-20`, landmine 10). The plan's "one gesture
+ * is one undo step" was simply not met by the gestures that change the most.
+ *
+ * Every case here drives the whole road with a stubbed network, the same way
+ * `createdNodeSelection.test.ts` does: a real store action, a real `/save`
+ * carrying created/relocated ids, a narrow `/reload-scope`, a `/load` whose
+ * fresh page is what the write actually produced, and then a real `undo()`.
+ * Asserting on the plan alone would miss the two things most likely to break —
+ * the entry never reaching the stack, and the inverse addressing an element
+ * the board cannot resolve.
+ */
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import '@modules/base'
+import { registry } from '@core/module-engine'
+import type { Page } from '@core/page-tree'
+import { useEditorStore } from '@site/store/store'
+import { registerEditorSave } from '@site/hooks/editorSaveRef'
+import { applyStructuralWriteOutcome } from '@site/hooks/usePersistence'
+import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
+import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
+import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
+import { clearPendingStructuralOutcome } from '../pendingStructuralOutcome'
+import { resetStructuralCommitQueue } from '../structuralCommitQueue'
+import { setStudioLoadedDir } from '../studioWorkspaceDir'
+
+const PAGE_ID = 'home'
+const ROOT_ID = 'pages/Home.tsx:4:5'
+const ROW_ID = 'pages/Home.tsx:5:7'
+const SECOND_ID = 'pages/Home.tsx:6:7'
+/** Where the codemod put whatever the gesture made. */
+const MADE_ID = 'pages/Home.tsx:7:7'
+
+interface SaveAnswer {
+  createdNodeIds?: string[]
+  relocatedNodeIds?: string[]
+  pages?: Page[]
+}
+
+function page(nodes: Record<string, ReturnType<typeof makeNode>>, children: string[]): Page {
+  return makePage({
+    id: PAGE_ID,
+    rootNodeId: ROOT_ID,
+    nodes: {
+      [ROOT_ID]: makeNode({ id: ROOT_ID, moduleId: 'base.container', children }),
+      ...nodes,
+    },
+  })
+}
+
+const text = (id: string) => makeNode({ id, moduleId: 'base.text', props: { text: id } })
+
+/** Two source-backed siblings — the board before any gesture. */
+const pageBefore = (): Page => page({ [ROW_ID]: text(ROW_ID), [SECOND_ID]: text(SECOND_ID) }, [ROW_ID, SECOND_ID])
+
+/** The same page with a third element the write made, at `MADE_ID`. */
+const pageWithMade = (): Page =>
+  page({ [ROW_ID]: text(ROW_ID), [SECOND_ID]: text(SECOND_ID), [MADE_ID]: text(MADE_ID) }, [ROW_ID, SECOND_ID, MADE_ID])
+
+/** The page as a group leaves it: one container at `MADE_ID` holding both rows. */
+const pageGrouped = (): Page =>
+  page(
+    {
+      [MADE_ID]: makeNode({ id: MADE_ID, moduleId: 'base.container', children: [ROW_ID, SECOND_ID] }),
+      [ROW_ID]: text(ROW_ID),
+      [SECOND_ID]: text(SECOND_ID),
+    },
+    [MADE_ID],
+  )
+
+describe('a structural source write is one undo step', () => {
+  let originalFetch: typeof globalThis.fetch
+  let unregisterSave: (() => void) | null = null
+  let patchListener: ((evt: Event) => void) | null = null
+  let saveCalls: { edits: { kind: string; nodeId: string; siblingNodeIds?: string[]; name?: string }[] }[] = []
+  let answers: SaveAnswer[] = []
+
+  beforeEach(() => {
+    __resetToastBusForTests()
+    clearPendingStructuralOutcome()
+    resetStructuralCommitQueue()
+    originalFetch = globalThis.fetch
+    saveCalls = []
+    answers = []
+    unregisterSave = registerEditorSave(async () => {})
+    setStudioLoadedDir('/tmp/studio-test')
+
+    useEditorStore.getState().loadSite(makeSite({ pages: [pageBefore()] }))
+    useEditorStore.getState().setActivePage(PAGE_ID)
+    useEditorStore.getState().selectNode(ROW_ID)
+
+    // Exactly what `usePersistence` does with a narrow resync.
+    patchListener = (evt: Event) => {
+      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
+      useEditorStore.getState().patchPages({
+        pages: detail.pages,
+        removedPageIds: detail.removedPageIds,
+        styleRules: detail.styleRules,
+        conditions: detail.conditions,
+      })
+      applyStructuralWriteOutcome()
+    }
+    window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
+  })
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    unregisterSave?.()
+    if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
+    setStudioLoadedDir(null)
+    clearPendingStructuralOutcome()
+    resetStructuralCommitQueue()
+    useEditorStore.getState().clearSite()
+  })
+
+  /**
+   * `/save` answers from `answers`, one per call, so a gesture and its undo
+   * can report different results — which is the whole point: the undo's own
+   * re-parse is what the redo after it has to address.
+   */
+  function stubFetch(scripted: SaveAnswer[]) {
+    answers = scripted
+    let call = 0
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input.toString()
+      const path = url.split('?')[0]
+
+      if (path === '/admin/api/studio/save') {
+        saveCalls.push(init?.body ? JSON.parse(String(init.body)) : { edits: [] })
+        const answer = answers[Math.min(call, answers.length - 1)] ?? {}
+        call += 1
+        return new Response(
+          JSON.stringify({
+            ok: true,
+            written: 1,
+            skipped: 0,
+            shifted: true,
+            sharedComponents: false,
+            touchedFiles: ['pages/Home.tsx'],
+            createdNodeIds: answer.createdNodeIds ?? [],
+            relocatedNodeIds: answer.relocatedNodeIds ?? [],
+          }),
+          { status: 200 },
+        )
+      }
+      if (path === '/admin/api/studio/reload-scope') {
+        return new Response(JSON.stringify({ ok: true, narrow: true, pageIds: [PAGE_ID] }), { status: 200 })
+      }
+      if (path === '/admin/api/studio/load') {
+        const answer = answers[Math.min(call - 1, answers.length - 1)] ?? {}
+        const pages = answer.pages ?? [pageWithMade()]
+        const lines = [
+          {
+            kind: 'meta',
+            dir: '/tmp/studio-test',
+            projectName: 'studio-test',
+            componentSources: {},
+            styleRules: {},
+            styleRuleSources: {},
+            styledStyleRuleSources: {},
+            conditions: [],
+            vendorCss: '',
+            authoredCss: '',
+            trust: 'static',
+            paletteHiddenModuleIds: [],
+            pageCount: pages.length,
+          },
+          ...pages.map((p) => ({ kind: 'page', page: p })),
+        ]
+        return new Response(lines.map((line) => JSON.stringify(line)).join('\n') + '\n', { status: 200 })
+      }
+      return new Response(JSON.stringify({}), { status: 200 })
+    }) as typeof fetch
+  }
+
+  /** Polls a real timer: the commit chain's microtask depth is not something to assert on. */
+  async function waitFor(predicate: () => boolean, timeoutMs = 3000): Promise<void> {
+    const start = Date.now()
+    while (!predicate()) {
+      if (Date.now() - start > timeoutMs) throw new Error('waitFor timed out')
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
+  const lastEdits = () => saveCalls[saveCalls.length - 1]!.edits
+
+  it('⌘D then ⌘Z deletes the copy, and is exactly one step', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], pages: [pageWithMade()] },
+      { pages: [pageBefore()] },
+    ])
+
+    useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: MADE_ID }])
+
+    await waitFor(() => useEditorStore.getState().site?.pages[0]?.nodes[MADE_ID] === undefined)
+    // ONE step: the entry moved to the redo stack, and nothing else was undone.
+    expect(useEditorStore.getState().canUndo).toBe(false)
+    expect(useEditorStore.getState().canRedo).toBe(true)
+  })
+
+  it('⌘⇧Z re-issues the gesture itself, and re-resolves what the NEXT ⌘Z has to delete', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], pages: [pageWithMade()] },
+      { pages: [pageBefore()] },
+      // The redo re-made the element, and the re-parse put it somewhere else —
+      // which is exactly why the entry's inverse cannot be frozen at gesture
+      // time.
+      { createdNodeIds: ['pages/Home.tsx:8:7'], pages: [page({ [ROW_ID]: text(ROW_ID), [SECOND_ID]: text(SECOND_ID), 'pages/Home.tsx:8:7': text('pages/Home.tsx:8:7') }, [ROW_ID, SECOND_ID, 'pages/Home.tsx:8:7'])] },
+      { pages: [pageBefore()] },
+    ])
+
+    useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    await waitFor(() => useEditorStore.getState().canRedo)
+
+    useEditorStore.getState().redo()
+    await waitFor(() => saveCalls.length === 3)
+    // The redo is the ORIGINAL gesture, not a synthesised one.
+    expect(lastEdits()).toEqual([{ kind: 'duplicate', nodeId: ROW_ID }])
+    await waitFor(() => useEditorStore.getState().site?.pages[0]?.nodes['pages/Home.tsx:8:7'] !== undefined)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 4)
+    // Addressed at where the REDO put it, not where the first write did.
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: 'pages/Home.tsx:8:7' }])
+  })
+
+  it('an insert from the library is undone by deleting what it added', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], pages: [pageWithMade()] },
+      { pages: [pageBefore()] },
+    ])
+
+    useEditorStore.getState().insertNode('base.container', {}, ROOT_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: MADE_ID }])
+  })
+
+  it('⌘G is undone by dissolving the container it wrote, not by deleting the children', async () => {
+    stubFetch([
+      { createdNodeIds: [MADE_ID], pages: [pageGrouped()] },
+      { relocatedNodeIds: [ROW_ID, SECOND_ID], pages: [pageBefore()] },
+    ])
+
+    useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
+    useEditorStore.getState().groupNodes([ROW_ID, SECOND_ID], 'base.container', { tag: 'div' })
+    await waitFor(() => useEditorStore.getState().canUndo)
+    expect(lastEdits()[0]!.kind).toBe('group')
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'ungroup', nodeId: MADE_ID }])
+  })
+
+  it('⌘⇧G is undone by writing the same container back around the children it released', async () => {
+    stubFetch([
+      { relocatedNodeIds: [ROW_ID, SECOND_ID], pages: [pageBefore()] },
+      { createdNodeIds: [MADE_ID], pages: [pageGrouped()] },
+    ])
+
+    useEditorStore.getState().loadSite(makeSite({ pages: [pageGrouped()] }))
+    useEditorStore.getState().setActivePage(PAGE_ID)
+    useEditorStore.getState().ungroupNode(MADE_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    const [edit] = lastEdits()
+    expect(edit!.kind).toBe('group')
+    expect(edit!.nodeId).toBe(ROW_ID)
+    expect(edit!.siblingNodeIds).toEqual([SECOND_ID])
+    // The container is written back as the tag it was, from the module
+    // registry — not as a hardcoded `div`.
+    expect(edit!.name).toBe('div')
+  })
+
+  it('five queued ⌘D presses are five undo steps, not one', async () => {
+    stubFetch([{ createdNodeIds: [MADE_ID], pages: [pageWithMade()] }])
+
+    for (let i = 0; i < 5; i += 1) useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => saveCalls.length === 5)
+    await waitFor(() => useEditorStore.getState()._historyPast.length === 5)
+
+    const past = useEditorStore.getState()._historyPast
+    expect(past).toHaveLength(5)
+    // Every one of them is its own source-structural step, and none of them
+    // coalesced into a neighbour.
+    for (const entry of past) {
+      expect(entry.structural?.gesture).toBe('source')
+      expect(entry.inverse).toEqual([])
+    }
+  })
+
+  /**
+   * The property `structuralUndoPlan.ts`'s LIFO note depends on, held up by
+   * `historyNodeIdRemap.ts`: an entry recorded before a reparse renumbered the
+   * file still addresses the element it was about, not whatever inherited that
+   * line. Without the remap this undo would delete the wrong `<p>`.
+   */
+  it('follows its target through a reparse that renumbered the file', async () => {
+    stubFetch([{ createdNodeIds: [MADE_ID], pages: [pageWithMade()] }])
+
+    useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    // The same three elements, every one of them at a new address — what an
+    // unrelated write above them does to this file.
+    const moved = (id: string) => id.replace(/:(\d+):/, (_m, line: string) => `:${Number(line) + 10}:`)
+    useEditorStore.getState().loadSite(
+      makeSite({
+        pages: [
+          page(
+            {
+              [moved(ROW_ID)]: text(moved(ROW_ID)),
+              [moved(SECOND_ID)]: text(moved(SECOND_ID)),
+              [moved(MADE_ID)]: text(moved(MADE_ID)),
+            },
+            [moved(ROW_ID), moved(SECOND_ID), moved(MADE_ID)],
+          ),
+        ],
+      }),
+    )
+    expect(useEditorStore.getState().canUndo).toBe(true)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: moved(MADE_ID) }])
+  })
+
+  it('says what it cannot take back, instead of posting a write the server would refuse', async () => {
+    stubFetch([{ createdNodeIds: [MADE_ID], pages: [pageGrouped()] }])
+
+    // A design-system container, registered here rather than pulled in from
+    // `src/modules/alm/` (which has no importable barrel): what matters is the
+    // `sourceImport`, which is what makes the wrapper a COMPONENT tag.
+    registry.register({
+      id: 'test.card',
+      name: 'Card',
+      category: 'layout',
+      defaults: {},
+      schema: [],
+      render: () => null,
+      sourceImport: { kind: 'design-system', name: 'Card' },
+    } as never)
+
+    useEditorStore.getState().selectMany([ROW_ID, SECOND_ID])
+    // `unwrapJsxElement` refuses a COMPONENT wrapper by name, so there is no
+    // ungroup to write back.
+    useEditorStore.getState().groupNodes([ROW_ID, SECOND_ID], 'test.card', {})
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().undo()
+    const dialog = useEditorStore.getState().structuralRefusalDialog
+    expect(dialog?.title).toBe('Undo refused')
+    expect(dialog?.constraint.explanation).toContain('component')
+    expect(saveCalls).toHaveLength(1)
+    registry.unregister('test.card')
+  })
+
+  it('refuses — naming the file — when the inverse no longer resolves against the board', async () => {
+    stubFetch([
+      // The write reported an id, but the page the resync brought back does
+      // not contain it: the file is not what this entry was recorded against.
+      { createdNodeIds: ['pages/Home.tsx:99:1'], pages: [pageWithMade()] },
+    ])
+
+    useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().undo()
+    const dialog = useEditorStore.getState().structuralRefusalDialog
+    expect(dialog?.title).toBe('Undo refused')
+    expect(dialog?.constraint.explanation).toContain('pages/Home.tsx')
+    // Nothing was written, and the step did not move.
+    expect(saveCalls).toHaveLength(1)
+    expect(useEditorStore.getState().canUndo).toBe(true)
+  })
+})
