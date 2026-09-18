@@ -23,7 +23,10 @@
  *                                Host/req.url fallback when none is configured.
  *   - `originAllowed`          — true when the request's Origin matches a
  *                                configured public origin / expectedOrigin, or
- *                                is on the dev allowlist.
+ *                                is on the dev allowlist. With NO Origin it
+ *                                falls back to `Sec-Fetch-Site` (a header only
+ *                                a browser can set) so an origin-less
+ *                                cross-site browser request is still refused.
  *   - `publicOriginIsHttps`    — true when the canonical public origin is https
  *                                (used to set the cookie `Secure` flag).
  *   - `configurePublicOrigins` — boot-time list of normalized public origins.
@@ -101,24 +104,59 @@ export function publicOriginIsHttps(): boolean {
 }
 
 /**
+ * The `Sec-Fetch-Site` values that are acceptable when a request carries NO
+ * `Origin` header.
+ *
+ *   - `same-origin` — the admin talking to itself.
+ *   - `none`        — user-initiated (address bar, bookmark). Barely reachable
+ *                     for a POST, but it is not a request another page caused.
+ *
+ * `cross-site` and `same-site` are deliberately absent: both ARE a request
+ * another page caused, and `same-site` is exactly the different-subdomain
+ * case `SameSite=Lax` does not cover.
+ */
+const ORIGINLESS_FETCH_SITES_ALLOWED: ReadonlySet<string> = new Set(['same-origin', 'none'])
+
+/**
  * True when the request's `Origin` header is acceptable for a state-changing
  * action. The check is a CSRF defense-in-depth on top of `SameSite=Lax`:
  *
- *   - No Origin header → trust (curl, server-to-server, same-origin form
- *     POST in some browsers); cannot be a cross-origin browser fetch since
- *     all modern browsers send Origin for CORS-significant requests.
+ *   - No Origin header → consult `Sec-Fetch-Site`, then trust — see below.
  *   - Origin matches expectedOrigin(req) → allow.
  *   - Origin is one of the configured public origins (custom domain +
  *     platform domain both accepted) → allow.
  *   - Origin is in the dev allowlist (Vite at :5173, etc.) → allow.
- *   - Anything else → reject.
+ *   - Anything else → reject. `Origin: null` — a sandboxed iframe's form POST,
+ *     a `data:`/`blob:` document — fails `normalizeOrigin` and lands here.
  *
  * Both sides are normalized with `normalizeOrigin` so trailing-slash / case
  * differences never cause a false reject.
+ *
+ * ## Why a missing Origin is no longer simply trusted (`sec-16`)
+ *
+ * A non-browser client — curl, a server-to-server call, a test harness —
+ * sends no `Origin`, and refusing those outright would break every scripted
+ * caller. But "no Origin" was ALSO an unconditional pass, which made it a
+ * complete bypass of this check for anything that can arrange for the header
+ * to be absent: omit it and the CSRF defence is gone.
+ *
+ * `Sec-Fetch-Site` closes that without touching the scripted callers, because
+ * it is a Fetch-spec FORBIDDEN header name — script cannot set it, only the
+ * browser can, and a browser that sets it is telling the truth about where
+ * the request came from. So: absent → nothing changed (curl still passes);
+ * present → it decides, and a browser-originated cross-site or
+ * same-site-cross-subdomain request is refused even with no `Origin` at all.
+ *
+ * This is a strict tightening. Every caller that passed before still passes
+ * unless a browser itself labelled the request as coming from somewhere else.
  */
 export function originAllowed(req: Request): boolean {
   const rawOrigin = req.headers.get('origin')
-  if (!rawOrigin) return true
+  if (!rawOrigin) {
+    const fetchSite = req.headers.get('sec-fetch-site')?.trim().toLowerCase()
+    if (fetchSite) return ORIGINLESS_FETCH_SITES_ALLOWED.has(fetchSite)
+    return true
+  }
   const origin = normalizeOrigin(rawOrigin)
   if (!origin) return false
   if (origin === normalizeOrigin(expectedOrigin(req))) return true

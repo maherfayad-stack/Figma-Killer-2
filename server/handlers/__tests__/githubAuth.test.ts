@@ -18,6 +18,13 @@
  *   - `device/start` on a server with no OAuth App client id is a 501 that
  *     names the paste fallback, not a 500;
  *   - **no response body, anywhere, contains the token.**
+ *
+ * Requests go through `gateStudioRequest` first — the dispatch gate
+ * `tryServeStudio` runs before any sub-router — and then into the sub-router
+ * with the user it resolved, because `githubAuthRoutes.ts` no longer
+ * authenticates for itself. Calling the sub-router directly (rather than
+ * `tryServeStudio`) is what lets the stubbed GitHub and the frozen clock be
+ * injected through `deps`.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { createSqliteClient } from '../../db/sqlite'
@@ -34,6 +41,8 @@ import {
   tryServeStudioGithubAuth,
 } from '../studio/githubAuthRoutes'
 import { readGithubToken } from '../studio/githubCredentialStore'
+import { gateStudioRequest } from '../studio/routeGate'
+import { syncSystemRoles } from '../../repositories/roles'
 
 const TOKEN = 'ghp_0123456789abcdefABCDEF0123456789abcd'
 const OTHER_TOKEN = 'ghp_ffffffffffffffffffffffffffffffffffff'
@@ -77,6 +86,11 @@ async function seedUser(id: string, email: string, roleId: 'owner' | 'admin'): P
 beforeEach(async () => {
   db = createSqliteClient(':memory:')
   await runMigrations(db, sqliteMigrations)
+  // `server/index.ts` does this on every boot. Without it the seeded `owner`
+  // row is a snapshot of the capability list as it stood when that migration
+  // was written, and would not hold `studio.git.write` — which is what the
+  // gate requires for the three state-changing routes here.
+  await syncSystemRoles(db)
   cookieA = await seedUser('user-a', 'a@studio.test', 'owner')
   cookieB = await seedUser('user-b', 'b@studio.test', 'admin')
   clearGithubDeviceFlowsForTest()
@@ -114,7 +128,13 @@ async function call(pathAndQuery: string, options: CallOptions = {}): Promise<Re
   if (options.cookie) req.headers.set('cookie', options.cookie)
   if (options.origin) req.headers.set('origin', options.origin)
 
-  const res = await tryServeStudioGithubAuth(req, { db }, url, url.pathname, {
+  // The gate first, exactly as `tryServeStudio` runs it: undeclared path,
+  // CSRF origin, then session + capability.
+  const gate = await gateStudioRequest(req, db, url.pathname)
+  if (gate === null) throw new Error(`not a studio path: ${url.pathname}`)
+  if (gate instanceof Response) return gate
+
+  const res = await tryServeStudioGithubAuth(req, { db, user: gate.user }, url, url.pathname, {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     ...(options.now !== undefined ? { now: () => options.now! } : {}),
   })

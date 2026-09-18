@@ -69,8 +69,9 @@
  *   POST   /admin/api/studio/page   body: { dir?, name? }
  *   DELETE /admin/api/studio/page   body: { dir?, pageId }
  *
- * Routes owned by `studio/trashRoutes.ts` (a `STUDIO_SESSION_SUB_ROUTERS`
- * entry — its two writes are capability-gated, so it needs the `DbClient`):
+ * Routes owned by `studio/trashRoutes.ts` (an ordinary sub-router — its two
+ * writes require `studio.write`, declared in `studio/routeCapabilities.ts`
+ * rather than checked in the module):
  *
  *   GET  /admin/api/studio/trash
  *   POST /admin/api/studio/trash/restore  body: { entry }
@@ -90,8 +91,8 @@
  *       absent means "no font-library change", never "clear it". 400 on an
  *       invalid shape.
  *
- * Routes owned by a sub-router (see `STUDIO_SUB_ROUTERS` below), documented
- * in the module they live in rather than here:
+ * Routes owned by a sub-router (the two lists live in `studio/subRouters.ts`),
+ * documented in the module they live in rather than here:
  *
  *   POST /admin/api/studio/import-github          → `studio/githubImportRoutes.ts`
  *   GET  /admin/api/studio/import-github/status   → the same module
@@ -256,6 +257,19 @@
  *       W8-4 — the inspector's Export section: a PNG of one node cut out of a
  *       capture of its page, and that node's own JSX read verbatim off disk.
  *
+ * ## Every route here is gated, once, before it is dispatched
+ *
+ * `tryServeStudio` runs `gateStudioRequest` (`studio/routeGate.ts`) first:
+ * declared-route lookup, CSRF `Origin` check on state-changing methods, then
+ * `requireCapability` with the capability `studio/routeCapabilities.ts`
+ * declares for that path and method class. A path under
+ * `/admin/api/studio/` that is not in that table answers 404 and never
+ * reaches a sub-router — so adding a route without declaring its capability
+ * produces a dead route, not an open one.
+ *
+ * The user the gate resolved is handed to `STUDIO_SESSION_SUB_ROUTERS` in
+ * `StudioSessionRuntime`; none of them authenticate again.
+ *
  * This module is the HTTP routing layer only — request wiring, body
  * validation, and error-envelope mapping. The actual page-parser/ast-codemods
  * work (Node/ts-morph, never the browser) lives in sibling modules by
@@ -284,106 +298,17 @@ import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
-import { tryServeStudioProbe } from './studio/projectProbe'
-import { tryServeStudioInstall } from './studio/installDeps'
-import { tryServeStudioIngest } from './studio/importUpload'
-import { tryServeStudioAssetUpload } from './studio/assetUpload'
-import { tryServeStudioReferenceUpload } from './studio/referenceUpload'
-import { tryServeStudioComponentBundle } from './studio/componentBundle'
-import { tryServeStudioTokens } from './studio/tokenExtract'
-import { tryServeStudioTrustTier } from './studio/trustTier'
-import { tryServeStudioLiveOriginInfo } from './studio/liveOriginInfo'
-import { tryServeStudioStyleCompileConsent } from './studio/styleCompileConsent'
-import { tryServeStudioDesignSystemMigrate } from './studio/designSystemMigrate'
-import { tryServeStudioExtractComponent } from './studio/extractComponent'
-import { tryServeStudioPreviewAxes } from './studio/previewAxes'
-import { tryServeStudioLocalizedPage } from './studio/localizedPage'
-import { tryServeStudioComponents } from './studio/components'
-import { tryServeStudioIcons } from './studio/iconCatalog'
-import { tryServeStudioProjectAssets } from './studio/projectAssets'
-import { tryServeStudioTranslations } from './studio/translations'
-import { tryServeStudioI18nSetup } from './studio/i18nSetup'
-import { tryServeStudioProjectRoutes } from './studio/projectRoutes'
-import { tryServeStudioTrashRoutes } from './studio/trashRoutes'
-import { tryServeStudioGithubImport } from './studio/githubImportRoutes'
-import { tryServeStudioReloadScope } from './studio/reloadScope'
-import { tryServeStudioComments } from './studio/commentsRoutes'
-import { tryServeStudioNodeExport } from './studio/nodeExportRoutes'
-import { tryServeStudioShares } from './studio/shareRoutes'
-import { tryServeStudioPrototype } from './studio/prototypeRoutes'
-import { tryServeStudioGit } from './studio/git'
-import { tryServeStudioGitSync } from './studio/gitSyncRoutes'
-import { tryServeStudioGithubAuth } from './studio/githubAuthRoutes'
-import { tryServeStudioGitRemote } from './studio/gitRemoteRoutes'
-import { tryServeStudioDeploy } from './studio/deploy'
-import { tryServeStudioDevServer } from './studio/devServer'
-import { tryServeStudioStories } from './studio/storiesRoutes'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
+import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
+import { STUDIO_SESSION_SUB_ROUTERS, STUDIO_SUB_ROUTERS } from './studio/subRouters'
 import type { DbClient } from '../db/client'
-
-/**
- * Sub-routers for the newer studio namespaces, each owning one concern and its
- * own `/admin/api/studio/<name>` paths. They are consulted before this module's
- * own route table below.
- *
- * Route handling lives with the feature rather than in this file for the same
- * reason `server/router.ts` composes an array of `tryServe*` handlers instead
- * of one switch: a single shared route table is the file every concurrent
- * change has to touch, and it grows without bound. Each entry returns `null`
- * for a path it does not own, so ordering here is not load-bearing.
- */
 import {
   BoardsPostBodySchema,
   FrameDefaultsBodySchema,
   FrameworkPostBodySchema,
   SaveBodySchema,
 } from './studio/studioRouteBodies'
-
-const STUDIO_SUB_ROUTERS = [
-  tryServeStudioProbe,
-  tryServeStudioGithubImport,
-  tryServeStudioInstall,
-  tryServeStudioIngest,
-  tryServeStudioAssetUpload,
-  tryServeStudioReferenceUpload,
-  tryServeStudioComponentBundle,
-  tryServeStudioTrustTier,
-  tryServeStudioLiveOriginInfo,
-  tryServeStudioStyleCompileConsent,
-  tryServeStudioDesignSystemMigrate,
-  tryServeStudioTokens,
-  tryServeStudioExtractComponent,
-  tryServeStudioPreviewAxes,
-  tryServeStudioLocalizedPage,
-  tryServeStudioComponents,
-  tryServeStudioIcons,
-  tryServeStudioProjectAssets,
-  tryServeStudioTranslations,
-  tryServeStudioI18nSetup,
-  tryServeStudioReloadScope,
-  tryServeStudioPrototype,
-  tryServeStudioGit,
-  tryServeStudioGitRemote,
-  tryServeStudioGitSync,
-  tryServeStudioDeploy,
-  tryServeStudioDevServer,
-  tryServeStudioStories,
-] as const
-
-/**
- * The same, for sub-routers that additionally need the `DbClient` because
- * each acts ON BEHALF OF a signed-in user (a byline, a public share link, a
- * capture, a file's contents) rather than merely reading a project directory.
- */
-const STUDIO_SESSION_SUB_ROUTERS = [
-  tryServeStudioGithubAuth,
-  tryServeStudioComments,
-  tryServeStudioProjectRoutes,
-  tryServeStudioTrashRoutes,
-  tryServeStudioShares,
-  tryServeStudioNodeExport,
-] as const
 
 /**
  * The answer every route in this file gives to a failure it did not expect —
@@ -401,13 +326,20 @@ export async function tryServeStudio(
   url: URL,
   pathname: string,
 ): Promise<Response | null> {
+  // One gate, before any sub-router and before any filesystem work. See
+  // `studio/routeGate.ts` — an undeclared path never gets past this line.
+  const gate = await gateStudioRequest(req, runtime.db, pathname)
+  if (gate === null) return null
+  if (gate instanceof Response) return gate
+  const sessionRuntime: StudioSessionRuntime = { db: runtime.db, user: gate.user }
+
   for (const subRouter of STUDIO_SUB_ROUTERS) {
     const response = await subRouter(req, url, pathname)
     if (response) return response
   }
 
   for (const subRouter of STUDIO_SESSION_SUB_ROUTERS) {
-    const response = await subRouter(req, runtime, url, pathname)
+    const response = await subRouter(req, sessionRuntime, url, pathname)
     if (response) return response
   }
 
@@ -673,5 +605,15 @@ export async function tryServeStudio(
     }
   }
 
-  return null
+  // The gate already proved the path is a declared Studio route, so falling
+  // through here means the declared method class exists but no sub-router
+  // claimed this exact (path, method) pair. Answer 404 rather than returning
+  // `null`: letting an API path continue down the router table ends at
+  // `tryServeAdminApp`, which would hand an API caller the admin SPA's HTML.
+  return notFoundResponse()
+}
+
+/** The one 404 shape this module emits — matches `routeGate.ts`'s. */
+function notFoundResponse(): Response {
+  return jsonResponse({ error: 'Not found' }, { status: 404 })
 }

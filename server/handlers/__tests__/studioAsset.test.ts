@@ -10,11 +10,31 @@
  * and — where the host permits creating one — a symlink escape) must be
  * rejected with a 404, never leak the target file's bytes.
  */
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { tryServeStudio } from '../studio'
+import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
+
+/**
+ * Every Studio route is capability-gated at dispatch, so these tests drive the
+ * surface as the signed-in Owner. See `helpers/studioRouteHarness.ts`.
+ */
+let studioRoutes: StudioRouteTestHarness
+
+beforeAll(async () => {
+  studioRoutes = await createStudioRouteTestHarness()
+})
+
+afterAll(async () => {
+  await studioRoutes.cleanup()
+})
+
+/** `tryServeStudio` with the Owner's session cookie attached. */
+function serveStudio(req: Request, url: URL): Promise<Response | null> {
+  return studioRoutes.serve(req, url)
+}
+
 
 let tmpDir: string
 /** A sibling directory OUTSIDE tmpDir — the traversal target. */
@@ -42,7 +62,7 @@ async function requestAsset(dir: string, rawPathQuery: string): Promise<Response
     `http://localhost/admin/api/studio/asset?dir=${encodeURIComponent(dir)}&${rawPathQuery}`,
   )
   const req = new Request(url)
-  const res = await tryServeStudio(req, undefined, url, url.pathname)
+  const res = await serveStudio(req, url)
   expect(res).not.toBeNull()
   return res!
 }
@@ -75,7 +95,7 @@ describe('GET /admin/api/studio/asset', () => {
   it('404s when no path query param is given', async () => {
     const url = new URL(`http://localhost/admin/api/studio/asset?dir=${encodeURIComponent(tmpDir)}`)
     const req = new Request(url)
-    const res = await tryServeStudio(req, undefined, url, url.pathname)
+    const res = await serveStudio(req, url)
     expect(res!.status).toBe(404)
   })
 

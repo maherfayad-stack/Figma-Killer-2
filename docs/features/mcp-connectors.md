@@ -228,7 +228,14 @@ visually by exporting them as images and comparing them to the live one"):
   with `{ ok:false, code:'trust-tier-required', trust, requiredTrust }`,
   spawning nothing. Before A10 the capability was the only gate, which made
   the MCP path strictly weaker than the HTTP route performing the identical
-  spawn (`sec-05` finding 1). Boots the
+  spawn (`sec-05` finding 1). `sec-05`'s other finding — that most Studio HTTP
+  routes had no per-request capability check — is closed separately, by the
+  dispatch gate described in `docs/server.md` → "Per-request capability gating
+  on the Studio routes". **That gate does not cover this surface**: an MCP tool
+  is dispatched in-process by the tool engine, not through `tryServeStudio`, so
+  its authorization is still the connector's own capability set. The two models
+  have to be kept in agreement by hand, which is exactly what made `sec-05`
+  finding 1 possible. Boots the
   project's own `dev`/`start` script via the detected package manager
   (`server/handlers/studio/installDeps.ts`'s `detectPackageManager`, reused),
   parses the URL it prints (no forced port — frameworks disagree on how to
@@ -323,7 +330,7 @@ The code vocabulary — frozen once shipped, same contract as `fidelityCodes.ts`
 Not covered, stated rather than implied: `XMLHttpRequest` and `WebSocket` are not wrapped, and anything the authored code catches itself is invisible here by definition.
 
 **`execution: 'bridge'` (via the live workspace bridge) — require the Site workspace to be open:**
-- `studio_upload_asset` — relayed whole by the runner, because it declares no server handler at all. It posts real `FormData` to `/admin/api/studio/asset-upload` as the signed-in user, and that endpoint's authority is the operator's session, which a server-side tool has no honest way to hold. `studio_fetch_remote_asset` is the headless alternative when the bytes are already at an `http(s)` URL.
+- `studio_upload_asset` — relayed whole by the runner, because it declares no server handler at all. It posts real `FormData` to `/admin/api/studio/asset-upload` as the signed-in user, and that endpoint's authority is the operator's session — enforced since the Studio route gate landed as a real 401/403 rather than an assumption, since the route declares `studio.write`. A server-side tool has no honest way to hold that session, which is why this one is relayed. `studio_fetch_remote_asset` is the headless alternative when the bytes are already at an `http(s)` URL.
 - `studio_page_diagnostics` — the other Studio tool in this class, and the one that shows why `bridge` is about *requirement* rather than *dispatch*: it declares a server handler, so it is dispatched in-process, and that handler relays and owns the "no board connected" message. Of the four tools that used to be here, `studio_computed_styles`, `studio_set_frame_axes` and `studio_duplicate_frame_as_variant` all moved server-side in W9-6 — see "Headless frame reads" and "Board writes are file writes" below.
 - Structure editing — `site_insert_html`, `site_replace_node_html`, `site_delete_node`, `site_move_node`, `site_duplicate_node`, `site_rename_node`, `site_update_node_props`.
 - HTML/CSS authoring (`site_apply_css`, `site_assign_class`, `site_remove_class`), page lifecycle (`site_add_page`, …), design tokens (`site_set_color_tokens`, …), code assets, structure reads (`site_read_document`), and live-DOM reads (`site_render_snapshot`, `site_get_node_html`).
