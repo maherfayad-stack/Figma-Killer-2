@@ -60,6 +60,11 @@ import type { Page } from '@playwright/test'
  * board of 8 frames or fewer every frame stays mounted and there is no mount
  * left to measure. **A gate on the mount path needs a board of at least 9
  * frames.**
+ *
+ * That gate is `studio-board-perf.e2e.ts`, and since `verify-2` it has one:
+ * the committed twelve-frame `studio-workspace/__board-perf-fixture`, which
+ * exists for exactly this reason and says so in its own README. Both budgets
+ * here are asserted there, on a board where the gesture really does mount.
  */
 export const BUDGET_ZOOM_WORST_FRAME_MS = 250
 

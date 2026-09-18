@@ -1,0 +1,9 @@
+{
+  "displayName": "Perf Board Fixture",
+  "platform": "web",
+  "pagesDir": "pages",
+  "frameDefaults": {
+    "width": 1024,
+    "height": 800
+  }
+}

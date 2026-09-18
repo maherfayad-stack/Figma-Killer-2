@@ -47,8 +47,26 @@ in the agent-run protocol.
 Run the automated suite with:
 
 ```sh
-bun run test:e2e:install
-bun run test:e2e
+bun run test:e2e:install   # once, to install Chromium
+bun run test:e2e           # starts its own stack — do not hand-start one first
+```
+
+### `bun run test:e2e` is the fourth gate
+
+`build`, `test`, and `lint` are the three gates every change runs. **A change
+that touches the canvas, a frame, an overlay, geometry, or a panel's height
+runs `bun run test:e2e` as well** — it is the fourth gate, not an optional
+extra. `standing-02` says why: happy-dom has no layout engine, so a unit test
+on those surfaces structurally cannot fail on the thing it is named after
+(WS-8.2 shipped a real frame-height defect behind a green one). Assert on
+*computed* layout — measured rects, `scrollHeight`, computed styles after
+layout.
+
+Running the four budget specs by path is usually enough and takes a few
+minutes:
+
+```sh
+npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
 ```
 
 ### In CI
@@ -59,38 +77,81 @@ server. The `e2e-budgets` job in `.github/workflows/ci.yml` runs the narrow
 budget slice instead — `studio-board-perf`, `inspector-panel-measurement`,
 `inspector-height`, `studio-feel` — because those four measure **computed
 layout and frame time**, the one class of question happy-dom structurally
-cannot answer (`standing-02`). The job starts `bun run e2e:dev` itself and
-waits on the two ports rather than leaving it to `playwright.config.ts`'s
-120s `webServer` timeout, which a cold Vite can exceed while it compiles the
-editor chunk. It passes only the spec paths that exist, so a spec that has not
-landed yet costs coverage instead of failing the job for the wrong reason, and
-it uploads `.tmp/playwright-report` as an artifact.
+cannot answer (`standing-02`). The job lets `playwright.config.ts`'s `webServer`
+block start the stack, deliberately: CI is the only place that proves that path
+works on Linux, and a job which bypassed it would let the bypass rot into the
+only thing that works — the exact shape that hid the Windows boot bug for seven
+weeks. It passes only the spec paths that exist, so a spec that has not landed
+yet costs coverage instead of failing the job for the wrong reason, and it
+uploads `.tmp/playwright-report` as an artifact on failure.
 
 `bun run bench:studio-board` runs `studio-board-perf.e2e.ts` through the same
 Playwright Node runner from the bench harness and republishes its `perf`
 annotations — see `scripts/bench/README.md`.
 
-The Playwright config starts a disposable local stack by default:
+### The disposable stack
 
-- Admin UI: `http://127.0.0.1:5174`
-- CMS/public site: `http://127.0.0.1:3002`
-- Database: `.tmp/e2e-agent.db`
-- Uploads: `.tmp/e2e-uploads`
+The Playwright config starts one by default:
 
-`scripts/e2e-dev.ts` resets only those `.tmp/e2e-*` paths, then runs the same
-Vite + Bun CMS stack a developer uses — with one deliberate difference: the CMS
-runs **without** `bun --watch`. A regression suite needs a stable server, and
-under watch the publish pipeline writing baked HTML (and the SQLite DB churning)
-can reload the server mid-test and drop in-memory state. Vite is likewise told to
-ignore the runtime-written paths (`.tmp`, `uploads`, `dist` in `vite.config.ts`),
-so publishing never reloads the admin app mid-test. The Vite dev proxy follows
-the configured CMS `PORT`, keeping the Playwright admin UI pointed at the
-disposable CMS instead of any regular dev server on port 3001.
+| | |
+|---|---|
+| Admin UI | `http://127.0.0.1:5174` (`E2E_VITE_PORT`) |
+| CMS / public site | `http://127.0.0.1:3002` (`E2E_CMS_PORT`) |
+| Database | `.tmp/e2e-agent.db` |
+| Uploads | `.tmp/e2e-uploads` |
+| Studio workspace | `.tmp/e2e-workspace` (`E2E_WORKSPACE_DIR`) |
+| Per-child logs | `.tmp/e2e-cms.log`, `.tmp/e2e-vite.log` |
 
-For debugging against a server you started yourself, set
-`E2E_REUSE_SERVER=1` and override `E2E_ADMIN_BASE_URL` /
-`E2E_PUBLIC_BASE_URL` as needed. Do not use reuse mode for CI or for
-regression runs that need a clean database.
+Those five names live in one place, `scripts/lib/e2eStack.ts`, which the
+config, the stack script, and `tests/e2e/helpers/constants.ts` all read — so
+moving a run to another port is one variable, not three edits.
+
+`scripts/e2e-dev.ts` resets every one of those paths, then runs the same Vite +
+Bun CMS stack a developer uses, with three deliberate differences.
+
+**The CMS runs without `bun --watch`.** A regression suite needs a stable
+server, and under watch the publish pipeline writing baked HTML (and the SQLite
+DB churning) can reload the server mid-test and drop in-memory state. Vite is
+likewise told to ignore the runtime-written paths (`.tmp`, `uploads`, `dist`,
+`studio-workspace` in `vite.config.ts`), so publishing never reloads the admin
+app mid-test. The Vite dev proxy follows the configured CMS `PORT`, keeping the
+Playwright admin UI pointed at the disposable CMS instead of any regular dev
+server on port 3001.
+
+**The Studio workspace is a throwaway copy.** `studio-workspace/` is tracked by
+git and is a user's real React project everywhere else, so the stack copies it
+to `.tmp/e2e-workspace` and exports `STUDIO_WORKSPACE_DIR`, which
+`projectsRootDir()` reads per call. Everything a run writes — `auth.setup.ts`
+stamping `lastOpenedAt`, the shell scaffolder writing `index.html` and
+`prototype/*` and rewriting `package.json`, the framework compiler dropping a
+`.studio/framework.json` — lands in the copy. **`git status --porcelain
+studio-workspace/` is empty after a run**; it was not before (`verify-01`
+finding 4). A spec that puts a fixture project on disk must therefore join onto
+`WORKSPACE_ROOT` from `tests/e2e/helpers/constants.ts` and never onto
+`process.cwd() + 'studio-workspace'` — a project outside the root the server
+resolved fails `resolveProjectDir`'s containment check and the route answers
+404.
+
+**Vite's boot is supervised.** Handed a pipe for stdout — which is exactly what
+Playwright's `webServer` gives it — Vite intermittently binds its port, prints
+nothing, and answers nothing, because it is blocked inside a write. Measured at
+3/10 successful boots. Two changes fix it, both in the stack script and its
+`scripts/lib/stackChild.ts` helper, which carry the numbers: each child writes
+to a log FILE that the supervisor tails (a file write cannot block on a reader),
+and the supervisor then waits for Vite to answer `/admin`, killing and
+respawning it if it does not. A stack that genuinely cannot start now says so
+instead of expiring as a bare "Timed out waiting …".
+
+The readiness probe asks for `/admin`, never `/`: `vite.config.ts` proxies `/`
+into the CMS's public-site renderer, which on a just-created database takes
+seconds and depends on state the stack has no opinion about.
+
+For debugging against a server you started yourself, set `E2E_REUSE_SERVER=1`.
+That path still works and is still the fastest way to iterate on one spec — but
+nothing in `webServer.env` reaches it, so export `VITE_ALLOWED_ORIGIN` (and any
+port overrides) in that shell yourself, or stay on the defaults, which need
+nothing. Do not use reuse mode for CI or for regression runs that need a clean
+database.
 
 Local trace and video capture are opt-in because a complete run keeps many SSE
 connections in one worker and can otherwise accumulate gigabytes of temporary

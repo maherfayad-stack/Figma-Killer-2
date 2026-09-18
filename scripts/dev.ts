@@ -25,8 +25,12 @@
  *   - Pre-checks ports 3001 (cms) and 5173 (vite) and prints an
  *     actionable message if either is held by something we don't own.
  *   - Spawns the cms (`bun --watch server/index.ts`) and vite
- *     (`bun node_modules/vite/bin/vite.js --host 127.0.0.1`) as children, forwarding their output
- *     and signals so Ctrl+C cleanly kills both.
+ *     (`bun node_modules/vite/bin/vite.js --host 127.0.0.1`) as children through
+ *     `spawnStackChild`, forwarding their output and signals so Ctrl+C cleanly
+ *     kills both. In a terminal that is a plain stdio inherit; with this
+ *     script's own output redirected or piped, each child writes to
+ *     `.tmp/dev-<name>.log` and this script tails it, because a child that
+ *     blocks writing to a pipe nobody drains stops serving (see that module).
  */
 
 import { mkdir } from 'node:fs/promises'
@@ -35,6 +39,7 @@ import { isSqliteUrl } from '../server/db'
 import { bunCommand, viteCommand } from './lib/bunCommand'
 import { runDevPreflight } from './lib/devPreflight'
 import { ensurePortFree } from './lib/freePort'
+import { spawnStackChild, type StackChild } from './lib/stackChild'
 
 const CMS_PORT = Number(process.env.PORT ?? '3001')
 const VITE_PORT = Number(process.env.VITE_PORT ?? '5173')
@@ -243,6 +248,8 @@ log('')
 interface DevProcess {
   name: string
   command: string[]
+  /** Where this child's output goes when we do not own a terminal — see `spawnStackChild`. */
+  logPath: string
   env?: Record<string, string>
 }
 
@@ -272,6 +279,7 @@ const processes: DevProcess[] = [
     // server without Vite.
     name: 'cms',
     command: bunCommand('--watch', 'server/index.ts'),
+    logPath: './.tmp/dev-cms.log',
     env: {
       PORT: String(CMS_PORT),
       DATABASE_URL,
@@ -282,27 +290,24 @@ const processes: DevProcess[] = [
   {
     name: 'vite',
     command: viteCommand('--host', '127.0.0.1', '--port', String(VITE_PORT), '--strictPort'),
+    logPath: './.tmp/dev-vite.log',
   },
 ]
 
-const children: Bun.Subprocess[] = []
+const children: StackChild[] = []
 let shuttingDown = false
 
 function stopChildren(signal: NodeJS.Signals = 'SIGTERM'): void {
   for (const child of children) {
-    if (child.exitCode === null) child.kill(signal)
+    child.stopTail()
+    if (child.process.exitCode === null) child.process.kill(signal)
   }
 }
 
 for (const cfg of processes) {
-  const child = Bun.spawn(cfg.command, {
-    env: { ...process.env, ...cfg.env },
-    stdin: 'inherit',
-    stdout: 'inherit',
-    stderr: 'inherit',
-  })
+  const child = spawnStackChild(cfg.command, { ...process.env, ...cfg.env }, cfg.logPath)
   children.push(child)
-  void child.exited.then((code) => {
+  void child.process.exited.then((code) => {
     if (shuttingDown) return
     shuttingDown = true
     stopChildren()

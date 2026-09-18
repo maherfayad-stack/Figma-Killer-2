@@ -238,6 +238,13 @@ describe('dev preflight', () => {
   it('runs from `bun run dev` before anything is spawned', () => {
     const script = readSiteFile('scripts/dev.ts')
     expect(script).toContain('runDevPreflight(log, fail)')
-    expect(script.indexOf('runDevPreflight(log, fail)')).toBeLessThan(script.indexOf('Bun.spawn(cfg.command'))
+    // `spawnStackChild`, not `Bun.spawn`: both dev supervisors spawn their two
+    // children through `scripts/lib/stackChild.ts` now, because a child handed
+    // a pipe nobody drains can stop serving (read that module). The contract
+    // this locks in is unchanged — the preflight runs before ANY child starts —
+    // so it is pinned to the one call that starts one.
+    const spawnCall = 'spawnStackChild(cfg.command'
+    expect(script).toContain(spawnCall)
+    expect(script.indexOf('runDevPreflight(log, fail)')).toBeLessThan(script.indexOf(spawnCall))
   })
 })
