@@ -11,22 +11,14 @@
  */
 
 import { describe, expect, test } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const LOOP_SOURCES_ROOT = join(PROJECT_ROOT, 'src/core/loops/sources')
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) walk(full, out)
-    else if (extname(entry) === '.ts') out.push(full)
-  }
-  return out
-}
+const walk = (dir: string): string[] => walkSourceTree(dir, ['.ts'])
 
 interface ForbiddenPattern {
   name: string
@@ -51,7 +43,7 @@ describe('loop sources — dialect-neutral SQL', () => {
     const violations: string[] = []
 
     for (const file of files) {
-      const content = readFileSync(file, 'utf8')
+      const content = readSource(file)
       const lines = content.split('\n')
       lines.forEach((line, idx) => {
         for (const pattern of FORBIDDEN_PATTERNS) {

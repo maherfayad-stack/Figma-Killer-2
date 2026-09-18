@@ -26,7 +26,8 @@
  * P2 rule 4 is about.
  */
 import { describe, expect, it } from 'bun:test'
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
 import { join } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
@@ -37,24 +38,13 @@ const TYPOGRAPHY_SECTION_FILE = join(
   'admin/pages/site/inspector/sections/TextSection.tsx',
 )
 
-function collectTsxFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      out.push(...collectTsxFiles(full))
-    } else if (entry.endsWith('.tsx') || entry.endsWith('.ts')) {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectTsxFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 describe('P2 rule 4 — no <Select> reintroduced in LayoutSection / TypographySection', () => {
   const files = [...collectTsxFiles(LAYOUT_SECTION_DIR), LAYOUT_SECTION_FILE, TYPOGRAPHY_SECTION_FILE]
 
   it.each(files)('%s does not import @ui/components/Select', (file) => {
-    const content = readFileSync(file, 'utf8')
+    const content = readSource(file)
     expect(content).not.toMatch(/from ['"]@ui\/components\/Select['"]/)
   })
 })

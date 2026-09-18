@@ -9,26 +9,14 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const TOOLS_ROOT = join(REPO_ROOT, 'server/ai/tools')
 
-function collectFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      out.push(...collectFiles(full))
-    } else if (extname(entry) === '.ts') {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts'])
 
 describe('ai-tools-typebox-only gate', () => {
   it('no file under server/ai/tools/** imports zod', () => {
@@ -36,7 +24,7 @@ describe('ai-tools-typebox-only gate', () => {
     expect(files.length).toBeGreaterThan(0)
 
     const violations = files.filter((file) => {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       return /from\s+['"]zod['"]|require\s*\(\s*['"]zod['"]\s*\)/.test(src)
     })
 
@@ -55,7 +43,7 @@ describe('ai-tools-typebox-only gate', () => {
     // shape — must reach for TypeBox. Heuristic: file mentions `inputSchema:`
     // (the AiTool field) at least once.
     const toolFiles = files.filter((f) => {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       return /\binputSchema:\s*/.test(src)
     })
     expect(toolFiles.length).toBeGreaterThan(0)
@@ -66,7 +54,7 @@ describe('ai-tools-typebox-only gate', () => {
     // truth that both the server tools and the browser executor consume. The
     // leaf is itself TypeBox-only, and zod stays banned by the test above.
     const missingTypeBox = toolFiles.filter((f) => {
-      const src = readFileSync(f, 'utf8')
+      const src = readSource(f)
       return !/from\s+['"]@core\/utils\/typeboxHelpers['"]|from\s+['"]@sinclair\/typebox['"]|from\s+['"]@core\/ai['"]/.test(src)
     })
     if (missingTypeBox.length > 0) {

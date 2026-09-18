@@ -102,8 +102,10 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, relative, extname, sep } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+import { statSync, existsSync } from 'fs'
+import { join, relative, sep } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const SCAN_ROOT = join(SRC_ROOT, 'admin')
@@ -151,21 +153,8 @@ function toPosix(p: string): string {
   return p.split(sep).join('/')
 }
 
-function collectSourceFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      if (entry === '__tests__' || entry === 'node_modules') continue
-      out.push(...collectSourceFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      out.push(full)
-    }
-  }
-  return out
-}
+const collectSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 // Matches the literal hook call `useEditorStore(` — NOT `useEditorStore.getState(`,
 // which is an imperative snapshot read, not a subscribed selector.
@@ -294,7 +283,7 @@ function valueImportsOf(file: string, content: string): string[] {
 
 function readOrNull(file: string): string | null {
   try {
-    return readFileSync(file, 'utf8')
+    return readSource(file)
   } catch {
     return null
   }
@@ -412,7 +401,7 @@ describe('Architecture gate — no full-site pages scan reachable from a useEdit
     // trivially if `valueImportsOf` silently resolves nothing.
     const notice = join(SCAN_ROOT, 'pages/site/panels/PropertiesPanel/SlotFillNotice.tsx')
     const slotOwners = join(SCAN_ROOT, 'pages/site/panels/PropertiesPanel/slotOwners.ts')
-    const content = readFileSync(notice, 'utf8')
+    const content = readSource(notice)
 
     expect(USE_EDITOR_STORE_HOOK_RE.test(content)).toBe(true)
     expect(valueImportsOf(notice, content)).toContain(slotOwners)

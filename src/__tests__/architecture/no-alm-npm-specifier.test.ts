@@ -56,8 +56,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { CACHED_EXTENSIONS, readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { basename, extname, join, relative } from 'node:path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 
@@ -101,20 +102,10 @@ function repoRelative(absPath: string): string {
   return relative(REPO_ROOT, absPath).replaceAll('\\', '/')
 }
 
-function collectFiles(dir: string, keep: (name: string) => boolean): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === 'dist' || entry === '.tmp') continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      out.push(...collectFiles(full, keep))
-      continue
-    }
-    if (keep(entry)) out.push(full)
-  }
-  return out
-}
+// Both callers below filter on extension, and both sets sit inside the shared
+// cache's extension list, so narrowing the walk to it changes nothing.
+const collectFiles = (dir: string, keep: (name: string) => boolean): string[] =>
+  walkSourceTree(dir, CACHED_EXTENSIONS).filter((f) => keep(basename(f)))
 
 /** A test file or a fixture — exempt from rules 1 and 3, see the module doc. */
 function isTestFile(rel: string): boolean {
@@ -197,13 +188,15 @@ describe('no-alm-npm-specifier — the design-system npm is retired', () => {
     for (const manifestPath of ['package.json', 'vendor/alm-design-system/package.json']) {
       const abs = join(REPO_ROOT, manifestPath)
       if (!existsSync(abs)) continue
-      const parsed: unknown = JSON.parse(readFileSync(abs, 'utf8'))
+      const parsed: unknown = JSON.parse(readSource(abs))
       if (parsed === null || typeof parsed !== 'object') continue
       for (const key of dependencyKeys(parsed as Record<string, unknown>)) {
         declared.push(`${manifestPath}: ${key}`)
       }
     }
     const lock = join(REPO_ROOT, 'bun.lock')
+    // `bun.lock` has no extension the shared tree cache holds, so this one
+    // read stays on node:fs.
     if (existsSync(lock) && readFileSync(lock, 'utf8').includes(SCOPE)) {
       declared.push('bun.lock: an @alm-design/ entry survives — run `bun install`')
     }
@@ -228,7 +221,7 @@ describe('no-alm-npm-specifier — the design-system npm is retired', () => {
         stale.push(`${rel} (file is gone)`)
         continue
       }
-      if (!stripComments(readFileSync(abs, 'utf8')).includes(SCOPE)) {
+      if (!stripComments(readSource(abs)).includes(SCOPE)) {
         stale.push(`${rel} (no longer spells it — drop the allowlist entry)`)
       }
     }
@@ -245,7 +238,7 @@ describe('no-alm-npm-specifier — the design-system npm is retired', () => {
         : [abs]
       for (const file of files) {
         const rel = repoRelative(file)
-        readFileSync(file, 'utf8')
+        readSource(file)
           .split('\n')
           .forEach((line, index) => {
             if (DOC_LIVE_USE_RE.test(line)) violations.push(`${rel}:${index + 1}`)

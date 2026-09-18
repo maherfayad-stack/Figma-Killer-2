@@ -6,6 +6,7 @@ import {
   countSourceOccurrences,
   createFixtureProject,
   decodeNodeSourceLocation,
+  readFixtureTrustMeta,
   findSiblingRun,
   firstLeafNode,
   frameForPage,
@@ -86,6 +87,30 @@ import {
  */
 
 const FIXTURE_NAME = '__e2e-phase0'
+
+/**
+ * Case 8's corpus: the smallest project `resolveLiveCapability` answers
+ * `{ capable: true }` for. `test4` has no `vite.config.*`, so the auto-promotion
+ * rule cannot be observed on it at all — see that fixture's own README.
+ */
+const LIVE_FIXTURE_SOURCE = '__vite-live-fixture'
+const LIVE_FIXTURE_NAME = '__e2e-phase0-vite'
+
+/**
+ * The one error case 8 expects, pinned to the exact log line and tied to the
+ * reason the fixture cannot avoid it. Same rule as `CONSOLE_ALLOWLIST` below:
+ * an entry that stops describing the run starts hiding whatever it matches next.
+ */
+const LIVE_CONSOLE_ALLOWLIST: readonly { pattern: RegExp; why: string }[] = [
+  {
+    pattern: /\[useDevServerPrewarm\] could not prewarm the dev server/,
+    why:
+      'reaching Tier 2 starts the project\'s real dev server, and `__vite-live-fixture` ships a lockfile ' +
+      'but no `node_modules` on purpose — committing an installed tree is what .gitignore\'s ' +
+      'studio-workspace section exists to prevent. The frame half of this decision is the `test.fail()` ' +
+      'case that follows.',
+  },
+]
 
 /** The board frame every canvas case drives — see this file's header for why. */
 const DOGFOOD_PAGE_ID = 'sms'
@@ -915,6 +940,170 @@ test.describe('Phase 0 exit dogfood', () => {
         'a CONSOLE_ALLOWLIST entry matched nothing in this run. Either the case that used to produce it ' +
           'no longer does (delete the entry) or the case stopped running (fix the case).',
       ).toEqual([])
+    }
+  })
+
+  // ── 8 ──────────────────────────────────────────────────────────────────────
+
+  /**
+   * §6 decision 2 — **a Vite project with a lockfile is promoted to
+   * `run-project` on FIRST OPEN, once ever, with a visible Undo.**
+   *
+   * This is the only place in Studio where the trust tier moves without a human
+   * clicking anything, which makes it the only place where losing a gate is
+   * SILENT: a build that stopped checking "is it Vite", or stopped writing the
+   * once-only latch, or stopped stopping the dev server on Undo, looks exactly
+   * like this one on screen. So the three things asserted here are all
+   * refusals, not features:
+   *
+   *   a. the promotion happens AND says so — a Tier-2 promotion the user is
+   *      never told about is the override without the thing that justifies it;
+   *   b. Undo writes `static` back, and `trustAutoPromotedAt` STAYS SET — the
+   *      latch is what stops a project whose owner said no from being
+   *      auto-promoted again on the next open;
+   *   c. re-opening the project after the Undo does NOT promote it again and
+   *      does NOT show the notice. (b) is the byte on disk; (c) is the
+   *      behaviour that byte exists to produce, and only (c) fails if the
+   *      client stops reading the latch.
+   *
+   * ## Why this case runs LAST, and on its own fixture
+   *
+   * It is the only case in this file that does not drive `test4`: auto-promotion
+   * is a property of the PROJECT, and `test4` has no `vite.config.*`, so nothing
+   * about it can be observed there. `studio-workspace/__vite-live-fixture` is
+   * the smallest project `resolveLiveCapability` answers `{ capable: true }` for
+   * — its README lists each of its five files against the condition it
+   * satisfies.
+   *
+   * It is declared after case 7 on purpose. Reaching Tier 2 makes
+   * `useDevServerPrewarm` try to start the project's real dev server, and the
+   * fixture deliberately ships no `node_modules` (committing one is what
+   * `.gitignore`'s studio-workspace section exists to prevent), so that attempt
+   * fails and logs. Feeding that into case 7's file-wide console budget would
+   * mean allowlisting a real error there for a reason that has nothing to do
+   * with the dogfood; instead this case carries its own recorder and its own
+   * one-entry allowlist, pinned to that exact message.
+   */
+  test('a Vite project with a lockfile promotes itself to Tier 2 on first open, and Undo takes it back for good', async ({
+    page,
+  }) => {
+    const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
+    test.skip(
+      !live.ready,
+      `studio-workspace/${LIVE_FIXTURE_SOURCE} is not present on disk, so the throwaway copy could not be made`,
+    )
+
+    const liveConsole: RecordedConsoleEvent[] = []
+    recordConsoleErrors(page, liveConsole, 'auto-promote')
+
+    try {
+      await startToastRecorder(page)
+      await openFixtureBoard(page, live, { autoSave: false })
+
+      // (a) The promotion, and the notice that makes it defensible.
+      const notice = page.getByTestId('live-auto-promote-notice')
+      await expect(
+        notice,
+        'a Vite project with a lockfile opened without announcing that Studio promoted it to Tier 2',
+      ).toBeVisible({ timeout: 60_000 })
+      await expect(notice).toContainText('Running your app live')
+
+      await settle(() => readFixtureTrustMeta(live).trust, 'run-project')
+      const promoted = readFixtureTrustMeta(live)
+      annotate('trust after first open', JSON.stringify(promoted))
+      expect(promoted.trust, 'first open did not write run-project into .studio/meta.json').toBe('run-project')
+      expect(promoted.trustAutoPromoted, 'the promotion did not record that its ORIGIN was Studio').toBe(true)
+      expect(
+        typeof promoted.trustAutoPromotedAt,
+        'the once-only latch (trustAutoPromotedAt) was never written',
+      ).toBe('number')
+
+      // The pill is the permanent, session-independent statement of the same
+      // fact — `sec-10`'s "revocable, not just undoable".
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'live')
+
+      // (b) Undo — back to static, latch deliberately left set.
+      await page.getByTestId('live-auto-promote-undo').click()
+      const undone = await settle(() => readFixtureTrustMeta(live).trust, 'static')
+      annotate('trust after Undo', JSON.stringify(readFixtureTrustMeta(live)))
+      expect(undone, 'Undo did not put the project back to static').toBe('static')
+      expect(
+        readFixtureTrustMeta(live).trustAutoPromotedAt,
+        'Undo cleared the once-only latch, so the next open would promote this project all over again — ' +
+          'the latch is the whole reason the override is bounded',
+      ).toBe(promoted.trustAutoPromotedAt)
+
+      // Read the toast log BEFORE the reload — the recorder lives in the page,
+      // and a reload takes it with it.
+      //
+      // Zero error toasts across promote + undo. An automatic promotion the
+      // user did not ask for must not be able to put an error in front of them;
+      // `LiveAutoPromoteNotice` logs its failures instead, deliberately.
+      const toasts = await readToastRecorder(page)
+      annotate('toast cards during promote + undo', JSON.stringify(toasts.map((t) => `${t.kind}:${t.title}`)))
+      expect(
+        toasts.filter((t) => t.kind === 'error').map((t) => t.title),
+        'the automatic promotion path put an error toast in front of the user',
+      ).toEqual([])
+
+      // (c) The latch as BEHAVIOUR, not just as a byte: open it again.
+      await page.reload()
+      await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'static', {
+        timeout: 30_000,
+      })
+      await expect(
+        page.getByTestId('live-auto-promote-notice'),
+        'the project was auto-promoted a SECOND time — the latch is not being read',
+      ).toBeHidden()
+      expect(
+        readFixtureTrustMeta(live).trust,
+        'a second open re-promoted a project whose owner clicked Undo',
+      ).toBe('static')
+
+      const unexplained = liveConsole.filter(
+        (event) => !LIVE_CONSOLE_ALLOWLIST.some((entry) => entry.pattern.test(event.text)),
+      )
+      expect(
+        unexplained.map((event) => `[${event.source}] ${event.text}`),
+        'the auto-promotion flow logged an error this case does not expect',
+      ).toEqual([])
+    } finally {
+      removeFixtureProject(live)
+    }
+  })
+
+  /**
+   * The LIVE FRAME half of §6 decision 2, which this machine cannot satisfy.
+   *
+   * Tier 2 means the frames are rendered by the project's OWN dev server
+   * (`server/handlers/studio/devServer.ts` + `server/liveOrigin.ts`), and a dev
+   * server needs an installed dependency tree. `__vite-live-fixture` ships a
+   * lockfile and no `node_modules` on purpose — committing an installed tree
+   * into this repository is precisely what `.gitignore`'s studio-workspace
+   * section exists to prevent ("the missing rule cost 140,894 committed
+   * lines"), and the fixture's README says so.
+   *
+   * Marked `test.fail()` rather than skipped: a skip is invisible in a summary,
+   * and Playwright fails the run if this starts PASSING — so whoever gives this
+   * fixture a real install (or points the case at a project that has one) finds
+   * out here rather than discovering later that nothing checked it.
+   */
+  test('a promoted project renders its frames from its own dev server', async ({ page }) => {
+    test.fail()
+    const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
+    test.skip(!live.ready, `studio-workspace/${LIVE_FIXTURE_SOURCE} is not present on disk`)
+    try {
+      await openFixtureBoard(page, live, { autoSave: false })
+      await expect(page.getByTestId('live-auto-promote-notice')).toBeVisible({ timeout: 60_000 })
+      // A live frame is a different element from a design-mode canvas frame:
+      // it is the project's own document, proxied through `/p/<projectKey>/`.
+      await expect(
+        page.locator('iframe[data-live-frame="true"]').first(),
+        'no live frame mounted — the dev server never came up (this fixture has no node_modules)',
+      ).toBeVisible({ timeout: 60_000 })
+    } finally {
+      removeFixtureProject(live)
     }
   })
 })

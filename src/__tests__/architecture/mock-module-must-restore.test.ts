@@ -48,8 +48,9 @@
  * `import { thatName }` anywhere else in the graph then fails to link.
  */
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'node:fs'
+import { join, relative } from 'node:path'
 import { toPosixPath } from './pathHelpers'
 
 const ROOT = join(import.meta.dir, '../../..')
@@ -75,20 +76,8 @@ const ALLOWLIST: { file: string; reason: string }[] = [
   },
 ]
 
-function collectTestFiles(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules') continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      collectTestFiles(full, out)
-      continue
-    }
-    const ext = extname(entry)
-    if ((ext === '.ts' || ext === '.tsx') && /\.test\.tsx?$/.test(entry)) out.push(full)
-  }
-  return out
-}
+const collectTestFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx']).filter((f) => /\.test\.tsx?$/.test(f))
 
 /** Every specifier passed to `mock.module(...)` in `source`, deduplicated. */
 function mockedSpecifiers(source: string): string[] {
@@ -126,7 +115,7 @@ describe('mock.module must be restored — a module mock outlives the file that 
         // This file spells the pattern out in prose and would match itself.
         if (rel === SELF) continue
 
-        const source = readFileSync(file, 'utf8')
+        const source = readSource(file)
         for (const specifier of mockedSpecifiers(source)) {
           if (hasRestore(source, specifier)) continue
           violations.push(`  ${rel}  →  mocks '${specifier}' and never restores it`)
@@ -160,7 +149,7 @@ describe('mock.module must be restored — a module mock outlives the file that 
     for (const entry of ALLOWLIST) {
       const full = join(ROOT, ...entry.file.split('/'))
       expect(existsSync(full), `ALLOWLIST names a file that no longer exists: ${entry.file}`).toBe(true)
-      const source = readFileSync(full, 'utf8')
+      const source = readSource(full)
       expect(
         mockedSpecifiers(source).length > 0,
         `ALLOWLIST entry for ${entry.file} is stale — it no longer calls mock.module. Delete the entry.`,

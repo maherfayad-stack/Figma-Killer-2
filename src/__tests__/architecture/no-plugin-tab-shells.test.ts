@@ -35,8 +35,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const SRC_ROOT = join(PROJECT_ROOT, 'src')
@@ -45,20 +46,7 @@ const SRC_ROOT = join(PROJECT_ROOT, 'src')
 // File walker — .ts and .tsx files only, recursive
 // ---------------------------------------------------------------------------
 
-function walkTSX(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) {
-      walkTSX(full, out)
-    } else {
-      const ext = extname(entry)
-      if (ext === '.tsx' || ext === '.ts') out.push(full)
-    }
-  }
-  return out
-}
+const walkTSX = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function collectAllFiles(): string[] {
   return walkTSX(join(SRC_ROOT, 'admin'))
@@ -120,7 +108,7 @@ function scanForViolations(): Violation[] {
 
     let content: string
     try {
-      content = readFileSync(file, 'utf8')
+      content = readSource(file)
     } catch {
       continue
     }

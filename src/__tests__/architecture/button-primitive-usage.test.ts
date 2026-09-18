@@ -27,8 +27,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const ADMIN_ROOT = join(SRC_ROOT, 'admin')
@@ -42,20 +43,7 @@ const SCAN_ROOTS = [{ label: 'admin', root: ADMIN_ROOT }]
 // TSX file walker
 // ---------------------------------------------------------------------------
 
-function collectTSXFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectTSXFiles(full))
-    } else if (extname(entry) === '.tsx') {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTSXFiles = (dir: string): string[] => walkSourceTree(dir, ['.tsx'])
 
 // ---------------------------------------------------------------------------
 // §8 allowlist — files permitted to contain bare <button elements
@@ -253,7 +241,7 @@ describe('BTN-3 — Button primitive usage gate', () => {
       // Skip allowlisted files
       if (ALLOWLIST.has(rel)) continue
 
-      const source = readFileSync(file, 'utf-8')
+      const source = readSource(file)
 
       // Match bare <button followed by a space or > (i.e. not <Button which is the primitive).
       // The capital-B <Button is the primitive; lowercase <button is forbidden outside the allowlist.

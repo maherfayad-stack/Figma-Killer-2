@@ -43,8 +43,10 @@
  * than silently taking the route's `read` capability.
  */
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   resolveStudioRouteCapability,
@@ -86,22 +88,10 @@ const METHOD_RE = /req\.method\s*[=!]==?\s*'([A-Z]+)'/g
 
 const READ_METHODS = new Set(['GET', 'HEAD', 'OPTIONS'])
 
-function listSourceFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stats = statSync(full)
-    if (stats.isDirectory()) {
-      if (entry === '__tests__') continue
-      out.push(...listSourceFiles(full))
-      continue
-    }
-    if (!stats.isFile() || extname(entry) !== '.ts') continue
-    if (entry.endsWith('.test.ts')) continue
-    out.push(full)
-  }
-  return out
-}
+const listSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts']).filter(
+    (f) => !toPosixPath(f).includes('/__tests__/') && !f.endsWith('.test.ts'),
+  )
 
 function scannedFiles(): string[] {
   return [STUDIO_ENTRY, ...listSourceFiles(STUDIO_DIR), ...SHARED_ROUTE_CONSTANT_FILES].filter(
@@ -157,7 +147,7 @@ interface RouteMatch {
 /** Every path this handler tree can dispatch to, with the methods it dispatches on. */
 function collectRouteMatches(): { routes: RouteMatch[]; jobIdParents: Map<string, string> } {
   const sources = new Map<string, string>()
-  for (const file of scannedFiles()) sources.set(file, readFileSync(file, 'utf8'))
+  for (const file of scannedFiles()) sources.set(file, readSource(file))
   const { perFile, globallyUnique } = collectConstants(sources)
 
   const routes: RouteMatch[] = []
@@ -252,7 +242,7 @@ describe('studio-routes-capability-declared gate', () => {
     //     constant is actually dispatched on.
     const undeclared = new Map<string, string>()
     for (const file of scannedFiles()) {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       const declarations: [number, number][] = []
       for (const match of src.matchAll(CONST_LITERAL_RE)) {
         declarations.push([match.index, match.index + match[0].length])

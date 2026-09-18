@@ -76,12 +76,71 @@ jobs:
       - name: Test
         run: bun test
 
-  # The FULL Playwright suite is still not run in CI: as configured
-  # (`workers: 1`, fully serial, 150+ tests) it takes ~45-60 min and is
-  # timeout-fragile against the un-optimized dev server. This job runs the
-  # narrow canvas + inspector BUDGET slice instead — the specs that measure
+  # The FULL Playwright suite.
+  #
+  # It was left out of CI for as long as nobody knew what it did: `verify-2`'s
+  # first cold whole-suite run reported 23 passed / 64 failed / 13 skipped and
+  # had no baseline to diff those 64 against, because the suite had never been
+  # run end to end on any machine. A suite in that state cannot gate anything —
+  # so `verify-4` triaged every non-passing test into deleted (a surface PR #18
+  # removed), fixed (a fixture outside the containment root), or annotated with
+  # the defect and owner it is waiting on. What remains is a run whose result
+  # MEANS something, which is the only kind worth spending CI minutes on.
+  #
+  # Separate from `e2e-budgets` below, not merged into it: the budget slice is
+  # a ~10 min measurement gate that should stay readable and fast on every PR,
+  # and folding it into an hour-long job would bury a 40 ms regression inside
+  # someone else's flake. They also fail for different reasons and want
+  # different triage.
+  #
+  # `timeout-minutes: 90` is a ceiling, not an expectation: the measured cold
+  # Windows run is ~53 min under an eleven-agent load, and Linux CI has the
+  # machine to itself. A job that times out here is a hung stack, not a slow
+  # suite — `scripts/e2e-dev.ts` reports its own boot failures.
+  e2e:
+    name: E2E (full Playwright suite)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.11
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Install Chromium
+        run: bunx playwright install --with-deps chromium
+
+      # No path list, deliberately — the same reason the `test` job has no path
+      # filter. A spec that has to be named in this file to run is a spec that
+      # will be forgotten, and the whole point of this job is that the suite's
+      # result is now complete.
+      - name: Run the full suite
+        run: bun run test:e2e
+
+      - name: Upload the Playwright report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-full
+          path: |
+            .tmp/playwright-report
+            .tmp/playwright-results
+            .tmp/e2e-dev.log
+            .tmp/e2e-vite.log
+            .tmp/e2e-cms.log
+          retention-days: 7
+          if-no-files-found: warn
+
+  # The narrow canvas + inspector BUDGET slice — the specs that measure
   # computed layout and frame time, which happy-dom structurally cannot answer
-  # (`standing-02`). Run the whole suite locally with `bun run test:e2e`.
+  # (`standing-02`). Kept as its own job so a budget regression is visible in
+  # ~10 minutes instead of at the end of the full suite above.
   e2e-budgets:
     name: Browser budgets (canvas + inspector)
     runs-on: ubuntu-latest
@@ -138,19 +197,17 @@ jobs:
           echo "running:$specs"
           bunx playwright test $specs
 
-      - name: Upload the Playwright report
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: playwright-report
-          path: .tmp/playwright-report
-          retention-days: 7
-
+      # ONE upload, not two. There used to be an `if: failure()` step and an
+      # `if: always()` step that both uploaded an artifact called
+      # `playwright-report`; on a failing run both fire, and
+      # `actions/upload-artifact@v4` rejects a duplicate artifact name — so the
+      # one case where the report is worth having was the one case where the
+      # upload errored.
       - name: Upload the Playwright report
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: playwright-report
+          name: playwright-report-budgets
           path: |
             .tmp/playwright-report
             .tmp/playwright-results

@@ -1,0 +1,9 @@
+{
+  "displayName": "Vite Live Fixture",
+  "platform": "web",
+  "pagesDir": "src/pages",
+  "frameDefaults": {
+    "width": 900,
+    "height": 640
+  }
+}

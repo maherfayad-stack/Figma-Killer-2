@@ -8,8 +8,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
@@ -62,22 +63,7 @@ function stripComments(src: string): string {
   return src.replace(COMMENT_RE, (m) => m.replace(/[^\n]/g, ' '))
 }
 
-function collectTSXFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectTSXFiles(full))
-    } else if (extname(entry) === '.tsx') {
-      results.push(full)
-    }
-  }
-
-  return results
-}
+const collectTSXFiles = (dir: string): string[] => walkSourceTree(dir, ['.tsx'])
 
 describe('UI primitives location', () => {
   it('keeps reusable primitives in src/ui/components', () => {
@@ -100,7 +86,7 @@ describe('UI primitives location', () => {
     const violations: string[] = []
 
     for (const file of collectTSXFiles(EDITOR_ROOT)) {
-      const source = readFileSync(file, 'utf-8')
+      const source = readSource(file)
       if (/from ['"].*\/ui\/Button['"]/.test(source)) {
         violations.push(toPosixPath(relative(EDITOR_ROOT, file)))
       }
@@ -115,7 +101,7 @@ describe('UI primitives location', () => {
 
     for (const root of roots) {
       for (const file of collectTSXFiles(root)) {
-        const source = stripComments(readFileSync(file, 'utf-8'))
+        const source = stripComments(readSource(file))
         if (/<input[\s\S]*type=["'](?:color|file)["']/.test(source)) {
           violations.push(toPosixPath(relative(SRC_ROOT, file)))
         }

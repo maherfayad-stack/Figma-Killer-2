@@ -8,8 +8,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -48,21 +49,10 @@ function stripCommentsAndStrings(source: string): string {
   return s
 }
 
-function collectFiles(dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    if (entry === '__tests__') continue
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry)) && !/\.test\.(ts|tsx|js|jsx|mts|mjs)$/.test(entry)) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts = ['.ts', '.tsx', '.js', '.jsx', '.mts', '.mjs']): string[] =>
+  walkSourceTree(dir, exts).filter(
+    (f) => !toPosixPath(f).includes('/__tests__/') && !/\.test\.(ts|tsx|js|jsx|mts|mjs)$/.test(f),
+  )
 
 // 'editor', 'app', and 'lib' never existed in this repo's tracked history
 // (`git log --all -- src/editor src/app src/lib` is empty) — this list
@@ -84,7 +74,7 @@ describe('Direct icon imports — no lazy Icon wrapper in production UI', () => 
     for (const filePath of collectProdFiles()) {
       const rel = toPosixPath(filePath.replace(SRC_ROOT, 'src/'))
 
-      const raw = readFileSync(filePath, 'utf8')
+      const raw = readSource(filePath)
       const sourceNoComments = stripComments(raw)
       const sourceNoCommentsOrStrings = stripCommentsAndStrings(raw)
       if (

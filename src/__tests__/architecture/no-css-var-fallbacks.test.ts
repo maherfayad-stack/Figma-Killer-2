@@ -23,8 +23,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 // 'src/editor' never existed in this repo's tracked history (`git log --all
@@ -85,23 +86,10 @@ function stripComments(source: string): string {
     .replace(/^\s*\/\/.*$/gm, '')
 }
 
-function collectFiles(dir: string, exts: ReadonlyArray<string>): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const info = statSync(full)
-    if (info.isDirectory()) {
-      results.push(...collectFiles(full, exts))
-    } else if (exts.includes(extname(entry))) {
-      // Only `.module.css` (not arbitrary `.css`) for stylesheets, but the
-      // caller filters on extension only — narrow `.css` here.
-      if (extname(entry) === '.css' && !entry.endsWith('.module.css')) continue
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, exts: ReadonlyArray<string>): string[] =>
+  // Only `.module.css` (not arbitrary `.css`) for stylesheets, but the
+  // caller filters on extension only — narrow `.css` here.
+  walkSourceTree(dir, exts).filter((f) => !f.endsWith('.css') || f.endsWith('.module.css'))
 
 describe('CSS var() fallback policy — no `var(--name, fallback)`', () => {
   it('every var() in editor / admin / ui CSS modules and globals.css uses a bare token', () => {
@@ -114,7 +102,7 @@ describe('CSS var() fallback policy — no `var(--name, fallback)`', () => {
     if (existsSync(GLOBALS_CSS)) cssFiles.push(GLOBALS_CSS)
 
     for (const filePath of cssFiles) {
-      const stripped = stripComments(readFileSync(filePath, 'utf8'))
+      const stripped = stripComments(readSource(filePath))
       for (const hit of findVarFallbackHits(stripped)) {
         offenders.push(`  ${relative(SRC_ROOT, filePath)}:${hit.line} -> ${hit.snippet}`)
       }
@@ -139,7 +127,7 @@ describe('CSS var() fallback policy — no `var(--name, fallback)`', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectFiles(root, ['.ts', '.tsx'])) {
-        const stripped = stripComments(readFileSync(filePath, 'utf8'))
+        const stripped = stripComments(readSource(filePath))
         for (const hit of findVarFallbackHits(stripped)) {
           offenders.push(`  ${relative(SRC_ROOT, filePath)}:${hit.line} -> ${hit.snippet}`)
         }

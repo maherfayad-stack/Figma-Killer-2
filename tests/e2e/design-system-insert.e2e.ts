@@ -1,7 +1,11 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
-import * as os from 'node:os'
 import * as path from 'node:path'
+import {
+  createAuthoredFixtureProject,
+  removeFixtureProject,
+  type FixtureProject,
+} from './helpers/studioFixtureProject'
 
 /**
  * Adding a design-system component to a studio board, and rendering one with
@@ -28,8 +32,10 @@ import * as path from 'node:path'
  *      file ever changing.
  *
  * SAFETY — this spec WRITES, so it never points at real user data. The fixture
- * is created fresh in an OS temp directory, opened by absolute path, and removed
- * afterwards. Nothing under `studio-workspace/` is read or written.
+ * is created fresh under this RUN's THROWAWAY COPY of `studio-workspace/`
+ * (`WORKSPACE_ROOT`) and removed afterwards; the tracked tree is never touched.
+ * An OS temp directory — what this used to use — sits outside the root the
+ * server resolved, and `resolveProjectDir`'s containment check 404s the board.
  *
  * The fixture is a DESIGN-SYSTEM-BACKED project: it carries a
  * `design-system/index.js` and imports it relatively, which is what makes
@@ -66,24 +72,23 @@ const DESIGN_SYSTEM_INDEX = `export function Button() { return null }
 export function Chip() { return null }
 `
 
-let fixtureDir: string
+let fixture: FixtureProject
 
-const pagePath = (): string => path.join(fixtureDir, 'pages', 'Home.tsx')
+const pagePath = (): string => path.join(fixture.dir, 'pages', 'Home.tsx')
 const readPage = (): string => fs.readFileSync(pagePath(), 'utf8')
 
 test.beforeAll(() => {
-  fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-ds-insert-'))
-  fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
-  fs.writeFileSync(pagePath(), FIXTURE_PAGE, 'utf8')
-  fs.mkdirSync(path.join(fixtureDir, 'design-system'), { recursive: true })
-  fs.writeFileSync(path.join(fixtureDir, 'design-system', 'index.js'), DESIGN_SYSTEM_INDEX, 'utf8')
+  fixture = createAuthoredFixtureProject('__e2e-design-system-insert', {
+    'pages/Home.tsx': FIXTURE_PAGE,
+    'design-system/index.js': DESIGN_SYSTEM_INDEX,
+  })
 })
 
 test.afterAll(() => {
-  if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true })
+  if (fixture) removeFixtureProject(fixture)
 })
 
-/** Open the studio board on the temp fixture. Safe to write only because `fixtureDir` is a throwaway. */
+/** Open the studio board on the fixture — safe to write because it is in the run's throwaway workspace copy. */
 async function openStudioBoard(page: Page, projectDir: string): Promise<FrameLocator> {
   await page.addInitScript((dir: string) => {
     window.localStorage.setItem('studio:studio:dir', dir)
@@ -104,7 +109,7 @@ test.describe('design-system components on a studio board', () => {
   test.setTimeout(180_000)
 
   test('package CSS actually applies — the reset must not outrank @layer vendor', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixtureDir)
+    const contentFrame = await openStudioBoard(page, fixture.dir)
 
     const button = contentFrame.locator('button.btn').first()
     await expect(button).toBeVisible({ timeout: 15_000 })
@@ -144,7 +149,7 @@ test.describe('design-system components on a studio board', () => {
   })
 
   test('inserting a component from the picker writes the .tsx and comes back as a real node', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixtureDir)
+    const contentFrame = await openStudioBoard(page, fixture.dir)
     expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
 
     // The Assets panel replaced the full-screen inserter dialog. It is docked,

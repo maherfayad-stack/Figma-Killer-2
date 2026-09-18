@@ -23,8 +23,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
+import { join, relative } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
 const HANDLERS_DIR = join(REPO_ROOT, 'server/handlers')
@@ -56,15 +57,7 @@ const RAW_MATERIAL_ALLOWLIST = new Set([
   'server/handlers/studio/githubCredentialStore.ts',
 ])
 
-function listFilesRecursive(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) out.push(...listFilesRecursive(full))
-    else if (extname(full) === '.ts') out.push(full)
-  }
-  return out
-}
+const listFilesRecursive = (dir: string): string[] => walkSourceTree(dir, ['.ts'])
 
 describe('plugin-secrets-never-leak gate', () => {
   it('no HTTP handler file touches raw encryption material or the plaintext runtime projection', () => {
@@ -74,7 +67,7 @@ describe('plugin-secrets-never-leak gate', () => {
     const violations: { file: string; finding: string }[] = []
 
     for (const file of files) {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       const rel = relative(REPO_ROOT, file).replaceAll('\\', '/')
 
       const rawMaterialAllowed = RAW_MATERIAL_ALLOWLIST.has(rel)
@@ -113,7 +106,7 @@ describe('plugin-secrets-never-leak gate', () => {
     for (const file of serverFiles) {
       const rel = relative(REPO_ROOT, file).replaceAll('\\', '/')
       if (rel === 'server/repositories/pluginSecrets.ts') continue // declaration site
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       // Match actual imports/usages, not doc-comment mentions: an import
       // clause or a call site.
       const imports = /import\s*\{[^}]*\bresolvePluginSecretsForRuntime\b[^}]*\}/.test(src)

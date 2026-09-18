@@ -55,7 +55,8 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readFileSync, readdirSync, statSync } from 'fs'
+import { walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'fs'
 import { join, relative, sep } from 'path'
 
 const REPO_ROOT = join(import.meta.dir, '../../../')
@@ -172,27 +173,15 @@ const GRANDFATHERED: Record<string, number> = {
 // ---------------------------------------------------------------------------
 
 /** Recursively collect gated `.ts`/`.tsx` modules under a root, repo-relative. */
-function collectModules(absRoot: string): string[] {
-  const out: string[] = []
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const abs = join(dir, entry)
-      const stat = statSync(abs)
-      if (stat.isDirectory()) {
-        // Test code is exercised by other gates and is allowed to be long
-        // (large fixture-heavy suites); this gate targets shipped modules.
-        if (entry === '__tests__' || entry === 'node_modules') continue
-        walk(abs)
-        continue
-      }
-      if (!entry.endsWith('.ts') && !entry.endsWith('.tsx')) continue
-      if (entry.endsWith('.test.ts') || entry.endsWith('.test.tsx')) continue
-      out.push(relative(REPO_ROOT, abs).split(sep).join('/'))
-    }
-  }
-  walk(absRoot)
-  return out
-}
+const collectModules = (absRoot: string): string[] =>
+  walkSourceTree(absRoot, ['.ts', '.tsx'])
+    .map((abs) => relative(REPO_ROOT, abs).split(sep).join('/'))
+    // Test code is exercised by other gates and is allowed to be long
+    // (large fixture-heavy suites); this gate targets shipped modules.
+    .filter(
+      (rel) =>
+        !rel.includes('/__tests__/') && !rel.endsWith('.test.ts') && !rel.endsWith('.test.tsx'),
+    )
 
 /** Line count identical to `wc -l`: the number of newline characters. */
 function lineCount(repoRelPath: string): number {

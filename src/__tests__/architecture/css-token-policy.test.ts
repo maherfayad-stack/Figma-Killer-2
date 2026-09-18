@@ -15,8 +15,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 // 'src/editor' never existed in this repo's tracked history (`git log --all
@@ -31,20 +32,8 @@ const SCAN_ROOTS = [
 const HEX_COLOR_RE = /#[0-9a-fA-F]{3,8}\b/g
 const RAW_COLOR_FUNCTION_RE = /\b(?:rgba?|hsla?)\(/g
 
-function collectModuleCss(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectModuleCss(full))
-    } else if (extname(entry) === '.css' && entry.endsWith('.module.css')) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectModuleCss = (dir: string): string[] =>
+  walkSourceTree(dir, ['.css']).filter((f) => f.endsWith('.module.css'))
 
 /** Strip `/* ... *\/` block comments and `// ...` line comments from the source. */
 function stripComments(source: string): string {
@@ -59,7 +48,7 @@ describe('CSS token policy — no raw colors in editor/admin/ui CSS modules', ()
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectModuleCss(root)) {
-        const raw = readFileSync(filePath, 'utf8')
+        const raw = readSource(filePath)
         const stripped = stripComments(raw)
 
         const lines = stripped.split('\n')

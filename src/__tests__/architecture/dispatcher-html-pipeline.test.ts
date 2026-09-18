@@ -32,21 +32,16 @@
  * `applyPublishedHtmlPipeline` — don't reimplement the pipeline.
  */
 import { describe, expect, it } from 'bun:test'
-import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { toPosixPath } from './pathHelpers'
 
 const ROOT = resolve(import.meta.dir, '../../..')
 
 /** Walk a tree, returning every `.ts` file path (skipping tests and dist). */
-function* walk(dir: string): Generator<string> {
-  for (const name of readdirSync(dir)) {
-    if (name === 'dist' || name === 'node_modules' || name === '__tests__') continue
-    const full = join(dir, name)
-    if (statSync(full).isDirectory()) yield* walk(full)
-    else if (name.endsWith('.ts')) yield full
-  }
-}
+const walk = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 describe('dispatcher HTML pipeline', () => {
   it('the publish.* lifecycle bus is owned by exactly one server file', () => {
@@ -60,7 +55,7 @@ describe('dispatcher HTML pipeline', () => {
     for (const file of walk(join(ROOT, 'server'))) {
       const rel = toPosixPath(file.slice(ROOT.length + 1))
       if (allowedOwners.has(rel)) continue
-      const src = readFileSync(file, 'utf-8')
+      const src = readSource(file)
       // `hookBus.emit('publish.before'`, `hookBus.emit('publish.after'`,
       // `hookBus.applyFilter('publish.html'` — all three signal a code path
       // that's driving the publish lifecycle itself rather than using the
@@ -84,7 +79,7 @@ describe('dispatcher HTML pipeline', () => {
 
   it('the dispatcher emits public HTML only through applyPublishedHtmlPipeline', () => {
     const routerPath = join(ROOT, 'server/router.ts')
-    const router = readFileSync(routerPath, 'utf-8')
+    const router = readSource(routerPath)
 
     // Both content paths (pages + posts) call the pipeline helper.
     expect(router).toContain('applyPublishedHtmlPipeline')

@@ -21,8 +21,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
 const SITE_IMPORT_DIR = join(SRC_ROOT, 'core/siteImport')
@@ -31,19 +32,7 @@ const SITE_IMPORT_DIR = join(SRC_ROOT, 'core/siteImport')
 // File walker — recursively collect .ts/.tsx files in a directory
 // ---------------------------------------------------------------------------
 
-function collectTs(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectTs(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTs = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 // ---------------------------------------------------------------------------
 // Gate 1 — No admin imports
@@ -65,7 +54,7 @@ describe('siteImport Gate 1 — no admin imports', () => {
 
     const violations: string[] = []
     for (const file of files) {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       if (ADMIN_IMPORT_RE.test(src)) {
         violations.push(relative(SRC_ROOT, file))
       }
@@ -100,7 +89,7 @@ describe('siteImport Gate 2 — no server imports', () => {
 
     const violations: string[] = []
     for (const file of files) {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       if (SERVER_IMPORT_RE.test(src)) {
         violations.push(relative(SRC_ROOT, file))
       }
@@ -132,7 +121,7 @@ describe('siteImport Gate 3 — no runtime React imports', () => {
 
     const violations: string[] = []
     for (const file of files) {
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       const lines = src.split('\n')
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]

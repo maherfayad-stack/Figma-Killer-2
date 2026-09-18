@@ -71,19 +71,39 @@ npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-pan
 
 ### In CI
 
-The full suite is **not** run in CI: serial (`workers: 1`) across 150+ specs it
-takes ~45-60 minutes and is timeout-fragile against the un-optimized dev
-server. The `e2e-budgets` job in `.github/workflows/ci.yml` runs the narrow
-budget slice instead — `studio-board-perf`, `inspector-panel-measurement`,
-`inspector-height`, `studio-feel` — because those four measure **computed
-layout and frame time**, the one class of question happy-dom structurally
-cannot answer (`standing-02`). The job lets `playwright.config.ts`'s `webServer`
-block start the stack, deliberately: CI is the only place that proves that path
-works on Linux, and a job which bypassed it would let the bypass rot into the
-only thing that works — the exact shape that hid the Windows boot bug for seven
-weeks. It passes only the spec paths that exist, so a spec that has not landed
-yet costs coverage instead of failing the job for the wrong reason, and it
-uploads `.tmp/playwright-report` as an artifact on failure.
+**Two jobs, and they are separate on purpose.**
+
+`e2e` runs the **whole suite** — no path list, for the same reason the `test`
+job has no path filter: a spec that has to be named in `ci.yml` to run is a
+spec that will be forgotten. Its ceiling is 90 minutes against a measured ~53
+minute cold Windows run, so a timeout there means a hung stack, not a slow
+suite.
+
+That job could not exist until the suite's result meant something. The first
+cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
+64 failed / 13 skipped** with nothing to diff the 64 against — see
+"The full-suite baseline" below for what those 64 turned out to be.
+
+`e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
+`inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
+those four measure **computed layout and frame time**, the one class of
+question happy-dom structurally cannot answer (`standing-02`). It stays its own
+job so a 40 ms regression is visible in ten minutes instead of at the end of an
+hour-long run, and so the two kinds of failure get the triage they each need.
+
+Both let `playwright.config.ts`'s `webServer` block start the stack,
+deliberately: CI is the only place that proves that path works on Linux, and a
+job which bypassed it would let the bypass rot into the only thing that works —
+the exact shape that hid the Windows boot bug for seven weeks. The budget job
+passes only the spec paths that exist, so a spec that has not landed yet costs
+coverage instead of failing the job for the wrong reason.
+
+Each job uploads its own report artifact (`playwright-report-full`,
+`playwright-report-budgets`). One upload step each, not two: there used to be
+an `if: failure()` step and an `if: always()` step sharing the artifact name
+`playwright-report`, and since `actions/upload-artifact@v4` rejects a duplicate
+name, the one run where the report mattered was the one run where the upload
+errored.
 
 `bun run bench:studio-board` runs `studio-board-perf.e2e.ts` through the same
 Playwright Node runner from the bench harness and republishes its `perf`
@@ -131,6 +151,31 @@ finding 4). A spec that puts a fixture project on disk must therefore join onto
 `process.cwd() + 'studio-workspace'` — a project outside the root the server
 resolved fails `resolveProjectDir`'s containment check and the route answers
 404.
+
+**That includes an OS temp directory**, and three specs learned it the
+expensive way. `css-writeback`, `structural-writeback` and
+`design-system-insert` each built their fixture with
+`fs.mkdtempSync(os.tmpdir())` and opened it by absolute path, reasoning that a
+temp dir is the safest place for a spec that writes. It is outside the
+containment root, so the board 404'd and all six cases failed on a timeout that
+read exactly like a product bug. `createAuthoredFixtureProject(name, files)` in
+`helpers/studioFixtureProject.ts` is the correct form of that instinct: it
+authors the fixture under `WORKSPACE_ROOT`, which for a run IS a throwaway
+directory. Its sibling `createFixtureProject(source, name)` copies an existing
+tracked project instead.
+
+**Tracked fixture projects.** Four projects under `studio-workspace/` are
+committed, each with a `.gitignore` negation line naming its consumer:
+`__canonical-fixture` (the parser corpus), `__board-perf-fixture` (the canvas
+budget corpus), `test4` (the Phase 0 dogfood target), and
+`__vite-live-fixture` — the smallest project `resolveLiveCapability` answers
+`{ capable: true }` for, which is what phase 0 case 8 needs to drive the
+automatic Tier 2 promotion. Adding a fifth means committing someone's
+repository into this one, so each has to earn its line. Two rules when you do:
+the negation line is mandatory (without it the project is invisible to
+`git status`), and `listStudioProjects` sorts by `displayName` while
+`defaultProjectDir` takes the first — so a new fixture's display name decides
+whether it becomes the project a fresh Studio opens.
 
 **Vite's boot is supervised.** Handed a pipe for stdout — which is exactly what
 Playwright's `webServer` gives it — Vite intermittently binds its port, prints
@@ -281,6 +326,21 @@ Every run appends what it measured to `.tmp/agent-turn-measurement.json` — wal
 ms, tool rounds, writeback POSTs, telemetry lines, failed tool labels and the
 changed-file set. That file is how `AGENT_TURN_WALL_MS` gets re-calibrated:
 three runs, budget is 1.5x the worst.
+| §6 decision 2 (`sec-10`, `sec-12`) | The ONE place the trust tier moves without a human clicking anything: a Vite project with a lockfile promotes itself to `run-project` on first open, says so, and **Undo takes it back without clearing the once-only latch** — so a project whose owner said no is never auto-promoted again. Case 8 of the phase-0 spec, on `studio-workspace/__vite-live-fixture` | `studio-feel-phase0.e2e.ts` |
+| `sec-17` landmine 6 | The frame drag relay's **FILE** branch, which no suite could reach: happy-dom implements neither `DragEvent` nor `DataTransfer`, so `src/__tests__/canvas/canvasFrameDragRelay.test.ts` can only assert the cancel. A real `DataTransfer` built in the frame's own realm must put the PNG in `public/` and an `<img>` in the `.tsx`; a `text/uri-list` drop must leave the frame exactly where it was | `frame-file-drop.e2e.ts` |
+
+#### The expected-failure convention
+
+A spec that asserts what the product was PROMISED to do, on a tree where it does
+not yet, marks the case `test.fail()` and names the defect and its owning
+`STATE.md` entry in a docblock directly above it. Playwright then fails the run
+if such a case starts **passing**, which is the whole point: a fix cannot land
+silently and the annotation cannot rot into a lie.
+
+Two rules go with it. **Never use `test.skip()` for a known defect** — a skip is
+invisible in a summary and nothing tells you when it is fixed. And **never
+weaken the assertion instead**; the annotation is the honest record, a softened
+`expect` is not.
 
 #### `studio-feel-phase0.e2e.ts` runs four cases that are EXPECTED to fail
 #### `studio-feel-phase0.e2e.ts` — the plan's exit dogfood, now fully green

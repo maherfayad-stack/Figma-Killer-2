@@ -33,54 +33,23 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { readdirSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
-
-const PROJECT_ROOT = join(import.meta.dir, '../../../')
-
-/** Extensions whose files a human or an agent reads as text. Binary assets are not scanned. */
-const SCANNED_EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.md', '.css', '.json']
-
-/**
- * Directories that are not repository source: dependencies, build output, the
- * user's own project repositories (`studio-workspace/` — never ours to
- * police, and `.gitattributes` marks it `-text` for that reason), and scratch
- * roots.
- */
-const SKIPPED_DIRS = new Set([
-  'node_modules',
-  '.git',
-  'dist',
-  'build',
-  '.next',
-  '.turbo',
-  'coverage',
-  'studio-workspace',
-  'uploads',
-  '.tmp',
-  '.claude',
-])
-
-/** `withFileTypes` avoids a `statSync` per entry — on Windows that alone is the difference between 280 ms and 90 ms. */
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    if (SKIPPED_DIRS.has(entry.name)) continue
-    const full = join(dir, entry.name)
-    if (entry.isDirectory()) walk(full, out)
-    else if (SCANNED_EXTENSIONS.some((ext) => entry.name.endsWith(ext))) out.push(full)
-  }
-  return out
-}
+import { allCachedFiles, readSourceBytes, toRepoRelativePosix } from './helpers/sourceTree'
 
 describe('Architecture: no literal NUL byte in a source or doc file', () => {
-  const files = walk(PROJECT_ROOT)
+  // The shared walk (`helpers/sourceTree.ts`) — one listing and one parallel
+  // read for the whole architecture suite instead of one per gate. Its
+  // extension set is a SUPERSET of the one this gate used to carry (it adds
+  // `.mjs`, `.mts`, `.cjs`, `.cts`, `.html`), so this scan got strictly wider,
+  // and its skipped-directory set adds only scratch roots (`.tmp-lint`,
+  // `.coverage`) that were never repository source.
+  const files = allCachedFiles()
 
   test('the scan actually reaches the source tree', () => {
     // A gate that inspects zero files passes forever (F-0007). Pin both the
     // order of magnitude and one specific file that used to be an offender.
     expect(files.length).toBeGreaterThan(1000)
     expect(
-      files.some((f) => relative(PROJECT_ROOT, f).split(sep).join('/') === 'server/handlers/studio/gitSyncOperations.ts'),
+      files.some((f) => toRepoRelativePosix(f) === 'server/handlers/studio/gitSyncOperations.ts'),
     ).toBe(true)
   })
 

@@ -1,23 +1,14 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'bun:test'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
 
 const SRC_ROOT = join(import.meta.dir, '..', '..')
 
-function readSource(path: string): string {
-  return readFileSync(join(SRC_ROOT, path), 'utf8')
-}
+/** `src/`-relative, because the three fixed targets below read best that way. */
+const readSrcRelative = (path: string): string => readSource(join(SRC_ROOT, path))
 
-function collectFiles(dir: string): string[] {
-  const files: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) files.push(...collectFiles(full))
-    else if (entry.endsWith('Editor.tsx')) files.push(full)
-  }
-  return files
-}
+const collectFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.tsx']).filter((f) => f.endsWith('Editor.tsx'))
 
 describe('Canvas Fast Refresh boundaries', () => {
   it('keeps component modules free of Fast Refresh suppression comments', () => {
@@ -27,12 +18,12 @@ describe('Canvas Fast Refresh boundaries', () => {
     ]
 
     for (const file of files) {
-      expect(readSource(file)).not.toContain('react-refresh/only-export-components')
+      expect(readSrcRelative(file)).not.toContain('react-refresh/only-export-components')
     }
   })
 
   it('keeps NodeRenderer exports limited to React components', () => {
-    const source = readSource('admin/pages/site/canvas/NodeRenderer.tsx')
+    const source = readSrcRelative('admin/pages/site/canvas/NodeRenderer.tsx')
 
     expect(source).not.toContain('export const CanvasSelectionContext')
     expect(source).not.toContain('export const CanvasBreakpointContext')
@@ -41,7 +32,7 @@ describe('Canvas Fast Refresh boundaries', () => {
   })
 
   it('keeps ModuleSandboxFrame exports limited to React components', () => {
-    const source = readSource('admin/pages/site/canvas/ModuleSandboxFrame.tsx')
+    const source = readSrcRelative('admin/pages/site/canvas/ModuleSandboxFrame.tsx')
 
     expect(source).not.toContain('export function createSandboxSrcDoc')
   })
@@ -52,7 +43,7 @@ describe('Canvas Fast Refresh boundaries', () => {
 
     const offenders: string[] = []
     for (const file of editorFiles) {
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (/from ['"]\.\/index['"]/.test(source)) {
         offenders.push(file.replace(`${SRC_ROOT}/`, ''))
       }

@@ -26,8 +26,9 @@
  */
 
 import { describe, test, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 
 const PROJECT_ROOT = join(import.meta.dir, '../../../')
 const SCAN_ROOT = join(PROJECT_ROOT, 'server')
@@ -39,16 +40,7 @@ const COMMENT_RE = /\/\/.*$|\/\*[\s\S]*?\*\//gm
 // File walker — .ts files only, recursive
 // ---------------------------------------------------------------------------
 
-function walk(dir: string, out: string[] = []): string[] {
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const st = statSync(full)
-    if (st.isDirectory()) walk(full, out)
-    else if (extname(entry) === '.ts') out.push(full)
-  }
-  return out
-}
+const walk = (dir: string): string[] => walkSourceTree(dir, ['.ts'])
 
 // ---------------------------------------------------------------------------
 // Allowlist — files that are explicitly permitted to use these operators
@@ -122,7 +114,7 @@ function scanForViolations(): Violation[] {
   for (const file of files) {
     let content: string
     try {
-      content = readFileSync(file, 'utf8')
+      content = readSource(file)
     } catch {
       continue
     }

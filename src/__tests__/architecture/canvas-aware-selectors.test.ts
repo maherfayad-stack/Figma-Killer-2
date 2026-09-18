@@ -26,8 +26,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -43,19 +44,7 @@ const EDITOR_ROOT = join(SRC_ROOT, 'admin/pages/site')
 // File walker
 // ---------------------------------------------------------------------------
 
-function collectTs(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectTs(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTs = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function relPath(full: string): string {
   return toPosixPath(relative(SRC_ROOT, full))
@@ -156,7 +145,7 @@ describe('Canvas-aware selector gate — selectActivePage not imported in editor
       if (SELECT_ACTIVE_PAGE_ALLOWLIST.has(rel)) continue
 
       let src: string
-      try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
+      try { src = stripComments(readSource(file)) } catch { continue }
 
       if (!IMPORT_RE.test(src)) continue
 
@@ -214,7 +203,7 @@ describe('Canvas-aware selector gate — no raw pages.find in VC-aware panel dir
     for (const dir of VC_AWARE_PANEL_DIRS) {
       for (const file of collectTs(dir)) {
         let src: string
-        try { src = stripComments(readFileSync(file, 'utf8')) } catch { continue }
+        try { src = stripComments(readSource(file)) } catch { continue }
 
         if (!PAGES_FIND_RE.test(src)) continue
 
