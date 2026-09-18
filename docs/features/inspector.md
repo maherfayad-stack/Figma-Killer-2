@@ -1545,11 +1545,13 @@ bespoke sections built on it) gets Mixed placeholders for free.
 cell through `readString` used to see `undefined` for `MIXED` and render its
 ordinary *unset* state — an empty field, an unpressed toggle group — which is
 indistinguishable from "nobody set this" and one keystroke from flattening a
-disagreement the user was never shown. Two helpers in `styleValueUtils.ts`
+disagreement the user was never shown. Three helpers in `styleValueUtils.ts`
 close it: `pickMixedString` (the cell read that PRESERVES the sentinel, used
-by the corner/side clusters in Appearance and Stroke) and `isMixedStyleValue`
-(is this field's stored cell mixed, or its effective one when nothing is
-stored — the placeholder layer). Every section is wired:
+by the corner/side clusters in Appearance and Stroke), `pickMixedCell` (the
+same read typed for `ClassPropertyRow`'s `value`, which replaced the
+`as string | number` casts that type-laundered a Symbol into a value), and
+`isMixedStyleValue` (is this field's stored cell mixed, or its effective one
+when nothing is stored — the placeholder layer). Every section is wired:
 
 | Section | Mixed surface |
 |---|---|
@@ -1559,17 +1561,52 @@ stored — the placeholder layer). Every section is wired:
 | Size | W/H and every revealed constraint (`AddablePropertyField` already took `MIXED`) |
 | Typography | text-align and vertical-align groups; every other row via `StackedPropertyGrid` |
 | Appearance | opacity, and all five corner-radius fields |
-| Fill | the entry stays (it used to vanish) and reads "Mixed"; its editor is a mixed `ColorValueInput` |
 | Stroke | weight, colour, style, and stroke position |
+| Fill · Layer · Shadow · Blur | the four `PropertyList` sections — see the table below |
 
 `String(MIXED)` was the other half of the bug: `hasStyleValue` is true for a
 Symbol, so Position and Size would have printed `Symbol(studio-mixed-value)`
 into their fields. Both now test `isMixed` before stringifying.
 
-**Deliberately not given a Mixed state:** `AlignGrid`'s 3×3 and Clip content's
-checkbox. Neither primitive has an indeterminate affordance, and inventing one
-for a 9-cell grid is a design decision, not a wire-up. Both render unset, as
-before.
+**Deliberately not given a Mixed state:** `AlignGrid`'s 3×3, Clip content's
+checkbox, and Layer's CSS-visibility eye. None of those primitives has an
+indeterminate affordance, and inventing one for a 9-cell grid is a design
+decision, not a wire-up. All three render unset; the eye names the
+disagreement in its accessible label instead, and clicking it agrees every
+selected layer, which is the Figma contract for a mixed field.
+
+#### The four `PropertyList` sections (`panel-38`)
+
+Fill, Layer, Shadow and Blur are the sections whose body is a **list of rows
+derived from a value**, not a fixed grid of fields. They shipped with the
+sentinel dropped, and each failed a different way — a row can *disappear*
+here, which a grid of fields cannot do:
+
+| Section | What it did before | What it does now |
+|---|---|---|
+| **Fill** — Text / Solid fill | The row VANISHED (`readString` → `undefined` → not stored → not shown) | The row stays; its `ColorValueInput` reads "Mixed" and its `%` opacity cell is dropped (no single alpha channel to show, and `ColorOpacityField` has no mixed state) |
+| **Fill** — Content fit | Trailing value blank | Trailing value reads "Mixed"; the popover's `ClassPropertyRow`s carry the sentinel to their own controls |
+| **Fill** — background layers | `parseBackgroundLayers` read the Symbol as "no layers", so the stack silently vanished | ONE row reading "Mixed" replaces the per-layer rows — there is no shared stack, so there is no layer to number, reorder, or blend. Its popover is `BackgroundDeclarationsBody`, which writes `background-image` and each satellite **whole**. The two layer-add buttons disable: "insert at index 0" over a list that does not exist is a replace wearing an add's icon |
+| **Fill** — a satellite alone | Read as the CSS initial | A stack the layers AGREE on keeps its per-layer rows; only the disagreeing satellite goes whole-declaration, because splicing index N of a list nobody shares would write the initial into every *other* layer of every selected node |
+| **Fill** — `background` shorthand | The row VANISHED | The row stays; its raw field reads "Mixed" |
+| **Layer** — opacity | `toPercentString` collapsed the Symbol before `resolveStyleFieldDisplay` (which already knew `MIXED`) could see it, so five opacities read the `100%` fallback | The sentinel passes through untouched and the `ScrubInput` reads "Mixed" |
+| **Layer** — blend mode | Trigger read "Blend mode" as if unset; the menu ticked `normal` | Trigger reads "Blend mode: Mixed"; no menu option is claimed |
+| **Layer** — CSS visibility | Read "not hidden" | The label names the disagreement (see the deliberate-omission note above) |
+| **Shadow** | **Lied.** `String(MIXED)` is a legal expression, so `parseShadowValue` answered `{ kind: 'raw', raw: 'Symbol(studio-mixed-value)' }` — a raw text field showing that string and offering to write it to the user's stylesheet | `parseShadowValue` takes `Mixed` and answers a fourth arm, `{ kind: 'mixed' }`, which the compiler forces every consumer to handle. One row per property reads "Mixed"; its popover writes the whole declaration to all N; the matching add-menu items disable |
+| **Blur** | NO row at all, under a `Section` Law 1 had already forced open — a populated section with an empty body, and "Add layer blur" still enabled beside it | One row per property reads "Mixed", with the same whole-declaration popover; the add items disable off the raw cell |
+
+The shared shape across all four: **when a list-valued property disagrees,
+collapse the list into one row and edit the whole declaration.** A
+multi-selection has no shared layer *index*, so every per-index gesture
+(reorder, per-layer blend, "add at 0", "remove layer 2") is refused by
+construction rather than silently writing the CSS initial into layers the user
+never touched. Removing one of those rows clears the property from every
+selected layer, in one history entry (§9.1).
+
+Two things this pass deliberately left alone, both recorded in `panel-38`:
+`node.hidden` / `node.locked` in Layer still read and toggle the **anchor**
+only — a structural fan-out gap needing a store action over N ids, not a Mixed
+one — and `commitProp` still stops at one node (§9.0).
 
 ### §9.4 Two targets, and the gate between them
 
@@ -1843,7 +1880,10 @@ into `FillColorField.tsx` (the colour rows' own chrome — `ColorFieldRow`,
 object itself), and `colorWriteTargetNote.ts` (the shared note-string
 builder, its own file because `react-refresh/only-export-components` forbids
 mixing a plain function export with a component export) when G6.2b grew it
-again).
+again, and once more into `fillRowDescriptors.tsx` (the `FillEntryData`
+taxonomy, popover titles and `describeLayer`), `FillEntryPopover.tsx` (the one
+switch over row kinds) and `GradientEditor.tsx` when §9.3's Mixed contract
+landed — `panel-38`).
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3
