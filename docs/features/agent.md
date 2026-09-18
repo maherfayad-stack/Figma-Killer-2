@@ -546,6 +546,21 @@ of consent for delegated work. There is deliberately **no** `init`, `restore`,
 overwrite work the user has on screen and cannot see being overwritten, which
 is exactly why the Version control panel shows them a list instead.
 
+All five share one guard, `guardProject` in `gitTools.ts`, and it owns both
+halves of "can this directory be operated on": it catches
+`ProjectDirOutsideWorkspaceError` (which `resolveToolProjectDir` throws for a
+`dir` outside `studio-workspace/`) and then runs `assertOwnGitRepo`, so every
+tool in the family answers a structured `outside-workspace` /
+`not-a-repository` refusal rather than a raw exception — which only
+`studio_git_commit` used to do. `outside-workspace` is reachable two ways, and
+both are tested: the caught throw, and the workspace **root** itself, which
+`resolveProjectDir` accepts (it is what you get with no `dir` in an empty
+workspace) and which is not a project. `ProjectDirMismatchError` — a
+workspace-bound connector naming a project other than its turn's —
+deliberately still throws, as it does in every other Studio tool: its message
+names both projects and the next action, and flattening it into
+`outside-workspace` told the agent a project that exists does not.
+
 **Non-Studio MCP tools.** `get_context` (`mcp/tools/contextTool.ts`) is the orientation call for the CMS half: it reports whether the Site editor is connected — every browser tool needs it — and which templates wrap pages, so an agent knows what its authored markup is *in addition to*. Headless; call it first when a browser tool answers "open the workspace". `mcp_list_project_servers` and `mcp_propose_server` (`mcpServerTool.ts`) cover external MCP servers: the first lists every project-declared (`.mcp.json`) and Studio-registered server with its approval state and its *secret field names* — never a secret value; the second registers a proposal that is saved **unapproved and cannot be approved by any tool or agent**, so the honest report to the user is "proposed, needs your review", never "set up". `site_read_styles` and `site_list_breakpoints` (`styleTools.ts`) are headless replacements for their snapshot-backed `site_*` siblings, which read a browser-posted snapshot that is `null` over MCP; `site_publish` (`publishTool.ts`) is the one explicitly capability-gated write that leaves draft state. The CMS `site_*` toolset itself is tabulated under [Tools](#tools) below.
 
 ### `studio_screenshot` — the agent's eyes
@@ -1061,6 +1076,20 @@ Both frame tools address a frame by `pageId` (the id every other Studio tool alr
 **W9-6 also added a fourth row**, `studio_measure_element` — the canvas's own ruler, and the missing third leg beside `studio_compare` (which rectangle is wrong) and `studio_measure_reference` (what the design says): the rendered geometry of the screen's own elements. See its section above.
 
 The matrix now has **zero `missing` rows** — every editor action a Studio project agent needs is either a real tool or explicitly, permanently withheld with a stated reason (trust-tier promotion, undo/redo, viewport pan/zoom/marquee, project deletion, a raw shell command, a full-file overwrite — see the six `withheld` rows in `parityMatrix.ts` for why each one stays that way on purpose).
+
+`studio_import_figma_frame` has its own row — *arm a screen against a supplied design*. The user's version of that action is two gestures: attach the design through the reference-upload panel (`uploadDesignReference.ts` → `POST /admin/api/studio/reference-upload`), then drag the board frame to the design's own size so the comparison is exact rather than resampled. The tool exists because the ORDER was what a weaker model got wrong, not any single leg — see its own section above.
+
+#### Headless-only tools
+
+The gate runs the matrix backwards too: every registered `mutates: true` tool must be named by some row. A tool that genuinely has no canvas counterpart declares **`headlessOnly`** on its own `AiTool` definition — a sentence saying why — and the gate reads that field. There is deliberately no allowlist inside `parityMatrix.test.ts`: a name on a list in a test file is a gate switched off, while a sentence on the tool is a claim the next reader can check. Declaring `headlessOnly` **and** appearing in a parity row fails the gate, because one of the two statements is then untrue.
+
+<!-- headless-only-tools:start -->
+
+| Tool | Why there is no canvas action to be parity with |
+|---|---|
+| `studio_plan_variants` | Nothing in the editor plans variants. Its only artefact is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER turn can edit variant B's recorded density instead of re-rolling the set. The editor's equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all. |
+
+<!-- headless-only-tools:end -->
 
 ---
 
