@@ -1,6 +1,7 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { WORKSPACE_ROOT } from './helpers/constants'
 
 /**
  * WS-14.5 — the inspector height gate: the Design tab's rendered height at a
@@ -81,10 +82,13 @@ import * as path from 'node:path'
  * would drift, and a failure would be indistinguishable from the user having
  * restyled a box. So this spec follows the convention
  * `inspector-panel-measurement.e2e.ts` already established — a fresh,
- * throwaway project created directly INSIDE `studio-workspace/` (the one
+ * throwaway project created directly INSIDE the workspace root (the one
  * shape `resolveProjectDir`'s containment check accepts; an OS temp dir
  * throws `ProjectDirOutsideWorkspaceError`) under a `ws145-e2e-` prefix,
- * removed in `afterAll`. It reproduces the same F1/F2/F3 shapes as that
+ * removed in `afterAll`. That root is `WORKSPACE_ROOT` — this run's throwaway
+ * COPY of `studio-workspace/`, not the tracked tree — which is also why this
+ * spec no longer leaves `__canonical-fixture/.studio/meta.json` modified and a
+ * `.studio/framework.json` behind it (`panel-37`'s landmine). It reproduces the same F1/F2/F3 shapes as that
  * spec's fixture, plus the F4 image the baseline names and that spec never
  * had (`clickCountsToCommonEdit.f4_downloadSourceImage` is skipped there for
  * exactly this reason). Nothing here touches an existing project.
@@ -233,7 +237,7 @@ export default function Home() {
 let fixtureDir: string
 
 test.beforeAll(() => {
-  fixtureDir = path.join(process.cwd(), 'studio-workspace', FIXTURE_PROJECT_NAME)
+  fixtureDir = path.join(WORKSPACE_ROOT, FIXTURE_PROJECT_NAME)
   fs.mkdirSync(path.join(fixtureDir, 'pages'), { recursive: true })
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.css'), FIXTURE_CSS, 'utf8')
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.tsx'), FIXTURE_PAGE, 'utf8')
