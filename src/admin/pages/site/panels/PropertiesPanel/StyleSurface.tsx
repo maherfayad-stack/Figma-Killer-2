@@ -171,7 +171,15 @@ export function StyleSurface({ definition, moduleContent, onFocusClassPicker }: 
             selector mode), and for a multi-selection, whose module props
             belong to one call site each (`commitApi.ts`). */}
         {hasModuleContent && !model.isMultiSelect && (
-          <div data-style-section="module">
+          // `data-section-id` as well as `data-style-section`: this block is
+          // not an `INSPECTOR_SECTIONS` entry, which is exactly why it went
+          // unbudgeted until panel-37 measured it at 158px on a text node and
+          // 252px on an image. The measured artefact
+          // (`docs/audits/penpot-inspector-baseline/05-section-heights.json`)
+          // keys off `data-section-id`, so carrying one puts the Module block
+          // in the same table as every real section and makes it impossible
+          // to grow it again without the number showing up.
+          <div data-style-section="module" data-section-id="module">
             <div className={styles.moduleHeader}>
               {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
               <span className={styles.moduleTitle}>{definition!.name}</span>
