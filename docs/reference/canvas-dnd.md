@@ -43,6 +43,24 @@ topology below first.
   `duplicateJsxElement`'s destination form) and for board frames (a cheap
   `boards.json` copy). Refuses for exactly the reasons the same drag without
   Alt would. See "[Alt+drag duplicates (K2)](#altdrag-duplicates-k2)".
+- **A drag that crosses into another FRAME moves the element between FILES**
+  (D2 G3). One `transplant` edit (`transplantJsxElement`) removes the markup
+  from one `.tsx` and writes it into the other, carrying whatever imports it
+  needs; Alt copies instead. Refuses — while the pointer is still down, as the
+  same chip a same-frame refusal shows — when the element reads a binding local
+  to the component it is leaving (`captured-scope`), when the destination
+  already means something else by a name it would carry
+  (`binding-conflict`), or for any of the four reasons a same-frame move
+  refuses on either end. **Two frames of the same PAGE are not cross-frame** —
+  a "duplicate as variant" sibling keeps going through `moveNodes`. See
+  "[Dragging an element BETWEEN frames](../agent-refs/canvas-internals.md)" in
+  canvas-internals.
+- **An image file dropped from the OPERATING SYSTEM onto a frame becomes an
+  `<img src alt>`** (D2 G15) — one upload into the project's own `public/`,
+  then one structural insert at the drop point. This is the canvas's one
+  native-HTML5 gesture, by necessity: a file from outside the browser is only
+  ever delivered through `DataTransfer.files`. Dropping on the empty board, or
+  dropping a non-image, is a refusal toast and no write.
 - **⌘/Ctrl+drag places by coordinates** instead of reordering — an inline
   `left`/`top` (or `inset-inline-start` in RTL) on one element, snapped to its
   siblings' edges and centres. Refuses, with a one-click remedy, when the

@@ -2,9 +2,11 @@
  * keybindingGestures — the canvas affordances that are MODIFIERS, not chords.
  *
  * Alt-hover measurement (K5), Alt+drag duplicate (K2), ⌘-drag free move
- * (K6) and the Shift/Escape pair a drag session owns (S2). None of them can
- * be fired by a keystroke: the modifier is read off a POINTER event by the
- * gesture that owns it, so every `match` here is constant-false and no
+ * (K6), the Shift/Escape pair a drag session owns (S2), and the two D2
+ * gestures that carry no modifier at all — dragging across a frame boundary
+ * (G3) and dropping a file from the desktop (G15). None of them can be fired
+ * by a keystroke: the modifier (or the drop) is read off a POINTER/DRAG event
+ * by the gesture that owns it, so every `match` here is constant-false and no
  * dispatcher will ever route to one.
  *
  * They live in the registry anyway, because that array IS the `?` sheet
@@ -62,6 +64,29 @@ export const GESTURE_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     commandId: 'canvas.dragAxisLock',
     displayName: 'Constrain a drag to one axis',
     shortcut: { mac: '⇧ + drag', win: 'Shift + drag' },
+    match: () => false,
+    scope: 'canvas',
+  },
+
+  // D2 G3 — a drag that leaves the frame it started in. No modifier at all,
+  // which is exactly why it belongs on the sheet: nothing about the gesture
+  // announces that it crosses files, and the one thing a user needs to know
+  // (Alt still means copy over there) is not discoverable by trying.
+  {
+    commandId: 'canvas.crossFrameDrag',
+    displayName: 'Drag an element into another frame — moves it between files (⌥ copies)',
+    shortcut: { mac: 'Drag across frames', win: 'Drag across frames' },
+    match: () => false,
+    scope: 'canvas',
+  },
+
+  // D2 G15 — an image file dragged in from the operating system. Not a
+  // modifier either, and the only gesture on this sheet whose input device is
+  // the desktop rather than the keyboard.
+  {
+    commandId: 'canvas.dropImageFile',
+    displayName: 'Drop an image file onto a frame to add an <img>',
+    shortcut: { mac: 'Drop a file', win: 'Drop a file' },
     match: () => false,
     scope: 'canvas',
   },

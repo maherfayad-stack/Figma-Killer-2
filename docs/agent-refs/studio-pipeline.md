@@ -201,13 +201,39 @@ therefore reached **no** code path at all: the tree changed, the save reported
 success, the `.tsx` was untouched, and the change was gone on reload. In Studio
 the repository IS the document, so that was a silent no-op.
 
-Eight kinds now exist — **`move`** and **`reparent`** (`moveJsxElement`, whose
+Nine kinds now exist — **`move`** and **`reparent`** (`moveJsxElement`, whose
 destination-parent form is W4-1's), **`delete`** (`deleteJsxElement`),
 **`insert`** (`insertJsxElement`), **`duplicate`** (`duplicateJsxElement`),
-**`wrap`** (`wrapJsxElement`), and K3's **`group`** (`wrapJsxElements` — ONE
+**`wrap`** (`wrapJsxElement`), K3's **`group`** (`wrapJsxElements` — ONE
 container around a contiguous run of siblings, ⌘G) and **`ungroup`**
-(`unwrapJsxElement` — the container goes, its children take its place, ⌘⇧G) —
-and everything else refuses out loud.
+(`unwrapJsxElement` — the container goes, its children take its place, ⌘⇧G),
+and D2 G3's **`transplant`** (`transplantJsxElement` — a move whose two ends
+are in two different FILES, the write behind dragging an element from one board
+frame into another) — and everything else refuses out loud.
+
+**`transplant` is the one kind whose destination is deliberately in another
+file**, which is why it has its own server entry (`applyTransplantEdit`) rather
+than a branch of `applyStructuralEdit`: that function's second and third
+locations are `{ line, col }` pairs only meaningful alongside `loc.file`, and
+widening them would make eight same-file kinds read as if they might not be.
+`transplant` is excluded from its parameter TYPE, so a misrouted one does not
+compile. Its destination id still goes through `studioEditLocation`, which is
+where the containment and app-source guards live — only the same-file FILTER is
+skipped. The batch's touched-file set gains the destination (or `shifted` would
+lie about the file the element landed in), and the existing post-batch import
+prune covers a transplant that MOVES, because it orphans an import in the
+origin exactly as a delete does; the destination's freshly carried import is
+never snapshotted and therefore can never be pruned.
+
+**What travels with the markup.** `transplantJsxElement` partitions the
+subtree's free variables (`analyzeFreeVariables`): a name the ORIGIN file
+resolves at module scope is CARRIED as a mirrored import — following a relative
+specifier to the file it actually names and re-resolving it against the
+destination's own location, and keeping the style the user wrote it in (a
+default import is not re-spelled as a named one). Anything body-local to the
+origin's component refuses as **`captured-scope`**, by name. Both files' next
+contents are computed in full before either is written, so a refusal leaves two
+untouched files and a success writes two complete ones.
 
 **None of them mints a node; all of them ask the SOURCE to grow one.** Adding a
 design-system component from the picker writes `<Button … />` *and* the `import`
@@ -251,7 +277,7 @@ from the node id and `lockReason` alone:
 | `multi-select` | several elements REORDERED or REPARENTED at once, or a WRAP of several (one wrapper spanning N ranges). A multi DELETE or in-place DUPLICATE is fine — the batch is ordered bottom-to-top. A GROUP (K3) of several is fine too, and this is the refusal it gets when the selection is not one run: different parents, or a gap between the members. A multi Alt+DRAG is not: N copies at one drop position have no single order in the code (`planSourceDuplicateTo`) |
 | `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
 | `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
-| `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file |
+| `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
 `expression-child` (the element comes out of `{cond && <X/>}`, so its position
@@ -263,7 +289,11 @@ group would wrap) and **`has-behaviour`**, and W4-1's
 **`out-of-scope`** — a reparent whose markup reads a binding that does not exist
 where it would land (`subtreeFreeVariables.ts`; the refusal names the
 variables). It is a static scope walk over the declarations enclosing the
-destination, never an evaluation of any of them.
+destination, never an evaluation of any of them. D2 G3 adds the two a
+CROSS-FILE move can answer that a same-file one cannot: **`captured-scope`**
+(the markup reads a binding local to the component it is leaving, so there is no
+module the other file could import it from) and **`binding-conflict`** (the
+destination already means something else by a name the move would carry).
 
 **A refusal reaches the user as an `EditConstraint`, never a bare string.**
 `describeStructuralRefusal` (`src/core/page-tree/editConstraint.ts`) dresses
