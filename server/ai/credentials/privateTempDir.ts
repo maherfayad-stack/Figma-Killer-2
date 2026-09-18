@@ -38,17 +38,36 @@
  * bounded runner's timeout and output caps like every other subprocess in
  * this tree.
  *
- * ## Fail-soft, and why that is not a hole
+ * ## The window between `mkdtemp` and the restriction, and what closes it
  *
- * A failed restriction logs and returns `false` rather than throwing. The
- * directory is still inside `os.tmpdir()`, which on a default Windows install
- * is already user-private — this call is defence in depth over that, not a
- * replacement for it, and refusing to run an agent turn because `icacls` was
- * missing would trade a real feature for a hypothetical. The caller gets the
- * boolean so a test can assert the protection really was applied on the
- * platform it is running on.
+ * `mkdtempSync` creates the directory with the ACL it INHERITS, and only then
+ * does `icacls` narrow it. On POSIX that window does not exist — `mkdtemp` is
+ * specified to create at mode 0700 — but on Windows it is real, and on a
+ * machine whose `%TEMP%` has been redirected to a shared volume it is long
+ * enough to lose to: a watcher on that volume (`ReadDirectoryChangesW` fires
+ * on creation) can pre-create the file the caller is about to write, with a
+ * DACL granting itself read. `/inheritance:r` on the PARENT does not touch an
+ * ALREADY-EXISTING child's explicit ACEs — measured, `sec-15`: after the
+ * restriction the planted file still carried `BUILTIN\Users:(R)` — and
+ * `writeFileSync`'s default `'w'` flag opens-and-truncates an existing file
+ * rather than refusing it, so the secret lands inside the attacker's object.
+ *
+ * {@link writePrivateFileExclusive} is the answer and the only way a secret
+ * should ever be written in here: `O_CREAT | O_EXCL`, so a name that already
+ * exists — as a file, a directory, a hardlink, or a symlink — is an error
+ * rather than a target.
+ *
+ * ## Fail-soft here, fail-CLOSED at the caller
+ *
+ * A failed restriction logs and returns `false` rather than throwing, because
+ * "restrict this directory" and "write a secret into it" are two different
+ * decisions and only the second one is dangerous. The caller that writes a
+ * secret must treat `false` as a refusal — see
+ * `../drivers/claudeCliMcpConfigFile.ts`, which deletes the directory and
+ * throws, degrading the turn to "no MCP tools" rather than putting a live
+ * bearer token somewhere it could not set the access control on.
  */
-import { chmodSync, mkdtempSync } from 'node:fs'
+import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir, userInfo } from 'node:os'
 import { join } from 'node:path'
 import { minimalSubprocessEnv, runCappedSubprocess, type SubprocessSpawnFn } from '../../handlers/studio/subprocessRunner'
@@ -84,6 +103,30 @@ export async function createPrivateTempDir(
   const dir = mkdtempSync(join(tmpdir(), prefix))
   const restricted = await restrictDirectoryToCurrentUser(dir, options)
   return { dir, restricted }
+}
+
+/**
+ * Writes a secret to `path`, creating it EXCLUSIVELY — the file must not
+ * already exist, in any form.
+ *
+ * `'wx'` is `O_CREAT | O_EXCL`, and the exclusivity is the security property:
+ * it is what makes "this file was created inside a directory I had already
+ * locked down, so it inherited that directory's DACL" true. Plain `'w'`
+ * (`writeFileSync`'s default) opens an existing file and truncates it, which
+ * on Windows keeps whatever DACL that pre-existing file already had — so a
+ * name an attacker planted during the `mkdtemp`→`icacls` window would be
+ * written into, not refused, and the secret would land in an object they can
+ * read. Driven, `sec-15`: with `'w'`, a planted `mcp-config.json` carrying
+ * `BUILTIN\Users:(R)` survives the parent's `/inheritance:r` and receives the
+ * token; with `'wx'` the write throws `EEXIST` and the planted file is
+ * untouched.
+ *
+ * `mode` is the create-time permission — real on POSIX, where the file never
+ * exists with a wider mode even for an instant, and decorative on Windows,
+ * where the inherited single-ACE DACL is what holds.
+ */
+export function writePrivateFileExclusive(path: string, contents: string): void {
+  writeFileSync(path, contents, { mode: PRIVATE_FILE_MODE, flag: 'wx' })
 }
 
 /**
