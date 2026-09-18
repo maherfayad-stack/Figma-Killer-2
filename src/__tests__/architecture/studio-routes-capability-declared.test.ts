@@ -23,8 +23,10 @@
  *      serves is a capability nobody can audit).
  */
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   resolveStudioRouteCapability,
@@ -53,22 +55,10 @@ const SHARED_ROUTE_CONSTANT_FILES = [
  */
 const STUDIO_PATH_RE = /'(\/admin\/api\/studio\/[a-z0-9\-/]*)'/g
 
-function listSourceFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stats = statSync(full)
-    if (stats.isDirectory()) {
-      if (entry === '__tests__') continue
-      out.push(...listSourceFiles(full))
-      continue
-    }
-    if (!stats.isFile() || extname(entry) !== '.ts') continue
-    if (entry.endsWith('.test.ts')) continue
-    out.push(full)
-  }
-  return out
-}
+const listSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts']).filter(
+    (f) => !toPosixPath(f).includes('/__tests__/') && !f.endsWith('.test.ts'),
+  )
 
 interface FoundPath {
   path: string
@@ -82,7 +72,7 @@ function collectStudioPathLiterals(): FoundPath[] {
     // The table itself is the declaration, not a usage — scanning it would
     // make every entry trivially justify itself.
     if (file.endsWith('routeCapabilities.ts')) continue
-    const src = readFileSync(file, 'utf8')
+    const src = readSource(file)
     for (const match of src.matchAll(STUDIO_PATH_RE)) {
       const raw = match[1]!
       const path = raw.length > STUDIO_ROUTE_PREFIX.length && raw.endsWith('/') ? raw.slice(0, -1) : raw

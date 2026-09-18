@@ -37,11 +37,11 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { join } from 'path'
+import { REPO_ROOT, readSource, toRepoRelativePosix, walkSourceTree } from './helpers/sourceTree'
 
-const REPO_ROOT = join(import.meta.dir, '../../../')
 const SCAN_DIRS = ['src', 'server']
+const SCAN_EXTENSIONS = ['.ts', '.tsx', '.js', '.mts', '.mjs']
 
 interface PackageRule {
   /** Display name in error messages. */
@@ -101,43 +101,29 @@ const RULES: PackageRule[] = [
   },
 ]
 
-function collectFiles(dir: string): string[] {
-  const out: string[] = []
-  if (!existsSync(dir)) return out
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    // Don't scan node_modules or build output.
-    if (entry === 'node_modules' || entry === '.tmp' || entry === 'dist') continue
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      out.push(...collectFiles(full))
-    } else if (['.ts', '.tsx', '.js', '.mts', '.mjs'].includes(extname(entry))) {
-      // Skip every architecture-gate test file — gates routinely embed the
-      // forbidden literals in their own scan regex.
-      if (full.includes('/__tests__/architecture/')) continue
-      out.push(full)
-    }
-  }
-  return out
-}
-
-function repoRelative(absPath: string): string {
-  return relative(REPO_ROOT, absPath).replaceAll('\\', '/')
-}
-
 describe('ai-driver-isolation gate', () => {
-  const allFiles = SCAN_DIRS.flatMap((d) => collectFiles(join(REPO_ROOT, d)))
+  // One shared walk, read in parallel (`helpers/sourceTree.ts`). This gate used
+  // to re-read all of `src/` + `server/` once per RULE with a serial
+  // `readFileSync`, which cost 29.7 s against its own 20 s per-test budget.
+  //
+  // The architecture-gate exclusion below was `full.includes('/__tests__/architecture/')`,
+  // which on win32 matched NOTHING (the walked path carried backslashes), so on
+  // Windows this gate scanned its own rule literals. It never produced a false
+  // positive only because those literals are regex source, not import syntax —
+  // an accident, not a design. Comparing a POSIX-normalised relative path is
+  // what makes the exclusion mean the same thing on both platforms.
+  const allFiles = SCAN_DIRS.flatMap((d) => walkSourceTree(join(REPO_ROOT, d), SCAN_EXTENSIONS)).filter(
+    (full) => !toRepoRelativePosix(full).includes('/__tests__/architecture/'),
+  )
 
   for (const rule of RULES) {
     it(`${rule.label}: only allowed files import it`, () => {
       const violations: string[] = []
       for (const file of allFiles) {
-        const rel = repoRelative(file)
+        const rel = toRepoRelativePosix(file)
         if (rule.allowed.includes(rel)) continue
         if (rule.allowedPrefixes?.some((p) => rel.startsWith(p))) continue
-        let content: string
-        try { content = readFileSync(file, 'utf8') } catch { continue }
-        if (rule.importRe.test(content)) {
+        if (rule.importRe.test(readSource(file))) {
           violations.push(rel)
         }
       }

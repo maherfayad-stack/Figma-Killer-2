@@ -7,8 +7,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const SCAN_ROOTS = [join(SRC_ROOT, 'admin'), join(SRC_ROOT, 'ui')]
@@ -46,21 +47,9 @@ const SVG_DIMENSION_RE =
   /\b(?:width|height|min-width|min-height|max-width|max-height|inline-size|block-size)\s*:\s*[^;]*\d+(?:\.\d+)?px[^;]*;/gm
 const CSS_RULE_RE = /([^{}]+)\{([^{}]*)\}/g
 
-function collectFiles(dir: string, extensions: ReadonlyArray<string>): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const info = statSync(full)
-    if (info.isDirectory()) {
-      results.push(...collectFiles(full, extensions))
-    } else if (extensions.includes(extname(entry))) {
-      if (extname(entry) === '.css' && !entry.endsWith('.module.css')) continue
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string, extensions: ReadonlyArray<string>): string[] =>
+  // `.css` here always means `.module.css`, exactly as the private walker did.
+  walkSourceTree(dir, extensions).filter((f) => !f.endsWith('.css') || f.endsWith('.module.css'))
 
 /** Strip `/* ... *\/` block comments and `// ...` line comments. */
 function stripComments(source: string): string {
@@ -118,7 +107,7 @@ function findSvgDimensions(filePath: string, source: string): string[] {
 
 describe('admin spacing tokens', () => {
   it('declares the admin fluid spacing scale in globals.css', () => {
-    const globals = readFileSync(GLOBALS_CSS, 'utf8')
+    const globals = readSource(GLOBALS_CSS)
 
     expect(globals).toContain('--space-px: 1px;')
     for (const token of ADMIN_SPACE_FLUID_TOKENS) {
@@ -131,7 +120,7 @@ describe('admin spacing tokens', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectFiles(root, ['.css'])) {
-        offenders.push(...findSpacingDeclarations(filePath, readFileSync(filePath, 'utf8')))
+        offenders.push(...findSpacingDeclarations(filePath, readSource(filePath)))
       }
     }
 
@@ -152,7 +141,7 @@ describe('admin spacing tokens', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectFiles(root, ['.ts', '.tsx'])) {
-        offenders.push(...findInlineSpacing(filePath, readFileSync(filePath, 'utf8')))
+        offenders.push(...findInlineSpacing(filePath, readSource(filePath)))
       }
     }
 
@@ -173,7 +162,7 @@ describe('admin spacing tokens', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectFiles(root, ['.css'])) {
-        offenders.push(...findSvgDimensions(filePath, readFileSync(filePath, 'utf8')))
+        offenders.push(...findSvgDimensions(filePath, readSource(filePath)))
       }
     }
 
@@ -192,7 +181,7 @@ describe('admin spacing tokens', () => {
   it('uses chrome spacing aliases instead of hardcoded pixel spacing in the iframe editor chrome', () => {
     const offenders = findSpacingDeclarations(
       EDITOR_CHROME_INJECTOR,
-      readFileSync(EDITOR_CHROME_INJECTOR, 'utf8'),
+      readSource(EDITOR_CHROME_INJECTOR),
     )
 
     if (offenders.length > 0) {

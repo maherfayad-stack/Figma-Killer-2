@@ -34,8 +34,10 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const SCAN_ROOT = join(SRC_ROOT, 'admin')
@@ -125,20 +127,8 @@ const NATIVE_HTML5_DND_ALLOWLIST: ReadonlySet<string> = new Set([
 
 // ─── File collection ─────────────────────────────────────────────────────────
 
-function collectSourceFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    if (entry === '__tests__') continue
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) {
-      results.push(...collectSourceFiles(full))
-    } else if (extname(entry) === '.ts' || extname(entry) === '.tsx') {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectSourceFiles = (dir: string): string[] =>
+  walkSourceTree(dir, ['.ts', '.tsx']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 function relPath(file: string): string {
   return relative(SRC_ROOT, file).split('\\').join('/')
@@ -154,7 +144,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
     for (const file of files) {
       const rel = relPath(file)
       if (DND_KIT_ALLOWLIST.has(rel)) continue
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (/from ['"]@dnd-kit\/core['"]/.test(source)) {
         violations.push(rel)
       }
@@ -180,7 +170,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
         stale.push(`${rel} (file no longer exists)`)
         continue
       }
-      const source = readFileSync(full, 'utf8')
+      const source = readSource(full)
       if (!/from ['"]@dnd-kit\/core['"]/.test(source)) {
         stale.push(`${rel} (no longer imports @dnd-kit/core — remove from the allowlist)`)
       }
@@ -195,7 +185,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
     for (const file of files) {
       const rel = relPath(file)
       if (NATIVE_HTML5_DND_ALLOWLIST.has(rel)) continue
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       if (/\bdataTransfer\b|\bDragEvent</.test(source)) {
         violations.push(rel)
       }
@@ -221,7 +211,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
         stale.push(`${rel} (file no longer exists)`)
         continue
       }
-      const source = readFileSync(full, 'utf8')
+      const source = readSource(full)
       if (!/\bdataTransfer\b|\bDragEvent</.test(source)) {
         stale.push(`${rel} (no longer uses dataTransfer — remove from the allowlist)`)
       }

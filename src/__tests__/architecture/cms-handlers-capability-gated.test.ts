@@ -14,8 +14,10 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { toPosixPath } from './pathHelpers'
+
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const REPO_ROOT = join(fileURLToPath(import.meta.url), '..', '..', '..', '..')
@@ -114,21 +116,9 @@ const ALLOWLIST: ReadonlyMap<string, string> = new Map([
   ['dashboard/storage.ts', 'Widget data reader called by gated dashboard/index.ts dispatcher.'],
 ])
 
-function listHandlerFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const s = statSync(full)
-    if (s.isDirectory()) {
-      // Test files are never Bun.serve routes — skip the `__tests__` tree.
-      if (entry === '__tests__') continue
-      out.push(...listHandlerFiles(full))
-    } else if (s.isFile() && extname(entry) === '.ts') {
-      out.push(full)
-    }
-  }
-  return out
-}
+const listHandlerFiles = (dir: string): string[] =>
+  // Test files are never Bun.serve routes — skip the `__tests__` tree.
+  walkSourceTree(dir, ['.ts']).filter((f) => !toPosixPath(f).includes('/__tests__/'))
 
 describe('cms-handlers-capability-gated gate', () => {
   it('every CMS handler file calls requireCapability / requireAnyCapability / requireAuthenticatedUser / requireStepUp', () => {
@@ -141,7 +131,7 @@ describe('cms-handlers-capability-gated gate', () => {
       // Keeps "plugins/state.ts" distinguishable from "state.ts" at root.
       const relKey = relative(CMS_HANDLERS_DIR, file).replaceAll('\\', '/')
       if (ALLOWLIST.has(relKey)) continue
-      const src = readFileSync(file, 'utf8')
+      const src = readSource(file)
       if (!AUTH_GATE_RE.test(src)) {
         violations.push(relative(REPO_ROOT, file).replaceAll('\\', '/'))
       }

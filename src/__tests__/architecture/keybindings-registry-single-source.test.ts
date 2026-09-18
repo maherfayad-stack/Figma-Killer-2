@@ -29,8 +29,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const SRC_ROOT = join(import.meta.dir, '../../')
@@ -54,21 +55,7 @@ const ALLOWLIST = new Set([
   'admin/pages/site/hooks/useCanvas.ts',
 ])
 
-function collectTsFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (full.includes('node_modules')) continue
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectTsFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectTsFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 /**
  * Strips single-line comments (//) from source before pattern testing
@@ -119,7 +106,7 @@ describe('Keybindings registry — single source of truth', () => {
       const rel = toPosixPath(relative(SRC_ROOT, file))
       if (ALLOWLIST.has(rel)) continue
 
-      const rawSource = readFileSync(file, 'utf8')
+      const rawSource = readSource(file)
       // Check line by line to avoid cross-line false positives and skip comment lines.
       const lines = rawSource.split('\n')
 
@@ -169,7 +156,7 @@ describe('Keybindings registry — single source of truth', () => {
       const rel = toPosixPath(relative(SRC_ROOT, file))
       if (ALLOWLIST.has(rel)) continue
 
-      const lines = readFileSync(file, 'utf8').split('\n')
+      const lines = readSource(file).split('\n')
 
       for (let i = 0; i < lines.length; i++) {
         const line = lines[i]!

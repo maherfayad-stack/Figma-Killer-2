@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
-import { extname, join, relative } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'node:path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 const SCAN_ROOTS = [
@@ -11,20 +12,7 @@ const SCAN_ROOTS = [
 
 const NATIVE_DIALOG_RE = /\b(?:window\.)?(?:alert|confirm|prompt)\s*\(/g
 
-function collectFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full))
-    } else if (['.ts', '.tsx'].includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx'])
 
 function stripComments(source: string): string {
   return source
@@ -38,7 +26,7 @@ describe('native browser dialogs are not used in production app code', () => {
 
     for (const root of SCAN_ROOTS) {
       for (const filePath of collectFiles(root)) {
-        const stripped = stripComments(readFileSync(filePath, 'utf8'))
+        const stripped = stripComments(readSource(filePath))
         const lines = stripped.split('\n')
         lines.forEach((line, index) => {
           NATIVE_DIALOG_RE.lastIndex = 0

@@ -34,8 +34,9 @@
  */
 
 import { describe, expect, it } from 'bun:test'
-import { existsSync, readFileSync, readdirSync, statSync } from 'fs'
-import { extname, join, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join, relative } from 'path'
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 // 'src/editor' never existed in this repo's tracked history (`git log --all
@@ -93,16 +94,7 @@ export const ALLOWED_NATIVE_TITLES: Array<{
 
 // ─── File collection ───────────────────────────────────────────────────────────
 
-function collectTSXFiles(dir: string): string[] {
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) results.push(...collectTSXFiles(full))
-    else if (extname(entry) === '.tsx') results.push(full)
-  }
-  return results
-}
+const collectTSXFiles = (dir: string): string[] => walkSourceTree(dir, ['.tsx'])
 
 // ─── Violation scanner ─────────────────────────────────────────────────────────
 
@@ -186,7 +178,7 @@ describe('Architecture — no native title= on interactive elements', () => {
 
     for (const file of files) {
       const rel = relative(SRC_ROOT, file)
-      const source = readFileSync(file, 'utf8')
+      const source = readSource(file)
       const violations = findViolations(source, rel)
       allViolations.push(...violations)
     }

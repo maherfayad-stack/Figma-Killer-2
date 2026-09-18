@@ -27,8 +27,9 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync, existsSync } from 'fs'
-import { join, extname, relative } from 'path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+import { existsSync } from 'fs'
+import { join, relative } from 'path'
 import { toPosixPath } from './pathHelpers'
 
 const ROOT = join(import.meta.dir, '../../..')
@@ -72,21 +73,7 @@ const SCAN_ROOTS = [join(ROOT, 'src'), join(ROOT, 'server')]
 // Trailing separator so `framework` does not prefix-match `framework-schema`.
 const OWN_MODULE_DIRS = BARRELLED_MODULES.map((m) => join(ROOT, 'src', 'core', m) + '/')
 
-function collectFiles(dir: string): string[] {
-  const exts = ['.ts', '.tsx', '.mts', '.cts']
-  const results: string[] = []
-  if (!existsSync(dir)) return results
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    const stat = statSync(full)
-    if (stat.isDirectory()) {
-      results.push(...collectFiles(full))
-    } else if (exts.includes(extname(entry))) {
-      results.push(full)
-    }
-  }
-  return results
-}
+const collectFiles = (dir: string): string[] => walkSourceTree(dir, ['.ts', '.tsx', '.mts', '.cts'])
 
 const DEEP_IMPORT = new RegExp(
   `(?:from|import\\()\\s*['"](@core/(?:${BARRELLED_MODULES.join('|')})/[^'"]+)['"]`,
@@ -139,7 +126,7 @@ describe('Core barrel deep imports — external callers use the barrel, never a 
         // POSIX on both sides of every comparison — `path.relative` returns
         // backslashes on win32, and the allowlist is written with `/`.
         const relPosix = toPosixPath(relative(ROOT, filePath))
-        const source = readFileSync(filePath, 'utf8')
+        const source = readSource(filePath)
         source.split('\n').forEach((line, i) => {
           const match = DEEP_IMPORT.exec(line)
           if (!match) return
@@ -170,7 +157,7 @@ describe('Core barrel deep imports — external callers use the barrel, never a 
     for (const entry of ALLOWLIST) {
       const filePath = join(ROOT, ...entry.file.split('/'))
       expect(existsSync(filePath), `ALLOWLIST names a file that no longer exists: ${entry.file}`).toBe(true)
-      const source = readFileSync(filePath, 'utf8')
+      const source = readSource(filePath)
       expect(
         source.includes(`'${entry.specifier}'`) || source.includes(`"${entry.specifier}"`),
         `ALLOWLIST entry for ${entry.file} is stale — it no longer imports '${entry.specifier}'. Delete the entry.`,

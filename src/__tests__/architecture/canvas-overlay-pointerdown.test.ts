@@ -27,8 +27,9 @@
  * seen the full press/release pair, so its tap state is correct.
  */
 import { describe, it, expect } from 'bun:test'
-import { readdirSync, readFileSync, statSync } from 'node:fs'
-import { join, extname } from 'node:path'
+import { readSource, walkSourceTree } from './helpers/sourceTree'
+
+import { join } from 'node:path'
 
 const CANVAS_ROOT = join(import.meta.dir, '../../admin/pages/site/canvas')
 
@@ -116,15 +117,7 @@ const ALLOWLIST = new Set<string>([
   'BoardDocsLayer/DocBlockView.tsx',
 ])
 
-function tsxFiles(dir: string): string[] {
-  const out: string[] = []
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry)
-    if (statSync(full).isDirectory()) out.push(...tsxFiles(full))
-    else if (extname(entry) === '.tsx') out.push(full)
-  }
-  return out
-}
+const tsxFiles = (dir: string): string[] => walkSourceTree(dir, ['.tsx'])
 
 describe('the detector itself', () => {
   // Twice now, this gate has passed while the hazard was live in the tree.
@@ -160,7 +153,7 @@ describe('canvas overlays do not swallow pointerdown', () => {
   it('no overlay stops pointerdown propagation', () => {
     const offenders = tsxFiles(CANVAS_ROOT)
       .filter((file) => ![...ALLOWLIST].some((allowed) => file.endsWith(allowed)))
-      .filter((file) => swallowsPointerDown(readFileSync(file, 'utf8')))
+      .filter((file) => swallowsPointerDown(readSource(file)))
       .map((file) => file.slice(file.indexOf('src/')))
 
     expect(offenders).toEqual([])
