@@ -17,6 +17,18 @@
  * `AbortError`; callers detect it with {@link isAbortError} instead of
  * hand-rolling `(err as Error).name === 'AbortError'` at each call site.
  *
+ * GATEWAY-DOWN RETRY: every call also retries, silently, an empty-bodied
+ * 502/503/504 (see `GATEWAY_STATUSES` and {@link GATEWAY_RETRY_BACKOFF_MS}) —
+ * the shape the Vite dev proxy answers with when nothing is listening on the
+ * API port, e.g. the second or two `bun --watch server/index.ts` spends
+ * restarting after a file change. An empty body on one of those statuses
+ * proves the request never reached a handler, so retrying it has zero
+ * server-side effect regardless of HTTP method — a `POST` that never ran is
+ * exactly as safe to repeat as a `GET`. A response the real server DID
+ * construct (a genuine `{ error }` envelope, even one that happens to use a
+ * 502/503/504 status) is a real answer and is never retried. Disable per-call
+ * with `retryGatewayDown: false`.
+ *
  * This module is the generic transport layer — it depends on nothing in
  * `@core/persistence`. The persistence layer (and everything else) depends on
  * it, never the reverse.
@@ -68,6 +80,49 @@ export function isAbortError(err: unknown): boolean {
  * empty one is an unambiguous "the backend is down" in this app's topology.
  */
 const GATEWAY_STATUSES = new Set([502, 503, 504])
+
+/**
+ * Backoff ladder for the gateway-down retry described in the module doc
+ * comment. Three rungs, ~5s total — long enough to ride out a `bun --watch`
+ * restart (typically under two seconds) without making a genuinely offline
+ * backend feel slow to report itself.
+ */
+export const GATEWAY_RETRY_BACKOFF_MS = [500, 1500, 3000] as const
+
+/** Real-timer sleep, abortable — the default `sleepImpl`; tests inject a fast stand-in. */
+function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new DOMException('Aborted', 'AbortError'))
+      return
+    }
+    const timer = setTimeout(resolve, ms)
+    signal?.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer)
+        reject(new DOMException('Aborted', 'AbortError'))
+      },
+      { once: true },
+    )
+  })
+}
+
+/**
+ * True when `res` is a gateway status AND its body is empty — the signal that
+ * nothing was listening on the API port, per the module doc comment. Reads
+ * via `res.clone()` so the body is still intact for the caller (or the next
+ * retry attempt's own error path) to read again.
+ */
+async function isEmptyGatewayResponse(res: Response): Promise<boolean> {
+  if (!GATEWAY_STATUSES.has(res.status)) return false
+  try {
+    const text = await res.clone().text()
+    return text.trim() === ''
+  } catch {
+    return false
+  }
+}
 
 /**
  * Best-effort human-readable message for a failed `Response`. Prefers the
@@ -152,6 +207,15 @@ interface ApiRequestOptions<S extends TSchema = TSchema> {
   fallbackMessage?: string
   /** Injectable fetch — test seam only; defaults to the global `fetch`. */
   fetchImpl?: FetchLike
+  /**
+   * Retry an empty-bodied 502/503/504 (see the module doc comment). Defaults
+   * to `true` — the retry is provably safe for every method, so opting out
+   * is rare; it exists as an escape hatch, not a decision every call site
+   * needs to make.
+   */
+  retryGatewayDown?: boolean
+  /** Injectable backoff sleep — test seam only; defaults to a real timer. */
+  sleepImpl?: (ms: number, signal?: AbortSignal | null) => Promise<void>
 }
 
 function buildUrl(path: string, query?: ApiRequestOptions['query']): string {
@@ -256,6 +320,8 @@ async function requestResponse(
     credentials = 'include',
     fallbackMessage,
     fetchImpl = globalThis.fetch.bind(globalThis),
+    retryGatewayDown = true,
+    sleepImpl = sleep,
   } = options
 
   const init: RequestInit = { method, credentials }
@@ -272,13 +338,20 @@ async function requestResponse(
   }
   if (Object.keys(finalHeaders).length > 0) init.headers = finalHeaders
 
-  const res = await fetchImpl(buildUrl(path, query), init)
+  const url = buildUrl(path, query)
 
-  if (!res.ok) {
+  for (let attempt = 0; ; attempt += 1) {
+    const res = await fetchImpl(url, init)
+    if (res.ok) return res
+
+    if (retryGatewayDown && attempt < GATEWAY_RETRY_BACKOFF_MS.length && (await isEmptyGatewayResponse(res))) {
+      await sleepImpl(GATEWAY_RETRY_BACKOFF_MS[attempt]!, signal)
+      continue
+    }
+
     throw new ApiError(
       await responseErrorMessage(res, fallbackMessage ?? `Request failed: ${res.status}`),
       res.status,
     )
   }
-  return res
 }

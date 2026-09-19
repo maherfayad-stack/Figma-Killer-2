@@ -5,11 +5,15 @@ import {
   apiRequest,
   ApiError,
   assertOk,
+  GATEWAY_RETRY_BACKOFF_MS,
   isAbortError,
   ndjsonRequest,
   readEnvelope,
   responseErrorMessage,
 } from '@core/http'
+
+/** No-op stand-in for the real backoff timer, so retry tests run instantly. */
+const noSleep = async () => {}
 
 const BodySchema = Type.Object({ value: Type.Number() })
 
@@ -91,6 +95,69 @@ describe('apiRequest', () => {
   it('returns void when no schema is supplied', async () => {
     const result = await apiRequest('/x', { fetchImpl: async () => new Response(null, { status: 204 }) })
     expect(result).toBeUndefined()
+  })
+
+  // The dev-server-restart case: a `bun --watch` restart makes the Vite proxy
+  // answer with an empty 502/503/504 for a second or two. The request never
+  // reached a handler, so a POST is exactly as safe to replay as a GET — the
+  // gesture must complete once the server comes back, with no error surfaced.
+  it('retries an empty-bodied gateway status and completes once the server answers', async () => {
+    let calls = 0
+    const result = await apiRequest('/admin/api/studio/page', {
+      method: 'POST',
+      body: { kind: 'screen' },
+      schema: Type.Object({ ok: Type.Boolean() }),
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        if (calls < 3) return new Response('', { status: 502 })
+        return jsonResponse({ ok: true })
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(calls).toBe(3)
+  })
+
+  it('gives up after exhausting the gateway-retry ladder and surfaces the down-backend message', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('', { status: 502 })
+      },
+    }).catch((e) => e)
+    // One initial attempt + one retry per backoff rung.
+    expect(calls).toBe(GATEWAY_RETRY_BACKOFF_MS.length + 1)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toContain("Studio server isn't responding")
+  })
+
+  it('never retries a gateway status that carries a real error body', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return jsonResponse({ error: 'upstream refused' }, 502)
+      },
+    }).catch((e) => e)
+    expect(calls).toBe(1)
+    expect((err as ApiError).message).toBe('upstream refused')
+  })
+
+  it('does not retry gateway statuses when retryGatewayDown is false', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      retryGatewayDown: false,
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('', { status: 503 })
+      },
+    }).catch((e) => e)
+    expect(calls).toBe(1)
+    expect(err).toBeInstanceOf(ApiError)
   })
 
   it('propagates abort errors so callers can detect them with isAbortError', async () => {
