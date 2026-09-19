@@ -15,9 +15,23 @@ Archive section at the bottom of this file indexes them.
 ### perf-10 — insert/duplicate/wrap/group paint the canvas before the write lands
 - **Agent:** store-engineer
 - **Stage:** done — branch pushed, draft PR open against `fix/studio-load-memo-cold-on-every-load`.
-- **Branch:** `perf/structural-gesture-latency` (this worktree). Commits: `c3479358`
-  (rate-limit-preserved WIP, unreviewed when written, now folded in) + `b35cd73c`
-  (the trims, the shared helper move, the regression test).
+- **Branch:** `perf/structural-gesture-latency` · **PR:** https://github.com/maherfayad-stack/Figma-Killer-2/pull/195
+  (draft, against `fix/studio-load-memo-cold-on-every-load`). Commits (after the
+  base-mismatch fix below): `d9a104f5` (rate-limit-preserved WIP, unreviewed when
+  written, now folded in), `fa391a63` (the trims, the shared helper move, the
+  regression test), `d19eed5a` (this handoff + the doc update).
+  **Landmine 0, worth its own line:** the worktree this task ran in was NOT
+  branched from `fix/studio-load-memo-cold-on-every-load`'s actual tip
+  (`08b93adf`) — its history instead ran through `51b19940` (an unrelated
+  three-wave merge, PR #191), diverging from the real base at `9716abf7`. Caught
+  before pushing (`git merge-base --is-ancestor 08b93adf HEAD` said no) by
+  diffing both lineages against the shared merge-base for every file this task
+  touched (zero overlap, confirmed) and re-basing via `git checkout -b … origin/
+  fix/studio-load-memo-cold-on-every-load` + `git cherry-pick` of the three
+  commits, never a rebase through the divergent history. If your worktree's
+  `git log` doesn't show your assigned base commit as an ancestor of `HEAD`,
+  check this before you push — a PR from the wrong base silently asks to revert
+  someone else's already-merged work.
 - **Updated:** 2026-09-19
 - **Goal:** cut the latency the user FEELS between ⌘D/⌘G/an Assets-panel insert and
   seeing the result. Server-side re-sync had already dropped from ~2.9–3.3s to
