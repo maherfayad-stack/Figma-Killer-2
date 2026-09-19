@@ -5,11 +5,15 @@ import {
   apiRequest,
   ApiError,
   assertOk,
+  GATEWAY_RETRY_BACKOFF_MS,
   isAbortError,
   ndjsonRequest,
   readEnvelope,
   responseErrorMessage,
 } from '@core/http'
+
+/** No-op stand-in for the real backoff timer, so retry tests run instantly. */
+const noSleep = async () => {}
 
 const BodySchema = Type.Object({ value: Type.Number() })
 
@@ -91,6 +95,98 @@ describe('apiRequest', () => {
   it('returns void when no schema is supplied', async () => {
     const result = await apiRequest('/x', { fetchImpl: async () => new Response(null, { status: 204 }) })
     expect(result).toBeUndefined()
+  })
+
+  // The dev-server-restart case: a `bun --watch` restart makes the Vite proxy
+  // answer with an empty 502/503/504 for a second or two. `/admin/api/studio/page`
+  // is one of the explicitly protected write routes, so a lost response is
+  // retried with a STABLE idempotency key the server can recognise as a
+  // replay — the gesture completes once the server comes back, with no error
+  // surfaced, and without the client itself deciding a POST was safe to repeat.
+  it('retries a protected write route with a stable idempotency key and completes once the server answers', async () => {
+    let calls = 0
+    const seenKeys: (string | null)[] = []
+    const result = await apiRequest('/admin/api/studio/page', {
+      method: 'POST',
+      body: { kind: 'screen' },
+      schema: Type.Object({ ok: Type.Boolean() }),
+      sleepImpl: noSleep,
+      fetchImpl: async (_input, init) => {
+        calls += 1
+        seenKeys.push((init?.headers as Record<string, string> | undefined)?.['X-Studio-Idempotency-Key'] ?? null)
+        if (calls < 3) return new Response('', { status: 502 })
+        return jsonResponse({ ok: true })
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(calls).toBe(3)
+    // Same key on every attempt — this is what lets the server recognise a
+    // replay instead of the client merely assuming one is safe.
+    expect(seenKeys[0]).toBeTruthy()
+    expect(new Set(seenKeys).size).toBe(1)
+  })
+
+  // The hole this closes: an empty-bodied gateway status collapses TWO
+  // failures the client cannot tell apart — "never reached a handler"
+  // (ECONNREFUSED, safe to repeat) and "the handler finished its write and
+  // the process died before the response went out" (a `bun --watch` restart
+  // mid-flight, NOT safe to repeat blindly). A state-changing request to a
+  // path with no server-side replay guard must never be retried on a guess.
+  it('never retries a state-changing method to a path with no idempotency guard', async () => {
+    let calls = 0
+    const err = await apiRequest('/admin/api/studio/frame-defaults', {
+      method: 'POST',
+      body: { width: 400, height: 800 },
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('', { status: 502 })
+      },
+    }).catch((e) => e)
+    expect(calls).toBe(1)
+    expect(err).toBeInstanceOf(ApiError)
+  })
+
+  it('gives up after exhausting the gateway-retry ladder and surfaces the down-backend message', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('', { status: 502 })
+      },
+    }).catch((e) => e)
+    // One initial attempt + one retry per backoff rung.
+    expect(calls).toBe(GATEWAY_RETRY_BACKOFF_MS.length + 1)
+    expect(err).toBeInstanceOf(ApiError)
+    expect((err as ApiError).message).toContain("Studio server isn't responding")
+  })
+
+  it('never retries a gateway status that carries a real error body', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return jsonResponse({ error: 'upstream refused' }, 502)
+      },
+    }).catch((e) => e)
+    expect(calls).toBe(1)
+    expect((err as ApiError).message).toBe('upstream refused')
+  })
+
+  it('does not retry gateway statuses when retryGatewayDown is false', async () => {
+    let calls = 0
+    const err = await apiRequest('/x', {
+      retryGatewayDown: false,
+      sleepImpl: noSleep,
+      fetchImpl: async () => {
+        calls += 1
+        return new Response('', { status: 503 })
+      },
+    }).catch((e) => e)
+    expect(calls).toBe(1)
+    expect(err).toBeInstanceOf(ApiError)
   })
 
   it('propagates abort errors so callers can detect them with isAbortError', async () => {
