@@ -152,6 +152,7 @@ function composeOneLayout(
   workspaceRoot: string,
   evalOptions: StaticEvalOptions | undefined,
   componentSourcesOut: Record<string, ComponentSource>,
+  dependencyFilesOut: Set<string> | undefined,
 ): { page: ParsedPage; relFile: string } | undefined {
   try {
     const found = findFileComponent(project, layoutAbsFile)
@@ -181,7 +182,7 @@ function composeOneLayout(
     // `{children}` splice above, so content flows through a local wrapper too.
     const sources = resolveComponentSources(project, layoutAbsFile, workspaceRoot, patched)
     Object.assign(componentSourcesOut, sources)
-    const expanded = inlineLocalComponents(patched, sources, project, workspaceRoot, { evalOptions })
+    const expanded = inlineLocalComponents(patched, sources, project, workspaceRoot, { evalOptions, dependencyFiles: dependencyFilesOut })
 
     // W4-4 Phase A — a layout's own styled templates and the route's are both
     // part of what this composed route renders.
@@ -230,6 +231,15 @@ export interface ComposeAppRouterRouteResult {
   composedLayoutFiles: string[]
   /** `resolveComponentSources` results for every local component inlined while expanding the layout chain — merge into the caller's page-wide `componentSources` map, same as a page's own. */
   componentSources: Record<string, ComponentSource>
+  /**
+   * Absolute paths of every local component file transitively inlined while
+   * expanding the layout chain — the same transitive set
+   * `InlineOptions.dependencyFiles` collects for a page's own inlining, merged
+   * across every layer. `parseAppRouterRouteEntry` folds these into the
+   * route's `pageParseCache` dependency list alongside the layout files
+   * themselves and the page's own transitive set.
+   */
+  dependencyFiles: string[]
 }
 
 /**
@@ -245,6 +255,7 @@ export function composeAppRouterRoute(opts: ComposeAppRouterRouteOptions): Compo
 
   const pageOwnNodeIds = new Set(Object.keys(composed.nodes))
   const componentSources: Record<string, ComponentSource> = {}
+  const dependencyFiles = new Set<string>()
   const composedLayoutFiles: string[] = []
 
   for (let i = opts.layoutAbsFiles.length - 1; i >= 0; i--) {
@@ -255,6 +266,7 @@ export function composeAppRouterRoute(opts: ComposeAppRouterRouteOptions): Compo
       opts.workspaceRoot,
       opts.evalOptions,
       componentSources,
+      dependencyFiles,
     )
     if (!result) break // decline this layer AND everything further out — see `composeOneLayout`'s doc.
     composed = result.page
@@ -262,5 +274,5 @@ export function composeAppRouterRoute(opts: ComposeAppRouterRouteOptions): Compo
   }
 
   const chromeNodeIds = Object.keys(composed.nodes).filter((id) => !pageOwnNodeIds.has(id))
-  return { page: composed, chromeNodeIds, composedLayoutFiles, componentSources }
+  return { page: composed, chromeNodeIds, composedLayoutFiles, componentSources, dependencyFiles: [...dependencyFiles] }
 }

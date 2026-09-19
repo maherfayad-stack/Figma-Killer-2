@@ -81,7 +81,6 @@ import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
   hashWorkspaceConfig,
-  localSourceAbsFiles,
   setCachedRouteParse,
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
@@ -208,8 +207,14 @@ function parseStandardRouteEntry(
     // resolved fresh, inside `inlineLocalComponents` itself, against that
     // sub-tree's own file.
     sources = resolveComponentSources(project, file, dir, parsed)
-    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
-    setCachedRouteParse(cacheKey, configHash, [file, ...localSourceAbsFiles(sources, dir)], {
+    // `dependencyFiles` collects the TRANSITIVE local-component set —
+    // `inlineLocalComponents` populates it at every nesting level, not just
+    // the direct call sites `sources` classified. See its own doc for why
+    // this closes the "a component three levels deep changed and this route's
+    // cache never noticed" gap `pageParseCache.ts` used to have.
+    const dependencyFiles = new Set<string>()
+    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
+    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles], {
       expanded,
       componentSources: sources,
     })
@@ -278,7 +283,11 @@ function parseAppRouterRouteEntry(
 
     const parsed = parsePageFile(file, dir, project, evalOptions)
     const pageSources = resolveComponentSources(project, file, dir, parsed)
-    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions })
+    // See `parseStandardRouteEntry`'s matching comment — this is the page's
+    // own transitive local-component set. The layout chain's own (also
+    // transitive, WS-1.3-composed) set comes back on `composed.dependencyFiles`.
+    const pageDependencyFiles = new Set<string>()
+    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions, dependencyFiles: pageDependencyFiles })
 
     const composed = composeAppRouterRoute({
       page: pageExpanded,
@@ -293,7 +302,7 @@ function parseAppRouterRouteEntry(
     setCachedRouteParse(
       cacheKey,
       configHash,
-      [file, ...layoutAbsFiles, ...localSourceAbsFiles(sources, dir)],
+      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles],
       { expanded, componentSources: sources },
     )
   }

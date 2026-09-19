@@ -478,6 +478,101 @@ describe('inlineLocalComponents — 2b: recursion + cycle guard + maxDepth/maxNo
   })
 })
 
+describe('inlineLocalComponents — dependencyFiles (transitive cache-invalidation set)', () => {
+  it('is empty (never undefined-throwing) when omitted entirely — the out-param is optional', () => {
+    write('components/Icon.jsx', "export default function Icon() {\n  return <span>hi</span>\n}\n")
+    const pageFile = write(
+      'pages/Home.jsx',
+      ["import Icon from '../components/Icon'", 'export default function Home() {', '  return <Icon />', '}', ''].join('\n'),
+    )
+    const { expanded } = load(pageFile)
+    expect(Object.keys(expanded.nodes).length).toBeGreaterThan(0)
+  })
+
+  it('records every file at every nesting level, not just the page\'s own direct import (the fix for pageParseCache\'s former one-level limit)', () => {
+    // Home -> L1 -> L2 -> L3: a THREE-hop chain. Before this fix, only L1
+    // (the page's own direct import) would ever be tracked — editing L2 or
+    // L3 could go unnoticed by a caller that only recorded the top-level
+    // `sources` map.
+    write('components/L3.jsx', "export default function L3() {\n  return <span>leaf</span>\n}\n")
+    write(
+      'components/L2.jsx',
+      ["import L3 from './L3'", 'export default function L2() {', '  return <div><L3 /></div>', '}', ''].join('\n'),
+    )
+    write(
+      'components/L1.jsx',
+      ["import L2 from './L2'", 'export default function L1() {', '  return <div><L2 /></div>', '}', ''].join('\n'),
+    )
+    const pageFile = write(
+      'pages/Home.jsx',
+      ["import L1 from '../components/L1'", 'export default function Home() {', '  return <L1 />', '}', ''].join('\n'),
+    )
+
+    const project = createWorkspaceProject(tmpDir)
+    const parsed = parsePageFile(pageFile, tmpDir, project)
+    const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
+    const dependencyFiles = new Set<string>()
+    inlineLocalComponents(parsed, sources, project, tmpDir, { dependencyFiles })
+
+    const l1File = path.join(tmpDir, 'components', 'L1.jsx')
+    const l2File = path.join(tmpDir, 'components', 'L2.jsx')
+    const l3File = path.join(tmpDir, 'components', 'L3.jsx')
+    expect(dependencyFiles.has(l1File)).toBe(true)
+    // These two are the case the old one-level tracking missed entirely.
+    expect(dependencyFiles.has(l2File)).toBe(true)
+    expect(dependencyFiles.has(l3File)).toBe(true)
+  })
+
+  it('still records a nested file whose OWN expansion is declined (maxDepth cap) — the file could still change the outcome next time', () => {
+    write('components/L2.jsx', "export default function L2() {\n  return <span>leaf</span>\n}\n")
+    write(
+      'components/L1.jsx',
+      ["import L2 from './L2'", 'export default function L1() {', '  return <div><L2 /></div>', '}', ''].join('\n'),
+    )
+    const pageFile = write(
+      'pages/Home.jsx',
+      ["import L1 from '../components/L1'", 'export default function Home() {', '  return <L1 />', '}', ''].join('\n'),
+    )
+
+    const project = createWorkspaceProject(tmpDir)
+    const parsed = parsePageFile(pageFile, tmpDir, project)
+    const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
+    const dependencyFiles = new Set<string>()
+    // maxDepth: 1 lets L1 expand (depth 0 -> 1) but declines to recurse into
+    // its own L2 call site (depth 1 >= maxDepth).
+    const expanded = inlineLocalComponents(parsed, sources, project, tmpDir, { maxDepth: 1, dependencyFiles })
+
+    // L2's call site stayed opaque (never got as deep as its own "leaf" text).
+    expect(Object.values(expanded.nodes).some((n) => n.text === 'leaf')).toBe(false)
+    // But L2.jsx is still tracked — resolveComponentSources classified it as
+    // local before the depth cap declined to expand it.
+    const l2File = path.join(tmpDir, 'components', 'L2.jsx')
+    expect(dependencyFiles.has(l2File)).toBe(true)
+  })
+
+  it('does not record a PACKAGE-sourced component — only local files can invalidate a route\'s cache', () => {
+    write(
+      'components/Icon.jsx',
+      ["import Spinner from 'some-npm-lib'", 'export default function Icon() {', '  return <div><Spinner /></div>', '}', ''].join('\n'),
+    )
+    const pageFile = write(
+      'pages/Home.jsx',
+      ["import Icon from '../components/Icon'", 'export default function Home() {', '  return <Icon />', '}', ''].join('\n'),
+    )
+
+    const project = createWorkspaceProject(tmpDir)
+    const parsed = parsePageFile(pageFile, tmpDir, project)
+    const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
+    const dependencyFiles = new Set<string>()
+    inlineLocalComponents(parsed, sources, project, tmpDir, { dependencyFiles })
+
+    for (const file of dependencyFiles) {
+      expect(file).not.toContain('some-npm-lib')
+    }
+    expect(dependencyFiles.has(path.join(tmpDir, 'components', 'Icon.jsx'))).toBe(true)
+  })
+})
+
 describe('inlineLocalComponents — 2c: {children} passthrough', () => {
   it('splices the call site\'s own (real, unprefixed, editable) children into a {children} slot', () => {
     write(
