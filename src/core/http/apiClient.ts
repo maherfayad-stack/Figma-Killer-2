@@ -21,13 +21,32 @@
  * 502/503/504 (see `GATEWAY_STATUSES` and {@link GATEWAY_RETRY_BACKOFF_MS}) —
  * the shape the Vite dev proxy answers with when nothing is listening on the
  * API port, e.g. the second or two `bun --watch server/index.ts` spends
- * restarting after a file change. An empty body on one of those statuses
- * proves the request never reached a handler, so retrying it has zero
- * server-side effect regardless of HTTP method — a `POST` that never ran is
- * exactly as safe to repeat as a `GET`. A response the real server DID
- * construct (a genuine `{ error }` envelope, even one that happens to use a
- * 502/503/504 status) is a real answer and is never retried. Disable per-call
- * with `retryGatewayDown: false`.
+ * restarting after a file change. A response the real server DID construct
+ * (a genuine `{ error }` envelope, even one that happens to use a
+ * 502/503/504 status) is a real answer and is never retried.
+ *
+ * That empty-body shape is NOT proof the request never ran, though — it is
+ * two failures collapsed into one indistinguishable response. ECONNREFUSED
+ * (nothing was listening) really did mean zero server-side effect. A
+ * connection RESET mid-flight does not: `bun --watch` restarts on a file
+ * change, often the very file the handler just wrote, and a handler can
+ * finish its disk write and then die before the response headers go out.
+ * Vite's proxy answers both cases with the same empty 502/503/504, so the
+ * client cannot tell them apart from the response alone.
+ *
+ * So the retry is unconditional only for GET/HEAD, where "ran or didn't"
+ * never matters. For a state-changing method, blindly retrying would risk
+ * re-running an already-landed write — a `duplicate` that already copied a
+ * node would copy it again. Those methods retry ONLY on the small,
+ * explicitly named set of routes in `IDEMPOTENT_REPLAY_PATHS`, and only by
+ * attaching a per-attempt `X-Studio-Idempotency-Key` header that the SERVER
+ * uses to recognise a replay and hand back the original response instead of
+ * running the route again (`server/handlers/studio/idempotentReplay.ts`).
+ * The safety proof lives server-side, not in an inference from the response
+ * shape. A state-changing call to any OTHER path is never retried — it
+ * surfaces its error immediately, same as before this feature existed.
+ * Disable retrying a specific call (including GET/HEAD) with
+ * `retryGatewayDown: false`.
  *
  * This module is the generic transport layer — it depends on nothing in
  * `@core/persistence`. The persistence layer (and everything else) depends on
@@ -88,6 +107,43 @@ const GATEWAY_STATUSES = new Set([502, 503, 504])
  * backend feel slow to report itself.
  */
 export const GATEWAY_RETRY_BACKOFF_MS = [500, 1500, 3000] as const
+
+/** Methods where "ran or didn't" never changes the answer — always safe to retry, on any path. */
+const ALWAYS_SAFE_METHODS = new Set(['GET', 'HEAD'])
+
+/**
+ * The exact, narrow set of state-changing Studio routes whose server side
+ * durably records `(idempotency key → response)` — see
+ * `server/handlers/studio/idempotentReplay.ts` for the full mechanism and
+ * why the record lives where it does. A state-changing request to a path NOT
+ * in this set is never retried on a gateway-down response: there is no
+ * server-side proof available that a replay is safe, so the honest answer is
+ * to surface the error rather than guess.
+ *
+ * Deliberately a short, explicit allowlist rather than "every mutating
+ * route" — extending it means adding the matching server-side guard in the
+ * same change, not just flipping a client-side switch.
+ */
+const IDEMPOTENT_REPLAY_PATHS = new Set([
+  '/admin/api/studio/save',
+  '/admin/api/studio/page',
+  '/admin/api/studio/boards',
+])
+
+/** The header carrying the per-attempt request id — see the module doc and `IDEMPOTENT_REPLAY_PATHS`. */
+const IDEMPOTENCY_KEY_HEADER = 'X-Studio-Idempotency-Key'
+
+/**
+ * Whether a gateway-down response for `method`+`path` may be retried at all,
+ * and (for a state-changing method) the idempotency key to attach on every
+ * attempt so the server can recognise a replay. `null` for "do not retry".
+ */
+function retryPlanFor(method: string, path: string): { idempotencyKey: string | null } | null {
+  const upper = method.toUpperCase()
+  if (ALWAYS_SAFE_METHODS.has(upper)) return { idempotencyKey: null }
+  if (IDEMPOTENT_REPLAY_PATHS.has(path)) return { idempotencyKey: crypto.randomUUID() }
+  return null
+}
 
 /** Real-timer sleep, abortable — the default `sleepImpl`; tests inject a fast stand-in. */
 function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
@@ -208,10 +264,11 @@ interface ApiRequestOptions<S extends TSchema = TSchema> {
   /** Injectable fetch — test seam only; defaults to the global `fetch`. */
   fetchImpl?: FetchLike
   /**
-   * Retry an empty-bodied 502/503/504 (see the module doc comment). Defaults
-   * to `true` — the retry is provably safe for every method, so opting out
-   * is rare; it exists as an escape hatch, not a decision every call site
-   * needs to make.
+   * Retry an empty-bodied 502/503/504 (see the module doc comment and
+   * `retryPlanFor`). Defaults to `true`; the retry itself only fires for
+   * GET/HEAD or for a state-changing method on one of
+   * `IDEMPOTENT_REPLAY_PATHS`, so this flag is a blanket "never retry this
+   * call" override rather than something every call site must reason about.
    */
   retryGatewayDown?: boolean
   /** Injectable backoff sleep — test seam only; defaults to a real timer. */
@@ -324,10 +381,17 @@ async function requestResponse(
     sleepImpl = sleep,
   } = options
 
+  // `null` means "do not retry this call at all" — either the caller opted
+  // out, or `retryPlanFor` found no server-side safety proof for this
+  // method+path combination.
+  const plan = retryGatewayDown ? retryPlanFor(method, path) : null
+
+  const finalHeaders: Record<string, string> = { ...headers }
+  if (plan?.idempotencyKey) finalHeaders[IDEMPOTENCY_KEY_HEADER] = plan.idempotencyKey
+
   const init: RequestInit = { method, credentials }
   if (signal) init.signal = signal
 
-  const finalHeaders: Record<string, string> = { ...headers }
   if (body !== undefined) {
     if (body instanceof FormData) {
       init.body = body
@@ -344,7 +408,7 @@ async function requestResponse(
     const res = await fetchImpl(url, init)
     if (res.ok) return res
 
-    if (retryGatewayDown && attempt < GATEWAY_RETRY_BACKOFF_MS.length && (await isEmptyGatewayResponse(res))) {
+    if (plan && attempt < GATEWAY_RETRY_BACKOFF_MS.length && (await isEmptyGatewayResponse(res))) {
       await sleepImpl(GATEWAY_RETRY_BACKOFF_MS[attempt]!, signal)
       continue
     }

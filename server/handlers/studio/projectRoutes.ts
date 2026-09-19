@@ -111,6 +111,7 @@ import { applyProjectSeed } from './projectSeed'
 import { generateStudioProjectGuide } from './projectGuide'
 import { deleteStudioPage } from './pageDelete'
 import { scaffoldPageLocked } from './pageScaffold'
+import { withIdempotentReplay } from './idempotentReplay'
 import { detectPageTemplateKit, starterPage } from './pageTemplates'
 import { isSafePagesDirOverride } from './studioMeta'
 import {
@@ -435,36 +436,46 @@ export async function tryServeStudioProjectRoutes(
   // name is turned into a PascalCase identifier (never `..`, never a
   // separator) so it can't escape the project's pages/ dir. See
   // `./pageScaffold.ts`.
+  // Idempotency-key-guarded: see `./idempotentReplay.ts` — a retry of a lost
+  // response after a `bun --watch` restart must never scaffold a second page.
   if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
-    try {
-      const body = await readValidatedBody(req, CreatePageBodySchema)
-      if (!body) return badRequest('invalid page body')
-      const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
-      if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
-      return jsonResponse(result)
-    } catch (err) {
-      rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
+    return withIdempotentReplay(req, async () => {
+      try {
+        const body = await readValidatedBody(req, CreatePageBodySchema)
+        if (!body) return badRequest('invalid page body')
+        const result = await scaffoldPageLocked(resolveProjectDir(body.dir), body.name ?? '', body.kind ?? DEFAULT_PAGE_KIND, body.boardId)
+        if (!result.ok) return jsonResponse({ error: result.conflict }, { status: 409 })
+        return jsonResponse(result)
+      } catch (err) {
+        rethrowProjectDirRefusal(err)
+        console.error('[studio]', err)
+        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      }
+    })
   }
 
   // Delete a page for real: its file, its orphaned stylesheet, its board
   // frames. The editor store's own `deletePage` only ever spliced the page out
   // of the in-memory tree, so the next reload parsed the untouched `.tsx`
   // straight back in — see `./pageDelete.ts`.
+  //
+  // Idempotency-key-guarded, same reasoning as the POST above: a lost
+  // response must not make a retry throw a SECOND page's frames away if the
+  // first delete already landed.
   if (pathname === '/admin/api/studio/page' && req.method === 'DELETE') {
-    try {
-      const body = await readValidatedBody(req, DeletePageBodySchema)
-      if (!body) return badRequest('invalid delete page body')
-      const result = deleteStudioPage(resolveProjectDir(body.dir), body.pageId)
-      if (!result.ok) return jsonResponse({ error: result.notFound }, { status: 404 })
-      return jsonResponse(result)
-    } catch (err) {
-      rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
-    }
+    return withIdempotentReplay(req, async () => {
+      try {
+        const body = await readValidatedBody(req, DeletePageBodySchema)
+        if (!body) return badRequest('invalid delete page body')
+        const result = deleteStudioPage(resolveProjectDir(body.dir), body.pageId)
+        if (!result.ok) return jsonResponse({ error: result.notFound }, { status: 404 })
+        return jsonResponse(result)
+      } catch (err) {
+        rethrowProjectDirRefusal(err)
+        console.error('[studio]', err)
+        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      }
+    })
   }
 
   return null
