@@ -351,11 +351,31 @@ by a pointerdown at all, so the frame under it was never activated. They are
 therefore NOT among the named tree-mutation actions the
 `no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
 
-Both join the `insert`/`duplicate`/`wrap`/`group` family in the other respect
-too: **nothing is shown optimistically**, because the node that appears
-afterwards is a freshly parsed one whose id is the `rel:line:col` the write
-produced. Both ride the same `structuralCommitQueue.ts` the rest of that family
-does.
+Both still show **nothing optimistically** — unlike `insert`/`duplicate`/`wrap`
+(below), the node that appears afterwards is a freshly parsed one whose id is
+the `rel:line:col` the write produced, and previewing it locally would need a
+tree on the OTHER end of the transplant/drop too. Both ride the same
+`structuralCommitQueue.ts` the rest of that family does.
+
+**`insert`/`duplicate`/`wrap`/`group` DO paint optimistically now (`perf-10`).**
+`structuralOptimism.ts`'s `previewOptimisticInsert`/`Duplicate`/`Wrap`/`Group`
+mutate the active tree the instant the gesture fires — using the exact tree
+primitives (`createNode`+`insertNode`, `duplicateNodeWithScopedClasses`,
+`wrapNode`/`wrapNodes`) an ordinary in-memory CMS-tree edit would — via a new
+`SiteSliceHelpers.previewActiveTreeMutation`, which applies the patches and
+keeps the WS-5.2 indexes in sync but deliberately skips history/dirty
+tracking: a preview is not the gesture's real edit, and must not become a
+second undo step or something autosave tries to persist. Safe to leave
+un-rolled-back on a landed write because the resync that follows always
+replaces the touched PAGE object wholesale, erasing the preview regardless of
+whether its guessed id matches the real one; `commitStructuralBody` explicitly
+rolls it back only on the two paths where no resync follows (a full refusal,
+or the POST never reaching disk). `ungroup`/paste/K2 Alt-drag-duplicate/
+transplant/image-drop are unchanged — still nothing shown until the resync.
+A pending preview id is guarded against a same-window Delete
+(`isPendingOptimisticNodeId`/`excludePendingOptimisticTargets`, wired into
+`deleteNode`/`deleteNodes`) — everything else that could target it goes
+through `structuralCommitQueue.ts` and simply re-plans once the id is gone.
 
 **The whole family is undoable (`store-14`).** It used to record nothing at all,
 so ⌘Z after a ⌘D, a ⌘G, a cross-frame drag or a file drop undid whatever came
