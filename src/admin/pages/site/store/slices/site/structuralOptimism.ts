@@ -104,6 +104,25 @@ export interface OptimisticPreviewHandle {
 }
 
 /**
+ * `studioStructuralCommits.ts`'s single call into this module once a
+ * commit's outcome is known: settle (a resync is about to replace the page
+ * anyway) or roll back (nothing landed at all). Guarded like
+ * `flushEditorSave` — a failure in this bookkeeping must never stop the
+ * toasts/resync around it, so it lives here rather than as a bare method
+ * call at each of that module's two call sites.
+ */
+export function settleOrRollbackOptimistic(
+  optimistic: OptimisticPreviewHandle | undefined,
+  action: 'settle' | 'rollback',
+): void {
+  try {
+    optimistic?.[action]()
+  } catch (err) {
+    console.error(`[structuralOptimism] preview ${action} failed:`, err)
+  }
+}
+
+/**
  * Preview ids currently minted and not yet resolved one way or the other.
  * Module-level, matching `structuralCommitQueue.ts`'s own precedent (the
  * in-flight flag) — both are "is a structural write still on the wire"
