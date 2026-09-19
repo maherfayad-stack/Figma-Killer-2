@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadStudioPages } from '../studioPageLoad'
-import { clearStudioLoadMemo } from './studioLoadMemo'
+import { clearStudioLoadMemo, getMemoizedStudioLoad, workspaceLoadFingerprint } from './studioLoadMemo'
 
 function page(heading: string): string {
   return `export default function Page() {\n  return <div><h1>${heading}</h1></div>\n}\n`
@@ -94,6 +94,50 @@ describe('loadStudioPages memo — invalidation', () => {
     writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ pagesDir: 'src/screens' }))
 
     expect((await loadStudioPages(dir)).pages.map((p) => p.id)).toEqual(['dash'])
+  })
+
+  it('a rewritten `lastOpenedAt` does NOT invalidate — the memo is not busted by its own reader', async () => {
+    // The regression this pins. `GET /admin/api/studio/load` stamps
+    // `lastOpenedAt` through `recordProjectOpened` on its way in, and the board
+    // calls that same route to re-sync after every structural edit. While the
+    // fingerprint stamped `.studio/meta.json` by mtime, that guaranteed a fresh
+    // fingerprint on every load, the memo never hit once, and each duplicate or
+    // insert paid a full cold `computeStudioPages` — measured at ~600 ms on a
+    // two-page project, against ~15 ms once the memo works.
+    //
+    // Asserted against the FINGERPRINT and the memo directly, not through a
+    // load's content: a hit and a miss return the same bytes when nothing but
+    // the timestamp moved, so content cannot tell them apart and a timing
+    // assertion would be a flake. This is the seam that actually broke.
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    const meta = join(dir, '.studio', 'meta.json')
+    writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 1 }))
+    await loadStudioPages(dir)
+
+    const before = workspaceLoadFingerprint(dir)
+    expect(getMemoizedStudioLoad(dir, before), 'the first load stored nothing').not.toBeNull()
+
+    // Exactly what `recordProjectOpened` does, and nothing else.
+    writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 2 }))
+    expect(workspaceLoadFingerprint(dir), 'a new `lastOpenedAt` changed the fingerprint').toBe(before)
+    expect(getMemoizedStudioLoad(dir, workspaceLoadFingerprint(dir))).not.toBeNull()
+
+    // The exclusion must not have widened: a field that DOES decide a parse
+    // still invalidates, from the same file.
+    writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 2, pagesDir: 'src/screens' }))
+    expect(workspaceLoadFingerprint(dir), 'a changed `pagesDir` was ignored').not.toBe(before)
+    expect(getMemoizedStudioLoad(dir, workspaceLoadFingerprint(dir))).toBeNull()
+  })
+
+
+  it('a key REORDER in `.studio/meta.json` is not mistaken for a change', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    const meta = join(dir, '.studio', 'meta.json')
+    writeFileSync(meta, JSON.stringify({ displayName: 'Fixture', lastOpenedAt: 1 }))
+    expect(headingOf((await loadStudioPages(dir)).pages, 'home')).toBe('Before')
+
+    writeFileSync(meta, JSON.stringify({ lastOpenedAt: 1, displayName: 'Fixture' }))
+    expect(headingOf((await loadStudioPages(dir)).pages, 'home')).toBe('Before')
   })
 
   it('mutating a returned page does not leak into the next caller', async () => {

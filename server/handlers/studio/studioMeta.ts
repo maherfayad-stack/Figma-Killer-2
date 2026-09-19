@@ -569,10 +569,32 @@ export function mergeStudioMeta(dir: string, patch: Partial<StudioMeta>): Studio
 }
 
 /**
- * Stamps `lastOpenedAt` with the current time. Called from
- * `GET /admin/api/studio/load` — the request that means "the editor is showing
- * this project" — so the fact is recorded by the thing that happened, not by
- * the UI that wants to read it later.
+ * How stale a recorded `lastOpenedAt` may be before the next load refreshes it.
+ *
+ * `GET /admin/api/studio/load` is NOT only "the user opened this project": the
+ * board calls the same route to re-sync after every structural edit, and the
+ * agent's tools call it too. Writing a fresh timestamp on each of those did two
+ * things nobody asked for. It rewrote a file inside the USER'S repository on
+ * every duplicate — `github-sync.e2e.ts` cases 2b and 6b are exactly that,
+ * "opening a cloned project wrote to files the user never touched", which then
+ * makes Studio refuse the next pull over changes the user did not make. And it
+ * changed `.studio/meta.json`'s mtime on every load, which is what
+ * `studioLoadMemo`'s fingerprint was keyed on, so the load memo could never hit
+ * and each gesture paid a full cold project load.
+ *
+ * An hour is coarse on purpose. The field's only consumer asks whether the
+ * project has EVER been opened (`onboardingFacts.ts`), so precision buys
+ * nothing, and every write inside this window is a write into someone's git
+ * working tree.
+ */
+const PROJECT_OPENED_REFRESH_MS = 60 * 60 * 1000
+
+/**
+ * Stamps `lastOpenedAt` with the current time, unless a recent enough stamp is
+ * already there — see `PROJECT_OPENED_REFRESH_MS` for why "recent enough"
+ * exists at all. Called from `GET /admin/api/studio/load`, so the fact is
+ * recorded by the thing that happened, not by the UI that wants to read it
+ * later.
  *
  * Best-effort by design: a project directory that has become unwritable is a
  * problem for a SAVE, and taking the board's load down over a timestamp would
@@ -580,7 +602,12 @@ export function mergeStudioMeta(dir: string, patch: Partial<StudioMeta>): Studio
  */
 export function recordProjectOpened(dir: string): void {
   try {
-    mergeStudioMeta(dir, { lastOpenedAt: Date.now() })
+    const recorded = readStudioMeta(dir).lastOpenedAt
+    const now = Date.now()
+    // `recorded > now` catches a clock that moved backwards (or a meta file
+    // copied from another machine): refresh rather than trust a future stamp.
+    if (recorded !== undefined && recorded <= now && now - recorded < PROJECT_OPENED_REFRESH_MS) return
+    mergeStudioMeta(dir, { lastOpenedAt: now })
   } catch (err) {
     console.error('[studio:studioMeta] could not record lastOpenedAt', err)
   }

@@ -60,6 +60,7 @@ import { join, relative, sep } from 'node:path'
 import {
   composeAppRouterRoute,
   createPageEvalBudget,
+  acquireReadOnlyWorkspaceProject,
   createWorkspaceProject,
   cssInJsStylesheet,
   inlineLocalComponents,
@@ -439,8 +440,15 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
   // a fresh per-file Project (parsePageFile's own default) can't see
-  // across files at all. See createWorkspaceProject's doc comment.
-  const project = createWorkspaceProject(dir)
+  // across files at all.
+  //
+  // ACQUIRED, not built: this function runs on every board re-sync, which is
+  // after every structural gesture, and building the project from scratch
+  // measured 302-484 ms of a ~494 ms load on a 64-file project. The cached one
+  // is refreshed from disk on the way out, so it never serves staler text than
+  // a fresh build would — see `acquireReadOnlyWorkspaceProject`. This is a READ
+  // path; codemods keep building their own.
+  const project = acquireReadOnlyWorkspaceProject(dir)
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -633,7 +641,7 @@ export async function loadStudioPageInLocale(dir: string, pageId: string, locale
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return null
 
-  const project = createWorkspaceProject(dir)
+  const project = acquireReadOnlyWorkspaceProject(dir)
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)
