@@ -115,9 +115,21 @@ describe('structural commits queue instead of refusing (store-14)', () => {
     }
   }
 
-  /** `writeDuplicateToSource` only reads `get`/`set` on the REFUSAL path, which this suite never reaches. */
+  /**
+   * `writeDuplicateToSource` only reads `get`/`set` on the REFUSAL path, which
+   * this suite never reaches. `previewActiveTreeMutation` is `perf-10`'s
+   * optimistic-preview hook — a stub that always declines (`null`, "nothing
+   * to roll back") is enough here: `structuralOptimism.ts`'s own
+   * `safelyBuild` already swallows a missing/failing implementation, this
+   * just keeps that path quiet instead of console.error-ing on every one of
+   * this suite's five-⌘D-burst duplicates.
+   */
   function makeHelpers(): SiteSliceHelpers {
-    return { get: (() => ({})) as never, set: (() => {}) as never } as unknown as SiteSliceHelpers
+    return {
+      get: (() => ({})) as never,
+      set: (() => {}) as never,
+      previewActiveTreeMutation: () => null,
+    } as unknown as SiteSliceHelpers
   }
 
   /**

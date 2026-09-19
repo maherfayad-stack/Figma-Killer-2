@@ -683,4 +683,14 @@ export interface SiteSliceHelpers {
     fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
     opts?: { coalesceKey?: string },
   ) => boolean
+
+  /**
+   * `perf-10` — an OPTIMISTIC preview of a structural SOURCE write
+   * (insert/duplicate/wrap/group), applied outside undo history and dirty
+   * tracking. See `structuralOptimism.ts` / `site/helpers.ts`. `null` means
+   * no change; otherwise a rollback closure computed against CURRENT `site`.
+   */
+  previewActiveTreeMutation: (
+    fn: (tree: NodeTree<PageNode>, site: SiteDocument) => SiteMutationResult,
+  ) => (() => void) | null
 }

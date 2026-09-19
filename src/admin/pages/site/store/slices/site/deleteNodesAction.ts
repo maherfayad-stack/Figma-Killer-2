@@ -24,6 +24,7 @@ import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
+import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { tagStructuralGesture } from './structuralHistory'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -49,7 +50,12 @@ function deleteOrdered(tree: NodeTree<PageNode>, ordered: readonly string[]): bo
 export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['deleteNodes'] {
   const { get, set, mutateActiveTree, mutateTreesForNodeIds } = helpers
 
-  return (nodeIds) => {
+  return (rawNodeIds) => {
+    if (rawNodeIds.length === 0) return
+    // `perf-10` — same guard `nodeActions.ts`'s single-node `deleteNode`
+    // applies, for a multi-selection: strip any id still a pending
+    // insert/duplicate/wrap preview before planning against it.
+    const nodeIds = excludePendingOptimisticTargets(rawNodeIds)
     if (nodeIds.length === 0) return
     const cur = get()
     const target = resolveActiveTreeTarget(cur)
