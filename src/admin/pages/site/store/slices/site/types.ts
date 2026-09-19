@@ -683,4 +683,19 @@ export interface SiteSliceHelpers {
     fn: (tree: NodeTree<PageNode>, idsOnThisTree: string[]) => SiteMutationResult,
     opts?: { coalesceKey?: string },
   ) => boolean
+
+  /**
+   * `perf-10` — an OPTIMISTIC preview of a structural SOURCE write
+   * (insert/duplicate/wrap/group), applied to the active tree OUTSIDE undo
+   * history and dirty tracking. See `structuralOptimism.ts` for the
+   * caller-facing contract and `site/helpers.ts`'s implementation doc for why
+   * this is safe to leave un-rolled-back on a write that lands.
+   *
+   * Returns `null` when the recipe reported no change; otherwise a rollback
+   * closure that reverts exactly this preview via Mutative's own `apply`,
+   * computed against whatever `site` is CURRENT when it runs.
+   */
+  previewActiveTreeMutation: (
+    fn: (tree: NodeTree<PageNode>, site: SiteDocument) => SiteMutationResult,
+  ) => (() => void) | null
 }

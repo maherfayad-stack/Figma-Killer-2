@@ -27,6 +27,7 @@
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
+import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import { setPendingStructuralOutcome, type PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
@@ -64,6 +65,14 @@ interface StructuralCommitOptions {
    * reported.
    */
   reissue?: 'undo' | 'redo'
+  /**
+   * `perf-10` — the local preview `structuralOptimism.ts` already painted for
+   * this gesture, if any. `commitStructuralBody` calls exactly one of its two
+   * methods once the outcome is known: `settle()` (stop tracking, touch
+   * nothing) when a resync is about to replace the page anyway, `rollback()`
+   * (revert the preview) when no resync will follow at all.
+   */
+  optimistic?: OptimisticPreviewHandle
 }
 
 /**
@@ -232,6 +241,8 @@ export async function commitStudioDuplicate(
     anchorNodeId: string | null
     position: 'before' | 'after'
   },
+  /** `perf-10` — the local preview already painted for this duplicate, if any. See `StructuralCommitOptions.optimistic`. */
+  optimistic?: OptimisticPreviewHandle,
 ): Promise<void> {
   if (nodeIds.length === 0) return
   await commitStructural(
@@ -254,6 +265,7 @@ export async function commitStudioDuplicate(
         body: 'Written to your project source.',
       },
       undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
+      ...(optimistic ? { optimistic } : {}),
     },
   )
 }
@@ -273,6 +285,8 @@ export async function commitStudioWrap(wrap: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  /** `perf-10` — the local preview already painted for this wrap, if any. */
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -288,6 +302,7 @@ export async function commitStudioWrap(wrap: {
     {
       success: { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
       undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
 }
@@ -314,6 +329,8 @@ export async function commitStudioGroup(group: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  /** `perf-10` — the local preview already painted for this group, if any. */
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   const [nodeId, ...siblingNodeIds] = group.nodeIds
   if (nodeId === undefined || siblingNodeIds.length === 0) return
@@ -332,6 +349,7 @@ export async function commitStudioGroup(group: {
     {
       success: { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
       undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
 }
@@ -423,6 +441,8 @@ export async function commitStudioInsert(insert: {
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
+  /** `perf-10` — the local preview already painted for this insert, if any. */
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -444,6 +464,7 @@ export async function commitStudioInsert(insert: {
     {
       success: { title: `Added ${insert.name}`, body: 'Written to your project source.' },
       undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )
 }
@@ -597,6 +618,19 @@ async function commitStructuralBody(
     // letting the change quietly reappear after the reload with no explanation.
     const unexplained = result.skipped - (result.refusals ?? []).length
     const willReload = result.written > 0
+    // `perf-10` — the local preview this gesture painted, if any, is settled
+    // (stop tracking, touch nothing — the resync below is about to replace
+    // the whole page anyway) when a write landed, or rolled back (revert the
+    // preview mutation) when NOTHING did — see `structuralOptimism.ts` for
+    // why exactly these two outcomes are the only ones that matter here.
+    // Guarded the same way `flushEditorSave` above is: a failure in this
+    // purely-cosmetic bookkeeping must never stop the toasts/resync below.
+    try {
+      if (willReload) options.optimistic?.settle()
+      else options.optimistic?.rollback()
+    } catch (err) {
+      console.error('[studioSaveRequests] optimistic preview settle/rollback failed:', err)
+    }
     if (unexplained > 0) {
       pushToast({
         kind: 'error',
@@ -649,6 +683,18 @@ async function commitStructuralBody(
     // failed request is "disk is unchanged," which means no reload either
     // (see this function's doc for why an unconditional reload here was the
     // bug, not the fix).
+    // `perf-10` — no response means `willReload` above was never computed
+    // (the throw happened before it), so nothing there rolled the preview
+    // back. Idempotent against the `settle()`/`rollback()` pair above: a
+    // throw from somewhere AFTER `willReload` was decided (not `postEdits`
+    // itself) would make this the second call, and the handle's own
+    // `resolved` guard makes the second call a no-op rather than a double
+    // revert.
+    try {
+      options.optimistic?.rollback()
+    } catch (rollbackErr) {
+      console.error('[studioSaveRequests] optimistic preview rollback failed:', rollbackErr)
+    }
     console.error('[studioSaveRequests] structural edit failed:', err)
     pushToast({
       kind: 'error',
