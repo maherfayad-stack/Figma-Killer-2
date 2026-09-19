@@ -255,7 +255,7 @@ describe('tryServeStudioReloadScope', () => {
     })
   })
 
-  it('widens for a file no cached route claims — deeper than one-level dependency tracking can see', async () => {
+  it('narrows for a component TWO local-import hops deep — pageParseCache.ts now tracks the transitive set, not just direct imports', async () => {
     write('pages/Home.tsx', [
       "import Card from '../components/Card'",
       'export default function Home() { return <Card /> }',
@@ -269,10 +269,28 @@ describe('tryServeStudioReloadScope', () => {
     write('components/Badge.tsx', 'export default function Badge() { return <span>B</span> }')
     await loadStudioPages(wsDir)
 
-    // `pageParseCache.ts` tracks the route's own file plus its DIRECT local
-    // component sources. `Badge.tsx` is one level further down, so no route
-    // records it — and "nothing claims it" must widen, never reload nothing.
+    // `Badge.tsx` is TWO import hops below `pages/Home.tsx` (Home -> Card ->
+    // Badge) — `inlineLocalComponents`'s `dependencyFiles` out-param now
+    // surfaces it into `pageParseCache.ts`'s recorded set for Home's route, so
+    // this correctly narrows to Home instead of falling back to rule 3's
+    // "nothing claims it" widen. Before that fix this test asserted the
+    // opposite (`narrow: false`) — the widen was covering for a real gap, not
+    // a feature; narrowing correctly is strictly better than widening as a
+    // stand-in for data the cache didn't have.
     const { body } = await reloadScope(wsDir, ['components/Badge.tsx'])
+    expect(body).toEqual({ ok: true, narrow: true, pageIds: ['home'] })
+  })
+
+  it('still widens for a source file genuinely outside the parse graph — rule 3 is not gone, just no longer covering local-component chains', async () => {
+    write('pages/Home.tsx', ['export default function Home() {', '  return <div>Home</div>', '}', ''].join('\n'))
+    await loadStudioPages(wsDir)
+
+    // A real `.ts` file on disk (so it clears the writable-source-extension
+    // guard and actually reaches rule 3), but never imported by Home or any
+    // other route — dead code with no honest dependent to narrow to.
+    write('utils/unused.ts', 'export const neverImported = 1\n')
+
+    const { body } = await reloadScope(wsDir, ['utils/unused.ts'])
     expect(body.narrow).toBe(false)
   })
 

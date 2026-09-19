@@ -327,10 +327,9 @@ function expandCallSite(
     // (the top-level loop above, or this exact block one recursion up), so
     // recording `subSources`' local entries here is sufficient to cover
     // every depth without re-deriving what the caller already added.
-    // TEMP-DISABLED-FOR-BASELINE-MEASUREMENT
-    // for (const source of Object.values(subSources)) {
-    //   if (source.kind === 'local') state.dependencyFiles.add(path.resolve(state.workspaceRoot, source.file))
-    // }
+    for (const source of Object.values(subSources)) {
+      if (source.kind === 'local') state.dependencyFiles.add(path.resolve(state.workspaceRoot, source.file))
+    }
     const nextCyclePath = new Set(cyclePath)
     nextCyclePath.add(cycleKey)
     for (const id of Object.keys(subPage.nodes)) {
