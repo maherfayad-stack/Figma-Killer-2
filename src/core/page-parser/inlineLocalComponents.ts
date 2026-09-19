@@ -116,6 +116,24 @@ export interface InlineOptions {
    * unchanged.
    */
   evalOptions?: StaticEvalOptions
+  /**
+   * Out-param (`pageParseCache.ts`'s follow-up): when provided, every LOCAL
+   * component file this call transitively read is added to it as an absolute
+   * path — not just the call sites on `parsed` itself, but every further
+   * local import discovered while expanding them, at every nesting level.
+   * `studioPageLoad.ts`/`storyPages.ts` accumulate these into a route's
+   * cache-invalidation dependency list, so editing a component two or more
+   * inlining hops deep from a page invalidates that page's cached parse
+   * instead of the cache serving stale content until the page's own file (or
+   * one of its DIRECT local imports) also happens to change.
+   *
+   * Mutated, not returned — the same out-param shape `nextAppLayout.ts`'s
+   * `composeOneLayout` already uses for `componentSourcesOut`, chosen here for
+   * the same reason: returning it would widen this function's return type for
+   * every existing caller (~15 call sites, mostly parser tests) that only
+   * wants the expanded `ParsedPage`.
+   */
+  dependencyFiles?: Set<string>
 }
 
 /**
@@ -153,6 +171,8 @@ interface ExpandState {
   evalOptions: StaticEvalOptions | undefined
   /** Running total of nodes produced by inlining so far, across the whole page. */
   nodeCount: number
+  /** See `InlineOptions.dependencyFiles`. Always present internally — a throwaway `Set` when the caller doesn't ask for one, so `expandCallSite` never needs a null check. */
+  dependencyFiles: Set<string>
 }
 
 /**
@@ -184,6 +204,7 @@ export function inlineLocalComponents(
       maxNodes: opts.maxNodes ?? DEFAULT_MAX_NODES,
       evalOptions: opts.evalOptions,
       nodeCount: Object.keys(parsed.nodes).length,
+      dependencyFiles: opts.dependencyFiles ?? new Set(),
     }
 
     const page: ParsedPage = {
@@ -201,6 +222,7 @@ export function inlineLocalComponents(
       if (!source || source.kind !== 'local') continue
       const node = page.nodes[id]
       if (!node || node.kind !== 'component') continue
+      state.dependencyFiles.add(path.resolve(state.workspaceRoot, source.file))
       expandCallSite(id, node, source.file, page, state, new Set(), 0)
     }
 
@@ -294,6 +316,20 @@ function expandCallSite(
     // comment already anticipates this ("nested inlining … chains additional
     // segments the same way").
     const subSources = resolveComponentSources(state.project, target.sourceFile.getFilePath(), state.workspaceRoot, subPage)
+    // Record EVERY local file this level's own component classifies —
+    // regardless of whether the recursion below actually manages to expand
+    // it (a cap, a cycle, or an unparseable target still leaves the node
+    // opaque, but its content can still flip the outcome the NEXT time this
+    // route is parsed, e.g. fixing the export the earlier parse couldn't
+    // find). This is what makes dependency tracking transitive rather than
+    // one level deep: `target.sourceFile.getFilePath()` — this level's OWN
+    // file — was already recorded by WHOEVER called `expandCallSite` with it
+    // (the top-level loop above, or this exact block one recursion up), so
+    // recording `subSources`' local entries here is sufficient to cover
+    // every depth without re-deriving what the caller already added.
+    for (const source of Object.values(subSources)) {
+      if (source.kind === 'local') state.dependencyFiles.add(path.resolve(state.workspaceRoot, source.file))
+    }
     const nextCyclePath = new Set(cyclePath)
     nextCyclePath.add(cycleKey)
     for (const id of Object.keys(subPage.nodes)) {
