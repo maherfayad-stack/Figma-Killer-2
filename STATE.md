@@ -12,6 +12,230 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### perf-10 — insert/duplicate/wrap/group paint the canvas before the write lands
+- **Agent:** store-engineer
+- **Stage:** done — branch pushed, draft PR open against `fix/studio-load-memo-cold-on-every-load`.
+- **Branch:** `perf/structural-gesture-latency` · **PR:** https://github.com/maherfayad-stack/Figma-Killer-2/pull/195
+  (draft, against `fix/studio-load-memo-cold-on-every-load`). Commits (after the
+  base-mismatch fix below): `d9a104f5` (rate-limit-preserved WIP, unreviewed when
+  written, now folded in), `fa391a63` (the trims, the shared helper move, the
+  regression test), `d19eed5a` (this handoff + the doc update).
+  **Landmine 0, worth its own line:** the worktree this task ran in was NOT
+  branched from `fix/studio-load-memo-cold-on-every-load`'s actual tip
+  (`08b93adf`) — its history instead ran through `51b19940` (an unrelated
+  three-wave merge, PR #191), diverging from the real base at `9716abf7`. Caught
+  before pushing (`git merge-base --is-ancestor 08b93adf HEAD` said no) by
+  diffing both lineages against the shared merge-base for every file this task
+  touched (zero overlap, confirmed) and re-basing via `git checkout -b … origin/
+  fix/studio-load-memo-cold-on-every-load` + `git cherry-pick` of the three
+  commits, never a rebase through the divergent history. If your worktree's
+  `git log` doesn't show your assigned base commit as an ancestor of `HEAD`,
+  check this before you push — a PR from the wrong base silently asks to revert
+  someone else's already-merged work.
+- **Updated:** 2026-09-19
+- **Goal:** cut the latency the user FEELS between ⌘D/⌘G/an Assets-panel insert and
+  seeing the result. Server-side re-sync had already dropped from ~2.9–3.3s to
+  ~0.27–0.5s (measured by the parallel server-side agent on the same base); this
+  work order's own half was the client: insert/duplicate/wrap/group showed
+  **nothing at all** on the canvas until that resync's response came back, per
+  `docs/agent-refs/editor-store.md`'s own words for the old behaviour ("nothing is
+  shown optimistically") — the single biggest latency left in the chain, because
+  move/delete already mutate the tree immediately and only this family did not.
+- **Scope:** `src/admin/pages/site/store/slices/site/{helpers.ts,types.ts,
+  nodeActions.ts,deleteNodesAction.ts,studioSourceWrites.ts}`, NEW
+  `structuralOptimism.ts`; `src/admin/pages/site/studio/studioStructuralCommits.ts`;
+  NEW `src/__tests__/editor-store/structuralOptimisticPreview.test.ts`;
+  `src/admin/pages/site/store/slices/site/__tests__/structuralCommitQueue.test.ts`
+  (one stub extended); `docs/agent-refs/editor-store.md`.
+- **What I did NOT change, on purpose:** `structuralCommitQueue.ts`,
+  `studioBoardResync.ts`, `pendingStructuralOutcome.ts`, `usePersistence.ts` — all
+  named in the work order's scope, none needed edits. `flushEditorSave` still runs
+  in series before every structural POST (work-order item 3); I did not find time
+  to investigate overlapping it, and it is a real, open follow-up.
+
+#### The fix
+`structuralOptimism.ts` (new) exports `previewOptimisticInsert`/`Duplicate`/
+`Wrap`/`Group`, called from `studioSourceWrites.ts`'s four writers the instant a
+gesture is accepted (same tick, before the network `commitStudioX` call). Each
+mutates the active `NodeTree` with the SAME tree primitive an ordinary in-memory
+CMS-tree edit already uses — `createNode`+`insertNode`, `duplicateNodeWithScoped
+Classes`, `wrapNode`/`wrapNodes` — so the preview renders exactly like what that
+module already looks like elsewhere in the editor, not a guess at the JSX the
+codemod is about to write (which is unknowable for a design-system component
+without executing it — `CLAUDE.md`'s "parse, never execute").
+
+The mutation runs through a NEW `SiteSliceHelpers.previewActiveTreeMutation`
+(`helpers.ts`) — the same `resolveActiveTreeTarget` routing every named mutation
+uses, over a Mutative `create()` of `site` alone, keeping the WS-5.2 node indexes
+in sync via the same `applyNodeIndexPatch` call `runHistoricMutation` makes — but
+it deliberately calls NONE of `commitHistoryEntry`/`_dirtySave`/
+`hasUnsavedChanges`. A preview is not the gesture's real edit (that is the
+patch-free `source` history entry `store-14` pushes once the write lands); making
+it a second undo step, or something autosave tries to persist, would be exactly
+the "half-applied write" class of bug this codebase refuses everywhere else.
+
+**Why leaving a bad preview un-rolled-back on success is safe:** `patchPages`/
+`loadSite` replace the touched PAGE OBJECT wholesale (`nextPages.push(fresh)`),
+so any preview node inside that page's OLD object is erased the moment ANY edit
+in the batch lands — regardless of whether the id the preview guessed matches the
+real `rel:line:col` the codemod produced. `commitStructuralBody` therefore only
+has two real decisions: `settle()` (stop tracking, touch nothing) when a resync
+is coming, `rollback()` (revert via Mutative's own `apply`, same idiom `undo`/
+`redo` use) when NOTHING landed at all (a full refusal, or the POST never
+reaching disk) — `settleOrRollbackOptimistic` in `structuralOptimism.ts` is the
+one place both call it, guarded like `flushEditorSave` so a failure there can
+never block the toasts/resync around it.
+
+**The one gap left open, by name** (`structuralOptimism.ts`'s own doc): a preview
+id is never `isSourceDerivedNodeId`, so a Delete keypress on the thing you just
+inserted, fired inside the sub-second window before its own resync lands, would
+otherwise take the "ordinary CMS node" path — a real, undo-tracked mutation
+against a node the resync is about to erase anyway. `isPendingOptimisticNodeId`/
+`excludePendingOptimisticTargets` close this for `deleteNode`/`deleteNodes`
+(treated exactly like a missing node — the same precedent `planSourceDuplicateTo`
+sets for a stale drop source). Every OTHER structural gesture aimed at a pending
+preview id is already safe for free: `insert`/`duplicate`/`wrap`/`group`/
+`ungroup`/paste/transplant all check `deferWhileStructuralCommitInFlight` first,
+and a preview id is pending only while its own commit is in flight, so a second
+gesture at it is QUEUED and re-plans against the post-resync tree (where the id
+is simply gone) rather than mutating a phantom. MOVE is the one gesture left
+genuinely unguarded — dragging the ghost before its own write lands — named as a
+deliberate, disproportionate-to-fix limitation in the same class `commitStructural`'s
+own doc already accepts for a refused move.
+
+#### Decisions
+1. **No batching of a burst into one write** (work-order item 2). Already decided
+   by `store-14` (`STATE.md`, this file) for good, specific reasons tied to the
+   owner's own bar ("one gesture = one write = one toast = one ⌘Z") — a batch
+   would turn five ⌘D undo steps into one. I re-read that reasoning, agreed with
+   it, and did not reopen it. The queue (`structuralCommitQueue.ts`) already
+   serializes without refusing; that stands unchanged.
+2. **Alt-drag duplicate-to-a-container (K2), paste, and ungroup are NOT
+   previewed.** Alt-drag already has continuous visual feedback from the drag
+   itself; paste and ungroup were left out for time, not for a correctness
+   reason — they are the natural next scope if this is extended.
+3. **The shared settle/rollback helper lives in `structuralOptimism.ts`, not
+   `studioStructuralCommits.ts`,** purely to fit the 700-line module-size budget
+   (see Landmines) — `studioStructuralCommits.ts` calls it, `structuralOptimism.ts`
+   owns it.
+
+#### New selectors and their complexity
+**None.** `previewActiveTreeMutation` is a one-shot mutation helper on the
+commit path, exactly like `mutateActiveTree` — never read from a selector.
+
+#### New mutations, coalesce keys, history behaviour
+**None of the 13 named tree-mutation actions changed, and no new one was added.**
+The preview is deliberately NOT a `mutate*`-family action: it pushes no history
+entry (`coalesceKey` is moot — nothing is coalesced) and sets no dirty mark. The
+gesture's real undo entry is unchanged from `store-14` (a patch-free `source`
+entry, `coalesceKey: null`).
+
+#### Landmines
+1. **The 700-line module-size gate bit twice.** Adding `optimistic?:
+   OptimisticPreviewHandle` to `StructuralCommitOptions` and all four
+   `commitStudioX` signatures pushed `studioStructuralCommits.ts` to 731 lines and
+   `types.ts` to 701. Fixed by trimming comments to one line each and moving the
+   shared `settleOrRollbackOptimistic` try/catch into `structuralOptimism.ts`
+   (exported, imported back) rather than defining it locally — both now sit
+   exactly at/under 700. If you add another field to that options bag, budget for
+   this gate before you write the doc comment.
+2. **`structuralCommitQueue.test.ts`'s `makeHelpers()` stub needed a
+   `previewActiveTreeMutation: () => null` added** — without it, every duplicate
+   in that suite logs a caught `TypeError` (harmless — `structuralOptimism.ts`'s
+   `safelyBuild` swallows it — but noisy). Any OTHER test stubbing
+   `SiteSliceHelpers` by hand for a structural-write path needs the same one-line
+   addition or will get the same (harmless) console spam.
+3. **The e2e phase0 suite's own "⌘D five times" and "⌘G / ⌘⇧G / ⌘Z" cases are
+   FLAKY in this environment, independent of this change.** Confirmed by copying
+   the six touched source files back to their pre-`perf-10` content (via `git show
+   c3479358~1:<path> > <path>`, never `git stash` — banned in this repo) and
+   re-running the identical e2e cases: **both failures reproduce byte-for-byte on
+   baseline**, with the exact same assertion messages ("stacked more than one
+   success toast", "the second ⌘G did not write anything"). Root cause theory,
+   not confirmed: `pushToast`'s default dedupe key is `kind+title+body` and only
+   collapses a repeat onto a toast still ON SCREEN — a slow-enough real dev-server
+   round trip (this VM, not the CI box) can let the first "Duplicated" toast's
+   default ~4s auto-dismiss elapse before the burst's later writes land, so they
+   start a SECOND card instead of collapsing onto the first. Not fixed here — it
+   predates this change and reproduces on an unmodified checkout.
+4. **The e2e stack leaves orphaned `bun.exe` processes holding ports 3002/5174 on
+   Windows after an aborted run** (`verify-2`'s own named issue, hit three times
+   this session). `netstat -ano | grep :3002` then `taskkill //F //PID <n>` before
+   retrying; `bun run test:e2e` reports "Process from config.webServer was not
+   able to start. Exit code: 1" with no other clue when this is the cause.
+5. **This worktree had no `node_modules` at all** when I resumed (140K on disk) —
+   `bun install` (66s, cache-warm) before anything that needs a real dependency
+   graph (e2e, `tsc`).
+6. **`npx tsc -b` reports ~484 pre-existing errors repo-wide**, all a
+   `StructuralPlan<T>`/similar discriminated-union narrowing failure
+   (`Property 'X' does not exist on type '{ ok: true; ... }'`) that has nothing to
+   do with this change. Confirmed pre-existing the same way as landmine 3: same
+   484-error count on baseline via `git show c3479358~1:<path>` restores of the six
+   touched files. None of my new/changed files (`structuralOptimism.ts`,
+   `helpers.ts`, `types.ts`) appear anywhere in the error list before or after.
+   `bun run build`'s `tsc -b` step will therefore fail regardless of this PR —
+   not this PR's bug to fix, flagged for whoever owns the baseline.
+
+#### Verification — real numbers
+- **Measured, this machine** (`src/__tests__/editor-store/` harness, real store,
+  no browser): a `duplicateNode` on a studio-imported tree shows the copy in the
+  tree **~3.9ms** after the call returns (same tick — no `await` in between),
+  against a stubbed 300ms-per-request `/save`+`/reload-scope` round trip that
+  would have made the OLD ("wait for resync") behaviour take **~656ms** to show
+  anything. Script deleted after use per the work order ("measure, report, don't
+  commit a one-off"); the four assertions pinning "under 5ms" / "over 300ms" now
+  live in the regression suite below instead.
+- **Regression test, confirmed to fail without the fix:** flipped
+  `structuralOptimism.ts`'s `safelyBuild` to `return null` unconditionally (no
+  `git stash` — copied the file aside, edited in place, restored the same way).
+  All 4 cases in `structuralOptimisticPreview.test.ts` went red with the exact
+  expected diffs (`Expected length: 2, Received: 1` for duplicate/wrap;
+  `Expected: "base.container", Received: "base.text"` for wrap's tag; the rollback
+  case's "still 2, not rolled back to 1" case also failed as expected). Restored
+  the file, diffed byte-identical against the pre-flip version, reran: 4/4 pass.
+- `bun test src/__tests__/editor src/__tests__/editor-store src/admin/pages/site/store
+  src/admin/pages/site/studio/__tests__ src/__tests__/architecture` → **1393 pass, 1
+  skip (pre-existing), 0 fail**, across 204 files.
+- `bun run lint` scoped to every file this change touches (7 source + 2 test
+  files) → **clean, zero warnings**. A full-repo `bun test`/`bun run lint` was
+  started but did not finish inside this session's time budget in this
+  environment (see landmine 6 for why `bun run build`'s `tsc` half is expected to
+  fail regardless — pre-existing).
+- `bun run test:e2e tests/e2e/studio-feel-phase0.e2e.ts` (case 1 is the five-⌘D
+  burst, as directed): **7 of 10 pass** on this branch; the 3 failures (case 1's
+  toast count, case 4's ⌘G/⌘⇧G/⌘Z round trip, case 9's Vite Tier-2 promotion) all
+  independently confirmed pre-existing — case 1 and case 4 reproduce byte-for-byte
+  on an unmodified checkout (landmine 3); case 9 fails with `headless capture …
+  Timeout 180000ms exceeded`, a resource/environment ceiling in this VM unrelated
+  to any file this PR touches.
+- **Correctness bar, checked by hand against the code, not just asserted:** a
+  refused write reverts the preview (`rollback()`); a write that never reaches
+  the network reverts it too (the `catch` block, idempotent against a maybe-
+  already-run `settle`); a write that lands never has its preview explicitly
+  reverted (the resync erases it as a side effect) and never gets a second undo
+  entry (`no new mutations` section above) — "one gesture = one write = one
+  toast = one ⌘Z" is unchanged from `store-14`.
+- **Full untargeted `bun test`, completed after ~17 minutes in the background**
+  (it was still running, not stuck, when I first drafted this entry): **14431
+  pass, 3 skip, 3 fail, across 14437 tests in 1285 files.** All 3 failures are
+  in `server/plugins/scheduler.ts` → `server/repositories/pluginSchedules.ts`
+  (`src/__tests__/server/cmsPlugins.test.ts`) — the CMS plugin scheduler's
+  advisory-lock/due-schedules SQL path. Nothing this change touches sits
+  anywhere near that file graph (no `server/` file is in this diff at all), so
+  this is server-engineer's territory, not mine — noted here rather than
+  investigated, per the parallel-sessions rule.
+- **Not run:** `bun run build` end-to-end (blocked on landmine 6's pre-existing
+  484 `tsc` errors, unrelated to this diff — confirmed via the same baseline
+  restore-and-compare method).
+- **Human action needed:** dogfood — on a studio-imported project, press ⌘D,
+  drop a component from the Assets panel, and ⌘G two siblings, and confirm each
+  shows on the canvas with no perceptible delay (rather than the previous
+  blank-until-resync pause). Also worth a human's eye: the toast-dedupe flake
+  (landmine 3) — if it reproduces for a real user (not just this VM's e2e runs),
+  it is a real, if pre-existing, product defect worth its own ticket.
+
+---
+
 ### store-11 — a duplicate you click once could write itself twice, silently
 - **Agent:** store-engineer
 - **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.

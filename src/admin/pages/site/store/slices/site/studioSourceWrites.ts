@@ -54,6 +54,12 @@ import {
 } from './structuralSourceEdits'
 import { insertableJsxProps } from './insertablePropValues'
 import { createStudioSourceRefusals, type StudioSourceRefusals } from './studioSourceRefusals'
+import {
+  previewOptimisticDuplicate,
+  previewOptimisticGroup,
+  previewOptimisticInsert,
+  previewOptimisticWrap,
+} from './structuralOptimism'
 import type { SiteSliceHelpers } from './types'
 
 /**
@@ -164,15 +170,22 @@ export function createStudioSourceWrites(
     const sourceImport = mod?.sourceImport
 
     if (sourceImport) {
-      // `live-07` — same-tick ghost paint for a live (bridge) frame: there is
-      // no real node id yet (the element doesn't exist until the codemod
-      // writes it), so a throwaway placeholder id stands in purely as the
-      // ghost's own `data-node-id`. Safe because `BridgeFrameAdapter.optimistic
-      // .insert` never looks the id up, and `runtime.ts`'s ghost sweep removes
-      // it wholesale on the next Fast Refresh. `'div'` is the least-disruptive
-      // generic placeholder tag — a design-system component's real root tag
-      // is unknowable without executing it.
-      broadcastOptimisticInsert(`optimistic:${crypto.randomUUID()}`, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, 'div')
+      // `live-07`/`perf-10` — same-tick paint for BOTH frame kinds, sharing
+      // ONE placeholder id: a throwaway `optimistic:` id stands in purely as
+      // the bridge ghost's own `data-node-id` (safe because
+      // `BridgeFrameAdapter.optimistic.insert` never looks it up, and
+      // `runtime.ts`'s ghost sweep removes it wholesale on the next Fast
+      // Refresh) AND as the temporary node's real id in the local tree, which
+      // is what makes a PORTAL frame paint too — it renders from that tree,
+      // not from a DOM ghost. `'div'` for the bridge ghost is the
+      // least-disruptive generic placeholder tag; the local preview renders
+      // the actual module with its own defaults instead, since a
+      // design-system component's real ROOT TAG is unknowable without
+      // executing it, but its registered CANVAS appearance is not.
+      const ghostId = `optimistic:${crypto.randomUUID()}`
+      broadcastOptimisticInsert(ghostId, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, 'div')
+      const optimistic =
+        previewOptimisticInsert(helpers, moduleId, props, plan.commit.parentNodeId, index, ghostId) ?? undefined
       void commitStudioInsert({
         ...plan.commit,
         name: sourceImport.name,
@@ -184,6 +197,7 @@ export function createStudioSourceWrites(
           ? { importSpecifier: sourceImport.specifier }
           : { designSystemImport: true as const }),
         props: insertableJsxProps(props),
+        ...(optimistic ? { optimistic } : {}),
       })
       return true
     }
@@ -193,15 +207,15 @@ export function createStudioSourceWrites(
     // omitting `importSpecifier`. See `sourceIntrinsic` on `ModuleDefinition`.
     const intrinsic = mod?.sourceIntrinsic?.(props)
     if (intrinsic) {
-      // `live-07` — same as above, but an honest tag match: `intrinsic.tag`
-      // is exactly what the codemod is about to write.
-      broadcastOptimisticInsert(
-        `optimistic:${crypto.randomUUID()}`,
-        plan.commit.parentNodeId,
-        index ?? Number.MAX_SAFE_INTEGER,
-        intrinsic.tag,
-        intrinsic.text,
-      )
+      // `live-07`/`perf-10` — same as above, but an honest tag match:
+      // `intrinsic.tag` is exactly what the codemod is about to write, and
+      // `props` (the same merged bag the codemod's `intrinsic.text` was
+      // itself derived from) is what the local preview renders with.
+      const ghostId = `optimistic:${crypto.randomUUID()}`
+      broadcastOptimisticInsert(ghostId, plan.commit.parentNodeId, index ?? Number.MAX_SAFE_INTEGER, intrinsic.tag, intrinsic.text)
+      const optimistic =
+        previewOptimisticInsert(helpers, moduleId, props, plan.commit.parentNodeId, index, ghostId, inlineStyles) ??
+        undefined
       void commitStudioInsert({
         ...plan.commit,
         name: intrinsic.tag,
@@ -213,6 +227,7 @@ export function createStudioSourceWrites(
         // `renderJsxNode` emits into `style={{ … }}` and the parser reads back.
         props: inlineStyles && Object.keys(inlineStyles).length > 0 ? { style: { ...inlineStyles } } : {},
         ...(intrinsic.text === undefined ? {} : { children: intrinsic.text }),
+        ...(optimistic ? { optimistic } : {}),
       })
       return true
     }
@@ -299,7 +314,12 @@ export function createStudioSourceWrites(
       return true
     }
     if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-    void commitStudioDuplicate(plan.commit)
+    // `perf-10` — paint the copies now, at the same identity `plan.commit`
+    // names: `duplicateNodeWithScopedClasses` clones each source id locally
+    // so the canvas shows the duplicate the instant ⌘D fires rather than
+    // after the write's own resync.
+    const optimistic = previewOptimisticDuplicate(helpers, plan.commit) ?? undefined
+    void commitStudioDuplicate(plan.commit, undefined, optimistic)
     return true
   }
 
@@ -344,7 +364,12 @@ export function createStudioSourceWrites(
 
     const container = resolveContainerTag(containerModuleId, defaults)
     if (container) {
-      void commitStudioWrap({ nodeId: plan.commit, ...container })
+      // `perf-10` — same defaults-resolution rule `nodeActions.ts`'s plain
+      // `wrapNode` uses, so the local preview's wrapper renders correctly.
+      const mod = registry.get(containerModuleId)
+      const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
+      const optimistic = previewOptimisticWrap(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined
+      void commitStudioWrap({ nodeId: plan.commit, ...container, ...(optimistic ? { optimistic } : {}) })
       return true
     }
     // Always `actions: []` — always the toast, never the dialog.
@@ -428,9 +453,17 @@ export function createStudioSourceWrites(
       return true
     }
 
+    // `perf-10` — same defaults-resolution rule `writeWrapToSource` uses.
+    const mod = registry.get(containerModuleId)
+    const resolvedDefaults = { ...(mod?.defaults ?? {}), ...defaults }
     const only = plan.commit.length === 1 ? plan.commit[0] : undefined
-    if (only !== undefined) void commitStudioWrap({ nodeId: only, ...container })
-    else void commitStudioGroup({ nodeIds: plan.commit, ...container })
+    if (only !== undefined) {
+      const optimistic = previewOptimisticWrap(helpers, only, containerModuleId, resolvedDefaults) ?? undefined
+      void commitStudioWrap({ nodeId: only, ...container, ...(optimistic ? { optimistic } : {}) })
+    } else {
+      const optimistic = previewOptimisticGroup(helpers, plan.commit, containerModuleId, resolvedDefaults) ?? undefined
+      void commitStudioGroup({ nodeIds: plan.commit, ...container, ...(optimistic ? { optimistic } : {}) })
+    }
     return true
   }
 

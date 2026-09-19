@@ -27,6 +27,7 @@
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
+import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import { setPendingStructuralOutcome, type PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
@@ -64,6 +65,7 @@ interface StructuralCommitOptions {
    * reported.
    */
   reissue?: 'undo' | 'redo'
+  optimistic?: OptimisticPreviewHandle // `perf-10` — local preview, settled/rolled back in `commitStructuralBody`.
 }
 
 /**
@@ -232,6 +234,7 @@ export async function commitStudioDuplicate(
     anchorNodeId: string | null
     position: 'before' | 'after'
   },
+  optimistic?: OptimisticPreviewHandle, // `perf-10` — see `StructuralCommitOptions.optimistic`.
 ): Promise<void> {
   if (nodeIds.length === 0) return
   await commitStructural(
@@ -254,6 +257,7 @@ export async function commitStudioDuplicate(
         body: 'Written to your project source.',
       },
       undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
+      ...(optimistic ? { optimistic } : {}),
     },
   )
 }
@@ -273,6 +277,7 @@ export async function commitStudioWrap(wrap: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -288,6 +293,7 @@ export async function commitStudioWrap(wrap: {
     {
       success: { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
       undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
 }
@@ -314,6 +320,7 @@ export async function commitStudioGroup(group: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   const [nodeId, ...siblingNodeIds] = group.nodeIds
   if (nodeId === undefined || siblingNodeIds.length === 0) return
@@ -332,6 +339,7 @@ export async function commitStudioGroup(group: {
     {
       success: { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
       undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
 }
@@ -423,6 +431,7 @@ export async function commitStudioInsert(insert: {
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -444,6 +453,7 @@ export async function commitStudioInsert(insert: {
     {
       success: { title: `Added ${insert.name}`, body: 'Written to your project source.' },
       undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )
 }
@@ -597,6 +607,7 @@ async function commitStructuralBody(
     // letting the change quietly reappear after the reload with no explanation.
     const unexplained = result.skipped - (result.refusals ?? []).length
     const willReload = result.written > 0
+    settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback') // `perf-10`
     if (unexplained > 0) {
       pushToast({
         kind: 'error',
@@ -649,6 +660,7 @@ async function commitStructuralBody(
     // failed request is "disk is unchanged," which means no reload either
     // (see this function's doc for why an unconditional reload here was the
     // bug, not the fix).
+    settleOrRollbackOptimistic(options.optimistic, 'rollback') // `perf-10` — idempotent against the line above.
     console.error('[studioSaveRequests] structural edit failed:', err)
     pushToast({
       kind: 'error',
@@ -683,3 +695,4 @@ function resolvePendingHistory(
     },
   }
 }
+
