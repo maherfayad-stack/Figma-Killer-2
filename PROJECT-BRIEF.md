@@ -422,15 +422,13 @@ for a project explicitly demoted to `static`.
   (Tailwind/Sass/PostCSS output, a non-`.css` module) goes to `unmapped` and is
   toasted. This is correct behaviour, not a bug — but it is why a Tailwind
   project's styles are edited through the `class` path, not the style path.
-- ~~Tailwind v3/v4, Sass and PostCSS compilation requires Tier-1 promotion~~ —
-  **no longer true as of 2026-09-20.** WS-2.1 built the pipeline
-  (`styleCompileTier1.ts`, a capped subprocess), and every project now starts
-  at Tier 2 (`DEFAULT_TRUST_TIER`), which already clears the Tier-1 gate
-  (`trust !== 'static'`) — a fresh import compiles its styles on the very
-  first load, no click required. The refusal
-  (`style-toolchain-requires-trust-promotion`) is still real, just reachable
-  now only for a project explicitly demoted to `static` via the Live pill's
-  "Back to static".
+- **Tailwind v3/v4, Sass and PostCSS compile on first load, in a capped
+  subprocess** (`styleCompileTier1.ts`): every project starts at Tier 2
+  (`DEFAULT_TRUST_TIER`, 2026-09-20), which clears the Tier-1 gate
+  (`trust !== 'static'`), so a fresh import is styled with no click. The
+  refusal (`style-toolchain-requires-trust-promotion`) is still real, but
+  only a project explicitly demoted to `static` via the Live pill's "Back to
+  static" reaches it — and that project renders unstyled until promoted again.
 - `.module.scss` / `.module.sass` / `.module.less` are **detected and warned
   about** (`css-module-sass-not-supported`) but not compiled — only plain
   `.module.css` is.
