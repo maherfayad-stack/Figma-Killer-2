@@ -99,11 +99,16 @@ const DeleteEditSchema = Type.Object({
  * re-rendered. `imports` are the standalone declaration texts the delete's
  * own prune pass removed (`PrunedImportsResult.declarations`), re-added as
  * their own lines after the file's last import.
+ *
+ * `index` is a non-negative integer at the wire (`sec-22`): a negative or
+ * fractional one is never something `captureDeleteOrigin` produces, and the
+ * codemod would otherwise silently read it as "past the end" — a wrong
+ * position is still a wrong write.
  */
 const ReinsertSourceEditSchema = Type.Object({
   kind: Type.Literal('reinsert-source'),
   nodeId: Type.String(),
-  index: Type.Number(),
+  index: Type.Integer({ minimum: 0 }),
   text: Type.String(),
   imports: Type.Optional(Type.Array(Type.String())),
 })

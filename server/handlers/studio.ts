@@ -469,6 +469,8 @@ export async function tryServeStudio(
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
+        removed,
+        prunedImports,
       } = await applyStudioEditBatchLocked(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
@@ -508,6 +510,17 @@ export async function tryServeStudio(
         // path to strip.
         createdNodeIds,
         relocatedNodeIds,
+        // `store-15` — what a `delete` took out: the element's own bytes and
+        // the imports its prune pass retired, which are the ONLY material ⌘Z
+        // has to put it back with. The same lesson as the two fields above:
+        // the batch computed them, and a route that lists its fields by hand
+        // forwarded neither, so every undo of a delete resolved to "Studio
+        // could not work out how to take this back" while the code that could
+        // sat one layer down. `studioSaveRoute.test.ts` holds this now.
+        // `removed` is keyed by the edit's own workspace-relative node id and
+        // `prunedImports.file` is already workspace-relative — nothing to strip.
+        removed,
+        prunedImports,
       })
     } catch (err) {
       return studioRouteFailure(err)
