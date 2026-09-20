@@ -26,10 +26,12 @@
  *   - `Static` + "Run the real app" — a Vite project with a lockfile that the
  *     owner explicitly put back to static via this pill's own demote button.
  *     The action promotes to Tier 2 and reloads.
- *   - `Live needs Vite` / `Live needs an install` — the real app cannot be run
- *     at all (§6 decision 5: non-Vite live frames are deferred). Says so
- *     instead of offering a button that would fail. The capability is decided
- *     SERVER-side (`liveCapability.ts`); this only renders the answer.
+ *   - `Live needs Vite` — the real app cannot be run at all (§6 decision 5:
+ *     non-Vite live frames are deferred), so it says so — at ANY tier,
+ *     including the Tier-2 default, because a board that is really showing
+ *     the static fallback must not be labelled "Live". The capability is
+ *     decided SERVER-side (`liveCapability.ts`, the same rule the dev-server
+ *     spawner refuses on); this only renders the answer.
  *
  * ## Revocable, not just an on-ramp (`sec-10`)
  *
@@ -65,14 +67,11 @@ import styles from './LiveRuntimePill.module.css'
 
 const BLOCKED_LABEL: Record<NonNullable<LiveCapability['reason']>, string> = {
   'not-vite': 'Live needs Vite',
-  'no-lockfile': 'Live needs an install',
 }
 
 const BLOCKED_EXPLANATION: Record<NonNullable<LiveCapability['reason']>, string> = {
   'not-vite':
     'Running the real app means spawning its dev server, and Studio’s live pipeline is a Vite plugin. This project is not a Vite project, so the board renders the parsed tree through Studio’s own React instead. Next/CRA support is a decided-later, not a never.',
-  'no-lockfile':
-    'This project has no lockfile, so there is no resolved dependency set to boot a dev server against. Install its dependencies from the Dependencies panel, then this becomes available.',
 }
 
 export function LiveRuntimePill() {
@@ -126,6 +125,23 @@ export function LiveRuntimePill() {
     }
   }
 
+  if (!live.capable) {
+    const reason = live.reason ?? 'not-vite'
+    return (
+      <Tooltip content={BLOCKED_EXPLANATION[reason]} size="wide" openOnFocus>
+        <span
+          className={styles.pill}
+          data-runtime="blocked"
+          data-testid="live-runtime-pill"
+          role="status"
+          tabIndex={0}
+        >
+          {BLOCKED_LABEL[reason]}
+        </span>
+      </Tooltip>
+    )
+  }
+
   if (trust === 'run-project') {
     return (
       <span className={styles.group}>
@@ -151,23 +167,6 @@ export function LiveRuntimePill() {
           {busy ? 'Stopping…' : 'Back to static'}
         </Button>
       </span>
-    )
-  }
-
-  if (!live.capable) {
-    const reason = live.reason ?? 'not-vite'
-    return (
-      <Tooltip content={BLOCKED_EXPLANATION[reason]} size="wide" openOnFocus>
-        <span
-          className={styles.pill}
-          data-runtime="blocked"
-          data-testid="live-runtime-pill"
-          role="status"
-          tabIndex={0}
-        >
-          {BLOCKED_LABEL[reason]}
-        </span>
-      </Tooltip>
     )
   }
 

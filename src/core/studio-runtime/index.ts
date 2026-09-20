@@ -40,7 +40,7 @@ export { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
 export type { NodeIdOccurrence } from './nodeIdIndexing'
 
 export {
-  STUDIO_PARENT_ORIGIN_ENV,
+  STUDIO_PARENT_ORIGINS_ENV,
   STUDIO_PROJECT_KEY_ENV,
   StudioRuntimeConfigSchema,
   readStudioRuntimeConfigFromEnv,

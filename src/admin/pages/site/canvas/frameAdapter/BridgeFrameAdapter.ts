@@ -128,6 +128,8 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   >()
   private nextRequestId = 0
   private disposed = false
+  private frameReady = false
+  private queuedUntilReady: Parameters<typeof toInboundEnvelope>[0][] = []
   private readonly onMessage = (ev: MessageEvent) => this.handleWindowMessage(ev)
 
   readonly optimistic: OptimisticDomOps = {
@@ -191,8 +193,21 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     return this.stampIndex.get(stampId)?.[occurrenceIndex] ?? stampId
   }
 
+  /**
+   * Nothing is posted until the frame has said `ready`. Before that the
+   * iframe is still `about:blank` (the parent's origin) or mid-navigation,
+   * and a `postMessage` targeted at `frameOrigin` lands nowhere and logs a
+   * "target origin does not match" warning for every overlay, mode and axes
+   * call the canvas makes while mounting. Queued and flushed on `ready`
+   * instead — the frame gets every command, in order, the moment it can act
+   * on them.
+   */
   private post(message: Parameters<typeof toInboundEnvelope>[0]): void {
     if (this.disposed) return
+    if (!this.frameReady) {
+      this.queuedUntilReady.push(message)
+      return
+    }
     this.channel.postMessage(toInboundEnvelope(message), this.frameOrigin)
   }
 
@@ -270,7 +285,14 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
 
   private dispatchOutboundMessage(message: OutboundRuntimeMessage): void {
     switch (message.type) {
-      case 'ready':
+      case 'ready': {
+        this.frameReady = true
+        const queued = this.queuedUntilReady
+        this.queuedUntilReady = []
+        for (const pending of queued) this.post(pending)
+        this.emit({ type: 'ready' })
+        return
+      }
       case 'hmr:before':
       case 'hmr:after':
         this.emit({ type: message.type })

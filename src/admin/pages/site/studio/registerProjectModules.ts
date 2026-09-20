@@ -444,8 +444,12 @@ async function syncProjectModules(dir: string): Promise<void> {
       // through `setPackageBundleStatus` and rendered where it matters —
       // `PackageComponentPlaceholder`, the ModulePicker and the insert
       // palette — which is the honest place for a state the user can act on.
-      // Every OTHER code is a genuine failure and still says so.
-      if (response.code !== 'trust-tier-required') {
+      // `no-components-found` is the same kind of non-failure: the project
+      // names packages (a retired npm design system still in its cached
+      // profile, a package with no manifest this extractor reads) and none of
+      // them yielded a component — nothing to register, nothing broken. Every
+      // OTHER code is a genuine failure and still says so.
+      if (response.code !== 'trust-tier-required' && response.code !== 'no-components-found') {
         console.error(`[registerProjectModules] bundle refused (${response.code}): ${response.message}`)
       }
       setPackageBundleStatus({ ok: false, code: response.code, message: response.message })

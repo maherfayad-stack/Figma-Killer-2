@@ -21,7 +21,7 @@ import { describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
+import { STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../../ai/drivers/registeredMcpServers'
 import {
   ensureDevServer,
@@ -56,14 +56,13 @@ function emptyStream(): ReadableStream<Uint8Array> {
 
 interface FakeProcessOptions {
   stdoutChunks?: string[]
-  hangUntilKilled?: boolean
 }
 
-function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessLike; wasKilled: () => boolean } {
+/** A fake dev-server process. Like a real one it stays alive until it is killed — or until the test ends it with `exit(code)`, which is how a crash after `ready` is modelled. */
+function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessLike; wasKilled: () => boolean; exit: (code: number) => void } {
   let killed = false
   let resolveExited!: (code: number) => void
   const exited = new Promise<number>((resolve) => { resolveExited = resolve })
-  if (!opts.hangUntilKilled) resolveExited(0)
 
   const proc: SpawnedProcessLike = {
     stdout: opts.stdoutChunks ? streamFromChunks(opts.stdoutChunks) : emptyStream(),
@@ -75,7 +74,7 @@ function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessL
       resolveExited(-1)
     },
   }
-  return { proc, wasKilled: () => killed }
+  return { proc, wasKilled: () => killed, exit: (code: number) => resolveExited(code) }
 }
 
 function writePackageJson(dir: string, scripts: Record<string, string>): void {
@@ -132,7 +131,7 @@ describe('ensureDevServer', () => {
     const result = await ensureDevServer(tmpDir, { spawn: () => proc })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.baseUrl).toBe('http://localhost:5173')
+    expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -149,7 +148,7 @@ describe('ensureDevServer', () => {
     const result = await ensureDevServer(tmpDir, { spawn: () => proc })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.baseUrl).toBe('http://localhost:5173')
+    expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -165,20 +164,43 @@ describe('ensureDevServer', () => {
     const result = await ensureDevServer(tmpDir, { spawn: () => proc })
 
     expect(result.ok).toBe(true)
-    expect(result.ok && result.baseUrl).toBe('http://localhost:5173')
+    expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-timeout-')
-    writePackageJson(tmpDir, { dev: 'some-slow-thing' })
-    const { proc, wasKilled } = makeFakeProcess({ hangUntilKilled: true })
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const { proc, wasKilled } = makeFakeProcess()
 
     const result = await ensureDevServer(tmpDir, { spawn: () => proc, bootTimeoutMs: 15 })
 
     expect(result.ok).toBe(false)
     expect(!result.ok && result.error.length > 0).toBe(true)
     expect(wasKilled()).toBe(true)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('refuses to spawn anything but vite — a non-Vite dev/start script never runs, at any tier (sec-20)', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-notvite-')
+    writePackageJson(tmpDir, { start: 'node ./server.js' })
+    let spawnCount = 0
+    const overrides: DevServerOverrides = {
+      spawn: () => {
+        spawnCount += 1
+        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5178/\n'] }).proc
+      },
+    }
+
+    const result = await ensureDevServer(tmpDir, overrides)
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toContain('vite')
+    expect(spawnCount).toBe(0)
+
+    // The browser route reports it as a failed boot with the reason, not a spawn.
+    expect(startDevServer(tmpDir, overrides).phase).toBe('failed')
+    expect(spawnCount).toBe(0)
+
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
@@ -233,7 +255,7 @@ describe('ensureDevServer', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('injects STUDIO_PARENT_ORIGIN_ENV from PUBLIC_ORIGIN when set, and omits it entirely when unset (live-08, virtual:studio-runtime)', async () => {
+  it('injects STUDIO_PARENT_ORIGINS_ENV as the live frame-ancestor list — PUBLIC_ORIGIN when set, and always the admin and dev origins (live-08, virtual:studio-runtime)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-parentorigin-')
     writePackageJson(tmpDir, { dev: 'vite' })
     const originalPublicOrigin = process.env.PUBLIC_ORIGIN
@@ -247,7 +269,9 @@ describe('ensureDevServer', () => {
           return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
         },
       })
-      expect(capturedEnvWithOrigin?.[STUDIO_PARENT_ORIGIN_ENV]).toBe('https://studio.example.com')
+      const withOrigin = (capturedEnvWithOrigin?.[STUDIO_PARENT_ORIGINS_ENV] ?? '').split(',')
+      expect(withOrigin).toContain('https://studio.example.com')
+      expect(withOrigin).toContain(`http://127.0.0.1:${process.env.PORT ?? 3001}`)
       stopDevServer(tmpDir)
 
       delete process.env.PUBLIC_ORIGIN
@@ -258,8 +282,10 @@ describe('ensureDevServer', () => {
           return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).proc
         },
       })
-      expect(capturedEnvWithoutOrigin).toBeDefined()
-      expect(Object.prototype.hasOwnProperty.call(capturedEnvWithoutOrigin ?? {}, STUDIO_PARENT_ORIGIN_ENV)).toBe(false)
+      const withoutOrigin = (capturedEnvWithoutOrigin?.[STUDIO_PARENT_ORIGINS_ENV] ?? '').split(',')
+      expect(withoutOrigin).not.toContain('https://studio.example.com')
+      expect(withoutOrigin).toContain(`http://127.0.0.1:${process.env.PORT ?? 3001}`)
+      expect(withoutOrigin).toContain('http://localhost:5173')
     } finally {
       if (originalPublicOrigin === undefined) delete process.env.PUBLIC_ORIGIN
       else process.env.PUBLIC_ORIGIN = originalPublicOrigin
@@ -352,12 +378,12 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
 
   it('retains a failed boot in the registry so status can show its log, then clears it on the next start', async () => {
     const tmpDir = makeTmpDir('studio-devserver-failed-')
-    writePackageJson(tmpDir, { dev: 'some-slow-thing' })
+    writePackageJson(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
       spawn: () => {
         spawnCount += 1
-        return makeFakeProcess({ hangUntilKilled: true }).proc
+        return makeFakeProcess().proc
       },
       bootTimeoutMs: 10,
     }
@@ -369,6 +395,35 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
     // Next start attempt clears the failed entry and spawns fresh.
     startDevServer(tmpDir, overrides)
     expect(spawnCount).toBe(2)
+
+    stopDevServer(tmpDir)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a dev server that exits AFTER it was ready reports failed with the exit in its log, and the next start respawns', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-crash-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const fakes: ReturnType<typeof makeFakeProcess>[] = []
+    const overrides: DevServerOverrides = {
+      spawn: () => {
+        const fake = makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5177/\n'] })
+        fakes.push(fake)
+        return fake.proc
+      },
+    }
+
+    startDevServer(tmpDir, overrides)
+    await waitUntil(() => getDevServerStatus(tmpDir).phase === 'ready')
+
+    // Vite crashing on an HMR socket reset, or the user killing it from a terminal.
+    fakes[0]!.exit(1)
+    await waitUntil(() => getDevServerStatus(tmpDir).phase === 'failed')
+    expect(getDevServerStatus(tmpDir).log).toContain('exited with code 1 after it was ready')
+
+    // The proxy must stop forwarding to the dead port, and a start respawns.
+    startDevServer(tmpDir, overrides)
+    expect(fakes).toHaveLength(2)
+    await waitUntil(() => getDevServerStatus(tmpDir).phase === 'ready')
 
     stopDevServer(tmpDir)
     fs.rmSync(tmpDir, { recursive: true, force: true })

@@ -83,12 +83,12 @@ export const LiveOriginErrorSchema = Type.Object({
 })
 export type LiveOriginError = Static<typeof LiveOriginErrorSchema>
 
-function liveOriginErrorResponse(status: number, body: LiveOriginError, publicOrigins: readonly string[]): Response {
+function liveOriginErrorResponse(status: number, body: LiveOriginError, frameAncestors: readonly string[]): Response {
   const res = new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   })
-  return liveOriginSecurityHeaders(res, publicOrigins)
+  return liveOriginSecurityHeaders(res, frameAncestors)
 }
 
 /**
@@ -202,11 +202,12 @@ export function stripSetCookie(headers: Headers): Headers {
   return out
 }
 
-let warnedMissingPublicOrigin = false
-
 /**
  * Apply this listener's response headers: CSP `frame-ancestors` restricted to
- * the configured public origin(s), and `X-Content-Type-Options: nosniff`.
+ * `frameAncestors` — `ServerConfig.liveFrameAncestors`, the same origins the
+ * admin's CSRF check accepts as the editor (public, dev, and the admin
+ * server's own) — and `X-Content-Type-Options: nosniff`. An empty list means
+ * nobody may frame this listener, which is what a caller that passes one gets.
  *
  * `X-Frame-Options` is deliberately NOT set here — it has no multi-origin
  * allowlist form, so setting `DENY`/`SAMEORIGIN` would either block the one
@@ -214,20 +215,13 @@ let warnedMissingPublicOrigin = false
  * CSP `frame-ancestors`, which supersedes XFO) do nothing but look like a
  * stricter policy than the one actually in force.
  */
-export function liveOriginSecurityHeaders(res: Response, publicOrigins: readonly string[]): Response {
+export function liveOriginSecurityHeaders(res: Response, frameAncestors: readonly string[]): Response {
   const headers = new Headers(res.headers)
   headers.set('x-content-type-options', 'nosniff')
-
-  if (publicOrigins.length === 0) {
-    if (!warnedMissingPublicOrigin) {
-      warnedMissingPublicOrigin = true
-      console.warn('[liveOrigin] PUBLIC_ORIGIN not configured — live frames cannot be embedded')
-    }
-    headers.set('content-security-policy', "frame-ancestors 'none'")
-  } else {
-    headers.set('content-security-policy', `frame-ancestors ${publicOrigins.join(' ')}; frame-src 'none'`)
-  }
-
+  headers.set(
+    'content-security-policy',
+    frameAncestors.length === 0 ? "frame-ancestors 'none'" : `frame-ancestors ${frameAncestors.join(' ')}; frame-src 'none'`,
+  )
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
 }
 
@@ -315,19 +309,19 @@ export interface LiveOriginUpgradeServer {
 export async function handleLiveOriginFetch(
   req: Request,
   server: LiveOriginUpgradeServer,
-  publicOrigins: readonly string[],
+  frameAncestors: readonly string[],
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<Response | undefined> {
   const url = new URL(req.url)
   const parsed = parseLivePath(url.pathname)
   if (!parsed) {
-    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, publicOrigins)
+    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, frameAncestors)
   }
   const { projectKey } = parsed
   const dir = resolveProjectDirForKey(projectKey)
 
   if (!dir) {
-    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, publicOrigins)
+    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, frameAncestors)
   }
 
   const status = getDevServerStatus(dir)
@@ -340,7 +334,7 @@ export async function handleLiveOriginFetch(
       return liveOriginErrorResponse(
         503,
         { error: 'Dev server is not ready', code: 'not-ready', phase: status.phase },
-        publicOrigins,
+        frameAncestors,
       )
     }
     const upstream = resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
@@ -354,7 +348,7 @@ export async function handleLiveOriginFetch(
     return liveOriginErrorResponse(
       503,
       { error: 'Dev server is not ready', code: 'not-ready', phase: status.phase },
-      publicOrigins,
+      frameAncestors,
     )
   }
 
@@ -371,7 +365,7 @@ export async function handleLiveOriginFetch(
     status: upstreamRes.status,
     headers: stripSetCookie(upstreamRes.headers),
   })
-  return liveOriginSecurityHeaders(res, publicOrigins)
+  return liveOriginSecurityHeaders(res, frameAncestors)
 }
 
 /**
@@ -396,13 +390,13 @@ export function getLiveOriginRuntimeOrigin(): string | null {
  * by `live-origin-isolation.test.ts`).
  */
 export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOriginSocketData> {
-  const publicOrigins = config.publicOrigins
+  const frameAncestors = config.liveFrameAncestors
 
   const server = Bun.serve<LiveOriginSocketData>({
     port: config.livePort,
 
     fetch(req, server) {
-      return handleLiveOriginFetch(req, server, publicOrigins)
+      return handleLiveOriginFetch(req, server, frameAncestors)
     },
 
     websocket: {
@@ -533,7 +527,7 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
           status: 500,
           headers: { 'content-type': 'application/json' },
         }),
-        publicOrigins,
+        frameAncestors,
       )
     },
   })
