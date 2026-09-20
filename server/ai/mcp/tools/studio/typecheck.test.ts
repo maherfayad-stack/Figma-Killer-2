@@ -58,12 +58,13 @@ describe('studio_typecheck', () => {
     expect(studioTypecheckTool.requiredCapabilities).toEqual(['studio.write'])
   })
 
-  it('refuses at the default Tier 0 (static) trust — no .studio/meta.json at all', async () => {
+  it('does not refuse on trust with no .studio/meta.json at all — every project defaults to run-project', async () => {
     write(dir, 'tsconfig.json', '{}')
     const result = (await studioTypecheckTool.handler!({ dir }, {} as never)) as { ok: boolean; code?: string; error?: string }
     expect(result.ok).toBe(false)
-    expect(result.code).toBe('trust-tier-required')
-    expect(result.error).toMatch(/Tier 0/)
+    // Trust already clears — the fixture has no installed tsc, so it refuses
+    // on THAT instead, never on the trust tier.
+    expect(result.code).not.toBe('trust-tier-required')
   })
 
   it('refuses at an EXPLICIT static trust tier too', async () => {

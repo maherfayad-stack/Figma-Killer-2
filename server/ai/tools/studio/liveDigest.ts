@@ -30,7 +30,7 @@ import { probeInstallStatus } from '../../../handlers/studio/installDeps'
 import { readAllDesignReferences } from '../../../handlers/studio/designReferenceStore'
 import { designReferenceRole, type DesignReferenceRole } from '../../../handlers/studio/designReferenceSchema'
 import { resolvePageSourceFile } from '../../../handlers/studio/pageSourceFile'
-import { readStudioMeta } from '../../../handlers/studio/studioMeta'
+import { DEFAULT_TRUST_TIER, readStudioMeta } from '../../../handlers/studio/studioMeta'
 import { findFigmaUrlInText } from '../../../handlers/studio/figmaUrl'
 import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
 import { loopbackAssetFetchEnabled } from '../../../handlers/studio/remoteAssetFetch'
@@ -334,7 +334,7 @@ function probeFigmaConnectorStatus(dir: string, userId?: string): StudioCapabili
  */
 function probeTypecheckAvailability(dir: string): TypecheckAvailability {
   try {
-    const trust = readStudioMeta(dir).trust ?? 'static'
+    const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
     if (trust === 'static') return { available: false, reason: 'trust-tier' }
     if (!existsSync(join(dir, 'tsconfig.json'))) return { available: false, reason: 'no-tsconfig' }
     if (!resolveProjectTscPath(dir)) return { available: false, reason: 'typescript-not-installed' }

@@ -260,15 +260,17 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
     expect(result.trust).toBe('render-packages')
   })
 
-  it('refuses a project with no .studio/meta.json at all — the default is Tier 0, never "unknown means yes"', async () => {
+  it('proceeds for a project with no .studio/meta.json at all — every project starts at run-project by default (owner decision, 2026-09-20)', async () => {
     writePackageJson(tmpDir, { dev: 'vite' })
 
-    const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
-    const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string; trust?: string }
+    const tool = createReferenceRenderTool({
+      spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5198/\n'] }).proc,
+      launchBrowser: async () => makeFakeBrowser(TINY_PNG_BASE64).browser,
+    })
+    const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string }
 
-    expect(result.ok).toBe(false)
-    expect(result.code).toBe('trust-tier-required')
-    expect(result.trust).toBe('static')
+    expect(result.ok).toBe(true)
+    expect(result.code).toBeUndefined()
   })
 
   it('proceeds once the project is promoted to run-project', async () => {
