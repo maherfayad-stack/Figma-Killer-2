@@ -577,12 +577,12 @@ describe('listStudioProjects', () => {
     expect(project!.styleToolchains).toEqual(['tailwind', 'sass'])
   })
 
-  it('defaults to Tier 0 and no badges for a project that has never been probed', () => {
+  it('defaults to run-project (Tier 2) and no badges for a project that has never been probed', () => {
     write('studio-workspace/plain/pages/Home.tsx', 'x')
 
     const [project] = listStudioProjects(projectsRoot)
 
-    expect(project!.trust).toBe('static')
+    expect(project!.trust).toBe('run-project')
     expect(project!.styleToolchains).toEqual([])
     expect(project!.platform).toBeUndefined()
     expect(project!.framework).toBeUndefined()

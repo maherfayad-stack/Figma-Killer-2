@@ -2,17 +2,15 @@
  * liveCapability — can this project's real app actually be RUN, and if not,
  * why not, in one word the UI can say out loud.
  *
- * Two consumers, one answer:
- *
- *   - the `Static · Live` pill in the canvas chrome (P8), which has to say
- *     which runtime the user is looking at and, when it is the static one,
- *     whether "Run the real app" is even on the table;
- *   - `trustTier.ts`'s auto-promotion gate (§6 decision 2), which re-checks
- *     this SERVER-SIDE before writing `run-project`, so a client cannot
- *     promote a project the owner's rule never covered.
- *
- * That second use is why this is a shared module and not a helper inside the
- * pill: a capability the client asserts and the server trusts is not a gate.
+ * One consumer today: the `Static · Live` pill in the canvas chrome (P8),
+ * which has to say which runtime the user is looking at and, when it is the
+ * static one, whether "Run the real app" is even on the table. (Until
+ * 2026-09-20 this also gated `trustTier.ts`'s now-retired automatic Tier 2
+ * promotion — every project starts at `run-project` by default now, so there
+ * is nothing left to auto-promote.) Kept as its own module rather than a
+ * helper inside the pill for the usual reason: a capability the CLIENT
+ * asserts is not the same thing as a decision the SERVER computes, even with
+ * one caller.
  *
  * ## The two conditions, and why each one
  *

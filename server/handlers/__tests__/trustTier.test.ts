@@ -70,11 +70,11 @@ describe('tryServeStudioTrustTier', () => {
     expect(await tryServeStudioTrustTier(req, url, pathname)).toBeNull()
   })
 
-  it('GET defaults to static (Tier 0) when nothing is persisted', async () => {
+  it('GET defaults to run-project (Tier 2) when nothing is persisted', async () => {
     const { req, url, pathname } = makeRequest(`/admin/api/studio/trust-tier?dir=${encodeURIComponent(wsDir)}`)
     const res = await tryServeStudioTrustTier(req, url, pathname)
     const body = (await res!.json()) as { trust: string }
-    expect(body.trust).toBe('static')
+    expect(body.trust).toBe('run-project')
   })
 
   it('GET rejects a dir outside studio-workspace/', async () => {
@@ -123,7 +123,7 @@ describe('tryServeStudioTrustTier', () => {
    * `/p/<projectKey>/` proxy keeps serving it, because that listener
    * deliberately trusts the registry rather than re-reading `.studio/meta.json`.
    * So the route has to stop the process, not just record that it should not be
-   * running — otherwise the auto-promote notice's "Undo" is cosmetic.
+   * running — otherwise the pill's "Back to static" is cosmetic.
    */
   it('POST stops a running dev server when it demotes the project below run-project', async () => {
     fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', scripts: { dev: 'vite' } }))

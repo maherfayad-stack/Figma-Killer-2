@@ -18,15 +18,17 @@
  *   - **Sass/Less/PostCSS/Tailwind is Tier 1.** Compiling them means running
  *     the WORKSPACE's own installed `sass`/`postcss` package and, for
  *     PostCSS, the workspace's own `postcss.config.*` — a config file is an
- *     arbitrary JS module that can do anything Node/Bun code can do.
- *     `meta-03` decision 1 fixed the default trust tier at `'static'` for
- *     every fresh import specifically so that importing a repo does not, by
- *     itself, run any of it. This module never auto-promotes: at Tier 0 it
- *     returns a `style-toolchain-requires-trust-promotion` warning instead of
- *     compiling, and the promote affordance lives in the UI surface that
- *     shows that warning. `compileSass`/`compilePostcssPipeline` themselves
- *     live in `styleCompileTier1.ts` (split out to stay under the module-size
- *     budget) — see that file's doc for `sec-01`'s subprocess design in full.
+ *     arbitrary JS module that can do anything Node/Bun code can do. Every
+ *     project starts at Tier 2 (`run-project`, `DEFAULT_TRUST_TIER` — owner
+ *     decision, 2026-09-20), which already satisfies this gate (`trust !==
+ *     'static'`); this module's Tier-0 branch is only reachable for a project
+ *     the owner explicitly demoted via the Live pill's "Back to static". At
+ *     Tier 0 it returns a `style-toolchain-requires-trust-promotion` warning
+ *     instead of compiling, and the promote affordance lives in the UI
+ *     surface that shows that warning. `compileSass`/`compilePostcssPipeline`
+ *     themselves live in `styleCompileTier1.ts` (split out to stay under the
+ *     module-size budget) — see that file's doc for `sec-01`'s subprocess
+ *     design in full.
  *
  * The output feeds the EXISTING `cssToStyleRules` engine
  * (`studioCss.ts`/`@core/studio-sync`) — `StyleRule` ids, the class registry,

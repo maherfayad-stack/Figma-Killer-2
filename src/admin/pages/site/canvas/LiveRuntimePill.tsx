@@ -20,33 +20,31 @@
  *
  * ## Three states, all honest
  *
- *   - `Live` + "Back to static" — Tier 2. See "Revocable, not just undoable".
- *   - `Static` + "Run the real app" — a Vite project with a lockfile that is
- *     currently at Tier 0/1, i.e. one the owner explicitly put back to static
- *     (auto-promotion, §6 decision 2, only ever happens once per project). The
- *     action promotes to Tier 2 and reloads.
+ *   - `Live` + "Back to static" — Tier 2, the default every project starts at
+ *     (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20). See "Revocable, not
+ *     just an on-ramp".
+ *   - `Static` + "Run the real app" — a Vite project with a lockfile that the
+ *     owner explicitly put back to static via this pill's own demote button.
+ *     The action promotes to Tier 2 and reloads.
  *   - `Live needs Vite` / `Live needs an install` — the real app cannot be run
  *     at all (§6 decision 5: non-Vite live frames are deferred). Says so
  *     instead of offering a button that would fail. The capability is decided
  *     SERVER-side (`liveCapability.ts`); this only renders the answer.
  *
- * ## Revocable, not just undoable (`sec-10`)
+ * ## Revocable, not just an on-ramp (`sec-10`)
  *
  * Tier 2 is consent to execute the project's own code, and `CLAUDE.md`'s
- * invariant 1 requires that consent to be "explicit, per project, and
- * revocable". §6 decision 2 trades the "explicit" half for a notice plus an
- * Undo — but `LiveAutoPromoteNotice`'s Undo lives on a component that only
- * renders in the session that did the promoting, so on the next page load the
- * project was running with no way back. That made the revocation a property of
- * one session rather than of the project.
- *
- * So the `Live` state is an action too. It is the ONE permanent way back to
- * Tier 0 in the UI, and it goes through the same `setStudioProjectTrust` write
+ * invariant 1 requires that consent to be per project and revocable. Every
+ * project starting at Tier 2 by default (2026-09-20) means the FIRST consent
+ * is the product default, never a person's click — which is exactly why the
+ * revocation has to be durable, not a one-session affordance: this pill's
+ * "Back to static" is the ONE permanent way back to Tier 0 in the UI, present
+ * on every load, and it goes through the same `setStudioProjectTrust` write
  * path, which stops the project's dev server as part of the demotion.
  *
  * Only rendered in Live view, by `CanvasModeToggle` — on the design board
- * every frame is its own answer to this question and the board's own
- * auto-promote notice is the place that speaks for the project.
+ * every frame is its own answer to this question and there is no single
+ * project-level runtime to label.
  */
 import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'

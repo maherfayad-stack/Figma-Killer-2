@@ -12,6 +12,199 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### sec-19 — every project starts at run-project (owner decision 2026-09-20)
+- **Agent:** studio-implementer
+- **Stage:** done — branch not pushed, no PR opened (orchestrator's job).
+- **Branch:** `feat/trust-tier-default-run-project`, based on
+  `origin/feat/alm-figma-killer-studio-shell` (`9716abf7`). Same worktree as
+  this session (`agent-a3a68f3e357bda1e7`) — its own branch pointer had gone
+  stale (pointed at `origin/main`'s tip, `8ab00ae0`), so the task branch was
+  cut from the real `origin/feat/alm-figma-killer-studio-shell` tip instead.
+- **Updated:** 2026-09-20.
+- **Goal:** implement the owner's 2026-09-20 decision — every Studio project
+  starts at trust tier `run-project` (Tier 2), no promotion click, no
+  automatic-promotion notice, superseding `STUDIO-FIGMA-FEEL-PLAN.md` §6
+  decision 2 (2026-09-17's narrower "a Vite project with a lockfile
+  auto-promotes once").
+- **Scope:** `server/handlers/studio/{studioMeta,trustTier}.ts`,
+  `server/handlers/studio/{componentBundle,styleCompile,liveCapability,
+  routeCapabilities}.ts` (doc comments only), `server/handlers/studio.ts`
+  (doc comments), `server/auth/capabilities.ts` (doc comment),
+  `server/ai/mcp/tools/studio/referenceRender.ts` (doc comment),
+  `src/admin/pages/site/studio/studioProjectTrust.ts`,
+  `src/admin/pages/site/canvas/{LiveRuntimePill.tsx,BoardBanners/
+  BoardBanners.tsx,PackageComponentPlaceholder.tsx}`,
+  `src/admin/pages/site/canvas/LiveAutoPromoteNotice/` (deleted),
+  `src/admin/pages/site/studio/registerProjectModules.ts` (doc comment),
+  server + client test suites listed below, docs listed below, e2e Case 8/9
+  in `tests/e2e/studio-feel-phase0.e2e.ts` + `tests/e2e/helpers/
+  studioFixtureProject.ts`.
+- **Done so far:**
+  - `DEFAULT_TRUST_TIER` flipped `'static'` → `'run-project'`
+    (`studioMeta.ts:76`). Every reader (`trustTier.ts`, `trustGate.ts`,
+    `styleCompile.ts`, `componentBundle.ts`, `styleCompileConsent.ts`,
+    `studio.ts:388`, `studioProjects.ts:409`) picks it up unchanged — none of
+    them hardcode `'static'`.
+  - `trustGate.ts` (`checkTrustTier`/`requireTrustTier`) and
+    `studio-tier2-two-gates.test.ts`'s assertions are **byte-for-byte
+    unchanged** — only that test's doc comment was reworded. The two-gate
+    design (capability × exact-tier-match) is untouched; only the default
+    changed.
+  - Deleted the whole automatic-promotion mechanism: `LiveAutoPromoteNotice/`
+    folder + its mount in `BoardBanners.tsx`; `autoPromoteProjectToTier2` +
+    `StudioTrustStatusSchema.autoPromoted` in `studioProjectTrust.ts`;
+    `refuseAutoPromotion`, the `autoPromoted` POST body field, and the
+    `autoPromoted` GET response field in `trustTier.ts`; the
+    `trustAutoPromoted`/`trustAutoPromotedAt` schema fields (and their doc
+    comment) in `studioMeta.ts`. `enforceTierOnRunningProcesses` (demotion
+    stops the dev server) and GET returning `{ trust, live }` both kept.
+  - `readStudioMeta` stays tolerant of old `.studio/meta.json` files still
+    carrying `trustAutoPromoted`/`trustAutoPromotedAt`: `StudioMetaSchema`
+    never set `additionalProperties: false`, so TypeBox's default-permissive
+    `Value.Check`/`Value.Decode` just ignores the now-unknown keys rather than
+    rejecting the file. Verified by reasoning, not a new test — no existing
+    test asserted the opposite.
+  - `liveCapability.ts` kept (Live pill still needs "Live needs Vite"/"no
+    lockfile" honesty) — its doc comment now describes ONE consumer instead of
+    two, since the promotion-gate consumer is gone.
+  - Docs rewritten with the prescribed sentence (or a close paraphrase) in:
+    `CLAUDE.md` (invariant 1), `PROJECT-BRIEF.md` (§2 invariant 1, §3 "Trust
+    tiers" bullet, the "Tailwind v3/v4…" bullet in "What does NOT work today"
+    — now struck through and marked no-longer-true, the Track L note, the
+    style-compile-consent intro note), `docs/agent-refs/glossary.md` (trust
+    tiers section), `docs/server.md` (line 395), `docs/reference/
+    capabilities.md` ("What the Tier-2 second gate proves" + "Two reads that
+    spawn" — the latter's core claim flips: a Client's very first `GET /load`
+    on a project NO privileged user has ever opened now compiles at Tier 1,
+    which the old text explicitly said could not happen), `docs/features/
+    studio-import.md` (4 spots: the `trust` field table row, the Sass/PostCSS
+    Tier-1 paragraph, the consent-prompt section intro, two refusal-table
+    rows), `docs/features/studio-deploy.md` (the gate section),
+    `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 (superseded note added inline in
+    the decisions table), `docs/e2e/README.md` (the §6-decision-2 coverage
+    row, since the e2e case it points at changed what it tests).
+    `docs/features/mcp-connectors.md` needed no edit — re-read, no stale claim
+    found there.
+  - Server tests fixed for the new default (each explicitly writes
+    `trust: 'static'` where the Tier-0 branch is under test, or updates the
+    "default" assertion to `run-project`): `trustTier.test.ts` (GET-default
+    test), `trustTierGate.test.ts` (default-now-passes + new explicit-static
+    case), `deploy.test.ts` (2 tests + the monorepo Tier-0 test),
+    `devServer.test.ts` (1 test), `componentBundle.test.ts` (1 test),
+    `styleCompile.test.ts` (3 tests), `styleCompileConsent.test.ts` — server
+    (3 tests), `liveCapability.test.ts` (deleted the whole
+    "automatic Tier 2 promotion gate" `describe` block — 6 tests for a
+    mechanism that no longer exists — and fixed the one surviving GET test's
+    default expectation). Also fixed (not in the original file list, found by
+    running the suite): `server/handlers/__tests__/studio.test.ts`'s
+    `listStudioProjects` default-tier test (`studioProjects.ts:409` reads
+    `DEFAULT_TRUST_TIER` too).
+  - Client tests reviewed and left alone because they mock the CLIENT-side
+    `trustTier` external store directly via `setStudioTrustTier(...)`, which
+    is untouched (its initial value stays `'static'` as a pre-load
+    placeholder — see Decisions): `boardFrameViewTierFork.test.tsx`,
+    `useDevServerReadiness.test.tsx`, `framePoolMountReason.test.tsx`, and the
+    client `src/admin/pages/site/studio/__tests__/styleCompileConsent.test.ts`
+    all pass unmodified.
+  - e2e: rewrote Case 8 and Case 9 of `studio-feel-phase0.e2e.ts` — the
+    auto-promotion mechanism they tested is gone, so the tests now assert "a
+    Vite project opens directly at Tier 2, no notice" and "Back to static
+    survives a reload" instead. Trimmed `FixtureTrustMeta`/
+    `readFixtureTrustMeta` in `studioFixtureProject.ts` to drop the retired
+    `trustAutoPromoted`/`trustAutoPromotedAt` fields (dead — nothing writes
+    them any more). **Not run** (`standing-02`: no browser/e2e verification by
+    this agent) — `tsc -b` typechecks `tests/e2e` and passed, that is the only
+    check these got.
+- **Decisions:**
+  - Kept the CLIENT-side `studioProjectTrust.ts`'s module-level
+    `let trustTier: TrustTier = 'static'` as-is — because that's the
+    pre-load placeholder before `loadSite`'s `/load` response calls
+    `setStudioTrustTier`, not a claim about the server default. Changing it
+    to `'run-project'` would be a fail-open guess about a project the client
+    hasn't heard from yet; `'static'` is the conservative placeholder and no
+    task item named it.
+  - Did NOT touch `StyleCompileConsentBanner.tsx`/`styleCompileConsent.ts`
+    (client) logic — `shouldOfferStyleCompile`'s `trust === 'static'` check is
+    already correct: the banner is now reachable only via an explicit
+    demotion, which is exactly right.
+  - Rewrote e2e Case 8/9 rather than leaving them referencing a deleted
+    component (`live-auto-promote-notice` testid, `LiveAutoPromoteNotice`
+    import) — "no dead code" / "delete what you replaced" applies to test
+    code too, and a stale e2e spec that can't pass is worse than one that was
+    updated and not run.
+- **Landmines:**
+  - **This worktree's own branch pointer was stale** — `git branch
+    --show-current` showed `worktree-agent-a3a68f3e357bda1e7` at `8ab00ae0`
+    (origin/main's tip, missing all of wave 3 / `STUDIO-FIGMA-FEEL-PLAN.md` /
+    `LiveAutoPromoteNotice` / the newer CLAUDE.md language), NOT at
+    `feat/alm-figma-killer-studio-shell` as the task described. Had to
+    `git checkout -b feat/trust-tier-default-run-project
+    origin/feat/alm-figma-killer-studio-shell` to get the right base. A future
+    agent handed a worktree should verify `git log --oneline -1 HEAD` against
+    the branch the task claims, not trust the task text.
+  - `node_modules` was absent in this worktree at session start — `bun
+    install` (700 packages, 3.24s) was required before `bun run build` could
+    even resolve `vite`.
+  - `TypeBox`'s default permissiveness (no `additionalProperties: false`
+    anywhere in `StudioMetaSchema`) is what makes dropping
+    `trustAutoPromoted`/`trustAutoPromotedAt` from the schema SAFE for old
+    files — if a future schema ever adds strict mode, removing a field
+    becomes a breaking read, not a no-op.
+  - `docs/reference/capabilities.md`'s "Two reads that spawn" section's whole
+    argument structure had to flip, not just get a word swap: the old text's
+    central claim ("nothing compiles at Tier 0, and a project no privileged
+    user has ever opened compiles nothing") is now FALSE — the new default
+    means a `site.read`-only Client's very first `GET /load` on a totally
+    untouched project compiles Tier-1 code. Read that section again if you
+    touch capabilities docs; it's easy to patch the words and leave the logic
+    contradicting itself.
+  - Two pre-existing, unrelated failures showed up in every run touching
+    `server/handlers/__tests__/studio.test.ts`: `applyStudioEdit > collapses
+    two edits that resolve to the same component source location` and
+    `applyStudioEdit > still collapses a repeated non-insert structural edit
+    on one location` (both `dedupeStudioEdits`, nothing to do with trust
+    tiers). `git diff --stat` on that file shows only my 2-line
+    `listStudioProjects` default-tier fix — these are not mine.
+  - `src/__tests__/architecture/studio-runtime-bundle-fresh.test.ts` fails
+    ("generated/vitePluginBundle.ts is stale — run `bun run
+    studio-runtime:sync`") — unrelated to this change, not in my diff, not
+    fixed.
+  - STATE.md's own W7-2 handoff entry (deep in the file, pre-`## Blocked`)
+    still says "Every project defaults to Tier 0" as a design-decision
+    rationale for `ProjectCard`'s trust badge — **left unedited on purpose**:
+    it is a dated historical record of a past decision's reasoning, not a
+    living doc, and the handoff protocol says append/archive, never rewrite
+    another agent's entry. `ProjectCard.tsx`'s actual badge logic
+    (`project.trust === 'static' && …`) is unaffected by the default flip and
+    still correct.
+- **Verification:**
+  - `bun run build` (`tsc -b && vite build`) — **pass**, clean.
+  - `bun run lint` — **pass**, exit 0, no errors.
+  - `bun test server/handlers` — 2447 pass / 11 fail before my test fixes;
+    after fixing the tests this change broke, re-ran the specific trust-tier
+    files (`styleCompileConsent`, `deploy`, `trustTier`, `liveCapability`,
+    `componentBundle`, `styleCompile`, `devServer`, `trustTierGate`,
+    `studio.test.ts`) together — **208 pass / 2 fail**, both the pre-existing
+    `applyStudioEdit` ones named above.
+  - `bun test src/__tests__/architecture` — 649 pass / 1 fail (the
+    pre-existing `studio-runtime-bundle-fresh` one named above).
+  - `bun test src/__tests__/canvas` — **1035 pass / 0 fail**.
+  - `bun test src/admin/pages/site/studio/__tests__` — **136 pass / 0 fail**.
+  - A full unfiltered `bun test` was kicked off but did not finish producing
+    output within this session (large repo; historically ~195s+) — the
+    targeted runs above are the evidence for this change; a full-suite number
+    was not captured. Worth re-running once before merge.
+- **Human action needed:** security-guard review (this is a trust-boundary
+  change — every project now runs the workspace's own style toolchain and, on
+  a Vite project, its dev server, with zero clicks) + dogfood: open any
+  project on `/admin/site` fresh (delete its `.studio/meta.json` first) and
+  confirm (a) the Live pill reads "Live" immediately for a Vite project with
+  no notice anywhere, (b) "Back to static" demotes it and the dev server
+  actually stops, (c) reloading after that stays at "Static" — it must never
+  re-promote itself.
+
+---
+
 ### store-11 — a duplicate you click once could write itself twice, silently
 - **Agent:** store-engineer
 - **Stage:** done — branch pushed, draft PR open against `feat/alm-figma-killer-studio-shell`.

@@ -435,13 +435,13 @@ async function syncProjectModules(dir: string): Promise<void> {
     if (dir !== activeProjectDir) return // project changed again while this request was in flight
 
     if (!response.ok) {
-      // `trust-tier-required` is not a failure — it is the DEFAULT. Tier 0
-      // (`static`) is what every project is until a human clicks to promote
-      // it (CLAUDE.md invariant 1), so logging it at error level fired on
-      // every board open of every project on disk and made the console
-      // useless for spotting real ones (Track Z: "detect the errors I did not
-      // see"). The refusal is already published through
-      // `setPackageBundleStatus` and rendered where it matters —
+      // `trust-tier-required` is not a failure — every project starts at
+      // Tier 2 by default (CLAUDE.md invariant 1), so this is reachable only
+      // for a project a human has explicitly demoted to `static`. Logging it
+      // at error level would still fire on every board open of a demoted
+      // project and made the console useless for spotting real ones (Track Z:
+      // "detect the errors I did not see"). The refusal is already published
+      // through `setPackageBundleStatus` and rendered where it matters —
       // `PackageComponentPlaceholder`, the ModulePicker and the insert
       // palette — which is the honest place for a state the user can act on.
       // Every OTHER code is a genuine failure and still says so.

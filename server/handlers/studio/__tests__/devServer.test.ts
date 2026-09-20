@@ -410,9 +410,10 @@ describe('tryServeStudioDevServer', () => {
     expect(res).toBeNull()
   })
 
-  it('refuses GET status at Tier 0 (static, the default) with 409 trust-tier-required', async () => {
+  it('refuses GET status at Tier 0 (static)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-route-status-refuse-')
     fs.mkdirSync(tmpDir, { recursive: true })
+    writeStudioMeta(tmpDir, { trust: 'static' })
 
     const res = await call(`/admin/api/studio/dev-server/status?dir=${encodeURIComponent(tmpDir)}`)
 

@@ -90,8 +90,9 @@ const FIXTURE_NAME = '__e2e-phase0'
 
 /**
  * Case 8's corpus: the smallest project `resolveLiveCapability` answers
- * `{ capable: true }` for. `test4` has no `vite.config.*`, so the auto-promotion
- * rule cannot be observed on it at all — see that fixture's own README.
+ * `{ capable: true }` for. `test4` has no `vite.config.*`, so "does the Live
+ * pill actually read `run-project`" cannot be observed on it at all — see
+ * that fixture's own README.
  */
 const LIVE_FIXTURE_SOURCE = '__vite-live-fixture'
 const LIVE_FIXTURE_NAME = '__e2e-phase0-vite'
@@ -105,10 +106,10 @@ const LIVE_CONSOLE_ALLOWLIST: readonly { pattern: RegExp; why: string }[] = [
   {
     pattern: /\[useDevServerPrewarm\] could not prewarm the dev server/,
     why:
-      'reaching Tier 2 starts the project\'s real dev server, and `__vite-live-fixture` ships a lockfile ' +
-      'but no `node_modules` on purpose — committing an installed tree is what .gitignore\'s ' +
-      'studio-workspace section exists to prevent. The frame half of this decision is the `test.fail()` ' +
-      'case that follows.',
+      'every project starts at Tier 2 by default (2026-09-20), so opening this fixture starts its real ' +
+      'dev server immediately, and `__vite-live-fixture` ships a lockfile but no `node_modules` on ' +
+      'purpose — committing an installed tree is what .gitignore\'s studio-workspace section exists to ' +
+      'prevent. The frame half of this decision is the `test.fail()` case that follows.',
   },
 ]
 
@@ -946,33 +947,31 @@ test.describe('Phase 0 exit dogfood', () => {
   // ── 8 ──────────────────────────────────────────────────────────────────────
 
   /**
-   * §6 decision 2 — **a Vite project with a lockfile is promoted to
-   * `run-project` on FIRST OPEN, once ever, with a visible Undo.**
+   * Every project starts at Tier 2 (`run-project`) by default —
+   * `DEFAULT_TRUST_TIER`, owner decision 2026-09-20. This supersedes the
+   * earlier, narrower §6 decision 2 (a Vite project with a lockfile promoted
+   * itself to Tier 2 on first open, once, with a notice and an Undo) — there
+   * is no lower default left to promote FROM, so there is no notice and no
+   * once-only latch to test any more. What still needs asserting is the
+   * durable half of that old contract, which the owner's later call did not
+   * touch: **"Back to static" is a real, permanent demotion that survives a
+   * reload**, because a demotion that only edits a file while a dev server
+   * keeps running is cosmetic (`sec-10`).
    *
-   * This is the only place in Studio where the trust tier moves without a human
-   * clicking anything, which makes it the only place where losing a gate is
-   * SILENT: a build that stopped checking "is it Vite", or stopped writing the
-   * once-only latch, or stopped stopping the dev server on Undo, looks exactly
-   * like this one on screen. So the three things asserted here are all
-   * refusals, not features:
-   *
-   *   a. the promotion happens AND says so — a Tier-2 promotion the user is
-   *      never told about is the override without the thing that justifies it;
-   *   b. Undo writes `static` back, and `trustAutoPromotedAt` STAYS SET — the
-   *      latch is what stops a project whose owner said no from being
-   *      auto-promoted again on the next open;
-   *   c. re-opening the project after the Undo does NOT promote it again and
-   *      does NOT show the notice. (b) is the byte on disk; (c) is the
-   *      behaviour that byte exists to produce, and only (c) fails if the
-   *      client stops reading the latch.
+   *   a. a Vite project with a lockfile opens directly at Tier 2, with no
+   *      notice — the Live pill already reads `run-project` on first paint;
+   *   b. "Back to static" writes `static` to disk and stops the dev server;
+   *   c. re-opening the project after that demotion stays at `static` — a
+   *      demotion is not undone by the next load, unlike the retired
+   *      auto-promotion which reasserted `run-project` from nothing.
    *
    * ## Why this case runs LAST, and on its own fixture
    *
-   * It is the only case in this file that does not drive `test4`: auto-promotion
-   * is a property of the PROJECT, and `test4` has no `vite.config.*`, so nothing
-   * about it can be observed there. `studio-workspace/__vite-live-fixture` is
-   * the smallest project `resolveLiveCapability` answers `{ capable: true }` for
-   * — its README lists each of its five files against the condition it
+   * It is the only case in this file that does not drive `test4`: `test4` has
+   * no `vite.config.*`, so "does the Live pill read `run-project`" cannot be
+   * observed on it at all. `studio-workspace/__vite-live-fixture` is the
+   * smallest project `resolveLiveCapability` answers `{ capable: true }` for —
+   * its README lists each of its five files against the condition it
    * satisfies.
    *
    * It is declared after case 7 on purpose. Reaching Tier 2 makes
@@ -984,7 +983,7 @@ test.describe('Phase 0 exit dogfood', () => {
    * with the dogfood; instead this case carries its own recorder and its own
    * one-entry allowlist, pinned to that exact message.
    */
-  test('a Vite project with a lockfile promotes itself to Tier 2 on first open, and Undo takes it back for good', async ({
+  test('a Vite project opens directly at Tier 2 by default, and Back to static demotes it for good', async ({
     page,
   }) => {
     const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
@@ -994,71 +993,48 @@ test.describe('Phase 0 exit dogfood', () => {
     )
 
     const liveConsole: RecordedConsoleEvent[] = []
-    recordConsoleErrors(page, liveConsole, 'auto-promote')
+    recordConsoleErrors(page, liveConsole, 'default-tier-2')
 
     try {
       await startToastRecorder(page)
       await openFixtureBoard(page, live, { autoSave: false })
 
-      // (a) The promotion, and the notice that makes it defensible.
-      const notice = page.getByTestId('live-auto-promote-notice')
-      await expect(
-        notice,
-        'a Vite project with a lockfile opened without announcing that Studio promoted it to Tier 2',
-      ).toBeVisible({ timeout: 60_000 })
-      await expect(notice).toContainText('Running your app live')
+      // (a) Tier 2 from the very first paint — nothing announced, nothing
+      // written: a fresh project has no `trust` field on disk at all, and
+      // every reader (`DEFAULT_TRUST_TIER`) treats that absence as `run-project`.
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'live', {
+        timeout: 60_000,
+      })
 
-      await settle(() => readFixtureTrustMeta(live).trust, 'run-project')
-      const promoted = readFixtureTrustMeta(live)
-      annotate('trust after first open', JSON.stringify(promoted))
-      expect(promoted.trust, 'first open did not write run-project into .studio/meta.json').toBe('run-project')
-      expect(promoted.trustAutoPromoted, 'the promotion did not record that its ORIGIN was Studio').toBe(true)
+      const opened = readFixtureTrustMeta(live)
+      annotate('trust on first open', JSON.stringify(opened))
       expect(
-        typeof promoted.trustAutoPromotedAt,
-        'the once-only latch (trustAutoPromotedAt) was never written',
-      ).toBe('number')
+        opened.trust,
+        'a fresh project wrote a trust field on open — nothing should write it as a side effect of loading a page',
+      ).toBeUndefined()
 
-      // The pill is the permanent, session-independent statement of the same
-      // fact — `sec-10`'s "revocable, not just undoable".
-      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'live')
+      // (b) Back to static — a real demotion, not a cosmetic file edit.
+      await page.getByTestId('live-runtime-pill-demote').click()
+      const demoted = await settle(() => readFixtureTrustMeta(live).trust, 'static')
+      annotate('trust after Back to static', JSON.stringify(readFixtureTrustMeta(live)))
+      expect(demoted, 'Back to static did not put the project back to static').toBe('static')
 
-      // (b) Undo — back to static, latch deliberately left set.
-      await page.getByTestId('live-auto-promote-undo').click()
-      const undone = await settle(() => readFixtureTrustMeta(live).trust, 'static')
-      annotate('trust after Undo', JSON.stringify(readFixtureTrustMeta(live)))
-      expect(undone, 'Undo did not put the project back to static').toBe('static')
-      expect(
-        readFixtureTrustMeta(live).trustAutoPromotedAt,
-        'Undo cleared the once-only latch, so the next open would promote this project all over again — ' +
-          'the latch is the whole reason the override is bounded',
-      ).toBe(promoted.trustAutoPromotedAt)
-
-      // Read the toast log BEFORE the reload — the recorder lives in the page,
-      // and a reload takes it with it.
-      //
-      // Zero error toasts across promote + undo. An automatic promotion the
-      // user did not ask for must not be able to put an error in front of them;
-      // `LiveAutoPromoteNotice` logs its failures instead, deliberately.
       const toasts = await readToastRecorder(page)
-      annotate('toast cards during promote + undo', JSON.stringify(toasts.map((t) => `${t.kind}:${t.title}`)))
+      annotate('toast cards during demotion', JSON.stringify(toasts.map((t) => `${t.kind}:${t.title}`)))
       expect(
         toasts.filter((t) => t.kind === 'error').map((t) => t.title),
-        'the automatic promotion path put an error toast in front of the user',
+        'demoting the project put an error toast in front of the user',
       ).toEqual([])
 
-      // (c) The latch as BEHAVIOUR, not just as a byte: open it again.
+      // (c) The demotion as BEHAVIOUR, not just as a byte: open it again.
       await page.reload()
       await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 60_000 })
       await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'static', {
         timeout: 30_000,
       })
-      await expect(
-        page.getByTestId('live-auto-promote-notice'),
-        'the project was auto-promoted a SECOND time — the latch is not being read',
-      ).toBeHidden()
       expect(
         readFixtureTrustMeta(live).trust,
-        'a second open re-promoted a project whose owner clicked Undo',
+        'a second open reverted an explicit demotion — nothing should ever write trust as a side effect of loading a page',
       ).toBe('static')
 
       const unexplained = liveConsole.filter(
@@ -1066,7 +1042,7 @@ test.describe('Phase 0 exit dogfood', () => {
       )
       expect(
         unexplained.map((event) => `[${event.source}] ${event.text}`),
-        'the auto-promotion flow logged an error this case does not expect',
+        'opening a Tier-2-by-default project logged an error this case does not expect',
       ).toEqual([])
     } finally {
       removeFixtureProject(live)
@@ -1074,7 +1050,8 @@ test.describe('Phase 0 exit dogfood', () => {
   })
 
   /**
-   * The LIVE FRAME half of §6 decision 2, which this machine cannot satisfy.
+   * The LIVE FRAME half of "every project starts at Tier 2 by default",
+   * which this machine cannot satisfy.
    *
    * Tier 2 means the frames are rendered by the project's OWN dev server
    * (`server/handlers/studio/devServer.ts` + `server/liveOrigin.ts`), and a dev
@@ -1089,13 +1066,15 @@ test.describe('Phase 0 exit dogfood', () => {
    * fixture a real install (or points the case at a project that has one) finds
    * out here rather than discovering later that nothing checked it.
    */
-  test('a promoted project renders its frames from its own dev server', async ({ page }) => {
+  test('a project at Tier 2 by default renders its frames from its own dev server', async ({ page }) => {
     test.fail()
     const live = createFixtureProject(LIVE_FIXTURE_SOURCE, LIVE_FIXTURE_NAME)
     test.skip(!live.ready, `studio-workspace/${LIVE_FIXTURE_SOURCE} is not present on disk`)
     try {
       await openFixtureBoard(page, live, { autoSave: false })
-      await expect(page.getByTestId('live-auto-promote-notice')).toBeVisible({ timeout: 60_000 })
+      await expect(page.getByTestId('live-runtime-pill')).toHaveAttribute('data-runtime', 'live', {
+        timeout: 60_000,
+      })
       // A live frame is a different element from a design-mode canvas frame:
       // it is the project's own document, proxied through `/p/<projectKey>/`.
       await expect(

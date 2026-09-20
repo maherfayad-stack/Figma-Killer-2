@@ -10,7 +10,9 @@
  * `registerProjectModules.ts`/`fsCodemodAdapter.ts` already maintain (no new
  * Zustand slice — this is ephemeral, per-load client state, same posture as
  * `componentSources`/`vendorCss`):
- *   1. Trust tier `static` (Tier 0, the default) — "Promote this project" button.
+ *   1. Trust tier `static` (Tier 0, reachable now only via an explicit
+ *      demotion — every project starts at Tier 2 by default) — "Promote this
+ *      project" button.
  *   2. Trust tier ≥ 1, no refusal recorded yet — "loading" (a fetch is either
  *      in flight or about to start; `useRegisterProjectModules`'s effect
  *      re-runs on every `[projectDir, trust]` transition).
