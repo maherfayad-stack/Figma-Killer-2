@@ -17,21 +17,23 @@
  * through one real HTTP call too, per the work order's explicit "Done when"
  * criterion.
  */
-import { describe, expect, it } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../../ai/drivers/registeredMcpServers'
 import {
+  STUDIO_LIVE_BASE_PATH_ENV,
   ensureDevServer,
+  forgetDevServersForTest,
   getDevServerStatus,
   startDevServer,
   stopDevServer,
-  STUDIO_LIVE_BASE_PATH_ENV,
   tryServeStudioDevServer,
   type DevServerOverrides,
 } from '../devServer'
+import { STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
 import { writeStudioMeta } from '../studioMeta'
 import type { SpawnedProcessLike } from '../subprocessRunner'
 
@@ -121,6 +123,24 @@ async function waitUntil(predicate: () => boolean, attempts = 200): Promise<void
 // ---------------------------------------------------------------------------
 // ensureDevServer — the blocking primitive `referenceRender.ts` consumes
 // ---------------------------------------------------------------------------
+
+// `live-11` — a ready entry writes a record to `STUDIO_DEV_SERVER_STATE_DIR`.
+// Every test here reaches `'ready'` through a fake process, so without this
+// the records would land in the repo's real `.tmp/dev-servers/`.
+let stateDir: string
+let previousStateDir: string | undefined
+
+beforeEach(() => {
+  stateDir = makeTmpDir('studio-devserver-state-')
+  previousStateDir = process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV]
+  process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV] = stateDir
+})
+
+afterEach(() => {
+  if (previousStateDir === undefined) delete process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV]
+  else process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV] = previousStateDir
+  fs.rmSync(stateDir, { recursive: true, force: true })
+})
 
 describe('ensureDevServer', () => {
   it('boots the dev server and discovers its printed URL', async () => {
@@ -537,6 +557,164 @@ describe('tryServeStudioDevServer', () => {
     expect(res?.status).toBe(200)
     const body = (await res!.json()) as { phase: string }
     expect(body.phase).toBe('stopped')
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+})
+
+// `live-11` — a ready dev server outlives this process and is adopted back.
+describe('dev-server records — adoption across a server restart', () => {
+  const READY_CHUNKS = ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n']
+
+  function recordFiles(): string[] {
+    return fs.existsSync(stateDir) ? fs.readdirSync(stateDir).filter((f) => f.endsWith('.json')) : []
+  }
+
+  it('writes a record once ready, and stop removes it', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-record-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const { proc, wasKilled } = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
+
+    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+    expect(result.ok).toBe(true)
+    expect(recordFiles()).toHaveLength(1)
+    const record = JSON.parse(fs.readFileSync(path.join(stateDir, recordFiles()[0]), 'utf8')) as { pid: number; baseUrl: string }
+    expect(record).toMatchObject({ pid: 4242, baseUrl: 'http://127.0.0.1:5173' })
+
+    stopDevServer(tmpDir)
+    expect(wasKilled()).toBe(true)
+    expect(recordFiles()).toHaveLength(0)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('after a restart, adopts the recorded server instead of spawning a second one', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-adopt-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const first = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
+    expect((await ensureDevServer(tmpDir, { spawn: () => first.proc })).ok).toBe(true)
+
+    // The process restarts: the registry is gone, the child and its record are
+    // not. (No status poll here — a poll adopts with the DEFAULT checks, and
+    // the fake's pid 4242 is not a live process on this machine.)
+    forgetDevServersForTest()
+
+    let spawned = 0
+    const probed: string[] = []
+    const result = await ensureDevServer(tmpDir, {
+      spawn: () => {
+        spawned += 1
+        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+      },
+      isProcessAlive: (pid) => pid === 4242,
+      probe: async (baseUrl, basePath) => {
+        probed.push(`${baseUrl}${basePath}`)
+        return true
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
+    expect(spawned).toBe(0)
+    expect(probed).toHaveLength(1)
+    expect(probed[0]).toMatch(/^http:\/\/127\.0\.0\.1:5173\/p\/[^/]+\/$/)
+    const status = getDevServerStatus(tmpDir)
+    expect(status.phase).toBe('ready')
+    expect(status.pid).toBe(4242)
+    expect(status.log).toContain('adopted')
+    expect(first.wasKilled()).toBe(false)
+
+    // Stop signals the adopted pid only through the record's own kill path — nothing else to assert here without a real process, but the record must go.
+    stopDevServer(tmpDir)
+    expect(recordFiles()).toHaveLength(0)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a plain status poll after a restart adopts the recorded server too — the proxy never has to wait for a start call', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-poll-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    forgetDevServersForTest()
+
+    // No overrides reach a status poll, so the default checks run: the fake
+    // pid 4242 is not a live process on this machine, and adoption must say
+    // so by discarding the record rather than answering 'ready' for a ghost.
+    expect(getDevServerStatus(tmpDir).phase).toBe('stopped')
+    expect(recordFiles()).toHaveLength(0)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a status poll adopts a recorded server whose pid is alive — it is this process\'s own pid here', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-poll-live-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    const alive = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
+    // The fake process reports pid 4242; rewrite the record to a pid that IS alive so the default check passes.
+    expect((await ensureDevServer(tmpDir, { spawn: () => alive.proc })).ok).toBe(true)
+    const file = path.join(stateDir, recordFiles()[0])
+    const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+    // …and to an origin nothing listens on, so the default probe's answer does
+    // not depend on whatever dev server happens to be running on this machine.
+    fs.writeFileSync(file, JSON.stringify({ ...record, pid: process.pid, baseUrl: 'http://127.0.0.1:1' }), 'utf8')
+    forgetDevServersForTest()
+
+    // Adoption starts on the poll (phase 'booting' while the default probe
+    // runs against a port nothing listens on), and the probe's failure is a
+    // failed boot — never a spawn, never 'ready' for an origin that is gone.
+    expect(getDevServerStatus(tmpDir).phase).toBe('booting')
+    await waitUntil(() => getDevServerStatus(tmpDir).phase !== 'booting')
+    expect(getDevServerStatus(tmpDir).phase).toBe('failed')
+    expect(recordFiles()).toHaveLength(0)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a record whose pid is gone is discarded and a fresh server is spawned', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-dead-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    forgetDevServersForTest()
+
+    let spawned = 0
+    const result = await ensureDevServer(tmpDir, {
+      spawn: () => {
+        spawned += 1
+        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+      },
+      isProcessAlive: () => false,
+      probe: async () => {
+        throw new Error('must not probe a dead pid')
+      },
+    })
+    expect(result.ok).toBe(true)
+    expect(spawned).toBe(1)
+    expect(recordFiles()).toHaveLength(1)
+    stopDevServer(tmpDir)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('a record whose origin no longer answers fails the adoption like a bad boot, then the next start spawns fresh', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-stale-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    forgetDevServersForTest()
+
+    const stale = await ensureDevServer(tmpDir, {
+      spawn: () => {
+        throw new Error('adoption must be attempted before any spawn')
+      },
+      isProcessAlive: () => true,
+      probe: async () => false,
+    })
+    expect(stale.ok).toBe(false)
+    expect(getDevServerStatus(tmpDir).phase).toBe('failed')
+    expect(recordFiles()).toHaveLength(0)
+
+    let spawned = 0
+    const fresh = await ensureDevServer(tmpDir, {
+      spawn: () => {
+        spawned += 1
+        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+      },
+    })
+    expect(fresh.ok).toBe(true)
+    expect(spawned).toBe(1)
+    stopDevServer(tmpDir)
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 })
