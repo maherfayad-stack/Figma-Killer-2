@@ -567,8 +567,23 @@ export function resolveIdentifier(name: string, scope: EvalScope, budget: Budget
   return unresolved(`"${name}" is not a statically resolvable binding`)
 }
 
-/** Process-wide memo: a module-scope `const`'s resolved value, keyed by its own `SourceFile` (auto-GC'd with the Project) then by binding name. See `./staticEval`'s doc comment. */
-const moduleConstCache = new WeakMap<SourceFile, Map<string, StaticValue>>()
+/**
+ * Process-wide memo: a module-scope `const`'s resolved value, keyed by its own
+ * `SourceFile` then by binding name. See `./staticEval`'s doc comment.
+ *
+ * A value cached against file A may have been read THROUGH file B (an
+ * imported dictionary, a barrel), so the memo is only sound while no file it
+ * could have read has changed. The workspace `Project` now outlives a load
+ * (`server/handlers/studio/workspaceProject.ts`), which is why this is
+ * reset — via `resetParserCaches` — the moment any source file moves,
+ * rather than trusting the `SourceFile` key alone.
+ */
+let moduleConstCache = new WeakMap<SourceFile, Map<string, StaticValue>>()
+
+/** Drops every memoized module const — see `moduleConstCache` and `./parserCaches`. */
+export function forgetModuleConstCache(): void {
+  moduleConstCache = new WeakMap()
+}
 
 export function evaluateModuleConst(
   file: SourceFile,

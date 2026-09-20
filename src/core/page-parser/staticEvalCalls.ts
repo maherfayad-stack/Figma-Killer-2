@@ -104,7 +104,12 @@ export function evaluateCall(expr: CallExpression, scope: EvalScope, budget: Bud
  * caching `{ t: <the "en" branch> }` and then handing it back to a page loaded
  * with `previewLocale: "ar"` would silently serve the wrong copy.
  */
-const providerTraceCache = new WeakMap<Node, Map<string, StaticValue>>()
+let providerTraceCache = new WeakMap<Node, Map<string, StaticValue>>()
+
+/** Drops every memoized provider trace — a traced `value` may have been read through any file in the workspace, so a kept `Project` resets this whenever one changes (`./parserCaches`). */
+export function forgetProviderTraceCache(): void {
+  providerTraceCache = new WeakMap()
+}
 
 /** `undefined` = not hook-shaped (let Tier C try instead); otherwise the (possibly unresolved) traced result. */
 function tryProviderTraceCached(fn: ArrowFunctionOrDecl, budget: Budget, depth: number): StaticValue | undefined {
@@ -205,6 +210,12 @@ function resolveContextDeclaration(ctxExpr: Node): Node | undefined {
 function findProviders(project: Project, ctxDecl: Node): (JsxOpeningElement | JsxSelfClosingElement)[] {
   const found: (JsxOpeningElement | JsxSelfClosingElement)[] = []
   for (const file of project.getSourceFiles()) {
+    // `forEachDescendant` wraps every compiler node it visits in a ts-morph
+    // object, so a full walk of a file that cannot possibly match — a
+    // generated bundle, a design-system component with no context — costs
+    // more than the whole page parse. A `<X.Provider>` tag has to spell
+    // `.Provider` in its text; a file that never does is skipped unread.
+    if (!file.getFullText().includes('.Provider')) continue
     file.forEachDescendant((node) => {
       if (!Node.isJsxOpeningElement(node) && !Node.isJsxSelfClosingElement(node)) return
       const tagName = node.getTagNameNode()

@@ -84,10 +84,10 @@ export interface StudioLoadResult {
 /** `loadStudioPages` options — today only the targeted-reload page filter. */
 export interface StudioLoadOptions {
   /**
-   * Track C5 (reload surgery) — return ONLY these page ids, and skip the
-   * per-page CONVERT work for every other route. `undefined` (every existing
-   * caller) is a full load, unchanged. See `loadStudioPages`'s own doc for
-   * exactly which stages this narrows and which stay project-wide.
+   * Track C5 (reload surgery) — return ONLY these page ids. The compute is
+   * the same full, project-wide load either way (and is memoized as such —
+   * `studioLoadMemo.ts`); only the returned `pages` are filtered. `undefined`
+   * (every existing caller) is a full load.
    */
   pageIds?: readonly string[]
 }
