@@ -28,7 +28,7 @@
  * (CLAUDE.md → "No dead code").
  */
 
-const NODE_ID_ATTR = 'data-node-id'
+export const NODE_ID_ATTR = 'data-node-id'
 
 /**
  * The Nth (0-based, document order) element in `doc` carrying

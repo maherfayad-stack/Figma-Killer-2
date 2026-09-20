@@ -81,6 +81,16 @@ export type FrameRuntimeEvent =
       clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
+  /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
+  | {
+      type: 'wheel'
+      deltaX: number
+      deltaY: number
+      deltaMode: number
+      clientX: number
+      clientY: number
+      modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+    }
   | { type: 'text:edit'; nodeId: string; text: string }
   /**
    * Z5 — the frame's own runtime reported a failure (an uncaught exception, an

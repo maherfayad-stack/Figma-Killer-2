@@ -1347,3 +1347,47 @@ registration is a bounded settle phase (`modules`) in
 `canvasCaptureSettle.ts`, warning and photographing anyway if the bundle never
 arrives. Adding a pack to the canvas is one line in `canvasModuleSet.ts`;
 gated by `src/__tests__/canvas/captureCanvasModuleSet.test.tsx`.
+
+### A Tier 2 bridge frame: what crosses the wire, and who consumes it (`live-12`)
+
+A `LiveBoardFrame` renders the user's real app in a cross-origin iframe served
+by the live origin (`/p/<projectKey>/…`). Nothing in it is Studio's React
+tree, so none of the portal-frame mechanics apply: `NodeRenderer`'s click
+handlers, `BoardFrameView`'s activate-on-capture, `useIframeEventForwarding`'s
+cloned wheel. Everything the board learns about a bridge frame arrives as a
+`postMessage` from the in-frame runtime (`@core/studio-runtime`), validated by
+`BridgeFrameAdapter`, and — as of `live-12` — consumed by
+`useBridgeFrameInteraction` on the parent:
+
+| Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
+|---|---|---|
+| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**) | capture-phase document listeners, both modes | `useBridgeFrameInteraction` → activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
+| `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
+| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues` |
+
+Three rules that fell out of wiring this, each pinned by a test:
+
+- **The parent declares the mode, on every `ready`.** `IframeFrameSurface`
+  calls `setInteractionMode('design' | 'live')` when it builds the adapter, and
+  `BridgeFrameAdapter` re-sends it on every subsequent `ready` — a Vite full
+  reload replaces the frame's document under the same `WindowProxy`, and a
+  mode sent once died with the old document. Before this nobody sent a mode at
+  all, so every bridge frame ran as a visitor's page: hover suppression,
+  scroll unroll and animation freeze never started, clicks reached the app,
+  inputs took focus.
+- **In design mode the gesture is the editor's.** The runtime cancels
+  `pointerdown`/`click` and stops their propagation at the document (the app's
+  React root never sees them; an `<input>` does not focus) — the same
+  `ownsAuthoredEvents` rule `NodeRenderer` applies to a portal frame — except
+  inside a `[contenteditable]`, where the caret has to land for the inline edit.
+- **A hit resolves to the innermost stamped ancestor the tree knows.** The Vite
+  plugin stamps host elements by SOURCE position, so a click inside a
+  design-system button lands on that package's own internal element. The
+  runtime sends the whole stamped chain (bounded at 32); the adapter walks it
+  to the first id in `nodeIdsInTreeOrder`. What that selects is the nearest
+  node the page tree has — the container around a package component's call
+  site, when the call site itself is not a stamped host element.
+
+The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
+frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that
+hands every click to the prototype player by design.

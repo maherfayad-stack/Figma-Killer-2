@@ -390,7 +390,13 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
  * dev server the record describes — a pid can be reused by an unrelated
  * process between two runs, and killing that would be worse than an orphan.
  */
-function adoptEntry(appRoot: string, dir: string, overrides: DevServerOverrides): DevServerEntry | null {
+function adoptEntry(
+  appRoot: string,
+  dir: string,
+  overrides: DevServerOverrides,
+  /** Whether a stale record may be replaced by a fresh spawn — true for a START, never for a status poll or a proxied request, which must not start processes. */
+  respawnIfStale: boolean,
+): DevServerEntry | null {
   const record = readDevServerRecord(appRoot)
   if (!record) return null
   const projectKey = registeredMcpServerProjectKey(dir)
@@ -456,7 +462,23 @@ function adoptEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     // Mirrors `pumpAndWatch`: a process that dies mid-probe settles the boot as failed.
     if (!entry.baseUrl) entry.urlPromise = Promise.resolve(null)
   })
-  entry.settled = raceBoot(entry, appRoot, overrides.bootTimeoutMs ?? BOOT_TIMEOUT_MS)
+  // A record that turns out stale — the origin gone, the pid dead mid-probe —
+  // is not a failed BOOT, it is a missing server, and the caller asked for
+  // one. Fall straight through to the spawn `ensureEntry` would have done
+  // had there been no record, instead of parking the project on `'failed'`
+  // until somebody presses start again.
+  entry.settled = raceBoot(entry, appRoot, overrides.bootTimeoutMs ?? BOOT_TIMEOUT_MS).then(() => {
+    if (!respawnIfStale || servers.get(appRoot) !== entry || entry.phase !== 'failed') return
+    servers.delete(appRoot)
+    const fresh = spawnEntry(appRoot, dir, overrides)
+    if (!fresh.ok) {
+      entry.error = fresh.error
+      servers.set(appRoot, entry)
+      return
+    }
+    fresh.entry.log = `${entry.log}[studio] the recorded server no longer answered; started a new one.\n${fresh.entry.log}`
+    return fresh.entry.settled
+  })
   return entry
 }
 
@@ -465,7 +487,7 @@ function ensureEntry(appRoot: string, dir: string, overrides: DevServerOverrides
   const existing = servers.get(appRoot)
   if (existing && existing.phase !== 'failed') return { ok: true, entry: existing }
   if (existing) servers.delete(appRoot)
-  const adopted = adoptEntry(appRoot, dir, overrides)
+  const adopted = adoptEntry(appRoot, dir, overrides, true)
   if (adopted) return { ok: true, entry: adopted }
   return spawnEntry(appRoot, dir, overrides)
 }
@@ -491,10 +513,13 @@ export async function ensureDevServer(dir: string, overrides: DevServerOverrides
   if (!created.ok) return { ok: false, error: created.error, log: '' }
 
   await created.entry.settled
-  if (created.entry.phase === 'ready' && created.entry.baseUrl) {
-    return { ok: true, baseUrl: created.entry.baseUrl }
+  // An adopted entry whose record was stale has been REPLACED by a fresh
+  // spawn while we waited (`adoptEntry`) — read the registry, not the handle.
+  const entry = servers.get(appRoot) ?? created.entry
+  if (entry.phase === 'ready' && entry.baseUrl) {
+    return { ok: true, baseUrl: entry.baseUrl }
   }
-  return { ok: false, error: created.entry.error ?? 'Dev server failed to boot.', log: created.entry.log }
+  return { ok: false, error: entry.error ?? 'Dev server failed to boot.', log: entry.log }
 }
 
 // ---------------------------------------------------------------------------
@@ -536,7 +561,7 @@ export function getDevServerStatus(dir: string): DevServerStatus {
  */
 function lookupEntry(dir: string): DevServerEntry | undefined {
   const appRoot = resolveAppRoot(dir)
-  return servers.get(appRoot) ?? adoptEntry(appRoot, dir, {}) ?? undefined
+  return servers.get(appRoot) ?? adoptEntry(appRoot, dir, {}, false) ?? undefined
 }
 
 /**

@@ -22,6 +22,13 @@ export const CanvasFrameContext = createContext<string | null>(null)
 
 interface CanvasSelectionContextValue {
   onNodeClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
+  /** A click forwarded out of a cross-origin bridge frame — see `useCanvasNodeInteraction`'s `onFrameNodeClick`. */
+  onFrameNodeClick: (
+    nodeId: string,
+    modifiers: { shiftKey: boolean; metaKey: boolean; ctrlKey: boolean },
+    breakpointId?: string,
+    frameId?: string | null,
+  ) => void
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: MouseEvent, breakpointId?: string, frameId?: string | null) => void
@@ -37,6 +44,7 @@ interface CanvasSelectionContextValue {
 
 export const CanvasSelectionContext = createContext<CanvasSelectionContextValue>({
   onNodeClick: () => {},
+  onFrameNodeClick: () => {},
   onNodeHover: () => {},
   onNodeContextMenu: () => {},
   onNodeDoubleClick: () => {},

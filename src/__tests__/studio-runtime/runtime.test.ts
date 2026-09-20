@@ -19,6 +19,24 @@ function makeFakeParentWindow() {
   return { fakeWindow, posted }
 }
 
+
+// happy-dom has no `WheelEvent`; the runtime and the hook construct one. A
+// `MouseEvent` carrying the four delta fields is all either of them reads.
+class TestWheelEvent extends MouseEvent {
+  readonly deltaX: number
+  readonly deltaY: number
+  readonly deltaZ: number
+  readonly deltaMode: number
+  constructor(type: string, init: MouseEventInit & { deltaX?: number; deltaY?: number; deltaZ?: number; deltaMode?: number } = {}) {
+    super(type, init)
+    this.deltaX = init.deltaX ?? 0
+    this.deltaY = init.deltaY ?? 0
+    this.deltaZ = init.deltaZ ?? 0
+    this.deltaMode = init.deltaMode ?? 0
+  }
+}
+if (typeof WheelEvent === 'undefined') Object.assign(globalThis, { WheelEvent: TestWheelEvent })
+
 let bridge: StudioRuntimeBridge | null = null
 
 afterEach(() => {
@@ -462,5 +480,79 @@ describe('createStudioRuntimeBridge — optimistic-insert ghost sweep', () => {
     fireAfterUpdate()
 
     expect(document.querySelector('[data-node-id="real"]')).not.toBeNull()
+  })
+})
+
+// `live-12` — a design frame's clicks belong to the editor, and its wheel to the canvas.
+describe('createStudioRuntimeBridge — design mode owns the gesture', () => {
+  function pointerEvent(type: string, init: MouseEventInit): Event {
+    const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+  }
+
+  it('in design mode: pointerdown and click are cancelled and never reach the app, wheel is cancelled and forwarded', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const button = document.createElement('button')
+    button.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(button)
+    let appClicks = 0
+    button.addEventListener('click', () => { appClicks += 1 })
+    let appPointerDowns = 0
+    button.addEventListener('pointerdown', () => { appPointerDowns += 1 })
+
+    const down = pointerEvent('pointerdown', { clientX: 5, clientY: 6 })
+    button.dispatchEvent(down)
+    const click = pointerEvent('click', { clientX: 5, clientY: 6 })
+    button.dispatchEvent(click)
+    expect(down.defaultPrevented).toBe(true)
+    expect(click.defaultPrevented).toBe(true)
+    expect(appPointerDowns).toBe(0)
+    expect(appClicks).toBe(0)
+    // …but the parent still heard both, with the node they landed on.
+    const phases = posted
+      .map((p) => (p.data as { message: { type: string; phase?: string; nodeId?: string | null } }).message)
+      .filter((m) => m.type === 'pointer')
+      .map((m) => `${m.phase}:${m.nodeId}`)
+    expect(phases).toEqual(['down:pages/Home.tsx:3:4', 'click:pages/Home.tsx:3:4'])
+
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: -120, ctrlKey: true, clientX: 7, clientY: 8 })
+    button.dispatchEvent(wheel)
+    expect(wheel.defaultPrevented).toBe(true)
+    const wheels = posted.map((p) => (p.data as { message: { type: string } }).message).filter((m) => m.type === 'wheel')
+    expect(wheels).toEqual([
+      { type: 'wheel', deltaX: 0, deltaY: -120, deltaMode: 0, clientX: 7, clientY: 8, modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false } },
+    ])
+  })
+
+  it('a contenteditable text run keeps its click in design mode — the caret has to land for an inline edit', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const text = document.createElement('p')
+    text.setAttribute('contenteditable', 'true')
+    document.body.appendChild(text)
+    const down = pointerEvent('pointerdown', {})
+    text.dispatchEvent(down)
+    expect(down.defaultPrevented).toBe(false)
+  })
+
+  it('in live mode: the app gets every event and nothing is forwarded as wheel', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'live' })
+    const button = document.createElement('button')
+    document.body.appendChild(button)
+    let appClicks = 0
+    button.addEventListener('click', () => { appClicks += 1 })
+    const click = pointerEvent('click', {})
+    button.dispatchEvent(click)
+    expect(click.defaultPrevented).toBe(false)
+    expect(appClicks).toBe(1)
+    const wheel = new WheelEvent('wheel', { bubbles: true, cancelable: true, deltaY: 40 })
+    button.dispatchEvent(wheel)
+    expect(wheel.defaultPrevented).toBe(false)
+    expect(posted.some((p) => (p.data as { message: { type: string } }).message.type === 'wheel')).toBe(false)
   })
 })
