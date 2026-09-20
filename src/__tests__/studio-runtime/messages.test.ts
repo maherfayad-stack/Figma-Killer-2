@@ -67,6 +67,15 @@ const outboundSamples: OutboundRuntimeMessage[] = [
   { type: 'hmr:before' },
   { type: 'hmr:after' },
   {
+    type: 'wheel',
+    deltaX: 0,
+    deltaY: -120,
+    deltaMode: 0,
+    clientX: 12,
+    clientY: 34,
+    modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false },
+  },
+  {
     type: 'pointer',
     phase: 'down',
     nodeId: 'n1',
@@ -75,6 +84,7 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     clientX: 5,
     clientY: 5,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      ancestors: [],
   },
   {
     type: 'pointer',
@@ -85,6 +95,7 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     clientX: 0,
     clientY: 0,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      ancestors: [],
   },
   { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
   {
@@ -212,6 +223,7 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         clientX: 0,
         clientY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      ancestors: [],
       }),
     ).toBe(false)
   })

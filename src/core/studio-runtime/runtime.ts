@@ -53,10 +53,11 @@ import {
   toOutboundEnvelope,
   type InboundRuntimeMessage,
   type NodeMeasurement,
-  type NodeRect,
   type OutboundRuntimeMessage,
   type RuntimeMode,
 } from './messages'
+import { installGestureForwarding } from './gestureForwarding'
+import { rectRelativeToBody } from './nodeDom'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
 import {
   applyOptimisticDelete,
@@ -70,11 +71,10 @@ import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRu
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
 import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
-import { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
+import { findNthNodeById, NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
-const NODE_ID_ATTR = 'data-node-id'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-runtime-animation-freeze'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
@@ -134,25 +134,6 @@ function isRuntimeOwnedStyleOwner(owner: Element): boolean {
  */
 function findByNodeId(doc: Document, nodeId: string, occurrenceIndex = 0): Element | null {
   return findNthNodeById(doc, nodeId, occurrenceIndex)
-}
-
-/** The nearest node-id-carrying ancestor (inclusive) of `el`, paired with its own occurrence index — `null` if no ancestor carries a node id. */
-function nearestNodeOccurrence(doc: Document, el: Element | null): { nodeId: string; occurrenceIndex: number } | null {
-  const anchor = el?.closest(`[${NODE_ID_ATTR}]`) as Element | null
-  if (!anchor) return null
-  return occurrenceIndexOf(doc, anchor)
-}
-
-/** `el`'s box relative to `body`'s border box — both rects are viewport-relative, so scroll cancels out of the difference. */
-function rectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
-  const elRect = el.getBoundingClientRect()
-  const bodyRect = body.getBoundingClientRect()
-  return {
-    x: elRect.left - bodyRect.left,
-    y: elRect.top - bodyRect.top,
-    width: elRect.width,
-    height: elRect.height,
-  }
 }
 
 /**
@@ -406,30 +387,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     parentWindow.postMessage(toOutboundEnvelope(message), parentOrigin)
   }
 
-  function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
-    const target = ev.target instanceof Element ? ev.target : null
-    const anchor = target?.closest(`[${NODE_ID_ATTR}]`) ?? null
-    const rect = anchor && doc.body ? rectRelativeToBody(anchor, doc.body) : null
-    const occurrence = nearestNodeOccurrence(doc, target)
-    postOutbound({
-      type: 'pointer',
-      phase,
-      nodeId: occurrence?.nodeId ?? null,
-      occurrenceIndex: occurrence?.occurrenceIndex ?? 0,
-      rect,
-      clientX: ev.clientX,
-      clientY: ev.clientY,
-      modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
-    })
-  }
-  const onPointerDown = (ev: PointerEvent) => forwardPointer('down', ev)
-  const onPointerMove = (ev: PointerEvent) => forwardPointer('move', ev)
-  const onPointerUp = (ev: PointerEvent) => forwardPointer('up', ev)
-  const onClick = (ev: MouseEvent) => forwardPointer('click', ev)
-  doc.addEventListener('pointerdown', onPointerDown, true)
-  doc.addEventListener('pointermove', onPointerMove, true)
-  doc.addEventListener('pointerup', onPointerUp, true)
-  doc.addEventListener('click', onClick, true)
+  // Pointer + wheel forwarding, and design-mode ownership of the gesture —
+  // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
+  const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
 
   // A minimal inline-text-edit bridge: any `contenteditable` element that
   // also carries a node id reports its live text on every `input`. Seeding
@@ -647,10 +607,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     dispose() {
       view.removeEventListener('message', onWindowMessage)
       view.removeEventListener('resize', scheduleReposition)
-      doc.removeEventListener('pointerdown', onPointerDown, true)
-      doc.removeEventListener('pointermove', onPointerMove, true)
-      doc.removeEventListener('pointerup', onPointerUp, true)
-      doc.removeEventListener('click', onClick, true)
+      disposeGestureForwarding()
       doc.removeEventListener('input', onInput, true)
       disposeErrorTaps()
       layoutObserver?.disconnect()

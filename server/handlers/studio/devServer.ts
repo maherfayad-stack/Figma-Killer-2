@@ -46,6 +46,21 @@
  * nested app (`apps/web/` inside the project directory) must not spawn two
  * dev servers for the same project because two different callers passed
  * `dir` and `dir/apps/web`.
+ *
+ * **A ready dev server outlives this process, and is adopted back (`live-11`).**
+ * The registry is in-memory, but the Vite child is not: `bun --watch`
+ * restarts this server in place on every source change (and a crash or a
+ * deploy restarts it for real), and each restart used to forget every child
+ * it had spawned. The children kept running — one orphaned Vite per restart,
+ * still bound to its port — while the proxy answered `'stopped'` and the
+ * next board open spawned yet another. So the moment an entry reaches
+ * `'ready'` its `{pid, baseUrl, projectKey}` is written to
+ * `devServerStateDir()` (`.tmp/dev-servers/`, machine-local, never inside
+ * the user's project), and `ensureEntry` on a registry miss first tries to
+ * ADOPT that record: the pid must still be alive, and the recorded origin
+ * must still answer at the project's own base path. An adopted entry has no
+ * stdout to pump — it is watched by polling its pid — and is otherwise a
+ * first-class entry: same phases, same `stop`, same exit demotion.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
@@ -54,6 +69,13 @@ import { readServerConfig } from '../../config'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
+import {
+  deleteDevServerRecord,
+  isProcessAlive,
+  probeDevServerOrigin,
+  readDevServerRecord,
+  writeDevServerRecord,
+} from './devServerRecords'
 import { resolveDevScript, resolveLiveCapability } from './liveCapability'
 import { detectPackageManager, type PackageManager } from './packageManager'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
@@ -107,15 +129,24 @@ function stripAnsi(text: string): string {
 export interface DevServerOverrides {
   spawn?: (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: 'pipe'; stderr: 'pipe'; stdin: 'ignore' }) => SpawnedProcessLike
   bootTimeoutMs?: number
+  /** Whether a recorded pid is still running — adoption's first check. Default: signal 0. */
+  isProcessAlive?: (pid: number) => boolean
+  /** Whether a recorded origin still serves the project at `basePath` — adoption's second check. Default: one bounded `fetch`. */
+  probe?: (baseUrl: string, basePath: string) => Promise<boolean>
 }
 
 const defaultSpawn: NonNullable<DevServerOverrides['spawn']> = (argv, options) =>
   Bun.spawn(argv, options) as unknown as SpawnedProcessLike
 
+/** How often an adopted process's pid is re-checked, standing in for the `exited` promise a spawned child has. */
+const ADOPTED_EXIT_POLL_MS = 1_000
+
 interface DevServerEntry {
   appRoot: string
   proc: SpawnedProcessLike
   packageManager: PackageManager
+  /** `registeredMcpServerProjectKey(dir)` — the base path the child was told to serve under, kept so the record can be checked against it on adoption. */
+  projectKey: string
   devScript: string
   phase: 'booting' | 'ready' | 'failed'
   baseUrl: string | null
@@ -229,6 +260,7 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
 
   if (timedOut || !entry.baseUrl) {
     entry.phase = 'failed'
+    deleteDevServerRecord(appRoot)
     entry.error = timedOut
       ? `Dev server ("${entry.packageManager} run ${entry.devScript}") did not print a Local URL within ${bootTimeoutMs}ms.`
       : `Dev server ("${entry.packageManager} run ${entry.devScript}") exited before printing a Local URL.`
@@ -241,6 +273,15 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
   }
 
   entry.phase = 'ready'
+  writeDevServerRecord({
+    appRoot,
+    projectKey: entry.projectKey,
+    pid: entry.pid ?? 0,
+    baseUrl: entry.baseUrl,
+    startedAt: entry.startedAt,
+    packageManager: entry.packageManager,
+    devScript: entry.devScript,
+  })
 
   // A process that dies AFTER it was ready — Vite crashing on an HMR socket
   // reset, the user killing it from a terminal — used to stay `'ready'` in
@@ -253,6 +294,7 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
     entry.phase = 'failed'
     entry.error = `Dev server ("${entry.packageManager} run ${entry.devScript}") exited with code ${code} after it was ready.`
     entry.log += `\n[studio] ${entry.error}\n`
+    deleteDevServerRecord(appRoot)
   })
 }
 
@@ -316,6 +358,7 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     appRoot,
     proc,
     packageManager,
+    projectKey,
     devScript: devScript.name,
     phase: 'booting',
     baseUrl: null,
@@ -335,12 +378,123 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
   return { ok: true, entry }
 }
 
-/** Reuses a live (`'booting'`/`'ready'`) entry; clears and respawns a `'failed'` one; spawns fresh otherwise. */
+/**
+ * A dev server a PREVIOUS run of this process left ready (`live-11`), re-entered
+ * into the registry without spawning anything — or `null` when there is no
+ * record, the record is for a different base path, or its pid is gone. A
+ * record whose pid is alive but whose origin no longer answers is judged by
+ * the same `raceBoot` a fresh spawn goes through: the probe stands in for the
+ * "Local URL" line, and a failed probe is a failed boot.
+ *
+ * The adopted process is never signalled unless the probe PROVED it is the
+ * dev server the record describes — a pid can be reused by an unrelated
+ * process between two runs, and killing that would be worse than an orphan.
+ */
+function adoptEntry(
+  appRoot: string,
+  dir: string,
+  overrides: DevServerOverrides,
+  /** Whether a stale record may be replaced by a fresh spawn — true for a START, never for a status poll or a proxied request, which must not start processes. */
+  respawnIfStale: boolean,
+): DevServerEntry | null {
+  const record = readDevServerRecord(appRoot)
+  if (!record) return null
+  const projectKey = registeredMcpServerProjectKey(dir)
+  const isAlive = overrides.isProcessAlive ?? isProcessAlive
+  if (record.projectKey !== projectKey || !isAlive(record.pid)) {
+    deleteDevServerRecord(appRoot)
+    return null
+  }
+
+  let verified = false
+  let exitPoll: ReturnType<typeof setInterval> | null = null
+  const exited = new Promise<number>((resolveExited) => {
+    // Deliberately NOT `.unref()`'d — see `scheduleTeardownInternal`'s comment.
+    exitPoll = setInterval(() => {
+      if (isAlive(record.pid)) return
+      if (exitPoll) clearInterval(exitPoll)
+      exitPoll = null
+      resolveExited(0)
+    }, ADOPTED_EXIT_POLL_MS)
+  })
+  const proc: SpawnedProcessLike = {
+    stdout: null,
+    stderr: null,
+    exited,
+    pid: record.pid,
+    kill: () => {
+      if (exitPoll) clearInterval(exitPoll)
+      exitPoll = null
+      if (!verified) return
+      try {
+        process.kill(record.pid)
+      } catch {
+        // already gone
+      }
+    },
+  }
+
+  const probe = overrides.probe ?? probeDevServerOrigin
+  const entry: DevServerEntry = {
+    appRoot,
+    proc,
+    packageManager: record.packageManager as PackageManager,
+    projectKey,
+    devScript: record.devScript,
+    phase: 'booting',
+    baseUrl: null,
+    urlPromise: Promise.resolve(null),
+    log: `[studio] adopted the dev server a previous run left ready (pid ${record.pid}, ${record.baseUrl}).\n`,
+    error: null,
+    pid: record.pid,
+    startedAt: record.startedAt,
+    idleTimer: null,
+    settled: Promise.resolve(),
+  }
+  entry.urlPromise = probe(record.baseUrl, `/p/${projectKey}/`).then((ok) => {
+    if (!ok) return null
+    verified = true
+    entry.baseUrl = record.baseUrl
+    return record.baseUrl
+  })
+  servers.set(appRoot, entry)
+  void exited.then(() => {
+    // Mirrors `pumpAndWatch`: a process that dies mid-probe settles the boot as failed.
+    if (!entry.baseUrl) entry.urlPromise = Promise.resolve(null)
+  })
+  // A record that turns out stale — the origin gone, the pid dead mid-probe —
+  // is not a failed BOOT, it is a missing server, and the caller asked for
+  // one. Fall straight through to the spawn `ensureEntry` would have done
+  // had there been no record, instead of parking the project on `'failed'`
+  // until somebody presses start again.
+  entry.settled = raceBoot(entry, appRoot, overrides.bootTimeoutMs ?? BOOT_TIMEOUT_MS).then(() => {
+    if (!respawnIfStale || servers.get(appRoot) !== entry || entry.phase !== 'failed') return
+    servers.delete(appRoot)
+    const fresh = spawnEntry(appRoot, dir, overrides)
+    if (!fresh.ok) {
+      entry.error = fresh.error
+      servers.set(appRoot, entry)
+      return
+    }
+    fresh.entry.log = `${entry.log}[studio] the recorded server no longer answered; started a new one.\n${fresh.entry.log}`
+    return fresh.entry.settled
+  })
+  return entry
+}
+
+/** Reuses a live (`'booting'`/`'ready'`) entry; clears and respawns a `'failed'` one; adopts a recorded survivor or spawns fresh otherwise. */
 function ensureEntry(appRoot: string, dir: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
   const existing = servers.get(appRoot)
   if (existing && existing.phase !== 'failed') return { ok: true, entry: existing }
   if (existing) servers.delete(appRoot)
+  const adopted = adoptEntry(appRoot, dir, overrides, true)
+  if (adopted) return { ok: true, entry: adopted }
   return spawnEntry(appRoot, dir, overrides)
+}
+
+/** Empties the registry WITHOUT killing anything — a test's stand-in for this process restarting. */
+export function forgetDevServersForTest(): void {
+  servers.clear()
 }
 
 export type EnsureDevServerResult =
@@ -359,10 +513,13 @@ export async function ensureDevServer(dir: string, overrides: DevServerOverrides
   if (!created.ok) return { ok: false, error: created.error, log: '' }
 
   await created.entry.settled
-  if (created.entry.phase === 'ready' && created.entry.baseUrl) {
-    return { ok: true, baseUrl: created.entry.baseUrl }
+  // An adopted entry whose record was stale has been REPLACED by a fresh
+  // spawn while we waited (`adoptEntry`) — read the registry, not the handle.
+  const entry = servers.get(appRoot) ?? created.entry
+  if (entry.phase === 'ready' && entry.baseUrl) {
+    return { ok: true, baseUrl: entry.baseUrl }
   }
-  return { ok: false, error: created.entry.error ?? 'Dev server failed to boot.', log: created.entry.log }
+  return { ok: false, error: entry.error ?? 'Dev server failed to boot.', log: entry.log }
 }
 
 // ---------------------------------------------------------------------------
@@ -393,8 +550,18 @@ function statusOf(entry: DevServerEntry | undefined): DevServerStatus {
 
 /** Pure read of the current in-memory registry — no spawn, no filesystem beyond what `resolveAppRoot` already needs. */
 export function getDevServerStatus(dir: string): DevServerStatus {
+  return statusOf(lookupEntry(dir))
+}
+
+/**
+ * The registry entry for `dir` — adopting a recorded survivor on a miss, so a
+ * status poll or a proxied frame request right after this process restarted
+ * finds the dev server that is still running instead of `'stopped'`. Nothing
+ * here spawns: adoption only re-enters a process a previous run started.
+ */
+function lookupEntry(dir: string): DevServerEntry | undefined {
   const appRoot = resolveAppRoot(dir)
-  return statusOf(servers.get(appRoot))
+  return servers.get(appRoot) ?? adoptEntry(appRoot, dir, {}, false) ?? undefined
 }
 
 /**
@@ -410,8 +577,7 @@ export function getDevServerStatus(dir: string): DevServerStatus {
  * routes put in a JSON response body, which this function never touches.
  */
 export function getDevServerUpstreamUrl(dir: string): string | null {
-  const appRoot = resolveAppRoot(dir)
-  const entry = servers.get(appRoot)
+  const entry = lookupEntry(dir)
   return entry && entry.phase === 'ready' ? entry.baseUrl : null
 }
 
@@ -442,6 +608,7 @@ export function stopDevServer(dir: string): DevServerStatus {
       // already exited
     }
   }
+  deleteDevServerRecord(appRoot)
   return STOPPED_STATUS
 }
 
