@@ -34,6 +34,14 @@
  * import declaration counts as a use, including an object key or a property
  * access that is not really this binding. The failure mode is a leftover
  * import, never a deleted one that was still needed.
+ *
+ * ## `store-15` — what it hands back for an undo
+ *
+ * A pruned import is a second thing a delete's ⌘Z has to restore, alongside
+ * the element itself. `prune()` returns not just which bindings it removed
+ * but a re-insertable declaration TEXT per one (`PrunedImportsResult`), so the
+ * caller can splice it back in without re-deriving how the binding was
+ * originally spelled.
  */
 import { SyntaxKind, type SourceFile } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -47,6 +55,34 @@ export function isPrunableSourceFile(file: string): boolean {
 }
 
 /**
+ * `store-15` — what one file's prune pass removed, for a caller that needs to
+ * put a pruned import back (an undo of the delete that orphaned it).
+ *
+ * `declarations` is NOT the removed bindings' names — it is, for each import
+ * this pass deleted (whole or partial), a STANDALONE declaration text that
+ * parses as exactly one `ImportDeclaration` and can be spliced back in as its
+ * own line: the verbatim original text for a whole-declaration removal (so
+ * restoring it after the file's last import reproduces the byte-for-byte
+ * original when it already was the last one), or a synthesized `import { … }
+ * from '…'` for a partial one (the survivors stay on their own line; the
+ * restored bindings get a second line rather than being spliced back into a
+ * declaration this pass no longer has to hand). Same order as `removed`.
+ */
+export interface PrunedImportsResult {
+  /** Every binding name removed, in source order. */
+  removed: readonly string[]
+  /** One standalone, re-insertable declaration text per import removed, in source order. */
+  declarations: readonly string[]
+}
+
+export interface ImportPruneSession {
+  /** The import bindings `file` currently REFERENCES — take this BEFORE any edit lands. */
+  snapshot(file: string): ReadonlySet<string>
+  /** Remove every binding in `wasReferenced` that no longer has a reference. */
+  prune(file: string, wasReferenced: ReadonlySet<string>): PrunedImportsResult
+}
+
+/**
  * The two calls a save batch makes, sharing one ts-morph `Project` so the
  * before/after pair costs one parse per file rather than two.
  *
@@ -54,13 +90,6 @@ export function isPrunableSourceFile(file: string): boolean {
  * caller is an HTTP handler that deliberately holds no ts-morph types, and a
  * module-level cache shared across requests would be worse than either.
  */
-export interface ImportPruneSession {
-  /** The import bindings `file` currently REFERENCES — take this BEFORE any edit lands. */
-  snapshot(file: string): ReadonlySet<string>
-  /** Remove every binding in `wasReferenced` that no longer has a reference. Returns the removed names. */
-  prune(file: string, wasReferenced: ReadonlySet<string>): readonly string[]
-}
-
 export function createImportPruneSession(): ImportPruneSession {
   const project = createProject()
   return {
@@ -85,9 +114,12 @@ function referencedImportBindings(file: string, project: ReturnType<typeof creat
   }
 }
 
+const NOTHING_PRUNED: PrunedImportsResult = { removed: [], declarations: [] }
+
 /**
  * Remove every import binding that was in `wasReferenced` and no longer has a
- * reference in the file. Returns the removed names, in source order.
+ * reference in the file. Returns the removed names AND a re-insertable
+ * declaration text per import removed, both in source order.
  *
  * Never throws: a file that vanished or stopped parsing mid-batch prunes
  * nothing rather than taking the whole save down.
@@ -96,32 +128,64 @@ function pruneOrphanedImports(
   file: string,
   wasReferenced: ReadonlySet<string>,
   project: ReturnType<typeof createProject>,
-): readonly string[] {
-  if (wasReferenced.size === 0) return []
+): PrunedImportsResult {
+  if (wasReferenced.size === 0) return NOTHING_PRUNED
   try {
     const sourceFile = loadSourceFile(project, file)
     const verbatim = verbatimSourceText(sourceFile, file)
-    if (verbatim === null) return []
+    if (verbatim === null) return NOTHING_PRUNED
 
     const live = referencedBindings(sourceFile)
     const edits: TextEdit[] = []
     const removed: string[] = []
+    const declarations: string[] = []
 
     for (const declaration of sourceFile.getImportDeclarations()) {
       const all = declarationBindings(declaration)
       const dead = all.filter((name) => wasReferenced.has(name) && !live.has(name))
       if (dead.length === 0) continue
+      const wholeDeclaration = dead.length === all.length
       removed.push(...dead)
-      edits.push(...removalEdits(verbatim, declaration, dead, dead.length === all.length))
+      declarations.push(reinsertableDeclarationText(declaration, dead, wholeDeclaration))
+      edits.push(...removalEdits(verbatim, declaration, dead, wholeDeclaration))
     }
 
-    if (edits.length === 0) return []
+    if (edits.length === 0) return NOTHING_PRUNED
     writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, edits))
-    return removed
+    return { removed, declarations }
   } catch (err) {
     console.error('[ast-codemods/pruneOrphanedImports] could not prune:', err)
-    return []
+    return NOTHING_PRUNED
   }
+}
+
+/**
+ * The standalone declaration text that puts `dead` back — see
+ * `PrunedImportsResult.declarations` for what this owes a caller and why a
+ * partial removal is synthesized rather than sliced.
+ *
+ * A whole-declaration removal returns the declaration's own text verbatim
+ * (comments aside — `getText()`'s ordinary trivia rule), never
+ * `removalEdits`' owned RANGE: that range's job is knowing which BYTES to cut
+ * (indentation, trailing newline included), not what a caller should splice
+ * back in as a fresh, independent line.
+ */
+function reinsertableDeclarationText(declaration: ImportLike, dead: readonly string[], wholeDeclaration: boolean): string {
+  if (wholeDeclaration) return declaration.getText()
+
+  const removed = new Set(dead)
+  const typePrefix = declaration.isTypeOnly() ? 'type ' : ''
+  const moduleSpecifier = declaration.getModuleSpecifier().getText()
+  const defaultImport = declaration.getDefaultImport()
+  const namespaceImport = declaration.getNamespaceImport()
+  const namedSpecifiers = declaration.getNamedImports().filter((s) => removed.has((s.getAliasNode() ?? s.getNameNode()).getText()))
+
+  const clause: string[] = []
+  if (defaultImport && removed.has(defaultImport.getText())) clause.push(defaultImport.getText())
+  if (namespaceImport && removed.has(namespaceImport.getText())) clause.push(`* as ${namespaceImport.getText()}`)
+  if (namedSpecifiers.length > 0) clause.push(`{ ${namedSpecifiers.map((s) => s.getText()).join(', ')} }`)
+
+  return `import ${typePrefix}${clause.join(', ')} from ${moduleSpecifier}`
 }
 
 /** Every import binding with at least one identifier reference outside an import declaration. */

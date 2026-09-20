@@ -97,15 +97,15 @@ export interface StructuralHistoryMove {
  * move, planned against the live tree by the same `moveNodes` action a drag
  * uses, so it rides every refusal gate and writes to source exactly once.
  *
- * `delete` is NOT. Undoing a source delete means writing the element's
- * original markup back into the file, and the writeback protocol has no edit
- * kind that carries a subtree's source text — `insert` names a component and
- * literal props. Rather than replay patches that would re-add nodes the file
- * does not contain, undo refuses and says so.
+ * `delete` (`store-15`) is folded into `StructuralSourceHistory` rather than
+ * getting a bare variant of its own: its tree mutation still runs eagerly
+ * (same-tick optimistic removal), but its UNDO — writing the element's
+ * original markup back — is a `reinsert-source` edit, resolved the identical
+ * way every other `source` gesture's inverse is. See `structuralUndoPlan.ts`'s
+ * `reinsert-deleted` template.
  */
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | { gesture: 'delete' }
   | StructuralSourceHistory
 
 /**

@@ -23,7 +23,7 @@ import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
-import { refuseStructuralUndo, reissueStructuralMove } from './structuralHistory'
+import { reissueStructuralMove } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralHistory } from './types'
 
@@ -48,10 +48,6 @@ function runStructuralStep(
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
 ): boolean {
-  if (structural.gesture === 'delete') {
-    refuseStructuralUndo(structural.gesture)
-    return true
-  }
   const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
   const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
   // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale
@@ -62,13 +58,16 @@ function runStructuralStep(
   const fromBefore = [...get()[from]]
   const toBefore = [...get()[to]]
 
-  // `store-14` — a SOURCE gesture (duplicate/wrap/group/ungroup/paste/
-  // transplant/image-drop) mutated no tree, so there is no gesture to
-  // re-issue through a store action: its inverse is a WRITE, posted through
-  // the same `/save` route the gesture used. It pushes no entry of its own
-  // (the commit carries `reissue`, which `recordStructuralSourceWrite` reads
-  // as "refresh, do not push"), so the stack bookkeeping below is still the
-  // only thing that moves it.
+  // `store-14`/`store-15` — a SOURCE gesture (duplicate/wrap/group/ungroup/
+  // paste/transplant/image-drop, and `delete`) has no gesture to re-issue
+  // through a store action: its inverse is a WRITE, posted through the same
+  // `/save` route the gesture used. Most of the family mutated no tree at
+  // gesture time and pushes no entry of its own on redo either (the commit
+  // carries `reissue`, which `recordStructuralSourceWrite` reads as "refresh,
+  // do not push"); `delete` is the one member that DID mutate the tree
+  // (`deleteNodesAction.ts`'s optimistic removal) and already has an entry —
+  // reissuing it here still only posts the write, so the stack bookkeeping
+  // below is what moves the entry either way.
   const performed =
     structural.gesture === 'source'
       ? reissueStructuralSourceEdits(get, set, structural, direction)

@@ -63,6 +63,7 @@ import {
   setStringLiteral,
   setStyledDeclaration,
   swapComponentInstance,
+  type DeletedJsxText,
 } from '@core/ast-codemods'
 import { buildSourceNodeId } from '@core/page-tree'
 import { applyCssEdit } from './studioCssWriteback'
@@ -306,6 +307,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     }
     case 'move':
     case 'delete':
+    case 'reinsert-source':
     case 'insert':
     case 'duplicate':
     case 'wrap':
@@ -352,6 +354,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
         applied: true,
         ...(result.created === undefined ? {} : { created: result.created }),
         ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
+        ...(result.removed === undefined ? {} : { removed: result.removed }),
       }
     }
     case 'detach': {
@@ -461,6 +464,11 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   // parses per file — not something to spend on every keystroke-driven save.
   const importPrune = createImportPruneSession()
   const referencedBefore = new Map<string, ReadonlySet<string>>()
+  // `store-15` — the workspace-relative `rel` for every file `referencedBefore`
+  // snapshots, so the prune pass below can report `prunedImports` in the same
+  // path shape every other per-file field on this result uses (never the
+  // absolute path `studioEditFile` resolves internally).
+  const relByFile = new Map<string, string>()
   for (const edit of ordered) {
     // D2 G3 — a transplant that MOVES (not copies) removes markup from the
     // origin file exactly as a delete does, so it can orphan an import there
@@ -481,6 +489,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     if (!file || referencedBefore.has(file)) continue
     if (isPrunableSourceFile(file) && existsSync(file)) {
       referencedBefore.set(file, importPrune.snapshot(file))
+      const rel = studioEditLocation(dir, edit.nodeId)?.rel
+      if (rel) relByFile.set(file, rel)
     }
   }
 
@@ -497,6 +507,10 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   const createdPositions: CreatedNodePosition[] = []
   // `store-14` — the same, for the elements a batch MOVED rather than made.
   const relocatedPositions: CreatedNodePosition[] = []
+  // `store-15` — every `delete` edit's own discarded bytes, keyed by the
+  // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
+  // that produced it.
+  const removed: (DeletedJsxText & { nodeId: string })[] = []
   for (const edit of ordered) {
     try {
       const outcome = applyStudioEdit(dir, edit)
@@ -514,6 +528,7 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
+        if (outcome.removed) removed.push({ nodeId: edit.nodeId, ...outcome.removed })
       } else {
         skipped += 1
         unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
@@ -531,8 +546,12 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
 
   // Only a binding that was live BEFORE and is dead AFTER — an import the user
   // had already left unused is their line, not something this batch created.
+  const prunedImports: { file: string; declarations: string[] }[] = []
   for (const [file, wasReferenced] of referencedBefore) {
-    if (existsSync(file)) importPrune.prune(file, wasReferenced)
+    if (!existsSync(file)) continue
+    const pruned = importPrune.prune(file, wasReferenced)
+    const rel = relByFile.get(file)
+    if (rel && pruned.declarations.length > 0) prunedImports.push({ file: rel, declarations: [...pruned.declarations] })
   }
 
   let shifted = false
@@ -565,6 +584,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     addSlotPropDetails,
     unexplainedSkips,
     touchedFiles: [...touchedFiles],
+    removed,
+    prunedImports,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
     relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
   }

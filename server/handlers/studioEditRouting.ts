@@ -293,6 +293,11 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * element in a batch (a cross-frame drag resolves one target, and the second
  * would be planned against a tree the first already changed). Collapsing it
  * would silently drop a copy while `written` reported the truth.
+ *
+ * `reinsert-source` (`store-15`) joins `insert` for the identical reason: its
+ * `nodeId` is the PARENT being restored INTO, not a span it overwrites, and a
+ * multi-node delete's ⌘Z posts one `reinsert-source` per restored sibling
+ * against that same parent — two wanted elements, not a duplicate write.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
@@ -317,6 +322,7 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'wrap' ||
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
+      edit.kind === 'reinsert-source' ||
       edit.kind === 'styled'
     ) {
       passthrough.push(edit)
