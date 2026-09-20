@@ -16,7 +16,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createImportPruneSession, isPrunableSourceFile } from '../pruneOrphanedImports'
+import { createImportPruneSession, isPrunableSourceFile, type PrunedImportsResult } from '../pruneOrphanedImports'
 
 let tmpDir: string
 
@@ -35,13 +35,13 @@ function writeFixture(source: string, name = 'Page.tsx'): string {
 }
 
 /** Snapshot, apply `edit` to the file's text, prune — the real batch sequence, compressed. */
-function pruneAfter(source: string, edit: (text: string) => string): { text: string; removed: readonly string[] } {
+function pruneAfter(source: string, edit: (text: string) => string): { text: string } & PrunedImportsResult {
   const file = writeFixture(source)
   const session = createImportPruneSession()
   const before = session.snapshot(file)
   fs.writeFileSync(file, edit(source), 'utf8')
-  const removed = session.prune(file, before)
-  return { text: fs.readFileSync(file, 'utf8'), removed }
+  const result = session.prune(file, before)
+  return { text: fs.readFileSync(file, 'utf8'), ...result }
 }
 
 describe('pruneOrphanedImports', () => {
@@ -56,8 +56,12 @@ export default function Page() {
   )
 }
 `
-    const { text, removed } = pruneAfter(source, (t) => t.replace('      <Third />\n', ''))
+    const { text, removed, declarations } = pruneAfter(source, (t) => t.replace('      <Third />\n', ''))
     expect(removed).toEqual(['Third'])
+    // Whole-declaration removal: the re-insertable text is the user's own
+    // line verbatim, so restoring it after the (now empty) import block
+    // reproduces this file byte-for-byte.
+    expect(declarations).toEqual(["import { Third } from './Third'"])
     expect(text).toBe(source.replace("import { Third } from './Third'\n", '').replace('      <Third />\n', ''))
   })
 
@@ -73,8 +77,11 @@ export default function Page() {
   )
 }
 `
-    const { text, removed } = pruneAfter(source, (t) => t.replace('      <TabBar />\n', ''))
+    const { text, removed, declarations } = pruneAfter(source, (t) => t.replace('      <TabBar />\n', ''))
     expect(removed).toEqual(['TabBar'])
+    // Partial removal: synthesized as its own standalone declaration, not
+    // sliced out of the survivors' line.
+    expect(declarations).toEqual(["import { TabBar } from '@ds'"])
     expect(text).toBe(
       source.replace('{ TabBar, Screen, ChevronUpIcon }', '{ Screen, ChevronUpIcon }').replace('      <TabBar />\n', ''),
     )
@@ -141,10 +148,13 @@ export default function Page() {
   )
 }
 `
-    const { text, removed } = pruneAfter(source, (t) =>
+    const { text, removed, declarations } = pruneAfter(source, (t) =>
       t.replace('      <TabBar />\n', '').replace('      <ChevronUpIcon />\n', ''),
     )
     expect([...removed].sort()).toEqual(['ChevronUpIcon', 'TabBar'])
+    // Whole-declaration removal keeps the user's own multi-line formatting —
+    // `getText()`, not a re-flowed single line.
+    expect(declarations).toEqual(["import {\n  TabBar,\n  ChevronUpIcon,\n} from '@alm-design/design-system'"])
     expect(text).toBe(
       source
         .replace("import {\n  TabBar,\n  ChevronUpIcon,\n} from '@alm-design/design-system'\n", '')
@@ -183,8 +193,9 @@ export default function Page() {
   )
 }
 `
-    const { text, removed } = pruneAfter(source, (t) => t.replace('      <TabBar />\n', ''))
+    const { text, removed, declarations } = pruneAfter(source, (t) => t.replace('      <TabBar />\n', ''))
     expect(removed).toEqual(['TabBar'])
+    expect(declarations).toEqual(["import { TabBar } from '@ds'"])
     expect(text).toBe(source.replace('import DS, { TabBar }', 'import DS').replace('      <TabBar />\n', ''))
   })
 
@@ -199,10 +210,11 @@ export default function Page() {
   )
 }
 `
-    const { text, removed } = pruneAfter(source, (t) =>
+    const { text, removed, declarations } = pruneAfter(source, (t) =>
       t.replace('    <DS.Screen>\n      <TabBar />\n    </DS.Screen>\n', '    <TabBar />\n'),
     )
     expect(removed).toEqual(['DS'])
+    expect(declarations).toEqual(["import DS from '@ds'"])
     expect(text).toContain("import { TabBar } from '@ds'")
   })
 
@@ -263,6 +275,9 @@ export default function Page() {
   })
 
   it('prunes nothing for a file that does not exist, rather than throwing', () => {
-    expect(createImportPruneSession().prune(path.join(tmpDir, 'gone.tsx'), new Set(['X']))).toEqual([])
+    expect(createImportPruneSession().prune(path.join(tmpDir, 'gone.tsx'), new Set(['X']))).toEqual({
+      removed: [],
+      declarations: [],
+    })
   })
 })

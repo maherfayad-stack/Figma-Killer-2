@@ -11,11 +11,17 @@
  * reparse silently wins. The undo has to be the inverse WRITE.
  *
  * The family this module covers — insert, duplicate, wrap, group, ungroup,
- * paste, transplant, and the `<img>` an OS file drop becomes — never even
- * reaches the patch stack: those gestures mutate NO tree (`studioSourceWrites.ts`'s
- * own contract, "the board is NOT updated here"), so before this module they
- * pushed no history entry at all and ⌘Z after one of them undid whatever came
- * before it (`canvas-20`, landmine 10).
+ * paste, transplant, the `<img>` an OS file drop becomes, and (`store-15`)
+ * DELETE — never even reaches the patch stack for its UNDO: `delete` itself
+ * still mutates the tree eagerly, for the same-tick optimistic removal
+ * `broadcastOptimisticDelete` exists for, but that mutation's own patches are
+ * never replayed (see `structuralHistory.ts`'s `tagStructuralGesture`, which
+ * tags the entry the mutation already pushed with a `source` gesture instead
+ * of leaving it as a bare patch pair). Every OTHER member of the family
+ * mutates NO tree at all (`studioSourceWrites.ts`'s own contract, "the board
+ * is NOT updated here"), so before this module they pushed no history entry
+ * at all and ⌘Z after one of them undid whatever came before it (`canvas-20`,
+ * landmine 10).
  *
  * ## The inverse is expressed in the edit kinds that already exist
  *
@@ -29,6 +35,7 @@
  * | ungroup | `group` the children it released, back into the same container |
  * | transplant (move) | `transplant` back to the parent it left |
  * | transplant (copy) | `delete` the copy it created |
+ * | delete | `reinsert-source` each element back where it was |
  *
  * That is why a codemod reporting the ids it CREATED (`store-13`) and the ids
  * it RELOCATED are both preconditions for undo: the inverse cannot be written
@@ -91,12 +98,47 @@ export type StructuralInverseTemplate =
       /** Which child it was. The SIBLING to anchor against is resolved from the live tree at undo time — see {@link anchorTransplantBack}. */
       index: number
     }
+  | {
+      /**
+       * `store-15` — the inverse of a `delete`: one `reinsert-source` edit
+       * per deleted node, written back to `parentNodeId` at `index` — both
+       * captured from the live tree BEFORE the delete, at gesture time
+       * (`captureDeleteOrigin`), the only moment the pre-delete position is
+       * still known. `nodeId` is the deleted element's OWN original id,
+       * carried only to look up its bytes in the outcome's `removed` list —
+       * it names nothing to write to.
+       */
+      kind: 'reinsert-deleted'
+      // A plain mutable array, not `readonly` — a history entry lives inside
+      // the Mutative draft the store commits it through, and `Draft<T>`
+      // cannot narrow a `readonly` array to a drafted one. Same reasoning as
+      // `StructuralSourceGesture.forward`/`.inverse` just below.
+      nodes: { nodeId: string; parentNodeId: string; index: number }[]
+    }
   | { kind: 'unsupported'; message: string }
+
+/** One `delete` edit's own discarded bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
+export interface StructuralRemovedText {
+  nodeId: string
+  text: string
+  wholeLine: boolean
+}
+
+/** One file's pruned imports — `StructuralWriteOutcome.prunedImports`'s own shape. */
+export interface StructuralPrunedImports {
+  /** Workspace-relative POSIX path — the same shape `structuralEditNodeIds` derives a node id's file as. */
+  file: string
+  declarations: readonly string[]
+}
 
 /** What a landed structural write reported about the elements it touched. */
 export interface StructuralWriteOutcome {
   createdNodeIds: readonly string[]
   relocatedNodeIds: readonly string[]
+  /** `store-15` — every `delete` edit's own discarded bytes. Empty when the batch deleted nothing. */
+  removed: readonly StructuralRemovedText[]
+  /** `store-15` — every file whose import a `delete`'s prune pass removed. Empty when nothing was pruned. */
+  prunedImports: readonly StructuralPrunedImports[]
 }
 
 /**
@@ -146,7 +188,52 @@ export function resolveStructuralInverse(
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
     }
+    case 'reinsert-deleted': {
+      // `null` — not "skip the ones we can" — the moment ANY deleted node's
+      // bytes did not come back: an undo that restores three of four elements
+      // silently drops the fourth, which is worse than refusing the whole
+      // step (`reissueStructuralSourceEdits`'s own "unsupported" sentence).
+      const byNodeId = new Map(outcome.removed.map((r) => [r.nodeId, r] as const))
+      if (!template.nodes.every((n) => byNodeId.has(n.nodeId))) return null
+
+      // A file's pruned imports are attached to exactly ONE reinsert edit
+      // targeting that file — never every one of them, or the import would be
+      // written back once per restored sibling. Which one carries it does not
+      // matter: `reinsert-source`'s import edit always lands after the file's
+      // last import, independent of which child position it rode in on.
+      const importsByFile = new Map(outcome.prunedImports.map((p) => [p.file, [...p.declarations]] as const))
+
+      // Ascending index WITHIN one parent, so the server's bottom-to-top
+      // ordering (which sorts by the PARENT's own line:col, and preserves
+      // array order for ties) applies each parent's siblings back in the
+      // order they left: restoring the earlier index first is always safe,
+      // because a still-missing later sibling only ever "past the end"s.
+      const ordered = [...template.nodes].sort((a, b) => a.index - b.index)
+
+      return ordered.map(({ nodeId, parentNodeId, index }) => {
+        const removedText = byNodeId.get(nodeId)!
+        const imports = importsByFile.get(fileOfNodeId(parentNodeId))
+        if (imports) importsByFile.delete(fileOfNodeId(parentNodeId))
+        return {
+          kind: 'reinsert-source',
+          nodeId: parentNodeId,
+          index,
+          text: removedText.text,
+          ...(imports && imports.length > 0 ? { imports } : {}),
+        }
+      })
+    }
   }
+}
+
+/**
+ * The workspace-relative file a `rel:line:col` node id names — everything
+ * before the `line:col` tail. Exported so `structuralSourceHistory.ts`'s own
+ * id-validity check reads the same file a `reinsert-deleted` template's
+ * `prunedImports` lookup does, rather than a second, parallel derivation.
+ */
+export function fileOfNodeId(nodeId: string): string {
+  return nodeId.split(':').slice(0, -2).join(':') || nodeId
 }
 
 /**
@@ -208,13 +295,29 @@ export function remapStructuralEditIds(
   })
 }
 
-/** The same, for the one template that names a node id of its own. */
+/** The same, for the templates that name node ids of their own. */
 export function remapInverseTemplate(
   template: StructuralInverseTemplate,
   remap: ReadonlyMap<string, string>,
 ): StructuralInverseTemplate {
-  if (template.kind !== 'transplant-back') return template
-  return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
+  if (template.kind === 'transplant-back') {
+    return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
+  }
+  if (template.kind === 'reinsert-deleted') {
+    // Both ids, not just `parentNodeId`: `nodeId` is the key `resolveStructuralInverse`
+    // looks up in the outcome's `removed` list, and that list is keyed by
+    // whatever `nodeId` the LATEST `delete` edit (itself remapped alongside
+    // `forward`, generically, by `remapStructuralEditIds`) actually carries.
+    return {
+      ...template,
+      nodes: template.nodes.map((n) => ({
+        nodeId: remap.get(n.nodeId) ?? n.nodeId,
+        parentNodeId: remap.get(n.parentNodeId) ?? n.parentNodeId,
+        index: n.index,
+      })),
+    }
+  }
+  return template
 }
 
 /**

@@ -134,6 +134,23 @@ export const StudioSaveResponseSchema = Type.Object({
    * reasoning as the fields above.
    */
   relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
+  /**
+   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
+   * exact bytes it discarded, keyed by the edit's own `nodeId` — `delete`'s
+   * ⌘Z (`reinsert-source`) is built from these once the resync lands.
+   * `Type.Optional`, same tolerant-rollout reasoning as the fields above.
+   */
+  removed: Type.Optional(
+    Type.Array(Type.Object({ nodeId: Type.String(), text: Type.String(), wholeLine: Type.Boolean() })),
+  ),
+  /**
+   * `store-15` — every import binding a `delete`'s own prune pass removed as
+   * a side effect, grouped per workspace-relative file, with a re-insertable
+   * declaration text per binding. `Type.Optional`, same reasoning as above.
+   */
+  prunedImports: Type.Optional(
+    Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) })),
+  ),
 })
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>

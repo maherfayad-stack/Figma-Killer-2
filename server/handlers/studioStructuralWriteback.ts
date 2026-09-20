@@ -2,8 +2,9 @@
  * studioStructuralWriteback — the studio edit kinds that change WHERE markup is
  * rather than what it says: `move`, `delete`, `insert` (`struct-01`,
  * `struct-02`), `duplicate`, `wrap` and `reparent` (W4-1), `group` /
- * `ungroup` (K3), and `transplant` (D2 G3). Their schemas and their dispatch
- * into `@core/ast-codemods`, in one place.
+ * `ungroup` (K3), `transplant` (D2 G3), and `reinsert-source` (`store-15`) —
+ * `delete`'s own inverse. Their schemas and their dispatch into
+ * `@core/ast-codemods`, in one place.
  *
  * `transplant` is the one kind with its OWN entry point
  * ({@link applyTransplantEdit}) rather than a branch of
@@ -40,25 +41,17 @@ import {
   duplicateJsxElement,
   insertJsxElement,
   moveJsxElement,
+  reinsertJsxSource,
   transplantJsxElement,
   unwrapJsxElement,
   wrapJsxElement,
   wrapJsxElements,
   type CreatedJsxLocation,
+  type DeletedJsxText,
 } from '@core/ast-codemods'
 import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-
-/**
- * "This tag comes from Studio's built-in design system" — the one thing the
- * client can say about a design-system import, because the specifier itself is
- * a path only the server can compute. A literal `true` rather than a boolean so
- * `designSystemImport: false` cannot be sent and read as an assertion.
- */
-export const DesignSystemImportSchema = Type.Literal(true, {
-  description:
-    "The tag comes from Studio's built-in design system, reached through the project's own design-system/ folder. The server computes the relative specifier for the file being written (a page at pages/Home.tsx gets '../design-system') — do NOT also send importSpecifier, and never guess the path yourself. Takes precedence if both are sent.",
-})
+import { DesignSystemImportSchema, InsertNodeSchema, InsertPropsSchema } from './studioInsertJsxSchemas'
 
 /**
  * One sibling reorder (`struct-01`) — `moveJsxElement`. `nodeId` is the moved
@@ -79,13 +72,40 @@ const MoveEditSchema = Type.Object({
 /**
  * One element removal (`struct-01`) — `deleteJsxElement`. Like `detach`/`swap`
  * this can REFUSE with a specific reason (it is the component's root return)
- * rather than simply "no writable location". It is not refused for orphaning
- * an import: the codemod removes any binding the deleted markup alone was
- * using, the same way `insert` adds the ones it needs.
+ * rather than simply "no writable location". Not refused for orphaning an
+ * import: the codemod removes any binding the deleted markup alone was using.
+ *
+ * `store-15` — the bytes this discards (and any import the batch's prune pass
+ * takes with it) ride back through the batch result as `reinsert-source`'s
+ * own `text`/`imports` — ⌘Z's only honest way to put the element back.
  */
 const DeleteEditSchema = Type.Object({
   kind: Type.Literal('delete'),
   nodeId: Type.String(),
+})
+
+/**
+ * `store-15` — one element PUT BACK where a `delete` removed it from —
+ * `reinsertJsxSource`, ⌘Z's own write.
+ *
+ * `nodeId` is the PARENT's location, like `insert`'s. `index` counts the
+ * parent's PLAIN JSX element children only, the same count
+ * `captureDeleteOrigin` captured client-side at delete time, so the two agree
+ * by construction — no `anchorNodeId`: the position is a fact recorded when
+ * the element still existed, not a placement decision made now against a
+ * possibly-reordered live sibling list.
+ *
+ * `text` is `deleteJsxElement`'s own `removed.text`, byte for byte, never
+ * re-rendered. `imports` are the standalone declaration texts the delete's
+ * own prune pass removed (`PrunedImportsResult.declarations`), re-added as
+ * their own lines after the file's last import.
+ */
+const ReinsertSourceEditSchema = Type.Object({
+  kind: Type.Literal('reinsert-source'),
+  nodeId: Type.String(),
+  index: Type.Number(),
+  text: Type.String(),
+  imports: Type.Optional(Type.Array(Type.String())),
 })
 
 /**
@@ -121,76 +141,11 @@ const DeleteEditSchema = Type.Object({
  * just decoded the node id through `studioEditLocation`. So the client says
  * WHICH SYSTEM and the server computes the PATH
  * (`designSystemImportSpecifier`). See {@link resolveInsertImports}.
- */
-/**
- * Any JSON value — `insertJsxElement`'s `JsonDataValue`, which it renders as a
- * JSX expression (`items={[{ label: "Home" }]}`).
  *
- * Recursive rather than the flat scalar union it was, because that union was
- * silently costing every structured default its trip to disk: a TabBar inserted
- * with the package's own documented `items` was written as `<TabBar
- * platform="ios" value={0}/>` and reloaded from source as an empty bar.
+ * `DesignSystemImportSchema`/`InsertPropsSchema`/`InsertNodeSchema` — the
+ * subtree and prop shapes this schema embeds — live in
+ * `studioInsertJsxSchemas.ts` (`module-size-budgets`).
  */
-export const JsonDataValueSchema = Type.Recursive((Self) =>
-  Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Null(), Type.Array(Self), Type.Record(Type.String(), Self)]),
-)
-
-/**
- * A React element in PROP position — `insertJsxElement`'s `JsxPropElement`.
- *
- * `<TabBar items={[{ icon: <svg…/>, label: 'Home' }]}/>` is the documented shape
- * of a tab bar, and an icon that cannot be written is an empty icon slot on
- * every tab. The element arrives as a VALIDATED TREE, never as source text, and
- * goes through the same `validateSubtree` tag-safety refusal every child
- * element already does — so this widens what can be written, not what can be
- * injected.
- *
- * Intrinsic tags with scalar props only — see `JsxPropElementNode`. A prop
- * element is a glyph, not a scene, and the missing `importSpecifier` is what
- * makes `validateSubtree` refuse a capitalised tag here.
- */
-const JsxPropElementNodeSchema = Type.Recursive((Self) =>
-  Type.Object({
-    name: Type.String(),
-    props: Type.Optional(Type.Record(Type.String(), JsonDataValueSchema)),
-    children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
-  }),
-)
-
-const JsxPropValueSchema = Type.Recursive((Self) =>
-  Type.Union([
-    Type.String(),
-    Type.Number(),
-    Type.Boolean(),
-    Type.Null(),
-    Type.Object({ __jsx: JsxPropElementNodeSchema }),
-    Type.Array(Self),
-    Type.Record(Type.String(), Self),
-  ]),
-)
-
-const InsertPropsSchema = Type.Record(Type.String(), JsxPropValueSchema)
-
-/**
- * One element in an insert's subtree. Recursive through `children`, which is
- * EITHER literal text or a list of nested elements — see `insertJsxElement`'s
- * `InsertJsxChildren` for why mixed content is excluded.
- *
- * `Type.Recursive` is what makes the nesting expressible as a real schema
- * rather than an `unknown` the handler would have to re-validate by hand; the
- * MCP tool advertises this verbatim as JSON Schema, so the model sees the
- * actual shape it may send.
- */
-const InsertNodeSchema = Type.Recursive((Self) =>
-  Type.Object({
-    name: Type.String(),
-    importSpecifier: Type.Optional(Type.String()),
-    designSystemImport: Type.Optional(DesignSystemImportSchema),
-    props: Type.Optional(InsertPropsSchema),
-    children: Type.Optional(Type.Union([Type.String(), Type.Array(Self)])),
-  }),
-)
-
 const InsertEditSchema = Type.Object({
   kind: Type.Literal('insert'),
   nodeId: Type.String(),
@@ -343,6 +298,7 @@ const TransplantEditSchema = Type.Object({
 export const StructuralEditSchemas = [
   MoveEditSchema,
   DeleteEditSchema,
+  ReinsertSourceEditSchema,
   InsertEditSchema,
   DuplicateEditSchema,
   WrapEditSchema,
@@ -443,9 +399,13 @@ export function resolveDesignSystemImports<TProps>(
  * `ungroup`'s released children, a `transplant`'s element in the destination
  * file. Absent for the kinds that move nothing, and subject to the identical
  * never-guess rule.
+ *
+ * `removed` (`store-15`) is set only by a successful `delete` — the exact
+ * bytes `deleteJsxElement` discarded, so the caller can report them through
+ * the batch result for an undo to reinsert later.
  */
 export type StructuralEditOutcome =
-  | { ok: true; created?: CreatedJsxLocation | null; relocated?: readonly CreatedJsxLocation[] }
+  | { ok: true; created?: CreatedJsxLocation | null; relocated?: readonly CreatedJsxLocation[]; removed?: DeletedJsxText }
   | { ok: false; reason: string; message: string }
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
@@ -453,6 +413,7 @@ export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind
   return (
     kind === 'move' ||
     kind === 'delete' ||
+    kind === 'reinsert-source' ||
     kind === 'insert' ||
     kind === 'duplicate' ||
     kind === 'wrap' ||
@@ -587,7 +548,11 @@ export function applyStructuralEdit(
     }
     case 'delete': {
       const result = deleteJsxElement(loc)
-      return result.ok ? { ok: true } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, removed: result.removed } : { ok: false, ...result.refusal }
+    }
+    case 'reinsert-source': {
+      const result = reinsertJsxSource({ ...loc, index: edit.index, text: edit.text, imports: edit.imports ?? [] })
+      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
     case 'insert': {
       // `importSpecifier`/`children` are spread conditionally rather than

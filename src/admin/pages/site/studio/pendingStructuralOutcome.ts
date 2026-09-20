@@ -52,7 +52,15 @@ const PENDING_OUTCOME_TTL_MS = 30_000
 /**
  * What the drain should do to the undo stack.
  *
- * - `push` — an ordinary gesture: a new entry, one ⌘Z.
+ * - `push` — an ordinary gesture that mutated NO tree at gesture time: a new
+ *   entry, one ⌘Z.
+ * - `fill` (`store-15`) — a `delete`'s own forward commit. `delete` DOES
+ *   mutate the tree at gesture time (`deleteNodesAction.ts`'s optimistic
+ *   removal), so an entry already exists — `tagStructuralGesture` tagged it
+ *   synchronously, before this write's outcome was known, with `inverse:
+ *   null`. This fills that SAME entry's `source.inverse` in from what the
+ *   write reported, rather than pushing a second one for a gesture that only
+ *   happened once.
  * - `refresh` — this commit WAS an undo or a redo re-issuing a stored entry.
  *   The stack bookkeeping already happened in `undoRedoActions.ts`; what is
  *   left is to re-resolve the entry's inverse against the ids this re-issue
@@ -61,6 +69,7 @@ const PENDING_OUTCOME_TTL_MS = 30_000
  */
 export type PendingStructuralHistory =
   | { kind: 'push'; gesture: StructuralSourceGesture }
+  | { kind: 'fill'; outcome: StructuralWriteOutcome }
   | { kind: 'refresh'; direction: 'undo' | 'redo'; outcome: StructuralWriteOutcome }
 
 export interface PendingStructuralOutcome {

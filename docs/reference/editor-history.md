@@ -73,7 +73,7 @@ export interface BoardHistory {
 
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | { gesture: 'delete' }
+  | { gesture: 'source'; source: StructuralSourceGesture } // insert/duplicate/wrap/group/ungroup/paste/transplant/image-drop/delete
 
 export interface StructuralHistoryMove {
   nodeId: string
@@ -319,18 +319,46 @@ patches:
 | gesture | undo | redo |
 |---|---|---|
 | `move` (canvas body drag, layers-panel drag, reorder + reparent) | re-issues `moveNodes` back to the captured pre-move `(parentId, index)` — re-planned against the live tree, so it rides every refusal gate and writes to source once | re-issues the original move |
-| `delete` | **refuses, with a toast.** No `StudioEdit` kind carries a subtree's source text, so there is nothing honest to write; re-adding the nodes in memory would be a canvas that disagrees with the file | — |
-| `source` (`store-14`) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
+| `source` (`store-14`/`store-15`) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop, **delete** | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
 
-### The `source` gesture — the family that mutated no tree
+### The `source` gesture — the family whose undo is a WRITE
 
-`store-14`. The eight gestures above mutate **no** tree on a studio-imported
-board: the element does not exist until the codemod has written it, and its id
-is the `line:col` that write produces. So they committed no transaction, pushed
-no entry, and ⌘Z after one of them undid whatever came before it
-(`canvas-20`, landmine 10). Their entry now carries **no patches at all** — only
-`structural.source` — the same way a board-only entry carries only
-`structural`/`board`.
+`store-14`/`store-15`. Seven of these gestures mutate **no** tree on a
+studio-imported board: the element does not exist until the codemod has
+written it, and its id is the `line:col` that write produces. So they
+committed no transaction, pushed no entry, and ⌘Z after one of them undid
+whatever came before it (`canvas-20`, landmine 10). Their entry carries **no
+patches at all** — only `structural.source` — the same way a board-only entry
+carries only `structural`/`board`.
+
+**`delete` is the eighth member, and the one exception to "mutates no tree".**
+It still removes the node from the tree eagerly, same-tick, the moment the
+gesture runs (`broadcastOptimisticDelete`'s reason to exist) — but its UNDO
+rides this same family, never a patch replay: `saveSite` has no notion of
+parent or child list, so replaying the tree-removal's own inverse patch would
+put the node back in memory while the `.tsx` still lacks it. Two consequences
+follow from keeping the eager mutation:
+
+- The entry already exists (pushed by `mutateActiveTree`) before the delete's
+  own commit even starts, so `deleteNodesAction.ts`/`nodeActions.ts` **tag**
+  it (`tagStructuralGesture`) rather than pushing a fresh one the way the
+  other seven do post-hoc. Tagging with a `source` gesture also **clears that
+  entry's `inverse`/`forward` patch arrays** — the real Mutative patches from
+  the tree removal, which name the exact node id this gesture just made
+  permanently gone. Left standing, `historyPreservation.ts`'s reload-safety
+  check (next section) would read that as a stale reference on the very next
+  reparse — including this gesture's own resync — and wipe the whole stack
+  before the fill below ever lands.
+- The gesture's `label`/`forward`/`inverseTemplate` are decided at TAG time,
+  from the pre-delete tree (`captureDeleteOrigin` — the parent id and the
+  child's position among the parent's own plain JSX-element children, the
+  same count `reinsertJsxSource`'s `index` counts server-side). But `inverse`
+  itself cannot be — the bytes to restore are not known until the delete's own
+  commit answers. So it starts `null`, and a third `PendingStructuralHistory`
+  kind, `fill` (distinct from `push` and `refresh`), asks
+  `recordStructuralSourceWrite` to resolve `inverse` on that SAME top-of-stack
+  entry once the commit's outcome (`removed`/`prunedImports`) is known —
+  never pushing a second entry for a gesture that only happened once.
 
 The inverse is expressed in the edit kinds that already exist. There is no
 `revert` kind and no file snapshot:
@@ -342,13 +370,37 @@ The inverse is expressed in the edit kinds that already exist. There is no
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `transplant` back to the parent it left |
 | transplant (copy) | `delete` the copy it created |
+| delete | `reinsert-source` each element back where it was (`reinsertJsxSource`) |
 
-Because the inverse addresses elements the write had not made yet, the gesture
-records a **template** (`structuralUndoPlan.ts`) and `resolveStructuralInverse`
-fills it in from the batch's `createdNodeIds`/`relocatedNodeIds`. A template
-rather than a closure, because a redo has to re-resolve it: the gesture has been
-performed a second time, possibly at a different position, and the entry's
-inverse has to describe THAT one.
+**`reinsert-source`**, `store-15`'s own edit kind: `nodeId` is the PARENT
+(like `insert`'s), `index` the child position among the parent's plain
+JSX-element children, `text` the exact bytes `deleteJsxElement` discarded
+(`DeletedJsxText`, never re-rendered — a whole-line restore keeps its own
+indentation verbatim), `imports` the standalone declaration texts the
+delete's own `pruneOrphanedImports` pass removed
+(`PrunedImportsResult.declarations`), re-added as their own lines after the
+file's last import. A multi-node delete's restore posts one edit per element,
+ordered ascending by `index` within each shared parent — ties the server's own
+bottom-to-top ordering (by each edit's PARENT position) then resolves.
+
+**One refusal remains for delete, and it is not "no `StudioEdit` kind carries
+source text" any more — it is "no origin was captured".** `captureDeleteOrigin`
+returns `null` when the deleted node's parent has no writable source position
+at all — the synthetic page root, whose only "position" is the page's own
+`return` statement. Deleting the page's sole returned element is already
+refused there by `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a
+question the tree cannot); a delete that reaches this state anyway records an
+`unsupported` inverse template rather than guessing, and ⌘Z on it refuses
+through the same dialog every other `unsupported` `source` template uses.
+
+Because the inverse addresses elements the write had not made yet (or, for
+`delete`, discarded bytes the write had not yet reported), the gesture records
+a **template** (`structuralUndoPlan.ts`) and `resolveStructuralInverse` fills
+it in from the batch's answer — `createdNodeIds`/`relocatedNodeIds` for the
+first seven, `removed`/`prunedImports` for `delete`'s own `reinsert-deleted`
+template. A template rather than a closure, because a redo has to re-resolve
+it: the gesture has been performed a second time, possibly at a different
+position, and the entry's inverse has to describe THAT one.
 
 **Two refusals are deliberate, and say so at ⌘Z rather than posting a write the
 server would decline:** a group into a COMPONENT container (dissolving it would
@@ -429,10 +481,10 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - **Board/annotation SELECTION, `activeBoardId` on its own, snap guides,
   `frameDefaults`** — editor-local, same rule as node selection. (Undo does
   PRUNE an annotation selection that points at something the restore removed.)
-- **Undo of a source `delete`.** It produces an entry and refuses to replay it:
-  no `StudioEdit` kind carries a subtree's source text. `duplicate`, `wrap`,
-  `insert`, `group`, `ungroup`, paste, transplant and image drop ARE undoable
-  since `store-14` — see "The `source` gesture" above.
+- **Undo of a source `delete` whose parent has no writable position** — the
+  page's sole returned root element, matching `deleteJsxElement`'s own
+  `no-jsx-parent` refusal. Every ordinary delete IS undoable, as a
+  `reinsert-source` write, since `store-15` — see "The `source` gesture" above.
 - `mutateSiteState` — the recipe may write editor fields (e.g. `activeDocument`) alongside a `site` mutation; the editor fields go live but only the `site` patches enter history (parity with the prior snapshot model).
 - History stacks themselves — resetting to `[]` on `clearSite` is a lifecycle operation, not a mutation.
 

@@ -39,6 +39,7 @@ import { describeStructuralRefusal } from '@core/page-tree'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
   anchorTransplantBack,
+  fileOfNodeId,
   structuralEditNodeIds,
   type StructuralEditPayload,
 } from '@site/studio/structuralUndoPlan'
@@ -56,11 +57,13 @@ type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWri
  * `usePersistence.ts` once the board has read the write back, draining
  * `pendingStructuralOutcome.ts`.
  *
- * `push` is an ordinary gesture: one new entry, one ⌘Z. `refresh` is an undo
- * or a redo that has just re-issued a stored entry; its own stack bookkeeping
- * already happened in `undoRedoActions.ts`, and what is left is to re-resolve
- * the entry's inverse against the ids THIS write reported — a redo re-creates
- * the element at a position its previous undo cannot have known.
+ * `push` is an ordinary gesture: one new entry, one ⌘Z. `fill` (`store-15`) is
+ * `delete`'s own forward commit filling in the `inverse` of the entry its own
+ * tree mutation already pushed. `refresh` is an undo or a redo that has just
+ * re-issued a stored entry; its own stack bookkeeping already happened in
+ * `undoRedoActions.ts`, and what is left is to re-resolve the entry's inverse
+ * against the ids THIS write reported — a redo re-creates the element at a
+ * position its previous undo cannot have known.
  */
 export function createStructuralSourceHistoryActions({
   set,
@@ -81,6 +84,24 @@ export function createStructuralSourceHistoryActions({
           // ENDS any burst in progress, which is what closes the other
           // direction.
           commitHistoryEntry(state, entry)
+          return
+        }
+        if (history.kind === 'fill') {
+          // `store-15` — `delete`'s own forward commit. The entry already
+          // exists (the tree mutation pushed it; `tagStructuralGesture`
+          // tagged it), sitting at the top of `_historyPast` — this fills in
+          // the `inverse` its `unsupported`-free template can only now
+          // resolve, without pushing a second entry for one gesture.
+          const top = state._historyPast[state._historyPast.length - 1]
+          const structural = top?.structural
+          if (!top || structural?.gesture !== 'source') return
+          top.structural = {
+            gesture: 'source',
+            source: {
+              ...structural.source,
+              inverse: resolveStructuralInverse(structural.source.inverseTemplate, history.outcome),
+            },
+          }
           return
         }
         const stack = history.direction === 'undo' ? state._historyFuture : state._historyPast
@@ -158,7 +179,7 @@ export function reissueStructuralSourceEdits(
       get,
       set,
       direction,
-      `${fileOf(missing[0]!)} has changed since “${label}” was written, so ${
+      `${fileOfNodeId(missing[0]!)} has changed since “${label}” was written, so ${
         direction === 'undo' ? 'undoing' : 'redoing'
       } it would edit code Studio can no longer account for. Nothing was written — check what changed in that file.`,
       missing[0]!,
@@ -200,16 +221,12 @@ function unresolvedNodeIds(
   const missing: string[] = []
   for (const edit of edits) {
     for (const id of structuralEditNodeIds(edit)) {
-      if (!tree.nodes[id] && fileOf(id) === fileOf(edit.nodeId) && !missing.includes(id)) missing.push(id)
+      if (!tree.nodes[id] && fileOfNodeId(id) === fileOfNodeId(edit.nodeId) && !missing.includes(id)) missing.push(id)
     }
   }
   return missing
 }
 
-/** The workspace-relative file a `rel:line:col` node id names — everything before the `line:col` tail. */
-function fileOf(nodeId: string): string {
-  return nodeId.split(':').slice(0, -2).join(':') || nodeId
-}
 
 /**
  * Say why the step did not happen — through the refusal DIALOG, not a toast.
