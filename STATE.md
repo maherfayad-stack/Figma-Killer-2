@@ -2104,6 +2104,23 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 2. **Update the commit's own claim.** "Studio only ever runs vite" / "the spawner refuses to spawn anything else at any tier" is stated as settled fact in `liveCapability.ts`'s doc comment and the commit message; once the anchoring fix lands, keep the claim — until then it is not true and a future reader will trust it.
 3. Everything else in this commit (frame-ancestors, parentOrigin, socket guard, ready-phase gating) is sound and needs no follow-up from this review.
 4. `sec-20`'s original "Human action needed" items #3/#4 (clean full-suite run once the worktree settles; sec-19's dogfood checklist) still stand.
+### server-27 — a writeback to a not-yet-created file canonicalises through its deepest existing ancestor
+- **Agent:** main session (orchestrator)
+- **Stage:** done — branch `fix/writeback-realpath-missing-file`
+- **Updated:** 2026-09-20
+- **Goal:** the five writeback tests every macOS checkout has been failing (`studioEditLocation — writable-path
+  guard` ×3, `applyStudioEdit` collapse ×2, all "received null") were one bug in `canonicalSourceRel`
+  (`server/handlers/studioEditRouting.ts`): `realpathSync.native(dir)` resolved the project root through
+  its symlink (`/var` → `/private/var`, which is where `os.tmpdir()` lives) while a file that does not
+  exist yet fell back to `resolve()` on the plain side, so `relative()` climbed out through `..` and the
+  guard refused. Not test-only: a project checked out through a symlink hit it on the first write that
+  CREATES a file.
+- **Scope:** `realpathOr` now walks up to the deepest ancestor that exists, resolves that, and re-joins the
+  missing tail; regression test in `studioWriteback.test.ts` ("accepts a not-yet-created file when the
+  project root is reached through a symlink").
+- **Landmines:** the `git.test.ts` "answers 409 busy" failure recorded alongside these on 2026-09-20 is NOT
+  reproducible on current `main` (9/9 green alone and under CPU load; the lock files are identical to the
+  checkout it failed on) — treat a recurrence as new evidence, not a known flake.
 
 ### meta-13 — plan: "feels like Figma, never shows me an error" — `STUDIO-FIGMA-FEEL-PLAN.md`
 - **Agent:** main session (orchestrator) — seven read-only `studio-scout` audits, no code changed
