@@ -47,7 +47,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { isStructuralEditKind, StructuralEditSchemas } from './studioStructuralWriteback'
-import type { CreatedJsxLocation } from '@core/ast-codemods'
+import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**
@@ -350,6 +350,12 @@ export interface StudioEditApplyOutcome {
    * MOVE across frames lands in the destination's file.
    */
   relocatedIn?: string
+  /**
+   * `store-15` — populated only for a successful `delete`: the exact bytes it
+   * discarded, so `applyStudioEditBatch` can report them keyed by the edit's
+   * own `nodeId` for an undo to reinsert later.
+   */
+  removed?: DeletedJsxText
 }
 
 /**
@@ -366,6 +372,9 @@ export interface StudioEditRefusal {
     | 'swap'
     | 'move'
     | 'delete'
+    // `store-15` — ⌘Z's own write. Refuses for reasons only the AST can see,
+    // same channel as every other structural kind.
+    | 'reinsert-source'
     | 'insert'
     | 'duplicate'
     | 'wrap'
@@ -526,4 +535,18 @@ export interface StudioEditBatchResult {
    * guess, exactly as `createdNodeIds` does.
    */
   relocatedNodeIds: string[]
+  /**
+   * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
+   * exact bytes it discarded, keyed by the edit's own `nodeId` (the deleted
+   * element's own id) so a caller can pair a `removed` entry with the edit
+   * that produced it. Empty when the batch deleted nothing.
+   */
+  removed: (DeletedJsxText & { nodeId: string })[]
+  /**
+   * `store-15` — every import binding the batch's prune pass removed as a
+   * side effect of a `delete`, grouped per FILE (workspace-relative), with
+   * a re-insertable declaration text per binding
+   * (`PrunedImportsResult.declarations`). Empty when nothing was pruned.
+   */
+  prunedImports: { file: string; declarations: string[] }[]
 }

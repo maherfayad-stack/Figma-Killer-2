@@ -35,6 +35,17 @@
  * A codemod that collapses a now-empty parent or reformats the gap it left is
  * a codemod that changes bytes the user never pointed at. What is left behind
  * is exactly the file minus one element.
+ *
+ * ## `removed` — the bytes it just discarded, on purpose, given back
+ *
+ * `store-15` — a delete used to throw away exactly the bytes an undo would
+ * need: `verbatim.slice(target.range.start, target.range.end)` was computed
+ * and dropped in the same line. Every caller that wants ⌘Z to put the element
+ * back verbatim needs those bytes AND whether they owned a whole line (so
+ * `reinsertJsxSource.ts` knows whether to re-indent or splice inline) — both
+ * of which only exist here, at the moment of removal. Nothing here decides
+ * WHERE they get written back to; that is `reinsertJsxSource`'s question,
+ * asked later, against whatever the parent's children look like by then.
  */
 import { type Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -62,7 +73,13 @@ export interface DeleteJsxRefusal {
   message: string
 }
 
-export type DeleteJsxElementResult = { ok: true } | { ok: false; refusal: DeleteJsxRefusal }
+/** The exact bytes a delete removed — `reinsertJsxSource`'s own `text`/`wholeLine` input, unchanged. */
+export interface DeletedJsxText {
+  text: string
+  wholeLine: boolean
+}
+
+export type DeleteJsxElementResult = { ok: true; removed: DeletedJsxText } | { ok: false; refusal: DeleteJsxRefusal }
 
 export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxElementResult {
   const { file, line, col } = params
@@ -83,6 +100,7 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
     }
   }
 
+  const removed = verbatim.slice(target.range.start, target.range.end)
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, target.range.start) + verbatim.slice(target.range.end))
-  return { ok: true }
+  return { ok: true, removed: { text: removed, wholeLine: target.range.wholeLine } }
 }

@@ -279,8 +279,15 @@ describe('undo of a move is the inverse move, written to source', () => {
   })
 })
 
-describe('a source delete says what it cannot undo, instead of faking it', () => {
-  it('tags the entry and refuses rather than re-adding nodes the .tsx no longer contains', () => {
+describe('a source delete with no addressable parent says what it cannot undo, instead of faking it', () => {
+  // `a`/`b` sit directly under the synthetic page root in this fixture — a
+  // shape no real component returns (a component returns ONE root element;
+  // `<a/><b/>` as two top-level siblings has nowhere to be written), but
+  // exactly `deleteJsxElement`'s own `no-jsx-parent` refusal for the sole
+  // element a page actually returns: there is no source POSITION to reinsert
+  // into. `captureDeleteOrigin` reports exactly that — no origin — and the
+  // gesture is tagged `unsupported` rather than a made-up one.
+  it('tags the entry unsupported and refuses rather than guessing a position', () => {
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
@@ -288,7 +295,10 @@ describe('a source delete says what it cannot undo, instead of faking it', () =>
     store().deleteNodes([a])
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b])
     const entry = store()._historyPast[store()._historyPast.length - 1]!
-    expect(entry.structural).toEqual({ gesture: 'delete' })
+    expect(entry.structural).toMatchObject({
+      gesture: 'source',
+      source: { label: 'Delete', inverseTemplate: { kind: 'unsupported' }, inverse: null },
+    })
 
     const pastBefore = store()._historyPast.length
     store().undo()

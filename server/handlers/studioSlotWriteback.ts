@@ -59,7 +59,8 @@
  * `no-jsx-parent` stays an AST-only residual in `struct-01`.
  */
 import { insertJsxIntoSlotProp, extractSubtreeToComponent, addSlotPropToComponent, type ComponentCallSite } from '@core/ast-codemods'
-import { DesignSystemImportSchema, JsonDataValueSchema, resolveDesignSystemImports } from './studioStructuralWriteback'
+import { resolveDesignSystemImports } from './studioStructuralWriteback'
+import { DesignSystemImportSchema, JsonDataValueSchema } from './studioInsertJsxSchemas'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
 /**

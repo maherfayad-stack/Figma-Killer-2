@@ -36,10 +36,15 @@ const ROW_ID = 'pages/Home.tsx:5:7'
 const SECOND_ID = 'pages/Home.tsx:6:7'
 /** Where the codemod put whatever the gesture made. */
 const MADE_ID = 'pages/Home.tsx:7:7'
+/** A second container, elsewhere in the SAME file — `store-15`'s multi-parent delete/undo test. */
+const OTHER_PARENT_ID = 'pages/Home.tsx:20:5'
+const THIRD_ID = 'pages/Home.tsx:21:7'
 
 interface SaveAnswer {
   createdNodeIds?: string[]
   relocatedNodeIds?: string[]
+  removed?: { nodeId: string; text: string; wholeLine: boolean }[]
+  prunedImports?: { file: string; declarations: string[] }[]
   pages?: Page[]
 }
 
@@ -73,6 +78,26 @@ const pageGrouped = (): Page =>
     },
     [MADE_ID],
   )
+
+/** `pageBefore` with only `SECOND_ID` left — what deleting `ROW_ID` alone leaves. */
+const pageWithoutRow = (): Page => page({ [SECOND_ID]: text(SECOND_ID) }, [SECOND_ID])
+
+const otherParent = (children: string[]) => makeNode({ id: OTHER_PARENT_ID, moduleId: 'base.container', children })
+
+/** Two siblings under `ROOT_ID`, one under `OTHER_PARENT_ID` — two parents, one file. */
+const pageWithTwoParents = (): Page =>
+  page(
+    {
+      [ROW_ID]: text(ROW_ID),
+      [SECOND_ID]: text(SECOND_ID),
+      [OTHER_PARENT_ID]: otherParent([THIRD_ID]),
+      [THIRD_ID]: text(THIRD_ID),
+    },
+    [ROW_ID, SECOND_ID, OTHER_PARENT_ID],
+  )
+
+/** `pageWithTwoParents` with all three deleted. */
+const pageWithTwoParentsEmptied = (): Page => page({ [OTHER_PARENT_ID]: otherParent([]) }, [OTHER_PARENT_ID])
 
 describe('a structural source write is one undo step', () => {
   let originalFetch: typeof globalThis.fetch
@@ -145,6 +170,8 @@ describe('a structural source write is one undo step', () => {
             touchedFiles: ['pages/Home.tsx'],
             createdNodeIds: answer.createdNodeIds ?? [],
             relocatedNodeIds: answer.relocatedNodeIds ?? [],
+            removed: answer.removed ?? [],
+            prunedImports: answer.prunedImports ?? [],
           }),
           { status: 200 },
         )
@@ -189,6 +216,20 @@ describe('a structural source write is one undo step', () => {
   }
 
   const lastEdits = () => saveCalls[saveCalls.length - 1]!.edits
+
+  /**
+   * `store-15` — whether the TOP entry's `inverse` has been filled in.
+   * `delete`'s entry exists (and `canUndo` is already true) the instant the
+   * eager tree mutation lands, well before its commit's `fill` reports what
+   * it discarded — unlike every other gesture in this file, whose `canUndo`
+   * only flips once the entry is pushed AFTER that answer is already known.
+   * Callers that `undo()` a delete must wait for this, not just `canUndo`.
+   */
+  function hasResolvedInverse(): boolean {
+    const past = useEditorStore.getState()._historyPast
+    const entry = past[past.length - 1]
+    return entry?.structural?.gesture === 'source' && entry.structural.source.inverse !== null
+  }
 
   it('⌘D then ⌘Z deletes the copy, and is exactly one step', async () => {
     stubFetch([
@@ -390,5 +431,81 @@ describe('a structural source write is one undo step', () => {
     // Nothing was written, and the step did not move.
     expect(saveCalls).toHaveLength(1)
     expect(useEditorStore.getState().canUndo).toBe(true)
+  })
+
+  /**
+   * `store-15` — delete is the one member of this family whose tree mutation
+   * runs EAGERLY (same-tick optimistic removal), unlike every gesture above.
+   * Its entry exists the moment `deleteNode` returns; what these two tests
+   * pin is that it is still exactly ONE undo step, and that its inverse —
+   * `reinsert-source` — only becomes postable once the delete's own commit
+   * has reported what it discarded.
+   */
+  it('delete is undone by reinserting the element back where it was, and redone by deleting it again', async () => {
+    stubFetch([
+      // The delete's own commit — what it discarded, for the undo to restore.
+      { removed: [{ nodeId: ROW_ID, text: '<Row />\n', wholeLine: true }], pages: [pageWithoutRow()] },
+      // The undo's reinsert commit.
+      { createdNodeIds: [ROW_ID], pages: [pageBefore()] },
+      // The redo's delete commit.
+      { removed: [{ nodeId: ROW_ID, text: '<Row />\n', wholeLine: true }], pages: [pageWithoutRow()] },
+    ])
+
+    useEditorStore.getState().deleteNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+    await waitFor(() => saveCalls.length === 1)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: ROW_ID }])
+    await waitFor(hasResolvedInverse)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'reinsert-source', nodeId: ROOT_ID, index: 0, text: '<Row />\n' }])
+    await waitFor(() => useEditorStore.getState().site?.pages[0]?.nodes[ROW_ID] !== undefined)
+    // ONE step: the entry moved to the redo stack, and nothing else was undone.
+    expect(useEditorStore.getState().canUndo).toBe(false)
+    expect(useEditorStore.getState().canRedo).toBe(true)
+
+    useEditorStore.getState().redo()
+    await waitFor(() => saveCalls.length === 3)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: ROW_ID }])
+  })
+
+  /**
+   * Two of the three deleted elements share `ROOT_ID`; the third belongs to
+   * `OTHER_PARENT_ID`, a second container in the same file. The restore posts
+   * one `reinsert-source` per element, and `ROOT_ID`'s own two stay in
+   * ASCENDING index order relative to each other — the property
+   * `resolveStructuralInverse`'s `reinsert-deleted` case exists to guarantee,
+   * so the server's own bottom-to-top ordering (by each edit's PARENT
+   * position) never has to guess which of two same-parent restores goes
+   * first.
+   */
+  it('restores siblings under two different parents, each parent’s own children ascending', async () => {
+    stubFetch([
+      {
+        removed: [
+          { nodeId: ROW_ID, text: '<Row />\n', wholeLine: true },
+          { nodeId: SECOND_ID, text: '<Second />\n', wholeLine: true },
+          { nodeId: THIRD_ID, text: '<Third />\n', wholeLine: true },
+        ],
+        pages: [pageWithTwoParentsEmptied()],
+      },
+      { createdNodeIds: [ROW_ID, THIRD_ID, SECOND_ID], pages: [pageWithTwoParents()] },
+    ])
+
+    useEditorStore.getState().loadSite(makeSite({ pages: [pageWithTwoParents()] }))
+    useEditorStore.getState().setActivePage(PAGE_ID)
+    useEditorStore.getState().deleteNodes([ROW_ID, SECOND_ID, THIRD_ID])
+    await waitFor(() => useEditorStore.getState().canUndo)
+    await waitFor(() => saveCalls.length === 1)
+    await waitFor(hasResolvedInverse)
+
+    useEditorStore.getState().undo()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([
+      { kind: 'reinsert-source', nodeId: ROOT_ID, index: 0, text: '<Row />\n' },
+      { kind: 'reinsert-source', nodeId: OTHER_PARENT_ID, index: 0, text: '<Third />\n' },
+      { kind: 'reinsert-source', nodeId: ROOT_ID, index: 1, text: '<Second />\n' },
+    ])
   })
 })
