@@ -2121,6 +2121,25 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 - **Landmines:** the `git.test.ts` "answers 409 busy" failure recorded alongside these on 2026-09-20 is NOT
   reproducible on current `main` (9/9 green alone and under CPU load; the lock files are identical to the
   checkout it failed on) — treat a recurrence as new evidence, not a known flake.
+### panel-42 — an Assets insert writes a gated prop only for a variant it applies to
+- **Agent:** main session (orchestrator)
+- **Stage:** done — branch `fix/insert-defaults-applies-when`
+- **Updated:** 2026-09-20
+- **Goal:** the owner's Assets-panel insert of `Button` wrote `<Button variant="primary" cardLast4="1394" …>`;
+  `cardLast4` is documented "shown by `gpay-personalized`" and the Properties panel already hid its row
+  (PR #119), so the author could neither see why it was there nor remove it from the panel.
+- **Scope:** `src/modules/alm/inspectorSchema.ts` (`buildDefaults` — after the curated merge, drop every
+  prop whose `appliesWhen` the SEEDED controlling value does not satisfy; `propAppliesTo` is the same
+  string-equality rule `componentCallSiteRows.ts`'s `propAppliesToCallSite` uses), new
+  `src/__tests__/modules/almInsertDefaultsApplicability.test.ts` (Button pin + manifest-wide invariant +
+  both halves on a hand-built spec), `almInsertedRender.test.ts`'s "seeds every documented example" now
+  skips a gate the defaults do not satisfy, `docs/features/modules.md`.
+- **Decisions:** the gate is read against the seeded/curated value because at insert time that is the
+  only value the source will hold; a curated `variant` (`CURATED_DEFAULTS`) therefore decides which
+  gated props are written. `PropSpec.required` still plays no part — no design-system prop is required.
+- **Landmines:** `mod.defaults` is computed once per module at registration (`register.tsx`), so the
+  panel's per-instance gate and this per-module gate can disagree only after the author changes the
+  variant — the panel's row-hiding then owns it, as before.
 
 ### meta-13 — plan: "feels like Figma, never shows me an error" — `STUDIO-FIGMA-FEEL-PLAN.md`
 - **Agent:** main session (orchestrator) — seven read-only `studio-scout` audits, no code changed
