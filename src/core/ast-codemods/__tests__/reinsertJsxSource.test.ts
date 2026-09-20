@@ -266,7 +266,44 @@ describe('reinsertJsxSource — refusals leave the file untouched', () => {
     expect(read(file)).toBe(PAGE)
   })
 
-  it('refuses a restore that would leave the file with a syntax error', () => {
+  it('refuses a restore that would leave the file with a syntax error — well-formed alone, wrong in a .jsx file', () => {
+    // Passes the shape check (it IS one element, parsed as .tsx), then the
+    // whole-file comparison sees the TypeScript-only assertion land in a
+    // `.jsx` file: the one guard the other cannot replace.
+    const file = writeFixture(PAGE, 'Page.jsx')
+    const section = locateTag(PAGE, 'section')
+
+    const result = reinsertJsxSource({
+      file,
+      line: section.line,
+      col: section.col,
+      index: 1,
+      text: '      <p>{count as number}</p>\n',
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('invalid-source')
+    expect(read(file)).toBe(PAGE)
+  })
+
+  it('refuses an unclosed tag by shape, before the file is ever spliced', () => {
+    const file = writeFixture(PAGE)
+    const section = locateTag(PAGE, 'section')
+
+    const result = reinsertJsxSource({ file, line: section.line, col: section.col, index: 1, text: '      <p>\n' })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('not-jsx-content')
+    expect(read(file)).toBe(PAGE)
+  })
+
+  // `sec-22` — the two bypass strings from the security review. Each one
+  // leaves a file with ZERO syntax errors, so the whole-file diagnostic
+  // comparison alone accepted both and wrote a module-level statement that
+  // runs the next time anything imports the page. The shape check refuses
+  // them before placement: inside `<>…</>` the leading `</section>` has no
+  // opener, and a statement is not a JSX child.
+  it('refuses a well-formed splice that closes the component and adds a module-level statement', () => {
     const file = writeFixture(PAGE)
     const section = locateTag(PAGE, 'section')
 
@@ -275,11 +312,90 @@ describe('reinsertJsxSource — refusals leave the file untouched', () => {
       line: section.line,
       col: section.col,
       index: 1,
-      text: '      <p>\n',
+      text: `</section>
+  )
+}
+void (function () { /* runs at module load */ })();
+export function Dummy() {
+  return (
+    <section>
+`,
     })
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('invalid-source')
+    expect(result.refusal.reason).toBe('not-jsx-content')
     expect(read(file)).toBe(PAGE)
+  })
+
+  it('refuses a well-formed splice that closes the return and adds a statement inside the component', () => {
+    const file = writeFixture(PAGE)
+    const section = locateTag(PAGE, 'section')
+
+    const result = reinsertJsxSource({
+      file,
+      line: section.line,
+      col: section.col,
+      index: 1,
+      text: `</section>
+  )
+  console.log('reachable-if-return-removed')
+  return (
+    <section>
+`,
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) throw new Error('unreachable')
+    expect(result.refusal.reason).toBe('not-jsx-content')
+    expect(read(file)).toBe(PAGE)
+  })
+
+  it('refuses every shape that escapes the child position: a stray closing tag, a bare brace, a closed-and-reopened wrapper', () => {
+    const file = writeFixture(PAGE)
+    const section = locateTag(PAGE, 'section')
+    const attempt = (text: string) =>
+      reinsertJsxSource({ file, line: section.line, col: section.col, index: 1, text })
+
+    for (const text of ['</p>', '}', '</><p>Second</p><>', '{x}}']) {
+      const result = attempt(text)
+      expect(result.ok).toBe(false)
+      if (result.ok) throw new Error('unreachable')
+      expect(result.refusal.reason).toBe('not-jsx-content')
+    }
+    expect(read(file)).toBe(PAGE)
+  })
+
+  it('accepts bytes that only LOOK like code — between children they are JSX text, rendered, never run', () => {
+    const file = writeFixture(PAGE)
+    const section = locateTag(PAGE, 'section')
+
+    const result = reinsertJsxSource({
+      file,
+      line: section.line,
+      col: section.col,
+      index: 1,
+      text: '      const x = 1; run(x)\n',
+    })
+    expect(result.ok).toBe(true)
+    const after = read(file)
+    expect(after).toContain('      const x = 1; run(x)\n')
+    // Still inside <section>'s children — the component's own shape is intact.
+    expect(after.indexOf('const x = 1')).toBeGreaterThan(after.indexOf('<section>'))
+    expect(after.indexOf('const x = 1')).toBeLessThan(after.indexOf('</section>'))
+  })
+
+  it('still accepts JSX content of every legitimate shape — an expression child, text, and several siblings', () => {
+    const file = writeFixture(PAGE)
+    const section = locateTag(PAGE, 'section')
+
+    const result = reinsertJsxSource({
+      file,
+      line: section.line,
+      col: section.col,
+      index: 1,
+      text: '      {items.map((item) => <li key={item.id}>{item.label}</li>)}\n      Plain text\n      <b>Bold</b>\n',
+    })
+    expect(result.ok).toBe(true)
+    expect(read(file)).toContain('{items.map((item) => <li key={item.id}>{item.label}</li>)}')
+    expect(read(file)).toContain('<b>Bold</b>')
   })
 })

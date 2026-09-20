@@ -40,17 +40,34 @@
  *    (there is already an inner newline surviving the delete, from the JSX
  *    text node the deleted child's OWN wholeLine range never claimed).
  *
- * BYTE-EXACTNESS AND THE SYNTAX-DIAGNOSTIC GUARD
- * -----------------------------------------------
- * `text`/`imports` are strings the client sends; nothing stops a stale or
- * hand-crafted request from naming a splice that does not parse. Rather than
- * refuse on a narrower, hand-rolled check, the CANDIDATE file is parsed in a
- * throwaway in-memory project (never the shared, disk-backed one this
- * codemod's own project is) and its syntactic diagnostics are compared
- * against the ORIGINAL file's — new ones mean the splice broke something, and
- * the whole write refuses rather than landing a half-broken file. Syntactic
- * only: a JSX file legitimately carries semantic diagnostics (unresolved
- * imports, `noUnusedLocals`) this codemod has no business judging.
+ * WHAT `text` AND `imports` ARE ALLOWED TO BE — two guards, in order
+ * ------------------------------------------------------------------
+ * `text`/`imports` are strings the client sends. This is the first codemod
+ * in the tree that splices CLIENT-SUPPLIED SOURCE BYTES into a file, so
+ * "does the result parse?" is not the question — a result that parses is
+ * easy to arrange while still saying something completely different from
+ * "the element that used to be here" (`sec-22`: close the parent, close the
+ * component, add a module-level statement, reopen both — zero syntax errors,
+ * and code that runs the moment Vite next imports the file). So each string
+ * is SHAPE-checked on its own, before any placement arithmetic:
+ *
+ *  - every `imports` entry must parse, standalone, as exactly one
+ *    `ImportDeclaration` (`parsesAsOneImportDeclaration`);
+ *  - `text` must parse, wrapped in a fragment, as JSX CONTENT and nothing
+ *    else — elements, fragments, text, `{…}` expression children — with the
+ *    wrapper fragment the only statement in the file (`isJsxContentOnly`).
+ *    An unmatched closing tag, a bare statement, or a declaration is a parse
+ *    error in that isolated parse regardless of what the real file says.
+ *
+ * Only then is the CANDIDATE file parsed in a throwaway in-memory project
+ * (never the shared, disk-backed one this codemod's own project is) and its
+ * syntactic diagnostics compared against the ORIGINAL file's
+ * (`introducesSyntaxErrors`) — defense in depth for a splice that is
+ * well-formed on its own but lands somewhere it cannot (a self-closing
+ * parent the placement reopened wrongly, say). Syntactic only: a JSX file
+ * legitimately carries semantic diagnostics (unresolved imports,
+ * `noUnusedLocals`) this codemod has no business judging. Every refusal
+ * leaves the file untouched.
  */
 import { Node, Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile, type JsxOpeningLikeElement } from './locateJsxElement'
@@ -84,7 +101,12 @@ export interface ReinsertJsxSourceParams {
   project?: Project
 }
 
-export type ReinsertJsxRefusalReason = JsxChildRangeReason | 'not-a-container' | 'invalid-import' | 'invalid-source'
+export type ReinsertJsxRefusalReason =
+  | JsxChildRangeReason
+  | 'not-a-container'
+  | 'invalid-import'
+  | 'not-jsx-content'
+  | 'invalid-source'
 
 export interface ReinsertJsxRefusal {
   reason: ReinsertJsxRefusalReason
@@ -128,6 +150,13 @@ export function reinsertJsxSource(params: ReinsertJsxSourceParams): ReinsertJsxS
         'One of the imports this undo would restore is no longer valid on its own, so nothing was changed. Reload the project and try again.',
       )
     }
+  }
+
+  if (!isJsxContentOnly(text)) {
+    return refuse(
+      'not-jsx-content',
+      'What this undo would restore is not an element, so nothing was changed. Reload the project and try again.',
+    )
   }
 
   const placement = resolveReinsertPlacement(sourceFile, verbatim, parentOpening, index, text)
@@ -242,6 +271,42 @@ function buildImportReinsertEdit(sourceFile: SourceFile, verbatim: string, impor
   return { start: at, end: at, text: lines }
 }
 
+/**
+ * Whether `text` is JSX CONTENT and nothing else — what a delete could have
+ * taken out of a parent's children: elements, fragments, text and `{…}`
+ * expression children, in any number, and never a statement.
+ *
+ * `sec-22`: this is the check that makes `reinsert-source` an element write
+ * rather than a source write. The whole-file diagnostic comparison below only
+ * proves the RESULT parses, and a result that parses is easy to arrange — a
+ * `text` that closes the parent, closes the component, adds a module-level
+ * statement and reopens both leaves a file with zero syntax errors and code
+ * that runs the moment Vite next imports it. Wrapping `text` in a fragment
+ * and demanding that the fragment is the ONLY thing in the file makes every
+ * shape that ESCAPES the child position a parse error — an unmatched
+ * `</section>`, a bare `}`, a second top-level element after a closed
+ * fragment — before any placement arithmetic runs.
+ *
+ * What this deliberately does NOT refuse: bytes that merely LOOK like code.
+ * `const x = 1` between two children is JSX text, and it stays JSX text
+ * once spliced among the parent's children — rendered as characters, never
+ * evaluated. An expression child is JSX content too: it evaluates only when
+ * the element renders, exactly like the `{t.title}` a delete legitimately
+ * removes, and `insert`'s own children may carry the same.
+ */
+function isJsxContentOnly(text: string): boolean {
+  const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
+  const sourceFile = scratch.createSourceFile('reinsert-text-check.tsx', `<>${text}</>`)
+  if (scratch.getProgram().getSyntacticDiagnostics(sourceFile).length > 0) return false
+  const statements = sourceFile.getStatements()
+  const only = statements.length === 1 ? statements[0] : undefined
+  if (!only || !Node.isExpressionStatement(only)) return false
+  const fragment = only.getExpression()
+  // The fragment must be OUR wrapper: its own text is the whole file, so a
+  // `text` that closed our `<>` early and opened another cannot pass.
+  return Node.isJsxFragment(fragment) && fragment.getStart() === 0 && fragment.getEnd() === sourceFile.getEnd()
+}
+
 /** Whether `text` parses, on its own, as exactly one `ImportDeclaration` — never trusted merely because the client sent it. */
 function parsesAsOneImportDeclaration(text: string): boolean {
   const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
@@ -256,8 +321,13 @@ function parsesAsOneImportDeclaration(text: string): boolean {
 
 /**
  * True when `candidate` carries syntactic diagnostics `original` did not —
- * the one check that stands between a client-supplied `text`/`imports` and a
- * file Studio would otherwise write with a syntax error in it.
+ * the SECOND guard, after `isJsxContentOnly`/`parsesAsOneImportDeclaration`
+ * have already vouched for each string's shape. On its own this is a global
+ * COUNT, and a diagnostic-clean file makes 0-vs-0 trivial to satisfy
+ * (`sec-22`), so it never stands alone: it catches the splice that is fine
+ * in isolation but wrong where it landed — the shape check parses `text` as
+ * `.tsx`, so TypeScript-only syntax inside an otherwise well-formed element
+ * is only seen here, against the real file's own `.jsx` extension.
  *
  * A throwaway in-memory `Project`, never the shared one this codemod's own
  * `sourceFile` lives in: parsing a bad candidate must not leave that project
