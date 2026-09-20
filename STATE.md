@@ -471,10 +471,15 @@ entry, `coalesceKey: null`).
   reverted (the resync erases it as a side effect) and never gets a second undo
   entry (`no new mutations` section above) — "one gesture = one write = one
   toast = one ⌘Z" is unchanged from `store-14`.
-- **Full untargeted `bun test`**: started in background, did not complete within
-  this session — genuinely not run to completion, not claiming a number I did not
-  see. The scoped run above covers every file this change touches plus the
-  architecture gates (module-size, no-vc-mode-branches, centralized-history).
+- **Full untargeted `bun test`, completed after ~17 minutes in the background**
+  (it was still running, not stuck, when I first drafted this entry): **14431
+  pass, 3 skip, 3 fail, across 14437 tests in 1285 files.** All 3 failures are
+  in `server/plugins/scheduler.ts` → `server/repositories/pluginSchedules.ts`
+  (`src/__tests__/server/cmsPlugins.test.ts`) — the CMS plugin scheduler's
+  advisory-lock/due-schedules SQL path. Nothing this change touches sits
+  anywhere near that file graph (no `server/` file is in this diff at all), so
+  this is server-engineer's territory, not mine — noted here rather than
+  investigated, per the parallel-sessions rule.
 - **Not run:** `bun run build` end-to-end (blocked on landmine 6's pre-existing
   484 `tsc` errors, unrelated to this diff — confirmed via the same baseline
   restore-and-compare method).
