@@ -148,9 +148,33 @@ export function buildDefaults(spec: DesignSystemComponentSpec): Record<string, u
     else if (p.name === 'label') defaults[p.name] = spec.name
     else if (p.enumValues?.length) defaults[p.name] = p.enumValues[0]
   }
-  // Last, so a curated value beats the docs' own — that is the whole point of
-  // an entry existing. See `CURATED_DEFAULTS`.
-  return { ...defaults, ...CURATED_DEFAULTS[spec.name] }
+  // A curated value beats the docs' own — that is the whole point of an entry
+  // existing. See `CURATED_DEFAULTS`. Merged BEFORE the applicability pass so
+  // a curated `variant` decides which gated props the insert writes.
+  const seeded: Record<string, unknown> = { ...defaults, ...CURATED_DEFAULTS[spec.name] }
+  for (const p of spec.props) {
+    if (p.appliesWhen && p.name in seeded && !propAppliesTo(p.appliesWhen, seeded)) delete seeded[p.name]
+  }
+  return seeded
+}
+
+/**
+ * Whether a gated prop means anything on the instance these defaults describe.
+ *
+ * `PropSpec.appliesWhen` records the package's own "shown by `gpay-personalized`"
+ * note (`applicabilityGates.ts`), and the Properties panel has honoured it since
+ * the row-hiding fix — but the insert path did not, so a freshly inserted
+ * `<Button variant="primary">` arrived carrying `cardLast4="1394"`, a masked
+ * card number only the `gpay-personalized` variant ever renders. Writing a
+ * value the chosen variant cannot use is not a default, it is noise in a file
+ * a human reads, and the panel then hid the very row that would let them
+ * remove it. The gate is read against the SEEDED value of its controlling
+ * prop, which is exactly what the source will say — no other value exists at
+ * insert time.
+ */
+function propAppliesTo(gate: NonNullable<PropSpec['appliesWhen']>, seeded: Record<string, unknown>): boolean {
+  const controlling = seeded[gate.prop]
+  return typeof controlling === 'string' && gate.values.includes(controlling)
 }
 
 /**
