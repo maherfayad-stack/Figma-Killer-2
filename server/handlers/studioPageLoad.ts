@@ -60,7 +60,6 @@ import { join, relative, sep } from 'node:path'
 import {
   composeAppRouterRoute,
   createPageEvalBudget,
-  createWorkspaceProject,
   cssInJsStylesheet,
   inlineLocalComponents,
   parsePageFile,
@@ -72,6 +71,7 @@ import {
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
+import type { Project } from 'ts-morph'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
@@ -84,6 +84,7 @@ import {
   setCachedRouteParse,
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
+import { withWorkspaceProject } from './studio/workspaceProject'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
 // for its result shape — see `studioLoadContract.ts` for why they live apart.
 export type { StudioLoadOptions, StudioLoadResult } from './studio/studioLoadContract'
@@ -176,7 +177,7 @@ function parseStandardRouteEntry(
   pageId: string,
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -227,7 +228,7 @@ function parseStandardRouteEntry(
 function buildStandardPageEntries(
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -255,7 +256,7 @@ function parseAppRouterRouteEntry(
   pageId: string,
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -310,7 +311,7 @@ function parseAppRouterRouteEntry(
 function buildAppRouterPageEntries(
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -346,7 +347,7 @@ function buildAppRouterPageEntries(
  */
 function discoverProjectStories(
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   pageEntries: readonly RoutePageEntry[],
   enabled: boolean,
 ): DiscoveredStory[] {
@@ -416,7 +417,7 @@ function discoverProjectStories(
  * `profile` yet — keeps `buildStandardPageEntries` exactly as it always was.
  *
  * Every page is parsed against one shared, workspace-wide ts-morph `Project`
- * (`createWorkspaceProject`) so a page's local-component imports resolve to
+ * (`workspaceProject.ts`'s kept `createWorkspaceProject`) so a page's local-component imports resolve to
  * real files elsewhere in the tree; `resolveComponentSources` classifies each
  * `kind: 'component'` node as **local** (import resolves inside the
  * workspace) or **package** (an npm dependency, read-only prop surface). The
@@ -430,7 +431,7 @@ function discoverProjectStories(
  * Read that module for what the fingerprint covers and why a narrowed load is
  * served-but-never-stored.
  */
-async function computeStudioPages(dir: string, options: StudioLoadOptions): Promise<StudioLoadResult> {
+async function computeStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
     return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
@@ -439,8 +440,12 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
   // a fresh per-file Project (parsePageFile's own default) can't see
-  // across files at all. See createWorkspaceProject's doc comment.
-  const project = createWorkspaceProject(dir)
+  // across files at all. Kept across loads and synced to the disk by
+  // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
+  return withWorkspaceProject(dir, (project) => computeStudioPagesWith(dir, pagesDir, project))
+}
+
+async function computeStudioPagesWith(dir: string, pagesDir: string, project: Project): Promise<StudioLoadResult> {
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -496,13 +501,11 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 
-  // The one narrowable stage — see this function's `options.pageIds` doc.
-  const requestedPageIds = options.pageIds ? new Set(options.pageIds) : null
-  const convertedEntries = requestedPageIds
-    ? routeEntries.filter(({ pageId }) => requestedPageIds.has(pageId))
-    : routeEntries
-
-  const pages = convertedEntries.map(({ expanded, pageId, slug, title }) => {
+  // Every route is converted, even for a narrowed load: the convert is the
+  // cheap stage, and converting all of them is what lets `loadStudioPages`
+  // memoize this result as the project-wide truth and answer the NEXT load
+  // — full or narrowed — without parsing anything.
+  const pages = routeEntries.map(({ expanded, pageId, slug, title }) => {
     const page = parsedPageToSitePage(expanded, {
       pageId,
       slug,
@@ -586,12 +589,15 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   const memoized = getMemoizedStudioLoad(dir, fingerprint)
   if (memoized) return narrowLoadResult(memoized, options.pageIds)
 
-  const result = await computeStudioPages(dir, options)
-  if (!options.pageIds) setMemoizedStudioLoad(dir, fingerprint, result)
-  return result
+  // Always the full result, always memoized — a narrowed load is the SAME
+  // compute with fewer pages returned, so storing it costs nothing extra and
+  // means the full load that follows a canvas resync is a memo hit.
+  const result = await computeStudioPages(dir)
+  setMemoizedStudioLoad(dir, fingerprint, result)
+  return narrowLoadResult(result, options.pageIds)
 }
 
-/** The `options.pageIds` filter, applied to an already-computed FULL result — the same narrowing `computeStudioPages` does at its convert stage. */
+/** The `options.pageIds` filter, applied to a computed FULL result. */
 function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] | undefined): StudioLoadResult {
   if (!pageIds) return result
   const wanted = new Set(pageIds)
@@ -632,8 +638,10 @@ function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] |
 export async function loadStudioPageInLocale(dir: string, pageId: string, locale: string): Promise<Page | null> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return null
+  return withWorkspaceProject(dir, (project) => loadStudioPageInLocaleWith(dir, pagesDir, project, pageId, locale))
+}
 
-  const project = createWorkspaceProject(dir)
+async function loadStudioPageInLocaleWith(dir: string, pagesDir: string, project: Project, pageId: string, locale: string): Promise<Page | null> {
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)

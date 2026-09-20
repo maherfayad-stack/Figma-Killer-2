@@ -41,7 +41,9 @@ export {
   WORKSPACE_MAX_FILES,
   isPrototypeShellPath,
   listWorkspaceFiles,
+  listWorkspaceSourceFiles,
 } from './workspaceFiles'
+export { resetParserCaches } from './parserCaches'
 export {
   PROJECT_DESIGN_SYSTEM_DIR,
   designSystemImportSpecifier,

@@ -175,7 +175,12 @@ export function extractCssInJs(sourceFile: SourceFile, relFile: string, evalOpti
   return result
 }
 
-const fileCache = new WeakMap<SourceFile, Map<string, CssInJsFile>>()
+let fileCache = new WeakMap<SourceFile, Map<string, CssInJsFile>>()
+
+/** Drops every extracted file — an extraction follows imports into other files, so a kept `Project` resets this whenever one changes (`./parserCaches`). */
+export function forgetCssInJsFileCache(): void {
+  fileCache = new WeakMap()
+}
 
 /** Files currently being extracted — see `extractCssInJs`'s cycle guard. */
 const inFlight = new Set<SourceFile>()

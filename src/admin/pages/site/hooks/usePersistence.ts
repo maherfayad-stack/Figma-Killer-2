@@ -65,6 +65,8 @@ import {
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { getErrorMessage } from '@core/utils/errorMessage'
+import { pushToast } from '@ui/components/Toast'
 import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import { registerEditorSave } from './editorSaveRef'
 
@@ -495,7 +497,16 @@ export function usePersistence(
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
-        console.error('[persistence] Reload after pack install failed:', err)
+        // The write already landed on disk — this is the board failing to
+        // catch up with it. Silent, it reads as "nothing happened" and the
+        // only recovery the user can find is a page refresh; say so instead.
+        console.error('[persistence] Reload after a source write failed:', err)
+        pushToast({
+          kind: 'error',
+          title: 'The board could not reload your project',
+          body: `Your change was written to disk, but the canvas could not re-read it. Refresh to catch up. ${getErrorMessage(err, 'Unknown reload error')}`,
+        })
+        setSaveStatus({ state: 'error', message: 'Reload failed' })
       }
     }
 
