@@ -46,16 +46,7 @@
  * endpoint for rate limiting.
  */
 import { isIP } from 'node:net'
-import { normalizeOrigin } from '../config'
-
-/** Extra origins allowed by the Origin check (set via env in dev/test). */
-export const DEV_ORIGIN_ALLOWLIST: string[] = [
-  'http://localhost:5173',
-  'http://127.0.0.1:5173',
-  'http://localhost:5174',
-  'http://127.0.0.1:5174',
-  process.env.VITE_ALLOWED_ORIGIN ?? '',
-].filter(Boolean)
+import { DEV_ORIGIN_ALLOWLIST, normalizeOrigin } from '../config'
 
 /** Methods that mutate server state — the only ones the Origin check applies to. */
 export function isStateChangingMethod(method: string): boolean {

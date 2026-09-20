@@ -47,15 +47,14 @@
  * dev servers for the same project because two different callers passed
  * `dir` and `dir/apps/web`.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
+import { STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../ai/drivers/registeredMcpServers'
-import { resolvePublicOrigins } from '../../config'
+import { readServerConfig } from '../../config'
 import { badRequest, jsonResponse, readValidatedBody } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
+import { resolveDevScript, resolveLiveCapability } from './liveCapability'
 import { detectPackageManager, type PackageManager } from './packageManager'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
 import { requireTrustTier } from './trustGate'
@@ -133,23 +132,6 @@ interface DevServerEntry {
 /** Per-process registry, keyed by resolved app root — one dev server per project, reused across calls. */
 const servers = new Map<string, DevServerEntry>()
 
-function devScriptFor(appRoot: string): string | null {
-  const pkgPath = join(appRoot, 'package.json')
-  if (!existsSync(pkgPath)) return null
-  try {
-    const parsed: unknown = JSON.parse(readFileSync(pkgPath, 'utf8'))
-    if (!parsed || typeof parsed !== 'object') return null
-    const scripts = (parsed as Record<string, unknown>).scripts
-    if (!scripts || typeof scripts !== 'object') return null
-    const map = scripts as Record<string, unknown>
-    if (typeof map.dev === 'string') return 'dev'
-    if (typeof map.start === 'string') return 'start'
-    return null
-  } catch {
-    return null
-  }
-}
-
 function capText(current: string, chunk: string): string {
   const combined = current + chunk
   return combined.length > MAX_LOG_BYTES ? combined.slice(combined.length - MAX_LOG_BYTES) : combined
@@ -178,7 +160,13 @@ function pumpAndWatch(entry: DevServerEntry, resolveUrl: (url: string | null) =>
           const cleanChunk = stripAnsi(chunk)
           const match = URL_PATTERN.exec(cleanChunk) ?? URL_PATTERN.exec(stripAnsi(entry.log))
           if (match) {
-            entry.baseUrl = match[0].replace(/\/$/, '')
+            // `localhost` is pinned to IPv4 here for the same reason the
+            // generated `vite.config.js` pins `server.host`: the name can
+            // resolve to ::1 for the dev server and 127.0.0.1 for this proxy,
+            // and then the two are talking about different sockets. A config
+            // the user edited may still print `localhost`; the proxy must not
+            // guess which stack it bound.
+            entry.baseUrl = match[0].replace(/\/$/, '').replace(/^(https?:\/\/)localhost(?=[:/]|$)/i, '$1127.0.0.1')
             settle(entry.baseUrl)
           }
         }
@@ -253,6 +241,19 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
   }
 
   entry.phase = 'ready'
+
+  // A process that dies AFTER it was ready — Vite crashing on an HMR socket
+  // reset, the user killing it from a terminal — used to stay `'ready'` in
+  // this registry for good: the live-origin proxy kept forwarding to a port
+  // nobody listened on, the board's frames sat on an error document, and
+  // `GET status` could not tell anyone. `'failed'` is the honest phase, and
+  // the next `ensureEntry` clears a failed entry and respawns.
+  void entry.proc.exited.then((code) => {
+    if (servers.get(appRoot) !== entry || entry.phase !== 'ready') return
+    entry.phase = 'failed'
+    entry.error = `Dev server ("${entry.packageManager} run ${entry.devScript}") exited with code ${code} after it was ready.`
+    entry.log += `\n[studio] ${entry.error}\n`
+  })
 }
 
 /**
@@ -265,37 +266,43 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
  * would silently compute a different, wrong key for exactly the one case
  * (a nested app root) this distinction exists to handle.
  *
- * Also injects `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGIN_ENV`
+ * Also injects `STUDIO_PROJECT_KEY_ENV`/`STUDIO_PARENT_ORIGINS_ENV`
  * (`@core/studio-runtime`) — the two env vars `virtual:studio-runtime`
  * (`vitePlugin.ts`'s `runtimeConfigPlugin`) reads at `load()` time to build
  * `STUDIO_RUNTIME_CONFIG`, which `main.jsx` gates
  * `createStudioRuntimeBridge(...)` on. `projectKey` reuses the SAME
  * `registeredMcpServerProjectKey(dir)` call this function already makes for
- * `STUDIO_LIVE_BASE_PATH_ENV`, so the two can never disagree.
- * `resolvePublicOrigins(process.env)[0]` mirrors exactly what
- * `readServerConfig`/`liveOriginSecurityHeaders` already derive
- * `PUBLIC_ORIGIN` from — when it is unset, `parentOrigin` is `undefined`, the
- * env var is simply never set, and `readStudioRuntimeConfigFromEnv` degrades
- * to `parentOrigin: null` exactly as designed (the same condition under which
- * `liveOriginSecurityHeaders` sends `frame-ancestors 'none'` — the bridge and
- * the CSP that would let it load already fail together).
+ * `STUDIO_LIVE_BASE_PATH_ENV`, so the two can never disagree. The parent
+ * origins are `readServerConfig(process.env).liveFrameAncestors` — the SAME
+ * list `liveOriginSecurityHeaders` puts in `frame-ancestors`, so the set of
+ * documents allowed to frame a live frame and the set it will talk to are
+ * one list, and a local install with no `PUBLIC_ORIGIN` gets its own admin
+ * and dev origins in both. (It used to be `PUBLIC_ORIGIN` alone: unset
+ * locally, so the bridge never booted and the CSP blocked the frame — the
+ * two failed together, and Live had never worked on a local install.)
  */
 function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides): { ok: true; entry: DevServerEntry } | { ok: false; error: string } {
-  const devScript = devScriptFor(appRoot)
+  // The gate that keeps a Tier-2-by-default board from running an arbitrary
+  // repository's `dev`/`start` script the moment it opens: Studio only ever
+  // runs `vite`, because `vite` is the only thing it can frame (`sec-20`;
+  // the rule and its reasons live in `liveCapability.ts`).
+  if (!resolveLiveCapability(dir).capable) {
+    return { ok: false, error: `Live needs Vite: this project's dev/start script is not a vite invocation, so Studio does not run it (${appRoot}).` }
+  }
+  const devScript = resolveDevScript(appRoot)
   if (!devScript) {
     return { ok: false, error: `No "dev" or "start" script found in package.json at ${appRoot}.` }
   }
 
   const packageManager = detectPackageManager(appRoot)
   const projectKey = registeredMcpServerProjectKey(dir)
-  const parentOrigin = resolvePublicOrigins(process.env)[0]
   const extraEnv: Record<string, string> = {
     [STUDIO_LIVE_BASE_PATH_ENV]: `/p/${projectKey}/`,
     [STUDIO_PROJECT_KEY_ENV]: projectKey,
+    [STUDIO_PARENT_ORIGINS_ENV]: readServerConfig(process.env).liveFrameAncestors.join(','),
   }
-  if (parentOrigin) extraEnv[STUDIO_PARENT_ORIGIN_ENV] = parentOrigin
   const spawn = overrides.spawn ?? defaultSpawn
-  const proc = spawn([packageManager, 'run', devScript], {
+  const proc = spawn([packageManager, 'run', devScript.name], {
     cwd: appRoot,
     env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv),
     stdout: 'pipe',
@@ -309,7 +316,7 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     appRoot,
     proc,
     packageManager,
-    devScript,
+    devScript: devScript.name,
     phase: 'booting',
     baseUrl: null,
     urlPromise,

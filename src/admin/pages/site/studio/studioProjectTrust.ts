@@ -97,7 +97,7 @@ export function setStudioProjectKey(next: string | null): void {
  */
 export const LiveCapabilitySchema = Type.Object({
   capable: Type.Boolean(),
-  reason: Type.Optional(Type.Union([Type.Literal('not-vite'), Type.Literal('no-lockfile')])),
+  reason: Type.Optional(Type.Literal('not-vite')),
 })
 export type LiveCapability = Static<typeof LiveCapabilitySchema>
 

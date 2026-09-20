@@ -37,7 +37,10 @@ function makeStubChannel(): { channel: BridgeFrameChannel; posted: unknown[] } {
   const posted: unknown[] = []
   const channel: BridgeFrameChannel = {
     postMessage: (message) => { posted.push(message) },
-    addEventListener: () => {},
+    // A booted runtime reports `ready` first; the adapter queues every post until it does.
+    addEventListener: (type, h) => {
+      if (type === 'message') h({ origin: FRAME_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent)
+    },
     removeEventListener: () => {},
   }
   return { channel, posted }

