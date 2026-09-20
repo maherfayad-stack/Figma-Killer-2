@@ -43,6 +43,7 @@ import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
 import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
+import { useBridgeFrameInteraction } from './useBridgeFrameInteraction'
 
 interface LiveBoardFrameProps {
   page: Page
@@ -79,6 +80,9 @@ export function LiveBoardFrame({
   // badge subscribes to; the same call also makes the findings visible to
   // `studio_page_diagnostics`, which reads this iframe's `contentWindow`.
   useBridgeFrameDiagnostics(adapter, frameId)
+  // `live-12` — clicks and wheel forwarded out of the cross-origin frame
+  // reach selection and zoom; without this they reached nothing.
+  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, isActive, onActivate })
 
   // `server/liveOrigin.ts` (L2) routes on the `/p/<projectKey>` path
   // segment — `useLiveOrigin` only knows the bare server-topology origin

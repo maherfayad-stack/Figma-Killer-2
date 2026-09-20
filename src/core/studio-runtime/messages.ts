@@ -308,6 +308,35 @@ export const PointerMessageSchema = Type.Object({
   clientX: Type.Number(),
   clientY: Type.Number(),
   modifiers: PointerModifiersSchema,
+  /**
+   * `live-12` — every stamped ancestor of the hit, innermost first (`nodeId`
+   * repeated as the first entry), bounded. The runtime stamps by SOURCE
+   * position, so a click inside a design-system button lands on that
+   * package's own internal element — an id the parent's page tree has never
+   * heard of. The parent walks this chain to the first node it knows (the
+   * call site), which is what the user meant by clicking the button.
+   */
+  ancestors: Type.Array(NodeRefSchema, { maxItems: 32 }),
+})
+
+/**
+ * `live-12` — a wheel gesture inside a DESIGN-mode live frame. The parent
+ * canvas owns zoom and pan, and a cross-origin frame's wheel never reaches it
+ * on its own; the runtime forwards the gesture (having cancelled the frame's
+ * own scroll) and the parent re-dispatches it on the iframe element, exactly
+ * what `useIframeEventForwarding` does for a portal frame. Never sent in live
+ * mode, where the app scrolls itself. Numbers only — nothing here names a
+ * node or reaches the DOM.
+ */
+export const WheelMessageSchema = Type.Object({
+  type: Type.Literal('wheel'),
+  deltaX: Type.Number(),
+  deltaY: Type.Number(),
+  /** `WheelEvent.deltaMode`: 0 pixel, 1 line, 2 page. */
+  deltaMode: Type.Integer({ minimum: 0, maximum: 2 }),
+  clientX: Type.Number(),
+  clientY: Type.Number(),
+  modifiers: PointerModifiersSchema,
 })
 
 /** Routed by the parent to the existing `textOrigin` writeback (L7) — carries the CURRENT text, not a diff. */
@@ -454,6 +483,7 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   HmrBeforeMessageSchema,
   HmrAfterMessageSchema,
   PointerMessageSchema,
+  WheelMessageSchema,
   TextEditMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,

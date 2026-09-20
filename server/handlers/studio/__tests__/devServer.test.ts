@@ -688,32 +688,32 @@ describe('dev-server records — adoption across a server restart', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
-  it('a record whose origin no longer answers fails the adoption like a bad boot, then the next start spawns fresh', async () => {
+  it('a record whose origin no longer answers is discarded and a fresh server is spawned in the same start', async () => {
     const tmpDir = makeTmpDir('studio-devserver-stale-')
     writePackageJson(tmpDir, { dev: 'vite' })
     expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
     forgetDevServersForTest()
 
-    const stale = await ensureDevServer(tmpDir, {
-      spawn: () => {
-        throw new Error('adoption must be attempted before any spawn')
-      },
-      isProcessAlive: () => true,
-      probe: async () => false,
-    })
-    expect(stale.ok).toBe(false)
-    expect(getDevServerStatus(tmpDir).phase).toBe('failed')
-    expect(recordFiles()).toHaveLength(0)
-
     let spawned = 0
-    const fresh = await ensureDevServer(tmpDir, {
+    let probed = 0
+    const result = await ensureDevServer(tmpDir, {
       spawn: () => {
         spawned += 1
         return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
       },
+      isProcessAlive: () => true,
+      probe: async () => {
+        probed += 1
+        return false
+      },
     })
-    expect(fresh.ok).toBe(true)
+    expect(probed).toBe(1)
     expect(spawned).toBe(1)
+    expect(result.ok).toBe(true)
+    const status = getDevServerStatus(tmpDir)
+    expect(status.phase).toBe('ready')
+    expect(status.log).toContain('no longer answered')
+    expect(recordFiles()).toHaveLength(1)
     stopDevServer(tmpDir)
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
