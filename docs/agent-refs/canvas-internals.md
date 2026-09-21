@@ -1361,7 +1361,7 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 
 | Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
 |---|---|---|
-| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
+| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
 | `resize:commit` (`{ width?, height? }` as integer `px` strings) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
@@ -1377,6 +1377,27 @@ adapter):
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
+
+**`speed-03` — `move` is coalesced, not forwarded raw.** A native
+`pointermove` fires far faster than the parent can usefully act on it
+(measured ≈120/s while idly hovering a live frame, each one a `postMessage`
+plus an unconditional store write). `gestureForwarding.ts` now buffers `move`
+and posts at most one per animation frame, carrying the LAST event of the
+batch, and skips the post entirely when it would repeat the SAME resolved
+node + rect as the last move actually posted — the idle-hover case
+`hoverNode` (`selectionSlice.ts`) exists to guard against, and now itself
+no-ops (reads `get()` first) when the id/breakpoint/frame triple is unchanged,
+so a coalesced-but-repeated `move` costs nothing even if one still arrives.
+The skip only applies while **no pointer button is held**: a held button is
+an active drag — a pan replay in particular, whose parent-side replay reads
+`clientX`/`clientY` off every `move` — and the resolved node commonly does
+NOT change mid-pan (dragging across one full-bleed background element stays
+on the same node the whole gesture), but the position still has to reach the
+parent every frame. `down`/`up`/`click` stay immediate and always flush a
+pending move first, so the parent never observes a press arrive before the
+move that preceded it (assert ordering here if you touch this — the
+pan-replay `panPointerId` state machine in `useBridgeFrameInteraction`
+depends on seeing `move`s in the order they happened).
 
 Three rules that fell out of wiring this, each pinned by a test:
 

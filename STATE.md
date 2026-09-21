@@ -4,13 +4,160 @@ Shared memory for every agent working on this repo. **Read before working, write
 before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protocol.md).
 
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
-`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
+`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`,
+`speed` (`STUDIO-SPEED-PLAN.md` work orders).
 
 Landed entries older than the newest ~10 live in
 [`docs/state-archive/2026-Q3.md`](docs/state-archive/2026-Q3.md), verbatim. The
 Archive section at the bottom of this file indexes them.
 
 ---
+
+### speed-03 — a bridge frame's native pointermove flooded a `postMessage` and an unconditional store `set()` per event; move is now coalesced and hover deduped
+
+- **Agent:** canvas-engineer
+- **Stage:** done — branch `feat/speed-03-hover-coalescing`, based on
+  `fix/live-dev-server-survives-api-restart`. Draft PR opened against that
+  base (stacked, per `STUDIO-SPEED-PLAN.md`'s sequencing). Not yet merged —
+  the owner merges the base fix first.
+- **Updated:** 2026-09-21
+- **Goal (`STUDIO-SPEED-PLAN.md` speed-03):** 240 synthetic pointer moves
+  inside a live frame measured as 240 cross-frame messages and 240
+  unconditional store writes. Target: ≤ 1 store write per animation frame,
+  none when the hovered node is unchanged.
+- **What it was:** `gestureForwarding.ts`'s `onPointerMove` forwarded every
+  native `pointermove` (ancestor walk + rect + `postMessage`) — no throttle at
+  all. `selectionSlice.ts`'s `hoverNode` was an unconditional `set()` that fans
+  out to every mounted selector (overlays × frames, panel sections, layer
+  rows) even when nothing changed.
+- **Fixes:**
+  - **Runtime (`src/core/studio-runtime/gestureForwarding.ts`):** `move` is
+    now buffered and posted at most once per animation frame
+    (`view.requestAnimationFrame`, falling back to a bare global
+    `requestAnimationFrame`, falling back to `setTimeout(…, 16)` for a
+    headless `doc` with neither — same fallback order `runtime.ts`/
+    `resizeHandles.ts` already use), carrying the LAST event of the batch.
+    The post is skipped entirely when it would resolve to the SAME node +
+    rect as the last move actually posted (`lastPostedMove`) — **but only
+    while no pointer button is held**. A held button is an active drag (a
+    pan replay in particular — `useBridgeFrameInteraction`'s `panPointerId`
+    branch reads `clientX`/`clientY` off every `move` it receives), and the
+    resolved node commonly does NOT change mid-drag (panning across one
+    full-bleed background element stays on the same node the whole
+    gesture) — without this exception the naive "skip when node+rect
+    unchanged" rule would silently stall a pan the instant the cursor sat
+    over a single element. `down`/`up`/`click` call `flushPendingMove()`
+    first, so the parent never observes a press arrive before the move that
+    preceded it (pan-replay ordering depends on this). No wire/schema change
+    — `messages.ts` untouched, so no `studio-runtime:sync` conflict with
+    `speed-01`'s wire work beyond the routine bundle re-sync (regenerated
+    and committed: `generated/{vitePluginBundle,runtimeBridgeBundle}.ts`).
+  - **Store (`src/admin/pages/site/store/slices/selectionSlice.ts`):**
+    `hoverNode` reads `get()` first and no-ops when `hoveredNodeId` /
+    `hoveredBreakpointId` / `hoveredFrameId` are already exactly what the
+    call would set — covers BOTH the coalesced bridge path and the portal
+    frame's native (uncoalesced) `pointermove`, since `NodeRenderer` and
+    `useBridgeFrameInteraction` both funnel through the same
+    `useCanvasNodeInteraction.onNodeHover` → `hoverNode` call
+    (`useCanvasNodeInteraction.ts:224-238` is a thin passthrough — no
+    separate dedup needed there).
+  - **Checked, no change needed:** `useBridgeSelectionChrome.ts`'s
+    `bridge?.hover(...)` call already lives inside a
+    `useEffect(…, [bridge, hoverNodeId])` — React's own dependency-array
+    identity check means it only re-runs (and re-posts to the frame) when
+    `hoverNodeId` itself changes, so it never re-sends for a hover that
+    resolves to the same id.
+- **Tests:** `runtime.test.ts` (new `describe('createStudioRuntimeBridge —
+  move coalescing (speed-03)')`: 100 moves in one animation frame → 1
+  message with the last coordinates; unchanged node+rect → 0 further
+  messages, a genuinely different node → a new one; a held button keeps
+  posting every frame despite an unchanged node+rect; a pending move flushes
+  before a `down`, in that order). `selectionSlice.test.ts` (new
+  `describe('selectionSlice.hoverNode — speed-03 dedup')`: same-triple hover
+  → 0 subscriber notifications via `useEditorStore.subscribe`; a changed
+  node id, breakpoint id, or frame id alone → 1 notification; clearing an
+  already-clear hover → 0). `useBridgeFrameInteraction.test.tsx` re-run,
+  unchanged, still green (it dispatches synthetic `pointer` events directly
+  against the hook, below the runtime's coalescing layer, so it was never
+  exercising the new behaviour — the runtime-level tests are what cover it).
+- **Gates run:** `bun run studio-runtime:sync` (bundle re-synced and
+  committed), `bun run build`, `bun run lint`, `bun test` — both `bun test
+  --parallel=4` and bare `bun test` were run; `--parallel=4` crashed
+  mid-run with unrelated Bun 1.3.13 segfaults in `src/__tests__/ai/*` (the
+  known `--isolate` crash noted in `bunfig.toml`'s own comment, not
+  reproducible against files this change touches), so the bare run is the
+  one that finished: **14493 pass / 6 skip / 32 fail / 5 errors** across
+  14531 tests, under heavy concurrent load from sibling `speed-01`/`speed-02`/
+  `speed-05` sessions running their own builds/tests/dev-servers/e2e on the
+  same machine and the same symlinked `node_modules` at the same time (`ps
+  aux` showed 15+ concurrent `bun`/`vite` processes throughout the run).
+  Re-ran every failing file in isolation afterward: `useBridgeComputedValues`
+  ×4, `FillSection` computed-values, the four `broadcast… optimistic` tests
+  and `inspectFrameHeadless` match this project's already-documented
+  pre-existing failures verbatim. `Module size budgets` (`devServer.ts` at
+  748 lines) is unrelated to any file this change touches (`live-16`
+  territory). `generated studio-runtime bundles` failed inside the full run
+  with a Bun bundler error reading `@sinclair/typebox`'s own `.mjs` files
+  ("Unexpected reading file") — re-running `bun run scripts/sync-studio-
+  runtime.ts` directly afterward produced byte-identical output to what's
+  already committed (`git status` showed no further diff), so the committed
+  bundle IS fresh; the test failure was the concurrent-load environment, not
+  a stale artifact. `canonicalCheck`/`cssModulesEvaluator`/`rawSvgImports`/
+  `crlfProjectLoad`/`frameDiffEngine` (13 failures in the full run, all with
+  5–52s durations under load) all passed cleanly re-run in isolation.
+  `studio_render_reference`'s 4 tests (real dev-server spawns) still timed
+  out at the hard-coded 5000ms even in isolation — sibling sessions were
+  still running their own dev servers/e2e concurrently at the time; nothing
+  in this diff touches dev-server spawning. **My own touched files
+  (`gestureForwarding.ts`, `selectionSlice.ts`, and every test file above)
+  ran green in every configuration tried, isolated or not.**
+- **Browser proof:** not run — could not confirm the running dev stack
+  (`:5173`/`:5174` per `local-admin-login-blocked` memory) was serving THIS
+  worktree rather than the primary checkout or a sibling worktree; multiple
+  sibling sessions had their own Vite/API pairs up on other ports at the
+  same time (`ps aux`: `:4173`, `:5180`, `:5174`, plus the primary's own dev
+  server). Did not want to spin up a third pair and guess at a free port
+  under that load without a clear owner signal. **Someone with a known-good
+  running stack on this worktree should dogfood:** open a live (Tier 2)
+  board with a `run-project` project, dispatch (or physically make) ~240
+  pointer moves inside a live frame's iframe while parked over one element,
+  and in the parent count `message` events — expect it to drop from ~240 to
+  roughly one per animation frame the gesture spanned, with zero once the
+  cursor stops moving over the same element. Then confirm selection rings,
+  hover rings and a middle-button drag-pan through the same frame still all
+  work (`live-13`'s proof case) — the pan path is the one exception this
+  change carves out of the dedup rule and is the highest-risk regression
+  surface.
+- **Landmines:**
+  - **The "skip when node+rect unchanged" dedup MUST stay gated on
+    `buttons === 0`.** Removing that gate silently breaks drag-pan the
+    moment the cursor sits over one element for the whole gesture (a large
+    background container, most commonly) — no error, no crash, the pan
+    replay on the parent just stops receiving new positions after the
+    first `move` of the drag. There is no unit test that would catch a
+    regression here without dispatching a synthetic `buttons`-nonzero move
+    sequence — the new `runtime.test.ts` case does, but it is easy to
+    "simplify" this away in a future refactor since the naive version reads
+    cleaner.
+  - **`gestureForwarding.ts`'s coalescing state (`pendingMove`,
+    `pendingMoveFrame`, `lastPostedMove`) is per-`installGestureForwarding`
+    call, not module-level** — a fresh bridge gets a fresh baseline, so
+    `lastPostedMove` starting `null` always lets the first move through
+    regardless of what a PREVIOUS bridge instance last posted. Don't hoist
+    it to module scope; multiple bridges (design + live tab) would then
+    cross-contaminate each other's dedup baseline.
+  - **This is a three-way interaction between height/injectors/events per
+    the canvas-engineer brief, but this particular change touches only the
+    events leg** — no height or injector code was touched. The landmine
+    that DOES apply here: coalescing to rAF rate means a `move`'s effect
+    (hover ring position, in particular) now lags by up to one frame behind
+    the pointer during a fast sweep, same as native browser hover already
+    does relative to render — not a new lag class, just worth knowing if a
+    future perf pass tries to go below rAF granularity and hits this same
+    "the parent can't render faster than this anyway" ceiling.
+- **Docs:** `docs/agent-refs/canvas-internals.md`'s bridge section — added a
+  paragraph under the pointer-message table describing the coalescing rule,
+  the button-held exception, and the ordering guarantee.
 
 ### sec-19 — every project starts at run-project (owner decision 2026-09-20)
 - **Agent:** studio-implementer

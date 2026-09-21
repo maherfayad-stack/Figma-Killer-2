@@ -10,11 +10,34 @@
  * own scroll cancelled, so the parent canvas can zoom and pan. In LIVE mode
  * the app keeps every event and scrolls itself. `getMode` is read per event,
  * never captured: the parent declares the mode after the listeners exist.
+ *
+ * `speed-03` — a native `pointermove` fires far faster than the parent can
+ * usefully act on it (measured ≈120/s while idly hovering a live frame, each
+ * one a `postMessage` plus an unconditional store write). `move` is now
+ * coalesced to at most one post per animation frame, carrying the LAST event
+ * of the batch, and the post is skipped entirely when it would resolve to the
+ * SAME node + rect as the last one actually posted — that is the "idle
+ * hover" case the store write existed to guard against and doesn't exist for.
+ * The skip only applies while no button is held: a held button is an active
+ * drag (a pan replay in particular — see `useBridgeFrameInteraction`'s
+ * `panPointerId` branch), where the resolved node commonly does NOT change
+ * (e.g. panning across one full-bleed background element) but the position
+ * still has to reach the parent every frame. `down`/`up`/`click` stay
+ * immediate and always flush a pending move first, so the parent never sees
+ * a press arrive before the move that preceded it.
  */
 import type { OutboundRuntimeMessage, RuntimeMode } from './messages'
 import { NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
 import { nearestNodeOccurrence, rectRelativeToBody } from './nodeDom'
 import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
+
+type PointerRect = { x: number; y: number; width: number; height: number } | null
+
+function rectsEqual(a: PointerRect, b: PointerRect): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height
+}
 
 /** How many stamped ancestors a pointer message carries — deeper than any real component nesting, small enough to never matter on the wire. */
 const MAX_ANCESTORS = 32
@@ -58,13 +81,24 @@ function pointerIdentity(ev: PointerEvent | MouseEvent): { button: number; butto
 
 /** Installs the capture-phase listeners on `doc`; the returned function removes them. */
 export function installGestureForwarding(doc: Document, { getMode, post }: GestureForwardingOptions): () => void {
-function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
+const view = doc.defaultView
+// `view.requestAnimationFrame` when the frame has one; a bare global next
+// (tests that construct `doc` without a `defaultView`); `setTimeout(…, 16)`
+// last so the module never throws in a headless environment with neither —
+// same fallback order `runtime.ts`/`resizeHandles.ts` already use for rAF.
+const scheduleFrame: (cb: () => void) => number =
+  view?.requestAnimationFrame?.bind(view) ??
+  (typeof requestAnimationFrame === 'function' ? requestAnimationFrame : ((cb: () => void) => setTimeout(cb, 16) as unknown as number))
+const cancelFrame: (id: number) => void =
+  view?.cancelAnimationFrame?.bind(view) ??
+  (typeof cancelAnimationFrame === 'function' ? cancelAnimationFrame : ((id: number) => clearTimeout(id)))
+
+function buildPointerMessage(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEvent | MouseEvent): Extract<OutboundRuntimeMessage, { type: 'pointer' }> {
   const target = ev.target instanceof Element ? ev.target : null
-  if (isRuntimeChrome(target)) return
   const anchor = target?.closest(`[${NODE_ID_ATTR}]`) ?? null
   const rect = anchor && doc.body ? rectRelativeToBody(anchor, doc.body) : null
   const occurrence = nearestNodeOccurrence(doc, target)
-  post({
+  return {
     type: 'pointer',
     phase,
     nodeId: occurrence?.nodeId ?? null,
@@ -75,7 +109,45 @@ function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEven
     modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
     ancestors: stampedAncestors(doc, target),
     ...pointerIdentity(ev),
-  })
+  }
+}
+
+// `speed-03` coalescing state for `move` — see the module doc.
+// `lastPostedMove` is the node+rect of the last MOVE actually posted (not
+// every candidate), which is what the "unchanged since the last posted move"
+// skip compares against.
+let pendingMove: PointerEvent | null = null
+let pendingMoveFrame: number | null = null
+let lastPostedMove: { nodeId: string | null; rect: PointerRect } | null = null
+
+function postMove(ev: PointerEvent): void {
+  const target = ev.target instanceof Element ? ev.target : null
+  if (isRuntimeChrome(target)) return
+  const message = buildPointerMessage('move', ev)
+  // A held button is an active drag (pan replay in particular) — position
+  // has to keep flowing even when the resolved node doesn't change.
+  if (ev.buttons === 0 && lastPostedMove && lastPostedMove.nodeId === message.nodeId && rectsEqual(lastPostedMove.rect, message.rect)) {
+    return
+  }
+  lastPostedMove = { nodeId: message.nodeId, rect: message.rect }
+  post(message)
+}
+
+/** Posts the last buffered move now, cancelling its scheduled frame — called before any `down`/`up`/`click` so the parent never sees a press before the move that preceded it. */
+function flushPendingMove(): void {
+  if (pendingMoveFrame !== null) {
+    cancelFrame(pendingMoveFrame)
+    pendingMoveFrame = null
+  }
+  const ev = pendingMove
+  pendingMove = null
+  if (ev) postMove(ev)
+}
+
+function forwardPointer(phase: 'down' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
+  const target = ev.target instanceof Element ? ev.target : null
+  if (isRuntimeChrome(target)) return
+  post(buildPointerMessage(phase, ev))
 }
 /**
  * `live-12` — on a DESIGN frame the click belongs to the editor, as it does
@@ -97,18 +169,31 @@ function editorOwnsGesture(ev: Event): boolean {
   return !target?.closest('[contenteditable]')
 }
 const onPointerDown = (ev: PointerEvent) => {
+  flushPendingMove()
   forwardPointer('down', ev)
   if (editorOwnsGesture(ev)) {
     ev.preventDefault()
     ev.stopPropagation()
   }
 }
-const onPointerMove = (ev: PointerEvent) => forwardPointer('move', ev)
+const onPointerMove = (ev: PointerEvent) => {
+  pendingMove = ev
+  if (pendingMoveFrame === null) {
+    pendingMoveFrame = scheduleFrame(() => {
+      pendingMoveFrame = null
+      const queued = pendingMove
+      pendingMove = null
+      if (queued) postMove(queued)
+    })
+  }
+}
 const onPointerUp = (ev: PointerEvent) => {
+  flushPendingMove()
   forwardPointer('up', ev)
   if (editorOwnsGesture(ev)) ev.stopPropagation()
 }
 const onClick = (ev: MouseEvent) => {
+  flushPendingMove()
   forwardPointer('click', ev)
   if (editorOwnsGesture(ev)) {
     ev.preventDefault()
@@ -142,6 +227,8 @@ doc.addEventListener('click', onClick, true)
 // scrolls the frame first and the canvas zooms second.
 doc.addEventListener('wheel', onWheel, { capture: true, passive: false })
   return () => {
+    if (pendingMoveFrame !== null) cancelFrame(pendingMoveFrame)
+    pendingMove = null
     doc.removeEventListener('pointerdown', onPointerDown, true)
     doc.removeEventListener('pointermove', onPointerMove, true)
     doc.removeEventListener('pointerup', onPointerUp, true)

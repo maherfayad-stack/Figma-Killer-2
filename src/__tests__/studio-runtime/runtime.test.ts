@@ -605,6 +605,110 @@ describe('createStudioRuntimeBridge — design mode owns the gesture', () => {
   })
 })
 
+// `speed-03` — every native pointermove used to become its own postMessage
+// (measured ≈120/s while idly hovering a live frame); `move` is now
+// coalesced to one post per animation frame and skipped when it would repeat
+// the last posted node + rect.
+describe('createStudioRuntimeBridge — move coalescing (`speed-03`)', () => {
+  function pointerEvent(type: string, init: MouseEventInit): Event {
+    const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+  }
+
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+  }
+
+  function pointerMessages(posted: Array<{ data: unknown }>) {
+    return posted
+      .map((p) => (p.data as { message: Record<string, unknown> }).message)
+      .filter((m) => m.type === 'pointer')
+  }
+
+  it('100 moves inside one animation frame coalesce to a single message carrying the last coordinates', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    for (let i = 0; i < 100; i += 1) {
+      box.dispatchEvent(pointerEvent('pointermove', { clientX: i, clientY: i }))
+    }
+    // Nothing posts before the frame the batch is coalesced onto fires.
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(0)
+
+    await nextFrame()
+    const moves = pointerMessages(posted).filter((m) => m.phase === 'move')
+    expect(moves).toHaveLength(1)
+    expect(moves[0]).toMatchObject({ clientX: 99, clientY: 99, nodeId: 'pages/Home.tsx:3:4' })
+  })
+
+  it('skips the post when the resolved node and rect are unchanged from the last posted move', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 1, clientY: 1 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(1)
+
+    // Same node, same rect (happy-dom has no layout engine — every element's
+    // `getBoundingClientRect()` is the zero rect, so this also covers the
+    // "both null-ish" background case) — a different client position alone
+    // must not produce a second post.
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 40, clientY: 40 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(1)
+
+    // Genuinely leaving the node produces a new post.
+    document.body.appendChild(document.createElement('span'))
+    box.remove()
+    document.dispatchEvent(pointerEvent('pointermove', { clientX: 41, clientY: 41 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(2)
+  })
+
+  it('keeps posting while a button is held, even over the same node + rect — a pan replay needs every position', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    box.dispatchEvent(pointerEvent('pointerdown', { button: 1, buttons: 4, clientX: 0, clientY: 0 }))
+    box.dispatchEvent(pointerEvent('pointermove', { buttons: 4, clientX: 10, clientY: 10 }))
+    await nextFrame()
+    box.dispatchEvent(pointerEvent('pointermove', { buttons: 4, clientX: 20, clientY: 20 }))
+    await nextFrame()
+
+    const moves = pointerMessages(posted).filter((m) => m.phase === 'move')
+    expect(moves).toHaveLength(2)
+    expect(moves.map((m) => m.clientX)).toEqual([10, 20])
+  })
+
+  it('flushes a pending move before a down, so the parent never sees the down first', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    // The move is still pending (no frame has fired) when the down lands.
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 5, clientY: 5 }))
+    box.dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }))
+
+    const phases = pointerMessages(posted).map((m) => m.phase)
+    expect(phases).toEqual(['move', 'down'])
+  })
+})
+
 // `live-13` — the frame draws and drags the resize handles; the parent commits.
 describe('createStudioRuntimeBridge — resize handles', () => {
   const FRAME = '[data-canvas-resize-frame]'
