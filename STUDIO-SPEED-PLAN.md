@@ -10,15 +10,17 @@ after a reload" before today).
 
 ## What the user feels, and what it measures as
 
-| Interaction | Today | Cause (short) | Target |
+| Interaction | Morning of 2026-09-21 | After wave 1 (measured on the running stack, same evening) | Target |
 |---|---|---|---|
-| Type a number in the properties panel, live frame | **2.18 s** until the frame changes (save request fires at +2008 ms, takes 36 ms, HMR lands ~140 ms later; parent does no long task) | Fixed 2 s autosave debounce; no optimistic in-frame style op | **≤ 50 ms** visible, source written ≤ 300 ms after the last keystroke |
-| Scrub a number (drag) in the panel, live frame | no feedback until the write lands | scrub preview goes only to the portal `NodeRenderer` | live preview at pointer rate |
-| Click an element in a live frame | 17 ms warm, **235 ms cold** | cold: two documents per Tier 2 frame both running a selection overlay + forced-layout anchor measure per frame per selection | ≤ 30 ms warm, ≤ 100 ms cold |
-| Press Delete on a node that gets refused | **393 ms** long task | refusal itself is O(1); the cost is a cold `RefusalDialog` mount inside the keydown task plus store fan-out | ≤ 50 ms to visible response |
-| Move the mouse over a live frame | 1 cross-frame message + 1 unconditional store write per native pointermove (≈120/s) | no throttle in the runtime, no dedup in `hoverNode` | ≤ 1 store write per animation frame, none when the hovered node is unchanged |
-| Drag a component over a live frame | **no drop line**, ghost freezes at the frame edge | parent `window` pointer listeners go silent inside a cross-origin iframe; the relay is portal-only; the resolver scans an empty scope | drop line at 60 fps inside live frames; asset cards draggable |
-| Open a project | `/load` **1.05 s** for test4 | CSS registry rebuild per load, thumbnail, full page parse on cold cache | ≤ 300 ms warm |
+| Type a number in the properties panel, live frame | 2.18 s | **75 ms** visible (in-frame preview); source written at 44 ms (`speed-01` PR #207, `speed-02` PR #206) | ≤ 50 ms visible, write ≤ 300 ms |
+| Scrub a number in the panel, live frame | no feedback until the write | previews through the same in-frame rule (`speed-01`) | live at pointer rate |
+| Click an element in a live frame | 17 ms warm, 235 ms cold | 17 ms warm, **123–143 ms cold** across three fresh board loads (`speed-04` PR #213) | ≤ 30 warm, ≤ 100 cold |
+| Press Delete on a refused node | 393 ms long task | dialog opened in a transition; 44–57 ms keydown→dialog on the perf fixture (`speed-05` PR #210) | ≤ 50 ms |
+| Move the mouse over a live frame | 1 message + 1 store write per pointermove | **240 moves → 1 message**, no store write when unchanged (`speed-03` PR #208) | ≤ 1 write per frame |
+| Drag a component over a live frame | no drop line, ghost froze at the edge; asset cards not draggable | asset cards drag; the box tracks inside the frame and shows before/after lines against real containers (`speed-06` PRs #212 + #214) | drop line at 60 fps |
+| Click a design-system Button in a live frame | selected the page container | selects the Button (`live-17` PR #209) | — |
+| Double-click text in a live frame | nothing | editable in 87 ms, Enter commits, written to source (`live-18` PR #211) | — |
+| Open a project | `/load` 1.05 s | unchanged — `speed-07` not started | ≤ 300 ms warm |
 
 ## Work orders, in the order they should ship
 
@@ -153,6 +155,16 @@ Unify `frameMountPool.ts` and `liveFramePool.ts`, keep bridge frames alive acros
 page switches, and prefer posters over a second live document while booting.
 Lower priority than the above because it improves cold cases, not the per-action
 loop.
+
+## Status after wave 1 (2026-09-21 evening)
+
+Shipped and measured: speed-01, 02, 03, 04, 05, 06, plus `live-17` (component
+instance selection) and `live-18` (inline text editing), all stacked on
+`fix/live-frame-selection-chrome` (#203) and
+`fix/live-dev-server-survives-api-restart` (#204) and integrated on
+`tmp/speed-integration`, which the owner's running stack serves. Not started:
+speed-07 (project open), speed-08 (CI budgets — partial: e2e budgets exist for
+cold click and the refusal dialog), speed-09 (frame pool).
 
 ## Sequencing
 
