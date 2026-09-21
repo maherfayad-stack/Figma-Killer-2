@@ -388,6 +388,8 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
         rect,
         clientX: ev.clientX,
         clientY: ev.clientY,
+        screenX: ev.screenX,
+        screenY: ev.screenY,
         modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
         button: ev.button,
         buttons: ev.buttons,

@@ -100,6 +100,8 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     rect: { x: 0, y: 0, width: 10, height: 10 },
     clientX: 5,
     clientY: 5,
+    screenX: 105,
+    screenY: 205,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
     button: 0,
     buttons: 1,
@@ -115,6 +117,8 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     rect: null,
     clientX: 0,
     clientY: 0,
+    screenX: 0,
+    screenY: 0,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
     button: 0,
     buttons: 1,
@@ -266,6 +270,8 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         rect: null,
         clientX: 0,
         clientY: 0,
+        screenX: 0,
+        screenY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
         button: 0,
         buttons: 1,
@@ -274,6 +280,33 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         ancestors: [],
       }),
     ).toBe(false)
+  })
+
+  // `live-19` — the pan-replay fix's whole premise: `screenX`/`screenY` must
+  // round-trip through the schema like every other numeric pointer field,
+  // and a message missing either is rejected rather than silently defaulted
+  // (a silent default would reintroduce the exact bug the fix closes).
+  it('round-trips screenX/screenY on a pointer message and rejects one missing either field', () => {
+    const base = {
+      type: 'pointer',
+      phase: 'move',
+      nodeId: null,
+      occurrenceIndex: 0,
+      rect: null,
+      clientX: 12,
+      clientY: 34,
+      modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      button: -1,
+      buttons: 4,
+      pointerId: 1,
+      pointerType: 'mouse',
+      ancestors: [],
+    }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, screenX: -500.5, screenY: 900 })).toBe(true)
+    const { screenX: _screenX, ...missingScreenX } = { ...base, screenX: 0, screenY: 0 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, missingScreenX)).toBe(false)
+    const { screenY: _screenY, ...missingScreenY } = { ...base, screenX: 0, screenY: 0 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, missingScreenY)).toBe(false)
   })
 
   // `live-13` — the two resize messages carry only what the store needs: an
@@ -286,7 +319,7 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
   })
 
   it('rejects a pointer message with an unknown pointer type or an out-of-range button', () => {
-    const base = { type: 'pointer', phase: 'down', nodeId: 'n1', occurrenceIndex: 0, rect: null, clientX: 0, clientY: 0, modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }, ancestors: [], pointerId: 1 }
+    const base = { type: 'pointer', phase: 'down', nodeId: 'n1', occurrenceIndex: 0, rect: null, clientX: 0, clientY: 0, screenX: 0, screenY: 0, modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }, ancestors: [], pointerId: 1 }
     expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'mouse' })).toBe(true)
     expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'stylus' })).toBe(false)
     expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 7, buttons: 4, pointerType: 'mouse' })).toBe(false)

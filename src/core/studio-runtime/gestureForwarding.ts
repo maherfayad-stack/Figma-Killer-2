@@ -106,6 +106,11 @@ function buildPointerMessage(phase: 'down' | 'move' | 'up' | 'click', ev: Pointe
     rect,
     clientX: ev.clientX,
     clientY: ev.clientY,
+    // `live-19` — `ev` is a `PointerEvent` for down/move/up and a plain
+    // `MouseEvent` for click; both carry `screenX`/`screenY`. See the field's
+    // own schema doc (`messages.ts`) for why the parent needs it.
+    screenX: ev.screenX,
+    screenY: ev.screenY,
     modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
     ancestors: stampedAncestors(doc, target),
     ...pointerIdentity(ev),

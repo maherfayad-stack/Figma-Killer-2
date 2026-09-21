@@ -395,6 +395,8 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           rect: message.rect,
           clientX: message.clientX,
           clientY: message.clientY,
+          screenX: message.screenX,
+          screenY: message.screenY,
           modifiers: message.modifiers,
           button: message.button,
           buttons: message.buttons,

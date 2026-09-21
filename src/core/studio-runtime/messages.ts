@@ -422,6 +422,19 @@ export const PointerMessageSchema = Type.Object({
   pointerId: Type.Integer({ minimum: 0, maximum: 2_147_483_647 }),
   pointerType: PointerTypeSchema,
   /**
+   * `live-19` — the pointer's position in SCREEN pixels (`MouseEvent.screenX/Y`),
+   * identical in the child and the parent regardless of any CSS transform on
+   * the iframe and immune to the one-to-two-compositor-frame lag between the
+   * parent's own transform write landing and the OUT-OF-PROCESS iframe's last
+   * committed layout catching up to it (`useBridgeFrameInteraction.ts`'s
+   * module doc has the measured numbers). `clientX/clientY` above are frame-
+   * local and therefore USELESS for a pan replay's delta once the frame
+   * itself is moving in response to that same replay — `screenX/screenY` is
+   * what breaks that feedback loop.
+   */
+  screenX: Type.Number(),
+  screenY: Type.Number(),
+  /**
    * `live-12` — every stamped ancestor of the hit, innermost first (`nodeId`
    * repeated as the first entry), bounded. The runtime stamps by SOURCE
    * position, so a click inside a design-system button lands on that
