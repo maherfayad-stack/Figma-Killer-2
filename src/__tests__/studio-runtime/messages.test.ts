@@ -62,6 +62,18 @@ const inboundSamples: InboundRuntimeMessage[] = [
     index: 1,
   },
   { type: 'optimistic.text', nodeId: 'n1', occurrenceIndex: 0, text: 'updated' },
+  {
+    type: 'optimistic.style',
+    ref: { nodeId: 'n1', occurrenceIndex: 0 },
+    patch: { width: '240px', backgroundColor: 'red' },
+  },
+  {
+    type: 'optimistic.style',
+    ref: { nodeId: 'n1', occurrenceIndex: 0 },
+    patch: { color: 'blue' },
+    className: 'card',
+  },
+  { type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } },
 ]
 
 const outboundSamples: OutboundRuntimeMessage[] = [
@@ -272,6 +284,80 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         requestId: 'r1',
         measurements: [{ nodeId: 'n1', rect: null, computedStyle: {} }],
       }),
+    ).toBe(false)
+  })
+})
+
+// `speed-01` — the optimistic style patch is bounded at the schema, since a
+// script co-resident with `runtime.ts` in the live frame's document could
+// otherwise forge this message directly (`sec-06`'s "same-realm spoofing").
+describe('optimistic.style — bounds', () => {
+  const baseRef = { nodeId: 'n1', occurrenceIndex: 0 }
+
+  it('accepts a patch at the 64-property ceiling and rejects one over it', () => {
+    const at: Record<string, string> = {}
+    // 64 distinct, letters-only keys: two-letter suffixes cover 0..63.
+    for (let i = 0; i < 64; i++) {
+      const key = `prop${String.fromCharCode(97 + Math.floor(i / 26))}${String.fromCharCode(97 + (i % 26))}`
+      at[key] = 'red'
+    }
+    expect(Object.keys(at)).toHaveLength(64)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: at })).toBe(true)
+
+    const over = { ...at, oneMore: 'red' }
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: over })).toBe(false)
+  })
+
+  it('rejects a property key with a digit or symbol', () => {
+    for (const key of ['prop1', 'background-color-2', 'font_size', 'width;']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { [key]: 'red' } }),
+      ).toBe(false)
+    }
+  })
+
+  it('accepts kebab-case and camelCase property keys, and a (digit-free) CSS custom property', () => {
+    for (const key of ['background-color', 'backgroundColor', '--token']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { [key]: 'red' } }),
+      ).toBe(true)
+    }
+  })
+
+  it('rejects a value carrying `;`, `}`, `<`, or `!important`', () => {
+    for (const value of ['red; color: blue', 'red } .x { color: blue', '<img onerror=alert(1)>', 'red !important']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: value } }),
+      ).toBe(false)
+    }
+  })
+
+  it('rejects a value over 256 characters', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: 'x'.repeat(257) } }),
+    ).toBe(false)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: 'x'.repeat(256) } }),
+    ).toBe(true)
+  })
+
+  it('rejects a className carrying whitespace, `{`, `}`, `;`, or `<`', () => {
+    for (const className of ['card foo', 'card{', 'card}', 'card;', 'card<x']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, {
+          type: 'optimistic.style',
+          ref: baseRef,
+          patch: { color: 'red' },
+          className,
+        }),
+      ).toBe(false)
+    }
+  })
+
+  it('accepts optimistic.style:clear with only a ref, and rejects one missing occurrenceIndex', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style:clear', ref: baseRef })).toBe(true)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style:clear', ref: { nodeId: 'n1' } }),
     ).toBe(false)
   })
 })

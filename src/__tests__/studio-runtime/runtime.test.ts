@@ -275,6 +275,138 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
   })
 })
 
+// `speed-01` — a properties-panel style commit/scrub previewed in-frame
+// ahead of the file write + HMR round trip.
+describe('createStudioRuntimeBridge — optimistic style', () => {
+  const STYLE_TAG = 'studio-runtime-optimistic-style'
+  const STYLE_ATTR = 'data-studio-optimistic-style'
+
+  function makeFakeHot() {
+    const handlers = new Map<string, () => void>()
+    return {
+      hot: { on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => { handlers.set(event, cb) } },
+      fireBeforeUpdate: () => handlers.get('vite:beforeUpdate')?.(),
+      fireAfterUpdate: () => handlers.get('vite:afterUpdate')?.(),
+    }
+  }
+
+  it("applies an inline-target patch as a kebab-cased, !important stylesheet rule, never touching the element's own style", () => {
+    document.body.innerHTML = `<div data-node-id="n1" style="color: blue"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { backgroundColor: 'red', width: '100px' },
+    })
+
+    const el = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    expect(el.hasAttribute(STYLE_ATTR)).toBe(true)
+    expect(el.getAttribute('style')).toBe('color: blue')
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).toContain('background-color: red !important')
+    expect(sheet).toContain('width: 100px !important')
+  })
+
+  it('re-applying to the same ref REPLACES its rule rather than appending a second one', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'green' } })
+
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).not.toContain('red')
+    expect(sheet.match(/color:/g)).toHaveLength(1)
+    expect(sheet).toContain('color: green !important')
+  })
+
+  it('a class-target patch writes `.className { … }` and touches no element at all', () => {
+    document.body.innerHTML = `<div data-node-id="n1" class="card"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { color: 'red' },
+      className: 'card',
+    })
+
+    expect(document.getElementById(STYLE_TAG)?.textContent).toContain('.card { color: red !important; }')
+    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+  })
+
+  it('clear drops the rule and the attribute for that ref, and no-ops for a ref with nothing active', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+
+    expect(() =>
+      bridge!.handleMessage({ type: 'optimistic.style:clear', ref: { nodeId: 'missing', occurrenceIndex: 0 } }),
+    ).not.toThrow()
+
+    bridge.handleMessage({ type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } })
+
+    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+  })
+
+  it('vite:beforeUpdate reverts every optimistic style rule and attribute; vite:afterUpdate does the same for a frame that missed the before', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div><div data-node-id="n2" class="card"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireBeforeUpdate, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    fireBeforeUpdate()
+    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n2', occurrenceIndex: 0 },
+      patch: { color: 'blue' },
+      className: 'card',
+    })
+    fireAfterUpdate()
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+  })
+
+  it('repositions the selection ring after an apply — inline target and class target both', async () => {
+    document.body.innerHTML = `<div data-node-id="n1" class="card"></div>`
+    const target = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    let call = 0
+    target.getBoundingClientRect = () => {
+      call += 1
+      const x = call === 1 ? 0 : call * 10
+      return { left: x, top: 0, width: 10, height: 10, right: x + 10, bottom: 10, x, y: 0, toJSON: () => ({}) }
+    }
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
+    const ring = document.querySelector<HTMLElement>('[data-canvas-selection-ring]')!
+    expect(ring.style.transform).toBe('translate(0px, 0px)')
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(ring.style.transform).not.toBe('translate(0px, 0px)')
+
+    const afterInline = ring.style.transform
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { color: 'blue' },
+      className: 'card',
+    })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(ring.style.transform).not.toBe(afterInline)
+  })
+})
+
 describe('createStudioRuntimeBridge — measure', () => {
   it('replies with measure:result carrying a rect and the requested computed-style properties', () => {
     document.body.innerHTML = `<div data-node-id="m1"></div>`

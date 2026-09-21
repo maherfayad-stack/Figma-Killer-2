@@ -58,3 +58,20 @@ export function broadcastOptimisticDelete(nodeId: string): void {
 export function broadcastOptimisticMove(nodeId: string, parentNodeId: string, index: number): void {
   for (const adapter of bridgeAdapters()) adapter.optimistic.move(nodeId, parentNodeId, index)
 }
+
+/**
+ * `speed-01` — the same broadcast-and-let-absent-frames-no-op mechanism
+ * above, for a properties-panel style commit or scrub preview
+ * (`commitApi.ts`'s `writeToTarget`/`previewToTarget`). `nodeId` is always a
+ * real canonical id (a style write never targets a placeholder the way an
+ * in-flight `insert` can) — `className`, when present, is a CLASS-target
+ * write; see `FrameDocumentAdapter.ts`'s `OptimisticDomOps.style` doc.
+ */
+export function broadcastOptimisticStyle(nodeId: string, patch: Record<string, string>, className?: string): void {
+  for (const adapter of bridgeAdapters()) adapter.optimistic.style(nodeId, patch, className)
+}
+
+/** Drops whatever optimistic style rule every bridge frame currently has active for `nodeId` — a scrub ended with no commit, or a field lost focus. */
+export function broadcastOptimisticStyleClear(nodeId: string): void {
+  for (const adapter of bridgeAdapters()) adapter.optimistic.clearStyle(nodeId)
+}

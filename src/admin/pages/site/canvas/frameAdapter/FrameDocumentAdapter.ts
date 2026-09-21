@@ -65,6 +65,20 @@ export interface OptimisticDomOps {
   delete(nodeId: string): void
   move(nodeId: string, parentNodeId: string, index: number): void
   text(nodeId: string, text: string): void
+  /**
+   * `speed-01` — a properties-panel style commit or scrub preview, applied
+   * as a stylesheet rule (never `nodeId`'s own inline `style`, which the
+   * eventual React re-render also writes — see `@core/studio-runtime`'s
+   * `optimisticStyle.ts` for why an inline preview can never be cleared
+   * safely). `patch` keys are CSS property names (camelCase or kebab-case);
+   * `className`, when present, means this is a CLASS-target write — the rule
+   * selector becomes `.<className>` instead of one scoped to `nodeId` alone,
+   * reaching every element in the frame carrying that class, exactly the
+   * blast radius the real class write will have.
+   */
+  style(nodeId: string, patch: Record<string, string>, className?: string): void
+  /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */
+  clearStyle(nodeId: string): void
 }
 
 export type FrameRuntimeEvent =
