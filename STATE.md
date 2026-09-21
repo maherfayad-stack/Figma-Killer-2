@@ -44,10 +44,11 @@ Archive section at the bottom of this file indexes them.
 ### speed-06 — drag and drop into live frames, with a drop line and a per-drag candidate snapshot (closes `live-15`)
 
 - **Agent:** canvas-engineer
-- **Stage:** done — branch `feat/speed-06-live-frame-drag-drop`, based on
-  `tmp/speed-integration` (speed-01/02/03 already merged in). Worktree
-  `.tmp/wt-speed-06`. Draft PR opened against `tmp/speed-integration` (link in
-  the handback message).
+- **Stage:** done, with a follow-up fix landed on the same branch/PR — see
+  "Follow-up (2026-09-21, same day)" below. Branch
+  `feat/speed-06-live-frame-drag-drop`, based on `tmp/speed-integration`
+  (speed-01/02/03 already merged in). Worktree `.tmp/wt-speed-06`. PR #212
+  against `tmp/speed-integration` (draft).
 - **Updated:** 2026-09-21.
 - **Goal:** `STUDIO-SPEED-PLAN.md`'s `speed-06` + `live-15`'s three pieces —
   drag a component from the Assets panel or the notch, see the drop line
@@ -259,6 +260,116 @@ Archive section at the bottom of this file indexes them.
   extension of that work order). `live-15`'s own STATE.md entry above is left
   in place rather than deleted, per the "never delete another agent's entry"
   rule — this entry is the record that it shipped.
+
+#### Follow-up (2026-09-21, same day) — the drop line always showed "page root", never a container, into a live frame
+
+- **Trigger:** a real Playwright dogfood (coordinator, on `tmp/speed-integration`
+  after this PR merged) dragged an Assets-panel card ("AlmosaferLogo") into
+  the live SMS frame of `_scratch-undo`. The drag survived entering the
+  frame and the drop box tracked the pointer, but ALWAYS read "Drop
+  AlmosaferLogo at page root" at the full frame rect — never a container —
+  and a `message` listener installed INSIDE the frame saw zero
+  `dropCandidates` requests during a 1.5s drag with several moves.
+- **Investigated and ruled out, with reproductions kept only as the
+  regression tests they became:**
+  - `listFrameAdapters()`/registry mis-keying, `expectedSource`/`ready`
+    handshake, the wire schema, `runtime.ts`'s dispatch case — all verified
+    correct end-to-end (a real `IframeFrameSurface`(bridge) + real
+    `BridgeFrameAdapter`, driven through the actual message-listener spy,
+    posts exactly one `dropCandidates` and resolves a real reply).
+  - Whether `findCanvasViewportAtPoint` could ever return the bare
+    `<iframe>` instead of its wrapper (both carry `data-breakpoint-id` —
+    `IframeFrameSurface`'s own doc explains why) — reproducible in theory
+    (an iframe has no light-DOM children, so `viewport.querySelector('iframe')`
+    would then find nothing and everything downstream would silently fall
+    back to scanning empty light DOM) but NOT reproducible in a test: document
+    order already guarantees the wrapper matches first. **Hardened anyway**
+    (`isViewportCandidate` in `canvasInsertionDrop.ts` excludes any
+    `tagName === 'IFRAME'` match, plus a defensive `iframe` resolution that
+    also handles `viewport` itself being one) since it is cheap, clearly
+    correct, and matches the coordinator's own strongest hypothesis — even
+    though it measurably was not, by itself, the cause.
+  - **Landmine hit while building the repro:** `instanceof HTMLIFrameElement`
+    threw `ReferenceError: HTMLIFrameElement is not defined` in this test
+    environment (bun+happy-dom does not reliably expose that bare global).
+    Real browsers always have it, so this was never a production risk, but
+    the fix (`tagName === 'IFRAME'`, duck-typed, no global constructor
+    dependency) is more correct anyway and matches `canvasDomGeometry.ts`'s
+    own realm-safety posture — if you ever reach for `instanceof
+    HTMLIFrameElement`/`HTMLIFrameElement` bare in a test, expect this.
+- **PROVEN root cause (a dedicated test reproduces it exactly — same
+  symptom, same wrong `location.parentId`):** `useCanvasInsertionDrag`
+  resolves candidates and the insertion TARGET against `canvasPage` — the
+  store's single ACTIVE page — unconditionally, regardless of which page the
+  HOVERED viewport actually renders. A board can show many pages' frames
+  simultaneously (`_scratch-undo`'s SMS screen is its own page file,
+  `pages/SMS.tsx` — not a breakpoint of whatever page happened to be
+  active). Every real candidate `canvasInsertionDragSnapshot.ts` gets back
+  from the hovered frame's OWN tree then fails the `tree.nodes[id]` filter —
+  a different page's node ids never appear in `canvasPage.nodes` — so
+  resolution ALWAYS falls back to "page root" of the WRONG page. (The
+  reproduction sends and replies to a real `dropCandidates` round trip, so
+  the "zero requests" half of the report is not fully explained by this —
+  most likely the coordinator's frame-side listener had a narrower gap than
+  this fix could reproduce from the outside; not pursued further given the
+  proven, testable, and clearly correct fix in hand.)
+- **Fix:** `resolveCanvasPointerInsertionDrop` (`canvasInsertionDrop.ts`)
+  gained an optional `resolvePageForViewport(viewport) => Page | null`; when
+  it names a page, THAT tree — not `canvasPage` — is what candidates,
+  `resolveCanvasInsertionTarget`, and the "page root" fallback's
+  `rootNodeId` all use. `CanvasPointerInsertionDrop` gained a `pageId` field
+  naming which tree `location` was resolved against.
+  `useCanvasInsertionDrag.ts` supplies it by climbing
+  `viewport.closest('[data-page-id]')` — **`BoardFrameView.tsx`'s OWN,
+  already-existing stamp on its outer `.frame` wrapper, not a new one**: a
+  first attempt added a second `data-page-id` on `BreakpointFrame.tsx`'s
+  `.viewport` div and broke `framePoolMountReason.test.tsx`, whose `sample()`
+  reads every `[data-page-id]` element back through `readFrameMountReason` —
+  a second, mount-reason-less element with the same attribute fails its
+  "every frame answers" assertion. **Landmine: `data-page-id` is already
+  owned by `BoardFrameView.tsx`/`useMarqueeSelection.ts` — read it via
+  `.closest()`, never stamp it a second time.** On a successful drop whose
+  `pageId` differs from the active page, `useCanvasInsertionDrag.ts` now
+  calls `openPageInCanvas(resolved.pageId)` BEFORE `onDrop(...)` — every
+  insert action writes through `mutateActiveTree`, so the active document has
+  to already BE the resolved page or the write lands nowhere (or, worse, in
+  the wrong file).
+- **Tests:** `liveFrameInsertionDragTarget.test.tsx` (new) — the
+  `findCanvasViewportAtPoint` hardening, plus the full round-trip
+  integration test the coordinator asked for: a real `IframeFrameSurface`
+  (bridge) + real `BridgeFrameAdapter`, driven through
+  `resolveCanvasPointerInsertionDrop`, asserts EXACTLY ONE `dropCandidates`
+  request is posted for the whole gesture (cached on the second resolve) and
+  that the reply resolves a CONTAINER, not the root.
+  `canvasInsertionDrop.test.ts` gained a `resolvePageForViewport` case (a
+  viewport naming a different page than `canvasPage` resolves against ITS
+  OWN tree) and a `pageId` assertion on the two existing cases.
+- **Verification:** `bun run build`, `bun run lint` clean.
+  `bun test src/__tests__/canvas src/__tests__/studio-runtime
+  src/__tests__/panels` — 2096 pass / 0 fail (this exact set failed once
+  under `--parallel=4` on a stray, unrelated `localizedFrameRendering.test.tsx`
+  and once on my own new test colliding with a sibling file's leaked
+  `document.body` state under load — both reproduced as flaky-under-load,
+  NOT caused by this diff: both pass standalone and alongside the directly
+  adjacent files every time; the drag test file's own `beforeEach` now also
+  clears `document.body` defensively). Full `bun test --parallel=4
+  src/__tests__` (8017 tests, one Bun segfault mid-run, auto-retried, the
+  same known `--isolate` crash documented elsewhere in this file): 8012
+  pass / 5 fail, all five pre-existing/environmental — the four
+  `broadcast… optimistic` tests and `studio-runtime-bundle-fresh`'s own
+  documented `bun test`-environment `Bun.build` quirk (confirmed fresh by a
+  direct `bun run scripts/sync-studio-runtime.ts` re-run — byte-identical to
+  HEAD once reverted; note the sync script's OWN output is
+  **non-deterministic between runs** even with no source change, a fact
+  worth knowing if a future agent sees an unexplained one-line diff in
+  `generated/*.ts` — verify with a second sync + `git diff` before assuming
+  it's a real change). Did not re-run the full `bun run studio-runtime:sync`
+  step for this follow-up: nothing in `@core/studio-runtime` changed.
+- **Browser proof:** not run (no browser-automation tool bound to this
+  session). The coordinator's OWN primary-stack dogfood is the natural next
+  verification step for this exact fix — same drag, same `_scratch-undo`
+  SMS frame, now from whatever page happens to be active when the drag
+  starts.
 
 ### speed-02 — autosave cadence: 2s → 250ms, plus an immediate flush on blur/Enter/scrub-release
 - **Agent:** store-engineer

@@ -1646,3 +1646,26 @@ Not touched here: it is a materially larger, higher-risk refactor (an
 already-synchronous rAF loop that would need to become async-tolerant) that
 the work order this section describes explicitly scoped out. Flagged for a
 follow-up, not silently left broken.
+
+**Follow-up fix (same day) — a board can show more than one page's frames.**
+A live dogfood found the drop line always fell back to "page root", never a
+container, into a live frame that was NOT the store's currently active
+document. Root cause, proven by a dedicated round-trip test: resolution
+ALWAYS filtered candidates against `canvasPage` (the single active page),
+even when the hovered frame showed a DIFFERENT page — a board can have many
+simultaneously, and node ids never collide across pages, so every real
+candidate failed `canvasInsertionDragSnapshot.ts`'s `tree.nodes[id]` check
+and resolution fell back to "page root" of the WRONG page.
+`resolveCanvasPointerInsertionDrop` gained an optional
+`resolvePageForViewport(viewport) => Page | null`; when it names a page,
+THAT tree drives candidates, target resolution, and the page-root fallback's
+`rootNodeId` — not `canvasPage`. `useCanvasInsertionDrag.ts` supplies it by
+climbing `viewport.closest('[data-page-id]')` to `BoardFrameView.tsx`'s
+ALREADY-EXISTING stamp on its outer `.frame` wrapper (never a second copy —
+`framePoolMountReason.test.tsx`'s `sample()` reads every `[data-page-id]`
+element back through `readFrameMountReason`, and a mount-reason-less
+duplicate fails its "every frame answers" assertion). A successful drop
+whose resolved page differs from the active one calls
+`openPageInCanvas(resolved.pageId)` BEFORE the insert commits — every insert
+action writes through `mutateActiveTree`, so the active document has to
+already BE the target page or the write lands nowhere.

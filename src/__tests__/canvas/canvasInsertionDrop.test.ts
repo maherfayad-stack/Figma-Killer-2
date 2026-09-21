@@ -73,6 +73,7 @@ describe('resolveCanvasPointerInsertionDrop', () => {
     })
 
     expect(resolved?.breakpointId).toBe('desktop')
+    expect(resolved?.pageId).toBe('page')
     expect(resolved?.location).toEqual({ parentId: 'container', index: 0 })
     expect(resolved?.preview).toEqual({
       left: 20,
@@ -102,6 +103,7 @@ describe('resolveCanvasPointerInsertionDrop', () => {
     })
 
     expect(resolved?.breakpointId).toBe('mobile')
+    expect(resolved?.pageId).toBe('page')
     expect(resolved?.location).toEqual({ parentId: 'root', index: undefined })
     expect(resolved?.preview).toEqual({
       left: 10,
@@ -111,5 +113,46 @@ describe('resolveCanvasPointerInsertionDrop', () => {
       position: 'inside',
       label: 'Drop video at page root',
     })
+  })
+
+  // `speed-06` follow-up — a board can show many pages' frames at once; the
+  // ACTIVE page (`canvasPage`) is not necessarily the one the hovered
+  // viewport renders.
+  it('resolves against the hovered viewport\'s OWN page when resolvePageForViewport names a different one', () => {
+    const activeTree = page({ root: node('root', 'base.body') }, 'root')
+    // A different page, id deliberately distinct from `activeTree`'s.
+    const otherNodes = {
+      otherRoot: node('otherRoot', 'base.body', ['otherContainer']),
+      otherContainer: node('otherContainer', 'base.container'),
+    }
+    reindexNodeParents(otherNodes)
+    const otherTree: Page = {
+      id: 'other-page',
+      slug: 'other',
+      title: 'Other',
+      rootNodeId: 'otherRoot',
+      nodes: otherNodes,
+    }
+
+    const viewport = document.createElement('div')
+    viewport.dataset.breakpointId = 'mobile'
+    viewport.dataset.pageId = 'other-page'
+    setRect(viewport, { x: 0, y: 0, width: 400, height: 400 })
+    const container = document.createElement('section')
+    container.dataset.nodeId = 'otherContainer'
+    setRect(container, { x: 20, y: 20, width: 200, height: 120 })
+    viewport.append(container)
+    document.body.append(viewport)
+
+    const resolved = resolveCanvasPointerInsertionDrop({
+      canvasPage: activeTree,
+      clientX: 100,
+      clientY: 80,
+      label: 'Drop image',
+      resolvePageForViewport: () => otherTree,
+    })
+
+    expect(resolved?.pageId).toBe('other-page')
+    expect(resolved?.location).toEqual({ parentId: 'otherContainer', index: 0 })
   })
 })
