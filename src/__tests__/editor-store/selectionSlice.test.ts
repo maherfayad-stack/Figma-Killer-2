@@ -83,3 +83,61 @@ describe('selectionSlice — findSelectableNode resolves a shared node id via th
     expect(useEditorStore.getState().activeClassId).toBe('class-b')
   })
 })
+
+// ---------------------------------------------------------------------------
+// `speed-03` — `hoverNode` used to `set()` unconditionally, fanning every
+// coalesced-but-still-repeated `move` message straight out to every mounted
+// selector (overlays × frames, panel sections, layer rows). It now reads
+// current state first and no-ops when nothing changed.
+// ---------------------------------------------------------------------------
+
+describe('selectionSlice.hoverNode — speed-03 dedup', () => {
+  it('does not notify subscribers when hovering the same node/breakpoint/frame again', () => {
+    useEditorStore.getState().hoverNode('node-1', 'bp-1', 'frame-1')
+    let notifications = 0
+    const unsubscribe = useEditorStore.subscribe(() => { notifications += 1 })
+
+    useEditorStore.getState().hoverNode('node-1', 'bp-1', 'frame-1')
+
+    unsubscribe()
+    expect(notifications).toBe(0)
+    expect(useEditorStore.getState().hoveredNodeId).toBe('node-1')
+    expect(useEditorStore.getState().hoveredBreakpointId).toBe('bp-1')
+    expect(useEditorStore.getState().hoveredFrameId).toBe('frame-1')
+  })
+
+  it('still notifies when the node id changes', () => {
+    useEditorStore.getState().hoverNode('node-1', 'bp-1', 'frame-1')
+    let notifications = 0
+    const unsubscribe = useEditorStore.subscribe(() => { notifications += 1 })
+
+    useEditorStore.getState().hoverNode('node-2', 'bp-1', 'frame-1')
+
+    unsubscribe()
+    expect(notifications).toBe(1)
+    expect(useEditorStore.getState().hoveredNodeId).toBe('node-2')
+  })
+
+  it('still notifies when only the breakpoint or frame id changes', () => {
+    useEditorStore.getState().hoverNode('node-1', 'bp-1', 'frame-1')
+    let notifications = 0
+    const unsubscribe = useEditorStore.subscribe(() => { notifications += 1 })
+
+    useEditorStore.getState().hoverNode('node-1', 'bp-2', 'frame-1')
+
+    unsubscribe()
+    expect(notifications).toBe(1)
+    expect(useEditorStore.getState().hoveredBreakpointId).toBe('bp-2')
+  })
+
+  it('clearing an already-clear hover is a no-op', () => {
+    useEditorStore.getState().hoverNode(null)
+    let notifications = 0
+    const unsubscribe = useEditorStore.subscribe(() => { notifications += 1 })
+
+    useEditorStore.getState().hoverNode(null)
+
+    unsubscribe()
+    expect(notifications).toBe(0)
+  })
+})

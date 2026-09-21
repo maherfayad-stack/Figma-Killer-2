@@ -247,11 +247,24 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     applySelection(set, current, next)
   },
 
-  hoverNode: (id, breakpointId = null, frameId = null) => set({
-    hoveredNodeId: id,
-    hoveredBreakpointId: id ? breakpointId : null,
-    hoveredFrameId: id ? frameId : null,
-  }),
+  // `speed-03` — a bridge frame's coalesced `move` still fires once per
+  // animation frame while the pointer sits over the SAME node (its rect can
+  // legitimately keep changing under a pan without the hover target moving),
+  // and a portal frame's native pointermove is uncoalesced entirely. An
+  // unconditional `set()` here fanned that straight out to every mounted
+  // selector (overlays × frames, panel sections, layer rows) — read current
+  // state first and no-op when nothing this slice owns actually changed.
+  hoverNode: (id, breakpointId = null, frameId = null) => {
+    const current = get()
+    const nextBreakpointId = id ? breakpointId : null
+    const nextFrameId = id ? frameId : null
+    if (current.hoveredNodeId === id && current.hoveredBreakpointId === nextBreakpointId && current.hoveredFrameId === nextFrameId) return
+    set({
+      hoveredNodeId: id,
+      hoveredBreakpointId: nextBreakpointId,
+      hoveredFrameId: nextFrameId,
+    })
+  },
 
   clearSelection: () => set({
     selectedNodeIds: [],
