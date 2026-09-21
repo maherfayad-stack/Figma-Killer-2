@@ -57,6 +57,7 @@ import { SelectorHeader } from './SelectorHeader'
 import { MultiSelectorHeader } from './MultiSelectorInspector'
 import { type ClassPickerHandle } from './ClassPicker'
 import { useEditorStore } from '@site/store/store'
+import { flushAutosave } from '@site/hooks/autosaveSchedule'
 import { ProjectVariablesProvider } from '@site/property-controls/ProjectVariablesProvider'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
 import { PanelHeader } from '@admin/shared/PanelHeader'
@@ -79,7 +80,26 @@ function handlePropertiesPanelKeyDown(e: React.KeyboardEvent) {
   if (e.key === 'F6') {
     e.preventDefault()
     useEditorStore.getState().cycleFocusedPanel()
+    return
   }
+  // `speed-02`'s flush, Enter half. React dispatches bubble-phase handlers
+  // innermost-first within one synchronous pass, so by the time THIS handler
+  // (bound to the panel root) runs, an inner field's own Enter handler
+  // (`ScrubInput`/`TextControl`) has already committed the value to the
+  // store — `flushAutosave()` here is guaranteed to see it.
+  if (e.key === 'Enter') flushAutosave()
+}
+
+// `speed-02`'s flush, blur + scrub-release half. Same bubble-order argument
+// as the Enter case above: `onBlur` fires after the field that lost focus
+// already committed (React's synthetic blur bubbles, unlike native DOM
+// blur), and `onPointerUp` fires after `useScrubDrag`'s own `onPointerUp`
+// (bound to the scrub label, deeper in the tree) already called `onCommit`.
+// Guarded by `hasUnsavedChanges` inside `flushAutosave` itself, so a stray
+// blur/pointerup with nothing dirty (a button click, tabbing through
+// read-only chrome) is a no-op rather than an empty save request.
+function handlePropertiesPanelSettle() {
+  flushAutosave()
 }
 
 // ---------------------------------------------------------------------------
@@ -181,6 +201,8 @@ export function PropertiesPanel({ variant = 'floating' }: PropertiesPanelProps) 
       data-field-skin="inspector"
       onKeyDown={handlePropertiesPanelKeyDown}
       onFocus={() => data.setFocusedPanel('properties')}
+      onBlur={handlePropertiesPanelSettle}
+      onPointerUp={handlePropertiesPanelSettle}
       onClick={(e) => e.stopPropagation()}
       style={
         variant === 'floating'
