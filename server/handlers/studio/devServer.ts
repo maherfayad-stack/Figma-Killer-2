@@ -444,7 +444,12 @@ function adoptEntry(
     phase: 'booting',
     baseUrl: null,
     urlPromise: Promise.resolve(null),
-    log: `[studio] adopted the dev server a previous run left ready (pid ${record.pid}, ${record.baseUrl}).\n`,
+    // No URL in this line, deliberately: `pumpAndWatch` falls back to scanning
+    // the whole log for the "Local:" URL, and a respawn after a stale record
+    // prefixes this log onto the fresh entry's — the fresh server's URL was
+    // being read off THIS line (old port, trailing `).`) instead of its own
+    // output (`live-14`).
+    log: `[studio] adopted the dev server a previous run left ready (pid ${record.pid}, port ${new URL(record.baseUrl).port}).\n`,
     error: null,
     pid: record.pid,
     startedAt: record.startedAt,

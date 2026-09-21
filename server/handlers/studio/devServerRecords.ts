@@ -20,10 +20,30 @@ import { join, resolve } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
 
+/**
+ * `live-14` — two answers `process.kill(pid, 0)` gets wrong on its own: a pid
+ * of `0` signals this process's whole group (always "alive"), and a ZOMBIE —
+ * a child that exited under a parent that never reaped it, which is exactly
+ * what a `bun --watch` in-place restart leaves behind — still accepts the
+ * signal. A zombie's origin is gone, so it must read as dead or the proxy
+ * keeps forwarding to a closed port. `ps` is the portable way to see the
+ * `Z` state without procfs (macOS has none).
+ */
 export function isProcessAlive(pid: number): boolean {
+  if (!Number.isInteger(pid) || pid <= 0) return false
   try {
     process.kill(pid, 0)
-    return true
+  } catch {
+    return false
+  }
+  return !isZombie(pid)
+}
+
+function isZombie(pid: number): boolean {
+  if (process.platform === 'win32') return false
+  try {
+    const result = Bun.spawnSync(['ps', '-o', 'stat=', '-p', String(pid)], { stdout: 'pipe', stderr: 'ignore' })
+    return result.stdout.toString().trim().startsWith('Z')
   } catch {
     return false
   }

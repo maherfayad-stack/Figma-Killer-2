@@ -232,13 +232,20 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     },
   )
 
-  it('delete removes the element', () => {
-    document.body.innerHTML = `<div data-node-id="gone"></div>`
+  // `live-14` — a detached node broke React's next reconciliation and took
+  // the sibling below with it; a delete hides, and the update puts it back.
+  it('delete hides the element through a stylesheet rule, never detaches it or touches its inline style', () => {
+    document.body.innerHTML = `<div data-node-id="gone" style="color: red"></div><div data-node-id="below"></div>`
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
     bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'gone', occurrenceIndex: 0 })
-    expect(document.querySelector('[data-node-id="gone"]')).toBeNull()
+    const gone = document.querySelector<HTMLElement>('[data-node-id="gone"]')!
+    expect(gone.isConnected).toBe(true)
+    expect(gone.hasAttribute('data-studio-optimistic-hidden')).toBe(true)
+    expect(gone.getAttribute('style')).toBe('color: red')
+    expect(document.getElementById('studio-runtime-optimistic')?.textContent).toContain('[data-studio-optimistic-hidden] { display: none !important; }')
+    expect(document.querySelector('[data-node-id="below"]')?.previousElementSibling).toBe(gone)
   })
 
   it('move re-parents the element at the given index', () => {
@@ -458,6 +465,31 @@ describe('createStudioRuntimeBridge — optimistic-insert ghost sweep', () => {
     fireAfterUpdate()
 
     expect(document.querySelectorAll('[data-studio-optimistic]')).toHaveLength(0)
+  })
+
+  // `live-14` — before React reconciles an update, the DOM is the one it built.
+  it('vite:beforeUpdate un-hides an optimistic delete and puts an optimistic move back; vite:afterUpdate does the same for a frame that missed the before', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireBeforeUpdate, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    document.body.innerHTML = `
+      <div data-node-id="from"><div data-node-id="a"></div><div data-node-id="item"></div><div data-node-id="c"></div></div>
+      <div data-node-id="to"></div>
+    `
+    bridge.handleMessage({ type: 'optimistic.move', nodeId: 'item', occurrenceIndex: 0, parentNodeId: 'to', parentOccurrenceIndex: 0, index: 0 })
+    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'a', occurrenceIndex: 0 })
+    expect(document.querySelector('[data-node-id="to"] [data-node-id="item"]')).not.toBeNull()
+    expect(document.querySelector('[data-node-id="a"]')?.hasAttribute('data-studio-optimistic-hidden')).toBe(true)
+
+    fireBeforeUpdate()
+
+    const from = document.querySelector('[data-node-id="from"]')!
+    expect([...from.children].map((el) => el.getAttribute('data-node-id'))).toEqual(['a', 'item', 'c'])
+    expect(document.querySelector('[data-studio-optimistic-hidden]')).toBeNull()
+
+    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'c', occurrenceIndex: 0 })
+    fireAfterUpdate()
+    expect(document.querySelector('[data-studio-optimistic-hidden]')).toBeNull()
   })
 
   it('still posts hmr:after after sweeping', () => {

@@ -65,6 +65,7 @@ import {
   applyOptimisticInsert,
   applyOptimisticMove,
   applyOptimisticText,
+  revertOptimisticDom,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
@@ -637,7 +638,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     wireHmrStateAcrossUpdates(
       doc,
       options.hot,
-      () => postOutbound({ type: 'hmr:before' }),
+      () => {
+        // Before React reconciles the update: hand it back the DOM it built
+        // (`live-14`, see `optimisticDomOps.ts`).
+        revertOptimisticDom(doc)
+        postOutbound({ type: 'hmr:before' })
+      },
       () => {
         sweepOptimisticGhosts(doc)
         // The source now carries a committed resize — React re-rendered with

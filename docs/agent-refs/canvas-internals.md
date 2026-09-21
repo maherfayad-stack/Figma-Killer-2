@@ -1407,6 +1407,16 @@ Three rules that fell out of wiring this, each pinned by a test:
   check answered `null` and the reloaded frame ran without its bridge until
   the parent tab was refreshed. Both sources are still checked against the
   allowlist (`resolveParentOrigin`).
+- **An optimistic delete hides; an optimistic move is put back before React
+  reconciles.** The app's React root diffs its next render by sibling
+  position against the DOM it built. A delete that detached the node left
+  React updating that invisible node into the NEXT sibling and removing the
+  sibling's own node — the element below the deleted one vanished too, until
+  a reload (`live-14`). `optimisticDomOps.ts` now hides a deleted node with
+  `data-studio-optimistic-hidden` (one runtime stylesheet rule, never inline
+  `style`), records what a move displaced, and `revertOptimisticDom` restores
+  both on `vite:beforeUpdate` (and again on `vite:afterUpdate`). The real
+  change then arrives through React from the source.
 - **The runtime's chrome is exempt from the design-mode rule.** A press on a
   resize handle (inside the selection overlay root) is neither forwarded as a
   pointer on some node nor cancelled before the handle's own listener sees it.
