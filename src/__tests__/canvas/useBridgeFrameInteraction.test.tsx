@@ -204,6 +204,50 @@ describe('useBridgeFrameInteraction', () => {
     unregisterFrameAdapter(iframe)
   })
 
+  // Reproduces the owner's report: "the canvas keeps wiggling when I click
+  // the middle mouse button and keep panning, but started on a screen." Each
+  // replayed `move` PANS the canvas, which moves the iframe under it, and
+  // `useCanvas`'s DOM transform write is one rAF behind the delta that
+  // caused it — so a naive per-move `getBoundingClientRect()` reprojects the
+  // SAME frame-local point through an ALREADY-PANNED rect, silently folding
+  // the just-applied pan back into the next point. This mock reproduces that
+  // drift directly: the rect moves +80px between `down` and the first
+  // `move`, standing in for one rAF-deferred `applyTransformToDOM` write
+  // landing in between (exactly what happens for real between two
+  // `postMessage`-relayed, rAF-coalesced runtime events — see `speed-03`).
+  it('pins the iframe geometry at pan start, so a rect that drifts mid-gesture (an intervening pan write landing between events) does not feed back into the next converted point', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    let left = 100
+    iframe.getBoundingClientRect = () => ({ left, top: 50, width: 200, height: 300, right: left + 200, bottom: 350, x: left, y: 50, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter, 'bp-mobile')
+    const seen: PointerEvent[] = []
+    for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
+    render(
+      <CanvasSelectionContext.Provider value={NO_SELECTION}>
+        <Harness adapter={adapter} isActive />
+      </CanvasSelectionContext.Provider>,
+    )
+    const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
+    emit({ type: 'pointer', phase: 'down', nodeId: null, rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE })
+    // Simulate the parent's rAF-deferred pan write landing between events —
+    // the iframe has moved +80px right by the time the next move arrives,
+    // exactly what a real, already-applied pan step does to the iframe's rect.
+    left = 180
+    emit({ type: 'pointer', phase: 'move', nodeId: null, rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE, button: -1 })
+    // The frame-local point (40, 60) is UNCHANGED between down and move — a
+    // physically still mouse reports the same local coordinate. The
+    // converted parent point must therefore also stay put: pinned at the
+    // down-time rect (left=100), not reprojected through the drifted rect
+    // (left=180), which would fabricate an 80px delta out of nothing.
+    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
+    expect(seen[1].clientX).toBe(seen[0].clientX)
+    unregisterFrameAdapter(iframe)
+  })
+
   // `speed-06` — a drag that started OUTSIDE this frame entirely (an
   // asset-card drag) and whose pointer has now moved inside this bridge
   // frame's iframe: the runtime's own `pointer` messages must be replayed on

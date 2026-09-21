@@ -28,6 +28,27 @@
  * `CanvasSelectionContext` handlers `NodeRenderer` calls, by node id, with
  * the modifiers the runtime reported.
  *
+ * **The frame→parent point conversion is pinned for the life of a pan
+ * gesture, never re-read mid-drag.** `iframeLocalPointToParentClientPoint`
+ * projects the runtime's frame-local `clientX/clientY` through
+ * `iframe.getBoundingClientRect()` — but panning moves the iframe itself, and
+ * `useCanvas`'s DOM transform write is one `requestAnimationFrame` behind the
+ * delta that caused it (`scheduleTransformWrite`). Re-reading the iframe's
+ * CURRENT rect on every `move` therefore reprojects the SAME (unchanged)
+ * frame-local point through an already-panned rect, silently folding the
+ * pan this hook just applied back into the next point it hands `useCanvas` —
+ * a positive-feedback loop `useCanvas`'s delta-based `onDrag` then compounds
+ * frame over frame into a rapidly oscillating pan (the reported "wiggle").
+ * A portal frame's own relay (`useIframeEventForwarding.ts`) reads the same
+ * rect the same way but never shows this, because that forwarding is
+ * synchronous and same-document — there is no cross-realm `postMessage` +
+ * rAF-coalescing delay (`speed-03`) for the transform write to land inside.
+ * The fix: capture the iframe's rect + viewport once, on the pan's `down`,
+ * and reuse that SAME snapshot for every `move`/`up` of that gesture — the
+ * local→parent map is then a fixed linear scale+offset for the whole pan, so
+ * the delta `useCanvas` computes from two converted points reflects only the
+ * frame-local pointer's own movement, never the pan it is causing.
+ *
  * `speed-06` — a THIRD pointer case, checked before the ordinary hover/up
  * handling: a drag that started OUTSIDE this frame entirely (an asset-card
  * drag, the notch's own drag) and whose pointer has now moved inside this
@@ -96,13 +117,33 @@ function frameElementOf(adapter: FrameDocumentAdapter): HTMLIFrameElement | null
   return null
 }
 
-/** `point`, reported in the frame's own client pixels, as a parent client point on `iframe` — zoom and pan included. */
-function parentClientPoint(iframe: HTMLIFrameElement, point: { x: number; y: number }): { x: number; y: number } {
-  return iframeLocalPointToParentClientPoint(
-    iframe.getBoundingClientRect(),
-    { width: iframe.clientWidth, height: iframe.clientHeight },
-    point,
-  )
+/** A frame's on-screen geometry, snapshotted once rather than re-read mid-gesture — see the module doc's "pinned for the life of a pan gesture" note. */
+interface FrameGeometrySnapshot {
+  rect: { left: number; top: number; width: number; height: number }
+  viewport: { width: number; height: number }
+}
+
+function snapshotFrameGeometry(iframe: HTMLIFrameElement): FrameGeometrySnapshot {
+  return {
+    rect: iframe.getBoundingClientRect(),
+    viewport: { width: iframe.clientWidth, height: iframe.clientHeight },
+  }
+}
+
+/**
+ * `point`, reported in the frame's own client pixels, as a parent client
+ * point on `iframe` — zoom and pan included. `pinned`, when given, is used
+ * INSTEAD of the iframe's current geometry (a pan gesture's own snapshot);
+ * omit it only for a one-shot conversion (wheel, an ordinary hover/click)
+ * that doesn't itself move the iframe out from under the point it's converting.
+ */
+function parentClientPoint(
+  iframe: HTMLIFrameElement,
+  point: { x: number; y: number },
+  pinned?: FrameGeometrySnapshot,
+): { x: number; y: number } {
+  const geometry = pinned ?? snapshotFrameGeometry(iframe)
+  return iframeLocalPointToParentClientPoint(geometry.rect, geometry.viewport, point)
 }
 
 export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, options: BridgeFrameInteractionOptions): void {
@@ -126,10 +167,17 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
     // the click the runtime forwards after that release is still owed a drop.
     let panPointerId: number | null = null
     let dropNextClick = false
-    const replayPointer = (type: 'pointerdown' | 'pointermove' | 'pointerup', event: PointerEventFromFrame) => {
+    // Snapshotted on the pan's `down`, reused for every `move`/`up` of that
+    // SAME gesture — see the module doc. `null` outside an active pan.
+    let panGeometry: FrameGeometrySnapshot | null = null
+    const replayPointer = (
+      type: 'pointerdown' | 'pointermove' | 'pointerup',
+      event: PointerEventFromFrame,
+      pinned?: FrameGeometrySnapshot,
+    ) => {
       const iframe = frameElementOf(adapter)
       if (!iframe) return
-      const point = parentClientPoint(iframe, { x: event.clientX, y: event.clientY })
+      const point = parentClientPoint(iframe, { x: event.clientX, y: event.clientY }, pinned)
       iframe.dispatchEvent(
         new PointerEvent(type, {
           bubbles: true,
@@ -154,7 +202,9 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
           case 'down':
             if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) {
               panPointerId = event.pointerId
-              replayPointer('pointerdown', event)
+              const iframe = frameElementOf(adapter)
+              panGeometry = iframe ? snapshotFrameGeometry(iframe) : null
+              replayPointer('pointerdown', event, panGeometry ?? undefined)
               return
             }
             activateIfNeeded()
@@ -162,7 +212,7 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             return
           case 'move':
             if (panPointerId === event.pointerId) {
-              replayPointer('pointermove', event)
+              replayPointer('pointermove', event, panGeometry ?? undefined)
               return
             }
             if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
@@ -175,7 +225,8 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             if (panPointerId === event.pointerId) {
               panPointerId = null
               dropNextClick = true
-              replayPointer('pointerup', event)
+              replayPointer('pointerup', event, panGeometry ?? undefined)
+              panGeometry = null
               return
             }
             if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
