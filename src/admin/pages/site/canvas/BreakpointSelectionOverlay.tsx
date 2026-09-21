@@ -72,7 +72,7 @@ import type { VisualComponent } from '@core/visualComponents'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
 import { cn } from '@ui/cn'
-import { CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
+import { CanvasFrameAdapterContext, CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
 import { SelectionToolbar } from './SelectionToolbar'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
@@ -82,7 +82,8 @@ import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
-import { registerCanvasDropSurface, unregisterCanvasDropSurface } from './canvasDropSurfaceRegistry'
+import { useCanvasDropSurfaceRegistration } from './useCanvasDropSurfaceRegistration'
+import { isBridgeChromeAdapter, useBridgeSelectionChrome } from './useBridgeSelectionChrome'
 import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
@@ -248,6 +249,18 @@ export function BreakpointSelectionOverlay({
   // component; read here so the tick can hand it the elements it just resolved.
   const schedulerRef = useRef<OverlayMeasureScheduler | null>(null)
   const viewportActions = use(CanvasViewportActionsContext)
+  // `live-13` — the frame's adapter, provided by `BreakpointFrame` around this
+  // overlay. Read from context rather than taken as a prop on purpose: a
+  // `BridgeFrameAdapter` holds the iframe's cross-origin `contentWindow`,
+  // and React's dev-mode render logging walks a component's changed props —
+  // a prop-carried adapter had it reading `location` on that window. For a
+  // Tier 2 bridge frame (no `overlayRoot`, no reachable document) the rings,
+  // resize handles and the toolbar/inspector anchor are driven through it
+  // instead of measured here — see `useBridgeSelectionChrome`; the tick
+  // below must neither measure that chrome (it cannot) nor hide what the
+  // bridge hook placed.
+  const adapter = use(CanvasFrameAdapterContext)
+  const bridgeChrome = isBridgeChromeAdapter(adapter)
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -344,33 +357,14 @@ export function BreakpointSelectionOverlay({
   })
 
   // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
-  //
-  // Registration is the viewport test: this overlay only exists for a frame
-  // that is mounted, which `frameVirtualization.ts` (plus the mount pool)
-  // already decided. There is deliberately no second on-screen check here, and
-  // no store selector enumerating frames — a drag reads this list on every
-  // animation frame, and a `useEditorStore` selector that scanned the board
-  // would re-run on every unrelated store change.
-  //
-  // Gated on `canEditStructureHere` so a read-only session, or a frame whose
-  // breakpoint is not the active one, is never offered as a drop target. The
-  // refs are read through a closure rather than captured, because
-  // `dropLayerRef` is populated by React AFTER this effect runs on the first
-  // commit and `iframeElement` is replaced wholesale on a frame reload.
-  useEffect(() => {
-    if (!canEditStructureHere || !framePageId) return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const key = {}
-    registerCanvasDropSurface(key, {
-      frameId,
-      pageId: framePageId,
-      viewport,
-      iframe: iframeElement,
-      dropLayer: () => reorderDrag.dropLayerRef.current,
-    })
-    return () => unregisterCanvasDropSurface(key)
-  }, [canEditStructureHere, framePageId, frameId, iframeElement, viewportRef, reorderDrag.dropLayerRef])
+  useCanvasDropSurfaceRegistration({
+    enabled: canEditStructureHere,
+    frameId,
+    pageId: framePageId,
+    viewportRef,
+    iframeElement,
+    dropLayerRef: reorderDrag.dropLayerRef,
+  })
 
   // One measurement pass. Reads the freshest selection / hover / toolbar inputs
   // from the latest render closure via useEffectEvent, so the scheduler effect
@@ -402,6 +396,10 @@ export function BreakpointSelectionOverlay({
     const elementCache = nodeElementCacheRef.current!
 
     if (!iframe || !iframeDoc) {
+      // A bridge frame never has a reachable document: its rings are the
+      // runtime's, and `useBridgeSelectionChrome` owns the toolbar/inspector
+      // anchor — hiding them here would undo its placement every tick.
+      if (bridgeChrome) return
       // Nothing measurable (iframe not mounted yet / reloading). Rings/hover/
       // selector-highlight/badge now live INSIDE the iframe document, so when
       // it's gone there is nothing there to hide — only the parent-doc
@@ -621,6 +619,11 @@ export function BreakpointSelectionOverlay({
   const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
     ? (selectedNodeIds[0] ?? null)
     : null
+  // `live-13` — the same rings, hover, handles and anchor for a bridge frame, through its adapter.
+  useBridgeSelectionChrome(bridgeChrome ? adapter : null, {
+    iframeElement, canvasRoot: portalCanvasRoot, selectedNodeIds: showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS,
+    hoverNodeId: showHover ? hoverRingNodeId : null, showToolbar, inspectorNodeId, toolbarRef, inspectorRef, committedTransform,
+  })
   // This component owns `resizeFrameRef`, so this component writes it —
   // the chrome below is handed a setter, never the ref.
   const setResizeFrameElement = (element: HTMLDivElement | null) => {

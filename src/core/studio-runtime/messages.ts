@@ -170,6 +170,19 @@ export const SetAxesMessageSchema = Type.Object({
 })
 
 /** See "Two additions" in the module docblock. */
+/**
+ * `live-13` — which node, if any, carries resize handles right now, decided
+ * by the parent (a single selection whose module can carry an inline style —
+ * `resizeOffer.ts`); the runtime draws and drags them (`resizeHandles.ts`)
+ * and refuses on its own side when the element's computed display ignores a
+ * size. `proportional` is `K4`'s scale tool, re-sent whenever it toggles.
+ */
+export const SetResizeTargetMessageSchema = Type.Object({
+  type: Type.Literal('setResizeTarget'),
+  ref: Type.Union([NodeRefSchema, Type.Null()]),
+  proportional: Type.Boolean(),
+})
+
 export const SetModeMessageSchema = Type.Object({
   type: Type.Literal('setMode'),
   mode: RuntimeModeSchema,
@@ -265,6 +278,7 @@ export const InboundRuntimeMessageSchema = Type.Union([
   MeasureMessageSchema,
   SetAxesMessageSchema,
   SetModeMessageSchema,
+  SetResizeTargetMessageSchema,
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
@@ -298,6 +312,9 @@ const PointerPhaseSchema = Type.Union([
   Type.Literal('click'),
 ])
 
+/** `PointerEvent.pointerType`, or `''` for a plain `MouseEvent` (`click`). */
+const PointerTypeSchema = Type.Union([Type.Literal('mouse'), Type.Literal('pen'), Type.Literal('touch'), Type.Literal('')])
+
 /** Feeds `canvasDnd`, marquee selection, and the prototype Player — see L5. */
 export const PointerMessageSchema = Type.Object({
   type: Type.Literal('pointer'),
@@ -308,6 +325,67 @@ export const PointerMessageSchema = Type.Object({
   clientX: Type.Number(),
   clientY: Type.Number(),
   modifiers: PointerModifiersSchema,
+  /**
+   * `live-13` — the button state the parent needs to tell a PAN from a
+   * selection (a middle-button press, or Space held with the primary button),
+   * and the id that keeps one gesture's moves and its release together when
+   * the parent replays them on the iframe element. `PointerEvent.button`
+   * is `-1` on a move; `buttons` is a five-bit mask.
+   */
+  button: Type.Integer({ minimum: -1, maximum: 4 }),
+  buttons: Type.Integer({ minimum: 0, maximum: 31 }),
+  pointerId: Type.Integer({ minimum: 0, maximum: 2_147_483_647 }),
+  pointerType: PointerTypeSchema,
+  /**
+   * `live-12` — every stamped ancestor of the hit, innermost first (`nodeId`
+   * repeated as the first entry), bounded. The runtime stamps by SOURCE
+   * position, so a click inside a design-system button lands on that
+   * package's own internal element — an id the parent's page tree has never
+   * heard of. The parent walks this chain to the first node it knows (the
+   * call site), which is what the user meant by clicking the button.
+   */
+  ancestors: Type.Array(NodeRefSchema, { maxItems: 32 }),
+})
+
+/**
+ * `live-12` — a wheel gesture inside a DESIGN-mode live frame. The parent
+ * canvas owns zoom and pan, and a cross-origin frame's wheel never reaches it
+ * on its own; the runtime forwards the gesture (having cancelled the frame's
+ * own scroll) and the parent re-dispatches it on the iframe element, exactly
+ * what `useIframeEventForwarding` does for a portal frame. Never sent in live
+ * mode, where the app scrolls itself. Numbers only — nothing here names a
+ * node or reaches the DOM.
+ */
+export const WheelMessageSchema = Type.Object({
+  type: Type.Literal('wheel'),
+  deltaX: Type.Number(),
+  deltaY: Type.Number(),
+  /** `WheelEvent.deltaMode`: 0 pixel, 1 line, 2 page. */
+  deltaMode: Type.Integer({ minimum: 0, maximum: 2 }),
+  clientX: Type.Number(),
+  clientY: Type.Number(),
+  modifiers: PointerModifiersSchema,
+})
+
+/** A committed size, as the source will spell it: an integer pixel count. Bounded so a forged value can never reach the store as an absurd width. */
+const CssPixelLengthSchema = Type.String({ pattern: '^[0-9]{1,6}px$' })
+
+/**
+ * `live-13` — a finished drag on the in-frame resize handles
+ * (`resizeHandles.ts`) that changed the element's size. The frame previewed
+ * the drag itself; the parent commits `patch` to the node's inline style
+ * through the store, exactly the write `useElementResizeDrag` makes for a
+ * portal frame. Only the dimensions the drag changed are present, each an
+ * integer `px` string — nothing here names a selector or reaches the DOM.
+ */
+export const ResizeCommitMessageSchema = Type.Object({
+  type: Type.Literal('resize:commit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  patch: Type.Object({
+    width: Type.Optional(CssPixelLengthSchema),
+    height: Type.Optional(CssPixelLengthSchema),
+  }),
 })
 
 /** Routed by the parent to the existing `textOrigin` writeback (L7) — carries the CURRENT text, not a diff. */
@@ -454,6 +532,8 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   HmrBeforeMessageSchema,
   HmrAfterMessageSchema,
   PointerMessageSchema,
+  WheelMessageSchema,
+  ResizeCommitMessageSchema,
   TextEditMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,

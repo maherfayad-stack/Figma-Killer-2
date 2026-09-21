@@ -83,11 +83,11 @@ interface CanvasSelectionOverlayInjectorProps {
  * for an EXISTING `SELECTION_STYLE_TAG_ID`/`SELECTION_OVERLAY_ROOT_ID` by
  * that exact literal id before creating their own — routing this through
  * `applyOverlay`'s prefixed-id scheme would make that existence check miss,
- * and the two mechanisms would fight. Nothing in the real, running app calls
- * `adapter.select`/`hover` yet (portal mode's selection is driven entirely
- * by `BreakpointSelectionOverlay`'s own `createPortal`, unchanged by this
- * work order) — that only starts mattering once a bridge-mode caller for
- * `CanvasSelectionOverlayInjector` exists (a later batch).
+ * and the two mechanisms would fight. Portal mode's selection is driven
+ * entirely by `BreakpointSelectionOverlay`'s own `createPortal`; the
+ * `adapter.select`/`hover` path is the BRIDGE frame's (`live-13`,
+ * `useBridgeSelectionChrome`), where the runtime draws the rings itself and
+ * receives the editor's ring tokens as an `applyOverlay` stylesheet.
  */
 export function CanvasSelectionOverlayInjector({ onRootReady }: CanvasSelectionOverlayInjectorProps) {
   const adapter = useContext(CanvasFrameAdapterContext)

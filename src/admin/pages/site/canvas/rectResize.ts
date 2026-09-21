@@ -23,7 +23,7 @@
  * import it too.
  */
 
-export type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+import type { ResizeHandle } from '@core/studio-runtime'
 
 export interface ResizeRect {
   x: number
@@ -31,9 +31,6 @@ export interface ResizeRect {
   width: number
   height: number
 }
-
-/** Every handle, in visual order (top-left clockwise) — the order each view renders them in. */
-export const RESIZE_HANDLES: ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 /**
  * The next rect after dragging `handle` by (`dx`, `dy`) board units from

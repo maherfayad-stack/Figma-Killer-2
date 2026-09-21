@@ -101,6 +101,80 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     expect(last.refs).toEqual([{ nodeId: 'row:1:1', occurrenceIndex: 1 }])
   })
 
+  // `live-12` — a reloaded frame document boots with no mode; the parent's last declared mode follows every `ready`.
+  it('re-sends the declared interaction mode when the frame says ready a second time', () => {
+    const stub = makeStubChannel({ announceReady: false })
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: [] })
+    adapters.push(adapter)
+    adapter.setInteractionMode('design')
+    const modes = () => stub.posted.map((e) => e.message).filter((m) => m.type === 'setMode').map((m) => (m as { mode: string }).mode)
+    expect(modes()).toEqual([])
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }))
+    expect(modes()).toEqual(['design'])
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }))
+    expect(modes()).toEqual(['design', 'design'])
+  })
+
+  // `live-12` — the wheel gesture a design-mode frame forwards so the parent canvas can zoom.
+  it('emits a wheel event for the runtime\'s wheel message, numbers and modifiers intact', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: [] })
+    adapters.push(adapter)
+
+    const received: unknown[] = []
+    adapter.on('wheel', (msg) => received.push(msg))
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'wheel',
+        deltaX: 3,
+        deltaY: -120,
+        deltaMode: 0,
+        clientX: 40,
+        clientY: 60,
+        modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false },
+      }),
+    )
+    expect(received).toEqual([
+      { type: 'wheel', deltaX: 3, deltaY: -120, deltaMode: 0, clientX: 40, clientY: 60, modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false } },
+    ])
+  })
+
+  // `live-12` — a click inside a design-system button is stamped with the package's own source position.
+  it('resolves a pointer hit to the innermost stamped ancestor the page tree knows', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['pages/Home.tsx:10:6', 'pages/Home.tsx:12:8'] })
+    adapters.push(adapter)
+    const received: Array<string | null> = []
+    adapter.on('pointer', (msg) => received.push(msg.nodeId))
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'pointer',
+        phase: 'click',
+        nodeId: 'design-system/components/Button.jsx:101:26',
+        occurrenceIndex: 0,
+        rect: null,
+        clientX: 0,
+        clientY: 0,
+        modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+
+        button: 0,
+
+        buttons: 1,
+
+        pointerId: 1,
+
+        pointerType: 'mouse',
+        ancestors: [
+          { nodeId: 'design-system/components/Button.jsx:101:26', occurrenceIndex: 0 },
+          { nodeId: 'design-system/components/Button.jsx:90:4', occurrenceIndex: 0 },
+          { nodeId: 'pages/Home.tsx:12:8', occurrenceIndex: 0 },
+          { nodeId: 'pages/Home.tsx:10:6', occurrenceIndex: 0 },
+        ],
+      }),
+    )
+    expect(received).toEqual(['pages/Home.tsx:12:8'])
+  })
+
   it('resolves an inbound pointer event back to the correct canonical row, not always row 0', () => {
     const stub = makeStubChannel()
     const adapter = new BridgeFrameAdapter({
@@ -122,6 +196,15 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
       clientX: 0,
       clientY: 0,
       modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+
+      button: 0,
+
+      buttons: 1,
+
+      pointerId: 1,
+
+      pointerType: 'mouse',
+      ancestors: [],
     })
     stub.dispatch(envelope)
 
@@ -146,10 +229,43 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
         clientX: 0,
         clientY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+
+        button: 0,
+
+        buttons: 1,
+
+        pointerId: 1,
+
+        pointerType: 'mouse',
+        ancestors: [],
       }),
     )
 
     expect(received).toEqual(['x:1:1'])
+  })
+
+  // `live-13` — the resize target crosses the wire as a stamp + occurrence, and the commit comes back canonical.
+  it('setResizeTarget posts the wire ref for a .map() row, and null to clear', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    adapter.setResizeTarget({ nodeId: 'row:1:1#1' }, { proportional: true })
+    adapter.setResizeTarget(null, { proportional: false })
+    const last = stub.posted.slice(-2).map((e) => e.message)
+    expect(last).toEqual([
+      { type: 'setResizeTarget', ref: { nodeId: 'row:1:1', occurrenceIndex: 1 }, proportional: true },
+      { type: 'setResizeTarget', ref: null, proportional: false },
+    ])
+  })
+
+  it('emits an inbound resize:commit with the canonical row id and the patch untouched', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    const received: unknown[] = []
+    adapter.on('resize:commit', (msg) => received.push(msg))
+    stub.dispatch(toOutboundEnvelope({ type: 'resize:commit', nodeId: 'row:1:1', occurrenceIndex: 1, patch: { width: '240px', height: '96px' } }))
+    expect(received).toEqual([{ type: 'resize:commit', nodeId: 'row:1:1#1', patch: { width: '240px', height: '96px' } }])
   })
 
   it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {

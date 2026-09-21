@@ -179,6 +179,19 @@ export function resolveUpstreamUrl(baseUrl: string, pathname: string, search: st
  * - `Connection`, `Keep-Alive`, `Upgrade`, `Transfer-Encoding` are hop-by-hop
  *   headers that must not be forwarded verbatim through a second hop.
  */
+/**
+ * The subprotocols a `Sec-WebSocket-Protocol` header offers, in order, each
+ * trimmed, empties dropped — `[]` for a missing header. Exported for the
+ * relay's tests; the header grammar is a plain comma list (RFC 6455 §4.1).
+ */
+export function parseWebSocketProtocols(header: string | null): string[] {
+  if (!header) return []
+  return header
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+}
+
 export function stripHopByHopAndCookies(headers: Headers, upstreamHost: string): Headers {
   const out = new Headers(headers)
   out.delete('cookie')
@@ -227,6 +240,16 @@ export function liveOriginSecurityHeaders(res: Response, frameAncestors: readonl
 
 interface LiveOriginSocketData {
   upstreamWsUrl: string
+  /**
+   * The subprotocols the browser offered (`Sec-WebSocket-Protocol`), in order.
+   * Vite's HMR listener upgrades ONLY a socket that offers `vite-hmr` (or
+   * `vite-ping` for its reconnect probe) and silently leaves any other upgrade
+   * hanging — so a relay that opens its upstream leg without them never gets
+   * an answer, times out, and the browser's Vite client falls into "server
+   * connection lost, polling for restart… reload" for every live frame on the
+   * board (`live-11`). Forwarded verbatim to the outbound `WebSocket`.
+   */
+  protocols: string[]
   upstream?: WebSocket
   /**
    * Messages the browser sent before the outbound `WebSocket` to the
@@ -292,7 +315,7 @@ export function enqueuePendingMessage(
 
 /** Minimal shape `handleLiveOriginFetch` needs from `Bun.Server` — just enough to upgrade a socket, and a test seam. */
 export interface LiveOriginUpgradeServer {
-  upgrade(req: Request, options: { data: LiveOriginSocketData }): boolean
+  upgrade(req: Request, options: { data: LiveOriginSocketData; headers?: Record<string, string> }): boolean
 }
 
 /**
@@ -339,7 +362,18 @@ export async function handleLiveOriginFetch(
     }
     const upstream = resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
     upstream.protocol = upstream.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ok = server.upgrade(req, { data: { upstreamWsUrl: upstream.toString() } })
+    const protocols = parseWebSocketProtocols(req.headers.get('sec-websocket-protocol'))
+    // The browser's socket is accepted BEFORE the upstream leg has negotiated
+    // anything, so the subprotocol it is told about is the first one it
+    // offered. A client that offers one and hears none back fails the
+    // handshake itself (Chrome: "Sent non-empty 'Sec-WebSocket-Protocol'
+    // header but no response was received"), which is the same reload loop
+    // from the other side. Vite offers exactly one, so first-offered is the
+    // one the upstream will accept too.
+    const ok = server.upgrade(req, {
+      data: { upstreamWsUrl: upstream.toString(), protocols },
+      headers: protocols.length > 0 ? { 'sec-websocket-protocol': protocols[0] } : undefined,
+    })
     return ok ? undefined : new Response('Upgrade failed', { status: 400 })
   }
 
@@ -401,7 +435,7 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
 
     websocket: {
       open(ws) {
-        const upstream = new WebSocket(ws.data.upstreamWsUrl)
+        const upstream = new WebSocket(ws.data.upstreamWsUrl, ws.data.protocols)
         ws.data.upstream = upstream
         ws.data.pending = []
         ws.data.pendingBytes = 0

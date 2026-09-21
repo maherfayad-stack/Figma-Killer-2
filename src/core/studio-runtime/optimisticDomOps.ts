@@ -29,6 +29,23 @@
  * landed the real element (`live-07`). Without that sweep a successful insert
  * leaves a permanent duplicate; a refusal that writes no file never fires it,
  * which is the same limitation portal mode already has.
+ *
+ * ## Never detach or move a node React owns (`live-14`)
+ *
+ * The app's React root reconciles the NEXT render against the DOM it built,
+ * by sibling position. A delete that physically removed the selected node
+ * left that fiber's DOM detached; when HMR then re-rendered `[A, B, C]` as
+ * `[A, C]`, React updated B's (detached, invisible) node into C and removed
+ * C's own node — so the user watched the element BELOW the one they deleted
+ * disappear too, until a full reload. A move that reparented a node broke the
+ * same contract the other way round.
+ *
+ * So a delete only HIDES ({@link OPTIMISTIC_HIDDEN_ATTR} + one runtime-owned
+ * stylesheet rule — never the element's inline `style`, which React also
+ * writes), a move is recorded in a per-document ledger, and
+ * {@link revertOptimisticDom} puts everything back the instant Vite announces
+ * an update (`vite:beforeUpdate`), before React reconciles. The real change
+ * then arrives from the source, through React, on a DOM React recognises.
  */
 import { DANGEROUS_OPTIMISTIC_INSERT_TAG_NAMES } from './messages'
 import { findNthNodeById } from './nodeIdIndexing'
@@ -37,6 +54,27 @@ const NODE_ID_ATTR = 'data-node-id'
 
 /** Marks an element this module created, so a later sweep can find every one of them. */
 export const OPTIMISTIC_ATTR = 'data-studio-optimistic'
+/** Marks a node an optimistic delete hid — the node itself stays where React put it. */
+export const OPTIMISTIC_HIDDEN_ATTR = 'data-studio-optimistic-hidden'
+const OPTIMISTIC_STYLE_ID = 'studio-runtime-optimistic'
+
+interface MoveRecord {
+  el: Element
+  parent: ParentNode
+  next: Node | null
+}
+
+/** Per-document record of what an optimistic move displaced, so it can be put back before React reconciles. */
+const moveLedgers = new WeakMap<Document, MoveRecord[]>()
+
+function ensureOptimisticStylesheet(doc: Document): void {
+  if (doc.getElementById(OPTIMISTIC_STYLE_ID)) return
+  const style = doc.createElement('style')
+  style.id = OPTIMISTIC_STYLE_ID
+  style.setAttribute('data-source', 'studio-runtime')
+  style.textContent = `[${OPTIMISTIC_HIDDEN_ATTR}] { display: none !important; }`
+  doc.head?.appendChild(style)
+}
 
 export interface OptimisticInsert {
   nodeId: string
@@ -58,8 +96,12 @@ export function applyOptimisticInsert(doc: Document, op: OptimisticInsert): void
   parent.insertBefore(el, parent.children[op.index] ?? null)
 }
 
+/** Hides the node — see "Never detach or move a node React owns" above. */
 export function applyOptimisticDelete(doc: Document, nodeId: string, occurrenceIndex: number): void {
-  findNthNodeById(doc, nodeId, occurrenceIndex)?.remove()
+  const el = findNthNodeById(doc, nodeId, occurrenceIndex)
+  if (!el) return
+  ensureOptimisticStylesheet(doc)
+  el.setAttribute(OPTIMISTIC_HIDDEN_ATTR, '')
 }
 
 export function applyOptimisticMove(
@@ -72,8 +114,31 @@ export function applyOptimisticMove(
 ): void {
   const el = findNthNodeById(doc, nodeId, occurrenceIndex)
   const parent = findNthNodeById(doc, parentNodeId, parentOccurrenceIndex)
-  if (!el || !parent) return
+  if (!el || !parent || !el.parentNode) return
+  let ledger = moveLedgers.get(doc)
+  if (!ledger) {
+    ledger = []
+    moveLedgers.set(doc, ledger)
+  }
+  ledger.push({ el, parent: el.parentNode, next: el.nextSibling })
   parent.insertBefore(el, parent.children[index] ?? null)
+}
+
+/**
+ * Puts every optimistic move back where React left it (latest first) and
+ * un-hides every optimistic delete — called on `vite:beforeUpdate`, before
+ * React reconciles the update, and again on `vite:afterUpdate` in case the
+ * frame never saw the "before" (a full reload). Idempotent.
+ */
+export function revertOptimisticDom(doc: Document): void {
+  const ledger = moveLedgers.get(doc) ?? []
+  for (const record of ledger.reverse()) {
+    if (!record.parent.isConnected) continue
+    const next = record.next && record.next.parentNode === record.parent ? record.next : null
+    record.parent.insertBefore(record.el, next)
+  }
+  moveLedgers.delete(doc)
+  doc.querySelectorAll(`[${OPTIMISTIC_HIDDEN_ATTR}]`).forEach((el) => el.removeAttribute(OPTIMISTIC_HIDDEN_ATTR))
 }
 
 export function applyOptimisticText(doc: Document, nodeId: string, occurrenceIndex: number, text: string): void {
@@ -81,7 +146,8 @@ export function applyOptimisticText(doc: Document, nodeId: string, occurrenceInd
   if (el) el.textContent = text
 }
 
-/** Clears every optimistic placeholder — called on `vite:afterUpdate`, which fires once the new DOM exists. */
+/** Clears every optimistic placeholder and any leftover hide/move — called on `vite:afterUpdate`, which fires once the new DOM exists. */
 export function sweepOptimisticGhosts(doc: Document): void {
   doc.querySelectorAll(`[${OPTIMISTIC_ATTR}]`).forEach((el) => el.remove())
+  revertOptimisticDom(doc)
 }

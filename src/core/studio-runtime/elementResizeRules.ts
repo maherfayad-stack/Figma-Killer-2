@@ -1,6 +1,10 @@
 /**
- * elementResize — pure geometry for dragging a resize handle on a LAID-OUT
- * element, as opposed to a board rect.
+ * elementResizeRules — the pure geometry and policy of dragging a resize
+ * handle on a LAID-OUT element, shared by the portal-mode handles
+ * (`useElementResizeDrag.ts`, same document) and the in-frame runtime's
+ * handles (`resizeHandles.ts`, cross-origin). One implementation, two hosts,
+ * like every other rule module in this package — this file ships inside the
+ * runtime bundle, so it stays free of admin/store/DOM imports.
  *
  * ## Why this is not `rectResize.ts`
  *
@@ -31,15 +35,23 @@
  * responsive box into a fixed one, silently, as a side effect of a horizontal
  * drag. This is the same class of bug as the frame resize's `changesHeight`
  * guard (`BoardFrameView`), for the same reason.
- *
- * Deliberately pure — no React, no DOM reads — so all eight handle directions
- * and the clamp are unit-tested without a browser.
  */
-import type { ResizeHandle } from './rectResize'
+
+/** The eight drag handles every resizable thing on the board offers — four corners, four edges. */
+export type ResizeHandle = 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw'
+
+/** Every handle, in visual order (top-left clockwise) — the order each view renders them in. */
+export const RESIZE_HANDLES: ResizeHandle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w']
 
 export interface ElementSize {
   width: number
   height: number
+}
+
+/** The inline-style patch a finished drag commits — `px` strings, only the dimensions the drag changed. A type alias, not an interface, so it stays assignable to the store's `Record<string, …>` patch parameter. */
+export type ElementSizePatch = {
+  width?: string
+  height?: string
 }
 
 /**
@@ -49,6 +61,20 @@ export interface ElementSize {
  * make them unresizable.
  */
 export const MIN_ELEMENT_SIZE = 8
+
+/**
+ * Outer displays CSS simply ignores `width`/`height` on. A resize offered on
+ * one of these lands in the source and changes nothing on screen — a dead
+ * affordance that is harder to spot than a refusal, because it appears to
+ * have worked. The geometric half of `resizeOffer.ts`'s `canOfferResize`;
+ * the in-frame runtime applies it on its own side of the wire, where the
+ * computed display actually lives.
+ */
+const UNSIZEABLE_DISPLAYS = new Set(['inline', 'contents', 'none'])
+
+export function isSizeableDisplay(display: string): boolean {
+  return !UNSIZEABLE_DISPLAYS.has(display)
+}
 
 /** Which dimensions `handle` changes — the properties a drag may write. */
 export function resizeAxes(handle: ResizeHandle): { width: boolean; height: boolean } {
@@ -62,9 +88,9 @@ export function resizeAxes(handle: ResizeHandle): { width: boolean; height: bool
  * The element's size after dragging `handle` by (`dx`, `dy`) from `start`.
  *
  * `dx`/`dy` are in the element's OWN CSS pixels, which is what pointer events
- * raised inside the frame's iframe already report: the canvas zoom is a CSS
+ * raised inside the frame's document already report: the canvas zoom is a CSS
  * transform on the iframe element in the parent document, and the browser
- * un-projects it before the event reaches the iframe's own document. There is
+ * un-projects it before the event reaches the frame's own document. There is
  * deliberately no `/ zoom` here — adding one would double-correct.
  *
  * Dimensions the handle does not own come back unchanged, so a caller can
@@ -140,10 +166,10 @@ export function resizeStylePatch(
   start: ElementSize,
   next: ElementSize,
   proportional = false,
-): Record<string, string> | null {
+): ElementSizePatch | null {
   const axes = resizeAxes(handle)
-  const patch: Record<string, string> = {}
-  if ((proportional || axes.width) && next.width !== start.width) patch['width'] = `${next.width}px`
-  if ((proportional || axes.height) && next.height !== start.height) patch['height'] = `${next.height}px`
-  return Object.keys(patch).length > 0 ? patch : null
+  const patch: ElementSizePatch = {}
+  if ((proportional || axes.width) && next.width !== start.width) patch.width = `${next.width}px`
+  if ((proportional || axes.height) && next.height !== start.height) patch.height = `${next.height}px`
+  return patch.width !== undefined || patch.height !== undefined ? patch : null
 }

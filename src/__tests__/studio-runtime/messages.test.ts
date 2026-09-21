@@ -40,6 +40,8 @@ const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'setAxes', axes: { direction: 'ltr', colorScheme: 'light' } },
   { type: 'setAxes', axes: { direction: 'rtl', colorScheme: 'dark', locale: 'ar' } },
   { type: 'setMode', mode: 'design' },
+  { type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false },
+  { type: 'setResizeTarget', ref: null, proportional: true },
   { type: 'setMode', mode: 'live' },
   {
     type: 'optimistic.insert',
@@ -67,6 +69,15 @@ const outboundSamples: OutboundRuntimeMessage[] = [
   { type: 'hmr:before' },
   { type: 'hmr:after' },
   {
+    type: 'wheel',
+    deltaX: 0,
+    deltaY: -120,
+    deltaMode: 0,
+    clientX: 12,
+    clientY: 34,
+    modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false },
+  },
+  {
     type: 'pointer',
     phase: 'down',
     nodeId: 'n1',
@@ -75,6 +86,11 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     clientX: 5,
     clientY: 5,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    button: 0,
+    buttons: 1,
+    pointerId: 1,
+    pointerType: 'mouse',
+    ancestors: [],
   },
   {
     type: 'pointer',
@@ -85,8 +101,15 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     clientX: 0,
     clientY: 0,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    button: 0,
+    buttons: 1,
+    pointerId: 1,
+    pointerType: 'mouse',
+    ancestors: [],
   },
   { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width: '240px' } },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 2, patch: { width: '240px', height: '96px' } },
   {
     type: 'measure:result',
     requestId: 'r1',
@@ -212,8 +235,34 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         clientX: 0,
         clientY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+        pointerType: 'mouse',
+        ancestors: [],
       }),
     ).toBe(false)
+  })
+
+  // `live-13` — the two resize messages carry only what the store needs: an
+  // integer pixel count per changed axis, and a bounded pointer identity.
+  it('rejects a resize:commit whose patch is not an integer pixel length', () => {
+    for (const width of ['12em', '50%', '1e3px', '-4px', 'calc(1px)', '']) {
+      expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width } })).toBe(false)
+    }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: {} })).toBe(true)
+  })
+
+  it('rejects a pointer message with an unknown pointer type or an out-of-range button', () => {
+    const base = { type: 'pointer', phase: 'down', nodeId: 'n1', occurrenceIndex: 0, rect: null, clientX: 0, clientY: 0, modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }, ancestors: [], pointerId: 1 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'mouse' })).toBe(true)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'stylus' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 7, buttons: 4, pointerType: 'mouse' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 64, pointerType: 'mouse' })).toBe(false)
+  })
+
+  it('rejects a setResizeTarget without the proportional flag', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'setResizeTarget', ref: null })).toBe(false)
   })
 
   it('rejects a measure:result measurement missing occurrenceIndex', () => {

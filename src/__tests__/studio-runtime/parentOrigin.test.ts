@@ -22,6 +22,16 @@ describe('resolveParentOrigin', () => {
     expect(resolveParentOrigin([], 'http://127.0.0.1:3001/')).toBeNull()
   })
 
+  // `live-13` — a Vite full reload leaves the referrer pointing at the frame's
+  // own url; the browser's ancestor origin still names the parent.
+  it('prefers the ancestor origin, and falls back to the referrer only when the ancestor is absent or not allowed', () => {
+    expect(resolveParentOrigin(ALLOWED, 'http://localhost:3002/p/test4/__screen/home', 'http://127.0.0.1:3001')).toBe('http://127.0.0.1:3001')
+    expect(resolveParentOrigin(ALLOWED, 'http://127.0.0.1:3001/admin/site', null)).toBe('http://127.0.0.1:3001')
+    expect(resolveParentOrigin(ALLOWED, 'http://127.0.0.1:3001/admin/site', 'https://evil.example')).toBe('http://127.0.0.1:3001')
+    expect(resolveParentOrigin(ALLOWED, 'http://localhost:3002/p/test4/__screen/home', 'https://evil.example')).toBeNull()
+    expect(resolveParentOrigin(ALLOWED, '', 'not an origin')).toBeNull()
+  })
+
   it('reads the comma-separated allowlist the dev-server manager sets on the process', () => {
     const config = readStudioRuntimeConfigFromEnv({ [STUDIO_PARENT_ORIGINS_ENV]: ' http://localhost:5174, http://127.0.0.1:3001 ,' }, 'data-node-id')
     expect(config.parentOrigins).toEqual(['http://localhost:5174', 'http://127.0.0.1:3001'])

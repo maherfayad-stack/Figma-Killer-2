@@ -46,7 +46,7 @@ import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { CloseIcon } from 'pixel-art-icons/icons/close'
 import { cn } from '@ui/cn'
 import { useAnnotationInteraction } from '../useAnnotationInteraction'
-import { RESIZE_HANDLES } from '../rectResize'
+import { RESIZE_HANDLES } from '@core/studio-runtime'
 import { useAutoFitText } from './useAutoFitText'
 import styles from './StickyNoteView.module.css'
 

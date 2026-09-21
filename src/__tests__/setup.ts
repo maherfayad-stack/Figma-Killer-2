@@ -8,7 +8,17 @@
  * etc.) are available on the window object — required by @testing-library/dom's
  * querySelectorAll implementation.
  */
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { GlobalWindow, MutationObserver as HappyMutationObserver, PropertySymbol } from 'happy-dom'
+import { STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../../server/handlers/studio/devServerRecords'
+
+// Every test process gets its own dev-server records directory. Without this
+// a test that starts (or fakes) a dev server writes a record into the real
+// `.tmp/dev-servers/`, and the running Studio then "adopts" a pid that was
+// never a dev server (`live-14`). A file may still narrow it further.
+process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV] ??= mkdtempSync(join(tmpdir(), 'studio-dev-servers-'))
 
 // happy-dom auto-fetches and parses every `<link rel="stylesheet">` inserted
 // into the document — including the Google Fonts CSS that

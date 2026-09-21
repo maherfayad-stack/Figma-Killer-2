@@ -1,0 +1,209 @@
+/**
+ * `live-12` — the parent half of clicking and zooming through a Tier 2 bridge
+ * frame. A fake adapter stands in for `BridgeFrameAdapter` (only `on` is
+ * exercised) and is registered under a real `<iframe>` element, which is how
+ * the hook finds the element to re-dispatch a wheel on.
+ */
+import { afterEach, describe, expect, it } from 'bun:test'
+import { cleanup, render } from '@testing-library/react'
+import { CanvasSelectionContext } from '@site/canvas/CanvasContexts'
+import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
+import { useBridgeFrameInteraction } from '@site/canvas/BoardFramesLayer/useBridgeFrameInteraction'
+import { useEditorStore } from '@site/store/store'
+
+
+// happy-dom has no `WheelEvent`; the runtime and the hook construct one. A
+// `MouseEvent` carrying the four delta fields is all either of them reads.
+class TestWheelEvent extends MouseEvent {
+  readonly deltaX: number
+  readonly deltaY: number
+  readonly deltaZ: number
+  readonly deltaMode: number
+  constructor(type: string, init: MouseEventInit & { deltaX?: number; deltaY?: number; deltaZ?: number; deltaMode?: number } = {}) {
+    super(type, init)
+    this.deltaX = init.deltaX ?? 0
+    this.deltaY = init.deltaY ?? 0
+    this.deltaZ = init.deltaZ ?? 0
+    this.deltaMode = init.deltaMode ?? 0
+  }
+}
+if (typeof WheelEvent === 'undefined') Object.assign(globalThis, { WheelEvent: TestWheelEvent })
+
+type Handler = (event: FrameRuntimeEvent) => void
+
+function makeFakeAdapter() {
+  const handlers = new Map<string, Set<Handler>>()
+  const adapter = {
+    on: (type: string, handler: Handler) => {
+      let set = handlers.get(type)
+      if (!set) {
+        set = new Set()
+        handlers.set(type, set)
+      }
+      set.add(handler)
+      return () => set?.delete(handler)
+    },
+  } as unknown as FrameDocumentAdapter
+  const emit = (event: FrameRuntimeEvent) => handlers.get(event.type)?.forEach((h) => h(event))
+  return { adapter, emit, subscriptions: () => [...handlers.values()].reduce((n, s) => n + s.size, 0) }
+}
+
+function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter: FrameDocumentAdapter; isActive?: boolean; onActivate?: (breakpointId: string) => void }) {
+  useBridgeFrameInteraction(adapter, { breakpointId: 'bp-mobile', frameId: 'frame-1', isActive, onActivate })
+  return null
+}
+
+const MODS = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }
+/** A primary-button mouse press, as the runtime reports one. */
+const MOUSE = { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse' }
+const NO_SELECTION = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
+
+afterEach(() => {
+  cleanup()
+  document.body.innerHTML = ''
+})
+
+describe('useBridgeFrameInteraction', () => {
+  it('routes a forwarded click to onFrameNodeClick with the frame and breakpoint it came from, and a move to hover', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const clicks: unknown[] = []
+    const hovers: unknown[] = []
+    const value = {
+      onNodeClick: () => {},
+      onFrameNodeClick: (...args: unknown[]) => clicks.push(args),
+      onNodeHover: (...args: unknown[]) => hovers.push(args),
+      onNodeContextMenu: () => {},
+      onNodeDoubleClick: () => {},
+      onNodePointerDown: () => {},
+      onNodePointerUp: () => {},
+    }
+    render(
+      <CanvasSelectionContext.Provider value={value}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/Home.tsx:3:4', rect: null, clientX: 1, clientY: 2, modifiers: { ...MODS, metaKey: true }, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: null, rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/Home.tsx:5:6', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(clicks).toEqual([['pages/Home.tsx:3:4', { ...MODS, metaKey: true }, 'bp-mobile', 'frame-1']])
+    expect(hovers).toEqual([['pages/Home.tsx:5:6', 'bp-mobile', 'frame-1']])
+  })
+
+  it('re-dispatches a forwarded wheel on the iframe element in parent client pixels, modifiers intact', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    // The frame is drawn at half scale: 200 css px of a 400 px wide viewport.
+    iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter)
+    const seen: WheelEvent[] = []
+    document.addEventListener('wheel', (e) => seen.push(e))
+
+    render(
+      <CanvasSelectionContext.Provider value={{ onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'wheel', deltaX: 0, deltaY: -120, deltaMode: 0, clientX: 40, clientY: 60, modifiers: { ...MODS, ctrlKey: true } })
+    expect(seen).toHaveLength(1)
+    expect(seen[0].target).toBe(iframe)
+    expect(seen[0].deltaY).toBe(-120)
+    expect(seen[0].ctrlKey).toBe(true)
+    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
+    expect(seen[0].clientY).toBe(50 + 60 * 0.5)
+    unregisterFrameAdapter(iframe)
+  })
+
+  it('activates an inactive frame on press and on click, before the selection runs', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const order: string[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onFrameNodeClick: (id) => order.push(`select:${id}`) }}>
+        <Harness adapter={adapter} isActive={false} onActivate={(bp) => order.push(`activate:${bp}`)} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(order).toEqual(['activate:bp-mobile', 'activate:bp-mobile', 'select:pages/SMS.tsx:41:8'])
+  })
+
+  it('leaves an active frame alone', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    let activated = 0
+    render(
+      <CanvasSelectionContext.Provider value={NO_SELECTION}>
+        <Harness adapter={adapter} isActive onActivate={() => { activated += 1 }} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(activated).toBe(0)
+  })
+
+  it('unsubscribes when the adapter goes away', () => {
+    const first = makeFakeAdapter()
+    const value = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
+    const view = render(
+      <CanvasSelectionContext.Provider value={value}>
+        <Harness adapter={first.adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    expect(first.subscriptions()).toBe(3)
+    view.unmount()
+    expect(first.subscriptions()).toBe(0)
+  })
+
+  // `live-13` — a pan press inside the frame is the canvas's gesture, replayed
+  // on the iframe element so `useCanvas`'s drag handler sees it.
+  it('replays a middle-button press, its moves and its release on the iframe element, and drops the click that follows', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter)
+    const seen: PointerEvent[] = []
+    for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
+    const order: string[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onFrameNodeClick: (id) => order.push(`select:${id}`), onNodePointerDown: (id) => order.push(`down:${id}`), onNodeHover: (id) => order.push(`hover:${id}`) }}>
+        <Harness adapter={adapter} isActive={false} onActivate={(bp) => order.push(`activate:${bp}`)} />
+      </CanvasSelectionContext.Provider>,
+    )
+    const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE })
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, button: -1 })
+    emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    expect(seen.map((e) => e.type)).toEqual(['pointerdown', 'pointermove', 'pointerup'])
+    expect(seen.every((e) => e.target === iframe && e.pointerId === 7)).toBe(true)
+    expect(seen[0].button).toBe(1)
+    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
+    expect(seen[1].clientX).toBe(100 + 80 * 0.5)
+    // Neither the press nor the click that ended the pan touched selection or activation…
+    expect(order).toEqual([])
+    // …and the next ordinary click does.
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(order).toEqual(['activate:bp-mobile', 'select:pages/SMS.tsx:41:8'])
+    // A move from a different pointer while nothing is panning is a hover, as before.
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE, button: -1, buttons: 0 })
+    expect(order.at(-1)).toBe('hover:pages/SMS.tsx:41:8')
+    unregisterFrameAdapter(iframe)
+  })
+
+  it('commits a resize the frame finished through setNodeInlineStyles', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const commits: unknown[] = []
+    useEditorStore.setState({ setNodeInlineStyles: (nodeId: string, patch: unknown) => commits.push([nodeId, patch]) } as Parameters<typeof useEditorStore.setState>[0])
+    render(
+      <CanvasSelectionContext.Provider value={NO_SELECTION}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'resize:commit', nodeId: 'pages/SMS.tsx:41:8', patch: { width: '240px' } })
+    expect(commits).toEqual([['pages/SMS.tsx:41:8', { width: '240px' }]])
+  })
+})

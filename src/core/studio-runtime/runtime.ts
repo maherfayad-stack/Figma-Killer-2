@@ -53,16 +53,19 @@ import {
   toOutboundEnvelope,
   type InboundRuntimeMessage,
   type NodeMeasurement,
-  type NodeRect,
   type OutboundRuntimeMessage,
   type RuntimeMode,
 } from './messages'
+import { installGestureForwarding } from './gestureForwarding'
+import { rectRelativeToBody } from './nodeDom'
+import { installResizeHandles } from './resizeHandles'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
 import {
   applyOptimisticDelete,
   applyOptimisticInsert,
   applyOptimisticMove,
   applyOptimisticText,
+  revertOptimisticDom,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
@@ -70,11 +73,10 @@ import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRu
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
 import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
-import { findNthNodeById, occurrenceIndexOf } from './nodeIdIndexing'
+import { findNthNodeById, NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
-const NODE_ID_ATTR = 'data-node-id'
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
 const RUNTIME_ANIMATION_STYLE_ID = 'studio-runtime-animation-freeze'
 const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
@@ -136,25 +138,6 @@ function findByNodeId(doc: Document, nodeId: string, occurrenceIndex = 0): Eleme
   return findNthNodeById(doc, nodeId, occurrenceIndex)
 }
 
-/** The nearest node-id-carrying ancestor (inclusive) of `el`, paired with its own occurrence index — `null` if no ancestor carries a node id. */
-function nearestNodeOccurrence(doc: Document, el: Element | null): { nodeId: string; occurrenceIndex: number } | null {
-  const anchor = el?.closest(`[${NODE_ID_ATTR}]`) as Element | null
-  if (!anchor) return null
-  return occurrenceIndexOf(doc, anchor)
-}
-
-/** `el`'s box relative to `body`'s border box — both rects are viewport-relative, so scroll cancels out of the difference. */
-function rectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
-  const elRect = el.getBoundingClientRect()
-  const bodyRect = body.getBoundingClientRect()
-  return {
-    x: elRect.left - bodyRect.left,
-    y: elRect.top - bodyRect.top,
-    width: elRect.width,
-    height: elRect.height,
-  }
-}
-
 /**
  * Boots the in-frame runtime bridge: installs the postMessage listener,
  * posts `ready`, and returns a handle for direct dispatch (tests) and
@@ -170,22 +153,49 @@ function rectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
  * answer, and the runtime then talks to that one origin exclusively — the
  * allowlist narrows who may be a parent; the referrer names which one is.
  *
- * `document.referrer` is the parent document's URL for an iframe the parent
- * navigated, reduced to its origin by the admin's own
- * `Referrer-Policy: strict-origin-when-cross-origin`; the origin is all this
- * needs. A forged referrer cannot widen anything: it is checked against the
- * list, and the list is the same set the live listener's CSP
- * `frame-ancestors` already restricts framing to.
+ * Two sources name the parent, tried in this order:
+ *
+ *   1. `location.ancestorOrigins[0]` (`ancestorOrigin`) — the browser's own
+ *      record of who framed this document. It survives everything the
+ *      document does to itself: a Vite full reload (`location.reload()`, run
+ *      whenever a module without an HMR boundary changes — the runtime bundle
+ *      itself on every project open, `main.jsx`, `vite.config.js`) reloads
+ *      the frame with `document.referrer` set to the frame's OWN url, and a
+ *      referrer-only check then answered `null` and left a reloaded frame
+ *      running without its bridge: no rings, no mode, no selection, until
+ *      the parent tab was refreshed (`live-13`). Chromium and WebKit expose
+ *      it; Firefox does not, and falls through to the referrer.
+ *   2. `document.referrer` — the parent document's URL for an iframe the
+ *      parent navigated, reduced to its origin by the admin's own
+ *      `Referrer-Policy: strict-origin-when-cross-origin`.
+ *
+ * Neither source can widen anything: each is checked against the list, and
+ * the list is the same set the live listener's CSP `frame-ancestors` already
+ * restricts framing to.
  */
-export function resolveParentOrigin(allowedOrigins: readonly string[], referrer: string): string | null {
-  if (!referrer) return null
-  let origin: string
-  try {
-    origin = new URL(referrer).origin
-  } catch {
-    return null
+export function resolveParentOrigin(
+  allowedOrigins: readonly string[],
+  referrer: string,
+  ancestorOrigin: string | null = readAncestorOrigin(),
+): string | null {
+  for (const candidate of [ancestorOrigin, referrer]) {
+    if (!candidate) continue
+    let origin: string
+    try {
+      origin = new URL(candidate).origin
+    } catch {
+      continue
+    }
+    if (allowedOrigins.includes(origin)) return origin
   }
-  return allowedOrigins.includes(origin) ? origin : null
+  return null
+}
+
+/** The direct framing document's origin, where the browser exposes it (`Location.ancestorOrigins` — not Firefox). */
+function readAncestorOrigin(): string | null {
+  const location = (globalThis as { location?: { ancestorOrigins?: ArrayLike<string> } }).location
+  const origins = location?.ancestorOrigins
+  return origins && origins.length > 0 ? (origins[0] ?? null) : null
 }
 
 export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): StudioRuntimeBridge {
@@ -322,6 +332,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   function repositionAllRings(): void {
     for (const { nodeId, occurrenceIndex, el } of selectionRings.values()) positionRingOnNode(el, nodeId, occurrenceIndex)
     if (hoverRing && hoverRef) positionRingOnNode(hoverRing, hoverRef.nodeId, hoverRef.occurrenceIndex)
+    resize.reposition()
   }
 
   let repositionRaf: number | null = null
@@ -352,6 +363,16 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       positionRingOnNode(entry.el, ref.nodeId, ref.occurrenceIndex)
     }
   }
+
+  // ---- resize handles (`live-13`) — drawn and dragged here, committed by the parent ----
+  const resize = installResizeHandles({
+    doc,
+    view,
+    ensureOverlayRoot,
+    resolveTarget: (target) => findByNodeId(doc, target.nodeId, target.occurrenceIndex),
+    onCommit: (target, patch) => postOutbound({ type: 'resize:commit', nodeId: target.nodeId, occurrenceIndex: target.occurrenceIndex, patch }),
+    onPreview: scheduleReposition,
+  })
 
   function handleHover(nodeId: string | null, occurrenceIndex: number): void {
     hoverRef = nodeId === null ? null : { nodeId, occurrenceIndex }
@@ -406,30 +427,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     parentWindow.postMessage(toOutboundEnvelope(message), parentOrigin)
   }
 
-  function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
-    const target = ev.target instanceof Element ? ev.target : null
-    const anchor = target?.closest(`[${NODE_ID_ATTR}]`) ?? null
-    const rect = anchor && doc.body ? rectRelativeToBody(anchor, doc.body) : null
-    const occurrence = nearestNodeOccurrence(doc, target)
-    postOutbound({
-      type: 'pointer',
-      phase,
-      nodeId: occurrence?.nodeId ?? null,
-      occurrenceIndex: occurrence?.occurrenceIndex ?? 0,
-      rect,
-      clientX: ev.clientX,
-      clientY: ev.clientY,
-      modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
-    })
-  }
-  const onPointerDown = (ev: PointerEvent) => forwardPointer('down', ev)
-  const onPointerMove = (ev: PointerEvent) => forwardPointer('move', ev)
-  const onPointerUp = (ev: PointerEvent) => forwardPointer('up', ev)
-  const onClick = (ev: MouseEvent) => forwardPointer('click', ev)
-  doc.addEventListener('pointerdown', onPointerDown, true)
-  doc.addEventListener('pointermove', onPointerMove, true)
-  doc.addEventListener('pointerup', onPointerUp, true)
-  doc.addEventListener('click', onClick, true)
+  // Pointer + wheel forwarding, and design-mode ownership of the gesture —
+  // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
+  const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
 
   // A minimal inline-text-edit bridge: any `contenteditable` element that
   // also carries a node id reports its live text on every `input`. Seeding
@@ -473,6 +473,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         // anywhere, or a non-chrome attribute change — still resets normally.
         const isIgnorable = (record: MutationRecord): boolean => {
           if (record.target === doc.body && record.type === 'attributes' && record.attributeName === 'style') return true
+          // (3) the resize preview's own stamp on the element it sizes — a
+          // drag in flight, not new content.
+          if (record.target === resize.previewElement() && record.type === 'attributes') return true
           return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
         }
         if (records.every(isIgnorable)) return
@@ -594,6 +597,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'setMode':
         applyMode(message.mode)
         return
+      case 'setResizeTarget':
+        resize.setTarget(message.ref, message.proportional)
+        return
       case 'optimistic.insert':
         applyOptimisticInsert(doc, message)
         return
@@ -632,9 +638,17 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     wireHmrStateAcrossUpdates(
       doc,
       options.hot,
-      () => postOutbound({ type: 'hmr:before' }),
+      () => {
+        // Before React reconciles the update: hand it back the DOM it built
+        // (`live-14`, see `optimisticDomOps.ts`).
+        revertOptimisticDom(doc)
+        postOutbound({ type: 'hmr:before' })
+      },
       () => {
         sweepOptimisticGhosts(doc)
+        // The source now carries a committed resize — React re-rendered with
+        // it, so the held preview can go without anything snapping back.
+        resize.clearPreview()
         postOutbound({ type: 'hmr:after' })
       },
     )
@@ -647,10 +661,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     dispose() {
       view.removeEventListener('message', onWindowMessage)
       view.removeEventListener('resize', scheduleReposition)
-      doc.removeEventListener('pointerdown', onPointerDown, true)
-      doc.removeEventListener('pointermove', onPointerMove, true)
-      doc.removeEventListener('pointerup', onPointerUp, true)
-      doc.removeEventListener('click', onClick, true)
+      disposeGestureForwarding()
+      resize.dispose()
       doc.removeEventListener('input', onInput, true)
       disposeErrorTaps()
       layoutObserver?.disconnect()
