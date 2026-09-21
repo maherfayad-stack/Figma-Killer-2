@@ -99,6 +99,17 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // `live-18`
+    it('startTextEdit does not throw for an allowed or a refused reply', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.startTextEdit(existingRef.nodeId, true, 'seed text')).not.toThrow()
+        expect(() => adapter.startTextEdit(existingRef.nodeId, false)).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     it('optimistic.* do not throw for a well-formed call', () => {
       const { adapter, existingRef, cleanup } = makeHarness()
       try {

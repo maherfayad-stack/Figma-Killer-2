@@ -977,3 +977,197 @@ describe('createStudioRuntimeBridge — resize handles', () => {
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
   })
 })
+
+// `live-18` — double-click-to-edit text inside a bridge frame.
+describe('createStudioRuntimeBridge — inline text edit', () => {
+  function mouseEvent(type: string, init: MouseEventInit = {}): MouseEvent {
+    return new MouseEvent(type, { bubbles: true, cancelable: true, ...init })
+  }
+  function keyEvent(type: string, init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init })
+  }
+  function messages(posted: Array<{ data: unknown }>): Array<Record<string, unknown>> {
+    return posted.map((p) => (p.data as { message: Record<string, unknown> }).message)
+  }
+  function mountText(text: string): HTMLElement {
+    const el = document.createElement('p')
+    el.setAttribute('data-node-id', 'pages/Home.tsx:5:2')
+    el.textContent = text
+    document.body.appendChild(el)
+    return el
+  }
+
+  it('a double-click in design mode posts text:editStart and claims the gesture', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    const dbl = mouseEvent('dblclick')
+    el.dispatchEvent(dbl)
+    expect(dbl.defaultPrevented).toBe(true)
+    expect(messages(posted).filter((m) => m.type === 'text:editStart')).toEqual([
+      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+    // Not yet contentEditable — the parent hasn't replied.
+    expect(el.getAttribute('contenteditable')).toBeNull()
+  })
+
+  it('a double-click in live mode does nothing — the runtime asks only in design mode', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'live' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
+  })
+
+  it('an allowed reply seeds the text, makes the element editable, and focuses it', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'canonical text' })
+
+    expect(el.contentEditable).toBe('plaintext-only')
+    expect(el.textContent).toBe('canonical text')
+    expect(document.activeElement).toBe(el)
+  })
+
+  it('a refused reply leaves the element untouched', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: false })
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+  })
+
+  it('a reply for a stale/mismatched request is ignored', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    // No editStart was ever sent for this node — a reply with nothing pending.
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'nope' })
+    expect(el.getAttribute('contenteditable')).toBeNull()
+  })
+
+  it('Enter without Shift commits the CURRENT DOM text and removes the attribute; the app never sees the keydown', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+
+    let appKeydowns = 0
+    document.body.addEventListener('keydown', () => { appKeydowns += 1 })
+    el.textContent = 'hello world' // the user typed directly into the real element
+    const enter = keyEvent('keydown', { key: 'Enter' })
+    el.dispatchEvent(enter)
+
+    expect(enter.defaultPrevented).toBe(true)
+    expect(appKeydowns).toBe(0)
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello world')
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toEqual([
+      { type: 'text:commit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, text: 'hello world' },
+    ])
+  })
+
+  it('Shift+Enter does not commit — plain newline behaviour is left to the browser', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.dispatchEvent(keyEvent('keydown', { key: 'Enter', shiftKey: true }))
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toHaveLength(0)
+    expect(el.getAttribute('contenteditable')).not.toBeNull()
+  })
+
+  it('Escape cancels — restores the seeded text, removes the attribute, and posts text:cancel', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'typed but abandoned'
+    const escape = keyEvent('keydown', { key: 'Escape' })
+    el.dispatchEvent(escape)
+
+    expect(escape.defaultPrevented).toBe(true)
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+    expect(messages(posted).filter((m) => m.type === 'text:cancel')).toEqual([
+      { type: 'text:cancel', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toHaveLength(0)
+  })
+
+  it('blur commits — clicking away ends the session', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'blurred away'
+    el.dispatchEvent(new Event('blur'))
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toEqual([
+      { type: 'text:commit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, text: 'blurred away' },
+    ])
+  })
+
+  it('a text over the 20000-char ceiling is truncated before it is posted', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'x'.repeat(20_050)
+    el.dispatchEvent(keyEvent('keydown', { key: 'Enter' }))
+
+    const commit = messages(posted).find((m) => m.type === 'text:commit') as { text: string } | undefined
+    expect(commit?.text).toHaveLength(20_000)
+  })
+
+  it("vite:beforeUpdate with an edit still open cancels it (nothing was ever written to the store to undo)", () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    const handlers = new Map<string, () => void>()
+    const hot = { on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => { handlers.set(event, cb) } }
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'unsaved edit'
+
+    handlers.get('vite:beforeUpdate')?.()
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+    expect(messages(posted).filter((m) => m.type === 'text:cancel')).toEqual([
+      { type: 'text:cancel', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+  })
+
+  it('a double-click on the runtime\'s own chrome is never a text edit', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
+    const ring = document.querySelector('[data-canvas-selection-ring]')!
+    ring.dispatchEvent(mouseEvent('dblclick'))
+    expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
+  })
+})

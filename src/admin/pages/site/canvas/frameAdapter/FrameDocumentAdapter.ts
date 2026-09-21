@@ -122,7 +122,12 @@ export type FrameRuntimeEvent =
       clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
-  | { type: 'text:edit'; nodeId: string; text: string }
+  /** `live-18` — a double-click on a text-bearing node inside the frame; the parent decides allowed/refused via `startTextEdit`. */
+  | { type: 'text:editStart'; nodeId: string }
+  /** `live-18` — Enter (no Shift) or blur ended the session with this final text. */
+  | { type: 'text:commit'; nodeId: string; text: string }
+  /** `live-18` — Escape, or an HMR update landing mid-edit, ended the session with no write. */
+  | { type: 'text:cancel'; nodeId: string }
   /**
    * Z5 — the frame's own runtime reported a failure (an uncaught exception, an
    * unhandled rejection, a `console.error`, a resource that would not load, or
@@ -173,6 +178,15 @@ export interface FrameDocumentAdapter {
    * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
    */
   setResizeTarget(ref: NodeRef | null, options: { proportional: boolean }): void
+  /**
+   * `live-18` — replies to the frame's `text:editStart`: whether `nodeId`
+   * may be edited inline (the same predicate the portal editor's
+   * `startInlineEdit` applies) and, when it may, the node's CURRENT text to
+   * seed the frame's `contentEditable` with. Portal mode's inline editor
+   * owns its whole session directly inside `NodeRenderer`, with no adapter
+   * round trip — a documented no-op there.
+   */
+  startTextEdit(nodeId: string, allowed: boolean, text?: string): void
   optimistic: OptimisticDomOps
   /** Subscribes to a runtime event. Portal mode: real DOM/synthetic events (`ready` fires once, synchronously — a portal frame has no real "boot" moment). Bridge mode: the matching inbound `postMessage` from `runtime.ts`. */
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe

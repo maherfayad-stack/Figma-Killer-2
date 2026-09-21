@@ -291,6 +291,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
   }
 
+  startTextEdit(nodeId: string, allowed: boolean, text?: string): void {
+    const ref = this.toWireRef(nodeId)
+    this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed, ...(text === undefined ? {} : { text }) })
+  }
+
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
     let set = this.eventHandlers.get(event)
     if (!set) {
@@ -390,11 +395,23 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           modifiers: message.modifiers,
         })
         return
-      case 'text:edit':
+      case 'text:editStart':
         this.emit({
-          type: 'text:edit',
+          type: 'text:editStart',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+        })
+        return
+      case 'text:commit':
+        this.emit({
+          type: 'text:commit',
           nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
           text: message.text,
+        })
+        return
+      case 'text:cancel':
+        this.emit({
+          type: 'text:cancel',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
         })
         return
       case 'measure:result': {

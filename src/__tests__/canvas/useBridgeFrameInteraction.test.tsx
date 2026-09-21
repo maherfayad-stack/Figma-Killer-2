@@ -34,6 +34,7 @@ type Handler = (event: FrameRuntimeEvent) => void
 
 function makeFakeAdapter() {
   const handlers = new Map<string, Set<Handler>>()
+  const startTextEditCalls: Array<[nodeId: string, allowed: boolean, text: string | undefined]> = []
   const adapter = {
     on: (type: string, handler: Handler) => {
       let set = handlers.get(type)
@@ -44,9 +45,17 @@ function makeFakeAdapter() {
       set.add(handler)
       return () => set?.delete(handler)
     },
+    startTextEdit: (nodeId: string, allowed: boolean, text?: string) => {
+      startTextEditCalls.push([nodeId, allowed, text])
+    },
   } as unknown as FrameDocumentAdapter
   const emit = (event: FrameRuntimeEvent) => handlers.get(event.type)?.forEach((h) => h(event))
-  return { adapter, emit, subscriptions: () => [...handlers.values()].reduce((n, s) => n + s.size, 0) }
+  return {
+    adapter,
+    emit,
+    startTextEditCalls,
+    subscriptions: () => [...handlers.values()].reduce((n, s) => n + s.size, 0),
+  }
 }
 
 function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter: FrameDocumentAdapter; isActive?: boolean; onActivate?: (breakpointId: string) => void }) {
@@ -150,7 +159,8 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={first.adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    expect(first.subscriptions()).toBe(3)
+    // pointer, wheel, resize:commit, text:editStart, text:commit, text:cancel
+    expect(first.subscriptions()).toBe(6)
     view.unmount()
     expect(first.subscriptions()).toBe(0)
   })
@@ -205,5 +215,135 @@ describe('useBridgeFrameInteraction', () => {
     )
     emit({ type: 'resize:commit', nodeId: 'pages/SMS.tsx:41:8', patch: { width: '240px' } })
     expect(commits).toEqual([['pages/SMS.tsx:41:8', { width: '240px' }]])
+  })
+
+  // `live-18` — the frame asks (`text:editStart`), the store decides through
+  // the SAME `startInlineEdit` predicate the portal double-click handler
+  // uses, and the reply crosses back through `adapter.startTextEdit`.
+  describe('inline text edit', () => {
+    afterEach(() => {
+      useEditorStore.setState({ activeInlineEdit: null } as Parameters<typeof useEditorStore.setState>[0])
+    })
+
+    it('an allowed text:editStart replies with the seeded text from the new session', () => {
+      const { adapter, emit, startTextEditCalls } = makeFakeAdapter()
+      const startCalls: unknown[] = []
+      useEditorStore.setState({
+        startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null) => {
+          startCalls.push([nodeId, breakpointId, frameId])
+          useEditorStore.setState({
+            activeInlineEdit: {
+              nodeId,
+              prop: 'text',
+              breakpointId,
+              frameId: frameId ?? null,
+              localeOverride: null,
+              multiline: false,
+              initialValue: 'canonical text',
+              committed: false,
+            },
+          } as Parameters<typeof useEditorStore.setState>[0])
+          return true
+        },
+      } as Parameters<typeof useEditorStore.setState>[0])
+      render(
+        <CanvasSelectionContext.Provider value={NO_SELECTION}>
+          <Harness adapter={adapter} />
+        </CanvasSelectionContext.Provider>,
+      )
+      emit({ type: 'text:editStart', nodeId: 'pages/SMS.tsx:41:8' })
+      expect(startCalls).toEqual([['pages/SMS.tsx:41:8', 'bp-mobile', 'frame-1']])
+      expect(startTextEditCalls).toEqual([['pages/SMS.tsx:41:8', true, 'canonical text']])
+    })
+
+    it('a refused text:editStart replies with allowed: false and no text', () => {
+      const { adapter, emit, startTextEditCalls } = makeFakeAdapter()
+      useEditorStore.setState({ startInlineEdit: () => false } as Parameters<typeof useEditorStore.setState>[0])
+      render(
+        <CanvasSelectionContext.Provider value={NO_SELECTION}>
+          <Harness adapter={adapter} />
+        </CanvasSelectionContext.Provider>,
+      )
+      emit({ type: 'text:editStart', nodeId: 'pages/SMS.tsx:41:8' })
+      expect(startTextEditCalls).toEqual([['pages/SMS.tsx:41:8', false, undefined]])
+    })
+
+    it('text:commit for the active session applies the value and ends the session', () => {
+      const { adapter, emit } = makeFakeAdapter()
+      const applied: unknown[] = []
+      let ended = 0
+      useEditorStore.setState({
+        activeInlineEdit: {
+          nodeId: 'pages/SMS.tsx:41:8',
+          prop: 'text',
+          breakpointId: 'bp-mobile',
+          frameId: 'frame-1',
+          localeOverride: null,
+          multiline: false,
+          initialValue: 'x',
+          committed: false,
+        },
+        applyInlineEditValue: (value: string) => applied.push(value),
+        endInlineEdit: () => { ended += 1 },
+      } as Parameters<typeof useEditorStore.setState>[0])
+      render(
+        <CanvasSelectionContext.Provider value={NO_SELECTION}>
+          <Harness adapter={adapter} />
+        </CanvasSelectionContext.Provider>,
+      )
+      emit({ type: 'text:commit', nodeId: 'pages/SMS.tsx:41:8', text: 'new text' })
+      expect(applied).toEqual(['new text'])
+      expect(ended).toBe(1)
+    })
+
+    it('text:commit for a node that no longer matches the active session is ignored', () => {
+      const { adapter, emit } = makeFakeAdapter()
+      const applied: unknown[] = []
+      useEditorStore.setState({
+        activeInlineEdit: {
+          nodeId: 'some-other-node',
+          prop: 'text',
+          breakpointId: 'bp-mobile',
+          frameId: 'frame-1',
+          localeOverride: null,
+          multiline: false,
+          initialValue: 'x',
+          committed: false,
+        },
+        applyInlineEditValue: (value: string) => applied.push(value),
+      } as Parameters<typeof useEditorStore.setState>[0])
+      render(
+        <CanvasSelectionContext.Provider value={NO_SELECTION}>
+          <Harness adapter={adapter} />
+        </CanvasSelectionContext.Provider>,
+      )
+      emit({ type: 'text:commit', nodeId: 'pages/SMS.tsx:41:8', text: 'new text' })
+      expect(applied).toHaveLength(0)
+    })
+
+    it('text:cancel for the active session reverts through cancelInlineEdit', () => {
+      const { adapter, emit } = makeFakeAdapter()
+      let cancelled = 0
+      useEditorStore.setState({
+        activeInlineEdit: {
+          nodeId: 'pages/SMS.tsx:41:8',
+          prop: 'text',
+          breakpointId: 'bp-mobile',
+          frameId: 'frame-1',
+          localeOverride: null,
+          multiline: false,
+          initialValue: 'x',
+          committed: false,
+        },
+        cancelInlineEdit: () => { cancelled += 1 },
+      } as Parameters<typeof useEditorStore.setState>[0])
+      render(
+        <CanvasSelectionContext.Provider value={NO_SELECTION}>
+          <Harness adapter={adapter} />
+        </CanvasSelectionContext.Provider>,
+      )
+      emit({ type: 'text:cancel', nodeId: 'pages/SMS.tsx:41:8' })
+      expect(cancelled).toBe(1)
+    })
   })
 })

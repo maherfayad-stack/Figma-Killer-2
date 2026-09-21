@@ -80,7 +80,11 @@ export {
   HmrBeforeMessageSchema,
   HmrAfterMessageSchema,
   PointerMessageSchema,
-  TextEditMessageSchema,
+  TEXT_EDIT_MAX_LENGTH,
+  TextEditReplyMessageSchema,
+  TextEditStartMessageSchema,
+  TextCommitMessageSchema,
+  TextCancelMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,
   ErrorMessageSchema,
@@ -99,7 +103,10 @@ export {
   type RuntimeMode,
   type NodeRect,
   type NodeMeasurement,
+  type TextEditReplyMessage,
 } from './messages'
+
+export { installInlineTextEdit, type InlineTextEditController, type InlineTextEditOptions } from './inlineTextEdit'
 
 export {
   RESOURCE_ERROR_TAGS,
