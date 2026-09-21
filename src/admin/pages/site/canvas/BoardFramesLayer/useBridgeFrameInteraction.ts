@@ -28,26 +28,46 @@
  * `CanvasSelectionContext` handlers `NodeRenderer` calls, by node id, with
  * the modifiers the runtime reported.
  *
- * **The frame→parent point conversion is pinned for the life of a pan
- * gesture, never re-read mid-drag.** `iframeLocalPointToParentClientPoint`
- * projects the runtime's frame-local `clientX/clientY` through
- * `iframe.getBoundingClientRect()` — but panning moves the iframe itself, and
- * `useCanvas`'s DOM transform write is one `requestAnimationFrame` behind the
- * delta that caused it (`scheduleTransformWrite`). Re-reading the iframe's
- * CURRENT rect on every `move` therefore reprojects the SAME (unchanged)
- * frame-local point through an already-panned rect, silently folding the
- * pan this hook just applied back into the next point it hands `useCanvas` —
- * a positive-feedback loop `useCanvas`'s delta-based `onDrag` then compounds
- * frame over frame into a rapidly oscillating pan (the reported "wiggle").
- * A portal frame's own relay (`useIframeEventForwarding.ts`) reads the same
- * rect the same way but never shows this, because that forwarding is
- * synchronous and same-document — there is no cross-realm `postMessage` +
- * rAF-coalescing delay (`speed-03`) for the transform write to land inside.
- * The fix: capture the iframe's rect + viewport once, on the pan's `down`,
- * and reuse that SAME snapshot for every `move`/`up` of that gesture — the
- * local→parent map is then a fixed linear scale+offset for the whole pan, so
- * the delta `useCanvas` computes from two converted points reflects only the
- * frame-local pointer's own movement, never the pan it is causing.
+ * **A pan replay's `move`/`up` drive their point from `screenX/screenY`
+ * DELTAS, never from `clientX/clientY` re-projected through the iframe's
+ * rect.** The first, disproven fix here pinned the iframe's
+ * `getBoundingClientRect()` snapshot for the life of a pan, reasoning that a
+ * physically still mouse reports an unchanged frame-local point — true, but
+ * it silently assumed the frame-local point was the only thing moving.
+ * Measured live (Playwright, synthetic middle-button drag, pan read off the
+ * transform layer once per animation frame — see `live-19`'s STATE.md entry
+ * for the full numbers): that pinned version panned the canvas at HALF speed
+ * with backward steps and then snapped back on release, because once the
+ * canvas starts panning, the FRAME ITSELF starts moving under a mouse that
+ * IS still moving — the iframe's own screen position changes, so the
+ * runtime's `pointermove` inside it reports a frame-local `clientX` that has
+ * stopped growing at the mouse's own rate (the frame is chasing it). Adding
+ * that shrinking local delta to a rect fixed at pan-start starves the pan of
+ * its own input.
+ *
+ * The actual root cause is a **compositor lag**, not a coordinate-frame
+ * choice: Chrome computes the runtime's `clientX/clientY` against the
+ * cross-origin iframe's LAST COMMITTED screen transform, which lags the
+ * parent's own DOM transform write by one to two compositor frames during an
+ * active pan (an out-of-process iframe's rendering is genuinely a frame or
+ * two behind the parent compositor's latest paint). The parent then adds its
+ * OWN, freshly-read `getBoundingClientRect()` on top — the two disagree by
+ * however much pan landed in between, in EITHER direction, and `speed-03`'s
+ * rAF coalescing on both sides beats against that disagreement. No
+ * rect-timing trick fixes this, pinned or not, because the lag lives in the
+ * browser's compositor, not in anything this hook reads or writes.
+ *
+ * `screenX`/`screenY` (`MouseEvent`'s hardware-relative fields, `live-19`)
+ * sidestep the whole problem: the OS reports the SAME screen position to
+ * both the child's and the parent's event, with no iframe transform, no
+ * compositor commit, and no rect read involved on EITHER side. A pan replay
+ * therefore records the down's converted parent-client point and the down's
+ * `screenX/screenY` once, and drives every subsequent `move`/`up` as
+ * `downClientPoint + (event.screenX − downScreenX, event.screenY − downScreenY)`
+ * — a pure hardware delta, immune to the frame lagging or leading the mouse.
+ * Every other path (hover, click, the `speed-06` external-drag relay, wheel)
+ * is untouched: none of them pan the canvas out from under the very point
+ * they're converting.
  *
  * `speed-06` — a THIRD pointer case, checked before the ordinary hover/up
  * handling: a drag that started OUTSIDE this frame entirely (an asset-card
@@ -117,33 +137,27 @@ function frameElementOf(adapter: FrameDocumentAdapter): HTMLIFrameElement | null
   return null
 }
 
-/** A frame's on-screen geometry, snapshotted once rather than re-read mid-gesture — see the module doc's "pinned for the life of a pan gesture" note. */
-interface FrameGeometrySnapshot {
-  rect: { left: number; top: number; width: number; height: number }
-  viewport: { width: number; height: number }
+/** `point`, reported in the frame's own client pixels, as a parent client point on `iframe` — zoom and pan included. One-shot only: see the module doc for why a pan's `move`/`up` must NOT call this. */
+function parentClientPoint(iframe: HTMLIFrameElement, point: { x: number; y: number }): { x: number; y: number } {
+  return iframeLocalPointToParentClientPoint(
+    iframe.getBoundingClientRect(),
+    { width: iframe.clientWidth, height: iframe.clientHeight },
+    point,
+  )
 }
 
-function snapshotFrameGeometry(iframe: HTMLIFrameElement): FrameGeometrySnapshot {
+/** Where a pan gesture started: the down's converted parent-client point, and the down's hardware `screenX/screenY` — the fixed reference every subsequent `move`/`up` of the SAME pan measures its delta against. */
+interface PanOrigin {
+  client: { x: number; y: number }
+  screen: { x: number; y: number }
+}
+
+/** `origin.client` plus how far `event`'s hardware screen position has moved since the pan started — see the module doc. */
+function panPoint(origin: PanOrigin, event: PointerEventFromFrame): { x: number; y: number } {
   return {
-    rect: iframe.getBoundingClientRect(),
-    viewport: { width: iframe.clientWidth, height: iframe.clientHeight },
+    x: origin.client.x + (event.screenX - origin.screen.x),
+    y: origin.client.y + (event.screenY - origin.screen.y),
   }
-}
-
-/**
- * `point`, reported in the frame's own client pixels, as a parent client
- * point on `iframe` — zoom and pan included. `pinned`, when given, is used
- * INSTEAD of the iframe's current geometry (a pan gesture's own snapshot);
- * omit it only for a one-shot conversion (wheel, an ordinary hover/click)
- * that doesn't itself move the iframe out from under the point it's converting.
- */
-function parentClientPoint(
-  iframe: HTMLIFrameElement,
-  point: { x: number; y: number },
-  pinned?: FrameGeometrySnapshot,
-): { x: number; y: number } {
-  const geometry = pinned ?? snapshotFrameGeometry(iframe)
-  return iframeLocalPointToParentClientPoint(geometry.rect, geometry.viewport, point)
 }
 
 export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, options: BridgeFrameInteractionOptions): void {
@@ -167,17 +181,12 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
     // the click the runtime forwards after that release is still owed a drop.
     let panPointerId: number | null = null
     let dropNextClick = false
-    // Snapshotted on the pan's `down`, reused for every `move`/`up` of that
-    // SAME gesture — see the module doc. `null` outside an active pan.
-    let panGeometry: FrameGeometrySnapshot | null = null
-    const replayPointer = (
-      type: 'pointerdown' | 'pointermove' | 'pointerup',
-      event: PointerEventFromFrame,
-      pinned?: FrameGeometrySnapshot,
-    ) => {
+    // Recorded on the pan's `down`, read by every `move`/`up` of that SAME
+    // gesture — see the module doc. `null` outside an active pan.
+    let panOrigin: PanOrigin | null = null
+    const replayPointer = (type: 'pointerdown' | 'pointermove' | 'pointerup', event: PointerEventFromFrame, point: { x: number; y: number }) => {
       const iframe = frameElementOf(adapter)
       if (!iframe) return
-      const point = parentClientPoint(iframe, { x: event.clientX, y: event.clientY }, pinned)
       iframe.dispatchEvent(
         new PointerEvent(type, {
           bubbles: true,
@@ -188,6 +197,8 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
           buttons: event.buttons,
           clientX: point.x,
           clientY: point.y,
+          screenX: event.screenX,
+          screenY: event.screenY,
           ctrlKey: event.modifiers.ctrlKey,
           shiftKey: event.modifiers.shiftKey,
           altKey: event.modifiers.altKey,
@@ -203,8 +214,13 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             if (shouldStartCanvasPointerPan(event, { spaceHeld: isCanvasSpacePanActive(document) })) {
               panPointerId = event.pointerId
               const iframe = frameElementOf(adapter)
-              panGeometry = iframe ? snapshotFrameGeometry(iframe) : null
-              replayPointer('pointerdown', event, panGeometry ?? undefined)
+              if (iframe) {
+                const client = parentClientPoint(iframe, { x: event.clientX, y: event.clientY })
+                panOrigin = { client, screen: { x: event.screenX, y: event.screenY } }
+                replayPointer('pointerdown', event, client)
+              } else {
+                panOrigin = null
+              }
               return
             }
             activateIfNeeded()
@@ -212,11 +228,12 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             return
           case 'move':
             if (panPointerId === event.pointerId) {
-              replayPointer('pointermove', event, panGeometry ?? undefined)
+              if (panOrigin) replayPointer('pointermove', event, panPoint(panOrigin, event))
               return
             }
             if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
-              replayPointer('pointermove', event)
+              const iframe = frameElementOf(adapter)
+              if (iframe) replayPointer('pointermove', event, parentClientPoint(iframe, { x: event.clientX, y: event.clientY }))
               return
             }
             handlers.onNodeHover(event.nodeId, current.breakpointId, current.frameId)
@@ -225,12 +242,13 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
             if (panPointerId === event.pointerId) {
               panPointerId = null
               dropNextClick = true
-              replayPointer('pointerup', event, panGeometry ?? undefined)
-              panGeometry = null
+              if (panOrigin) replayPointer('pointerup', event, panPoint(panOrigin, event))
+              panOrigin = null
               return
             }
             if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
-              replayPointer('pointerup', event)
+              const iframe = frameElementOf(adapter)
+              if (iframe) replayPointer('pointerup', event, parentClientPoint(iframe, { x: event.clientX, y: event.clientY }))
               return
             }
             if (event.nodeId) handlers.onNodePointerUp(event.nodeId)

@@ -115,6 +115,17 @@ export type FrameRuntimeEvent =
       rect: NodeRect | null
       clientX: number
       clientY: number
+      /**
+       * `live-19` — `MouseEvent.screenX/Y`: identical in the frame and the
+       * parent regardless of any CSS transform on the iframe, and immune to
+       * the compositor lag between a pan's DOM write landing and the
+       * out-of-process iframe's last-committed layout catching up. A pan
+       * replay must drive its delta from THESE, never from `clientX/clientY`
+       * re-projected through the iframe's current rect — see
+       * `useBridgeFrameInteraction.ts`'s module doc.
+       */
+      screenX: number
+      screenY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
       /** `live-13` — `PointerEvent.button`/`buttons`/`pointerId`/`pointerType`, so a consumer can tell a pan press from a selection and replay one gesture coherently. */
       button: number

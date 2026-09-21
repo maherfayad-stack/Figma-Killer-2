@@ -174,6 +174,8 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
         rect: null,
         clientX: 0,
         clientY: 0,
+        screenX: 0,
+        screenY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
 
         button: 0,
@@ -214,6 +216,8 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
       rect: null,
       clientX: 0,
       clientY: 0,
+      screenX: 0,
+      screenY: 0,
       modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
 
       button: 0,
@@ -247,6 +251,8 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
         rect: null,
         clientX: 0,
         clientY: 0,
+        screenX: 0,
+        screenY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
 
         button: 0,

@@ -64,8 +64,8 @@ function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter:
 }
 
 const MODS = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }
-/** A primary-button mouse press, as the runtime reports one. */
-const MOUSE = { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse' }
+/** A primary-button mouse press, as the runtime reports one. `screenX/screenY` default to 0 — irrelevant off the pan-replay path (`live-19`). */
+const MOUSE = { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse', screenX: 0, screenY: 0 }
 const NO_SELECTION = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
 
 afterEach(() => {
@@ -167,10 +167,18 @@ describe('useBridgeFrameInteraction', () => {
 
   // `live-13` — a pan press inside the frame is the canvas's gesture, replayed
   // on the iframe element so `useCanvas`'s drag handler sees it.
-  it('replays a middle-button press, its moves and its release on the iframe element, and drops the click that follows', () => {
+  //
+  // `live-19` — the `move`/`up` assertions below are deliberately written
+  // with `clientX`/`clientY` values that do NOT match a rect-based
+  // recomputation (999/-50 rather than the frame-local point a naive
+  // conversion would produce a sane-looking number from): if the
+  // implementation ever regresses to reading them, these numbers would fail
+  // loudly instead of silently passing on a coincidence.
+  it('replays a middle-button press, its moves and its release on the iframe element as a screenX/screenY delta from the down point, and drops the click that follows', () => {
     const { adapter, emit } = makeFakeAdapter()
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
+    // The frame is drawn at half scale: 200 css px of a 400 px wide viewport.
     iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
     Object.defineProperty(iframe, 'clientWidth', { value: 400 })
     Object.defineProperty(iframe, 'clientHeight', { value: 600 })
@@ -184,15 +192,23 @@ describe('useBridgeFrameInteraction', () => {
       </CanvasSelectionContext.Provider>,
     )
     const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
-    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE })
-    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, button: -1 })
-    emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
-    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    // down: converted ONCE from the frame-local point through the iframe's rect.
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, screenX: 500, screenY: 700, modifiers: MODS, ...MIDDLE })
+    // move: the hardware pointer moved +80 screen px right, 0 vertically. Its
+    // frame-local clientX (999) is nonsense on purpose — see the `it` doc.
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 999, clientY: 999, screenX: 580, screenY: 700, modifiers: MODS, ...MIDDLE, button: -1 })
+    // up: +40 more screen px right from the move (120 total from down).
+    emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: -50, clientY: -50, screenX: 620, screenY: 700, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, screenX: 620, screenY: 700, modifiers: MODS, ...MIDDLE, buttons: 0 })
     expect(seen.map((e) => e.type)).toEqual(['pointerdown', 'pointermove', 'pointerup'])
     expect(seen.every((e) => e.target === iframe && e.pointerId === 7)).toBe(true)
     expect(seen[0].button).toBe(1)
-    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
-    expect(seen[1].clientX).toBe(100 + 80 * 0.5)
+    // down: 100 + 40*0.5 = 120.
+    expect(seen[0].clientX).toBe(120)
+    // move: down's 120 + (580 - 500) screen delta = 200 — NOT 100 + 999*0.5.
+    expect(seen[1].clientX).toBe(200)
+    // up: down's 120 + (620 - 500) = 240 — NOT 100 + -50*0.5.
+    expect(seen[2].clientX).toBe(240)
     // Neither the press nor the click that ended the pan touched selection or activation…
     expect(order).toEqual([])
     // …and the next ordinary click does.
@@ -204,18 +220,13 @@ describe('useBridgeFrameInteraction', () => {
     unregisterFrameAdapter(iframe)
   })
 
-  // Reproduces the owner's report: "the canvas keeps wiggling when I click
-  // the middle mouse button and keep panning, but started on a screen." Each
-  // replayed `move` PANS the canvas, which moves the iframe under it, and
-  // `useCanvas`'s DOM transform write is one rAF behind the delta that
-  // caused it — so a naive per-move `getBoundingClientRect()` reprojects the
-  // SAME frame-local point through an ALREADY-PANNED rect, silently folding
-  // the just-applied pan back into the next point. This mock reproduces that
-  // drift directly: the rect moves +80px between `down` and the first
-  // `move`, standing in for one rAF-deferred `applyTransformToDOM` write
-  // landing in between (exactly what happens for real between two
-  // `postMessage`-relayed, rAF-coalesced runtime events — see `speed-03`).
-  it('pins the iframe geometry at pan start, so a rect that drifts mid-gesture (an intervening pan write landing between events) does not feed back into the next converted point', () => {
+  // `live-19` — the disproven "pin the rect" fix's own failure mode: once the
+  // canvas is actually panning, the FRAME's on-screen rect drifts mid-gesture
+  // (here simulated the same way that attempt's test did — the rect moves
+  // +80px between `down` and the first `move`) — and the corrected,
+  // screen-delta-based replay must be UNAFFECTED by that drift, because it
+  // never reads the rect again after `down`.
+  it('is unaffected by the iframe rect drifting mid-pan (the disproven pinned-rect fix\'s own failure mode)', () => {
     const { adapter, emit } = makeFakeAdapter()
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
@@ -232,19 +243,48 @@ describe('useBridgeFrameInteraction', () => {
       </CanvasSelectionContext.Provider>,
     )
     const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
-    emit({ type: 'pointer', phase: 'down', nodeId: null, rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE })
-    // Simulate the parent's rAF-deferred pan write landing between events —
-    // the iframe has moved +80px right by the time the next move arrives,
-    // exactly what a real, already-applied pan step does to the iframe's rect.
+    emit({ type: 'pointer', phase: 'down', nodeId: null, rect: null, clientX: 40, clientY: 60, screenX: 500, screenY: 700, modifiers: MODS, ...MIDDLE })
+    // The rect drifts +80px — an intervening rAF-deferred `applyTransformToDOM`
+    // pan write landing between the two runtime messages, exactly as it would
+    // for real (`speed-03`'s cross-realm coalescing delay).
     left = 180
-    emit({ type: 'pointer', phase: 'move', nodeId: null, rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE, button: -1 })
-    // The frame-local point (40, 60) is UNCHANGED between down and move — a
-    // physically still mouse reports the same local coordinate. The
-    // converted parent point must therefore also stay put: pinned at the
-    // down-time rect (left=100), not reprojected through the drifted rect
-    // (left=180), which would fabricate an 80px delta out of nothing.
+    // The mouse did not physically move (screenX unchanged) — the correct
+    // replayed point is therefore IDENTICAL to the down point, regardless of
+    // where the iframe's rect has drifted to.
+    emit({ type: 'pointer', phase: 'move', nodeId: null, rect: null, clientX: 40, clientY: 60, screenX: 500, screenY: 700, modifiers: MODS, ...MIDDLE, button: -1 })
     expect(seen[0].clientX).toBe(100 + 40 * 0.5)
     expect(seen[1].clientX).toBe(seen[0].clientX)
+    unregisterFrameAdapter(iframe)
+  })
+
+  // `live-19` — continuous pan: several `move`s in a row, each advancing
+  // `screenX` while the frame's own `clientX` stays pinned at the down's
+  // value (the frame is chasing the mouse, so its local report of the
+  // pointer stops advancing — the exact failure mode that sank the
+  // pinned-rect fix). The replayed points must still advance smoothly.
+  it('advances the replayed point continuously across several moves, driven by screenX alone', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    iframe.getBoundingClientRect = () => ({ left: 0, top: 0, width: 400, height: 600, right: 400, bottom: 600, x: 0, y: 0, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter, 'bp-mobile')
+    const seen: PointerEvent[] = []
+    for (const type of ['pointerdown', 'pointermove'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
+    render(
+      <CanvasSelectionContext.Provider value={NO_SELECTION}>
+        <Harness adapter={adapter} isActive />
+      </CanvasSelectionContext.Provider>,
+    )
+    const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
+    emit({ type: 'pointer', phase: 'down', nodeId: null, rect: null, clientX: 50, clientY: 50, screenX: 1000, screenY: 1000, modifiers: MODS, ...MIDDLE })
+    // Three moves, frame-local clientX PINNED at the down's value (the frame
+    // is chasing the mouse) while screenX advances 10, 20, 30.
+    for (const dx of [10, 20, 30]) {
+      emit({ type: 'pointer', phase: 'move', nodeId: null, rect: null, clientX: 50, clientY: 50, screenX: 1000 + dx, screenY: 1000, modifiers: MODS, ...MIDDLE, button: -1 })
+    }
+    expect(seen.map((e) => e.clientX)).toEqual([50, 60, 70, 80])
     unregisterFrameAdapter(iframe)
   })
 
@@ -271,7 +311,7 @@ describe('useBridgeFrameInteraction', () => {
     )
     document.documentElement.dataset.studioCanvasDragging = '1'
     document.documentElement.dataset.studioCanvasDraggingPointerId = '9'
-    const RELAY = { button: -1, buttons: 1, pointerId: 9, pointerType: 'mouse' }
+    const RELAY = { button: -1, buttons: 1, pointerId: 9, pointerType: 'mouse', screenX: 0, screenY: 0 }
     emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...RELAY })
     emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...RELAY, buttons: 0 })
     delete document.documentElement.dataset.studioCanvasDragging
