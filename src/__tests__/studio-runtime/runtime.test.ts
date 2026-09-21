@@ -436,6 +436,70 @@ describe('createStudioRuntimeBridge — measure', () => {
   })
 })
 
+// `speed-06` — the reply the parent's per-drag snapshot round-trips against.
+describe('createStudioRuntimeBridge — dropCandidates', () => {
+  it('replies with one candidate per stamped node, with an axis and no empty-box entries', () => {
+    document.body.innerHTML = `
+      <div data-node-id="row" style="display:flex; flex-direction:row;">
+        <span data-node-id="a"></span>
+        <span data-node-id="b"></span>
+      </div>
+    `
+    for (const [id, rect] of [
+      ['row', { x: 0, y: 0, width: 200, height: 40 }],
+      ['a', { x: 0, y: 0, width: 100, height: 40 }],
+      ['b', { x: 100, y: 0, width: 100, height: 40 }],
+    ] as const) {
+      const el = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!
+      el.getBoundingClientRect = () => ({ ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height, toJSON: () => ({}) }) as DOMRect
+    }
+    document.body.getBoundingClientRect = () => ({ x: 0, y: 0, width: 200, height: 40, left: 0, top: 0, right: 200, bottom: 40, toJSON: () => ({}) }) as DOMRect
+
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'dropCandidates', requestId: 'drop-1' })
+
+    const reply = posted.at(-1)!.data as {
+      message: { type: string; requestId: string; candidates: Array<{ nodeId: string; axis: string; rect: { width: number; height: number } }> }
+    }
+    expect(reply.message.type).toBe('dropCandidates:result')
+    expect(reply.message.requestId).toBe('drop-1')
+    const nodeIds = reply.message.candidates.map((c) => c.nodeId).sort()
+    expect(nodeIds).toEqual(['a', 'b', 'row'])
+    // `a`/`b` sit inside the flex-row container `row` — inserting a sibling
+    // beside either of them is a HORIZONTAL choice; `row` itself sits inside
+    // the (default, block) `<body>`, a VERTICAL choice.
+    const a = reply.message.candidates.find((c) => c.nodeId === 'a')!
+    expect(a.axis).toBe('horizontal')
+    const row = reply.message.candidates.find((c) => c.nodeId === 'row')!
+    expect(row.axis).toBe('vertical')
+    for (const candidate of reply.message.candidates) {
+      expect(candidate.rect.width > 0 || candidate.rect.height > 0).toBe(true)
+    }
+  })
+
+  it('excludes a node whose element has no box (a `display: contents` wrapper) but keeps its children', () => {
+    document.body.innerHTML = `
+      <div data-node-id="wrapper" style="display:contents;">
+        <span data-node-id="child"></span>
+      </div>
+    `
+    const child = document.querySelector<HTMLElement>('[data-node-id="child"]')!
+    child.getBoundingClientRect = () => ({ x: 0, y: 0, width: 40, height: 20, left: 0, top: 0, right: 40, bottom: 20, toJSON: () => ({}) }) as DOMRect
+    document.body.getBoundingClientRect = () => ({ x: 0, y: 0, width: 40, height: 20, left: 0, top: 0, right: 40, bottom: 20, toJSON: () => ({}) }) as DOMRect
+
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'dropCandidates', requestId: 'drop-2' })
+
+    const reply = posted.at(-1)!.data as { message: { candidates: Array<{ nodeId: string }> } }
+    const nodeIds = reply.message.candidates.map((c) => c.nodeId)
+    expect(nodeIds).toEqual(['child'])
+  })
+})
+
 /**
  * These tests exercise the REAL listener `createStudioRuntimeBridge`
  * installs (captured via a spy on `addEventListener`, since a real

@@ -74,6 +74,7 @@ const inboundSamples: InboundRuntimeMessage[] = [
     className: 'card',
   },
   { type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } },
+  { type: 'dropCandidates', requestId: 'r1' },
 ]
 
 const outboundSamples: OutboundRuntimeMessage[] = [
@@ -130,6 +131,21 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     ],
   },
   { type: 'frame:resize', height: 1234 },
+  {
+    type: 'dropCandidates:result',
+    requestId: 'r1',
+    candidates: [
+      {
+        nodeId: 'n1',
+        occurrenceIndex: 0,
+        rect: { x: 0, y: 0, width: 10, height: 10 },
+        axis: 'vertical',
+        reversed: false,
+        childRects: [{ x: 0, y: 0, width: 5, height: 5 }],
+      },
+    ],
+  },
+  { type: 'dropCandidates:result', requestId: 'r2', candidates: [] },
 ]
 
 describe('InboundRuntimeMessageSchema', () => {
@@ -359,6 +375,56 @@ describe('optimistic.style — bounds', () => {
     expect(
       Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style:clear', ref: { nodeId: 'n1' } }),
     ).toBe(false)
+  })
+})
+
+// `speed-06` — the reply is bounded at the schema for the same "same-realm
+// spoofing" reason `optimistic.style`'s patch is: a script co-resident with
+// `runtime.ts` could otherwise forge an arbitrarily large reply directly.
+describe('dropCandidates:result — bounds', () => {
+  const candidate = {
+    nodeId: 'n1',
+    occurrenceIndex: 0,
+    rect: { x: 0, y: 0, width: 10, height: 10 },
+    axis: 'vertical' as const,
+    reversed: false,
+    childRects: [] as { x: number; y: number; width: number; height: number }[],
+  }
+
+  it('rejects a candidate list over 2000 entries, accepts one at the ceiling', () => {
+    const atCeiling = Array.from({ length: 2000 }, () => candidate)
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: atCeiling }),
+    ).toBe(true)
+    const overCeiling = [...atCeiling, candidate]
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: overCeiling }),
+    ).toBe(false)
+  })
+
+  it('rejects a childRects array over 200 entries, accepts one at the ceiling', () => {
+    const atCeiling = { ...candidate, childRects: Array.from({ length: 200 }, () => ({ x: 0, y: 0, width: 1, height: 1 })) }
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: [atCeiling] }),
+    ).toBe(true)
+    const overCeiling = { ...candidate, childRects: [...atCeiling.childRects, { x: 0, y: 0, width: 1, height: 1 }] }
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: [overCeiling] }),
+    ).toBe(false)
+  })
+
+  it('rejects an unknown axis value', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, {
+        type: 'dropCandidates:result',
+        requestId: 'r1',
+        candidates: [{ ...candidate, axis: 'diagonal' }],
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects a dropCandidates request missing requestId', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'dropCandidates' })).toBe(false)
   })
 })
 

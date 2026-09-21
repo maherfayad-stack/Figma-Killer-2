@@ -25,8 +25,9 @@ interface StubChannel {
 }
 
 /** `autoReplyMeasure`: immediately (next microtask) answers every posted `measure` with a `measure:result` echoing back each ref's own `nodeId`/`occurrenceIndex` and a fixed rect — enough for the shared contract suite's "measure resolves" assertion without a real frame. */
+/** `autoReplyDropCandidates` (default `autoReplyMeasure`'s value): same idea for `dropCandidates` — one fixed candidate per posted request, so the contract suite's "measureDropCandidates resolves" assertion doesn't wait out the timeout. */
 /** `announceReady` (default true): the stub frame reports `ready` the instant the adapter subscribes, the way a booted runtime does — an adapter queues every post until then. */
-function makeStubChannel(options: { autoReplyMeasure?: boolean; announceReady?: boolean } = {}): StubChannel {
+function makeStubChannel(options: { autoReplyMeasure?: boolean; autoReplyDropCandidates?: boolean; announceReady?: boolean } = {}): StubChannel {
   let handler: ((ev: MessageEvent) => void) | null = null
   const posted: InboundEnvelope[] = []
   const channel: BridgeFrameChannel = {
@@ -44,6 +45,24 @@ function makeStubChannel(options: { autoReplyMeasure?: boolean; announceReady?: 
             rect: { x: 0, y: 0, width: 10, height: 10 },
             computedStyle: {},
           })),
+        })
+        queueMicrotask(() => handler?.({ origin: FRAME_ORIGIN, source: undefined, data: reply } as MessageEvent))
+      }
+      if ((options.autoReplyDropCandidates ?? options.autoReplyMeasure) && envelope.message.type === 'dropCandidates') {
+        const { requestId } = envelope.message
+        const reply = toOutboundEnvelope({
+          type: 'dropCandidates:result',
+          requestId,
+          candidates: [
+            {
+              nodeId: 'n1',
+              occurrenceIndex: 0,
+              rect: { x: 0, y: 0, width: 10, height: 10 },
+              axis: 'vertical',
+              reversed: false,
+              childRects: [],
+            },
+          ],
         })
         queueMicrotask(() => handler?.({ origin: FRAME_ORIGIN, source: undefined, data: reply } as MessageEvent))
       }
@@ -343,6 +362,50 @@ describe('BridgeFrameAdapter — measure lifecycle', () => {
     })
 
     const pending = adapter.measure([{ nodeId: 'n1' }])
+    adapter.dispose()
+
+    await expect(pending).rejects.toThrow()
+  })
+})
+
+// `speed-06`
+describe('BridgeFrameAdapter — measureDropCandidates lifecycle', () => {
+  it('resolves with the wire reply, translated to canonical node ids', async () => {
+    const stub = makeStubChannel({ autoReplyDropCandidates: true })
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    const [candidate] = await adapter.measureDropCandidates()
+    expect(candidate!.nodeId).toBe('n1')
+    expect(candidate!.rect).toEqual({ x: 0, y: 0, width: 10, height: 10 })
+    expect(candidate!.axis).toBe('vertical')
+    expect(candidate!.reversed).toBe(false)
+    expect(stub.posted.at(-1)!.message.type).toBe('dropCandidates')
+  })
+
+  it('rejects if the timeout elapses with no reply', async () => {
+    const stub = makeStubChannel() // no auto-reply
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['n1'],
+      measureTimeoutMs: 5,
+    })
+    adapters.push(adapter)
+
+    await expect(adapter.measureDropCandidates()).rejects.toThrow()
+  })
+
+  it('dispose() rejects any in-flight dropCandidates promise', async () => {
+    const stub = makeStubChannel() // no auto-reply
+    const adapter = new BridgeFrameAdapter({
+      channel: stub.channel,
+      frameOrigin: FRAME_ORIGIN,
+      nodeIdsInTreeOrder: ['n1'],
+      measureTimeoutMs: 60_000,
+    })
+
+    const pending = adapter.measureDropCandidates()
     adapter.dispose()
 
     await expect(pending).rejects.toThrow()

@@ -54,6 +54,24 @@ export interface NodeMeasurement {
 }
 
 /**
+ * `speed-06` — one node's drop-target geometry, as returned by
+ * {@link FrameDocumentAdapter.measureDropCandidates}. `rect` is BODY-RELATIVE
+ * — the same coordinate space `measure`/`resize:commit` already speak — not
+ * the "frame-space" (viewport-local, unscaled) units `CanvasDropCandidate`
+ * (`canvasDnd.ts`) uses; the caller (`canvasInsertionDragSnapshot.ts`)
+ * converts through `bodyRelativeRectToFrameSpace` once it also has the
+ * surface's `viewport`/`iframe`, which this interface deliberately knows
+ * nothing about.
+ */
+export interface DropCandidateGeometry {
+  nodeId: string
+  rect: NodeRect
+  axis: 'vertical' | 'horizontal'
+  /** See `CanvasDropCandidate.reversed`'s doc (`canvasDnd.ts`). */
+  reversed: boolean
+}
+
+/**
  * The four structural DOM mutations today's reorder-drag code already
  * performs immediately (same tick) for the paint-on-drop feel, ahead of the
  * HMR/writeback reconciliation that follows within milliseconds. Portal mode:
@@ -148,6 +166,14 @@ export interface FrameDocumentAdapter {
   hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
+  /**
+   * `speed-06` — every node currently in the frame's document, with its
+   * drop-target geometry, for a per-drag candidate snapshot
+   * (`canvasInsertionDragSnapshot.ts`). Same synchronous-vs-real-round-trip
+   * split as `measure`. Called once per drag and again on that surface's own
+   * refresh triggers — NEVER per pointer move, which is the whole point.
+   */
+  measureDropCandidates(): Promise<DropCandidateGeometry[]>
   /** Applies the board's render-time preview axes to the frame's own document root. */
   setAxes(axes: PreviewAxes): void
   /**

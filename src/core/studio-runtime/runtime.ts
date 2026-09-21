@@ -59,6 +59,8 @@ import {
 import { installGestureForwarding } from './gestureForwarding'
 import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
+import { measureNodes } from './measureNodes'
+import { collectDropCandidates } from './dropCandidates'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
 import {
   applyOptimisticDelete,
@@ -84,18 +86,6 @@ const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
 
 /** A generic RTL stand-in — mirrors `previewAxesFrameEffect.ts`'s `RTL_PREVIEW_LANG` (Studio has no real per-project locale to reach for here; see `setAxes` below for why this file does not import that module directly). */
 const RTL_PREVIEW_LANG = 'ar'
-
-const DEFAULT_MEASURED_PROPERTIES = [
-  'display',
-  'position',
-  'width',
-  'height',
-  'color',
-  'background-color',
-  'font-size',
-  'font-weight',
-  'opacity',
-]
 
 export interface StudioRuntimeBridgeOptions {
   /** The exact origin every inbound `postMessage` must come from. */
@@ -386,22 +376,20 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   }
 
   // ---- measure ------------------------------------------------------------
+  // Split out (`measureNodes.ts`) with `dropCandidates.ts` (`speed-06`) to
+  // keep this module under the 700-line ceiling.
   function handleMeasure(
     requestId: string,
     refs: readonly { nodeId: string; occurrenceIndex: number }[],
     properties: readonly string[] | undefined,
   ): void {
-    const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
-    const measurements: NodeMeasurement[] = refs.map(({ nodeId, occurrenceIndex }) => {
-      const el = findByNodeId(doc, nodeId, occurrenceIndex)
-      if (!el || !doc.body) return { nodeId, occurrenceIndex, rect: null, computedStyle: {} }
-      const rect = rectRelativeToBody(el, doc.body)
-      const computed = view.getComputedStyle(el)
-      const computedStyle: Record<string, string> = {}
-      for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
-      return { nodeId, occurrenceIndex, rect, computedStyle }
-    })
+    const measurements: NodeMeasurement[] = measureNodes(doc, view, refs, properties)
     postOutbound({ type: 'measure:result', requestId, measurements })
+  }
+
+  // ---- dropCandidates (`speed-06`) -----------------------------------------
+  function handleDropCandidates(requestId: string): void {
+    postOutbound({ type: 'dropCandidates:result', requestId, candidates: collectDropCandidates(doc) })
   }
 
   // ---- setAxes --------------------------------------------------------------
@@ -621,6 +609,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'optimistic.style:clear':
         clearOptimisticStyle(doc, message.ref)
         scheduleReposition()
+        return
+      case 'dropCandidates':
+        handleDropCandidates(message.requestId)
         return
     }
   }

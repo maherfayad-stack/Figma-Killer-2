@@ -14,6 +14,225 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### speed-06 — drag and drop into live frames, with a drop line and a per-drag candidate snapshot (closes `live-15`)
+
+- **Agent:** canvas-engineer
+- **Stage:** done — branch `feat/speed-06-live-frame-drag-drop`, based on
+  `tmp/speed-integration` (speed-01/02/03 already merged in). Worktree
+  `.tmp/wt-speed-06`. Draft PR opened against `tmp/speed-integration` (link in
+  the handback message).
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md`'s `speed-06` + `live-15`'s three pieces —
+  drag a component from the Assets panel or the notch, see the drop line
+  while dragging, and have it work inside a live (Tier 2) frame — plus the
+  performance half: no per-`pointermove` DOM scan anywhere, portal or bridge.
+  Owner's words: "Drag and drop of components doesn't work as expected at all
+  — it doesn't show the line of where it's going to drop, and it's really
+  slow."
+- **Scope:** new: `src/core/studio-runtime/{dropAxisRules,dropCandidates,
+  measureNodes}.ts`, `src/admin/pages/site/canvas/canvasInsertionDragSnapshot.ts`,
+  `src/__tests__/canvas/canvasInsertionDragSnapshot.test.ts`. Touched:
+  `src/core/studio-runtime/{messages,runtime,index}.ts`, `src/admin/pages/
+  site/canvas/{canvasDomGeometry,canvasInsertionDrop,canvasPointerRelay,
+  useCanvasInsertionDrag,useIframeEventForwarding}.ts`, `src/admin/pages/site/
+  canvas/BoardFramesLayer/useBridgeFrameInteraction.ts`, `src/admin/pages/
+  site/canvas/frameAdapter/{FrameDocumentAdapter,BridgeFrameAdapter,
+  PortalFrameAdapter}.ts`, `src/admin/pages/site/panels/AssetsPanel/
+  {AssetCard,AssetsPanel}.tsx` + `AssetsPanel.module.css`, the generated
+  runtime bundles, plus every test file named under Verification.
+- **The four pieces, all shipped:**
+  1. **Asset-card drag start.** `AssetCard` gained an `onPointerDown` prop
+     (`onDragStart`); `AssetsPanel.tsx` owns ONE `useCanvasInsertionDrag`
+     instance + `CanvasInsertionDragOverlay` shared by every card, the exact
+     shape the notch's own primitives already use. A plain click still
+     inserts at the current selection (`shouldSuppressClick`).
+  2. **Bridge pointer relay during a parent drag.** `useBridgeFrameInteraction.ts`
+     gained a third `pointer` case, checked before hover/selection: when
+     `readCanvasPointerRelay(document)`'s pointer id matches the event's
+     (a drag that started OUTSIDE this frame, in the parent doc, and whose
+     pointer has now moved inside this bridge frame's iframe — its `down`
+     never reached this frame, only `move`/`up` do), those two phases are
+     replayed on the iframe element as real `PointerEvent`s (bubbling to
+     `window`), never routed to `onNodeHover`/`onNodePointerUp`.
+     `readCanvasPointerRelay` (new, `canvasPointerRelay.ts`) is the ONE
+     reader both this relay and the pre-existing portal relay
+     (`useIframeEventForwarding.ts`, refactored to use it too) now share.
+     **No `pointercancel`** — the wire has no cancel phase
+     (`gestureForwarding.ts` never taps native `pointercancel`); a real,
+     documented gap, not a silent one.
+  3. **Bounded `dropCandidates`/`dropCandidates:result` wire pair.**
+     `messages.ts`: inbound `{ type: 'dropCandidates', requestId }`, outbound
+     `{ type: 'dropCandidates:result', requestId, candidates: [{ nodeId,
+     occurrenceIndex, rect, axis, reversed, childRects }] }`, bounded ≤2000
+     candidates / ≤200 `childRects` each (`sec-06`'s posture — same-realm
+     spoofing). `FrameDocumentAdapter` gained `measureDropCandidates():
+     Promise<DropCandidateGeometry[]>` (body-relative `rect`, no `depth` —
+     depth is a TREE property the caller derives). `PortalFrameAdapter`'s
+     implementation reuses the SAME `collectDropCandidates` the runtime
+     answers with (`@core/studio-runtime`, moved there so both sides share
+     it) — a portal document's `data-node-id` is already canonical, so there
+     is no stamp translation. `BridgeFrameAdapter`'s is a bounded round trip
+     (a second `pendingDropCandidates` map beside `pendingMeasurements`,
+     rejected on `dispose()` too).
+  4. **Per-drag snapshot + rAF resolve.** `canvasInsertionDragSnapshot.ts`
+     (new): `beginInsertionDragSnapshotSession()` measures a frame's
+     candidates LAZILY — the first time a drag actually visits it via
+     `adapter.measureDropCandidates()` — caches them, and re-measures only on
+     that adapter's `hmr:after`/`frame:resize` or (portal only) a native
+     `scroll` on its document. `useCanvasInsertionDrag.ts`'s `resolveDrop` now
+     asks the session instead of scanning; the whole resolve step is
+     throttled to at most once per animation frame (`pendingPoint`/
+     `pendingFrame`), with the LAST pointer position of whatever moves
+     arrived since the previous tick. `pointerup` still resolves
+     SYNCHRONOUSLY off whatever the snapshot already has, never waiting
+     another frame.
+- **Decisions (read before touching any of this again):**
+  - **`measureDropCandidates()` returns BODY-RELATIVE rects, not the
+    resolver's "frame-space" units** — matching `measure()`'s own contract.
+    The conversion (`bodyRelativeRectToFrameSpace`, new in
+    `canvasDomGeometry.ts`, reusing the existing `clientRectToViewportRect`)
+    lives in the CALLER (`canvasInsertionDragSnapshot.ts`), not the adapter —
+    the adapter has no concept of a canvas "viewport" element. Do not move
+    this conversion into either adapter; it would duplicate the ×zoom+offset
+    arithmetic `canvasOverlayGeometry.ts`'s own `project` comment already
+    warns against a second copy of.
+  - **`childRects` travels on the wire and is validated (bounded), but is
+    DROPPED when converting to the adapter's `DropCandidateGeometry`** —
+    nothing consumes it yet. It exists for a future sibling-geometry axis
+    heuristic (`dropAxisRules.ts`'s own G9 follow-up note). If you wire it up
+    later, thread it through `FrameDocumentAdapter.DropCandidateGeometry`
+    too, deliberately, rather than reading it off the wire type directly.
+  - **The ghost's `x`/`y` update on EVERY throttled rAF tick, unconditionally
+    — there is no "skip `setDrag` when the resolved target is unchanged."**
+    The work order's literal text asked for that skip; it was dropped because
+    the ghost visually follows the cursor via `drag.x`/`drag.y`
+    (`ghostPositionStyle.ts`), and skipping the write would freeze the ghost
+    mid-drag whenever the pointer sat over the same drop target for more than
+    one frame. The rAF throttle alone (100 native moves → 1 resolve) is what
+    delivers the stated perf goal; the extra dedup would have been a UI
+    regression for zero further measured benefit. Flagging this explicitly
+    since it is a genuine, deliberate deviation from the work order's letter.
+  - **The ELEMENT REORDER drag (`useCanvasReorderDrag.ts`/
+    `canvasDragSession.ts`'s `FrameCandidateIndex`, D2 G3's cross-frame
+    board) is UNTOUCHED and therefore STILL bridge-blind** — it calls
+    `measureCanvasDropCandidates` directly, same as before. Dragging an
+    EXISTING element across frames when one of them is a live Tier 2 frame
+    still silently finds zero candidates there. Out of scope for this work
+    order (a materially larger refactor — turning an already-synchronous rAF
+    loop async-tolerant); a real, named follow-up, not a silent gap.
+  - **The per-drag snapshot is keyed per-iframe, LAZILY, not eagerly over
+    `listCanvasDropSurfaces()`** as the work order's literal text suggested.
+    `useCanvasInsertionDrag` still locates the frame under the pointer via
+    the pre-existing `findCanvasViewportAtPoint` (cheap rect-containment over
+    mounted breakpoint frames — never the expensive part) and only measures
+    candidates for whichever iframe the drag actually visits. This ALSO
+    preserves the existing `canvasNotchInsertionDrag.test.tsx` fixture
+    (a hand-built frame with no real `<iframe>`/registered adapter) unchanged
+    in spirit — that case now takes an explicit, documented no-adapter
+    fallback to the original synchronous scan, rather than requiring every
+    existing test to wire up the drop-surface registry.
+- **Landmines (read before touching height/injectors/events near this):**
+  - **`runtime.ts` was at 699/700 lines going in.** `measureNodes.ts` was
+    extracted OUT first (saving ~26 lines) to make room for the
+    `dropCandidates` dispatch case — it is now 690 lines. The next addition
+    there needs another extraction first; do not just add lines.
+  - **`resolveCanvasAxisFromStyle`/`resolveCanvasInsertionAxis` now live in
+    `@core/studio-runtime/dropAxisRules.ts`**, re-exported verbatim from
+    `canvasDomGeometry.ts` for existing admin imports. If you need the SAME
+    axis logic in a third place, import it from `@core/studio-runtime`
+    directly — do not copy it a third time.
+  - **`readCanvasPointerRelay` is now the ONE relay-flag reader** — both
+    `useIframeEventForwarding.ts` (portal, iframe→parent) and
+    `useBridgeFrameInteraction.ts` (bridge, parent→iframe replay) call it.
+    Adding a THIRD relay consumer should call it too, not re-read
+    `document.documentElement.dataset.studioCanvasDragging` inline again.
+  - **A `display: contents` node is NOT offered as its own drop candidate in
+    EITHER mode for the NEW snapshot-based flow** (portal's `measureDropCandidates`
+    and bridge's `collectDropCandidates` both use the simpler "skip zero-box"
+    rule, not `nodeVisualRect`'s recursive children-union fallback). Its
+    children still are. This is a real, narrow, documented fidelity loss vs.
+    the OLD per-move `measureCanvasDropCandidates` scan (still used, at full
+    fidelity, by the untouched reorder-drag path) — see the "Decisions"
+    entry above for why moving `nodeVisualRect` itself was out of scope
+    (13 other admin/module files import it).
+  - **Fast flick-and-release into a bridge frame whose candidates are still
+    in flight commits to "page root."** `pointerup` resolves synchronously
+    off whatever the snapshot cache already has; a bridge round trip that
+    hasn't landed yet reads as `[]`. Same honest answer a pointer outside
+    every frame already gets — not a hang, not a stale/wrong target — but
+    worth knowing if a future perf pass tries to make this feel instant on a
+    slow connection.
+- **Tests:** `messages.test.ts` (`dropCandidates` accept + reject, the
+  2000/200 bounds), `runtime.test.ts` (`dropCandidates:result` dispatch, the
+  `display:contents` exclusion, per-parent axis), `BridgeFrameAdapter.test.ts`
+  (`measureDropCandidates` lifecycle: resolves/times out/dispose-rejects),
+  `frameDocumentAdapter.contract.ts` (new shared conformance case, both
+  adapters), `useBridgeFrameInteraction.test.tsx` (the relay-replay case:
+  move/up replayed on the iframe element, never hover/selection; the SAME
+  pointer id is an ordinary hover again once the relay flag clears),
+  `canvasInsertionDragSnapshot.test.ts` (no-adapter fallback, lazy
+  first-call-empty-then-resolved, hidden/unknown-node filtering,
+  `hmr:after` refresh), `canvasNotchInsertionDrag.test.tsx` (updated for the
+  rAF throttle + a new "100 moves in one frame resolve once" case),
+  `assetsPanel.test.tsx` (new `describe('dragging a card onto a frame')`:
+  drop preview shown, drag-release inserts once, the pointerup-triggered
+  click on the drag's own origin card does not double-insert).
+- **Gates run:** `bun run studio-runtime:sync` (bundles re-synced, re-ran a
+  second time to confirm idempotence — `git diff` unchanged after the second
+  run). `bun run build` (`tsc -b && vite build`) clean. `bun run lint` clean
+  (only the pre-existing Babel deopt-size note on the generated bundle).
+  `bun test --parallel=4 src/__tests__` — **7972 pass / 6 fail** across 820
+  files (one mid-run Bun segfault, auto-retried — the same known
+  `--isolate` crash `bunfig.toml` already documents, not reproducible against
+  any file this change touches). All 6 failures pre-existing and
+  independently confirmed unrelated: the four `broadcast… optimistic` tests
+  (`structuralOptimisticBroadcast.test.ts`), `module-size-budgets` for
+  `fsCodemodAdapter.ts`/`usePersistence.ts` ONLY (explicitly named as
+  speed-02's territory in this task's own brief), and
+  `studio-runtime-bundle-fresh` (the documented `bun test`-environment
+  `Bun.build` quirk reading `@sinclair/typebox`'s `.mjs` files — reproduced,
+  then confirmed the committed bundle IS fresh via a direct
+  `bun run scripts/sync-studio-runtime.ts` re-run producing zero further
+  diff). Every file this diff touches, and every new test, passed cleanly in
+  every run. `bun test src/__tests__/architecture` run standalone: same two
+  pre-existing failures, nothing else.
+- **Browser proof (`standing-02`):** **not run.** This subagent has no
+  browser-automation tool bound to it (no Playwright MCP, no gstack
+  `/browse`) — consistent with `speed-01`'s own precedent. **Dogfood
+  instruction for whoever has one:** open a `run-project` (Tier 2) project on
+  the board at zoom ≥ 50%, with at least one frame set to Live so a real
+  cross-origin bridge frame is mounted. (1) Drag a card from the Assets panel
+  toward that live frame — the same green drop-line/box the notch already
+  draws over a design (portal) frame should appear INSIDE the live frame,
+  tracking the cursor, and land the element there on release; before this
+  change it drew nothing over a live frame and released at "page root."
+  (2) With the browser's Performance panel recording, drag a card slowly
+  back and forth across a frame for ~2 seconds and confirm there is no
+  per-`pointermove` `querySelectorAll`/layout-thrashing burst in the flame
+  chart — only one measurement at drag start (plus any `hmr:after`/resize
+  refresh) and cheap rAF-cadence work afterward. (3) Drag a component from
+  the notch across TWO different frames of the SAME page (one live, one
+  design) in a single gesture and confirm the drop line follows correctly
+  into both. Also worth confirming middle-button pan and click-selection
+  through a live frame still work exactly as `live-13` left them (this
+  change adds a THIRD pointer branch beside the existing pan-replay one; a
+  regression there would be silent without a live check).
+- **E2E:** not added / not run this pass. Reasoning-effort and time budget
+  went to the four pieces + their unit/contract coverage instead; the
+  portal-mode-only assertion the work order's e2e fallback describes is
+  already covered at the unit level by `canvasNotchInsertionDrag.test.tsx`'s
+  new "100 moves in one frame" case and `assetsPanel.test.tsx`'s new drag
+  suite, both of which exercise real rAF timing (not `standing-03`'s happy-dom
+  layout gap, since neither depends on real CSS layout — both use stubbed
+  `getBoundingClientRect`s). A genuine `test:e2e` spec dragging a card onto a
+  LIVE frame and asserting the drop box lands inside a real dev-server-backed
+  container is still owed; flagging rather than claiming it's covered.
+- **Closes `live-15`** (its three pieces are speed-06's pieces 1–3 verbatim;
+  piece 4 — the snapshot + rAF resolve — was `STUDIO-SPEED-PLAN.md`'s own
+  extension of that work order). `live-15`'s own STATE.md entry above is left
+  in place rather than deleted, per the "never delete another agent's entry"
+  rule — this entry is the record that it shipped.
+
 ### speed-02 — autosave cadence: 2s → 250ms, plus an immediate flush on blur/Enter/scrub-release
 - **Agent:** store-engineer
 - **Stage:** done — branch `feat/speed-02-autosave-cadence`, stacked on
@@ -2462,8 +2681,9 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 - **Landmines:** `mod.defaults` is computed once per module at registration (`register.tsx`), so the
   panel's per-instance gate and this per-module gate can disagree only after the author changes the
   variant — the panel's row-hiding then owns it, as before.
-### live-15 — PLANNED: drag a component from the side pane and drop it into a live (Tier 2) frame
+### live-15 — DONE, see `speed-06` above: drag a component from the side pane and drop it into a live (Tier 2) frame
 
+- **Closed by:** `speed-06` (top of this file) — all three pieces below shipped there, plus a fourth (per-drag snapshot + rAF resolve) `STUDIO-SPEED-PLAN.md` added to the work order. Left in place per the "never delete another agent's entry" rule; the plan below is what was actually built.
 - **Agent:** none yet — work order written by the main session on 2026-09-21 from a scout's map; not started
 - **Stage:** planned. Owner's ask: "I want to be able to drag and drop components from the side pane."
 - **What exists today (scout, exact):** the Assets/design-system panel (`AssetsPanel/AssetCard.tsx`) is click-to-insert only — no pointer drag at all, in ANY frame mode. The only drag-to-canvas insertion gesture is the board notch's, through `useCanvasInsertionDrag.ts` (pointer events, not HTML5 DnD, so it can cross an iframe), which resolves its target every move with `resolveCanvasPointerInsertionDrop` → `measureCanvasDropCandidates(viewport, page, iframe)` (`canvasDomGeometry.ts:112-141`). That measurement reads `resolvePortalDocument(iframe)`, which is `null` for a bridge frame, so every drop into a live frame collapses to "page root". And once the pointer enters a bridge iframe mid-drag the parent's `window` listeners go silent: the portal relay in `useIframeEventForwarding.ts` (`data-studio-canvas-dragging` on the parent `<html>`) is portal-only, and `useBridgeFrameInteraction` consumes `pointer` only for pan/selection. The write side (`writeInsertToSource` → `broadcastOptimisticInsert` → `adapter.optimistic.insert`) is already bridge-aware.

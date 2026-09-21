@@ -26,11 +26,26 @@
  * which is also what a click-to-insert resolves through — so "where the ghost
  * says it will land" and "where it lands" are the same computation, not two
  * that agree by luck.
+ *
+ * ## `speed-06` — candidates are a per-drag snapshot, resolution is rAF-throttled
+ *
+ * Before this, EVERY raw `pointermove` re-ran `resolveCanvasPointerInsertionDrop`,
+ * which re-scanned the frame's whole DOM (`querySelectorAll` + one
+ * `getBoundingClientRect`/`getComputedStyle` per node) — and did nothing at
+ * all for a Tier 2 bridge frame (`resolvePortalDocument` is `null` there, so
+ * the scan silently found zero candidates and every live-frame drop fell
+ * back to "page root"). `beginInsertionDragSnapshotSession`
+ * (`canvasInsertionDragSnapshot.ts`) now measures each frame's candidates
+ * ONCE, lazily, the first time the drag visits it (bridge-aware — it goes
+ * through `FrameDocumentAdapter.measureDropCandidates()`), and resolution
+ * itself runs at most once per animation frame, with the LAST pointer
+ * position of whatever moves arrived since the previous frame.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { InsertLocation } from '@site/store/insertLocation'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { resolveCanvasPointerInsertionDrop, type CanvasDropPreview } from './canvasInsertionDrop'
+import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 
 /** Pointer travel (screen px) before a press becomes a drag rather than a click. */
@@ -89,11 +104,38 @@ export function useCanvasInsertionDrag<TGhost>({
     const startX = event.clientX
     const startY = event.clientY
     let started = false
+    const snapshot = beginInsertionDragSnapshotSession()
 
     const resolveDrop = (clientX: number, clientY: number) =>
       canvasPage
-        ? resolveCanvasPointerInsertionDrop({ canvasPage, clientX, clientY, label })
+        ? resolveCanvasPointerInsertionDrop({
+            canvasPage,
+            clientX,
+            clientY,
+            label,
+            candidatesForViewport: (viewport, iframe) => snapshot.candidatesFor(viewport, iframe, canvasPage),
+          })
         : null
+
+    // `speed-06` — at most one resolve per animation frame, with the LAST
+    // pointer position of whatever moves arrived since the previous one (100
+    // native moves inside a single frame resolve exactly once).
+    let pendingPoint: { x: number; y: number } | null = null
+    let pendingFrame: number | null = null
+
+    const applyPendingResolve = () => {
+      pendingFrame = null
+      const point = pendingPoint
+      pendingPoint = null
+      if (!point) return
+      const resolved = resolveDrop(point.x, point.y)
+      setDrag({ ghost, x: point.x, y: point.y, preview: resolved?.preview ?? null })
+    }
+
+    const scheduleResolve = (clientX: number, clientY: number) => {
+      pendingPoint = { x: clientX, y: clientY }
+      pendingFrame ??= window.requestAnimationFrame(applyPendingResolve)
+    }
 
     const teardown = () => {
       window.removeEventListener('pointermove', move)
@@ -101,6 +143,11 @@ export function useCanvasInsertionDrag<TGhost>({
       window.removeEventListener('pointercancel', cancel)
       clearCanvasPointerRelay()
       teardownRef.current = null
+      if (pendingFrame !== null) {
+        window.cancelAnimationFrame(pendingFrame)
+        pendingFrame = null
+      }
+      snapshot.dispose()
       if (started) onDraggingChange?.(false)
     }
 
@@ -110,13 +157,18 @@ export function useCanvasInsertionDrag<TGhost>({
         started = true
         onDraggingChange?.(true)
       }
-      const resolved = resolveDrop(moveEvent.clientX, moveEvent.clientY)
-      setDrag({ ghost, x: moveEvent.clientX, y: moveEvent.clientY, preview: resolved?.preview ?? null })
+      scheduleResolve(moveEvent.clientX, moveEvent.clientY)
     }
 
     const up = (upEvent: PointerEvent) => {
-      // Resolve BEFORE teardown: the relay has to still be armed for the drop
-      // point to hit-test against a frame's iframe.
+      // Resolve BEFORE teardown, synchronously — never wait another
+      // animation frame for a release that ends the gesture anyway. The
+      // relay also has to still be armed for the drop point to hit-test
+      // against a frame's iframe. A bridge frame the drag never actually
+      // paused over (a fast flick-and-release) may still have its
+      // candidates in flight at this point; `snapshot.candidatesFor` then
+      // answers `[]` and the drop falls back to "page root" — the same
+      // honest answer a pointer outside every frame gets, not a hang.
       const resolved = started ? resolveDrop(upEvent.clientX, upEvent.clientY) : null
       teardown()
       setDrag(null)

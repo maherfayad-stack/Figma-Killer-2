@@ -70,45 +70,51 @@ afterEach(() => {
   document.body.replaceChildren()
 })
 
-/** Presses the given notch primitive and drags the pointer to (x, y). */
-function dragFrom(testId: string, x: number, y: number) {
+/** One rAF tick — `speed-06`'s resolver runs at most once per animation frame. */
+function flushRaf(): Promise<void> {
+  return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+}
+
+/** Presses the given notch primitive and drags the pointer to (x, y), then waits for the throttled resolve. */
+async function dragFrom(testId: string, x: number, y: number) {
   const button = screen.getByTestId(testId)
   fireEvent.pointerDown(button, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
   // Past the 6px threshold, so the press is committed to being a drag.
-  act(() => { fireEvent.pointerMove(window, { clientX: x, clientY: y, pointerId: 1 }) })
+  fireEvent.pointerMove(window, { clientX: x, clientY: y, pointerId: 1 })
+  await act(() => flushRaf())
 }
 
 describe('dragging a notch primitive onto a frame', () => {
-  it('shows a drop preview naming the target while the pointer is over a frame', () => {
+  it('shows a drop preview naming the target while the pointer is over a frame', async () => {
     render(<CanvasNotch />)
     mountFrame()
 
     expect(document.querySelector('[data-position]')).toBeNull()
-    dragFrom('canvas-notch-div-btn', 100, 60)
+    await dragFrom('canvas-notch-div-btn', 100, 60)
 
     const preview = document.querySelector('[data-position]')
     expect(preview).not.toBeNull()
     expect(preview?.textContent).toContain('Drop div')
   })
 
-  it('inserts at the dragged-to location on release', () => {
+  it('inserts at the dragged-to location on release', async () => {
     render(<CanvasNotch />)
     mountFrame()
     const before = nodeCount()
 
-    dragFrom('canvas-notch-div-btn', 100, 60)
+    await dragFrom('canvas-notch-div-btn', 100, 60)
     act(() => { fireEvent.pointerUp(window, { clientX: 100, clientY: 60, pointerId: 1 }) })
 
     expect(nodeCount()).toBe(before + 1)
     expect(document.querySelector('[data-position]')).toBeNull()
   })
 
-  it('does not insert when released outside every frame', () => {
+  it('does not insert when released outside every frame', async () => {
     render(<CanvasNotch />)
     mountFrame()
     const before = nodeCount()
 
-    dragFrom('canvas-notch-div-btn', 900, 900)
+    await dragFrom('canvas-notch-div-btn', 900, 900)
     act(() => { fireEvent.pointerUp(window, { clientX: 900, clientY: 900, pointerId: 1 }) })
 
     expect(nodeCount()).toBe(before)
@@ -126,5 +132,26 @@ describe('dragging a notch primitive onto a frame', () => {
 
     // The click inserts; the sub-threshold drag must not have inserted too.
     expect(nodeCount()).toBe(before + 1)
+  })
+
+  it('resolves once per animation frame no matter how many native moves arrive first', async () => {
+    render(<CanvasNotch />)
+    mountFrame()
+
+    const button = screen.getByTestId('canvas-notch-div-btn')
+    fireEvent.pointerDown(button, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+    // Well past the threshold, then a flood of moves before the frame ticks —
+    // only the LAST one should be what the preview reflects.
+    fireEvent.pointerMove(window, { clientX: 600, clientY: 600, pointerId: 1 })
+    for (let i = 0; i < 99; i += 1) {
+      fireEvent.pointerMove(window, { clientX: 50 + i, clientY: 50, pointerId: 1 })
+    }
+    fireEvent.pointerMove(window, { clientX: 100, clientY: 60, pointerId: 1 })
+    await act(() => flushRaf())
+
+    const preview = document.querySelector('[data-position]')
+    expect(preview).not.toBeNull()
+    expect(preview?.textContent).toContain('Drop div')
+    act(() => { fireEvent.pointerUp(window, { clientX: 100, clientY: 60, pointerId: 1 }) })
   })
 })

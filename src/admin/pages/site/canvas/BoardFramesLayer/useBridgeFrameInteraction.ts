@@ -28,6 +28,26 @@
  * `CanvasSelectionContext` handlers `NodeRenderer` calls, by node id, with
  * the modifiers the runtime reported.
  *
+ * `speed-06` — a THIRD pointer case, checked before the ordinary hover/up
+ * handling: a drag that started OUTSIDE this frame entirely (an asset-card
+ * drag, the notch's own drag) and whose pointer has now moved inside this
+ * bridge frame's iframe. `useCanvasInsertionDrag`'s `window` pointermove/up
+ * listeners go silent the instant the cursor crosses into a real,
+ * cross-origin iframe — nothing about that press ever reached this frame's
+ * `down` phase (it happened in the PARENT document), so `panPointerId` is
+ * never set for it. `readCanvasPointerRelay` (`canvasPointerRelay.ts`) reads
+ * the SAME `data-studio-canvas-dragging`/`…-pointer-id` flags the portal
+ * relay (`useIframeEventForwarding.ts`) reads for the mirror-image case
+ * (forwarding an iframe-internal move back OUT to the parent); here the
+ * runtime has already delivered the move to the PARENT as a `pointer`
+ * message, and replaying it onto the iframe element (bubbling to `window`,
+ * same mechanism the pan replay above uses) is what lets the parent's own
+ * drag-session listeners see it. Routed here, never to `onNodeHover`/
+ * `onNodePointerUp` — an external drag owns the gesture, not this frame's
+ * selection. No `down`/`cancel` case: the runtime's wire has no `cancel`
+ * phase (nothing here taps native `pointercancel`), a real, documented gap
+ * rather than a silent one.
+ *
  * Wheel → one `WheelEvent` re-dispatched on the iframe element in parent
  * client pixels (`iframeLocalPointToParentClientPoint`, the portal path's own
  * conversion) so it bubbles to the canvas root and zoom-to-cursor stays under
@@ -44,6 +64,7 @@ import { use, useEffect, useRef } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { CanvasSelectionContext } from '../CanvasContexts'
 import { isCanvasSpacePanActive, shouldStartCanvasPointerPan } from '../canvasPanInput'
+import { readCanvasPointerRelay } from '../canvasPointerRelay'
 import type { FrameDocumentAdapter, FrameRuntimeEvent } from '../frameAdapter/FrameDocumentAdapter'
 import { listFrameAdapters } from '../frameAdapter/canvasFrameAdapterRegistry'
 import { iframeLocalPointToParentClientPoint } from '../iframeEventCoordinates'
@@ -135,12 +156,20 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
               replayPointer('pointermove', event)
               return
             }
+            if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
+              replayPointer('pointermove', event)
+              return
+            }
             handlers.onNodeHover(event.nodeId, current.breakpointId, current.frameId)
             return
           case 'up':
             if (panPointerId === event.pointerId) {
               panPointerId = null
               dropNextClick = true
+              replayPointer('pointerup', event)
+              return
+            }
+            if (readCanvasPointerRelay(document)?.pointerId === event.pointerId) {
               replayPointer('pointerup', event)
               return
             }

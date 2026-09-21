@@ -17,6 +17,7 @@
 import { getColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import type { PreviewAxes } from '@core/studio-board'
 import {
+  collectDropCandidates,
   OVERLAY_ID_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
@@ -31,6 +32,7 @@ import {
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
+  DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
   NodeMeasurement,
@@ -308,6 +310,17 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
       return { nodeId, rect, computedStyle }
     })
+  }
+
+  /**
+   * `speed-06` — reuses the SAME `collectDropCandidates` the in-frame bridge
+   * runtime answers `dropCandidates` with (`@core/studio-runtime`): a portal
+   * document's `data-node-id` values are already canonical tree node ids, so
+   * there is no stamp/occurrence translation to do here — `occurrenceIndex`
+   * and `childRects` are simply dropped, unused by this side of the bridge.
+   */
+  async measureDropCandidates(): Promise<DropCandidateGeometry[]> {
+    return collectDropCandidates(this.doc).map(({ nodeId, rect, axis, reversed }) => ({ nodeId, rect, axis, reversed }))
   }
 
   setAxes(axes: PreviewAxes): void {

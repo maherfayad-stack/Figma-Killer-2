@@ -88,6 +88,10 @@ export {
   RUNTIME_ERROR_MESSAGE_MAX,
   RUNTIME_ERROR_STACK_MAX,
   RUNTIME_ERROR_SOURCE_MAX,
+  DropCandidatesMessageSchema,
+  DropCandidatesResultMessageSchema,
+  DROP_CANDIDATES_MAX,
+  DROP_CANDIDATE_CHILD_RECTS_MAX,
   toInboundEnvelope,
   toOutboundEnvelope,
   type InboundRuntimeMessage,
@@ -99,6 +103,7 @@ export {
   type RuntimeMode,
   type NodeRect,
   type NodeMeasurement,
+  type DropCandidateWire,
 } from './messages'
 
 export {
@@ -210,4 +215,21 @@ export {
   type ResizeTargetRef,
 } from './resizeHandles'
 
-export { presentedElementOf } from './nodeDom'
+export { presentedElementOf, rectRelativeToBody } from './nodeDom'
+
+export {
+  resolveCanvasAxisFromStyle,
+  resolveCanvasInsertionAxis,
+  type CanvasDropAxis,
+  type CanvasAxisResolution,
+  type CanvasAxisStyleInput,
+} from './dropAxisRules'
+
+export {
+  collectDropCandidates,
+  MAX_DROP_CANDIDATES,
+  MAX_DROP_CANDIDATE_CHILD_RECTS,
+  type DropCandidateGeometry,
+} from './dropCandidates'
+
+export { measureNodes, DEFAULT_MEASURED_PROPERTIES } from './measureNodes'
