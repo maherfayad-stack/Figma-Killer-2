@@ -129,6 +129,15 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   private nextRequestId = 0
   private disposed = false
   private frameReady = false
+  /**
+   * `live-12` — the mode the parent last declared, re-sent on every `ready`.
+   * A Vite full reload (the runtime's own bundle changing, an edit HMR cannot
+   * hot-swap) replaces the frame's DOCUMENT under the same `WindowProxy`: the
+   * new runtime boots with no mode and posts `ready` again, and a mode sent
+   * only once would have died with the old document — leaving the frame a
+   * visitor's page, its clicks reaching the app instead of the editor.
+   */
+  private interactionMode: 'design' | 'live' | null = null
   private queuedUntilReady: Parameters<typeof toInboundEnvelope>[0][] = []
   private readonly onMessage = (ev: MessageEvent) => this.handleWindowMessage(ev)
 
@@ -194,6 +203,22 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   }
 
   /**
+   * `live-12` — the canonical id of the innermost stamped ancestor of a
+   * pointer hit that the page tree actually knows. A click inside a
+   * design-system button is stamped with that package's own internal source
+   * position; walking out to the call site is what makes the click select
+   * the button. Falls back to the innermost id's own (possibly inexact)
+   * translation when nothing in the chain is known, exactly as before.
+   */
+  private nearestKnownNodeId(message: { nodeId: string | null; occurrenceIndex: number; ancestors: readonly { nodeId: string; occurrenceIndex: number }[] }): string | null {
+    for (const ref of message.ancestors) {
+      const known = this.stampIndex.get(ref.nodeId)?.[ref.occurrenceIndex]
+      if (known !== undefined) return known
+    }
+    return message.nodeId === null ? null : this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex)
+  }
+
+  /**
    * Nothing is posted until the frame has said `ready`. Before that the
    * iframe is still `about:blank` (the parent's origin) or mid-navigation,
    * and a `postMessage` targeted at `frameOrigin` lands nowhere and logs a
@@ -250,6 +275,7 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   }
 
   setInteractionMode(mode: 'design' | 'live'): void {
+    this.interactionMode = mode
     this.post({ type: 'setMode', mode })
   }
 
@@ -286,10 +312,13 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   private dispatchOutboundMessage(message: OutboundRuntimeMessage): void {
     switch (message.type) {
       case 'ready': {
+        const wasReady = this.frameReady
         this.frameReady = true
         const queued = this.queuedUntilReady
         this.queuedUntilReady = []
         for (const pending of queued) this.post(pending)
+        // A SECOND `ready` is a reloaded document — see `interactionMode`.
+        if (wasReady && this.interactionMode !== null) this.post({ type: 'setMode', mode: this.interactionMode })
         this.emit({ type: 'ready' })
         return
       }
@@ -320,8 +349,19 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         this.emit({
           type: 'pointer',
           phase: message.phase,
-          nodeId: message.nodeId === null ? null : this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+          nodeId: this.nearestKnownNodeId(message),
           rect: message.rect,
+          clientX: message.clientX,
+          clientY: message.clientY,
+          modifiers: message.modifiers,
+        })
+        return
+      case 'wheel':
+        this.emit({
+          type: 'wheel',
+          deltaX: message.deltaX,
+          deltaY: message.deltaY,
+          deltaMode: message.deltaMode,
           clientX: message.clientX,
           clientY: message.clientY,
           modifiers: message.modifiers,
