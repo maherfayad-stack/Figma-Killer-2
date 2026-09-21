@@ -28,12 +28,12 @@ import {
   ensureDevServer,
   forgetDevServersForTest,
   getDevServerStatus,
-  spawnDevServerProcess,
   startDevServer,
   stopDevServer,
   tryServeStudioDevServer,
   type DevServerOverrides,
 } from '../devServer'
+import { spawnDevServerProcess } from '../devServerOutput'
 import { isProcessAlive, STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
 import { writeStudioMeta } from '../studioMeta'
 import type { SpawnedProcessLike } from '../subprocessRunner'
