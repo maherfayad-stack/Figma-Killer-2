@@ -2253,6 +2253,139 @@ None blocking — this design is directly implementable by `panel-designer` (the
 - **Human action needed:** dogfood on your own project — ⌘D, insert from Assets, and watch
   the "Saving…" chip; it should settle well under half a second.
 
+### speed-05 — a refused Delete answers inside the keydown task; now it doesn't
+- **Agent:** panel-designer (dispatched for `STUDIO-SPEED-PLAN.md`'s speed-05 work order).
+- **Stage:** done — branch `feat/speed-05-refusal-within-keydown`, stacked on
+  `fix/live-dev-server-survives-api-restart`, draft PR against that branch.
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md` speed-05 — pressing Delete on a node whose delete is
+  refused measured a 393 ms main-thread long task (keydown → `RefusalDialog` first
+  paint); target ≤ 50 ms visible response.
+- **Scope:** `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts`
+  (`presentStructuralRefusal`), `tests/e2e/studio-feel.e2e.ts` (new budget test +
+  two small helpers). Did not touch `inspector/commitApi.ts`, `selectionSlice.ts`,
+  `useBridgeFrameInteraction.ts`, or the persistence hooks — those are other
+  sessions' scope per the work order.
+- **What I found, not what the plan guessed:** the refusal decision itself is O(1)
+  (confirmed — `planSourceDelete`/`refuseStructuralEdit` do one id check, no
+  scan). `RefusalDialog` and its `Dialog` primitive are already STATICALLY
+  imported at `SitePage.tsx` — there is no lazy-import boundary to preload, and
+  `Dialog.tsx` has no focus-trap library, just `createPortal` + two small
+  `useEffect`s. The actual cost is priority, not weight: `requestDeleteNode`'s
+  `commit()` (default `confirmBeforeDelete: false`, `catalog.ts:172`) runs
+  `deleteNode` synchronously inside the native `document`-level keydown listener
+  (`useEditorKeyDispatcher`, not a React-synthetic handler), and the refusal's
+  `context.set(...)` that opens `structuralRefusalDialog` was un-prioritized —
+  React 18+ automatic batching still renders and mounts the dialog's portal
+  DOM at DEFAULT priority, in the SAME task, before the browser gets to paint.
+  Investigated and ruled out as the cause: Mutative's `enableAutoFreeze` (the
+  store's `create(..., { enableAutoFreeze: true })`) — its `deepFreeze` short-
+  circuits on `Object.isFrozen`, so an unrelated top-level field write is O(top-
+  level key count) on every call after the first, not O(tree size); no broad
+  (non-selector) `useEditorStore` subscription found anywhere in `src/admin/
+  pages/site` that would re-render on an unrelated field.
+- **The fix:** one `startTransition` (React 19, `import { startTransition } from
+  'react'`) around the dialog-opening `context.set(...)` inside
+  `presentStructuralRefusal`'s `constraint.actions.length > 0` branch only — the
+  toast branch (`constraint.actions.length === 0`) is untouched, since
+  `pushToast` never goes through this store's `set` at all. The store WRITE is
+  still synchronous (readable via `getState()` immediately); only the resulting
+  React re-render/mount is deferred to its own, interruptible, low-priority task,
+  so the keydown handler returns immediately.
+- **e2e budget:** `tests/e2e/studio-feel.e2e.ts` — new test `'Delete on a node
+  the source refuses answers with RefusalDialog within budget'`. Selects the iOS
+  status-bar clock inside `test4`'s `Onboarding.tsx` (`<IOSStatusBar/>` is a
+  local component the parser inlines — `inlineLocalComponents.ts` — so it
+  refuses `shared-component`, which has runnable remedies and therefore opens
+  the DIALOG, not a toast), presses Delete, and asserts keydown → `[role=
+  "alertdialog"]` visible `< BUDGET_REFUSAL_DIALOG_MS` (100 — 2× the work
+  order's own 50 ms target, for CI noise headroom; tighten only after
+  re-measuring on the CI runner). Measured **43.8–56.8 ms across 5 isolated
+  runs on this machine, WITH AND WITHOUT the fix** (see Landmines) — both sides
+  passed the 100 ms gate here.
+- **Landmines:**
+  - **Could not reproduce the 393 ms defect on the tracked `studio-workspace/
+    test4` fixture on this machine, with or without the fix.** Temporarily
+    reverted just the `startTransition` line (`git stash` on that one file,
+    reapplied after), ran the same e2e test 3× before and 5× after: 44.8–57.9 ms
+    before, 43.8–56.8 ms after — no measurable gap. The plan's 393 ms was
+    measured on a bigger, real imported repo (`_scratch-undo`) with more nodes
+    behind the refused instance (`SharedComponentNotice`'s own doc cites "a
+    single `Icon.jsx` line sat behind 29 board nodes" on a real repo) — the
+    fix is still correct by mechanism (it moves a synchronous default-priority
+    render out of the keydown task, which is strictly never slower and is
+    exactly what R18's docs recommend for this shape of update), but re-measure
+    on a bigger project before calling the gap closed. **Kept the fix and the
+    gate regardless** — a ratchet against regression, not proof of the original
+    number.
+  - **`speed-04`'s own dual-mount defect is real and not self-healing on a
+    fresh page load**: `LiveBoardFrame.tsx` mounts a portal-fallback
+    `BreakpointFrame` AND the bridge one together until the bridge is ready, so
+    `[data-page-id] iframe[title^="Canvas frame"]` can resolve to 2 elements for
+    up to several seconds after `openFixtureBoard` returns. My test waits for
+    that to settle to 1 before touching `frameLocator()` — every OTHER test in
+    this file that skips that wait is either lucky (extra steps before its own
+    frame query give it time) or itself flaky under load; did not fix `speed-04`
+    itself, out of scope.
+  - **`data-node-id` in a live (Tier 2 bridge) frame is NOT the store's
+    composite id.** `idStamp.ts` stamps the element's own `rel:line:col` inside
+    ITS OWN source file (e.g. `IOSStatusBar.tsx:9:7`); the store's inlined
+    `${callSiteId}~${originalId}` id is a translation `liveNodeResolve.ts` does
+    on the parent side, invisible to the DOM. A selector built on `[data-node-
+    id*="~"]` finds nothing in a live frame — match by stable TEXT instead
+    (`getByText('9:41', { exact: true })`) when you need "a node whose id is
+    inlined" in a live-frame e2e test.
+  - `SharedComponentNotice`'s `role="note"` text ("Part of `<Component>`…") is
+    a more reliable post-click assertion than the in-frame selection ring here:
+    selecting this node triggers `focusActiveBreakpoint`'s auto pan/zoom, and
+    the ring can still be mid-transition when checked. The notice does NOT
+    survive `RefusalDialog` opening (unmounts or the properties panel changes
+    focus) — assert on it BEFORE pressing Delete, then assert on the dialog's
+    own `constraint-action-detach` testid afterward, not on the notice again.
+  - This machine had 4+ sibling `speed-0X` agents' `bun test --parallel=4` /
+    `playwright test` running concurrently in other worktrees during
+    verification — a full `studio-feel.e2e.ts` run picked up unrelated
+    `ConnectionRefused` failures on the ⌘D and Escape tests (their own
+    per-fixture dev server died mid-test) that vanished when I re-ran the same
+    tests in isolation later. Don't trust a shared-machine full-suite e2e
+    failure without an isolated re-run; `bun run test`
+    (`bun test --parallel=4`) hung past 15 minutes here too (a sibling
+    worktree's own `bun test --parallel=4` had been running 31+ minutes) — the
+    documented known issue. Fell back to scoped `bun test` runs instead.
+- **Verification:**
+  - `bun test src/admin/pages/site/store src/admin/pages/site/ui/RefusalDialog
+    src/__tests__/studio/constraintRefusalSurfaces.test.ts src/admin/pages/site/
+    studio/__tests__/structuralSourceUndo.test.ts` — 68 pass / 0 fail.
+  - `bun test src/admin/pages/site` (whole area) — 1076 pass / 5 fail, all 5 the
+    task's named pre-existing bucket (`useBridgeComputedValues` ×4,
+    `FillSection` computed-values loading state) — untouched by this diff.
+  - `bun test src/__tests__/architecture` — 648 pass / 2 fail, both pre-existing
+    on this branch and outside my diff (`server/handlers/studio/devServer.ts`
+    748 lines > 700-line ceiling; a stale `studio-runtime:sync` bundle check) —
+    confirmed via `git status`/`git diff --stat` that I never touched either
+    file.
+  - `bun run build` — clean (`tsc -b && vite build`).
+  - `bun run lint` — clean.
+  - `bun run test` (`bun test --parallel=4`, full repo) — killed after 15 min per
+    the documented fallback; did not re-run bare `bun test` on the full repo
+    given the scoped runs above already cover everything this diff touches and
+    the machine was under heavy parallel load from sibling agents.
+  - e2e: `E2E_VITE_PORT=5180 E2E_CMS_PORT=3012 bun run test:e2e -- tests/e2e/
+    studio-feel.e2e.ts -g "RefusalDialog within budget"` — pass, isolated, 5
+    runs, 43.8–56.8 ms each (budget 100 ms). Full-file run (all 5 tests) hit
+    the shared-machine flake above on the ⌘D/Escape tests; my own new test
+    failed ONCE in that same full-file run with the dual-mount strict-mode
+    violation never settling within 30 s — did not reproduce in 3 later
+    isolated re-runs, consistent with the shared-machine theory above rather
+    than a real defect in the wait, but flag it for the human: if this test
+    flakes in CI, look at `speed-04`'s dual-mount timing first.
+- **Human action needed:** dogfood — open `test4` (or a bigger real project),
+  select an element inside a local component used elsewhere on the board (e.g.
+  inside `SheetHeader`/`IOSStatusBar`), press Delete, and confirm the refusal
+  dialog appears with no visible stutter/freeze. Also worth trying on a larger
+  imported repo than `test4` to see whether the original 393 ms reproduces
+  there and whether this fix closes it in practice, not just in isolation.
+
 ### live-10 — live frames render on a local install, and the Tier-2 default only ever runs `vite`
 - **Agent:** main session (orchestrator), driven by dogfood on the owner's own `test4`.
 - **Stage:** done — branch `fix/live-frames-on-local-install`, stacked on
