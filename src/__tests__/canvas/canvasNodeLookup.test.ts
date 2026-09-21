@@ -42,7 +42,7 @@ function addCanvasFrame(html: string, breakpointId = 'bp-desktop'): HTMLIFrameEl
   frameDoc.body.innerHTML = html
   const adapter = new PortalFrameAdapter(frameDoc)
   adapters.push(adapter)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, breakpointId)
   return frame
 }
 

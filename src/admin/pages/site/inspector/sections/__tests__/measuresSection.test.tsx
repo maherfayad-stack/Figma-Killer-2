@@ -213,7 +213,7 @@ describe('MeasuresSection — constraint writes', () => {
     frameDoc.body.appendChild(parent)
     const adapter = new PortalFrameAdapter(frameDoc)
     frameAdapters.push(adapter)
-    registerFrameAdapter(frame, adapter)
+    registerFrameAdapter(frame, adapter, 'desktop')
   }
 
   function pickConstraint(axisLabel: string, option: string) {
@@ -280,7 +280,7 @@ describe('MeasuresSection — Constraints-vs-Flex-element identity swap', () => 
     frameDoc.body.appendChild(el)
     const adapter = new PortalFrameAdapter(frameDoc)
     frameAdapters.push(adapter)
-    registerFrameAdapter(frame, adapter)
+    registerFrameAdapter(frame, adapter, 'desktop')
   }
 
   it('shows no "Flex element" header for a node with no live parent frame', () => {

@@ -1377,7 +1377,7 @@ adapter):
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
-| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
 | `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 
 **`speed-03` — `move` is coalesced, not forwarded raw.** A native
@@ -1521,6 +1521,32 @@ Three rules that fell out of wiring this, each pinned by a test:
   wants "every element with class X" from inside a bridge frame needs the
   frame to report ITS OWN class names back over the wire — Studio's parsed
   name is never usable as a live-DOM selector.
+- **A live board frame IS a breakpoint frame — "non-base context" and "skip
+  the preview" are NOT the same condition.** `commitApi.ts`'s first version
+  gated `broadcastOptimisticStyle` on `activeContextId` being falsy, meaning
+  ANY non-null context — a breakpoint tab as much as a hover/focus condition
+  — turned the broadcast off. That is wrong for a breakpoint context: a
+  panel edit almost always happens WHILE a specific breakpoint's frame is
+  selected, so the inspector's active context is that breakpoint's context
+  for the common case, not an edge one — and the fix silently removed the
+  whole feature from its own main use case (proven live: a Width edit sent
+  no wire message at all). The correct split is by WHICH KIND of context is
+  active, not whether one is active: `selectionModel.ts`'s own derivation —
+  `activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab
+  : null)` — already tells a breakpoint context (`activeTab`, itself equal
+  to `activeBreakpointId` whenever it isn't `'desktop'`) from a state/
+  condition one (`activeConditionId`, validated against `site.conditions`).
+  A breakpoint context previews too, narrowed by `canvasFrameAdapterRegistry
+  .ts`'s per-registration `breakpointId` (`IframeFrameSurface.tsx`'s own
+  prop, in scope at every `registerFrameAdapter` call); only a genuine state/
+  condition context (`onCondition`) skips the broadcast — that ONE case is a
+  bridge frame's document not holding every pointer/focus state at once, not
+  "any context at all". `optimisticStructuralBroadcast.ts`'s
+  `broadcastOptimisticStyle(nodeId, patch, { breakpointId? })` is the layer
+  that does the filtering; `listFrameAdapters()` stays adapter-only (its 8
+  existing callers never need a breakpoint id) while
+  `listFrameAdapterRegistrations()` carries both — one registry, two derived
+  views, so they cannot drift apart.
 
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that

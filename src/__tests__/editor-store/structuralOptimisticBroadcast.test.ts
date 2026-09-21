@@ -68,7 +68,7 @@ beforeEach(() => {
   }
   adapter = new BridgeFrameAdapter({ channel, frameOrigin: 'https://live.studio.test' })
   iframe = document.createElement('iframe')
-  registerFrameAdapter(iframe, adapter)
+  registerFrameAdapter(iframe, adapter, 'desktop')
 
   realFetch = globalThis.fetch
   // The structural commits this fires are fire-and-forget network writes —

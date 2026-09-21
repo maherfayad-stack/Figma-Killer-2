@@ -89,7 +89,7 @@ function setUpCanvasFrame(
   styleNode(node, frameDoc)
 
   const adapter = new PortalFrameAdapter(frameDoc)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, breakpointId)
   liveFrames.push({
     frame,
     dispose: () => {
@@ -126,7 +126,7 @@ function addBridgeFrame(breakpointId: string) {
     },
   }
   const adapter = new BridgeFrameAdapter({ channel, frameOrigin: BRIDGE_ORIGIN })
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, breakpointId)
   liveFrames.push({
     frame,
     dispose: () => {
