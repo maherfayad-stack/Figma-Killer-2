@@ -67,14 +67,18 @@ export interface OptimisticDomOps {
   text(nodeId: string, text: string): void
   /**
    * `speed-01` — a properties-panel style commit or scrub preview, applied
-   * as a stylesheet rule (never `nodeId`'s own inline `style`, which the
-   * eventual React re-render also writes — see `@core/studio-runtime`'s
-   * `optimisticStyle.ts` for why an inline preview can never be cleared
-   * safely). `patch` keys are CSS property names (camelCase or kebab-case);
-   * `className`, when present, means this is a CLASS-target write — the rule
-   * selector becomes `.<className>` instead of one scoped to `nodeId` alone,
-   * reaching every element in the frame carrying that class, exactly the
-   * blast radius the real class write will have.
+   * as a stylesheet rule scoped to `nodeId`'s own element (never `nodeId`'s
+   * inline `style`, which the eventual React re-render also writes — see
+   * `@core/studio-runtime`'s `optimisticStyle.ts` for why an inline preview
+   * can never be cleared safely). `patch` keys are CSS property names
+   * (camelCase or kebab-case). `className`, present for a CLASS-target write,
+   * is carried through to the wire but is INFORMATIONAL only — a bridge frame
+   * cannot build a `.<className>` selector against it, because that name is
+   * Studio's own parse of the class, not the (independently hashed) name
+   * Vite's CSS-modules plugin gave it in the live frame's DOM; see
+   * `optimisticStyle.ts`'s module doc, "ALWAYS element-scoped". Only the
+   * edited node's own element previews instantly; other elements sharing the
+   * class catch up on the next HMR update.
    */
   style(nodeId: string, patch: Record<string, string>, className?: string): void
   /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */

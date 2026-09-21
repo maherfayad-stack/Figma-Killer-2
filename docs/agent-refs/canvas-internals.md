@@ -1377,8 +1377,8 @@ adapter):
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
-| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared) — an inline write stamps the node's element and keys on `[data-studio-optimistic-style]`; a class write (`className` present) keys on `.<className>` and touches no element, reaching every node in the frame carrying that class. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
-| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId`, whichever selector shape it turned out to be — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 
 Three rules that fell out of wiring this, each pinned by a test:
 
@@ -1437,27 +1437,41 @@ Three rules that fell out of wiring this, each pinned by a test:
 - **`speed-01` — a properties-panel style op reuses the exact same
   stylesheet-not-inline-style posture, and had to teach the frame-fit
   `layoutObserver` about a NEW attribute it must ignore.** `optimisticStyle.ts`
-  stamps `[data-studio-optimistic-style]` on an inline-target element for the
+  stamps `[data-studio-optimistic-style]` on the edited element for the
   SAME reason `resizeHandles.ts` stamps `[data-studio-resize-preview]` — the
   eventual React re-render writes the identical value, so only a stylesheet
   rule (never `element.style`) can be dropped without either deleting React's
-  write or snapping back mid-round-trip. But this is the THIRD attribute the
+  write or snapping back mid-round-trip. This is the THIRD attribute the
   frame-fit mutation observer (`runtime.ts`'s `layoutObserver`, which watches
   `doc.body` for real content changes to know when to re-derive the fit pin)
   has to be told to ignore — miss one and every style edit spuriously resets
   the frame's fit-height pin through the SAME observer callback that reports
   `frame:resize` to the parent, fighting the "grow to content" requirement
-  `docs/features/canvas-iframe-per-frame.md` describes. A class-target style
-  write (selector-only, no element touched at all) needs no such exemption
-  but ALSO produces no `layoutObserver` mutation to reposition the selection
-  ring from — so `runtime.ts`'s `optimistic.style` handler calls
-  `scheduleReposition()` explicitly rather than relying on that side effect,
-  unlike the inline path, where the attribute write incidentally triggers it
-  anyway. Any FUTURE runtime-owned attribute needs the same three-way check:
-  (1) does the mutation observer see it and mis-fire a fit-pin reset, (2)
-  does React's own reconciliation ever try to write the same thing (then it
-  must be a stylesheet rule, never inline), (3) does clearing it need an
-  explicit reposition call because no other mutation will trigger one.
+  `docs/features/canvas-iframe-per-frame.md` describes. `runtime.ts`'s
+  `optimistic.style` handler also calls `scheduleReposition()` explicitly
+  rather than relying solely on the mutation-observer side effect. Any
+  FUTURE runtime-owned attribute needs the same three-way check: (1) does the
+  mutation observer see it and mis-fire a fit-pin reset, (2) does React's own
+  reconciliation ever try to write the same thing (then it must be a
+  stylesheet rule, never inline), (3) does clearing it need an explicit
+  reposition call because no other mutation will trigger one.
+- **A class name is not a portable selector across the parse/DOM boundary.**
+  `optimisticStyle.ts` originally tried a class-target write as
+  `.<className> { … }`, reaching every element carrying the class in one
+  shot — this looked right in every unit test and was WRONG the first time it
+  ran against a real project. Studio's own PARSE names a CSS-module class one
+  way (`SMS_page__5638d`, read out of the source); **Vite's own CSS-modules
+  plugin** names the SAME class a completely different way at dev-server
+  build time (`_page_xxxxx_3`-shaped) — two independent hashing schemes over
+  one source file, with no reason to agree, and in the live frame's DOM they
+  did not. `.SMS_page__5638d` matched nothing; the frame never changed until
+  HMR landed. The fix: a class-target write previews element-scoped, exactly
+  like an inline write — stamping the ONE node the panel is editing, never a
+  class selector. `className` still crosses the wire but is read by nothing
+  on the runtime side; it is informational only. Any FUTURE feature that
+  wants "every element with class X" from inside a bridge frame needs the
+  frame to report ITS OWN class names back over the wire — Studio's parsed
+  name is never usable as a live-DOM selector.
 
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that

@@ -323,8 +323,13 @@ describe('createStudioRuntimeBridge — optimistic style', () => {
     expect(sheet).toContain('color: green !important')
   })
 
-  it('a class-target patch writes `.className { … }` and touches no element at all', () => {
-    document.body.innerHTML = `<div data-node-id="n1" class="card"></div>`
+  // A class-target write (`className` present) previews the SAME way an
+  // inline write does — `className` is wire-informational only. Studio's
+  // parse names a class differently than Vite's own CSS-modules plugin does
+  // in the live frame's DOM, so a `.<className>` selector would match
+  // nothing there — see `optimisticStyle.ts`'s module doc.
+  it('a class-target patch (className present) previews element-scoped too, never as a `.className` selector', () => {
+    document.body.innerHTML = `<div data-node-id="n1" class="_page_j4o6g_3"></div>`
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
@@ -332,11 +337,15 @@ describe('createStudioRuntimeBridge — optimistic style', () => {
       type: 'optimistic.style',
       ref: { nodeId: 'n1', occurrenceIndex: 0 },
       patch: { color: 'red' },
-      className: 'card',
+      className: 'SMS_page__5638d', // Studio's own parse name — deliberately NOT the DOM's real class
     })
 
-    expect(document.getElementById(STYLE_TAG)?.textContent).toContain('.card { color: red !important; }')
-    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+    const el = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    expect(el.hasAttribute(STYLE_ATTR)).toBe(true)
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).toContain('color: red !important')
+    expect(sheet).not.toContain('.SMS_page__5638d')
+    expect(sheet).not.toContain('._page_j4o6g_3')
   })
 
   it('clear drops the rule and the attribute for that ref, and no-ops for a ref with nothing active', () => {
@@ -374,6 +383,7 @@ describe('createStudioRuntimeBridge — optimistic style', () => {
     })
     fireAfterUpdate()
     expect(document.getElementById(STYLE_TAG)).toBeNull()
+    expect(document.querySelector('[data-node-id="n2"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
   })
 
   it('repositions the selection ring after an apply — inline target and class target both', async () => {

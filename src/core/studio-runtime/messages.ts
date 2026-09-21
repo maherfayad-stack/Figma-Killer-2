@@ -283,15 +283,20 @@ export const OptimisticTextMessageSchema = Type.Object({
  *   - `className` — present only for a CLASS-target write (`commitApi.ts`'s
  *     `writeToTarget`/`previewToTarget`), the bare class name
  *     `styleRuleSelector`/`selectionModel.ts` already produced (its leading
- *     `.` stripped) — `optimisticStyle.ts` rebuilds the identical selector as
- *     `.<className>`. Bounded and excludes whitespace/`{`/`}`/`;`/`<` for the
- *     same reason `patch`'s values are: it is concatenated directly into the
- *     rule's SELECTOR position, not escaped.
+ *     `.` stripped). **Informational only** — `optimisticStyle.ts` does NOT
+ *     build a `.<className>` selector from it. Dogfooding against a real
+ *     project showed that selector matches nothing: `className` is the name
+ *     STUDIO'S PARSE gives the class, read out of the CSS-module source, but
+ *     the live frame's DOM carries whatever name VITE'S OWN CSS-modules
+ *     plugin generated at dev-server build time — two independent hashing
+ *     schemes over the same source with no reason to agree, and in practice
+ *     they don't. Still bounded (excludes whitespace/`{`/`}`/`;`/`<`) as
+ *     defense in depth for whatever future consumer reads it off the wire.
  *
- * `ref` names which node this write is FOR — the element an inline write
- * stamps, or the anchor node a class write's internal bookkeeping keys on
- * (the class selector itself reaches every element carrying it, regardless of
- * which node the panel happened to be editing through).
+ * `ref` names the element every optimistic style write actually targets —
+ * inline or class, both are element-scoped (see `optimisticStyle.ts`'s module
+ * doc, "ALWAYS element-scoped"); a class write's other elements catch up on
+ * the next HMR update rather than getting an in-frame preview of their own.
  */
 const OPTIMISTIC_STYLE_KEY_PATTERN = '^[a-zA-Z-]{1,64}$'
 const OPTIMISTIC_STYLE_VALUE_PATTERN = '^(?!.*!important)[^;}<]{0,256}$'

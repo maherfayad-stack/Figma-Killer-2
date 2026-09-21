@@ -242,9 +242,10 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // A breakpoint/condition-scoped override applies only under a media
       // query or a state a bridge frame's own document renders at ALL times
       // (it is one fixed viewport, one fixed pointer/focus state) — an
-      // unconditional in-frame rule for one would show wrong outside that
-      // context. Base-context class writes only; see the module doc on
-      // `previewToTarget`'s matching guard.
+      // unconditional in-frame preview on the selected node's own element
+      // (see `optimisticStyle.ts`'s "ALWAYS element-scoped") would show
+      // wrong outside that context. Base-context class writes only; see the
+      // module doc on `previewToTarget`'s matching guard.
       if (!activeContextId) {
         const optimisticPatch = optimisticStylePatch(patch)
         if (optimisticPatch) broadcastOptimisticStyle(selectedNodeId, optimisticPatch, bareClassName(target.selector))

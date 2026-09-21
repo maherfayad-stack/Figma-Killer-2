@@ -615,8 +615,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
         return
       case 'optimistic.style':
-        applyOptimisticStyle(doc, message.ref, message.patch, message.className)
-        scheduleReposition() // a class-target rule touches no element for `layoutObserver` to see mutate
+        applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`
+        scheduleReposition()
         return
       case 'optimistic.style:clear':
         clearOptimisticStyle(doc, message.ref)
