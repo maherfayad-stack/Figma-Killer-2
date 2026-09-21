@@ -1,11 +1,18 @@
 import type { PageNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type {
-  CanvasDropAxis,
   CanvasDropCandidate,
   CanvasRect,
 } from './canvasDnd'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
+import { resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis } from '@core/studio-runtime'
+
+// Re-exported verbatim — `speed-06` moved the implementation into
+// `@core/studio-runtime/dropAxisRules.ts` so the in-frame bridge candidate
+// builder can share it, but existing admin-side imports of these two names
+// from THIS module (`canvasInsertionAxis.test.ts`) stay valid.
+export { resolveCanvasAxisFromStyle, resolveCanvasInsertionAxis }
+export type { CanvasAxisResolution, CanvasAxisStyleInput } from '@core/studio-runtime'
 
 const CANVAS_NODE_SELECTOR = '[data-node-id]'
 
@@ -264,7 +271,7 @@ export function nodeVisualRect(element: CanvasRectSource, depth: number = 0): Cl
   return { left: union.left, top: union.top, right: union.right, bottom: union.bottom, width: union.right - union.left, height: union.bottom - union.top }
 }
 
-function clientRectToViewportRect(
+export function clientRectToViewportRect(
   viewport: HTMLElement,
   rect: ClientRectLike,
 ): CanvasRect {
@@ -302,114 +309,41 @@ export function getViewportZoom(viewport: HTMLElement): number {
   return getViewportScale(viewport, viewport.getBoundingClientRect())
 }
 
-/** The subset of `CSSStyleDeclaration` `resolveCanvasAxisFromStyle` reads — a structural type so it can be unit-tested with a plain object, no DOM. */
-export interface CanvasAxisStyleInput {
-  display: string
-  flexDirection: string
-  gridAutoFlow: string
-  direction: string
-}
-
-export interface CanvasAxisResolution {
-  axis: CanvasDropAxis
-  /** See `CanvasDropCandidate.reversed`'s doc (`canvasDnd.ts`). */
-  reversed: boolean
-}
-
 /**
- * G9 — pure CSS→axis mapping, extracted so grid/`*-reverse`/RTL logic is
- * directly unit-testable without a real browser layout. Only reads FOUR
- * computed-style properties; `resolveCanvasInsertionAxis` below is the DOM
- * wrapper that finds the layout parent and reads them off it.
+ * A body-relative rect — the coordinate space `FrameDocumentAdapter.measure`/
+ * `measureDropCandidates` both speak, since a bridge frame's cross-origin
+ * document can only ever report a rect relative to ITS OWN `body` — converted
+ * into CANDIDATE frame-space: the same unscaled, viewport-local unit system
+ * `measureCanvasDropCandidates` has always produced, which
+ * `resolveCanvasInsertionTarget`/`getCanvasDropZone`/`fixedPreviewForTarget`
+ * all assume.
  *
- * **Grid is a CSS-only heuristic, not the sibling-geometry-derived axis the
- * fully correct fix would compute** (compare row/column overlap of actual
- * sibling rects — see `STUDIO-FIGMA-PARITY-PLAN.md`'s G9 finding). That needs
- * `measureCanvasDropCandidates` to thread sibling rects into this function,
- * which is a larger plumbing change deferred out of this pass. What ships
- * here: `gridAutoFlow: column` (dense-column placement, fills a column
- * top-to-bottom before wrapping) resolves `vertical`; the default row
- * autoflow (fills a row left-to-right before wrapping) resolves
- * `horizontal`. Strictly better than the PRE-G9 behavior (`'vertical'`
- * unconditionally, which drew horizontal insertion bars across a
- * side-by-side card gallery) but still wrong for any grid whose visual flow
- * doesn't match its `gridAutoFlow` keyword alone — e.g. an explicit
- * `grid-template-columns` layout with items NOT auto-placed.
+ * Shared by the `speed-06` per-drag snapshot builder for BOTH a portal
+ * surface's own DOM read and a bridge surface's wire answer — one conversion,
+ * one place, instead of the iframe-scale arithmetic living twice (the
+ * `standing-03` drift this module's own `project` comment elsewhere warns
+ * against). Reuses `clientRectToViewportRect` below, the same function
+ * `measureCanvasDropCandidates` itself is built on.
  */
-export function resolveCanvasAxisFromStyle(style: CanvasAxisStyleInput): CanvasAxisResolution {
-  const rtl = style.direction === 'rtl'
-
-  if (style.display.includes('grid')) {
-    const columnFlow = style.gridAutoFlow.includes('column')
-    return columnFlow ? { axis: 'vertical', reversed: false } : { axis: 'horizontal', reversed: rtl }
+export function bodyRelativeRectToFrameSpace(
+  viewport: HTMLElement,
+  iframe: HTMLIFrameElement,
+  rect: { x: number; y: number; width: number; height: number },
+): CanvasRect {
+  const iframeRect = iframe.getBoundingClientRect()
+  const iframeScale = iframe.offsetWidth > 0 ? iframeRect.width / iframe.offsetWidth : 1
+  const editorRect: ClientRectLike = {
+    left: iframeRect.left + rect.x * iframeScale,
+    top: iframeRect.top + rect.y * iframeScale,
+    right: iframeRect.left + (rect.x + rect.width) * iframeScale,
+    bottom: iframeRect.top + (rect.y + rect.height) * iframeScale,
+    width: rect.width * iframeScale,
+    height: rect.height * iframeScale,
   }
-
-  if (style.display.includes('flex')) {
-    const isRow = style.flexDirection.startsWith('row')
-    const isReverseFlexDirection = style.flexDirection.endsWith('reverse')
-    if (isRow) {
-      // Visual-left is the logical END of the axis under `direction: rtl`;
-      // `row-reverse` flips visual order again. Two flips cancel out — XOR,
-      // not OR — a `row-reverse` container that is ALSO `rtl` renders in DOM
-      // order again (not reversed).
-      return { axis: 'horizontal', reversed: isReverseFlexDirection !== rtl }
-    }
-    // `column` / `column-reverse` — RTL only mirrors the INLINE axis, never
-    // the BLOCK axis, so `direction` plays no part here.
-    return { axis: 'vertical', reversed: isReverseFlexDirection }
-  }
-
-  // Ordinary block flow (including `flex-wrap` and anything else): vertical,
-  // top-to-bottom, unaffected by `direction`.
-  return { axis: 'vertical', reversed: false }
+  return clientRectToViewportRect(viewport, editorRect)
 }
 
-/**
- * DOM wrapper around `resolveCanvasAxisFromStyle`: finds `target`'s nearest
- * boxed layout parent (skipping `display: contents` hosts, same as the
- * geometry walk `nodeVisualRect` does) and reads its computed style.
- *
- * Uses `target`'s OWN document's `defaultView` — not the ambient `window` —
- * because `target` lives inside a breakpoint iframe's document, a DIFFERENT
- * realm from the parent editor window. Real browsers resolve
- * `window.getComputedStyle(elementFromAnotherDocument)` correctly for a
- * same-origin iframe today, but that is not a contract this function should
- * lean on (`STUDIO-FIGMA-PARITY-PLAN.md`'s G9 finding) — reading from the
- * element's own realm is correct by construction instead of by browser
- * behavior nobody promised.
- */
-export function resolveCanvasInsertionAxis(target: HTMLElement): CanvasAxisResolution {
-  const parent = findLayoutParent(target)
-  if (!parent) return { axis: 'vertical', reversed: false }
-
-  const view = parent.ownerDocument?.defaultView
-  if (!view || typeof view.getComputedStyle !== 'function') return { axis: 'vertical', reversed: false }
-
-  const style = view.getComputedStyle(parent)
-  return resolveCanvasAxisFromStyle({
-    display: style.display,
-    flexDirection: style.flexDirection,
-    gridAutoFlow: style.gridAutoFlow,
-    direction: style.direction,
-  })
-}
-
-function findLayoutParent(element: HTMLElement): HTMLElement | null {
-  let parent = element.parentElement
-  while (parent) {
-    // Same realm-correctness note as `resolveCanvasInsertionAxis`: read from
-    // the candidate parent's OWN document view, not the ambient `window`.
-    const view = parent.ownerDocument?.defaultView
-    const style = view && typeof view.getComputedStyle === 'function'
-      ? view.getComputedStyle(parent)
-      : null
-    if (style?.display !== 'contents') return parent
-    parent = parent.parentElement
-  }
-  return null
-}
-
-function buildDepthMap(tree: NodeTree<PageNode>): Map<string, number> {
+export function buildDepthMap(tree: NodeTree<PageNode>): Map<string, number> {
   const depths = new Map<string, number>()
   const stack: Array<{ id: string; depth: number }> = [{ id: tree.rootNodeId, depth: 0 }]
 

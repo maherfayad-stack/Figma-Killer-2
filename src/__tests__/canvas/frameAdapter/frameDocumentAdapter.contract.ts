@@ -78,6 +78,19 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // `speed-06`
+    it('measureDropCandidates returns a promise resolving to an array', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        const result = adapter.measureDropCandidates()
+        expect(result).toBeInstanceOf(Promise)
+        const candidates = await result
+        expect(Array.isArray(candidates)).toBe(true)
+      } finally {
+        cleanup()
+      }
+    })
+
     it('setAxes does not throw for both directions and both color schemes', () => {
       const { adapter, cleanup } = makeHarness()
       try {

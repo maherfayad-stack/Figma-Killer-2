@@ -1366,6 +1366,8 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 | `resize:commit` (`{ width?, height? }` as integer `px` strings) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
 | `text:editStart` (`live-18`, design mode only) / `text:commit` (final text, bounded to 20 000 chars) / `text:cancel` | `inlineTextEdit.ts` — a double-click on a stamped element opens a session; the runtime owns the whole contentEditable lifecycle itself (seeding, focus, select-all, Escape/Enter, blur) and only the request and the final result cross the wire | `useBridgeFrameInteraction` → `text:editStart` runs the SAME `startInlineEdit` predicate the portal double-click handler applies and replies via `adapter.startTextEdit(nodeId, allowed, text?)`; `text:commit` calls `applyInlineEditValue` + `endInlineEdit`; `text:cancel` calls `cancelInlineEdit` — nothing is written to the store until commit, so cancel (and an HMR update landing mid-edit) is a plain no-op here |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
+| `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
+| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 
 And the other direction — what the parent sends a bridge frame that a portal
 frame never needs, all from `useBridgeSelectionChrome` (called by
@@ -1383,6 +1385,7 @@ adapter):
 | `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared) — an inline write stamps the node's element and keys on `[data-studio-optimistic-style]`; a class write (`className` present) keys on `.<className>` and touches no element, reaching every node in the frame carrying that class. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
 | `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId`, whichever selector shape it turned out to be — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 | `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. |
+| `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
 
 **`speed-03` — `move` is coalesced, not forwarded raw.** A native
 `pointermove` fires far faster than the parent can usefully act on it
@@ -1555,3 +1558,91 @@ Three rules that fell out of wiring this, each pinned by a test:
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that
 hands every click to the prototype player by design.
+
+### `speed-06` — drag and drop into (and across) live frames
+
+The board notch's `useCanvasInsertionDrag.ts` is the ONE drag-to-canvas
+gesture (pointer events, not HTML5 DnD, so it can cross an iframe boundary —
+see that file's own doc for why). Before `speed-06` it had two independent
+gaps, both invisible until `run-project` became the trust-tier default:
+
+- **Asset-card drag start.** The Assets panel's `AssetCard` was click-to-insert
+  only — no pointer drag at all, in ANY frame mode. It now presses into the
+  SAME `useCanvasInsertionDrag` gesture the notch's primitives use
+  (`AssetsPanel.tsx` owns the one shared hook instance + overlay; the card
+  only gets an `onPointerDown`), with the same payload its click-insert
+  already builds.
+- **A parent-doc drag crossing into a bridge frame did nothing.** The relay
+  flag a drag sets on the parent `<html>` (`markCanvasPointerRelay`,
+  `canvasPointerRelay.ts`) was read only by the PORTAL relay
+  (`useIframeEventForwarding.ts`, forwarding an iframe-internal move back OUT
+  to the parent's `window`). A bridge frame's own runtime ALREADY forwards
+  every pointer event as a `pointer` message regardless of that flag
+  (`gestureForwarding.ts` doesn't know or care about a parent-doc drag), but
+  nothing on the parent replayed those messages onto the iframe element so
+  the drag session's `window` listeners would see them. `useBridgeFrameInteraction`
+  now does, as a third pointer case checked before hover/selection: when
+  `readCanvasPointerRelay(document)`'s pointer id matches the event's, `move`/
+  `up` are replayed on the iframe element (bubbling to `window`, the same
+  mechanism the pan replay already uses) instead of routed to
+  `onNodeHover`/`onNodePointerUp`. `readCanvasPointerRelay` is the ONE reader
+  both relays (portal-outbound, bridge-replay) share — see
+  `canvasPointerRelay.ts`'s own doc. **Known gap, not silently swallowed:**
+  the wire has no `pointercancel` phase (`gestureForwarding.ts` never taps
+  native `pointercancel`), so only `move`/`up` are relayed.
+
+**The bigger fix underneath both: a per-drag candidate SNAPSHOT, not a
+per-move DOM scan, in either mode.** `resolveCanvasPointerInsertionDrop` used
+to call `measureCanvasDropCandidates` — a full `querySelectorAll` plus one
+`getBoundingClientRect`/`getComputedStyle` per candidate — on every raw
+`pointermove`, and had no bridge-mode path at all (`resolvePortalDocument` is
+`null` for a Tier 2 frame, so the scan silently found zero candidates and
+every live-frame drop fell back to "page root"). Two changes:
+
+1. **`FrameDocumentAdapter` gained `measureDropCandidates()`** — same
+   synchronous-DOM-read-wrapped-in-a-resolved-Promise-vs-real-round-trip split
+   `measure()` already has. Bridge mode: the `dropCandidates`/
+   `dropCandidates:result` pair above. Portal mode: `collectDropCandidates`
+   (`@core/studio-runtime`, shared verbatim with the in-frame runtime — one
+   axis rule, `dropAxisRules.ts`, moved out of `canvasDomGeometry.ts` so both
+   sides can read it). Both return BODY-RELATIVE rects (`measure`'s own
+   coordinate space) and no `depth` — depth is a TREE property the caller
+   derives from `buildDepthMap`, which the adapter has no concept of.
+2. **`canvasInsertionDragSnapshot.ts`** (new) is what `useCanvasInsertionDrag`
+   now asks instead of scanning: `beginInsertionDragSnapshotSession()` measures
+   a frame's candidates LAZILY, the first time a drag actually visits it, caches
+   them, and re-measures only on that frame's own `hmr:after`/`frame:resize`
+   (bridge) or a native `scroll` on its document (portal only — a cross-origin
+   scroll has no wire signal yet, a real, documented gap). Converting a
+   body-relative rect into the resolver's own "frame-space" (unscaled,
+   viewport-local) unit system is ONE function,
+   `bodyRelativeRectToFrameSpace` (`canvasDomGeometry.ts`), reused for both
+   modes — the same "don't grow a second copy of ×zoom+offset arithmetic"
+   discipline `canvasOverlayGeometry.ts`'s own `project` already documents.
+   **The no-adapter fallback:** a viewport whose iframe has no registered
+   adapter (a hand-built test fixture; nothing in production leaves this
+   state) falls back to the original synchronous `measureCanvasDropCandidates`
+   scan — not a workaround, the same "nothing to measure" answer that
+   function already gave an iframe with no `resolvePortalDocument`.
+3. **Resolution itself is throttled to at most once per animation frame**,
+   with the LAST pointer position of whatever native moves arrived since the
+   previous tick (`useCanvasInsertionDrag.ts`'s own `pendingPoint`/
+   `pendingFrame` pair) — the ghost still follows every resolved frame's
+   pointer position (no "skip when unchanged" beyond the throttle itself: the
+   ghost's `x`/`y` have to keep moving even when the drop TARGET doesn't, so
+   `setDrag` runs once per throttled tick unconditionally). `pointerup` still
+   resolves SYNCHRONOUSLY, off whatever the snapshot already has — a very fast
+   flick-and-release into a bridge frame whose candidates are still in flight
+   commits to "page root", the same honest answer a pointer outside every
+   frame gets, not a hang.
+
+**Known, deliberately out-of-scope gap:** the ELEMENT REORDER drag
+(`useCanvasReorderDrag.ts`/`canvasDragSession.ts`'s `FrameCandidateIndex`,
+D2 G3's cross-frame board) still calls `measureCanvasDropCandidates` directly
+and is therefore STILL bridge-blind for that gesture — dragging an existing
+element across frames when one of them is a live Tier 2 frame silently finds
+zero candidates there, same failure mode this work order fixed for INSERTION.
+Not touched here: it is a materially larger, higher-risk refactor (an
+already-synchronous rAF loop that would need to become async-tolerant) that
+the work order this section describes explicitly scoped out. Flagged for a
+follow-up, not silently left broken.

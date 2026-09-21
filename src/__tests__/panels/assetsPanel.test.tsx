@@ -8,7 +8,7 @@
  * to the notch without inserting anything.
  */
 import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { AssetsPanel } from '@site/panels/AssetsPanel'
 import { useEditorStore } from '@site/store/store'
 import { __resetAssetFavoritesForTests } from '@site/panels/AssetsPanel/assetsPrefs'
@@ -216,5 +216,83 @@ describe('AssetsPanel', () => {
     fireEvent.click(document.querySelector('[data-asset-id="base.text"]') as HTMLElement)
 
     expect(screen.getByRole('button', { name: /^Recent/ })).toBeTruthy()
+  })
+
+  // `speed-06` — the card is also a drag source, sharing `useCanvasInsertionDrag`
+  // with the notch's own primitives.
+  describe('dragging a card onto a frame', () => {
+    function mountFrame() {
+      const viewport = document.createElement('div')
+      viewport.dataset.breakpointId = 'desktop'
+      viewport.getBoundingClientRect = () => domRect({ x: 0, y: 0, width: 400, height: 400 })
+      const container = document.createElement('section')
+      container.dataset.nodeId = 'root-home'
+      container.getBoundingClientRect = () => domRect({ x: 20, y: 20, width: 200, height: 120 })
+      viewport.append(container)
+      document.body.append(viewport)
+      return viewport
+    }
+
+    function domRect(init: { x: number; y: number; width: number; height: number }): DOMRect {
+      return {
+        x: init.x, y: init.y, left: init.x, top: init.y,
+        right: init.x + init.width, bottom: init.y + init.height,
+        width: init.width, height: init.height, toJSON: () => ({}),
+      } as DOMRect
+    }
+
+    afterEach(() => {
+      document.body.querySelectorAll('[data-breakpoint-id]').forEach((el) => el.remove())
+    })
+
+    it('shows a drop preview while dragging, and a plain click still inserts at the current selection', async () => {
+      loadSite()
+      render(<AssetsPanel />)
+      mountFrame()
+
+      const card = document.querySelector('[data-asset-id="base.text"]') as HTMLElement
+      expect(document.querySelector('[data-position]')).toBeNull()
+
+      fireEvent.pointerDown(card, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+      fireEvent.pointerMove(window, { clientX: 100, clientY: 60, pointerId: 1 })
+      await act(() => new Promise((resolve) => requestAnimationFrame(() => resolve(undefined))))
+
+      const preview = document.querySelector('[data-position]')
+      expect(preview).not.toBeNull()
+      expect(preview?.textContent).toContain('Drop Text')
+
+      fireEvent.pointerUp(window, { clientX: 100, clientY: 60, pointerId: 1 })
+
+      // The drag's own release inserted — not a click on the card.
+      expect(document.querySelector('[data-position]')).toBeNull()
+      const page = useEditorStore.getState().site?.pages.find((item) => item.id === 'page-home')
+      const textNodesAfterDrag = page ? Object.values(page.nodes).filter((n) => n.moduleId === 'base.text') : []
+      expect(textNodesAfterDrag).toHaveLength(1)
+
+      // The pointerup-triggered click suppression clears on the next tick —
+      // a LATER, independent click still inserts.
+      await act(() => new Promise((resolve) => setTimeout(resolve, 0)))
+      fireEvent.click(card)
+      const pageAfterClick = useEditorStore.getState().site?.pages.find((item) => item.id === 'page-home')
+      const textNodesAfterClick = pageAfterClick ? Object.values(pageAfterClick.nodes).filter((n) => n.moduleId === 'base.text') : []
+      expect(textNodesAfterClick).toHaveLength(2)
+    })
+
+    it('does not insert twice when the pointerup-triggered click fires on the card that started the drag', () => {
+      loadSite()
+      render(<AssetsPanel />)
+      mountFrame()
+
+      const card = document.querySelector('[data-asset-id="base.text"]') as HTMLElement
+      fireEvent.pointerDown(card, { button: 0, clientX: 500, clientY: 500, pointerId: 1 })
+      fireEvent.pointerMove(window, { clientX: 100, clientY: 60, pointerId: 1 })
+      fireEvent.pointerUp(window, { clientX: 100, clientY: 60, pointerId: 1 })
+      // The browser fires a `click` on the element the pointer went down on.
+      fireEvent.click(card)
+
+      const page = useEditorStore.getState().site?.pages.find((item) => item.id === 'page-home')
+      const textNodes = page ? Object.values(page.nodes).filter((n) => n.moduleId === 'base.text') : []
+      expect(textNodes).toHaveLength(1)
+    })
   })
 })

@@ -9,6 +9,7 @@ import {
 } from './canvasDomGeometry'
 import {
   resolveCanvasInsertionTarget,
+  type CanvasDropCandidate,
   type CanvasInsertionTarget,
 } from './canvasDnd'
 
@@ -34,6 +35,15 @@ interface ResolveCanvasPointerInsertionDropInput {
   clientX: number
   clientY: number
   label: string
+  /**
+   * `speed-06` — pre-measured candidates for the viewport the pointer turns
+   * out to be over, keyed by that viewport's own DOM element. Supplied by
+   * `useCanvasInsertionDrag`'s per-drag snapshot (`canvasInsertionDragSnapshot.ts`)
+   * so this function never scans the DOM itself. Omitted callers (the direct
+   * unit test, any future one-shot caller) keep the original synchronous
+   * `measureCanvasDropCandidates` scan — unchanged behavior for them.
+   */
+  candidatesForViewport?: (viewport: HTMLElement, iframe: HTMLIFrameElement | null) => CanvasDropCandidate[]
 }
 
 export function findCanvasViewportAtPoint(
@@ -61,6 +71,7 @@ export function resolveCanvasPointerInsertionDrop({
   clientX,
   clientY,
   label,
+  candidatesForViewport,
 }: ResolveCanvasPointerInsertionDropInput): CanvasPointerInsertionDrop | null {
   const viewport = findCanvasViewportAtPoint(clientX, clientY)
   if (!viewport) return null
@@ -79,7 +90,9 @@ export function resolveCanvasPointerInsertionDrop({
 
   const iframe = viewport.querySelector<HTMLIFrameElement>('iframe')
   const point = getViewportLocalPoint(viewport, clientX, clientY)
-  const candidates = measureCanvasDropCandidates(viewport, canvasPage, iframe)
+  const candidates = candidatesForViewport
+    ? candidatesForViewport(viewport, iframe)
+    : measureCanvasDropCandidates(viewport, canvasPage, iframe)
   // See `MIN_EDGE_HIT_ZONE_SCREEN_PX` in `canvasDnd.ts` — the edge bands are
   // screen-space; convert with the live zoom before hit-testing frame-space
   // candidates.

@@ -204,6 +204,48 @@ describe('useBridgeFrameInteraction', () => {
     unregisterFrameAdapter(iframe)
   })
 
+  // `speed-06` — a drag that started OUTSIDE this frame entirely (an
+  // asset-card drag) and whose pointer has now moved inside this bridge
+  // frame's iframe: the runtime's own `pointer` messages must be replayed on
+  // the iframe element (so the PARENT's `window` drag-session listeners see
+  // them), never routed to hover/selection.
+  it('replays a relayed drag\'s moves and release on the iframe element, never as hover/selection', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter)
+    const seen: PointerEvent[] = []
+    for (const type of ['pointermove', 'pointerup'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
+    const order: string[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onNodeHover: (id) => order.push(`hover:${id}`), onNodePointerUp: (id) => order.push(`up:${id}`) }}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    document.documentElement.dataset.studioCanvasDragging = '1'
+    document.documentElement.dataset.studioCanvasDraggingPointerId = '9'
+    const RELAY = { button: -1, buttons: 1, pointerId: 9, pointerType: 'mouse' }
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...RELAY })
+    emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...RELAY, buttons: 0 })
+    delete document.documentElement.dataset.studioCanvasDragging
+    delete document.documentElement.dataset.studioCanvasDraggingPointerId
+
+    expect(seen.map((e) => e.type)).toEqual(['pointermove', 'pointerup'])
+    expect(seen.every((e) => e.target === iframe && e.pointerId === 9)).toBe(true)
+    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
+    expect(seen[1].clientX).toBe(100 + 80 * 0.5)
+    // Neither move nor up reached the frame's own hover/selection handlers.
+    expect(order).toEqual([])
+
+    // With the relay flag cleared, the SAME pointer id's move is an ordinary hover again.
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...RELAY })
+    expect(order).toEqual(['hover:pages/SMS.tsx:41:8'])
+    unregisterFrameAdapter(iframe)
+  })
+
   it('commits a resize the frame finished through setNodeInlineStyles', () => {
     const { adapter, emit } = makeFakeAdapter()
     const commits: unknown[] = []

@@ -34,11 +34,14 @@ import { pluginRuntime } from '@core/plugins/runtime'
 import type { SavedLayout } from '@core/layouts'
 import type { VisualComponent } from '@core/visualComponents'
 import { useEditorStore } from '@site/store/store'
+import type { InsertLocation } from '@site/store/insertLocation'
 import { useInsertInserterItem } from '@site/hooks/useInsertInserterItem'
 import { Panel } from '@admin/shared/Panel'
 import { EmptyState } from '@ui/components/EmptyState'
 import { SearchBar } from '@ui/components/SearchBar'
 import { PackageSolidIcon } from 'pixel-art-icons/icons/package-solid'
+import { useCanvasInsertionDrag } from '@site/canvas/useCanvasInsertionDrag'
+import { CanvasInsertionDragOverlay } from '@site/canvas/CanvasInsertionDragOverlay'
 import {
   buildAssetItems,
   composeLayoutsSection,
@@ -50,6 +53,7 @@ import { readAssetPrefs, trackAssetInsert, useAssetFavorites } from './assetsPre
 import { rankAssets, type RankedAsset } from './rankAssets'
 import { useModuleInsertionContext } from './useModuleInsertionContext'
 import { AssetCard } from './AssetCard'
+import { AssetPreview } from './AssetPreview'
 import { AssetGrid, AssetGroupLabel, AssetSection } from './AssetSection'
 import { buildColorAssetItems } from './colorTokens'
 import { ColorsSection } from './ColorsSection'
@@ -163,10 +167,18 @@ export function AssetsPanel() {
     })
   }
 
-  function handleInsert(item: AssetItem) {
-    if (!insertItem(item, undefined, 'click')) return
+  // `speed-06` — one drag session shared by every card: the ghost + drop
+  // preview overlay is drawn once for the whole panel (`CanvasInsertionDragOverlay`
+  // below), exactly the shape the notch's own primitives already use.
+  const canvasDrag = useCanvasInsertionDrag<AssetItem>({
+    onDrop: (item, location) => handleInsert(item, location, 'drop'),
+  })
+
+  function handleInsert(item: AssetItem, target?: InsertLocation, mode: 'click' | 'drop' = 'click') {
+    if (!insertItem(item, target, mode)) return false
     trackAssetInsert(refForAssetItem(item))
     setRecentRefs(readAssetPrefs().recent)
+    return true
   }
 
   function renderCard({ item, matchedKeyword }: RankedAsset<AssetItem>) {
@@ -176,8 +188,15 @@ export function AssetsPanel() {
         item={item}
         matchedKeyword={matchedKeyword}
         favorite={isFavorite(refForAssetItem(item))}
-        onInsert={() => handleInsert(item)}
+        onInsert={() => {
+          // The pointerup that ends a drag also fires a click on the card it
+          // started from — which would insert a SECOND copy at the current
+          // selection.
+          if (canvasDrag.shouldSuppressClick()) return
+          handleInsert(item)
+        }}
         onToggleFavorite={() => toggleFavorite(refForAssetItem(item))}
+        onDragStart={(event) => canvasDrag.startDrag(event, item, `Drop ${item.name}`)}
         onContextMenu={
           item.kind === 'savedLayout'
             ? (event) => {
@@ -326,6 +345,17 @@ export function AssetsPanel() {
       {layoutMenu && (
         <SavedLayoutManageMenu menu={layoutMenu} onClose={() => setLayoutMenu(null)} />
       )}
+
+      <CanvasInsertionDragOverlay drag={canvasDrag.drag}>
+        {canvasDrag.drag && (
+          <>
+            <span className={styles.dragGhostPreview} aria-hidden="true">
+              <AssetPreview item={canvasDrag.drag.ghost} />
+            </span>
+            {canvasDrag.drag.ghost.name}
+          </>
+        )}
+      </CanvasInsertionDragOverlay>
     </Panel>
   )
 }

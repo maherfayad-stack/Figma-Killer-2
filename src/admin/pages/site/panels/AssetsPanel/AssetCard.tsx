@@ -10,7 +10,14 @@
  * clamped to two lines), and — only when the search hit came from a keyword
  * rather than the name — WHY it matched, as a small chip. That chip is the
  * honest answer to "why is `Chip` in my results for 'pill'?".
+ *
+ * `speed-06` — the card is also a DRAG source: `onPointerDown` starts
+ * `useCanvasInsertionDrag`'s gesture the same way the notch's own primitives
+ * do (`AssetsPanel.tsx` owns the one shared hook instance and its overlay). A
+ * plain click still inserts at the current selection; the card stays an
+ * ordinary `Button` either way — no new element, no changed a11y semantics.
  */
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { Button } from '@ui/components/Button'
 import { StarSolidIcon } from 'pixel-art-icons/icons/star-solid'
 import { cn } from '@ui/cn'
@@ -26,6 +33,8 @@ interface AssetCardProps {
   onInsert: () => void
   onToggleFavorite: () => void
   onContextMenu?: (event: React.MouseEvent<HTMLDivElement>) => void
+  /** `speed-06` — starts a canvas-insertion drag from this card. Omitted keeps the card click-to-insert only (used nowhere today, but keeps the prop honestly optional rather than assumed). */
+  onDragStart?: (event: ReactPointerEvent<HTMLButtonElement>) => void
 }
 
 export function AssetCard({
@@ -35,6 +44,7 @@ export function AssetCard({
   onInsert,
   onToggleFavorite,
   onContextMenu,
+  onDragStart,
 }: AssetCardProps) {
   const disabled = Boolean(item.disabledReason)
   return (
@@ -47,6 +57,7 @@ export function AssetCard({
         data-asset-id={item.id}
         data-asset-kind={item.kind}
         onClick={onInsert}
+        onPointerDown={onDragStart}
       >
         <span className={styles.preview}>
           <AssetPreview item={item} />
