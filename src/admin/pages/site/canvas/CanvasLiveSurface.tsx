@@ -46,9 +46,9 @@ import {
   CanvasBreakpointContext,
   CanvasDiagnosticsScopeContext,
   CanvasPageContext,
-  CanvasTemplateContext,
-} from './CanvasContexts'
+  CanvasTemplateContext, CanvasFrameAdapterContext } from './CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from './IframeFrameSurface'
+import type { FrameDocumentAdapter } from './frameAdapter/FrameDocumentAdapter'
 import { DeviceMockup } from './DeviceMockup'
 import { PrototypeOverlay } from './PrototypeOverlay'
 import { PrototypeScreenStack } from './PrototypeScreenStack'
@@ -131,6 +131,8 @@ export function CanvasLiveSurface({
   // stays correct automatically if that ever changes; `BreakpointSelectionOverlay`
   // already falls back to its pre-WS-5.1 rendering whenever this is `null`.
   const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
+  // `live-13` — the frame's adapter, for the overlay to drive a bridge frame's chrome through.
+  const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
 
   const [containerWidth, setContainerWidth] = useState<number | null>(null)
   const [widthOverride, setWidthOverride] = useState<LiveWidthOverride | null>(null)
@@ -189,6 +191,7 @@ export function CanvasLiveSurface({
   const handleIframeRef = (handle: IframeFrameSurfaceHandle | null) => {
     setIframeEl(handle?.iframeElement ?? null)
     setOverlayRoot(handle?.contentOverlayRoot ?? null)
+    setAdapter(handle?.adapter ?? null)
   }
 
   /**
@@ -290,12 +293,14 @@ export function CanvasLiveSurface({
               </div>
             )}
 
-              <BreakpointSelectionOverlay
-                breakpointId={activeBreakpoint.id}
-                viewportRef={viewportRef}
-                iframeElement={iframeEl}
-                overlayRoot={overlayRoot}
-              />
+              <CanvasFrameAdapterContext.Provider value={adapter}>
+                <BreakpointSelectionOverlay
+                  breakpointId={activeBreakpoint.id}
+                  viewportRef={viewportRef}
+                  iframeElement={iframeEl}
+                  overlayRoot={overlayRoot}
+                />
+              </CanvasFrameAdapterContext.Provider>
 
               {/*
                 The prototype overlay: a second frame over the first, with a

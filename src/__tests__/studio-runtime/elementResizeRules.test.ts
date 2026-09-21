@@ -11,7 +11,7 @@ import {
   resizeAxes,
   resizeElementSize,
   resizeStylePatch,
-} from '@site/canvas/elementResize'
+} from '@core/studio-runtime'
 
 const start = { width: 200, height: 100 }
 

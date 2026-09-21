@@ -25,3 +25,26 @@ export function rectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
     height: elRect.height,
   }
 }
+
+/**
+ * The element a node is actually SEEN as — `own`, then down through any
+ * layout-transparent host it renders. A module may carry the node id on a
+ * `display: contents` wrapper so the wrapper cannot disturb the component's
+ * own layout; that host is the right thing to select and the wrong thing to
+ * size (`width` on it does nothing), so the box the user is pointing at is
+ * one level down. Descent stops at anything carrying its own node id (that
+ * box belongs to a different node) and at anything with more than one
+ * element child (no single "the" element to mean). Bounded rather than
+ * `while (true)`: a deep chain of transparent wrappers is not worth walking.
+ */
+export function presentedElementOf(view: Window, own: Element): HTMLElement {
+  let element = own as HTMLElement
+  for (let depth = 0; depth < 4; depth += 1) {
+    if (view.getComputedStyle(element).display !== 'contents') return element
+    const children = Array.from(element.children)
+    const only = children.length === 1 ? (children[0] as HTMLElement) : null
+    if (!only || only.hasAttribute(NODE_ID_ATTR)) return element
+    element = only
+  }
+  return element
+}

@@ -45,8 +45,7 @@ import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { MIN_ELEMENT_SIZE, resizeElementSize, resizeStylePatch } from './elementResize'
-import type { ResizeHandle } from './rectResize'
+import { MIN_ELEMENT_SIZE, resizeElementSize, resizeStylePatch, type ResizeHandle } from '@core/studio-runtime'
 
 /** The attribute each handle carries, naming the direction it drags. */
 export const RESIZE_HANDLE_ATTR = 'data-canvas-resize-handle'

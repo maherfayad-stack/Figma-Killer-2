@@ -43,6 +43,7 @@ import { getChildren } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { nodeVisualRect, type CanvasRectSource, type ClientRectLike } from './canvasDomGeometry'
 import { listFrameAdapters } from './frameAdapter/canvasFrameAdapterRegistry'
+import { presentedElementOf } from '@core/studio-runtime'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import type { NodeRect } from './frameAdapter/FrameDocumentAdapter'
 import { escapeCssAttributeValue } from './escapeCssAttributeValue'
@@ -98,19 +99,9 @@ export function presentedElementForNode(doc: Document, nodeId: string): HTMLElem
   const own = ownElementForNode(doc, nodeId)
   const view = doc.defaultView
   if (!own || !view) return own
-
-  let element = own
-  // Bounded rather than `while (true)`: a cycle is impossible in a tree, but a
-  // deep chain of transparent wrappers is not worth walking, and a fixed
-  // ceiling keeps this safe to call from a render.
-  for (let depth = 0; depth < 4; depth += 1) {
-    if (view.getComputedStyle(element).display !== 'contents') return element
-    const children = Array.from(element.children)
-    const only = children.length === 1 ? (children[0] as HTMLElement) : null
-    if (!only || only.hasAttribute('data-node-id')) return element
-    element = only
-  }
-  return element
+  // The descent rule itself is shared with the in-frame runtime's resize
+  // handles (`live-13`), which size the same presented element cross-origin.
+  return presentedElementOf(view, own)
 }
 
 /**

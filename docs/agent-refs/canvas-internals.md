@@ -1348,7 +1348,7 @@ registration is a bounded settle phase (`modules`) in
 arrives. Adding a pack to the canvas is one line in `canvasModuleSet.ts`;
 gated by `src/__tests__/canvas/captureCanvasModuleSet.test.tsx`.
 
-### A Tier 2 bridge frame: what crosses the wire, and who consumes it (`live-12`)
+### A Tier 2 bridge frame: what crosses the wire, and who consumes it (`live-12`, `live-13`)
 
 A `LiveBoardFrame` renders the user's real app in a cross-origin iframe served
 by the live origin (`/p/<projectKey>/…`). Nothing in it is Studio's React
@@ -1356,14 +1356,27 @@ tree, so none of the portal-frame mechanics apply: `NodeRenderer`'s click
 handlers, `BoardFrameView`'s activate-on-capture, `useIframeEventForwarding`'s
 cloned wheel. Everything the board learns about a bridge frame arrives as a
 `postMessage` from the in-frame runtime (`@core/studio-runtime`), validated by
-`BridgeFrameAdapter`, and — as of `live-12` — consumed by
-`useBridgeFrameInteraction` on the parent:
+`BridgeFrameAdapter`, and — as of `live-12`/`live-13` — consumed by
+`useBridgeFrameInteraction` and `useBridgeSelectionChrome` on the parent:
 
 | Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
 |---|---|---|
-| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**) | capture-phase document listeners, both modes | `useBridgeFrameInteraction` → activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
+| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
-| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues` |
+| `resize:commit` (`{ width?, height? }` as integer `px` strings) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
+| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
+
+And the other direction — what the parent sends a bridge frame that a portal
+frame never needs, all from `useBridgeSelectionChrome` (called by
+`BreakpointSelectionOverlay` with the frame's adapter; a no-op for a portal
+adapter):
+
+| Adapter call | What the runtime does with it |
+|---|---|
+| `applyOverlay('selection-chrome-tokens', …)` | mounts the editor's `--canvas-selection-ring`/… token block — the runtime's own ring stylesheet references them, and a cross-origin document cannot read the parent's computed styles, so without this the rings position correctly and paint nothing |
+| `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
+| `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
+| `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
 
 Three rules that fell out of wiring this, each pinned by a test:
 
@@ -1387,6 +1400,28 @@ Three rules that fell out of wiring this, each pinned by a test:
   to the first id in `nodeIdsInTreeOrder`. What that selects is the nearest
   node the page tree has — the container around a package component's call
   site, when the call site itself is not a stamped host element.
+- **The frame finds its parent through `location.ancestorOrigins`, then the
+  referrer.** A Vite full reload inside the frame (the runtime bundle
+  rewritten on project open, an HMR socket reconnect after an API-server
+  restart) sets `document.referrer` to the frame's own url; a referrer-only
+  check answered `null` and the reloaded frame ran without its bridge until
+  the parent tab was refreshed. Both sources are still checked against the
+  allowlist (`resolveParentOrigin`).
+- **The runtime's chrome is exempt from the design-mode rule.** A press on a
+  resize handle (inside the selection overlay root) is neither forwarded as a
+  pointer on some node nor cancelled before the handle's own listener sees it.
+  The drag's document listeners are CAPTURE-phase for the same reason: the
+  design-mode `stopPropagation` at the document would otherwise silence a
+  bubble listener on that same document.
+- **An in-frame resize previews through a stylesheet, never the element's
+  `style`.** The commit is a `postMessage`, a file write and an HMR round trip
+  away, after which React writes the SAME inline `width` the drag would have
+  previewed — so an inline preview could neither be cleared after the commit
+  (it deletes React's value) nor before it (the element snaps back for the
+  length of the round trip). A `[data-studio-resize-preview]` rule in a
+  runtime-owned `<style>` shares nothing with React and is dropped on the
+  runtime's `hmr:after`; a refused commit never produces one, so that preview
+  lasts until the next target change, where the snap-back is the honest answer.
 
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that

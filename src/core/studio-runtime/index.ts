@@ -183,3 +183,28 @@ export {
 } from './frameFitRules'
 
 export { OVERLAY_ID_ATTR } from './overlayStyleAttr'
+
+export {
+  RESIZE_HANDLES,
+  MIN_ELEMENT_SIZE,
+  isSizeableDisplay,
+  resizeAxes,
+  resizeElementSize,
+  resizeStylePatch,
+  type ResizeHandle,
+  type ElementSize,
+  type ElementSizePatch,
+} from './elementResizeRules'
+
+export {
+  RESIZE_FRAME_ATTR,
+  RESIZE_HANDLE_ATTR,
+  RESIZE_PREVIEW_ATTR,
+  RESIZE_PREVIEW_STYLE_ID,
+  installResizeHandles,
+  type ResizeHandlesController,
+  type ResizeHandlesOptions,
+  type ResizeTargetRef,
+} from './resizeHandles'
+
+export { presentedElementOf } from './nodeDom'
