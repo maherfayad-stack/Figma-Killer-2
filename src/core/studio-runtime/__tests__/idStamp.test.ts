@@ -21,12 +21,40 @@ describe('stampHostElementIds', () => {
     expect(result.code).toContain('data-node-id="pages/Home.tsx:2:11"')
   })
 
-  it('does not stamp a component call site', () => {
+  it('stamps a component call site too (live-17) — a component that spreads its props renders it', () => {
     const code = 'export default function Home() {\n  return <PlanCard plan={p} />\n}\n'
     const result = stampHostElementIds(code, 'pages/Home.tsx')
 
-    expect(result.changed).toBe(false)
-    expect(result.code).not.toContain(STUDIO_NODE_ID_ATTR)
+    expect(result.changed).toBe(true)
+    // "  return <" is 10 characters, so `P` of `PlanCard` sits at column 11 —
+    // same computation as a host element, `parsePageFile` mints the identical
+    // id for this node regardless of `kind` (see this file's header).
+    expect(result.code).toContain('data-node-id="pages/Home.tsx:2:11"')
+  })
+
+  it('puts a component call site\'s stamp LAST on its own attribute list', () => {
+    const code = 'export default function Home() {\n  return <PlanCard plan={p} featured />\n}\n'
+    const result = stampHostElementIds(code, 'pages/Home.tsx')
+
+    const opening = result.code.match(/<PlanCard[^>]*>/)?.[0] ?? ''
+    expect(opening.indexOf(STUDIO_NODE_ID_ATTR)).toBeGreaterThan(opening.indexOf('featured'))
+  })
+
+  it('puts a HOST element\'s own stamp FIRST — before every authored attribute, including a later spread', () => {
+    const code = 'export default function Button({ className, ...rest }) {\n  return <button className={className} {...rest} />\n}\n'
+    const result = stampHostElementIds(code, 'pages/Button.tsx')
+
+    const opening = result.code.match(/<button[^>]*>/)?.[0] ?? ''
+    const stampIndex = opening.indexOf(STUDIO_NODE_ID_ATTR)
+    const classNameIndex = opening.indexOf('className')
+    const spreadIndex = opening.indexOf('{...rest}')
+    // Unshifted to the front: before the author's own attributes...
+    expect(stampIndex).toBeGreaterThan(-1)
+    expect(stampIndex).toBeLessThan(classNameIndex)
+    // ...and, load-bearing, still textually BEFORE the spread — so a caller's
+    // own forwarded `data-node-id` (inside `...rest`) is the LATER attribute
+    // and wins per JSX/createElement's later-attribute-wins merge semantics.
+    expect(stampIndex).toBeLessThan(spreadIndex)
   })
 
   it('stamps a dotted, lowercase-led tag name (framer-motion\'s motion.div) — the classifyJsxTagKind quirk, reproduced on purpose', () => {

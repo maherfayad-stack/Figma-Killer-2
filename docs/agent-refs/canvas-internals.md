@@ -1416,13 +1416,41 @@ Three rules that fell out of wiring this, each pinned by a test:
   React root never sees them; an `<input>` does not focus) — the same
   `ownsAuthoredEvents` rule `NodeRenderer` applies to a portal frame — except
   inside a `[contenteditable]`, where the caret has to land for the inline edit.
-- **A hit resolves to the innermost stamped ancestor the tree knows.** The Vite
-  plugin stamps host elements by SOURCE position, so a click inside a
-  design-system button lands on that package's own internal element. The
-  runtime sends the whole stamped chain (bounded at 32); the adapter walks it
-  to the first id in `nodeIdsInTreeOrder`. What that selects is the nearest
-  node the page tree has — the container around a package component's call
-  site, when the call site itself is not a stamped host element.
+- **A component call site is stamped too, and its stamp wins over the
+  component's own internal one (`live-17`).** `idStamp.ts` used to stamp only
+  host/intrinsic elements (`<button>`), never a component call site
+  (`<Button/>`) — reasoning that a call site "renders none of its own DOM".
+  False for any component that spreads `...props` onto its own root element,
+  which every design-system component in this repo's corpus does: a click on
+  `<Button label="Label"/>` in the page produced a live `<button>` stamped
+  with `design-system/components/Button.jsx:99:6` — a real position, but one
+  the page tree has NO node for (package/design-system call sites are opaque
+  instances, never inlined — see `componentSources.ts`). The old ancestor
+  walk then landed on the nearest node the tree DID have — the page's own
+  `<main>`, not the button — so the click silently selected the wrong node
+  instead of failing loudly.
+  Fixed by stamping BOTH kinds (`classifyJsxTagKind(name) === 'element' OR
+  'component'`, same id-minting `processElement` already uses for either
+  kind) and making ORDER decide which stamp survives when both land on the
+  same rendered element: a host element's own stamp is `unshift`ed to the
+  FRONT of its attribute list, a call site's stamp is `push`ed onto the END
+  of its own — so a component that forwards `{...props}` (textually later)
+  overrides its own internal stamp with whatever the call site passed in,
+  and a component that does NOT forward props leaves its own internal stamp
+  untouched (the extra attribute on the call site is simply an unused,
+  harmless prop). See `idStamp.ts`'s own "What gets stamped, and where the
+  attribute lands" doc for the full mechanics.
+- **The ancestor walk still exists, for what genuinely has no stamp at all.**
+  The runtime still sends the whole stamped chain (bounded at 32) and
+  `liveNodeResolve.ts`'s `resolveLiveNode` still walks it to the nearest
+  element that carries ANY `data-node-id` — vendor markup, a package
+  component's own un-instrumented internals below Studio's parse boundary,
+  or a genuinely un-stamped runtime-only element. That match comes back
+  `exact: false` so a caller can badge it rather than act on it as a real
+  selection. What changed is which id a design-system/package component's
+  OWN rendered root now carries — its call site's, not its internal one — so
+  the ancestor fallback no longer fires for the common "click a button"
+  case.
 - **The frame finds its parent through `location.ancestorOrigins`, then the
   referrer.** A Vite full reload inside the frame (the runtime bundle
   rewritten on project open, an HMR socket reconnect after an API-server
