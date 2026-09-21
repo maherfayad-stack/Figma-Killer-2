@@ -58,10 +58,24 @@
  * `devServerStateDir()` (`.tmp/dev-servers/`, machine-local, never inside
  * the user's project), and `ensureEntry` on a registry miss first tries to
  * ADOPT that record: the pid must still be alive, and the recorded origin
- * must still answer at the project's own base path. An adopted entry has no
- * stdout to pump — it is watched by polling its pid — and is otherwise a
- * first-class entry: same phases, same `stop`, same exit demotion.
+ * must still answer at the project's own base path. An adopted entry is
+ * watched by polling its pid instead of awaiting an `exited` promise, and is
+ * otherwise a first-class entry: same phases, same `stop`, same exit demotion.
+ *
+ * **The child's output goes to a FILE, never to a pipe (`live-16`).** A pipe's
+ * reader is this process. When `bun --watch` restarts it, the reader is gone,
+ * and the child dies of EPIPE the next time Vite logs anything — the first
+ * HMR update, the first `/load` that rewrites `prototype/main.jsx`. So every
+ * adopted server was a time bomb, and the zombies `live-14` learned to detect
+ * were its remains. stdout and stderr now share one descriptor on
+ * `devServerLogPath(appRoot)` (opened here, handed to the child, closed here
+ * once the child holds its own copy), this process TAILS that file for the
+ * "Local:" URL and the capped status log (`tailAndWatch`), and an adopted
+ * entry tails the same file, so its status log is real output rather than a
+ * single adoption line. The file is deleted with the record.
  */
+import { closeSync, mkdirSync, openSync } from 'node:fs'
+import { dirname } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '@core/studio-runtime'
 import { registeredMcpServerProjectKey } from '../../ai/drivers/registeredMcpServers'
@@ -71,8 +85,11 @@ import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import {
   deleteDevServerRecord,
+  devServerLogPath,
+  devServerLogSize,
   isProcessAlive,
   probeDevServerOrigin,
+  readDevServerLogSince,
   readDevServerRecord,
   writeDevServerRecord,
 } from './devServerRecords'
@@ -125,9 +142,16 @@ function stripAnsi(text: string): string {
   return text.replace(ANSI_ESCAPE_PATTERN, '')
 }
 
+/** What a dev server is spawned with: where to run, what it sees, and the file its output goes to. */
+export interface DevServerSpawnOptions {
+  cwd: string
+  env: Record<string, string>
+  logPath: string
+}
+
 /** Injectable seams for tests — never touched by real callers. */
 export interface DevServerOverrides {
-  spawn?: (argv: string[], options: { cwd: string; env: Record<string, string>; stdout: 'pipe'; stderr: 'pipe'; stdin: 'ignore' }) => SpawnedProcessLike
+  spawn?: (argv: string[], options: DevServerSpawnOptions) => SpawnedProcessLike
   bootTimeoutMs?: number
   /** Whether a recorded pid is still running — adoption's first check. Default: signal 0. */
   isProcessAlive?: (pid: number) => boolean
@@ -135,8 +159,26 @@ export interface DevServerOverrides {
   probe?: (baseUrl: string, basePath: string) => Promise<boolean>
 }
 
-const defaultSpawn: NonNullable<DevServerOverrides['spawn']> = (argv, options) =>
-  Bun.spawn(argv, options) as unknown as SpawnedProcessLike
+/**
+ * The real spawn. stdout and stderr share ONE descriptor on `logPath`, opened
+ * fresh (truncating a previous server's output) and closed again here as soon
+ * as the child holds its own copy — the child then writes to a file the OS
+ * keeps open for it, and nothing about this process's lifetime can turn that
+ * write into an EPIPE. Exported for its own test: this is the one place the
+ * survival property lives.
+ */
+export function spawnDevServerProcess(argv: string[], options: DevServerSpawnOptions): SpawnedProcessLike {
+  mkdirSync(dirname(options.logPath), { recursive: true })
+  const fd = openSync(options.logPath, 'w')
+  try {
+    return Bun.spawn(argv, { cwd: options.cwd, env: options.env, stdout: fd, stderr: fd, stdin: 'ignore' }) as unknown as SpawnedProcessLike
+  } finally {
+    closeSync(fd)
+  }
+}
+
+/** How often the log file is re-read. The child writes to a file, not to this process, so its output is polled rather than streamed. */
+const LOG_TAIL_POLL_MS = 200
 
 /** How often an adopted process's pid is re-checked, standing in for the `exited` promise a spawned child has. */
 const ADOPTED_EXIT_POLL_MS = 1_000
@@ -151,6 +193,8 @@ interface DevServerEntry {
   phase: 'booting' | 'ready' | 'failed'
   baseUrl: string | null
   urlPromise: Promise<string | null>
+  /** The file the child's stdout+stderr go to — see `spawnDevServerProcess`. */
+  logPath: string
   log: string
   error: string | null
   pid: number | null
@@ -168,47 +212,57 @@ function capText(current: string, chunk: string): string {
   return combined.length > MAX_LOG_BYTES ? combined.slice(combined.length - MAX_LOG_BYTES) : combined
 }
 
-/** Continuously drains stdout/stderr for the process's lifetime so a chatty dev server never stalls on a full pipe buffer — resolves `urlPromise` the first time a Local URL is seen, keeps draining after. */
-function pumpAndWatch(entry: DevServerEntry, resolveUrl: (url: string | null) => void): void {
-  let resolved = false
+/**
+ * Follows `entry.logPath` for the entry's lifetime: appends new output to the
+ * capped status log and, when `discoverUrl`, resolves `resolveUrl` the first
+ * time a Local URL appears (ANSI-stripped, and re-scanned over the whole log
+ * so a URL split across two reads is still found). Stops on its own once the
+ * entry has left the registry or its process has exited — after one last
+ * read, so an exit message is not lost. The timer is unref'd: the loop must
+ * not keep a `bun test` worker alive after a test leaves a ready entry
+ * behind, and while URL discovery matters `raceBoot`'s own ref'd boot timer
+ * keeps the event loop running for it.
+ */
+function tailAndWatch(entry: DevServerEntry, appRoot: string, discoverUrl: boolean, resolveUrl: (url: string | null) => void, startOffset = 0): void {
+  let offset = startOffset
+  let resolved = !discoverUrl
+  let exited = false
+  void entry.proc.exited.then(() => {
+    exited = true
+  })
   const settle = (url: string | null) => {
     if (resolved) return
     resolved = true
     resolveUrl(url)
   }
-  const pump = async (stream: ReadableStream<Uint8Array> | null) => {
-    if (!stream) return
-    const reader = stream.getReader()
-    const decoder = new TextDecoder()
-    try {
-      for (;;) {
-        const { done, value } = await reader.read()
-        if (done) break
-        if (!value) continue
-        const chunk = decoder.decode(value, { stream: true })
-        entry.log = capText(entry.log, chunk)
-        if (!entry.baseUrl) {
-          const cleanChunk = stripAnsi(chunk)
-          const match = URL_PATTERN.exec(cleanChunk) ?? URL_PATTERN.exec(stripAnsi(entry.log))
-          if (match) {
-            // `localhost` is pinned to IPv4 here for the same reason the
-            // generated `vite.config.js` pins `server.host`: the name can
-            // resolve to ::1 for the dev server and 127.0.0.1 for this proxy,
-            // and then the two are talking about different sockets. A config
-            // the user edited may still print `localhost`; the proxy must not
-            // guess which stack it bound.
-            entry.baseUrl = match[0].replace(/\/$/, '').replace(/^(https?:\/\/)localhost(?=[:/]|$)/i, '$1127.0.0.1')
-            settle(entry.baseUrl)
-          }
-        }
-      }
-    } catch {
-      // stream errored/closed — nothing more to drain
-    }
+  const read = () => {
+    const next = readDevServerLogSince(entry.logPath, offset)
+    offset = next.offset
+    if (!next.chunk) return
+    entry.log = capText(entry.log, next.chunk)
+    if (resolved || entry.baseUrl) return
+    const match = URL_PATTERN.exec(stripAnsi(next.chunk)) ?? URL_PATTERN.exec(stripAnsi(entry.log))
+    if (!match) return
+    // `localhost` is pinned to IPv4 here for the same reason the generated
+    // `vite.config.js` pins `server.host`: the name can resolve to ::1 for the
+    // dev server and 127.0.0.1 for this proxy, and then the two are talking
+    // about different sockets. A config the user edited may still print
+    // `localhost`; the proxy must not guess which stack it bound.
+    entry.baseUrl = match[0].replace(/\/$/, '').replace(/^(https?:\/\/)localhost(?=[:/]|$)/i, '$1127.0.0.1')
+    settle(entry.baseUrl)
   }
-  void pump(entry.proc.stdout)
-  void pump(entry.proc.stderr)
-  void entry.proc.exited.then(() => settle(null))
+  const tick = () => {
+    read()
+    if (exited) {
+      settle(null)
+      return
+    }
+    if (servers.get(appRoot) !== entry) return
+    const timer = setTimeout(tick, LOG_TAIL_POLL_MS)
+    // happy-dom's `setTimeout` (the test preload's) returns a number; Bun's returns a Timer.
+    if (typeof timer === 'object' && timer !== null && 'unref' in timer) timer.unref()
+  }
+  tick()
 }
 
 /**
@@ -278,6 +332,7 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
     projectKey: entry.projectKey,
     pid: entry.pid ?? 0,
     baseUrl: entry.baseUrl,
+    logPath: entry.logPath,
     startedAt: entry.startedAt,
     packageManager: entry.packageManager,
     devScript: entry.devScript,
@@ -343,13 +398,12 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     [STUDIO_PROJECT_KEY_ENV]: projectKey,
     [STUDIO_PARENT_ORIGINS_ENV]: readServerConfig(process.env).liveFrameAncestors.join(','),
   }
-  const spawn = overrides.spawn ?? defaultSpawn
+  const logPath = devServerLogPath(appRoot)
+  const spawn = overrides.spawn ?? spawnDevServerProcess
   const proc = spawn([packageManager, 'run', devScript.name], {
     cwd: appRoot,
     env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv),
-    stdout: 'pipe',
-    stderr: 'pipe',
-    stdin: 'ignore',
+    logPath,
   })
 
   let resolveUrl!: (url: string | null) => void
@@ -363,6 +417,7 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     phase: 'booting',
     baseUrl: null,
     urlPromise,
+    logPath,
     log: '',
     error: null,
     pid: proc.pid ?? null,
@@ -371,7 +426,7 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     settled: Promise.resolve(),
   }
   servers.set(appRoot, entry)
-  pumpAndWatch(entry, resolveUrl)
+  tailAndWatch(entry, appRoot, true, resolveUrl)
 
   const bootTimeoutMs = overrides.bootTimeoutMs ?? BOOT_TIMEOUT_MS
   entry.settled = raceBoot(entry, appRoot, bootTimeoutMs)
@@ -444,7 +499,8 @@ function adoptEntry(
     phase: 'booting',
     baseUrl: null,
     urlPromise: Promise.resolve(null),
-    // No URL in this line, deliberately: `pumpAndWatch` falls back to scanning
+    logPath: record.logPath,
+    // No URL in this line, deliberately: `tailAndWatch` falls back to scanning
     // the whole log for the "Local:" URL, and a respawn after a stale record
     // prefixes this log onto the fresh entry's — the fresh server's URL was
     // being read off THIS line (old port, trailing `).`) instead of its own
@@ -463,8 +519,12 @@ function adoptEntry(
     return record.baseUrl
   })
   servers.set(appRoot, entry)
+  // The URL is the probe's to confirm, never the old log's — so no discovery
+  // here; the tail only feeds the status log, starting from the file's last
+  // `MAX_LOG_BYTES` so an adopted server's status is not an empty page.
+  tailAndWatch(entry, appRoot, false, () => {}, Math.max(0, devServerLogSize(record.logPath) - MAX_LOG_BYTES))
   void exited.then(() => {
-    // Mirrors `pumpAndWatch`: a process that dies mid-probe settles the boot as failed.
+    // Mirrors `tailAndWatch`: a process that dies mid-probe settles the boot as failed.
     if (!entry.baseUrl) entry.urlPromise = Promise.resolve(null)
   })
   // A record that turns out stale — the origin gone, the pid dead mid-probe —

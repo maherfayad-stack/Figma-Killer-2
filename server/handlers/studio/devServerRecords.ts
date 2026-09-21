@@ -15,7 +15,7 @@
  * Machine-local and gitignored (`.tmp/dev-servers/`), never inside the user's
  * project: a pid and a port are facts about THIS machine's session.
  */
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { closeSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
@@ -82,6 +82,8 @@ const DevServerRecordSchema = Type.Object({
   projectKey: Type.String(),
   pid: Type.Integer({ minimum: 1 }),
   baseUrl: Type.String(),
+  /** The file the child's stdout+stderr go to (`live-16`) — what the manager tails, in this run and in the one that adopts the server. */
+  logPath: Type.String(),
   startedAt: Type.Integer(),
   packageManager: Type.String(),
   devScript: Type.String(),
@@ -117,4 +119,49 @@ export function writeDevServerRecord(record: DevServerRecord): void {
 
 export function deleteDevServerRecord(appRoot: string): void {
   rmSync(recordPath(appRoot), { force: true })
+  rmSync(devServerLogPath(appRoot), { force: true })
+}
+
+/**
+ * Where a spawned dev server's stdout and stderr land — a FILE next to its
+ * record, so the child's output never depends on this process being alive to
+ * read it (`live-16`). Lives and dies with the record.
+ */
+export function devServerLogPath(appRoot: string): string {
+  return join(devServerStateDir(), `${Bun.hash(appRoot).toString(16)}.log`)
+}
+
+/** Current size of a log file, `0` when it does not exist yet. */
+export function devServerLogSize(logPath: string): number {
+  try {
+    return statSync(logPath).size
+  } catch {
+    return 0
+  }
+}
+
+/**
+ * The bytes of `logPath` written since `offset`, and the offset to continue
+ * from. A missing file reads as nothing. A file now SHORTER than `offset` was
+ * re-created by a fresh spawn (`spawnDevServerProcess` opens it truncating),
+ * so the read restarts from the beginning rather than waiting for it to grow
+ * back past a mark that no longer means anything.
+ */
+export function readDevServerLogSince(logPath: string, offset: number): { chunk: string; offset: number } {
+  let fd: number
+  try {
+    fd = openSync(logPath, 'r')
+  } catch {
+    return { chunk: '', offset }
+  }
+  try {
+    const size = fstatSync(fd).size
+    const from = size < offset ? 0 : offset
+    if (size === from) return { chunk: '', offset: from }
+    const buf = Buffer.alloc(size - from)
+    const read = readSync(fd, buf, 0, buf.length, from)
+    return { chunk: buf.subarray(0, read).toString('utf8'), offset: from + read }
+  } finally {
+    closeSync(fd)
+  }
 }
