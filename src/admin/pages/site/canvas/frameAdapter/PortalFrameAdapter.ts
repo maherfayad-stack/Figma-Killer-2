@@ -149,6 +149,13 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       const el = findByNodeId(this.doc, nodeId)
       if (el) el.textContent = text
     },
+    // `speed-01` — a documented no-op. The store write this call previews/
+    // commits already re-renders the portal tree through React on the SAME
+    // tick; a second DOM write here would be a redundant paint racing the
+    // first, exactly the reasoning `optimisticStructuralBroadcast.ts` gives
+    // for skipping portal adapters on insert/delete/move.
+    style: () => {},
+    clearStyle: () => {},
   }
 
   constructor(doc: Document) {

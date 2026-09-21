@@ -68,6 +68,7 @@ import {
   revertOptimisticDom,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
+import { applyOptimisticStyle, clearOptimisticStyle, OPTIMISTIC_STYLE_ATTR, revertAllOptimisticStyle } from './optimisticStyle'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
@@ -476,6 +477,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
           // (3) the resize preview's own stamp on the element it sizes — a
           // drag in flight, not new content.
           if (record.target === resize.previewElement() && record.type === 'attributes') return true
+          if (record.type === 'attributes' && record.attributeName === OPTIMISTIC_STYLE_ATTR) return true // (4) `speed-01`'s style stamp, any element
           return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
         }
         if (records.every(isIgnorable)) return
@@ -612,6 +614,14 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'optimistic.text':
         applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
         return
+      case 'optimistic.style':
+        applyOptimisticStyle(doc, message.ref, message.patch, message.className)
+        scheduleReposition() // a class-target rule touches no element for `layoutObserver` to see mutate
+        return
+      case 'optimistic.style:clear':
+        clearOptimisticStyle(doc, message.ref)
+        scheduleReposition()
+        return
     }
   }
 
@@ -639,16 +649,15 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       doc,
       options.hot,
       () => {
-        // Before React reconciles the update: hand it back the DOM it built
-        // (`live-14`, see `optimisticDomOps.ts`).
+        // Before React reconciles: hand it back the DOM it built (`live-14`).
         revertOptimisticDom(doc)
+        revertAllOptimisticStyle(doc)
         postOutbound({ type: 'hmr:before' })
       },
       () => {
         sweepOptimisticGhosts(doc)
-        // The source now carries a committed resize — React re-rendered with
-        // it, so the held preview can go without anything snapping back.
-        resize.clearPreview()
+        resize.clearPreview() // the source now carries it; idempotent with `hmr:before` above
+        revertAllOptimisticStyle(doc)
         postOutbound({ type: 'hmr:after' })
       },
     )

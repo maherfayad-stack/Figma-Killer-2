@@ -1377,6 +1377,8 @@ adapter):
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared) — an inline write stamps the node's element and keys on `[data-studio-optimistic-style]`; a class write (`className` present) keys on `.<className>` and touches no element, reaching every node in the frame carrying that class. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId`, whichever selector shape it turned out to be — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
 
 Three rules that fell out of wiring this, each pinned by a test:
 
@@ -1432,6 +1434,30 @@ Three rules that fell out of wiring this, each pinned by a test:
   runtime-owned `<style>` shares nothing with React and is dropped on the
   runtime's `hmr:after`; a refused commit never produces one, so that preview
   lasts until the next target change, where the snap-back is the honest answer.
+- **`speed-01` — a properties-panel style op reuses the exact same
+  stylesheet-not-inline-style posture, and had to teach the frame-fit
+  `layoutObserver` about a NEW attribute it must ignore.** `optimisticStyle.ts`
+  stamps `[data-studio-optimistic-style]` on an inline-target element for the
+  SAME reason `resizeHandles.ts` stamps `[data-studio-resize-preview]` — the
+  eventual React re-render writes the identical value, so only a stylesheet
+  rule (never `element.style`) can be dropped without either deleting React's
+  write or snapping back mid-round-trip. But this is the THIRD attribute the
+  frame-fit mutation observer (`runtime.ts`'s `layoutObserver`, which watches
+  `doc.body` for real content changes to know when to re-derive the fit pin)
+  has to be told to ignore — miss one and every style edit spuriously resets
+  the frame's fit-height pin through the SAME observer callback that reports
+  `frame:resize` to the parent, fighting the "grow to content" requirement
+  `docs/features/canvas-iframe-per-frame.md` describes. A class-target style
+  write (selector-only, no element touched at all) needs no such exemption
+  but ALSO produces no `layoutObserver` mutation to reposition the selection
+  ring from — so `runtime.ts`'s `optimistic.style` handler calls
+  `scheduleReposition()` explicitly rather than relying on that side effect,
+  unlike the inline path, where the attribute write incidentally triggers it
+  anyway. Any FUTURE runtime-owned attribute needs the same three-way check:
+  (1) does the mutation observer see it and mis-fire a fit-pin reset, (2)
+  does React's own reconciliation ever try to write the same thing (then it
+  must be a stylesheet rule, never inline), (3) does clearing it need an
+  explicit reposition call because no other mutation will trigger one.
 
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that

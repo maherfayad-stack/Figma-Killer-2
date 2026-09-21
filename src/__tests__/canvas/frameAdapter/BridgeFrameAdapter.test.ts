@@ -268,6 +268,33 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     expect(received).toEqual([{ type: 'resize:commit', nodeId: 'row:1:1#1', patch: { width: '240px', height: '96px' } }])
   })
 
+  // `speed-01` — a properties-panel style commit/preview, translated the same
+  // canonical -> wire way every other optimistic op is.
+  it('optimistic.style posts the wire ref and patch untouched, with className carried through when present', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+
+    adapter.optimistic.style('row:1:1#1', { color: 'red' })
+    adapter.optimistic.style('row:1:1#0', { color: 'blue' }, 'card')
+
+    const last = stub.posted.slice(-2).map((e) => e.message)
+    expect(last).toEqual([
+      { type: 'optimistic.style', ref: { nodeId: 'row:1:1', occurrenceIndex: 1 }, patch: { color: 'red' } },
+      { type: 'optimistic.style', ref: { nodeId: 'row:1:1', occurrenceIndex: 0 }, patch: { color: 'blue' }, className: 'card' },
+    ])
+  })
+
+  it('optimistic.clearStyle posts an optimistic.style:clear with the wire ref', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+
+    adapter.optimistic.clearStyle('row:1:1#1')
+
+    expect(stub.posted.at(-1)!.message).toEqual({ type: 'optimistic.style:clear', ref: { nodeId: 'row:1:1', occurrenceIndex: 1 } })
+  })
+
   it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {
     const stub = makeStubChannel()
     const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0'] })
