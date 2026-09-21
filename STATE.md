@@ -829,6 +829,11 @@ Fixed by extraction, not comment-trimming, per the coordinator's ask:
   3. ~~Commit, push, and open the draft PR~~ — done: commit `ff4e265f` (feature) + `e4821899` (STATE.md) + the live-measurement fix commit + the breakpoint-scoped broadcast fix commit (see git log), all pushed, PR #207 (draft, base `fix/live-dev-server-survives-api-restart`).
 
 ---
+### speed-00 — the speed plan (owner: "this is non-negotiable")
+
+- **Agent:** main session, 2026-09-21. Branch `docs/studio-speed-plan`. Plan: `STUDIO-SPEED-PLAN.md` at the repo root.
+- **Stage:** planned; nine work orders `speed-01` … `speed-09`, each with a measured "today" number, a cause with file:line, a change and a gate. Ship order: 01/02/03 (optimistic style in live frames, 250 ms autosave, hover coalescing), then 06 (drag and drop into live frames with a drop line — supersedes and extends `live-15`), 04 (cold selection), then 05/07/08/09.
+- **Headline measurements (healthy Tier 2 stack, `_scratch-undo`):** panel number edit → frame 2.18 s (2 s of it is the autosave debounce; save itself 36 ms); click → ring 17 ms warm / 235 ms cold; refused Delete 393 ms long task (dialog cold mount); one message + one unconditional store write per pointermove over a live frame; no drop line in live frames because the parent's pointer listeners go silent inside the iframe; `/load` 1.05 s.
 
 ### sec-19 — every project starts at run-project (owner decision 2026-09-20)
 - **Agent:** studio-implementer
