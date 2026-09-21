@@ -1301,9 +1301,79 @@ design mode, and retracts them (`null`) on unmount and in live mode.
 gesture BODIES stay in `useCanvas` because they need `transformRef` above;
 only the measurement is shared (`canvas/canvasViewportCommands.ts`).
 
----
+### Cold selection on a Tier-2 board: one overlay per board frame, not two (`speed-04`)
 
-## Testing the canvas
+Before this fix, `LiveBoardFrame` mounted its Tier-0 fallback `BreakpointFrame`
+**and** its hidden bridge `BreakpointFrame` at the same time (by design — the
+bridge's cold boot runs concurrently with the visible fallback), and **both**
+unconditionally mounted their own `BreakpointSelectionOverlay`. A click on the
+fallback (the only interactive surface before the bridge reports `ready`)
+selected a node in the store; both overlay instances reacted to it — the
+fallback's real, working `tickOnce` AND the bridge overlay's
+`useBridgeSelectionChrome`, which opened a real `postMessage` round trip
+(`select`/`hover`/`setResizeTarget`/`measure`) into a still-loading
+cross-origin document and rendered a **second**, independently-positioned
+toolbar and in-place inspector for the very same selection — not just wasted
+work, a real double-toolbar correctness bug on every Tier-2 board frame's
+first click.
+
+Fix: `BreakpointFrame` grew an `overlayEnabled?: boolean` prop (default
+`true`, every existing caller unaffected). `LiveBoardFrame` passes
+`overlayEnabled={ready}` to its bridge `BreakpointFrame` — the iframe still
+mounts and boots (concurrency untouched), only its OWN
+`BreakpointSelectionOverlay` is deferred until `ready`, which is also the
+exact commit the fallback unmounts in, so the two are never both live. See
+`BreakpointFrame.tsx`'s `overlayEnabled` doc and `liveBoardFrame.test.tsx`'s
+`describe('LiveBoardFrame — selection chrome while not ready (speed-04)')`.
+
+A second, smaller fix rides in `tickOnce`'s anchor branch (`needsAnchor` —
+the toolbar/inspector's expensive parent-doc `createCanvasOverlayMeasureSession`
+path, two forced `getBoundingClientRect()` reads): a frame whose own ring
+placements show it owns NONE of the selected nodes (every `elementCache.resolve`
+came back `null` — not present in this frame's iframe document) now skips
+session creation entirely rather than creating one that would only ever
+measure `null`. For a board frame this mostly restates what `selectedNodeFrameId`
+scoping (WS-10 Phase 2) already gives for free — a non-owning board frame's
+`selectedNodeIds` is already `EMPTY_SELECTED_NODE_IDS`, so its `tickOnce`
+never even runs — but the CMS/Visual-Component canvas mirrors one selection
+across every real breakpoint frame on purpose, and that is exactly the case
+where more than one frame reaches the anchor branch for a selection only one
+of them actually renders. See `breakpointSelectionOverlayAnchorSkip.test.tsx`.
+
+`BreakpointSelectionOverlay.tsx` also shed its top-of-component store reads
+(selection/hover scoping, the selector-affinity highlight, this frame's page,
+the VC list) into `useBreakpointOverlaySelectionState.ts` — a
+`module-size-budgets` extraction (the file was at the 700-line ceiling before
+either fix above), not a behavior change: eight independent `useEditorStore`
+reads with no refs and no effects, the same shape `useCanvasAnimationScrub`
+already uses for a component-local slice of store state.
+
+**What did NOT change, and why.** The plan's own cause list also named
+"cache the iframe and canvas-root rects per pan/zoom commit and per
+`frame:resize` instead of re-measuring per selection." Not implemented:
+`iframe.getBoundingClientRect()` can change for reasons OTHER than a pan/zoom
+commit or a bridge `frame:resize` — an auto-height fallback iframe whose
+content just grew, or the canvas root itself resizing because the very
+selection being anchored opened a side panel — and caching across those
+triggers would silently reintroduce `standing-03`'s exact class of bug (a
+stale term in the anchor math, multiplied by zoom). The two forced reads this
+session pays are cheap (`canvasOverlayMeasurement.test.ts` already proves ONE
+session reads geometry once no matter how many rings it measures); the real
+cost was paying for a session AT ALL on a frame that owns nothing, which the
+skip above already removes. Do not add this cache without a measured number
+showing the remaining per-selection cost is real on a frame that DOES own the
+node — "never skip a measurement that height correctness depends on."
+
+Budget: `tests/e2e/studio-board-perf.e2e.ts`'s `speed-04` describe block —
+click → selection ring, cold, on `__board-perf-fixture` (Tier-2 by default,
+no `node_modules`, so its bridge iframe never reports `ready` inside a test
+run — the fallback stays the only interactive surface for the whole run,
+which is exactly the "just opened" window this budget targets). Calibrated
+under heavy shared-machine contention, not the plan's own 100ms target — see
+that constant's own doc for the real before/after numbers and why the
+recorded budget is looser.
+
+
 
 - Canvas DOM is inside iframes: `document.querySelector('[data-node-id]')`
   returns `null`. Use `src/__tests__/canvas/iframeCanvasQuery.ts`.

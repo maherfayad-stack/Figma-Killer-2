@@ -158,6 +158,12 @@ export function LiveBoardFrame({
           documentMode="bridge"
           liveFrame={liveFrame}
           onAdapterChange={setAdapter}
+          // `speed-04` (STATE.md) — the bridge overlay has nothing to do
+          // until this frame is ready (see `overlayEnabled`'s own doc on
+          // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
+          // selection chrome for this board frame while `!ready`, and it
+          // unmounts the instant this flips, so the two are never both live.
+          overlayEnabled={ready}
         />
       </div>
     </>
