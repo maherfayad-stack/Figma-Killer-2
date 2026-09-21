@@ -2143,7 +2143,7 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 ### live-13 — on a Tier 2 board a selected element showed no ring and no handles, and a drag-pan over a live frame did nothing: the frame's chrome had no caller, and its pan presses no consumer
 
 - **Agent:** main session — reproduced in a real browser first (gstack `/browse`, smoke account, the `_scratch-undo` copy of `test4`), fixed by hand
-- **Stage:** done — proven live, every layer pinned by tests; NOT yet committed at the time of this entry (see "Human action needed")
+- **Stage:** done — branch `fix/live-frame-selection-chrome`, draft PR #203 against `tmp/integration` (same arrangement as #202: it builds on `live-11`/`live-12`, which are not on `main` yet). Proven live, every layer pinned by tests. The checkout stays on this branch so the running dev stack serves the fix; the owner merges.
 - **Updated:** 2026-09-21
 - **Owner's report, after `live-12`:** "when the mouse is over a screen it doesn't pan/zoom, and when I select an element it doesn't have those borders that say it's selected, or allow me to change dimensions visually."
 - **What it was (three gaps, all pre-existing, all invisible until `sec-19` made Tier 2 the default):**
@@ -2165,6 +2165,7 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
   - **Drag listeners on the frame document must be capture-phase.** `gestureForwarding.ts`'s design-mode `stopPropagation` at the document silences any bubble listener on that same object; a pointerup that targets the page (a browser that refused `setPointerCapture`) would never end the drag otherwise. The unit test reproduces exactly that path.
   - The toolbar/inspector anchor for a bridge frame is `rect relative to body`, not the frame's viewport — the two differ by the body's own offset (typically 0–8 px), scaled. Acceptable for a toolbar; not a substitute for the rings, which the frame positions itself.
   - `BreakpointSelectionOverlay` is at 695 of 700 lines. The next addition there needs another split first.
+  - **Never hand a `BridgeFrameAdapter` to a component as a prop.** It holds the iframe's cross-origin `contentWindow`, and React's dev-mode render logging (`logComponentRender` → `addObjectDiffToProperties`) walks a function component's changed props and read `location` on that window — a `SecurityError` mid-render that left React in "Should not already be working" for every test after it (`liveBoardFrame.test.tsx` caught it). Adapters travel through `CanvasFrameAdapterContext`, state and hook arguments only; `BreakpointFrame` and `CanvasLiveSurface` provide the context around the overlay.
   - **Every `bun --watch` restart of the API server reloads every live frame** (the HMR socket through the proxy drops; Vite's client polls and reloads). With the referrer fix the frame comes back with its bridge; before it, it came back dead. If a frame ever looks "live" on a design board again, check `document.referrer` inside it first.
 
 ### live-12 — on a Tier 2 board nothing selected, nothing zoomed, and inputs took focus: the bridge frame's events were never consumed, and its mode never declared
