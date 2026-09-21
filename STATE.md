@@ -29,6 +29,11 @@ Archive section at the bottom of this file indexes them.
   (doc comment only), `src/admin/pages/site/panels/PropertiesPanel/
   PropertiesPanel.tsx` (the flush wiring), `src/__tests__/persistence/
   autoSaveCadence.test.ts` (updated assertions) + new `autoSaveFlush.test.tsx`.
+  **Follow-up (same day, module-size-budget fix):** new
+  `src/admin/pages/site/studio/nodeDiffWriteback.ts` and
+  `src/admin/pages/site/hooks/autosaveSchedule.ts`, `src/__tests__/persistence/
+  autoSaveTrailingDebounce.test.tsx` (import path only), `docs/agent-refs/
+  path-index.md` (two new rows).
 - **Slices touched:** none of the 12 store slices changed shape — this is
   entirely in the persistence hook + panel chrome layer, not the Zustand
   store itself. No new state, no new selector, no new mutation, no new
@@ -144,6 +149,91 @@ Archive section at the bottom of this file indexes them.
     written — the targeted suites above are the load-bearing signal).
 - **Human action needed:** none — no browser-observable UI beyond the
   existing "Unsaved"/"Saving…" chip, which was already dogfooded.
+
+**Follow-up — 2026-09-21, same day: `module-size-budgets.test.ts` fix.**
+The coordinator flagged that this PR's own edits pushed two files over the
+700-line ceiling: `fsCodemodAdapter.ts` (700 → 708) and `usePersistence.ts`
+(686 → 717) — both were already at/near the ceiling before `speed-02`, and
+the doc-comment additions this work order made were what tipped them over.
+Fixed by extraction, not comment-trimming, per the coordinator's ask:
+  - **`nodeDiffWriteback.ts`** (new, 249 lines) — `saveSite`'s per-node diff
+    walk, exported as `collectNodeDiffEdits(pages, dirty)`. Takes the dirty
+    page list + `opts.dirty`, returns `{ edits, bumps, drops,
+    inlineStyleRefusals }`. `effectiveTag` (the tag/customTag helper) moved
+    with it — it was only ever called from inside the walk.
+    `fsCodemodAdapter.ts`: **708 → 515 lines.** `saveSite` still owns
+    everything downstream of the call (the POST, refusal reporting, baseline
+    commits, resync) — only the walk itself moved. Every inline comment in
+    the walk carried over VERBATIM (the coordinator's explicit instruction:
+    extract a coherent unit, don't trim comments to fit).
+  - **`autosaveSchedule.ts`** (new, 77 lines) — the four cadence-policy
+    exports `resolveAutoSaveDelayMs`, `AUTOSAVE_MAX_DEFERRAL_MULTIPLE`,
+    `nextAutoSaveDelayMs`, and `flushAutosave` (this work order's own new
+    export), all pure/self-contained (no dependency on the hook's
+    timers/refs/effects — `usePersistence.ts` still owns the mechanical
+    `setTimeout` wiring, the single-flight queue, the retry ladder).
+    `usePersistence.ts`: **717 → 657 lines.**
+  - Every import of the four moved symbols updated to `@site/hooks/
+    autosaveSchedule` instead of `@site/hooks/usePersistence`:
+    `PropertiesPanel.tsx` (`flushAutosave`), `autoSaveCadence.test.ts` (all
+    three cadence exports), `autoSaveFlush.test.tsx` (`flushAutosave`),
+    `autoSaveTrailingDebounce.test.tsx` (`AUTOSAVE_MAX_DEFERRAL_MULTIPLE` —
+    this one was missed on the first pass and caught by a bare `bun test`
+    run against `module-size-budgets` + `persistence` together, which threw
+    a `SyntaxError: Export named 'AUTOSAVE_MAX_DEFERRAL_MULTIPLE' not found`
+    — see Landmines). No re-export/back-compat shim left in
+    `usePersistence.ts` — this repo's own "no deprecation shims" rule.
+  - Doc-comment cross-references updated everywhere the moved symbols were
+    named by file: `usePersistence.ts`'s module doc (items 2 and 5),
+    `fsCodemodAdapter.ts`'s `STUDIO_AUTOSAVE_DELAY_MS` doc, the orphaned
+    `loadedValuesBaseline` doc comment above `getStudioComponentSources`
+    (used to say "this file only ever reads it" — no longer true post-split,
+    now points at `nodeDiffWriteback.ts`), `AdminCanvasLayout.tsx:180`'s
+    comment.
+- **New-file line counts:** `nodeDiffWriteback.ts` 249, `autosaveSchedule.ts`
+  77 — both comfortably under the 700 ceiling.
+- **Landmines:**
+  - `bun test <file-A> <file-B>` only surfaces a stale import as a
+    `SyntaxError` at the point that module is actually LOADED by the test
+    run — running `autoSaveCadence.test.ts`/`autoSaveFlush.test.tsx` alone
+    (the two files this task edited first) stayed green after the extraction
+    even though `autoSaveTrailingDebounce.test.tsx`'s import was already
+    broken, because that third file only loads when something in the same
+    `bun test` invocation pulls it in. **Grep every importer of a moved
+    symbol across the whole tree before declaring an extraction done** —
+    `grep -rn "from '@site/hooks/usePersistence'"` plus a check of each
+    moved symbol name would have caught this in one pass instead of a
+    failing CI run.
+  - `module-size-budgets.test.ts` still fails on this branch — but on
+    `server/handlers/studio/devServer.ts` (748 lines), NOT on either file
+    this work order touches. Confirmed pre-existing on the PR base commit
+    itself (`git show 2566b676:server/handlers/studio/devServer.ts | wc -l`
+    → 748, before `speed-02`'s branch even started) — the live-dev-server
+    line-count growth from `fix/live-dev-server-survives-api-restart`'s own
+    change (output-to-file instead of a pipe) pushed it over, unrelated to
+    autosave cadence. **Not fixed here** — out of this task's scope, not a
+    file `speed-02` touches, and fixing it risks colliding with whoever owns
+    `devServer.ts` next. Flagged for the coordinator/whoever picks up
+    `live-16`'s lineage.
+  - `src/__tests__/persistence` showed a flaky single failure
+    (`saveRetryLadder.test.tsx`, timing-sensitive) on ~1 in 4 full-directory
+    runs, vanishing on every isolated re-run (`--bail=1`, standalone file
+    run) — matches this repo's documented batch-run isolation flake pattern,
+    not a real regression; re-run if you see it.
+- **Verification (follow-up):**
+  - `bun test src/__tests__/architecture/module-size-budgets.test.ts` — 4
+    pass, 1 fail (`server/handlers/studio/devServer.ts`, pre-existing, see
+    Landmines above — NOT `fsCodemodAdapter.ts`/`usePersistence.ts`, both
+    now clean against the ceiling).
+  - `bun test src/__tests__/persistence` — 174 pass, 0 fail (clean on
+    repeated re-runs after fixing the missed import).
+  - `bun test src/__tests__/editor src/__tests__/architecture/
+    no-vc-mode-branches-in-mutations.test.ts src/__tests__/architecture/
+    centralized-site-mutation-history.test.ts` — 598/1 pass (same four
+    pre-existing `structuralOptimisticBroadcast.test.ts` failures as before
+    the follow-up, no new regressions from the extraction).
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — clean.
 
 ---
 

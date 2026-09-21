@@ -1,5 +1,6 @@
 /**
- * Auto-save cadence precedence — `resolveAutoSaveDelayMs` (usePersistence.ts).
+ * Auto-save cadence precedence — `resolveAutoSaveDelayMs` (`autosaveSchedule.ts`,
+ * split out of `usePersistence.ts` by `speed-02`'s module-size-budget fix).
  *
  * Phase 5B: Studio source writeback should feel snappy without inheriting the
  * CMS's slower, user-configurable idle-commit delay (default 30s). Rather
@@ -14,7 +15,7 @@ import {
   AUTOSAVE_MAX_DEFERRAL_MULTIPLE,
   nextAutoSaveDelayMs,
   resolveAutoSaveDelayMs,
-} from '@site/hooks/usePersistence'
+} from '@site/hooks/autosaveSchedule'
 import { STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { EDITOR_PREFS_KEY, setEditorSelectPreference } from '@site/preferences/editorPreferences'
 

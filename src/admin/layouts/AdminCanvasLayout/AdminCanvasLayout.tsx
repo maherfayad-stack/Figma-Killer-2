@@ -181,7 +181,7 @@ export function AdminCanvasLayout() {
     // (250ms trailing debounce, 1s deferral cap as of speed-02). The
     // properties panel also calls `flushAutosave()` on blur/Enter/scrub-
     // release so a settled field writes to disk before even this window
-    // elapses — see `usePersistence.ts`.
+    // elapses — see `hooks/autosaveSchedule.ts`.
     autoSaveDelayMs: STUDIO_AUTOSAVE_DELAY_MS,
   })
   useStudioBoardsPersistence()

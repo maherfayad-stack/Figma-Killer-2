@@ -2,7 +2,8 @@
  * `speed-02` — the autosave FLUSH half, and the production cadence it flushes
  * ahead of.
  *
- * `flushAutosave()` (`usePersistence.ts`) is what the properties panel's
+ * `flushAutosave()` (`autosaveSchedule.ts`, split out of `usePersistence.ts`
+ * by `speed-02`'s own module-size-budget fix) is what the properties panel's
  * blur / Enter / scrub-release handlers call (`PropertiesPanel.tsx`'s
  * `onBlur` / `onKeyDown` / `onPointerUp`) so a field the user visibly
  * finished editing writes to disk without waiting out the trailing debounce.
@@ -21,7 +22,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useEffect } from 'react'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
-import { usePersistence, flushAutosave } from '@site/hooks/usePersistence'
+import { usePersistence } from '@site/hooks/usePersistence'
+import { flushAutosave } from '@site/hooks/autosaveSchedule'
 import { STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import type { IPersistenceAdapter } from '@core/persistence/types'
 import { useEditorStore } from '@site/store/store'
