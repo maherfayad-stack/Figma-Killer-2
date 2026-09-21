@@ -102,6 +102,22 @@ interface BreakpointFrameProps {
    * that prop's doc on `IframeFrameSurface` for why it must not be a closure.
    */
   onContentReadyChange?: (ready: boolean) => void
+  /**
+   * `speed-04` (STATE.md) — whether this frame mounts `BreakpointSelectionOverlay`
+   * at all. Defaults to `true` (every existing caller). `LiveBoardFrame` sets
+   * this to `false` on its hidden bridge `BreakpointFrame` while the adapter
+   * hasn't fired `ready` yet: that frame's iframe still boots concurrently
+   * (the whole point of the not-ready/ready render fork), but its OWN overlay
+   * has nothing to measure (`overlayRoot` is never mounted in bridge mode
+   * anyway) and `useBridgeSelectionChrome` would otherwise open a real
+   * `postMessage` round trip — `select`/`hover`/`measure` — into a document
+   * that has not finished loading, AND render a second, independently-
+   * positioned toolbar/inspector stacked on top of the Tier-0 fallback's own
+   * (real, already-working) chrome for the exact same selection. The bridge
+   * frame's own overlay takes over the instant `ready` flips and the fallback
+   * unmounts in the same commit, so there is never a moment with both active.
+   */
+  overlayEnabled?: boolean
 }
 
 // React Compiler exception #2: `memo()` re-render bailout on a hot,
@@ -128,6 +144,7 @@ export const BreakpointFrame = memo(function BreakpointFrame({
   liveFrame,
   onAdapterChange,
   onContentReadyChange,
+  overlayEnabled = true,
 }: BreakpointFrameProps) {
   // --bp-width drives both label width and viewport width via CSS (dynamic value)
   const bpStyle = { '--bp-width': `${breakpoint.width}px` } as CSSProperties
@@ -343,15 +360,17 @@ export const BreakpointFrame = memo(function BreakpointFrame({
             The toolbar and InPlaceInspector still portal into the parent
             document — real inputs/buttons inside a transformed iframe are a
             worse problem — anchored via the `--selection-anchor-*` channel. */}
-        <CanvasFrameAdapterContext.Provider value={adapter}>
-          <BreakpointSelectionOverlay
-            breakpointId={breakpoint.id}
-            viewportRef={viewportRef}
-            iframeElement={iframeEl}
-            overlayRoot={overlayRoot}
-            frameId={frameId}
-          />
-        </CanvasFrameAdapterContext.Provider>
+        {overlayEnabled && (
+          <CanvasFrameAdapterContext.Provider value={adapter}>
+            <BreakpointSelectionOverlay
+              breakpointId={breakpoint.id}
+              viewportRef={viewportRef}
+              iframeElement={iframeEl}
+              overlayRoot={overlayRoot}
+              frameId={frameId}
+            />
+          </CanvasFrameAdapterContext.Provider>
+        )}
         <CursorTooltip
           content={`Click to activate ${breakpoint.label} breakpoint`}
           point={inactiveFrameActivates ? activationHintPoint : null}

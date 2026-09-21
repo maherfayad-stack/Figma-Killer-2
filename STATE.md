@@ -16671,6 +16671,198 @@ below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
 
+### speed-04 — cold selection on a Tier-2 board frame: one overlay, not two
+
+- **Agent:** perf-hunter (dispatched for `STUDIO-SPEED-PLAN.md`'s `speed-04` work order).
+- **Stage:** done — branch `feat/speed-04-cold-selection`, based on `tmp/speed-integration`.
+  Worked in `.tmp/wt-speed-04`. **PR:** [#213](https://github.com/maherfayad-stack/Figma-Killer-2/pull/213) (draft, base `tmp/speed-integration`).
+- **Updated:** 2026-09-21.
+- **Goal:** the plan's own table — click → selection ring on a live frame, 17ms
+  warm but **150–658ms cold**. The scout's cause, already diagnosed (not
+  re-diagnosed here per the work order): `LiveBoardFrame.tsx` mounts a Tier-0
+  portal fallback `BreakpointFrame` and the bridge `BreakpointFrame` together
+  until the bridge reports ready, and each ALWAYS mounted its own
+  `BreakpointSelectionOverlay`.
+
+**Root cause, confirmed by reading, not guessing.** `BreakpointFrame` always
+renders `<BreakpointSelectionOverlay>` regardless of `documentMode`. For a
+Tier-2 board frame that isn't ready, `LiveBoardFrame` renders BOTH the
+fallback's overlay (real, portal, working) AND the hidden bridge frame's
+overlay — and since `documentMode="bridge"` makes `bridgeChrome` true there,
+that second overlay's `useBridgeSelectionChrome` reacts to every selection
+change with a REAL `postMessage` round trip (`select`/`hover`/
+`setResizeTarget`/`measure`) into a document that has not finished loading,
+**and renders its own second, independently-positioned toolbar + in-place
+inspector for the exact same selection** — not scoped away, because both
+copies of `BreakpointFrame` receive the identical `frameId`/`selectedNodeIds`.
+This is a real correctness bug (two toolbars stacked), not just a perf one,
+and it is what the "dual mount not self-healing quickly" observation in
+speed-05's own notes was seeing.
+
+**What was NOT the cause, contrary to my own first hypothesis — recorded so
+nobody re-chases it.** Board frames share one synthetic breakpoint id
+(`'studio'`, `BoardFrameView.tsx`'s `STUDIO_BREAKPOINT_BASE`), which looked
+like it would make `showToolbar`/the expensive anchor session run on every
+POOLED board frame on every selection change (an O(pool size) cost). It
+doesn't: WS-10 Phase 2's `selectedNodeFrameId` scoping already zeroes
+`selectedNodeIds` to `EMPTY_SELECTED_NODE_IDS` for every non-owning board
+frame, so `hasOverlayWork` is false there and `tickOnce` never runs at all —
+confirmed by reading `useBreakpointOverlaySelectionState.ts`'s scoping and by
+`boardFrameVariantSelection.test.tsx` (pre-existing) staying green. The real
+O(frames) exposure that DOES exist is the CMS/Visual-Component canvas, where
+one selection is deliberately mirrored across every real breakpoint frame —
+that's what the second fix below targets.
+
+**Change (two independent fixes, both additive, both gated):**
+1. `BreakpointFrame.tsx` — new `overlayEnabled?: boolean` prop, default
+   `true` (every existing caller unaffected — `bun run lint`/`bun run build`
+   confirm no other call site needed a change). Gates whether
+   `<BreakpointSelectionOverlay>` mounts at all.
+2. `LiveBoardFrame.tsx` — passes `overlayEnabled={ready}` to its hidden
+   bridge `BreakpointFrame`. The bridge iframe still mounts and boots
+   concurrently (unchanged — the whole point of the not-ready/ready render
+   fork); only its OWN overlay is deferred until `ready`, which is the exact
+   commit the fallback unmounts in. The two overlays are now never both
+   live — eliminates both the wasted round trip and the double-toolbar bug.
+3. `BreakpointSelectionOverlay.tsx`'s `tickOnce` — in the "parent-doc anchor
+   (expensive, rare)" branch, added `ownsAnySelectedNode` (derived from the
+   ring placements already measured this tick, zero extra cost): when a
+   frame's own `elementCache.resolve` found none of the selected nodes, skip
+   `createCanvasOverlayMeasureSession` entirely — the session would only
+   ever measure `null` for every id, exactly what the hide-and-return path
+   already produces. Behavior-preserving (same output), removes two forced
+   `getBoundingClientRect()` reads per non-owning frame per selection change.
+4. **Deliberately NOT implemented**: the plan's own text also said "cache the
+   iframe and canvas-root rects per pan/zoom commit and per `frame:resize`
+   instead of re-measuring per selection." Investigated and rejected — an
+   `iframe.getBoundingClientRect()` can legitimately change for reasons OTHER
+   than a pan/zoom commit or a bridge `frame:resize` (an auto-height fallback
+   iframe whose content just grew from the SAME selection change being
+   anchored; the canvas root itself resizing because selecting a node opened
+   a side panel), and caching across those triggers would silently
+   reintroduce `standing-03`'s exact class of bug — a stale term in the
+   anchor math, multiplied by zoom. The two reads the session already pays
+   are cheap and `canvasOverlayMeasurement.test.ts` already proves ONE
+   session reads geometry once no matter how many rings it measures; the real
+   cost was paying for a session at all on a frame that owns nothing, which
+   fix 3 already removes. Do not add this cache without a measured number
+   showing remaining per-selection cost on a frame that DOES own the node.
+5. `BreakpointSelectionOverlay.tsx` was at the 700-line ceiling before either
+   fix above (`module-size-budgets.test.ts`) — extracted its top-of-component
+   store reads (frame-scoped selection/hover, the selector-affinity
+   highlight, this frame's page, the VC badge list) into a new
+   `useBreakpointOverlaySelectionState.ts` hook. No behavior change; 685
+   lines after, comfortable headroom.
+
+**Measured — real numbers, `git stash` A/B on the three product files alone
+(the e2e spec unchanged both times), against `studio-workspace/__board-perf-fixture`
+(12 frames; defaults to Tier 2 — `DEFAULT_TRUST_TIER`, 2026-09-20 — with no
+`node_modules`, so its bridge iframe never reaches `ready` inside a test run;
+the fallback is the only interactive surface for the whole run, which IS the
+"just opened" window this budget targets, not a workaround):**
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| before (dual overlay mount) | 200.4ms | 165.3ms | 210.4ms | 192.0ms |
+| after (this change) | 141.3ms | 197.4ms | 184.7ms | 174.5ms |
+
+**Read this before trusting the absolute numbers.** `uptime` load average was
+~50 at calibration time (many other agent worktrees running `bun test`/`bun
+run build`/dev servers concurrently — the same contention `bun run
+bench:editor-store` hit: a run that normally takes well under a minute took
+710s in this session). The spread WITHIN each side (141–210ms) is comparable
+to the delta BETWEEN sides — real, directionally consistent, not a clean
+number. `BUDGET_CLICK_TO_RING_COLD_MS` is set to **350ms** (roughly 2x the
+observed "after" mean, the same convention `BUDGET_PAN_WORST_FRAME_MS` in the
+same file already uses), not the plan's own `<=100ms` target. **Re-calibrate
+on a quiet CI runner and tighten toward 100ms once a clean number exists
+there — do not loosen it further to chase noise on a busy dev box.**
+
+**Files:**
+```
+modify  src/admin/pages/site/canvas/BreakpointFrame.tsx            (overlayEnabled prop)
+modify  src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx  (overlayEnabled={ready})
+modify  src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx (anchor-skip + extraction; 718 lines mid-change, 685 after)
+create  src/admin/pages/site/canvas/useBreakpointOverlaySelectionState.ts
+modify  src/__tests__/canvas/liveBoardFrame.test.tsx  (new describe: exactly one toolbar/inspector while not ready)
+create  src/__tests__/canvas/breakpointFrameOverlayGate.test.tsx     (overlayEnabled contract, in isolation)
+create  src/__tests__/canvas/breakpointSelectionOverlayAnchorSkip.test.tsx  (session-spy proof: skipped for a non-owning selection, still created for a real one)
+modify  tests/e2e/studio-board-perf.e2e.ts  (new `speed-04` describe: click -> ring budget)
+modify  docs/agent-refs/canvas-internals.md, docs/agent-refs/path-index.md
+```
+
+**Gates:**
+- `bun test src/__tests__/canvas src/__tests__/architecture` → 1691 pass, 2
+  fail — both pre-existing and named by the work order itself:
+  `module-size-budgets.test.ts` (`fsCodemodAdapter.ts` 708, `usePersistence.ts`
+  717 — neither touched by this change) and `studio-runtime-bundle-fresh.test.ts`
+  (the documented `Bun.build`-reading-a-`.mjs`-under-`node_modules` quirk).
+  Confirmed identical both stashed and unstashed.
+- `bun run build` clean (`tsc -b` + `vite build`).
+- `bun run lint` clean on every touched file.
+- `bun run bench:editor-store` — completed clean (710s wall time — machine
+  load, not a regression; this bench doesn't touch anything speed-04 changed).
+- `bun run test` (bare, `--parallel=4`, full repo) — **started in background,
+  did not finish before this handoff was written**, same "shared machine, many
+  concurrent agent worktrees" reason `speed-03`'s own handoff already
+  recorded. Whoever picks this up next: check
+  `/private/tmp/claude-504/.../tasks/bc8lxl7kp.output` if it's still around,
+  or just re-run when the machine is quieter.
+- e2e: `E2E_VITE_PORT=5180 E2E_CMS_PORT=3012 bun run test:e2e -- tests/e2e/studio-board-perf.e2e.ts -g "speed-04"` →
+  2 pass (including the `[setup]` auth project). The `speed-04` test itself
+  fails against the pre-fix code (200.4/165.3/210.4ms, all over budget) and
+  passes against the fix (135.7/141.3/166.6/197.4/184.7ms across five runs,
+  under the calibrated 350ms budget every time).
+
+**A real, pre-existing, unrelated failure found along the way — not fixed,
+flagged for whoever owns it.** `studio-board-perf.e2e.ts`'s OWN `perf-01`
+test (`virtualization bounds live iframes...`) now fails on a clean
+`tmp/speed-integration` checkout too (confirmed via the same `git stash` A/B
+— identical failure with or without this PR's diff): `atWorkingZoom.liveIframes`
+came back equal to (or greater than!) `atWorkingZoom.boardFrames` (12 vs 12,
+then 16 vs 12 on a second run) instead of strictly less. Cause: `__board-perf-fixture`
+now defaults to Tier 2 (`DEFAULT_TRUST_TIER`, 2026-09-20's change,
+postdating this fixture's own README, which was written assuming Tier 0),
+and `readBoardCounts`/`readFrameStates`'s `iframe[title^="Canvas frame"]`
+counting logic double-counts a Tier-2 `LiveBoardFrame`'s fallback iframe AND
+its hidden bridge iframe (both carry the identical title, since board frames
+share one synthetic breakpoint id) as two separate "live" frames. This is a
+`perf-01`/virtualization-counting bug, not a `speed-04` one — did not touch
+`readBoardCounts`/`readFrameStates`/`frameVirtualization.ts` per the work
+order's explicit file boundaries. Whoever owns `perf-01` next: the counting
+helper needs to distinguish a fallback iframe from a bridge iframe (or count
+board frames, not raw iframes) now that Tier 2 is the product default.
+- **Docs:** `docs/agent-refs/canvas-internals.md` — new "Cold selection on a
+  Tier-2 board: one overlay per board frame, not two (`speed-04`)" subsection
+  under Perf, including the "what did NOT change and why" note.
+  `docs/agent-refs/path-index.md` — new entry for
+  `useBreakpointOverlaySelectionState.ts`.
+- **Landmines:**
+  - `Locator.toBeVisible()` in Playwright checks CSS visibility, NOT whether
+    an element's transformed board position is inside the current viewport.
+    `page.locator('[data-testid="board-frame-body"]').first()` on a
+    multi-frame board can silently resolve to a frame parked off-canvas
+    (its DOM-order-first, not screen-order-first) — spent real time chasing
+    a "no pointerdown ever observed" mystery before realizing the click was
+    landing on the Explorer sidebar, not the canvas, because the "first"
+    frame in DOM order was Screen01, off-screen behind the panel. Fix: pick
+    the iframe whose bounding box actually contains the canvas root's own
+    center point (see the e2e spec's own comment).
+  - `FrameLocator` (from `.frameLocator(...)`) has no `.evaluate()` — a
+    whole-document script needs the real `Frame`, reached through
+    `elementHandle.contentFrame()`, not the locator.
+  - `mock.module` calls leak across `bun test` FILES in this bun version
+    (1.3.13) — same landmine `perf-06` already recorded; not hit directly
+    here since `liveBoardFrame.test.tsx`'s existing mocks were reused as-is,
+    but worth re-flagging since this PR added a new `describe` block to that
+    same file.
+- **Human action needed:** none blocking. Worth a dogfood once a real project
+  is promoted to Tier 2 with `node_modules` installed and its dev server
+  actually reaches `ready`: click a node in a board frame within the first
+  second or two after opening (before the bridge is ready), confirm exactly
+  ONE ring + ONE toolbar + ONE inspector appear (not two), then watch them
+  swap cleanly to the bridge's own chrome the instant the frame goes live.
+
 ### server-22 — localized page frames rendered completely unstyled (style rule ids re-minted)
 - **Agent:** server-engineer · **Stage:** done — targeted gates green, draft PR open.
 - **Branch:** `fix/localized-page-style-rule-ids` off `feat/alm-figma-killer-studio-shell`, worked in `.tmp/wt-localized-page/` (own worktree, primary checkout untouched). **PR:** [#125](https://github.com/maherfayad-stack/Figma-Killer-2/pull/125) (draft).
