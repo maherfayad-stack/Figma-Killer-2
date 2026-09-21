@@ -41,6 +41,7 @@
  * three plans return a COMMIT and the caller must NOT also mutate the tree —
  * the same discipline `writeInsertToSource` already follows in `nodeActions`.
  */
+import { startTransition } from 'react'
 import {
   describeStructuralRefusal,
   isSourceDerivedNodeId,
@@ -575,6 +576,18 @@ export const STRUCTURAL_REFUSAL_TITLE = {
  *    or failing that a jump to the source position it names. That is the whole
  *    point of `EditConstraint.actions`/`origin`, which nothing rendered until
  *    now.
+ *
+ * `speed-05` — the dialog branch's `context.set` is wrapped in `startTransition`.
+ * Every real call site into this function runs synchronously inside a keydown
+ * (Delete) or a mouse-gesture handler, none of them a React-owned event — React
+ * 18+'s automatic batching still schedules the resulting re-render (and
+ * `RefusalDialog`'s first portal mount) at DEFAULT priority there, which keeps
+ * it in the SAME main-thread task as the keystroke: measured at 393 ms for a
+ * cold mount (`STUDIO-SPEED-PLAN.md` speed-05). `startTransition` marks that
+ * state write low-priority, so React can finish the keydown task immediately
+ * and mount the dialog in its own, interruptible task instead. The toast branch
+ * below is untouched — `pushToast` does not go through this store's `set` at
+ * all, so it was never inside this cost.
  */
 export function presentStructuralRefusal(
   title: (typeof STRUCTURAL_REFUSAL_TITLE)[keyof typeof STRUCTURAL_REFUSAL_TITLE],
@@ -613,14 +626,18 @@ export function presentStructuralRefusal(
     : {}
 
   if (constraint.actions.length > 0) {
-    context.set((state) => {
-      state.structuralRefusalDialog = {
-        title,
-        constraint,
-        ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
-        ...(context.retry ? { retry: context.retry } : {}),
-        ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
-      }
+    // `speed-05` — deferred so the keydown/gesture task that refused this
+    // edit ends immediately; see this function's own doc comment.
+    startTransition(() => {
+      context.set((state) => {
+        state.structuralRefusalDialog = {
+          title,
+          constraint,
+          ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
+          ...(context.retry ? { retry: context.retry } : {}),
+          ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
+        }
+      })
     })
     return
   }
