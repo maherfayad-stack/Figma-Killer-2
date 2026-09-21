@@ -240,7 +240,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // so a Class B (cross-frame) caller can enumerate every mounted
         // canvas frame without ever reaching for `document.querySelectorAll
         // ('iframe')` + `contentDocument`. Same lifecycle both branches.
-        registerFrameAdapter(iframe, next)
+        registerFrameAdapter(iframe, next, breakpointId)
         return () => {
           unregisterFrameAdapter(iframe)
           next.dispose()
@@ -253,12 +253,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       }
       const next = new PortalFrameAdapter(iframeDoc)
       setAdapter(next)
-      registerFrameAdapter(iframe, next)
+      registerFrameAdapter(iframe, next, breakpointId)
       return () => {
         unregisterFrameAdapter(iframe)
         next.dispose()
       }
-    }, [isLive, documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey])
+    }, [isLive, documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey, breakpointId])
 
     // `live-07` — the other half of the split above: reconciles the
     // canonical<->stamp index IN PLACE via `setNodeIds` (already shipped by

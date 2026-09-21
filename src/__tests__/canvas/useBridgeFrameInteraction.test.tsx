@@ -98,7 +98,7 @@ describe('useBridgeFrameInteraction', () => {
     iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
     Object.defineProperty(iframe, 'clientWidth', { value: 400 })
     Object.defineProperty(iframe, 'clientHeight', { value: 600 })
-    registerFrameAdapter(iframe, adapter)
+    registerFrameAdapter(iframe, adapter, 'bp-mobile')
     const seen: WheelEvent[] = []
     document.addEventListener('wheel', (e) => seen.push(e))
 
@@ -164,7 +164,7 @@ describe('useBridgeFrameInteraction', () => {
     iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
     Object.defineProperty(iframe, 'clientWidth', { value: 400 })
     Object.defineProperty(iframe, 'clientHeight', { value: 600 })
-    registerFrameAdapter(iframe, adapter)
+    registerFrameAdapter(iframe, adapter, 'bp-mobile')
     const seen: PointerEvent[] = []
     for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
     const order: string[] = []

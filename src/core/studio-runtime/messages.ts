@@ -262,11 +262,72 @@ export const OptimisticTextMessageSchema = Type.Object({
   text: Type.String(),
 })
 
+/**
+ * `speed-01` — a properties-panel style commit or scrub preview, applied
+ * in-frame as a stylesheet rule ahead of the file write + HMR round trip
+ * (`optimisticStyle.ts`'s module doc has the full mechanism). Bounded at the
+ * SCHEMA, per `sec-06`'s "same-realm spoofing" posture — a script co-resident
+ * with `runtime.ts` in the live frame's document could otherwise forge this
+ * message directly and inject arbitrary CSS text into the frame's own
+ * stylesheet:
+ *
+ *   - `patch` — at most 64 properties (`maxProperties`, enforced only because
+ *     `additionalProperties: false` is set below — see `OPTIMISTIC_STYLE_KEY_PATTERN`'s
+ *     own doc for why that flag is load-bearing here). Each KEY matches
+ *     `OPTIMISTIC_STYLE_KEY_PATTERN` (bare letters/hyphens only — camelCase or
+ *     kebab-case; `optimisticStyle.ts` converts camel -> kebab before writing
+ *     the rule). Each VALUE is ≤ 256 chars and excludes `;`, `}`, `<` and the
+ *     substring `!important` (a negative lookahead) — the four ways a value
+ *     could otherwise close the declaration/rule early or smuggle markup, or
+ *     fight the rule's OWN `!important` in a way that changes which one wins.
+ *   - `className` — present only for a CLASS-target write (`commitApi.ts`'s
+ *     `writeToTarget`/`previewToTarget`), the bare class name
+ *     `styleRuleSelector`/`selectionModel.ts` already produced (its leading
+ *     `.` stripped). **Informational only** — `optimisticStyle.ts` does NOT
+ *     build a `.<className>` selector from it. Dogfooding against a real
+ *     project showed that selector matches nothing: `className` is the name
+ *     STUDIO'S PARSE gives the class, read out of the CSS-module source, but
+ *     the live frame's DOM carries whatever name VITE'S OWN CSS-modules
+ *     plugin generated at dev-server build time — two independent hashing
+ *     schemes over the same source with no reason to agree, and in practice
+ *     they don't. Still bounded (excludes whitespace/`{`/`}`/`;`/`<`) as
+ *     defense in depth for whatever future consumer reads it off the wire.
+ *
+ * `ref` names the element every optimistic style write actually targets —
+ * inline or class, both are element-scoped (see `optimisticStyle.ts`'s module
+ * doc, "ALWAYS element-scoped"); a class write's other elements catch up on
+ * the next HMR update rather than getting an in-frame preview of their own.
+ */
+const OPTIMISTIC_STYLE_KEY_PATTERN = '^[a-zA-Z-]{1,64}$'
+const OPTIMISTIC_STYLE_VALUE_PATTERN = '^(?!.*!important)[^;}<]{0,256}$'
+const OPTIMISTIC_STYLE_CLASS_NAME_PATTERN = '^[^\\s{};<]{1,128}$'
+
+export const OptimisticStylePatchSchema = Type.Record(
+  Type.String({ pattern: OPTIMISTIC_STYLE_KEY_PATTERN }),
+  Type.String({ pattern: OPTIMISTIC_STYLE_VALUE_PATTERN }),
+  { maxProperties: 64, additionalProperties: false },
+)
+
+export const OptimisticStyleMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.style'),
+  ref: NodeRefSchema,
+  patch: OptimisticStylePatchSchema,
+  className: Type.Optional(Type.String({ pattern: OPTIMISTIC_STYLE_CLASS_NAME_PATTERN })),
+})
+
+/** Drops whatever optimistic style rule is currently keyed on `ref` — the panel stopped scrubbing with no commit, or the field lost focus. A no-op when nothing is active for it. */
+export const OptimisticStyleClearMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.style:clear'),
+  ref: NodeRefSchema,
+})
+
 export const OptimisticMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
   OptimisticTextMessageSchema,
+  OptimisticStyleMessageSchema,
+  OptimisticStyleClearMessageSchema,
 ])
 export type OptimisticMessage = Static<typeof OptimisticMessageSchema>
 
@@ -283,6 +344,8 @@ export const InboundRuntimeMessageSchema = Type.Union([
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
   OptimisticTextMessageSchema,
+  OptimisticStyleMessageSchema,
+  OptimisticStyleClearMessageSchema,
 ])
 export type InboundRuntimeMessage = Static<typeof InboundRuntimeMessageSchema>
 

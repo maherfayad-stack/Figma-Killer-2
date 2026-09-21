@@ -53,7 +53,7 @@ describe('measureCanvasDropCandidates — registry-based iframe access', () => {
 
     const adapter = new PortalFrameAdapter(frameDoc)
     adapters.push(adapter)
-    registerFrameAdapter(iframe, adapter)
+    registerFrameAdapter(iframe, adapter, 'desktop')
 
     const candidates = measureCanvasDropCandidates(viewport, makeTree('n1'), iframe)
     expect(candidates.map((c) => c.nodeId)).toEqual(['n1'])
@@ -91,7 +91,7 @@ describe('measureCanvasDropCandidates — registry-based iframe access', () => {
 
     const adapter = new PortalFrameAdapter(frameDoc)
     adapters.push(adapter)
-    registerFrameAdapter(iframe, adapter)
+    registerFrameAdapter(iframe, adapter, 'desktop')
     expect(measureCanvasDropCandidates(viewport, makeTree('n1'), iframe)).toHaveLength(1)
 
     unregisterFrameAdapter(iframe)

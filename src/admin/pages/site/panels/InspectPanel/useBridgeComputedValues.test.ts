@@ -107,7 +107,7 @@ function addBridgeFrame(breakpointId: string, options: { autoReply?: Record<stri
   document.body.appendChild(frame)
   const stub = makeStubChannel(options)
   const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN })
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, breakpointId)
   return {
     frame,
     stub,
@@ -132,7 +132,7 @@ describe('hasBridgeFrameFor', () => {
     frameDoc.body.setAttribute('data-breakpoint-id', 'bp-desktop')
     frame.setAttribute('data-breakpoint-id', 'bp-desktop')
     const adapter = new PortalFrameAdapter(frameDoc)
-    registerFrameAdapter(frame, adapter)
+    registerFrameAdapter(frame, adapter, 'bp-desktop')
 
     expect(hasBridgeFrameFor('bp-desktop')).toBe(false)
 
@@ -197,7 +197,7 @@ describe('useBridgeComputedValues', () => {
       frameOrigin: FRAME_ORIGIN,
       measureTimeoutMs: 5,
     })
-    registerFrameAdapter(bridge.frame, shortTimeoutAdapter)
+    registerFrameAdapter(bridge.frame, shortTimeoutAdapter, 'bp-desktop')
 
     const { result, rerender } = renderHook(
       ({ nodeId }: { nodeId: string }) => useBridgeComputedValues(nodeId, 'bp-desktop', PROPERTIES, true),

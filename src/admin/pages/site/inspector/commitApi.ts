@@ -79,6 +79,7 @@ import { registry } from '@core/module-engine'
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { styleValueKey } from '@core/page-tree'
 import { getActiveStyleTab } from '../panels/PropertiesPanel/classStyleSections'
+import { broadcastOptimisticStyle, broadcastOptimisticStyleClear } from '../canvas/frameAdapter/optimisticStructuralBroadcast'
 import type { SelectionModel } from './selectionModel'
 import type { WriteTarget } from './resolveWriteTarget'
 
@@ -147,6 +148,32 @@ export function lockedStyleProperties(node: PageNode | null): ReadonlySet<string
 }
 
 // ---------------------------------------------------------------------------
+// speed-01 — optimistic in-frame style broadcast, shared by write and preview
+// ---------------------------------------------------------------------------
+
+/**
+ * Narrows a style patch to what {@link broadcastOptimisticStyle} can carry:
+ * drops `null`/`undefined` entries (a clear — the wire's `patch` is a set of
+ * positive `!important` overrides, not a way to express "remove", and the
+ * removal will show once the file write reaches Vite same as it always has)
+ * and stringifies a raw number the way the store itself stores it verbatim.
+ * Returns `null` when nothing is left to broadcast.
+ */
+function optimisticStylePatch(patch: Record<string, string | number | null>): Record<string, string> | null {
+  const out: Record<string, string> = {}
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === null || value === undefined) continue
+    out[key] = String(value)
+  }
+  return Object.keys(out).length > 0 ? out : null
+}
+
+/** `styleRuleSelector` always produces a leading-`.` class selector for an assigned class rule (never an ambient ``h1 > span`` shape — those never reach `assignedClassRules`); `optimisticStyle.ts`'s wire `className` field is that name with the dot stripped. */
+function bareClassName(selector: string): string {
+  return selector.startsWith('.') ? selector.slice(1) : selector
+}
+
+// ---------------------------------------------------------------------------
 // useInspectorCommit
 // ---------------------------------------------------------------------------
 
@@ -188,6 +215,15 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
 
   const onCondition = activeConditionId !== null
   const activeTab = getActiveStyleTab(activeBreakpointId)
+  // `speed-01` — the breakpoint id to scope an optimistic style broadcast to.
+  // Non-null only when the active context IS a breakpoint one: `activeTab`
+  // reflects the panel's selected breakpoint tab regardless of whether a
+  // condition is ALSO active, so a state/condition context (`onCondition`)
+  // is excluded here even at a non-default breakpoint tab — a bridge frame
+  // never previews a state context at all (see the two broadcast call sites
+  // below). `null` (base context, or inline's own no-context-axis case)
+  // broadcasts to every bridge frame.
+  const activeBreakpointContextId = !onCondition && activeTab !== 'base' ? activeTab : null
 
   const lockedPropertySet = lockedStyleProperties(selectedNode)
 
@@ -199,11 +235,35 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // so "clear this property" cannot mean two things.
       if (isMultiSelect) setNodesInlineStyles([...inlineTargetIds], patch)
       else setNodeInlineStyles(inlineTargetIds[0], patch)
+      // `speed-01` — paint the SAME commit inside every mounted live (bridge)
+      // frame immediately, ahead of the file write + HMR round trip. Portal
+      // frames already repainted from the store mutation above; see
+      // `optimisticStructuralBroadcast.ts`'s own doc for why this never
+      // double-paints one.
+      const optimisticPatch = optimisticStylePatch(patch)
+      if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     } else if (target.kind === 'class') {
       if (activeContextId) {
         setClassContextStyles(target.classId, activeContextId, patch as Partial<CSSPropertyBag>)
       } else {
         updateClassStyles(target.classId, patch as Partial<CSSPropertyBag>)
+      }
+      // A STATE/condition context (hover, focus, active, ...) applies only
+      // under a pointer/focus state a bridge frame's own document does not
+      // hold at all times — an unconditional in-frame preview would show
+      // wrong, so that case alone is skipped (`onCondition`). A BREAKPOINT
+      // context previews too, narrowed to the bridge frame(s) actually
+      // rendering that breakpoint (`activeBreakpointContextId`) — a live
+      // board frame IS a breakpoint frame, so this is the common case a
+      // panel edit hits, not an edge one.
+      if (!onCondition) {
+        const optimisticPatch = optimisticStylePatch(patch)
+        if (optimisticPatch) {
+          broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
+            className: bareClassName(target.selector),
+            ...(activeBreakpointContextId ? { breakpointId: activeBreakpointContextId } : {}),
+          })
+        }
       }
     }
     // 'none' — no honest target; the row should already be disabled by the
@@ -214,16 +274,31 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
   const previewToTarget = (target: WriteTarget, patch: Partial<CSSPropertyBag>) => {
     if (target.kind === 'class') {
       // The class preview channel has no conditional-layer target — same
-      // guard `WriteTargetStyleComposer.tsx`'s `handlePreview` used.
+      // guard `WriteTargetStyleComposer.tsx`'s `handlePreview` used, and the
+      // same reason `writeToTarget`'s class branch skips the in-frame paint
+      // for a state/condition context. Past this guard the context is either
+      // base or a breakpoint one, both of which preview — see
+      // `activeBreakpointContextId`'s own doc above.
       if (onCondition) return
       setPreviewClassStyles({
         classId: target.classId,
         breakpointId: activeTab !== 'base' ? activeTab : null,
         styles: patch,
       })
+      if (selectedNodeId) {
+        const optimisticPatch = optimisticStylePatch(patch)
+        if (optimisticPatch) {
+          broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
+            className: bareClassName(target.selector),
+            ...(activeBreakpointContextId ? { breakpointId: activeBreakpointContextId } : {}),
+          })
+        }
+      }
     } else if (target.kind === 'inline') {
       if (inlineTargetIds.length === 0) return
       setPreviewNodeStyles({ nodeIds: [...inlineTargetIds], styles: patch })
+      const optimisticPatch = optimisticStylePatch(patch)
+      if (optimisticPatch) for (const id of inlineTargetIds) broadcastOptimisticStyle(id, optimisticPatch)
     }
   }
 
@@ -268,7 +343,15 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
 
   const clearStylePreview = () => {
     clearPreviewClassStyles()
-    for (const id of inlineTargetIds) clearPreviewNodeStyles(id)
+    // Covers a class-target preview's own broadcast ref too (`selectedNodeId`
+    // — see `previewToTarget`'s class branch) — a no-op in every bridge frame
+    // when nothing is active for it, so clearing unconditionally here is
+    // simpler and just as correct as tracking which target kind was live.
+    if (selectedNodeId) broadcastOptimisticStyleClear(selectedNodeId)
+    for (const id of inlineTargetIds) {
+      clearPreviewNodeStyles(id)
+      broadcastOptimisticStyleClear(id)
+    }
   }
 
   const moduleId = selectedNode?.moduleId

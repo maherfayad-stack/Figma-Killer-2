@@ -17,12 +17,45 @@ import { act, cleanup, renderHook } from '@testing-library/react'
 import { registry } from '@core/module-engine'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import type { StyleRule } from '@core/page-tree'
+import { toOutboundEnvelope, type InboundEnvelope } from '@core/studio-runtime'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { BridgeFrameAdapter, type BridgeFrameChannel } from '../../canvas/frameAdapter/BridgeFrameAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from '../../canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { useSelectionModel } from '../selectionModel'
 import { useInspectorCommit } from '../commitApi'
 import { makeSite, makePage, makeNode } from '../../../../../__tests__/fixtures'
 import '@modules/base/index'
+
+const FRAME_ORIGIN = 'https://live.studio.test'
+
+/** A registered `BridgeFrameAdapter` backed by a stub channel, `ready` announced immediately — the same shape `BridgeFrameAdapter.test.ts` drives directly. `breakpointId` defaults to `'desktop'`; pass an explicit one to test the breakpoint-scoped broadcast filter. */
+function makeRegisteredBridgeAdapter(nodeIdsInTreeOrder: readonly string[], breakpointId = 'desktop') {
+  const posted: InboundEnvelope[] = []
+  // A real (unattached) iframe element — `registerFrameAdapter`'s subscribers
+  // read DOM attributes off it (e.g. `data-breakpoint-id`); a bare object
+  // literal cast to the type is not a real element and throws there.
+  const iframe = document.createElement('iframe')
+  const channel: BridgeFrameChannel = {
+    postMessage: (message) => posted.push(message as InboundEnvelope),
+    addEventListener: (type, handler) => {
+      if (type !== 'message') return
+      handler({ origin: FRAME_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent)
+    },
+    removeEventListener: () => {},
+  }
+  const adapter = new BridgeFrameAdapter({ channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder })
+  registerFrameAdapter(iframe, adapter, breakpointId)
+  return {
+    posted,
+    /** Every `optimistic.style`/`optimistic.style:clear` message posted so far. */
+    styleMessages: () => posted.map((e) => e.message).filter((m) => m.type === 'optimistic.style' || m.type === 'optimistic.style:clear'),
+    dispose: () => {
+      unregisterFrameAdapter(iframe)
+      adapter.dispose()
+    },
+  }
+}
 
 afterEach(cleanup)
 
@@ -236,6 +269,287 @@ describe('useInspectorCommit — preview channel', () => {
       result.current.commit.clearStylePreview()
     })
     expect(useEditorStore.getState().previewNodeStyles).toBeNull()
+  })
+})
+
+describe('useInspectorCommit — optimistic in-frame broadcast (`speed-01`)', () => {
+  it('commitStyle (inline) broadcasts an optimistic.style message to every registered bridge frame', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div' }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const bridge = makeRegisteredBridgeAdapter([nodeId])
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyle('color', 'blue')
+      })
+
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' } },
+      ])
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  it('commitStyle({preview:true}) (inline) broadcasts too, and clearStylePreview clears it', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div' }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const bridge = makeRegisteredBridgeAdapter([nodeId])
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyle('color', 'blue', { preview: true })
+      })
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' } },
+      ])
+
+      act(() => {
+        result.current.commit.clearStylePreview()
+      })
+      expect(bridge.styleMessages().at(-1)).toEqual({
+        type: 'optimistic.style:clear',
+        ref: { nodeId, occurrenceIndex: 0 },
+      })
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  it('commitStyleMany (class target, base context) broadcasts with the bare class name', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', classIds: ['class-1'] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page], styleRules: { 'class-1': makeClass('class-1') } }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const bridge = makeRegisteredBridgeAdapter([nodeId])
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyleMany({ color: 'blue' })
+      })
+
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' }, className: 'card' },
+      ])
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  // `speed-01` — a live board frame IS a breakpoint frame, so a
+  // breakpoint-context edit is the COMMON case a panel edit hits, not an
+  // edge one. Found live: the original code skipped broadcasting for ANY
+  // non-null active context (breakpoint or condition alike), which silently
+  // removed the preview from its main use case — a Width edit under the
+  // selected breakpoint's own context sent no wire message at all.
+  it('a class-target write at a non-default breakpoint DOES broadcast, to the bridge frame rendering that breakpoint', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', classIds: ['class-1'] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page], styleRules: { 'class-1': makeClass('class-1') } }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+      activeBreakpointId: 'mobile',
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const bridge = makeRegisteredBridgeAdapter([nodeId], 'mobile')
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyleMany({ color: 'blue' })
+      })
+
+      expect(bridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' }, className: 'card' },
+      ])
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  it('a breakpoint-context write does NOT reach a bridge frame rendering a DIFFERENT breakpoint', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', classIds: ['class-1'] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page], styleRules: { 'class-1': makeClass('class-1') } }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+      activeBreakpointId: 'mobile',
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    // Registered for 'desktop' — the active context is 'mobile'.
+    const bridge = makeRegisteredBridgeAdapter([nodeId], 'desktop')
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyleMany({ color: 'blue' })
+      })
+
+      expect(bridge.styleMessages()).toHaveLength(0)
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  it('a class-target write under a STATE/condition context (hover, ...) does NOT broadcast at all', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', classIds: ['class-1'] }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({
+        pages: [page],
+        styleRules: { 'class-1': makeClass('class-1') },
+        conditions: [{ id: 'hover-1', label: 'Hover', condition: { kind: 'media', query: '(hover: hover)' } }],
+      }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+      activeConditionId: 'hover-1',
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    // Even a frame registered for the CURRENT breakpoint must get nothing —
+    // a state context is skipped regardless of which frame is asking.
+    const bridge = makeRegisteredBridgeAdapter([nodeId], 'desktop')
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyleMany({ color: 'blue' })
+      })
+
+      expect(bridge.styleMessages()).toHaveLength(0)
+    } finally {
+      bridge.dispose()
+    }
+  })
+
+  it('an inline-target write broadcasts to every bridge frame regardless of the active breakpoint — inline has no context axis', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div' }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+      activeBreakpointId: 'mobile',
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const desktopBridge = makeRegisteredBridgeAdapter([nodeId], 'desktop')
+    const mobileBridge = makeRegisteredBridgeAdapter([nodeId], 'mobile')
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyle('color', 'blue')
+      })
+
+      expect(desktopBridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' } },
+      ])
+      expect(mobileBridge.styleMessages()).toEqual([
+        { type: 'optimistic.style', ref: { nodeId, occurrenceIndex: 0 }, patch: { color: 'blue' } },
+      ])
+    } finally {
+      desktopBridge.dispose()
+      mobileBridge.dispose()
+    }
+  })
+
+  it('commitStyle(value=null) commits nothing to broadcast — a clear is not previewable as a positive override', () => {
+    const nodeId = 'node-1'
+    const rootId = 'root'
+    const page = makePage({
+      id: 'page-1',
+      rootNodeId: rootId,
+      nodes: {
+        [rootId]: makeNode({ id: rootId, moduleId: 'base.body', children: [nodeId] }),
+        [nodeId]: makeNode({ id: nodeId, moduleId: 'base.div', inlineStyles: { color: 'red' } }),
+      },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: 'page-1',
+      selectedNodeId: nodeId,
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    const bridge = makeRegisteredBridgeAdapter([nodeId])
+    try {
+      const { result } = renderHook(() => useTestHook())
+      act(() => {
+        result.current.commit.commitStyle('color', null, { existing: true })
+      })
+
+      expect(bridge.styleMessages()).toHaveLength(0)
+    } finally {
+      bridge.dispose()
+    }
   })
 })
 

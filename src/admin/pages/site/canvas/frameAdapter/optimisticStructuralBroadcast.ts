@@ -32,12 +32,17 @@
  * the store, so a broadcast-and-let-absent-frames-no-op is the whole
  * mechanism — do not build a `pageId -> frames` registry for this.
  */
-import { listFrameAdapters } from './canvasFrameAdapterRegistry'
+import { listFrameAdapterRegistrations, listFrameAdapters, type FrameAdapterRegistration } from './canvasFrameAdapterRegistry'
 import { isBridgeFrameAdapter } from './BridgeFrameAdapter'
 import type { FrameDocumentAdapter } from './FrameDocumentAdapter'
 
 function bridgeAdapters(): FrameDocumentAdapter[] {
   return [...listFrameAdapters().values()].filter((adapter) => isBridgeFrameAdapter(adapter))
+}
+
+/** Same filter as {@link bridgeAdapters}, but keeping each registration's `breakpointId` — {@link broadcastOptimisticStyle} needs it. */
+function bridgeRegistrations(): FrameAdapterRegistration[] {
+  return [...listFrameAdapterRegistrations().values()].filter((registration) => isBridgeFrameAdapter(registration.adapter))
 }
 
 /**
@@ -57,4 +62,45 @@ export function broadcastOptimisticDelete(nodeId: string): void {
 
 export function broadcastOptimisticMove(nodeId: string, parentNodeId: string, index: number): void {
   for (const adapter of bridgeAdapters()) adapter.optimistic.move(nodeId, parentNodeId, index)
+}
+
+export interface BroadcastOptimisticStyleOptions {
+  /** Present for a CLASS-target write — informational only; see `FrameDocumentAdapter.ts`'s `OptimisticDomOps.style` doc for why a bridge frame cannot build a selector from it. */
+  className?: string
+  /**
+   * `speed-01` — present for a BREAKPOINT-CONTEXT write (the inspector's
+   * active context resolves to a breakpoint id, not a condition/state one —
+   * `commitApi.ts` is the one place that tells the two apart). Narrows the
+   * broadcast to the bridge frame(s) rendering THAT breakpoint. Omitted
+   * broadcasts to every bridge frame, the same as a base-context write —
+   * which is the right behaviour for an inline write (no context axis at
+   * all) and for a genuine base-context class write.
+   *
+   * A live board frame IS a breakpoint frame — this is not an edge case, it
+   * is the common one. Filtering wrong here silently removes the preview
+   * from its main use case (found live: a Width edit under the default
+   * breakpoint's own context sent no wire message at all, because the OLD
+   * code treated every non-null `activeContextId` — breakpoint or
+   * condition — as "skip the broadcast").
+   */
+  breakpointId?: string
+}
+
+/**
+ * `speed-01` — the same broadcast-and-let-absent-frames-no-op mechanism
+ * above, for a properties-panel style commit or scrub preview
+ * (`commitApi.ts`'s `writeToTarget`/`previewToTarget`). `nodeId` is always a
+ * real canonical id (a style write never targets a placeholder the way an
+ * in-flight `insert` can).
+ */
+export function broadcastOptimisticStyle(nodeId: string, patch: Record<string, string>, options?: BroadcastOptimisticStyleOptions): void {
+  for (const registration of bridgeRegistrations()) {
+    if (options?.breakpointId !== undefined && registration.breakpointId !== options.breakpointId) continue
+    registration.adapter.optimistic.style(nodeId, patch, options?.className)
+  }
+}
+
+/** Drops whatever optimistic style rule every bridge frame currently has active for `nodeId` — a scrub ended with no commit, or a field lost focus. */
+export function broadcastOptimisticStyleClear(nodeId: string): void {
+  for (const adapter of bridgeAdapters()) adapter.optimistic.clearStyle(nodeId)
 }

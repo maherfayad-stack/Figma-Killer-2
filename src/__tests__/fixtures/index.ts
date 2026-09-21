@@ -167,6 +167,13 @@ export function makeSite(overrides: Partial<SiteDocument> = {}): SiteDocument {
     files: overrides.files ?? [],
     visualComponents: overrides.visualComponents ?? [],
     layouts: overrides.layouts ?? [],
+    // Optional in `SiteDocument` (a site with no custom conditions has none
+    // at all, not an empty array) — passed through verbatim rather than
+    // defaulted, so a caller's `conditions: [...]` override actually reaches
+    // the built object. It silently didn't before this fix: this factory
+    // lists every field by hand rather than spreading `overrides`, and
+    // `conditions` had no entry at all — `speed-01`'s STATE.md entry.
+    conditions: overrides.conditions,
     packageJson: overrides.packageJson ?? normalizeSitePackageJson(undefined),
     runtime: overrides.runtime ?? normalizeSiteRuntimeConfig(undefined),
     createdAt: overrides.createdAt ?? 1_700_000_000_000,

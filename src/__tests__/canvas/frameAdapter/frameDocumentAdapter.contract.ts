@@ -115,6 +115,18 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // `speed-01`
+    it('optimistic.style/clearStyle do not throw for an inline call, a class-target call, or a clear', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.optimistic.style(existingRef.nodeId, { color: 'red' })).not.toThrow()
+        expect(() => adapter.optimistic.style(existingRef.nodeId, { color: 'blue' }, 'card')).not.toThrow()
+        expect(() => adapter.optimistic.clearStyle(existingRef.nodeId)).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     it('on() returns an unsubscribe function, callable more than once without throwing', () => {
       const { adapter, cleanup } = makeHarness()
       try {

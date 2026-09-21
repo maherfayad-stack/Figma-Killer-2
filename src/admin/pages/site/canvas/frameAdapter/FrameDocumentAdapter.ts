@@ -65,6 +65,24 @@ export interface OptimisticDomOps {
   delete(nodeId: string): void
   move(nodeId: string, parentNodeId: string, index: number): void
   text(nodeId: string, text: string): void
+  /**
+   * `speed-01` — a properties-panel style commit or scrub preview, applied
+   * as a stylesheet rule scoped to `nodeId`'s own element (never `nodeId`'s
+   * inline `style`, which the eventual React re-render also writes — see
+   * `@core/studio-runtime`'s `optimisticStyle.ts` for why an inline preview
+   * can never be cleared safely). `patch` keys are CSS property names
+   * (camelCase or kebab-case). `className`, present for a CLASS-target write,
+   * is carried through to the wire but is INFORMATIONAL only — a bridge frame
+   * cannot build a `.<className>` selector against it, because that name is
+   * Studio's own parse of the class, not the (independently hashed) name
+   * Vite's CSS-modules plugin gave it in the live frame's DOM; see
+   * `optimisticStyle.ts`'s module doc, "ALWAYS element-scoped". Only the
+   * edited node's own element previews instantly; other elements sharing the
+   * class catch up on the next HMR update.
+   */
+  style(nodeId: string, patch: Record<string, string>, className?: string): void
+  /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */
+  clearStyle(nodeId: string): void
 }
 
 export type FrameRuntimeEvent =
