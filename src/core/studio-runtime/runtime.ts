@@ -57,6 +57,7 @@ import {
   type RuntimeMode,
 } from './messages'
 import { installGestureForwarding } from './gestureForwarding'
+import { installInlineTextEdit } from './inlineTextEdit'
 import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
@@ -74,7 +75,7 @@ import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRu
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
 import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
-import { findNthNodeById, NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
+import { findNthNodeById } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
@@ -423,7 +424,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     html.style.colorScheme = axes.colorScheme
   }
 
-  // ---- outbound: pointer + text:edit ---------------------------------------
+  // ---- outbound: every message this frame ever posts shares one sender ----
   function postOutbound(message: OutboundRuntimeMessage): void {
     parentWindow.postMessage(toOutboundEnvelope(message), parentOrigin)
   }
@@ -432,20 +433,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
   const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
 
-  // A minimal inline-text-edit bridge: any `contenteditable` element that
-  // also carries a node id reports its live text on every `input`. Seeding
-  // the editable content, latching it against the parent's own inline-edit
-  // session, and routing the result to `textOrigin` writeback are L5/L7
-  // concerns — this is the emission half only.
-  function onInput(ev: Event): void {
-    const target = ev.target instanceof Element ? ev.target : null
-    if (!target?.hasAttribute('contenteditable')) return
-    const nodeId = target.getAttribute(NODE_ID_ATTR)
-    if (!nodeId) return
-    const occurrence = occurrenceIndexOf(doc, target)
-    postOutbound({ type: 'text:edit', nodeId, occurrenceIndex: occurrence?.occurrenceIndex ?? 0, text: target.textContent ?? '' })
-  }
-  doc.addEventListener('input', onInput, true)
+  // `live-18` — double-click-to-edit text; see `inlineTextEdit.ts`'s module doc.
+  const textEdit = installInlineTextEdit({ doc, getMode: () => mode, post: postOutbound })
 
   // ---- outbound: runtime errors (Z5) — taps + bounds in `runtimeErrorTaps.ts` ----
   const disposeErrorTaps = startRuntimeErrorTaps(view, (finding) => postOutbound({ type: 'error', ...finding }))
@@ -602,6 +591,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'setResizeTarget':
         resize.setTarget(message.ref, message.proportional)
         return
+      case 'text:edit':
+        textEdit.handleReply(message)
+        return
       case 'optimistic.insert':
         applyOptimisticInsert(doc, message)
         return
@@ -652,6 +644,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         // Before React reconciles: hand it back the DOM it built (`live-14`).
         revertOptimisticDom(doc)
         revertAllOptimisticStyle(doc)
+        textEdit.onHmrBefore()
         postOutbound({ type: 'hmr:before' })
       },
       () => {
@@ -672,7 +665,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       view.removeEventListener('resize', scheduleReposition)
       disposeGestureForwarding()
       resize.dispose()
-      doc.removeEventListener('input', onInput, true)
+      textEdit.dispose()
       disposeErrorTaps()
       layoutObserver?.disconnect()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)

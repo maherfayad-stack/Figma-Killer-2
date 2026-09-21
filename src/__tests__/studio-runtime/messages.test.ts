@@ -43,6 +43,8 @@ const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false },
   { type: 'setResizeTarget', ref: null, proportional: true },
   { type: 'setMode', mode: 'live' },
+  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: true, text: 'current text' },
+  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: false },
   {
     type: 'optimistic.insert',
     nodeId: 'n1',
@@ -119,7 +121,9 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     pointerType: 'mouse',
     ancestors: [],
   },
-  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
+  { type: 'text:editStart', nodeId: 'n1', occurrenceIndex: 0 },
+  { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
+  { type: 'text:cancel', nodeId: 'n1', occurrenceIndex: 0 },
   { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width: '240px' } },
   { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 2, patch: { width: '240px', height: '96px' } },
   {
@@ -285,6 +289,32 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         measurements: [{ nodeId: 'n1', rect: null, computedStyle: {} }],
       }),
     ).toBe(false)
+  })
+
+  // `live-18` — bounded per `sec-06`'s "same-realm spoofing" posture, same as
+  // `optimistic.style`'s patch values above.
+  it('accepts a text:commit at the 20000-char ceiling and rejects one over it', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'x'.repeat(20_000) }),
+    ).toBe(true)
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'x'.repeat(20_001) }),
+    ).toBe(false)
+  })
+
+  it('accepts a text:edit reply at the same ceiling, rejects a refusal that still carries an over-length text, and rejects a missing allowed flag', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: true, text: 'x'.repeat(20_000) }),
+    ).toBe(true)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: false, text: 'x'.repeat(20_001) }),
+    ).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0 })).toBe(false)
+  })
+
+  it('rejects a text:editStart/text:cancel missing occurrenceIndex', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'text:editStart', nodeId: 'n1' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'text:cancel', nodeId: 'n1' })).toBe(false)
   })
 })
 

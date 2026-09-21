@@ -1,7 +1,7 @@
 /**
- * useBridgeFrameInteraction — `live-12`/`live-13`: the parent half of
- * selecting, panning, zooming and resizing through a Tier 2 bridge frame on
- * the design board.
+ * useBridgeFrameInteraction — `live-12`/`live-13`/`live-18`: the parent half
+ * of selecting, panning, zooming, resizing, and inline-text-editing through a
+ * Tier 2 bridge frame on the design board.
  *
  * A portal frame's clicks are React events in the parent's own tree
  * (`NodeRenderer`), its page activation is the frame wrapper's capture
@@ -36,6 +36,15 @@
  * Resize commit → the frame previewed the drag itself (`resizeHandles.ts`);
  * the parent makes the ONE write, `setNodeInlineStyles`, the portal path's
  * `useElementResizeDrag` makes for the same gesture.
+ *
+ * `text:editStart`/`text:commit`/`text:cancel` (`live-18`) → the frame asks
+ * (a double-click landed on a stamped element), the store decides through
+ * the SAME `startInlineEdit` predicate the portal double-click handler
+ * applies, and the reply (allowed + the node's current text, or refused)
+ * crosses back through `adapter.startTextEdit`. Nothing is written to the
+ * store until `text:commit` — the typed text lives only in the frame's own
+ * DOM until then (`inlineTextEdit.ts`'s module doc) — so `text:cancel`, and
+ * an HMR update landing mid-edit, are both plain no-ops on this side.
  *
  * Only ever mounted by `LiveBoardFrame`, which is a design-board frame — the
  * Live tab's single frame is `CanvasLiveSurface` and never comes through here.
@@ -178,6 +187,27 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
       }),
       adapter.on('resize:commit', (event) => {
         useEditorStore.getState().setNodeInlineStyles(event.nodeId, event.patch)
+      }),
+      // `live-18` — the frame asks, the store decides (the SAME predicate the
+      // portal double-click handler's `startInlineEdit` applies), the reply
+      // crosses back over the wire. Nothing is written to the store until
+      // `text:commit` — see `inlineTextEdit.ts`'s module doc for why that's safe.
+      adapter.on('text:editStart', (event) => {
+        const { options: current } = latest.current
+        const started = useEditorStore.getState().startInlineEdit(event.nodeId, current.breakpointId, current.frameId)
+        const text = started ? useEditorStore.getState().activeInlineEdit?.initialValue : undefined
+        adapter.startTextEdit(event.nodeId, started, text)
+      }),
+      adapter.on('text:commit', (event) => {
+        const store = useEditorStore.getState()
+        if (store.activeInlineEdit?.nodeId !== event.nodeId) return
+        store.applyInlineEditValue(event.text)
+        useEditorStore.getState().endInlineEdit()
+      }),
+      adapter.on('text:cancel', (event) => {
+        const store = useEditorStore.getState()
+        if (store.activeInlineEdit?.nodeId !== event.nodeId) return
+        store.cancelInlineEdit()
       }),
     ]
     return () => {

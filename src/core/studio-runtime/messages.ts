@@ -52,7 +52,8 @@
  * per-iteration information to mint a unique one with; see
  * `liveNodeResolve.ts`'s module doc for the full picture). Every message
  * below that names a node — inbound (`select`'s `refs`, `hover`, `measure`,
- * the four `optimistic.*`) and outbound (`pointer`, `text:edit`,
+ * the four `optimistic.*`, the `text:edit` reply) and outbound (`pointer`,
+ * `text:editStart`/`text:commit`/`text:cancel`,
  * `measure:result`'s echoed-back measurements) — pairs the stamp id with a
  * 0-based `occurrenceIndex`: "the Nth element sharing this stamp, in
  * document order" (`nodeIdIndexing.ts`'s `findNthNodeById`/
@@ -187,6 +188,27 @@ export const SetModeMessageSchema = Type.Object({
   type: Type.Literal('setMode'),
   mode: RuntimeModeSchema,
 })
+
+/** `live-18` — every text-editing message's text ceiling: `sec-06`'s "same-realm spoofing" posture (a script co-resident with `runtime.ts` could otherwise forge an unbounded payload) and a sane cap on a single inline edit either way. */
+export const TEXT_EDIT_MAX_LENGTH = 20_000
+
+/**
+ * `live-18` — the parent's reply to a frame's `text:editStart` request: it
+ * already ran the same predicate `startInlineEdit` applies (module declares
+ * `inlineTextEdit`, no children, source-writable, not dynamically bound) and
+ * decides here whether `nodeId`/`occurrenceIndex` may be edited inline.
+ * `text` — the node's CURRENT canonical value, not necessarily identical to
+ * what the frame's DOM shows — seeds the `contentEditable` and is present
+ * iff `allowed`.
+ */
+export const TextEditReplyMessageSchema = Type.Object({
+  type: Type.Literal('text:edit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  allowed: Type.Boolean(),
+  text: Type.Optional(Type.String({ maxLength: TEXT_EDIT_MAX_LENGTH })),
+})
+export type TextEditReplyMessage = Static<typeof TextEditReplyMessageSchema>
 
 /**
  * `tagName`/`text` only — see "optimistic.insert never carries HTML" above.
@@ -335,6 +357,7 @@ export const InboundRuntimeMessageSchema = Type.Union([
   SetAxesMessageSchema,
   SetModeMessageSchema,
   SetResizeTargetMessageSchema,
+  TextEditReplyMessageSchema,
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
@@ -446,12 +469,32 @@ export const ResizeCommitMessageSchema = Type.Object({
   }),
 })
 
-/** Routed by the parent to the existing `textOrigin` writeback (L7) — carries the CURRENT text, not a diff. */
-export const TextEditMessageSchema = Type.Object({
-  type: Type.Literal('text:edit'),
+/**
+ * `live-18` — a double-click on a stamped element inside a DESIGN-mode
+ * frame; the runtime asks, the parent decides (via the inbound
+ * {@link TextEditReplyMessageSchema} reply above) whether this node is
+ * text-editable at all — the runtime has no page-tree/module knowledge to
+ * decide that itself.
+ */
+export const TextEditStartMessageSchema = Type.Object({
+  type: Type.Literal('text:editStart'),
   nodeId: Type.String({ minLength: 1 }),
   occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
-  text: Type.String(),
+})
+
+/** `live-18` — Enter (no Shift) or blur ended the session with this final text, bounded per {@link TEXT_EDIT_MAX_LENGTH}. */
+export const TextCommitMessageSchema = Type.Object({
+  type: Type.Literal('text:commit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  text: Type.String({ maxLength: TEXT_EDIT_MAX_LENGTH }),
+})
+
+/** `live-18` — Escape, or an HMR update landing mid-edit, ended the session with no write. */
+export const TextCancelMessageSchema = Type.Object({
+  type: Type.Literal('text:cancel'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 const NodeMeasurementSchema = Type.Object({
@@ -592,7 +635,9 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   PointerMessageSchema,
   WheelMessageSchema,
   ResizeCommitMessageSchema,
-  TextEditMessageSchema,
+  TextEditStartMessageSchema,
+  TextCommitMessageSchema,
+  TextCancelMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,
   ErrorMessageSchema,

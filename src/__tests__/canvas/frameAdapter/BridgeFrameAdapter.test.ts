@@ -295,6 +295,41 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     expect(stub.posted.at(-1)!.message).toEqual({ type: 'optimistic.style:clear', ref: { nodeId: 'row:1:1', occurrenceIndex: 1 } })
   })
 
+  // `live-18` — the reply to the frame's own `text:editStart` request crosses
+  // the wire as a stamp + occurrence, same as every other node-naming message.
+  it('startTextEdit posts the wire ref, allowed and the seed text; a refusal omits text', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    adapter.startTextEdit('row:1:1#1', true, 'canonical text')
+    adapter.startTextEdit('row:1:1#0', false)
+    const last = stub.posted.slice(-2).map((e) => e.message)
+    expect(last).toEqual([
+      { type: 'text:edit', nodeId: 'row:1:1', occurrenceIndex: 1, allowed: true, text: 'canonical text' },
+      { type: 'text:edit', nodeId: 'row:1:1', occurrenceIndex: 0, allowed: false },
+    ])
+  })
+
+  it('emits inbound text:editStart/text:commit/text:cancel with the canonical row id', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    const editStarts: unknown[] = []
+    const commits: unknown[] = []
+    const cancels: unknown[] = []
+    adapter.on('text:editStart', (msg) => editStarts.push(msg))
+    adapter.on('text:commit', (msg) => commits.push(msg))
+    adapter.on('text:cancel', (msg) => cancels.push(msg))
+
+    stub.dispatch(toOutboundEnvelope({ type: 'text:editStart', nodeId: 'row:1:1', occurrenceIndex: 1 }))
+    stub.dispatch(toOutboundEnvelope({ type: 'text:commit', nodeId: 'row:1:1', occurrenceIndex: 1, text: 'typed text' }))
+    stub.dispatch(toOutboundEnvelope({ type: 'text:cancel', nodeId: 'row:1:1', occurrenceIndex: 0 }))
+
+    expect(editStarts).toEqual([{ type: 'text:editStart', nodeId: 'row:1:1#1' }])
+    expect(commits).toEqual([{ type: 'text:commit', nodeId: 'row:1:1#1', text: 'typed text' }])
+    expect(cancels).toEqual([{ type: 'text:cancel', nodeId: 'row:1:1#0' }])
+  })
+
   it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {
     const stub = makeStubChannel()
     const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0'] })

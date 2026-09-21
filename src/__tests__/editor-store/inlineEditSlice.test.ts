@@ -50,6 +50,15 @@ beforeEach(() => {
 })
 
 describe('startInlineEdit', () => {
+  // `live-18` — the bridge-frame caller needs the return value to answer the
+  // frame's `text:editStart` request before it can seed any DOM.
+  it('returns whether a session actually started', () => {
+    const { nodeId } = setupSiteWithTextNode()
+    expect(useEditorStore.getState().startInlineEdit(nodeId, 'bp-desktop')).toBe(true)
+    useEditorStore.getState().endInlineEdit()
+    expect(useEditorStore.getState().startInlineEdit('does-not-exist', 'bp-desktop')).toBe(false)
+  })
+
   it('opens a multiline session for base.text on the text prop', () => {
     const { nodeId } = setupSiteWithTextNode()
     useEditorStore.getState().startInlineEdit(nodeId, 'bp-desktop')
