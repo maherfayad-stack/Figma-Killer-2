@@ -177,7 +177,11 @@ export function AdminCanvasLayout() {
     markNewSiteUnsaved: true,
     enabled: true,
     // Studio bypasses the CMS's user-configurable (default 30s) autosave
-    // delay in favor of a fixed, snappy cadence — see STUDIO_AUTOSAVE_DELAY_MS.
+    // delay in favor of a fixed, snappy cadence — see STUDIO_AUTOSAVE_DELAY_MS
+    // (250ms trailing debounce, 1s deferral cap as of speed-02). The
+    // properties panel also calls `flushAutosave()` on blur/Enter/scrub-
+    // release so a settled field writes to disk before even this window
+    // elapses — see `usePersistence.ts`.
     autoSaveDelayMs: STUDIO_AUTOSAVE_DELAY_MS,
   })
   useStudioBoardsPersistence()
