@@ -215,6 +215,15 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
 
   const onCondition = activeConditionId !== null
   const activeTab = getActiveStyleTab(activeBreakpointId)
+  // `speed-01` — the breakpoint id to scope an optimistic style broadcast to.
+  // Non-null only when the active context IS a breakpoint one: `activeTab`
+  // reflects the panel's selected breakpoint tab regardless of whether a
+  // condition is ALSO active, so a state/condition context (`onCondition`)
+  // is excluded here even at a non-default breakpoint tab — a bridge frame
+  // never previews a state context at all (see the two broadcast call sites
+  // below). `null` (base context, or inline's own no-context-axis case)
+  // broadcasts to every bridge frame.
+  const activeBreakpointContextId = !onCondition && activeTab !== 'base' ? activeTab : null
 
   const lockedPropertySet = lockedStyleProperties(selectedNode)
 
@@ -239,16 +248,22 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       } else {
         updateClassStyles(target.classId, patch as Partial<CSSPropertyBag>)
       }
-      // A breakpoint/condition-scoped override applies only under a media
-      // query or a state a bridge frame's own document renders at ALL times
-      // (it is one fixed viewport, one fixed pointer/focus state) — an
-      // unconditional in-frame preview on the selected node's own element
-      // (see `optimisticStyle.ts`'s "ALWAYS element-scoped") would show
-      // wrong outside that context. Base-context class writes only; see the
-      // module doc on `previewToTarget`'s matching guard.
-      if (!activeContextId) {
+      // A STATE/condition context (hover, focus, active, ...) applies only
+      // under a pointer/focus state a bridge frame's own document does not
+      // hold at all times — an unconditional in-frame preview would show
+      // wrong, so that case alone is skipped (`onCondition`). A BREAKPOINT
+      // context previews too, narrowed to the bridge frame(s) actually
+      // rendering that breakpoint (`activeBreakpointContextId`) — a live
+      // board frame IS a breakpoint frame, so this is the common case a
+      // panel edit hits, not an edge one.
+      if (!onCondition) {
         const optimisticPatch = optimisticStylePatch(patch)
-        if (optimisticPatch) broadcastOptimisticStyle(selectedNodeId, optimisticPatch, bareClassName(target.selector))
+        if (optimisticPatch) {
+          broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
+            className: bareClassName(target.selector),
+            ...(activeBreakpointContextId ? { breakpointId: activeBreakpointContextId } : {}),
+          })
+        }
       }
     }
     // 'none' — no honest target; the row should already be disabled by the
@@ -261,16 +276,23 @@ export function useInspectorCommit(model: SelectionModel): InspectorCommitApi {
       // The class preview channel has no conditional-layer target — same
       // guard `WriteTargetStyleComposer.tsx`'s `handlePreview` used, and the
       // same reason `writeToTarget`'s class branch skips the in-frame paint
-      // for a non-base context.
+      // for a state/condition context. Past this guard the context is either
+      // base or a breakpoint one, both of which preview — see
+      // `activeBreakpointContextId`'s own doc above.
       if (onCondition) return
       setPreviewClassStyles({
         classId: target.classId,
         breakpointId: activeTab !== 'base' ? activeTab : null,
         styles: patch,
       })
-      if (activeTab === 'base' && selectedNodeId) {
+      if (selectedNodeId) {
         const optimisticPatch = optimisticStylePatch(patch)
-        if (optimisticPatch) broadcastOptimisticStyle(selectedNodeId, optimisticPatch, bareClassName(target.selector))
+        if (optimisticPatch) {
+          broadcastOptimisticStyle(selectedNodeId, optimisticPatch, {
+            className: bareClassName(target.selector),
+            ...(activeBreakpointContextId ? { breakpointId: activeBreakpointContextId } : {}),
+          })
+        }
       }
     } else if (target.kind === 'inline') {
       if (inlineTargetIds.length === 0) return

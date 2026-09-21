@@ -81,7 +81,7 @@ function renderNodeInPortalFrame() {
   el.setAttribute('data-node-id', NODE_ID)
   frameDoc.body.appendChild(el)
   const adapter = new PortalFrameAdapter(frameDoc)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, BREAKPOINT_ID)
   cleanupFns.push(() => {
     unregisterFrameAdapter(frame)
     adapter.dispose()
@@ -103,7 +103,7 @@ function registerNeverAnsweringBridgeFrame() {
     frameOrigin: 'https://live.studio.test',
     measureTimeoutMs: 60_000,
   })
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, BREAKPOINT_ID)
   cleanupFns.push(() => {
     unregisterFrameAdapter(frame)
     adapter.dispose()

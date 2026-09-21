@@ -93,7 +93,7 @@ function setUpCanvasFrame(nodeId: string, breakpointId = 'bp-desktop') {
 
   const adapter = new PortalFrameAdapter(frameDoc)
   frameAdapters.push(adapter)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, 'desktop')
 
   return { frame, node, queries: () => queries }
 }
