@@ -177,15 +177,23 @@ export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
  * than the CMS's user-configurable, default-30s cadence (see
  * `readAutoSaveDelayMs` in `preferences/editorPreferences.ts`): a design
  * canvas needs source to "follow" an edit within a beat, and studio has no
- * exposed autosave-delay setting to protect. 2s sits in the middle of the
- * ~1.5-3s target band — long enough that a burst of keystrokes (typing a
- * heading) or a drag gesture collapses into one write instead of one per
- * keystroke, short enough to feel immediate. It stays well above the actual
- * round trip (a same-machine HTTP POST + ts-morph codemod over a handful of
- * `.tsx` files, typically tens of milliseconds), so there's no risk of a
- * save queueing up before the previous one lands.
+ * exposed autosave-delay setting to protect.
+ *
+ * `speed-02`: this used to be 2s, chosen to comfortably clear the save's own
+ * round trip. Measurement showed the save itself costs ~36ms — the 2s was
+ * pure waiting, not safety margin, and it read as the canvas being slow to
+ * everyone watching the file (HMR, git, an MCP agent). 250ms is the new
+ * trailing-debounce window: long enough that a burst of keystrokes (typing a
+ * heading) or a drag gesture still collapses into one write instead of one
+ * per keystroke, short enough that the write is over before anyone would
+ * call it a wait. Combined with `AUTOSAVE_MAX_DEFERRAL_MULTIPLE` (4) in
+ * `usePersistence.ts`, a continuous edit burst is still forced to save at
+ * least once a second, and the properties panel's blur/Enter/scrub-release
+ * handlers call `flushAutosave()` (`usePersistence.ts`) to write immediately
+ * once a field visibly settles, rather than waiting out even this shorter
+ * window.
  */
-export const STUDIO_AUTOSAVE_DELAY_MS = 2_000
+export const STUDIO_AUTOSAVE_DELAY_MS = 250
 
 /**
  * The HTML tag an element node renders as, or `undefined` when the module has no

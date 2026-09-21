@@ -25,6 +25,14 @@
  *     so the toolbar chip can say "Saving…" rather than "Unsaved" while the
  *     ladder runs. No toast at any point — see `SAVE_RETRY_BACKOFF_MS` and
  *     `toolbar/SaveStatusChip.tsx`.
+ *  5. FLUSH          — `flushAutosave()` (exported below) asks for the SAME
+ *     immediate save `EDITOR_SAVE_REQUEST_EVENT` already triggers (`"Save as
+ *     layout"`, deep links), gated on `hasUnsavedChanges` so a stray call
+ *     with nothing dirty is a no-op rather than an empty request. `speed-02`
+ *     wires it into the properties panel's blur / Enter / scrub-release
+ *     moments — see `PropertiesPanel.tsx` — so a field the user visibly
+ *     finished editing writes to disk without waiting out even the short
+ *     trailing debounce below.
  *
  * Constraint #230: raw adapter data is validated via `validateSite` before
  * being passed to `store.loadSite()`.
@@ -84,6 +92,7 @@ import {
   EDITOR_SAVE_REQUEST_EVENT,
   consumePendingCmsSiteReload,
   hasPendingCmsSiteReload,
+  requestEditorSave,
   type CmsSitePagesPatchDetail,
 } from '@admin/state/adminEvents'
 
@@ -209,11 +218,11 @@ export function resolveAutoSaveDelayMs(overrideMs?: number): number {
  * A pure trailing debounce never fires while the user keeps typing, which for
  * Studio means the `.tsx` on disk can lag the canvas indefinitely — the exact
  * failure mode the fixed, snappy `STUDIO_AUTOSAVE_DELAY_MS` exists to avoid.
- * The cap converts "never" into "at worst every 4 × the idle delay" (8 s in
- * Studio, the user's own configured multiple in the CMS), which is still a
- * long burst but is bounded. 4 was chosen so that a save mid-burst is rare
- * enough not to feel like the editor is writing over your typing, and near
- * enough that no realistic burst outruns it.
+ * The cap converts "never" into "at worst every 4 × the idle delay" (1 s in
+ * Studio post-`speed-02`, the user's own configured multiple in the CMS),
+ * which is still a long burst but is bounded. 4 was chosen so that a save
+ * mid-burst is rare enough not to feel like the editor is writing over your
+ * typing, and near enough that no realistic burst outruns it.
  */
 export const AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4
 
@@ -229,6 +238,28 @@ export const AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4
 export function nextAutoSaveDelayMs(idleDelayMs: number, deferredForMs: number): number {
   const remainingBudget = idleDelayMs * AUTOSAVE_MAX_DEFERRAL_MULTIPLE - deferredForMs
   return Math.max(0, Math.min(idleDelayMs, remainingBudget))
+}
+
+/**
+ * `speed-02`'s flush half: request the SAME immediate save
+ * `EDITOR_SAVE_REQUEST_EVENT` already triggers for "Save as layout" and deep
+ * links, but only when there is something dirty to ship. A field the user
+ * blurs, presses Enter in, or releases a scrub drag over has JUST landed a
+ * store mutation — calling this right after (see `PropertiesPanel.tsx`'s
+ * `onBlur`/`onKeyDown`/`onPointerUp`) writes it to disk without waiting out
+ * even the 250ms trailing debounce.
+ *
+ * Deliberately NOT wired into every store mutation or into `commitApi.ts`:
+ * most CSS-property text fields commit on every keystroke (there is no
+ * separate preview channel for them), and flushing on every keystroke would
+ * turn the debounce back into "one save per keystroke" — exactly what
+ * `speed-02`'s "one save per burst" requirement rules out. The guard here
+ * (`hasUnsavedChanges`) also means a stray blur/Enter/pointerup elsewhere in
+ * the panel — a button, a non-editing keypress, clicking away with nothing
+ * changed — is a no-op rather than an empty save request.
+ */
+export function flushAutosave(): void {
+  if (useEditorStore.getState().hasUnsavedChanges) requestEditorSave()
 }
 
 export function usePersistence(

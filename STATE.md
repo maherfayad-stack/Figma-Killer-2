@@ -12,6 +12,141 @@ Archive section at the bottom of this file indexes them.
 
 ---
 
+### speed-02 — autosave cadence: 2s → 250ms, plus an immediate flush on blur/Enter/scrub-release
+- **Agent:** store-engineer
+- **Stage:** done — branch `feat/speed-02-autosave-cadence`, stacked on
+  `fix/live-dev-server-survives-api-restart` (the PR base per the work order),
+  draft PR opened (link in the handback message).
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md`'s `speed-02` work order — the properties
+  panel's save request used to fire 2008ms after a panel edit even though the
+  save itself costs ~36ms. Target: source written ≤300ms after the last
+  keystroke, one save per burst, unchanged.
+- **Scope:** `src/admin/pages/site/studio/fsCodemodAdapter.ts` (the
+  `STUDIO_AUTOSAVE_DELAY_MS` constant + its doc comment),
+  `src/admin/pages/site/hooks/usePersistence.ts` (new `flushAutosave()` export
+  + doc comments), `src/admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx`
+  (doc comment only), `src/admin/pages/site/panels/PropertiesPanel/
+  PropertiesPanel.tsx` (the flush wiring), `src/__tests__/persistence/
+  autoSaveCadence.test.ts` (updated assertions) + new `autoSaveFlush.test.tsx`.
+- **Slices touched:** none of the 12 store slices changed shape — this is
+  entirely in the persistence hook + panel chrome layer, not the Zustand
+  store itself. No new state, no new selector, no new mutation, no new
+  coalesce key — flagged explicitly since the persona brief expects one of
+  each; this work order genuinely has none. `saveTrackingSlice.ts` (dirty
+  tracking) is read (`hasUnsavedChanges`) but not modified.
+- **Done:**
+  1. `STUDIO_AUTOSAVE_DELAY_MS` `2_000` → `250` (`fsCodemodAdapter.ts:188`).
+     `AUTOSAVE_MAX_DEFERRAL_MULTIPLE` (4, unchanged) now caps a continuous
+     Studio burst at 250×4 = **1000ms**, exactly the plan's "writes at least
+     once a second" — no separate multiplier change needed, the math already
+     lands on 1s once the base delay drops.
+  2. New `flushAutosave()` export in `usePersistence.ts`: `if
+     (useEditorStore.getState().hasUnsavedChanges) requestEditorSave()` — a
+     thin, guarded wrapper over the EXISTING `EDITOR_SAVE_REQUEST_EVENT` /
+     `requestEditorSave()` (`@admin/state/adminEvents`, previously only used
+     by "Save as layout" and a deep-link departure) that `usePersistence`
+     already listens for and honours with an immediate `saveCurrentSite()`.
+     Reused rather than building a second immediate-save mechanism — this
+     repo's own "no duplicate implementations" rule. The `hasUnsavedChanges`
+     guard is the new part: it makes a stray flush call with nothing dirty a
+     no-op instead of an empty save request.
+  3. Wired into `PropertiesPanel.tsx`'s root `<aside>`: `onBlur` and
+     `onPointerUp` both call `flushAutosave()` directly;
+     `onKeyDown` (already handling F6) now also checks `e.key === 'Enter'`.
+     **The seam, and why it's the smallest honest one:** `commitApi.ts` was
+     off-limits per the task, and hooking flush into the STORE ACTIONS
+     `commitStyle`/`commitProp` write to (`setNodeInlineStyles`,
+     `updateClassStyles`, `updateNodeProps`, …) would flush on EVERY
+     keystroke for any text-typed CSS/module prop (`TextControl`'s `onChange`
+     fires per keystroke, not just on blur — confirmed by reading
+     `TextControl.tsx`/`ClassPropertyRow.tsx`'s `handleControlChange`) —
+     exactly the "one save per keystroke" the work order's "keep one save
+     per burst" rules out. `ScrubInput`'s own `onChange` prop, by contrast,
+     ONLY ever fires at a settled moment (blur/Enter/drag-release/arrow-nudge
+     — never mid-typing, since typing only touches local `draft` state and a
+     separate `onPreview` channel) — but it has ~15 leaf call sites across
+     `inspector/sections/*` and `panels/PropertiesPanel/*`, each with its own
+     local `onChange` adapter wrapping `commit.commitStyle`; wiring a new
+     prop through all of them (or importing an admin/editor-store event into
+     the *shared, editor-agnostic* `src/ui/components/ScrubInput/` primitive
+     — no `src/ui` file imports `@admin` today, confirmed by grep) is neither
+     small nor architecturally clean. Instead: relies on a documented React
+     behaviour (verified, not assumed) — synthetic `onBlur`/`onFocus` bubble
+     (unlike native DOM blur/focus), and bubble-phase handlers fire
+     INNERMOST-FIRST within one synchronous dispatch. So a handler bound to
+     the panel ROOT (`<aside data-testid="properties-panel">`, the ONE
+     ancestor every section/field renders under, including popovers
+     rendered via portal — React portals bubble through the React tree, not
+     the DOM tree) fires AFTER the field's own commit handler has already
+     run. One file (`PropertiesPanel.tsx`), three event props, zero changes
+     to `commitApi.ts`, zero changes to shared `src/ui/` primitives, zero
+     fan-out across the ~15 leaf section files. Portal-rendered context
+     menus (`ClassPillContextMenu.tsx`, `ClassPickerParts.tsx`) also bubble
+     through this handler, which is harmless — guarded by `hasUnsavedChanges`.
+  4. CMS (database-backed) autosave path untouched: `usePersistence`'s only
+     caller besides Studio's `AdminCanvasLayout.tsx` is none (grepped — one
+     caller total today), and `flushAutosave`/the panel wiring only fire from
+     Studio's `PropertiesPanel.tsx`, gated by the same dirty check either way.
+     `resolveAutoSaveDelayMs`'s precedence (explicit override wins,
+     else the CMS's user preference) is unchanged.
+  5. Doc comments updated at all four named locations
+     (`fsCodemodAdapter.ts:174-188`, `usePersistence.ts`'s module doc + the
+     `AUTOSAVE_MAX_DEFERRAL_MULTIPLE` doc, `AdminCanvasLayout.tsx:180`).
+     `docs/agent-refs/editor-store.md` and `docs/editor.md` were grepped for
+     "2 s"/"2000"/"autosave" — neither documents the specific
+     `STUDIO_AUTOSAVE_DELAY_MS` value (the retry ladder's own "2s/4s/8s" in
+     `docs/editor.md` is a different, unrelated mechanism —
+     `SAVE_RETRY_BACKOFF_MS` — left alone), so there was nothing concrete to
+     correct in either file. `PROJECT-BRIEF.md`'s "~2 s" (trap #5, about
+     reload timing after a save, not the debounce) is illustrative, not a
+     specific claim about this constant — left as-is.
+- **Not touched, on purpose:** the BOARDS autosave (`BOARDS_AUTOSAVE_DEBOUNCE_MS
+  = 800` in `AdminCanvasLayout.tsx`, `boardsSaveGuard.ts`) is a SEPARATE
+  mechanism (frame positions/sizes, not the page tree) — out of this work
+  order's named scope, not touched.
+- **Decisions:**
+  - Reused `EDITOR_SAVE_REQUEST_EVENT`/`requestEditorSave()` rather than
+    inventing a parallel "flush" primitive — it already does exactly
+    "immediate save, bypassing the debounce" and `usePersistence` already
+    listens for it.
+  - Chose the panel-root bubble-order seam over touching `ScrubInput.tsx`/
+    `TextControl.tsx`/commit-callback call sites — see point 3 above for the
+    full reasoning; this is the one call a later agent could most easily
+    second-guess, so it's spelled out in full rather than just asserted.
+  - Did not add arrow-key nudge (ScrubInput's other commit path) to the
+    flush triggers — the work order named only "blur/Enter of a panel field
+    and pointerup of a scrub"; a nudge already rides the 250ms debounce and
+    adding it was not asked for.
+- **Landmines for the next reader:** the flush relies on React's synthetic
+  event bubble ORDER (innermost handler completes before an ancestor
+  handler of the SAME event runs, in one synchronous pass). If a future
+  change moves a scrub/text commit to run in a microtask/rAF *inside* its
+  own handler (instead of synchronously, as `ScrubInput.tsx`/`TextControl.tsx`
+  do today), the panel-root flush would fire before the store mutation lands
+  and become a no-op for that commit — re-verify the ordering assumption if
+  either file's commit path stops being synchronous.
+- **Verification:**
+  - `bun test src/__tests__/persistence/{autoSaveCadence,autoSaveFlush,
+    autoSaveTrailingDebounce,savePersistenceQueue}.test.{ts,tsx}` — 22 pass.
+  - `bun test src/__tests__/editor src/__tests__/architecture/
+    no-vc-mode-branches-in-mutations.test.ts` — 597 pass, 4 fail, all four
+    pre-existing (`structuralOptimisticBroadcast.test.ts`'s "broadcasts an
+    optimistic move/delete/delete-batch/insert" — the ignore-list's "four
+    broadcast… optimistic tests"), reproduced identically on a clean
+    re-run; none touch a file this change modified.
+  - `bun test src/__tests__/architecture/centralized-site-mutation-history.test.ts` — pass.
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — clean.
+  - `bun test` (full, `--parallel=4`) — started; see the handback message
+    for whether it completed before this branch was handed off (it was still
+    running, contending with a sibling agent's worktree, when this entry was
+    written — the targeted suites above are the load-bearing signal).
+- **Human action needed:** none — no browser-observable UI beyond the
+  existing "Unsaved"/"Saving…" chip, which was already dogfooded.
+
+---
+
 ### sec-19 — every project starts at run-project (owner decision 2026-09-20)
 - **Agent:** studio-implementer
 - **Stage:** done — branch not pushed, no PR opened (orchestrator's job).
