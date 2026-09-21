@@ -12,7 +12,8 @@ import { cleanup, render, waitFor } from '@testing-library/react'
 import { resolveLiveFrameSrc } from '@site/canvas/resolveLiveFrameSrc'
 import { setFramePoster } from '@site/canvas/BoardFramesLayer/frameSnapshotCache'
 import { setStudioProjectKey } from '@site/studio/studioProjectTrust'
-import { makePage } from '../fixtures'
+import { useEditorStore } from '@site/store/store'
+import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
 
 const BARE_LIVE_ORIGIN = 'https://live.studio.test'
@@ -67,6 +68,16 @@ beforeEach(() => setStudioProjectKey(PROJECT_KEY))
 afterEach(() => {
   cleanup()
   setStudioProjectKey(null)
+  // The selection-chrome test below sets store state other tests in this
+  // file don't expect — reset it so it can't leak into them.
+  useEditorStore.setState({
+    site: null,
+    activePageId: null,
+    activeBreakpointId: null,
+    selectedNodeIds: [],
+    selectedNodeId: null,
+    selectedNodeFrameId: null,
+  } as Parameters<typeof useEditorStore.setState>[0])
 })
 
 describe('LiveBoardFrame — not-ready render fork', () => {
@@ -149,6 +160,66 @@ describe('LiveBoardFrame — not-ready render fork', () => {
         axes: { direction: 'ltr', colorScheme: 'light' },
       }),
     )
+  })
+})
+
+describe('LiveBoardFrame — selection chrome while not ready (speed-04)', () => {
+  it('an already-selected node shows exactly ONE toolbar/inspector — the fallback\'s, never the hidden bridge overlay\'s', async () => {
+    const button = makeNode({ id: 'cta-button', moduleId: 'base.button' })
+    const root = makeNode({ id: 'page-root', moduleId: 'base.body', children: [button.id] })
+    const page = makePage({
+      id: 'checkout',
+      rootNodeId: root.id,
+      nodes: { [root.id]: root, [button.id]: button },
+    })
+    useEditorStore.setState({
+      site: makeSite({ pages: [page] }),
+      activePageId: page.id,
+      activeBreakpointId: BREAKPOINT.id,
+      // Selected before mount — the click that produced this selection
+      // landed on THIS frame (frameId matches), same as a real board click.
+      selectedNodeIds: [button.id],
+      selectedNodeId: button.id,
+      selectedNodeFrameId: 'frame-1',
+    } as Parameters<typeof useEditorStore.setState>[0])
+
+    render(
+      <LiveBoardFrame
+        page={page}
+        breakpoint={BREAKPOINT}
+        isActive={false}
+        onActivate={() => {}}
+        frameId="frame-1"
+        width={WIDTH}
+      />,
+    )
+
+    // The Tier-0 fallback's own overlay is real and working: its ring
+    // lands inside ITS OWN iframe document (WS-5.1).
+    const fallbackIframe = await waitFor(() => {
+      const el = document.querySelector('iframe[srcdoc]') as HTMLIFrameElement | null
+      expect(el?.contentDocument?.body).toBeTruthy()
+      return el!
+    })
+    await waitFor(() => {
+      expect(
+        fallbackIframe.contentDocument!.querySelector('[data-canvas-selection-ring]'),
+      ).not.toBeNull()
+    })
+
+    // Exactly one toolbar and one inspector wrapper in the whole document —
+    // not two. Before this change the hidden bridge frame's OWN overlay
+    // (bridgeChrome=true, `useBridgeSelectionChrome`) mounted unconditionally
+    // and rendered a second, independently-positioned copy of both for the
+    // SAME selection the instant it received a non-empty `selectedNodeIds`.
+    expect(document.querySelectorAll('[data-canvas-selection-toolbar]').length).toBe(1)
+    expect(document.querySelectorAll('[data-canvas-in-place-inspector]').length).toBe(1)
+
+    // The hidden bridge container mounted its iframe (booting concurrently)
+    // but carries no overlay chrome of its own while not ready.
+    const bridgeContainer = document.querySelector('[data-testid="live-board-frame-bridge"]')
+    expect(bridgeContainer?.querySelector('[data-canvas-selection-toolbar]')).toBeNull()
+    expect(bridgeContainer?.querySelector('[data-canvas-in-place-inspector]')).toBeNull()
   })
 })
 
