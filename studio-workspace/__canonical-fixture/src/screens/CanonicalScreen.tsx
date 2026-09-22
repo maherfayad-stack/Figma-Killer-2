@@ -36,6 +36,9 @@ export default function CanonicalScreen() {
       <svg className="canonical-screen__icon" viewBox="0 0 24 24">
         <circle cx="12" cy="12" r="10" />
       </svg>
+      <svg className="canonical-screen__icon" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10" />
+      </svg>
 
       {/* rule 4 (const-array-map) + rule 9 (direct-component-imports, local):
           .map over a module-scope const array, over a directly-imported

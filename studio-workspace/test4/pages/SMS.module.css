@@ -26,6 +26,7 @@
   padding: var(--space) var(--space) var(--space-lg);
   background: var(--background-base-default);
   overflow: hidden;
+  row-gap: 44px;
 }
 
 .title {

@@ -75,7 +75,7 @@ export const translations = {
     onboardingHero: {
       almosafer: 'المسافر',
       _941Am: '9:41 ص',
-      goodNewsAFewHotels: 'أخبار سارة! انخفضت أسعار بعض الفنادق التي تهتم بها بنسبة 30%'
+      goodNewsAFewHotels: 'asdasdasdas'
     },
     onboarding: {
       agree: 'موافق',
@@ -108,7 +108,7 @@ export const translations = {
     sMS: {
       _29Seconds: '29 ثانية',
       at: 'على',
-      enterThe6DigitCode: 'أدخل الرمز المكوّن من 6 أرقام المُرسل عبر:',
+      enterThe6DigitCode: 'asdasdasdasd',
       enterVerificationCode: 'أدخل رمز التحقق',
       resendIn: 'إعادة الإرسال خلال',
       sms: 'رسالة نصية',

@@ -17,9 +17,11 @@ createRoot(document.getElementById('root')).render(
 // 'npm run dev', including every copy Studio hands out via 'Download the
 // code'), this document is actually embedded in a frame, AND the document
 // that framed it is one of the origins Studio said may do so. The parent is
-// read off document.referrer and checked against that list — the list says
-// who may be a parent, the referrer says which one is. A supervised dev
-// server opened directly in a normal browser tab has no referrer and boots
+// read off the browser's own record of who framed this document
+// (location.ancestorOrigins, which survives a Vite full reload) or, where a
+// browser lacks that, document.referrer, and checked against that list — the
+// list says who may be a parent, the browser says which one is. A supervised
+// dev server opened directly in a normal browser tab has neither and boots
 // no bridge, because there is nothing to talk to.
 const studioParentOrigin = resolveParentOrigin(STUDIO_RUNTIME_CONFIG.parentOrigins, document.referrer)
 if (studioParentOrigin && window.parent !== window) {
