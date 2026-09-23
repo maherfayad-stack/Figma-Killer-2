@@ -8,6 +8,7 @@ import {
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
+  sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 
@@ -79,28 +80,11 @@ function readPage(): string {
 }
 
 /**
- * The studio node id of the Nth `<tag` in the fixture — `relFile:line:col`,
- * where col is 1-based at the character right after `<`. Derived rather than
+ * The studio node id of the Nth `<tag` in the fixture. Derived rather than
  * hardcoded so editing the fixture above cannot silently retarget the spec.
  */
 function nodeId(tag: string, occurrence = 1): string {
-  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
-  let match: RegExpExecArray | null
-  let count = 0
-  let index = -1
-  while ((match = re.exec(FIXTURE_PAGE)) !== null) {
-    count += 1
-    if (count === occurrence) {
-      index = match.index
-      break
-    }
-  }
-  if (index < 0) throw new Error(`fixture has no <${tag} #${occurrence}`)
-  const before = FIXTURE_PAGE.slice(0, index + 1)
-  const lines = before.split('\n')
-  // `+ 1`: the column convention is 1-based at the character right AFTER `<`,
-  // and `before` ends with the `<` itself.
-  return `pages/Home.tsx:${lines.length}:${lines[lines.length - 1]!.length + 1}`
+  return sourceNodeId(FIXTURE_PAGE, 'pages/Home.tsx', tag, occurrence)
 }
 
 test.beforeAll(() => {

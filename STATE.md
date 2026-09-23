@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
-- **Next:** the Phase 1 exit gate (`test/phase-1-exit-gate`: outside-edit e2e + regression audit), then Phase 2 from P2-A; P4-C runs alongside.
+- **Next:** Phase 1 exit gate passed (#232, `test-06`): Phase 2 PRs may now merge. P2-A and P4-C are running; then P2-B→C→E, P2-D, P2-F→G→H, P2-I.
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -63,6 +63,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### test-06 — Phase 1 exit gate: outside-edit e2e + regression audit (WB-1/2/7/23, ERR-1/3/4/5)
+- **Agent:** test-engineer · **Branch:** `test/phase-1-exit-gate` · **PR:** #232 (draft, base `feat/canvas-excellence`; the audit table is in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** `ROADMAP.md` §5 exit gate: a regression test that fails before its fix for every reproduced P1 finding, and an e2e that edits a page outside Studio mid-session, then edits and deletes on the canvas, and checks the file bytes.
+- **Done:**
+  - `tests/e2e/phase-1-exit-gate.e2e.ts`, 4 cases, Chromium, green twice. (1) outside edit, then the live reload, a text edit, a Delete and ⌘Z: the file is byte-exact after each step. (2–4) the outside write races a PENDING text edit (autosave off, flushed by the watcher push), an IN-FLIGHT text edit, and an IN-FLIGHT Delete (held with `page.route`). All three landed on the intended element, recorded as annotations.
+  - With `resolveEditIdentities` disabled in place, all three race cases fail on a wrong-element write. Case 1 does not fail that way: after the live reload its ids are fresh, so it proves P1-D's watcher, not the guard.
+  - Regression audit: each of the 8 findings has a committed test, and each test was proven to fail with its fix disabled in place, then restored with `git checkout -- <file>`. Table in the PR body.
+  - Shared `sourceNodeId()` in `tests/e2e/helpers/studioFixtureProject.ts` replaces three copies (`element-identity-guard`, `outside-edit-live-reload`, `structural-writeback`).
+  - `docs/e2e/README.md` coverage map: rows for the P1 specs.
+- **Decisions:** a racing edit may land OR be refused, never land elsewhere. `settleOnDisk` fails on any third file state that persists across 3 reads, so a read that races the server's non-atomic write cannot fail the case.
+- **Landmines:** `structural-writeback.e2e.ts` fails on the trunk BEFORE this change too. Its fixture is not pinned to `trust: 'static'`, so the Tier-2 default mounts a live frame as well (two canvas iframes, a strict-mode violation). Its second case then hits Windows `EPERM` re-creating the held fixture dir. Found, not fixed.
+- **Verification:** build + lint clean. Chunked suite: only pre-existing failures (bundle freshness, optimistic broadcast, bridge measurement, WebSocket, headless capture, dev server), plus three 5 s load timeouts that pass alone.
+- **Next:** none for Phase 1. Phase 2 can start.
+
+
 ### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
 - **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** see the PR against `feat/canvas-excellence` (draft) · **Updated:** 2026-09-23
 - **Stage:** verifying — **needs security-guard review before merge** (threat list in the PR body)
@@ -81,6 +97,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** `tool-write-gate-unchanged-by-side-effects.test.ts` now has `WRITE_GATED_ADDED_SINCE`; `no-phantom-tool-names` and the parity matrix gate cover the HTTP surface too. `TurnResult.stop` is gone (`truncated` + `toolCalls.length`).
 - **Verification:** build, lint, tsc clean; every chunk run; only pre-existing failures (PR body). No e2e: a real turn needs a provider key.
 - **Human action needed:** security-guard review; dogfood with an Anthropic API key (script in the PR body).
+
+---
 
 ## Blocked
 
