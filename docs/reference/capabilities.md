@@ -1,4 +1,5 @@
 # Capabilities
+> **Purpose:** every capability string, its default roles, and how to add one · **Read when:** gating a route or tool on a capability · **Trust:** current · **Owner:** security-guard · **Verified:** not yet
 
 The full catalog of `CoreCapability` strings, what each grants, which role gets them by default, and how to add a new capability.
 
@@ -55,13 +56,13 @@ For the broader auth flow (sessions, MFA, step-up), see [docs/features/auth-and-
 
 The `own / any` split is the standard CMS workflow: a contributor can edit/publish their own posts; an editor (`content.edit.any`, `content.publish.any`) can manage everyone's.
 
-### Data workspace (schema + raw rows + bundles)
+### Data (schema + raw rows + bundles)
 
-The Data workspace is split from the Content workspace: Content owns row-level editorial via `content.*`; Data owns schema design, cross-collection row moves, and bundle export/import. Table read/manage is further split **system vs custom**, so a persona (e.g. Client) can browse and manage custom tables without ever seeing the four internal system tables (`posts`, `pages`, `components`, `layouts`).
+There is no Content or Data workspace UI; these capabilities gate the `data_tables`/`data_rows` API, the data pickers and bundle export/import that remain. `content.*` covers row-level editorial; `data.*` covers schema design, cross-collection row moves, and bundle export/import. Table read/manage is further split **system vs custom**, so a persona (e.g. Client) can browse and manage custom tables without ever seeing the four internal system tables (`posts`, `pages`, `components`, `layouts`).
 
 | Capability                    | Grants                                                              | Roles         |
 |-------------------------------|---------------------------------------------------------------------|---------------|
-| `data.custom.tables.read`     | Open the Data workspace; see + browse **custom** tables and their field schemas | Owner, Admin, Client |
+| `data.custom.tables.read`     | See + browse **custom** tables and their field schemas through the API and data pickers | Owner, Admin, Client |
 | `data.custom.tables.manage`   | Create, rename, delete **custom** tables; add/rename/delete fields; change primary field, route base. **Step-up gated** — changes public URL surface. | Owner, Admin |
 | `data.system.tables.read`     | See + open the four **system** tables (`posts`/`pages`/`components`/`layouts`). | Owner, Admin |
 | `data.system.tables.manage`   | On a system table: add/edit/remove **custom** fields and set the primary field. The table's identity (name, slug, route base, labels, kind) and its **built-in fields** are frozen for everyone — `assertSystemTableUpdateAllowed` rejects those edits server-side. Built-in field *values* on the structural system tables (pages/components/layouts) are read-only in the grid; `posts` built-ins stay editable. | Owner, Admin |
@@ -73,7 +74,7 @@ The Data workspace is split from the Content workspace: Content owns row-level e
 
 | Capability       | Grants                                                              | Roles         |
 |------------------|---------------------------------------------------------------------|---------------|
-| `media.read`     | Open the Media workspace; browse assets and folders; see thumbnails in pickers. Also gated by `/dashboard/media`. | Owner, Admin, Client |
+| `media.read`     | Browse assets and folders; see thumbnails in the media picker. Also gates `GET /admin/api/cms/dashboard/media`. | Owner, Admin, Client |
 | `media.write`    | Upload assets; edit metadata (alt text, caption, tags); manage folders; restore from trash. | Owner, Admin |
 | `media.replace`  | Overwrite the bytes for an existing asset (variants regenerate). Split out from `media.write` because this silently swaps the bytes every page reference points at. | Owner, Admin |
 | `media.delete`   | Soft-delete to trash; hard-purge (`?purge=1`) additionally requires step-up. Also gates `DELETE /media/folders/:id` (cascade). | Owner, Admin |

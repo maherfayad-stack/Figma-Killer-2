@@ -1,4 +1,5 @@
 # Release Workflow
+> **Purpose:** publishing Studio Docker images (maintainers) · **Read when:** cutting a release · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This maintainer guide covers publishing Studio Docker images.
 

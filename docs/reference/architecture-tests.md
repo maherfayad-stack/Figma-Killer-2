@@ -1,4 +1,5 @@
 # Architecture Tests
+> **Purpose:** the catalogue of every architecture gate test · **Read when:** a gate fails, or you change a structural rule · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 Catalog of every test in `src/__tests__/architecture/`. These are structural gates — they run as part of `bun test` and fail the build when a rule is broken. When *your* change drifts a structural rule, fix the matching test in the **same** change.
 
@@ -213,7 +214,7 @@ See [docs/features/agent.md](../features/agent.md).
 | `media-storage-no-bytes-in-sandbox.test.ts`   | Plugin sandboxes can't read raw media bytes; only host adapters can.             |
 | `media-storage-panel.test.ts`                 | Media storage panel UI matches the registered adapter set.                       |
 
-See docs/features/media.md.
+There is no separate media feature doc: the variant pipeline is `server/handlers/cms/mediaVariants.ts` and its worker pool, listed in [`docs/architecture.md`](../architecture.md) → "Layer responsibilities".
 
 ### Publisher
 
@@ -257,9 +258,7 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `importPathTraversal.test.ts`                 | `assertPathWithin` blocks `..` traversal and absolute escapes; `MediaAssetExportSchema.storagePath` pattern rejects traversal at the schema boundary (ISS-009). |
 
-See [`docs/features/site-import.md`](../features/site-import.md). (This used to
-point at a `docs/features/site-transfer.md` that was never written; the CMS
-bundle transfer path is described in the import page instead.)
+See [`docs/features/site-import.md`](../features/site-import.md), which also describes the CMS bundle transfer path.
 
 ### Loop sources
 
@@ -288,6 +287,13 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 | `dockerConfig.test.ts`                        | Dockerfile uses a multi-stage build (build → production-deps → runtime), `ARG STUDIO_VERSION` and OCI version label are present, TypeScript path aliases (`tsconfig*.json`) are copied into the runtime stage, `esbuild` is in `dependencies` (not `devDependencies`) so the runtime script bundler is available in production. `compose.prod.yml` uses the GHCR image, has healthchecks, persistent volumes, and `depends_on: condition: service_healthy`. `POSTGRES_PASSWORD` carries a `CHANGEME` placeholder default (no `:?` guard) so the file loads in SQLite mode without a `.env`. `STUDIO_SECRET_KEY` is documented in `.env.production.example` and referenced in `compose.prod.yml`. |
 
 See [docs/deployment/](../deployment/).
+
+### Docs
+
+| Test                                          | What it enforces                                                                 |
+|-----------------------------------------------|----------------------------------------------------------------------------------|
+| `doc-headers.test.ts`                         | Every maintained doc (the six root docs, `docs/**` outside `archive/`, `audits/` and `state-archive/`, `scripts/bench/README.md`) has the `Purpose · Read when · Trust · Owner · Verified` header on line 2 under a `# Title`; every historical doc declares itself in its first two lines; and no code, maintained doc or root doc names a path in `DEAD_DOC_PATHS` (retired docs agents kept citing). Rules: [`docs/CONVENTIONS.md`](../CONVENTIONS.md) → "The header line". |
+| `css-token-vocabulary.test.ts`, `studio-tool-refusals-are-coded.test.ts`, `no-alm-npm-specifier.test.ts` | Also read docs by path: `docs/design.md`, `docs/reference/design-tokens.md`, `docs/reference/ui-primitives.md`; `docs/features/agent.md`'s refusal table; the agent-refs, features and reference folders plus `PROJECT-BRIEF.md` and `CLAUDE.md`. Move or split those docs and the gate moves with them. `scripts/build-release-bundle.ts` also ships `docs/deployment/*.md` by path. |
 
 ## Anatomy of an architecture test
 

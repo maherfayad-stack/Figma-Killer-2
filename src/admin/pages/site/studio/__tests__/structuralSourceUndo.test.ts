@@ -22,11 +22,10 @@ import { registry } from '@core/module-engine'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applyStructuralWriteOutcome } from '@site/hooks/usePersistence'
+import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
-import { clearPendingStructuralOutcome } from '../pendingStructuralOutcome'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
 
@@ -108,7 +107,6 @@ describe('a structural source write is one undo step', () => {
 
   beforeEach(() => {
     __resetToastBusForTests()
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     originalFetch = globalThis.fetch
     saveCalls = []
@@ -122,14 +120,7 @@ describe('a structural source write is one undo step', () => {
 
     // Exactly what `usePersistence` does with a narrow resync.
     patchListener = (evt: Event) => {
-      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
-      useEditorStore.getState().patchPages({
-        pages: detail.pages,
-        removedPageIds: detail.removedPageIds,
-        styleRules: detail.styleRules,
-        conditions: detail.conditions,
-      })
-      applyStructuralWriteOutcome()
+      applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
     }
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
   })
@@ -139,7 +130,6 @@ describe('a structural source write is one undo step', () => {
     unregisterSave?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
     setStudioLoadedDir(null)
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     useEditorStore.getState().clearSite()
   })

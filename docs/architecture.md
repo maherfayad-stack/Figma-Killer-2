@@ -1,4 +1,5 @@
 # Architecture
+> **Purpose:** the system overview: processes, folders, layers, request lifecycle, data model, and the dormant CMS half · **Read when:** orienting in an unfamiliar layer, or deciding where new code belongs · **Trust:** current · **Owner:** studio-architect · **Verified:** not yet
 
 System-level overview of Studio — what runs, what depends on what, and where to look first.
 
@@ -445,6 +446,17 @@ Three defences, in order of where they act:
 3. **The act-scope repair in `src/__tests__/setup.ts`** resolves any still-pending `act()` wrapper in the global `afterEach`, driving React's own unwind path. Gated by `src/__tests__/harness/actScopeLeakRecovery.test.tsx`, which reproduces the leak and asserts the next render still commits.
 
 `files/` holds standalone scaffolds copied out by an external `pnpm create-file` workflow (e.g. `files/demo/`) — independent projects with their own toolchain (Vitest, not `bun test`) and their own dependency graph. `bunfig.toml` sets `[test] pathIgnorePatterns = ["files/**"]` so `bun test` never discovers them; test a scaffold from inside its own folder (`cd files/<name> && bun run test`).
+
+---
+
+## The dormant CMS half: four traps
+
+This repository began as a fork of a self-hosted CMS. The standalone Content, Data, Media and Users workspaces are gone from routing (`src/admin/router.tsx`), but much of what remains is load-bearing for Studio under CMS-shaped names. Four traps catch anyone who tries to remove "the CMS half". Which parts could still be removed, and the product decision that blocks the rest, are in [`ROADMAP.md`](../ROADMAP.md) §13.
+
+1. **`src/core/publisher/` is load-bearing; `server/publish/**` is the CMS publisher.** Two directories share the name and have opposite verdicts. `src/core/publisher/` is the single class-CSS emission engine for publish and canvas: `src/core/ai/readSurface.ts` imports `renderNode`, the canvas's `ClassStyleInjector` imports `collectBackgroundImagePaths`, and base image and video modules import from it. Never delete it. `server/publish/**` publishes CMS sites; it is still reachable from the external MCP surface (`server/ai/mcp/tools/publishTool.ts` imports `publishDraftSite`).
+2. **Bundled is not the same as executed.** `src/core/persistence/cms.ts` is imported (so it is bundled): `usePersistence` takes `cmsAdapter` as its default parameter, while Studio's `AdminCanvasLayout` passes `fsCodemodAdapter`. A removal scoped by "is it imported?" keeps dead code; one scoped by "does it run?" deletes live code. Verify both.
+3. **The migration floor.** Committed migrations are never deleted or rewritten, and the runner replays history on every boot, so `data_tables`, `data_rows`, `media_assets`, `installed_plugins` and the other CMS tables exist on every install whether or not any code reads them. Removing CMS code shrinks the codebase, not the schema.
+4. **Studio is not database-free.** Its own state lives in `ai_conversations`, `ai_messages`, `ai_provider_credentials`, `ai_defaults`, `ai_model_pricing` and `ai_mcp_connectors`, plus the shared `users`, `sessions` and `roles`. `server/auth/` gates every Studio route, the MCP endpoint and every AI handler; Studio has no login of its own.
 
 ---
 

@@ -45,9 +45,9 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       // (re-planned) once the first one's resync has landed — dropping three
       // files at once is three images, not one.
       if (
-        deferWhileStructuralCommitInFlight(() => {
-          actions.insertImageIntoPage(pageId, parentId, index, image)
-        })
+        deferWhileStructuralCommitInFlight((relocate) => {
+          actions.insertImageIntoPage(pageId, relocate(parentId), index, image)
+        }, [parentId])
       ) {
         return
       }

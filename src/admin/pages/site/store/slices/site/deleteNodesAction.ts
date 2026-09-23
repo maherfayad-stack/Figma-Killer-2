@@ -26,6 +26,7 @@ import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { excludePendingOptimisticTargets } from './structuralOptimism'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, tagStructuralGesture, type StructuralHistoryDeleteOrigin } from './structuralHistory'
 import type { SiteSlice, SiteSliceHelpers } from './types'
@@ -108,6 +109,11 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     // insert/duplicate/wrap preview before planning against it.
     const nodeIds = excludePendingOptimisticTargets(rawNodeIds)
     if (nodeIds.length === 0) return
+    // ERR-4 — a delete pressed while another structural write is in flight
+    // (a drag's move, a ⌘D) used to post at once with ids from before that
+    // write, and delete whatever it had moved into their lines. It now runs
+    // after it, against the elements it was pressed on, re-found by identity.
+    if (deferWhileStructuralCommitInFlight((relocate) => get().deleteNodes(nodeIds.map(relocate)), nodeIds)) return
     const cur = get()
     const target = resolveActiveTreeTarget(cur)
     if (!target) return

@@ -1,4 +1,5 @@
 # VPS Deployment
+> **Purpose:** Docker Compose installs on a single VPS · **Read when:** installing on a VPS · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This guide covers Docker Compose installs on a single VPS.
 

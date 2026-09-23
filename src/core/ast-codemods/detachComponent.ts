@@ -8,44 +8,84 @@
  * detach, `<Card/>` no longer exists there: the parser will not produce a
  * `studio.instance` node at that location on the next load, and every node
  * detach materialized belongs to the page file, editable without the
- * "changes every instance" warning `fromComponent` used to carry.
+ * "changes every instance" warning `fromComponent` used to carry (owner
+ * decision OD-9: it still renders, its props no longer apply, and the user
+ * can edit anything freely).
  *
- * FAILS CLOSED, on purpose, and reports WHY (`DetachRefusal`) rather than
- * guessing:
+ * SYMBOLS, NOT SPELLINGS
+ * ----------------------
+ * Every identifier in the chosen JSX is resolved with the TypeScript checker
+ * in the COMPONENT's file — which declaration it names, not what it is
+ * called — and then placed so it names the same thing in the PAGE:
  *
- *  - The call target must be a LOCAL component (`ComponentSource.kind ===
- *    'local'`) with a resolvable declaration. A package component is a
- *    different operation ("Eject to local component" / "Replace with markup
- *    snapshot" — WS-4.4's plan text) and is out of scope for this function;
- *    see `docs/features/studio-import.md` for the honest gap.
- *  - The declaration's body must not call a hook (`useXxx`) — a hook needs a
- *    component to mount in; pasting its call site into a plain page tree
- *    would either break the rules of hooks (conditionally called) or change
- *    behaviour silently.
- *  - The declaration must not `.map` over one of its OWN destructured props —
- *    `items.map(...)` inside Card's JSX, where `items` is a prop, generates
- *    N elements FROM THE CALL SITE'S data; inlining one static copy would
- *    silently drop that data-drivenness.
- *  - The first parameter, if present, must be a destructured OBJECT pattern
- *    (`{ title, onClose }`, not `props`) — the substitution algorithm below
- *    needs named bindings to know what to replace.
- *  - Every identifier Card's JSX references that isn't already resolvable in
- *    the page file must resolve to something reconcilable — a sub-component,
- *    a constant, an asset import — with no NAME COLLISION against a
- *    different binding already in scope at the page file's top level.
+ *  - a destructured PARAM, in ANY expression position (`cn(styles.card,
+ *    className)`, `featured && …`, `` `/p/${id}` ``, `{ width: size }`,
+ *    `title.toUpperCase()`), becomes the call site's own expression — or the
+ *    destructured default, or `undefined` when the call site omitted it,
+ *    because that is exactly what an omitted prop IS. An attribute whose whole
+ *    value becomes `undefined` is dropped; a string in child position becomes
+ *    JSX text (`Confirm`, not `{"Confirm"}`); a string attribute is written
+ *    `className="neutral"`, not `className={'neutral'}`;
+ *  - a call-site SPREAD (`<Card {...plan}/>`) supplies `plan.title` for every
+ *    param no explicit attribute after it sets; the component's own `...rest`
+ *    is written out as the call site's leftover attributes (DET-2);
+ *  - a body `const` read once by the JSX is inlined as its initializer;
+ *  - a name from the component's MODULE scope is imported into the page —
+ *    reusing an equivalent import, else under its own name, else ALIASED
+ *    (`styles` → `cardStyles`) when the page already means something else by
+ *    it — and the rename is exact because it is keyed on the symbol;
+ *  - a global stays a global, and must not be shadowed where the text lands.
  *
- * A component with more than one JSX-bearing `return` (parser-06 — the
- * parser already SELECTS one to render, recording the rest as
- * `branchAlternatives`) is not refused: `getReturnedJsxRoots` picks the same
- * one the canvas is already showing, and this codemod inlines exactly that
- * branch, reporting which one via `DetachSuccess.branchNote` — "the branch
- * actually being shown", per this work order's explicit instruction.
+ * FAILS CLOSED, and says WHY (`DetachRefusal`) rather than guessing. Every
+ * refusal leaves both files byte-identical — the plan is built and checked
+ * before the first byte changes, and the post-build gate below restores the
+ * page's in-memory text before returning. Nothing is saved on any refusal.
+ *
+ *  - `package-component` / `unresolvable` / `not-a-component` — the call
+ *    target is not a local component with a readable declaration.
+ *  - `uses-hooks` — a hook needs a component to mount in.
+ *  - `maps-over-props` — the JSX `.map`s over one of its own props: inlining
+ *    one static copy would drop that data-drivenness.
+ *  - `unsupported-params` — an undestructured `props`, a nested destructure,
+ *    a prop used somewhere its call-site value cannot be written (a JSX tag
+ *    name that is not a component name, a type position).
+ *  - `spread-ambiguous` — which value a prop has cannot be known from source:
+ *    an explicit attribute BEFORE a spread, two spreads, a spread of a
+ *    non-identifier, or a call-site spread into a component that forwards
+ *    `...rest`.
+ *  - `body-local` — the JSX reads a body value that cannot be inlined (read
+ *    more than once, read inside a callback, or computed from other body
+ *    state).
+ *  - `unbound-reference` — something the JSX needs cannot be bound in the
+ *    page (a private module-level helper of the component's file, a name from
+ *    the scope around the component), or the post-build gate found a name it
+ *    cannot account for.
+ *  - `name-collision` — a name would bind to something different in the page
+ *    and cannot be aliased: a global the page shadows, a same-file name a
+ *    local shadows at the call site, or a call-site expression that one of the
+ *    component's own inner bindings would capture.
+ *
+ * THE GATE. After the plan is written into the page (in memory),
+ * `subtreeFreeVariables.ts` re-reads the inserted markup and checks every
+ * free name against what the plan promised: a call-site name must bind
+ * exactly as it did at the call site, an imported one must bind at module
+ * scope, a global must stay unbound. Anything else refuses and restores.
+ *
+ * A component with more than one JSX-bearing `return` (parser-06) is not
+ * refused: `getReturnedJsxRoots` picks the same one the canvas shows, and
+ * `DetachSuccess.branchNote` says so.
  */
-import { Node, Project, QuoteKind, SyntaxKind, type JsxAttribute } from 'ts-morph'
-import { findJsxElementAtLocationOrThrow, loadSourceFile, type JsxOpeningLikeElement } from './locateJsxElement'
+import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
+import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '@core/page-parser'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
-import { addReconciledImports, removeImportIfLastUsage } from './importReconcile'
+import { applyImportBinding, mirrorSideEffectImports, removeImportIfLastUsage } from './importReconcile'
+import { analyzeFreeVariables, bindingKindAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
+import { introducesSyntaxErrors } from './reinsertJsxSource'
+import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
+import { DetachPlanner, type DetachPlan } from './detachPlanner'
+
+export type { DetachRefusalReason } from './detachSource'
 
 export interface DetachComponentParams {
   /** Absolute path to the page file holding the call site. */
@@ -58,15 +98,6 @@ export interface DetachComponentParams {
   project?: Project
 }
 
-export type DetachRefusalReason =
-  | 'not-a-component'
-  | 'package-component'
-  | 'unresolvable'
-  | 'uses-hooks'
-  | 'maps-over-props'
-  | 'unsupported-params'
-  | 'no-renderable-jsx'
-  | 'name-collision'
 
 export interface DetachRefusal {
   reason: DetachRefusalReason
@@ -92,6 +123,7 @@ const HOOK_CALL_RE = /^use[A-Z0-9]/
 function refuse(reason: DetachRefusalReason, message: string): DetachFailure {
   return { ok: false, refusal: { reason, message } }
 }
+
 
 /** True if `fn`'s body calls anything shaped like a hook, anywhere (including inside a nested callback — a hook cannot legally be called there either, but the point here is just "this body is not a pure markup function"). */
 function usesHooks(fn: FunctionLike): string | undefined {
@@ -135,12 +167,12 @@ export interface ParamBinding {
 
 /**
  * Reads a component's destructured first-parameter pattern into a
- * substitution map, and separately names the `children` binding. Mirrors
- * `componentSubstitution.ts`'s `buildSubstitutionEnv` structurally, but
- * keeps TEXT, never an evaluated value — a source-to-source transform.
- * Exported (not just used by `detachComponentInstance`) — `swapComponentInstance`
- * needs the exact same "what props does this component's signature accept"
- * read for its prop-diff step.
+ * name-keyed map, and separately names the `children` binding. The
+ * "what props does this component's signature accept" read that
+ * `swapComponentInstance` (prop diff) and `addSlotPropToComponent` share. A
+ * `...rest` element and a nested pattern are not props this map can name, so
+ * they are skipped here; detach reads them itself, by symbol
+ * (`readParamTable`).
  */
 export function buildParamBindings(fn: FunctionLike): { childrenParam?: string; params: Map<string, ParamBinding>; hasUndestructuredParam: boolean } {
   const params = new Map<string, ParamBinding>()
@@ -154,9 +186,9 @@ export function buildParamBindings(fn: FunctionLike): { childrenParam?: string; 
   }
 
   for (const element of pattern.getElements()) {
-    if (element.getDotDotDotToken()) continue // ...rest — unsupported, left unbound (same policy as inlineLocalComponents)
+    if (element.getDotDotDotToken()) continue
     const nameNode = element.getNameNode()
-    if (!Node.isIdentifier(nameNode)) continue // nested pattern — unsupported
+    if (!Node.isIdentifier(nameNode)) continue
     const paramName = nameNode.getText()
     const propertyNameNode = element.getPropertyNameNode()
     const attrName = propertyNameNode ? propertyNameNode.getText() : paramName
@@ -170,103 +202,50 @@ export function buildParamBindings(fn: FunctionLike): { childrenParam?: string; 
   return { childrenParam, params, hasUndestructuredParam: false }
 }
 
-/** The call site's own JsxAttribute nodes, keyed by attribute name (self-closing or open/close form — both expose `getAttributes()`). */
-function callSiteAttributes(opening: JsxOpeningLikeElement): Map<string, JsxAttribute> {
-  const map = new Map<string, JsxAttribute>()
-  for (const attr of opening.getAttributes()) {
-    if (Node.isJsxAttribute(attr)) map.set(attr.getNameNode().getText(), attr)
-  }
-  return map
-}
 
-/** Verbatim source text of an attribute's VALUE, as a standalone expression usable at the splice position — never the evaluated value. */
-function attrValueText(attr: JsxAttribute): string {
-  const init = attr.getInitializer()
-  if (!init) return 'true' // boolean shorthand: `<Card featured/>`
-  if (Node.isStringLiteral(init)) return init.getText() // keep the quoted literal as-is — valid standalone JS
-  if (Node.isJsxExpression(init)) {
-    const inner = init.getExpression()
-    return inner ? inner.getText() : 'undefined'
-  }
-  return init.getText()
-}
+// ---------------------------------------------------------------------------
+// The post-build gate
+// ---------------------------------------------------------------------------
 
 /**
- * Builds the inlined JSX text for `root` (the component's chosen returned
- * JSX), substituting every `{paramName}` reference with the call site's own
- * argument text (or its destructured default when the call site omitted the
- * attribute), and every `{childrenParam}` reference with the call site's own
- * children source text. AST-driven (offsets from `root`'s own descendants),
- * never a blind text search-and-replace, so an unrelated identifier that
- * happens to share a param's name elsewhere in the file is never touched —
- * only `root`'s own subtree is walked.
+ * Re-reads the markup as it now sits in the page and checks every free name
+ * against the plan. A planning bug that left a component-scope name behind
+ * (the pre-DET-1 codemod's whole failure class) is caught here as an
+ * `unbound-reference`/`name-collision` instead of being written.
  */
-function buildInlinedJsxText(
-  root: Node,
-  childrenParam: string | undefined,
-  params: Map<string, ParamBinding>,
-  attrs: Map<string, JsxAttribute>,
-  callSiteChildrenText: string,
-): string {
-  const fullText = root.getSourceFile().getFullText()
-  const replacements: { start: number; end: number; text: string }[] = []
-
-  root.forEachDescendant((node) => {
-    if (!Node.isJsxExpression(node)) return
-    const expr = node.getExpression()
-    if (!expr || !Node.isIdentifier(expr)) return
-    const name = expr.getText()
-
-    if (childrenParam && name === childrenParam) {
-      replacements.push({ start: node.getStart(), end: node.getEnd(), text: callSiteChildrenText })
-      return
+function gateInsertedMarkup(inserted: Node, page: SourceFile, plan: DetachPlan): void {
+  for (const variable of analyzeFreeVariables(inserted, page)) {
+    const { name } = variable
+    const kinds = plan.expected.get(name)
+    const now = bindingKindAt(inserted, name, page)
+    if (!kinds) {
+      fail(
+        now === 'none' ? 'unbound-reference' : 'name-collision',
+        now === 'none'
+          ? `The detached markup would read \`${name}\`, which nothing in the page declares.`
+          : `The detached markup would read \`${name}\`, and in the page that name means something else.`,
+      )
     }
-
-    const binding = params.get(name)
-    if (!binding) return
-    const attr = attrs.get(binding.attrName)
-    const valueText = attr ? attrValueText(attr) : binding.defaultText
-    // No call-site value AND no default: leave `{paramName}` untouched — a
-    // documented gap (see this module's header), not a guess.
-    if (valueText === undefined) return
-    replacements.push({ start: node.getStart(), end: node.getEnd(), text: `{${valueText}}` })
-  })
-
-  if (replacements.length === 0) return root.getText()
-
-  replacements.sort((a, b) => a.start - b.start)
-  let out = ''
-  let cursor = root.getStart()
-  for (const r of replacements) {
-    out += fullText.slice(cursor, r.start)
-    out += r.text
-    cursor = r.end
+    if (kinds.has('call-site') && now !== plan.callSiteKinds.get(name)) {
+      fail('name-collision', `The call site's \`${name}\` would bind to something else once the markup is inlined.`)
+    }
+    if (kinds.has('module') && now !== 'module') {
+      fail(
+        now === 'none' ? 'unbound-reference' : 'name-collision',
+        `The detached markup's \`${name}\` would not bind to the import it needs at that position in the page.`,
+      )
+    }
+    if (kinds.has('global') && now !== 'none') {
+      fail('name-collision', `The detached markup reads the global \`${name}\`, which the page shadows at that position.`)
+    }
   }
-  out += fullText.slice(cursor, root.getEnd())
-  return out
-}
-
-/** Every top-level identifier `root`'s JSX references that would need to resolve in the PAGE file: JSX tag names (sub-components) and bare identifiers inside expression containers, excluding this component's own param/children bindings (already substituted) and lowercase HTML tags. */
-function referencedIdentifiers(root: Node, params: ReadonlySet<string>, childrenParam: string | undefined): Set<string> {
-  const names = new Set<string>()
-  root.forEachDescendant((node) => {
-    if (Node.isJsxSelfClosingElement(node) || Node.isJsxOpeningElement(node)) {
-      const tagName = node.getTagNameNode().getText().split('.')[0]!
-      if (/^[A-Z]/.test(tagName)) names.add(tagName)
-      return
+  for (const name of freeVariablesOutOfScopeAt(inserted, inserted, page)) {
+    const kinds = plan.expected.get(name)
+    const unboundBefore = kinds?.has('call-site') && plan.callSiteKinds.get(name) === 'none'
+    if (!kinds?.has('global') && !unboundBefore) {
+      fail('unbound-reference', `The detached markup would read \`${name}\`, which nothing in the page declares.`)
     }
-    if (Node.isJsxExpression(node)) {
-      const expr = node.getExpression()
-      const rootId = expr ? rootIdentifier(expr) : undefined
-      if (rootId && rootId !== childrenParam && !params.has(rootId) && /^[A-Za-z_$][\w$]*$/.test(rootId)) {
-        // Skip lowercase locals declared inside the expression itself (rare in
-        // JSX position) — a bare, capitalized-or-lowercase module-scope name
-        // is the common shape (`DEFAULT_ICON`, `styles`, an imported const).
-        names.add(rootId)
-      }
-    }
-  })
-  return names
+  }
 }
 
 /**
@@ -274,26 +253,20 @@ function referencedIdentifiers(root: Node, params: ReadonlySet<string>, children
  * own returned JSX at the call site, substituted with the call site's own
  * argument expressions, reconciles imports, and returns `{ok:true}` (the
  * client should reload — a write here always shifts line numbers). Refuses,
- * with a specific reason, when the target isn't safely inlinable — see this
- * module's header.
+ * with a specific reason and with the file untouched, when the target isn't
+ * faithfully inlinable — see this module's header.
  */
 export function detachComponentInstance(params: DetachComponentParams): DetachResult {
   const { file, line, col, workspaceRoot } = params
   // Unlike this module's siblings (`setJsxProp`, …), this codemod needs
-  // CROSS-FILE resolution — the target component's own declaring file — so
-  // it needs a workspace-wide `Project`, not a single-file `createProject()`
-  // (see `componentSources.ts`'s own doc comment for why a bare `Project`
-  // cannot resolve a module specifier to a file it doesn't already know
-  // about).
+  // CROSS-FILE resolution — the target component's own declaring file, and
+  // the checker's view of both files' scopes — so it needs a workspace-wide
+  // `Project`, not a single-file `createProject()`.
   const project = params.project ?? createWorkspaceProject(workspaceRoot)
-  // New import declarations synthesized below (`addReconciledImports`) follow
-  // ts-morph's own quote-kind setting, not the file's existing style — unlike
-  // every other codemod in this directory, which edits an EXISTING literal in
-  // place and matches its quotes textually (see `setImportSpecifier.ts`).
-  // Default to single quotes (this codebase's own dominant convention) rather
-  // than ts-morph's double-quote default; a project that genuinely prefers
-  // double quotes gets a one-file quote mismatch a formatter fixes, which is
-  // a smaller cost than guessing wrong the other direction.
+  // New import declarations follow ts-morph's quote-kind setting, not the
+  // file's existing style. Default to single quotes (this codebase's own
+  // dominant convention); a project that prefers double quotes gets a
+  // one-line mismatch a formatter fixes.
   project.manipulationSettings.set({ quoteKind: QuoteKind.Single })
   const sourceFile = loadSourceFile(project, file)
 
@@ -337,7 +310,8 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
   const hadAlternatives = roots.some((r) => !r.chosen)
 
-  const propNames = new Set([...paramBindings.keys(), ...(childrenParam ? [childrenParam] : [])])
+  const restName = readParamTable(fn).rest?.getName()
+  const propNames = new Set([...paramBindings.keys(), ...(childrenParam ? [childrenParam] : []), ...(restName ? [restName] : [])])
   if (mapsOverAnyProp(chosen.expr, propNames)) {
     return refuse(
       'maps-over-props',
@@ -345,47 +319,28 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     )
   }
 
-  const attrs = callSiteAttributes(opening)
-  // A self-closing element (`<Card/>`) HAS no children and IS the whole call
-  // site — `.getParent()` on it returns whatever CONTAINS it (a `<div>`, a
-  // fragment, …), NOT "this element's own open+close pair". Only a
-  // `JsxOpeningElement`'s parent is meaningfully "the JsxElement this call
-  // site is". Conflating the two here read a SIBLING element's children as
-  // the call site's own, and — worse — replaced the wrong node's text below.
-  const isSelfClosing = Node.isJsxSelfClosingElement(opening)
-  const jsxElementWrapper = !isSelfClosing ? opening.getParent() : undefined
-  const callSiteChildrenText =
-    jsxElementWrapper && Node.isJsxElement(jsxElementWrapper)
-      ? jsxElementWrapper.getJsxChildren().map((c) => c.getText()).join('')
-      : ''
-
-  // Computed BEFORE any import edits below (which insert new lines above the
-  // call site and would make a fresh (line, col) lookup stale) — `opening`
-  // and `jsxElementWrapper` stay live ts-morph node references across those
-  // structural edits (they're a different part of the same tree; only a
-  // node whose OWN text is replaced/removed gets "forgotten"), so re-using
-  // them here for the actual replacement is what keeps this correct without
-  // needing to re-locate by position.
-  const inlinedText = buildInlinedJsxText(chosen.expr, childrenParam, paramBindings, attrs, callSiteChildrenText)
-  const identifiers = referencedIdentifiers(chosen.expr, new Set(paramBindings.keys()), childrenParam)
-
-  addReconciledImports(sourceFile, target.sourceFile, identifiers)
-
-  // Replace the WHOLE call site (open+children+close, or self-closing) with
-  // the inlined text — self-closing replaces ITSELF; open/close replaces the
-  // JsxElement WRAPPER (open+children+close), never just the opening tag.
-  if (isSelfClosing) {
-    opening.replaceWithText(inlinedText)
-  } else if (jsxElementWrapper && Node.isJsxElement(jsxElementWrapper)) {
-    jsxElementWrapper.replaceWithText(inlinedText)
-  } else {
-    opening.replaceWithText(inlinedText)
+  const original = sourceFile.getFullText()
+  try {
+    const plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier).plan()
+    // Everything below writes the page IN MEMORY only; any refusal restores
+    // `original` and nothing reaches the disk.
+    const site = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
+    for (const pending of plan.imports) applyImportBinding(sourceFile, pending.request, pending.local)
+    if (target.sourceFile !== sourceFile) mirrorSideEffectImports(sourceFile, target.sourceFile)
+    const inserted = site.replaceWithText(plan.siteText)
+    gateInsertedMarkup(inserted, sourceFile, plan)
+    // Only now — after the call site's own tag reference is actually gone
+    // from the tree — is "does anything else in the file still reference
+    // Card" decidable.
+    removeImportIfLastUsage(sourceFile, identifier)
+    if (introducesSyntaxErrors(file, original, sourceFile.getFullText())) {
+      throw new Error(`[detachComponent] the detached source for <${identifier}> does not parse — nothing was written.`)
+    }
+  } catch (err) {
+    if (sourceFile.getFullText() !== original) sourceFile.replaceWithText(original)
+    if (err instanceof DetachRefusalSignal) return refuse(err.reason, err.message)
+    throw err
   }
-
-  // Only now — after the call site's own tag reference is actually gone from
-  // the tree — is "does anything else in the file still reference Card"
-  // decidable.
-  removeImportIfLastUsage(sourceFile, identifier)
 
   sourceFile.saveSync()
 

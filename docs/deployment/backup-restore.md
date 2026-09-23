@@ -1,17 +1,36 @@
 # Backup And Restore
+> **Purpose:** what to back up and how to restore it: the workspace, the database, uploads · **Read when:** backing up, restoring or migrating an install · **Trust:** current · **Owner:** server-engineer · **Verified:** 2026-09-23
 
-A complete backup includes the database and the uploaded media. The procedure depends on whether you're using Postgres or SQLite as the database engine. Pick the matching section below.
+A complete backup has three parts: **the Studio workspace** (`studio-workspace/`, the user's React projects: Studio's actual documents), the database, and the uploaded media. The database procedure depends on whether you're using Postgres or SQLite; pick the matching section below. The workspace and uploads are plain directories.
 
 ---
 
 ## TL;DR
 
-| Deployment | Database backup | Upload backup |
-|---|---|---|
-| VPS SQLite Compose | Copy `/app/data/cms.db` from the `data` volume | Archive the `uploads` volume |
-| VPS Postgres Compose | `pg_dump` from the `postgres` service | Archive the `uploads` volume |
-| Railway SQLite | Back up the app volume mounted at `/app/storage` | Same app volume, under `/app/storage/uploads` |
-| Railway Postgres | Back up the Postgres service volume/database | Back up the app volume mounted at `/app/storage` |
+| Deployment | Workspace backup | Database backup | Upload backup |
+|---|---|---|---|
+| VPS SQLite Compose | Archive `studio-workspace/` (see "The Studio workspace") | Copy `/app/data/cms.db` from the `data` volume | Archive the `uploads` volume |
+| VPS Postgres Compose | Archive `studio-workspace/` | `pg_dump` from the `postgres` service | Archive the `uploads` volume |
+| Railway SQLite | Archive `studio-workspace/` | Back up the app volume mounted at `/app/storage` | Same app volume, under `/app/storage/uploads` |
+| Railway Postgres | Archive `studio-workspace/` | Back up the Postgres service volume/database | Back up the app volume mounted at `/app/storage` |
+
+- **The workspace is the user's work.** Every project a user opened, imported or created lives under `studio-workspace/<project>/`: its `.tsx`/`.css` source (edited in place by Studio), its `.git`, and its `.studio/` sidecar (boards, comments, prototype links, the trust tier). A backup without it loses every design.
+- **The shipped container images do not persist it**: it sits outside every volume the Compose files and templates mount, so it is lost when the container is recreated unless `STUDIO_WORKSPACE_DIR` points at persistent storage. Where to put it: [README.md](README.md) → "Persistence Rules".
+- **`.data/` holds per-server private state** (`<cwd>/.data/`: MCP server secrets, the Claude CLI's config directory, the project seed, idempotency records). It is not user content, but losing it signs agent connectors and the CLI out. Back it up with the workspace if those matter to you; each location has its own `*_DIR` override.
+
+## The Studio workspace
+
+The workspace is a directory tree; archive it while no one is editing (Studio writes source files in place):
+
+```sh
+# default location, from the Studio checkout
+tar czf "backups/studio-workspace-$(date +%F).tgz" studio-workspace
+
+# or, when STUDIO_WORKSPACE_DIR is set
+tar czf "backups/studio-workspace-$(date +%F).tgz" -C "$STUDIO_WORKSPACE_DIR" .
+```
+
+In a container, run the same `tar` against the volume that holds it, the way the uploads archive below does for the `uploads` volume. Restore by extracting it back to the same path before starting Studio. Projects that are git repositories can also be pushed to their remotes from Studio's Version control panel, which is an independent copy of their source but not of `.studio/`.
 
 ## Postgres mode — backup
 
@@ -184,7 +203,7 @@ Railway-specific paths:
 | SQLite | `/app/storage/data/cms.db` | `/app/storage/uploads` |
 | Postgres | Railway Postgres service | `/app/storage/uploads` |
 
-For uploads, back up whatever disk or volume is mounted at `UPLOADS_DIR`.
+For uploads, back up whatever disk or volume is mounted at `UPLOADS_DIR`. For the workspace, back up the directory `STUDIO_WORKSPACE_DIR` points at; if it is unset on Railway, the workspace is in the container's writable layer and is not on the `/app/storage` volume at all.
 
 ## Related
 
@@ -192,4 +211,5 @@ For uploads, back up whatever disk or volume is mounted at `UPLOADS_DIR`.
 - [railway.md](railway.md) — Railway volume paths
 - [vps.md](vps.md) — VPS Compose volume names
 - `compose.prod.yml` — Postgres and uploads volume names
+- `server/handlers/studioProjects.ts` — `projectsRootDir()`, where the workspace lives and the `STUDIO_WORKSPACE_DIR` override
 - `compose.sqlite.yml` — SQLite data volume

@@ -69,24 +69,32 @@ export type ComponentSource =
  * below is the single source of truth for that), the workspace's tsconfig
  * only ever contributes path-alias resolution, never file selection or the
  * JS-parsing toggle.
+ *
+ * ## A tsconfig that does not parse costs its aliases, never the project (WB-23)
+ *
+ * ts-morph reads the tsconfig in the constructor and THROWS on one it cannot
+ * parse (`'}' expected.`) — and every caller builds its project first, so one
+ * missing brace, typed mid-edit by the user or an agent, took the whole board
+ * down with a raw TypeScript message and a 500. A project without the
+ * tsconfig is still an honest project: its only contribution is path-alias
+ * resolution, so the fallback loses exactly that and nothing else. The loss is
+ * reported, never silent — `warnings` receives one `tsconfig-unreadable`
+ * entry, which a load hands to the client.
  */
-export function createWorkspaceProject(workspaceRoot: string): Project {
+export function createWorkspaceProject(workspaceRoot: string, warnings?: WorkspaceProjectWarning[]): Project {
   const tsConfigFilePath = path.join(workspaceRoot, 'tsconfig.json')
-  const project = new Project({
-    useInMemoryFileSystem: false,
-    skipAddingFilesFromTsConfig: true,
-    compilerOptions: { allowJs: true },
-    // The user's repo may be a CRLF checkout. `EolPreservingFileSystem` hands
-    // ts-morph LF-only text so a page tree cannot depend on which way Git
-    // checked the repo out, and puts each file's own ending back at the one
-    // moment bytes reach the disk. See `./eolFileSystem`.
-    fileSystem: new EolPreservingFileSystem(),
-    // Codemods write through this project too; pin the printer to the same
-    // LF the file system normalises to, so the single place a line ending is
-    // decided stays the file system.
-    manipulationSettings: { newLineKind: NewLineKind.LineFeed },
-    ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
-  })
+  let project: Project
+  try {
+    project = newWorkspaceProject(existsSync(tsConfigFilePath) ? tsConfigFilePath : undefined)
+  } catch (err) {
+    warnings?.push({
+      code: 'tsconfig-unreadable',
+      message:
+        `tsconfig.json could not be read (${err instanceof Error ? err.message : String(err)}), so its path ` +
+        'aliases are ignored until it is fixed. Everything else loads as usual.',
+    })
+    project = newWorkspaceProject(undefined)
+  }
 
   // The explicit list, not a glob: `listWorkspaceSourceFiles` is the ONE
   // rule for which files are the user's source (the same walk the download
@@ -99,6 +107,30 @@ export function createWorkspaceProject(workspaceRoot: string): Project {
     project.addSourceFileAtPath(path.join(root, ...relPath.split('/')))
   }
   return project
+}
+
+/** Something `createWorkspaceProject` had to give up to build a project at all. `code` is stable — the client keys off it. */
+export interface WorkspaceProjectWarning {
+  code: 'tsconfig-unreadable'
+  message: string
+}
+
+function newWorkspaceProject(tsConfigFilePath: string | undefined): Project {
+  return new Project({
+    useInMemoryFileSystem: false,
+    skipAddingFilesFromTsConfig: true,
+    compilerOptions: { allowJs: true },
+    // The user's repo may be a CRLF checkout. `EolPreservingFileSystem` hands
+    // ts-morph LF-only text so a page tree cannot depend on which way Git
+    // checked the repo out, and puts each file's own ending back at the one
+    // moment bytes reach the disk. See `./eolFileSystem`.
+    fileSystem: new EolPreservingFileSystem(),
+    // Codemods write through this project too; pin the printer to the same
+    // LF the file system normalises to, so the single place a line ending is
+    // decided stays the file system.
+    manipulationSettings: { newLineKind: NewLineKind.LineFeed },
+    ...(tsConfigFilePath ? { tsConfigFilePath } : {}),
+  })
 }
 
 /**

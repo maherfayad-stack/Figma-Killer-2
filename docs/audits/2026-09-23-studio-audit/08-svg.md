@@ -1,4 +1,5 @@
 # Audit 08 — SVG on the canvas: insert, draw, edit, write back
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: canvas-engineer (read-only). Repo: `C:\Users\Admin\Documents\GitHub\Figma Killer 2`.
 Ground truth studied: Penpot `frontend/src/app/main/data/workspace/path/*`,

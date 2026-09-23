@@ -1,4 +1,5 @@
 # Glossary
+> **Purpose:** the project vocabulary, one entry per term · **Read when:** you meet a term you do not recognise · **Trust:** current · **Owner:** studio-scribe · **Verified:** not yet
 
 Terms that mean something specific here. Alphabetical.
 
@@ -179,47 +180,13 @@ C = pure calls in a narrow envelope. **D = banned** (branch selection, state,
 effects, async). Not to be confused with **trust tiers** below.
 
 **Trust tiers** — the per-project permission to run any of the user's own
-toolchain, stored as `.studio/meta.json`'s `trust` field and read/written by
-`server/handlers/studio/trustTier.ts`. Three values:
-
-- **Tier 0 — `static`**. Nothing of the user's ever runs. Parse, CSS Modules
-  transform, vendor `.css` reads. Reachable today only via an explicit
-  demotion (the Live pill's "Back to static") — see below.
-- **Tier 1 — `render-packages`**. Buys exactly two things: the workspace's own
-  style toolchain (Sass / PostCSS / Tailwind) compiles in a capped subprocess
-  (`styleCompileTier1.ts` → `styleCompileWorker.ts`), and its package components
-  are bundled and rendered on the canvas (`componentBundle.ts` →
-  `componentBundleWorker.ts`).
-- **Tier 2 — `run-project`** (`DEFAULT_TRUST_TIER` — every project starts
-  here, owner decision, 2026-09-20). What `deploy.ts` gates on (a preview
-  deploy builds the project, which runs its code) and what `devServer.ts`
-  gates on (Track L, `live-01`: one reused dev-server subprocess per project).
-  Both refuse via the shared `requireTrustTier` helper in `trustGate.ts`
-  unless a project has been explicitly demoted.
-
-**The parse itself never executes anything at any tier.** The tier is a
-per-project fact the owner can lower (the Live pill's "Back to static") and
-raise again; nothing promotes automatically any more, because nothing needs
-to — there is no lower default left to promote FROM. (Superseded: before
-2026-09-20, promotion to Tier 1 was always an explicit user click, and Tier 2
-had one narrow automatic case the owner called on 2026-09-17
-(`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2) — a Vite project with a lockfile
-was promoted on first open, once per project, with a notice and an Undo in
-the board chrome. That mechanism, `LiveAutoPromoteNotice`, is gone.) Gates
-that only need "above Tier 0" read `trust !== 'static'`.
-
-**A demotion stops the process, not just the file.** A `trust-tier` write that
-leaves a project below `run-project` calls `stopDevServer` before answering —
-the routes alone are not enough, because `server/liveOrigin.ts`'s
-unauthenticated `/p/<projectKey>/` proxy trusts the dev-server registry rather
-than re-reading `.studio/meta.json`. The permanent way back to Tier 0 in the UI
-is `LiveRuntimePill`'s "Back to static", present on every load.
-
-**Tier 2 is a PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — every
-project ships with both of a Tier-2 tool's gates (the connector capability
-AND `trust === 'run-project'`) satisfied by default, and no human answered a
-question to get there. Anything that genuinely needs a human to have agreed
-must ask at the point of use.
+toolchain, stored as `.studio/meta.json`'s `trust` field and written only by
+`server/handlers/studio/trustTier.ts`: `static` (Tier 0, nothing of the user's
+runs), `render-packages` (Tier 1, style toolchain + package components),
+`run-project` (Tier 2, the project's own dev server and preview deploys; the
+default for every project). The parse never executes anything at any tier.
+Full description, the gates and the default:
+[`docs/features/trust-tiers.md`](../features/trust-tiers.md).
 
 **Unroll** — neutralizing inner scroll containers on the design canvas so a whole
 app screen is visible in one frame (`canvasScrollUnroll.ts`,

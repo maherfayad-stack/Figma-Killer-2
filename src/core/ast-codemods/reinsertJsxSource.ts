@@ -334,7 +334,7 @@ function parsesAsOneImportDeclaration(text: string): boolean {
  * holding a broken tree for whatever edit runs after this one in the same
  * batch.
  */
-function introducesSyntaxErrors(file: string, original: string, candidate: string): boolean {
+export function introducesSyntaxErrors(file: string, original: string, candidate: string): boolean {
   const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
   // Two distinct filenames in one throwaway project (never `file` itself,
   // which would collide with whatever the real, disk-backed project holds),

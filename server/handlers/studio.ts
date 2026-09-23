@@ -34,7 +34,7 @@
  *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
  *       404 on anything rejected or missing.
  *
- *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
+ *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[], expect?: { [nodeId]: fingerprint } }
  *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). The edit
  *       model (`StudioEdit`), the bottom-to-top apply ordering, and the
  *       per-edit dir+edit→codemod dispatch (`applyStudioEdit`) live in
@@ -354,7 +354,7 @@ export async function tryServeStudio(
       // convert for every route not asked for, while the meta below stays a
       // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
       const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
-      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss } = loaded
+      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
@@ -411,7 +411,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -426,6 +426,7 @@ export async function tryServeStudio(
         conditions,
         vendorCss,
         authoredCss,
+        warnings,
         trust,
         projectKey,
         paletteHiddenModuleIds,
@@ -454,7 +455,7 @@ export async function tryServeStudio(
   // lost response after a `bun --watch` restart must never re-run a
   // `duplicate`/`insert`/`wrap`/`group` edit a second time.
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
@@ -478,7 +479,8 @@ export async function tryServeStudio(
         relocatedNodeIds,
         removed,
         prunedImports,
-      } = await applyStudioEditBatchLocked(dir, edits)
+        fingerprints,
+      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
@@ -528,6 +530,10 @@ export async function tryServeStudio(
         // `prunedImports.file` is already workspace-relative — nothing to strip.
         removed,
         prunedImports,
+        // P1-A — each landed value write's new identity, keyed by its own
+        // workspace-relative node id, so the board's next edit to the same
+        // element is not refused `element-moved` by this one.
+        fingerprints,
       })
     } catch (err) {
       return studioRouteFailure(err)
@@ -554,7 +560,7 @@ export async function tryServeStudio(
   // consistent with `/save` and `/page` rather than reasoning about safety
   // route-by-route.
   if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')

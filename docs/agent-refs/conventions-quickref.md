@@ -1,4 +1,5 @@
 # Conventions quick-reference
+> **Purpose:** every gated rule, compressed, plus the test traps · **Read when:** always, before writing code · **Trust:** rule · **Owner:** studio-scribe · **Verified:** not yet
 
 The rules that have **gate tests**. Breaking one fails `bun test`. Read before
 writing code. Full rationale is in `CLAUDE.md`; this page is the checklist.
@@ -146,6 +147,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
 - Reject: absolute paths, UNC paths, `..` on **either** separator, empty
   segments, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`
   (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`).
+- **A WRITE asks one predicate: `@core/page-parser`'s `workspaceWriteScope.ts`**
+  (P1-G). `UNWRITABLE_WORKSPACE_DIR_NAMES` is the walk exclusions plus
+  `.claude`; `unwritableWorkspaceSegment(rel)` is the pure check (case-folded,
+  trailing dots/spaces and NTFS stream suffixes dropped);
+  `isWorkspaceWritablePath(root, abs)` adds containment and the same check on
+  the REAL path, and refuses a path through a dangling link. The writeback
+  decoder, CSS writeback, asset landing, the component-copy codemods and the
+  agent's native-write hook all use it — never write a new
+  `segments.some(EXCLUDED_WORKSPACE_DIR_NAMES.has)` for a write.
 - **Containment is checked on the real path, after resolving symlinks.** A repo
   can arrive from GitHub and git stores symlinks — a textual check is bypassable.
   That includes the WRITEBACK decoder: `studioEditLocation(dir, nodeId)` and
@@ -232,8 +242,40 @@ Parallel sessions exist. A failure outside your `git diff` is **not yours** —
 note it in the handoff and move on. Do not "fix" it, do not comment out a
 failing test, do not revert someone else's work.
 
-**Do not run browser/e2e tests to validate UI work.** The human dogfoods UI.
-Static gates + a "needs human dogfood" note in `STATE.md`.
+**Browser or not** is decided by `CLAUDE.md` → "Verification": a change to the
+canvas, a frame, an overlay, geometry or a panel's height also runs
+`bun run test:e2e` for the specs it touches, asserting on computed layout.
+Panels, forms, server, parser and store work stop at the static gates, and the
+handoff ends with a dogfood checklist for the owner.
+
+### Test traps
+
+- **`mock.module` is process-wide and permanent.** `mock.restore()` restores
+  spies, not module mocks, so one unrestored module mock breaks every later
+  file in the same process. Read the header of
+  `src/__tests__/architecture/mock-module-must-restore.test.ts` before writing
+  one.
+- **The editor store is a module singleton.** `src/__tests__/setup.ts` resets
+  `useEditorStore` after every test through the hook `store.ts` publishes on
+  `globalThis` (`__resetEditorStoreForTests`). A new singleton store needs the
+  same treatment.
+- **CRLF.** Windows checkouts run with `core.autocrlf=true`, and JavaScript's
+  `.` does not match `\r`. A regex over file text must allow `\r\n`, or it
+  silently matches nothing on Windows.
+- **happy-dom's CSSOM drops every rule inside an `@layer` block**, with no
+  warning. Never round-trip a whole stylesheet through it:
+  `src/core/siteImport/cssToStyleRules.ts` runs `unwrapCssLayers` first for
+  exactly this reason.
+- **happy-dom has no layout engine.** A unit test cannot fail on `scrollHeight`,
+  measured rects or overflow; that is why those changes run the e2e gate.
+
+---
+
+### Commits
+
+One commit per work order, so a bad one can be reverted alone instead of
+unpicked from a blob. The branch, PR and staging rules are `CLAUDE.md` →
+"Repository workflow and PR conventions".
 
 ---
 

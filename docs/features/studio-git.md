@@ -1,4 +1,5 @@
 # Studio git integration
+> **Purpose:** version control against the project's own repository, GitHub sign-in, the agent commit tool · **Read when:** touching the Git panel or git routes · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Status:** v1 (W4-3). **Dogfooded against a real private github.com repository**
 by `tests/e2e/github-sync.e2e.ts` (the G8 script from `git-22`), which creates a

@@ -46,10 +46,12 @@
  * A test that genuinely imported the package would fail to resolve under
  * `bun test`, which is a louder gate than this one.
  *
- * `docs/state-archive/`, `docs/audits/`, `STATE.md` and the `STUDIO-*-PLAN.md`
- * files are excluded outright — they are a written record of what was true
- * when they were written, and rewriting history to please a grep is worse than
- * the grep failing.
+ * `docs/state-archive/`, `docs/audits/`, `docs/archive/` (the archived
+ * `STUDIO-*-PLAN.md` files and handoffs) and `STATE.md` are excluded outright —
+ * they are a written record of what was true when they were written, and
+ * rewriting history to please a grep is worse than the grep failing. Keep
+ * `docs/archive/` outside `DOC_TARGETS`: never nest it under
+ * `docs/features|reference|agent-refs`.
  *
  * @see server/handlers/studio/designSystemMigrate.ts — the one allowed caller
  * @see vendor/alm-design-system/ — what replaced the npm

@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { listProjectImageAssets, tryServeStudioProjectAssets } from '../studio/projectAssets'
+import { describeProjectImageAssets, listProjectImageAssets, tryServeStudioProjectAssets } from '../studio/projectAssets'
 
 let tmpDir: string
 
@@ -83,6 +83,36 @@ describe('listProjectImageAssets', () => {
     writeFile('keep.png')
 
     expect(listProjectImageAssets(tmpDir)).toEqual(['keep.png'])
+  })
+})
+
+/**
+ * IMG-1 — each listed image carries the URL the SERVER computed
+ * (`assetSiteUrl.ts`), so the picker writes it instead of deriving one. The
+ * deleted client rule joined `public` to the project dir; in a monorepo that
+ * called the wrong folder build-safe.
+ */
+describe('describeProjectImageAssets', () => {
+  it('attaches the site URL and build-safety verdict to every image', () => {
+    writeFile('package.json', JSON.stringify({ name: 'app' }))
+    writeFile('public/hero.png')
+    writeFile('src/assets/EN-2.png')
+
+    expect(describeProjectImageAssets(tmpDir)).toEqual([
+      { relPath: 'public/hero.png', src: '/hero.png', buildSafe: true },
+      { relPath: 'src/assets/EN-2.png', src: '/src/assets/EN-2.png', buildSafe: false },
+    ])
+  })
+
+  it("in a monorepo, only the APP's public/ is build-safe and a file outside the app has no URL", () => {
+    writeFile('web/package.json', JSON.stringify({ name: 'web' }))
+    writeFile('web/public/hero.png')
+    writeFile('docs/diagram.png')
+
+    expect(describeProjectImageAssets(tmpDir)).toEqual([
+      { relPath: 'docs/diagram.png', src: null, buildSafe: false },
+      { relPath: 'web/public/hero.png', src: '/hero.png', buildSafe: true },
+    ])
   })
 })
 

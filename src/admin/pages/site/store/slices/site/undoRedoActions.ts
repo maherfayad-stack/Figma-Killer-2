@@ -25,6 +25,7 @@ import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
 import { reissueStructuralMove } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralHistory } from './types'
 
 type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
@@ -48,6 +49,13 @@ function runStructuralStep(
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
 ): boolean {
+  // ERR-4 — a structural undo/redo is a WRITE (a move re-issued through
+  // `moveNodes`, or a source gesture's inverse posted), so it queues behind a
+  // structural write still in flight like every other structural writer. The
+  // whole step is parked, not just its write: when it runs it reads the top
+  // of the stack as the in-flight write's resync (and its history remap) left
+  // it, so ⌘Z pressed during a drag's commit undoes that drag.
+  if (deferWhileStructuralCommitInFlight(() => get()[direction]())) return true
   const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
   const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
   // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale

@@ -1,4 +1,5 @@
 # Studio comments
+> **Purpose:** review threads pinned to the board and the agent loop over them · **Read when:** touching comments or the anchor model · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Review threads pinned to the Studio board, stored in the project's own repository
 and readable by the AI agent.

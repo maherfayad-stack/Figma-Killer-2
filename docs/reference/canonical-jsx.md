@@ -1,4 +1,5 @@
 # Canonical JSX
+> **Purpose:** the JSX subset Studio reads and writes losslessly, and its validator · **Read when:** authoring or checking canonical screens · **Trust:** current · **Owner:** parser-surgeon · **Verified:** not yet
 
 A documented subset of React that Studio reads perfectly and writes back losslessly.
 

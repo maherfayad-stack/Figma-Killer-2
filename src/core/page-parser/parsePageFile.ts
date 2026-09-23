@@ -50,6 +50,7 @@ import { applyStyledAttachment, resolveStyledAttachment } from './cssInJsAttach'
 import { serializeInlineSvg } from './inlineSvg'
 import { extractRawSvgMarkup } from './iconPropValues'
 import { captureSlotProps } from './slotCapture'
+import { jsxElementFingerprint } from './sourceFingerprint'
 
 // Re-exported so every existing `from './parsePageFile'` import (`index.ts`,
 // `inlineLocalComponents.ts`, `nextAppLayout.ts`, `componentSubstitution.ts`)
@@ -371,6 +372,8 @@ function processElement(
   // `loc` stays the real source location even for an expanded loop iteration —
   // that IS where this element is written. Only the id is made unique.
   const id = buildSourceNodeId(ctx.relFile, line, column, ctx.idSuffix)
+  // P1-A — who this position names, for the writeback guard. A `.map` row has no writable location to guard.
+  const identity = ctx.idSuffix ? {} : { fingerprint: jsxElementFingerprint(element) }
 
   const attributes = Node.isJsxElement(element)
     ? element.getOpeningElement().getAttributes()
@@ -421,6 +424,7 @@ function processElement(
       props: markup === undefined ? propsResult.props : { ...propsResult.props, svg: markup },
       children: [],
       loc,
+      ...identity,
       locked: svgLock.locked,
       ...(svgLock.lockReason ? { lockReason: svgLock.lockReason } : {}),
       // `svg` is markup serialised from the JSX children, not an attribute —
@@ -452,6 +456,7 @@ function processElement(
       props: { ...propsResult.props, svg: rawSvg },
       children: [],
       loc,
+      ...identity,
       locked: rawLock.locked,
       ...(rawLock.lockReason ? { lockReason: rawLock.lockReason } : {}),
       // `svg` is resolved out of `dangerouslySetInnerHTML={{__html: …}}`, an
@@ -521,6 +526,7 @@ function processElement(
     props,
     children,
     loc,
+    ...identity,
     locked: lock.locked,
     ...(lock.lockReason ? { lockReason: lock.lockReason } : {}),
     ...(codeProps.length > 0 ? { codeProps } : {}),

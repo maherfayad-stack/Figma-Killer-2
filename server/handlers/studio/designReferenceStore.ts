@@ -38,11 +38,11 @@
  * call, not a claim that a design reference is disposable in the same sense
  * cache output is — see `.gitignore`'s own comment at that entry.
  *
- * Write path: `landAssetBytes` (`assetLanding.ts`) — the SAME magic-number
- * sniff / SVG-refusal / collision-safe write pipeline `studio_upload_asset`
- * and `studio_fetch_remote_asset` already use, via the one deliberate
- * `DESIGN_REFERENCE_ASSET_DIR` exception carved into `resolveAssetWriteDir`.
- * There is no second write path here.
+ * Write path: `landDesignReferenceBytes` (`assetLanding.ts`) — the SAME
+ * magic-number sniff / collision-safe write pipeline `studio_upload_asset`
+ * and `studio_fetch_remote_asset` use, into `DESIGN_REFERENCE_ASSET_DIR`, a
+ * directory the server fixes. No client-supplied `targetDir` can reach
+ * `.studio/` (P1-G). There is no second write path here.
  *
  * **Cardinality: many per project, explicitly.** The manifest is a list, not
  * a slot — a real fidelity workflow wants one reference per page/frame
@@ -60,7 +60,7 @@ import { dirname, join } from 'node:path'
 import sharp from 'sharp'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { isRealpathContained } from './workspacePackageResolve'
-import { DESIGN_REFERENCE_ASSET_DIR, landAssetBytes, sniffImageExtension } from './assetLanding'
+import { DESIGN_REFERENCE_ASSET_DIR, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
 import {
   DESIGN_REFERENCE_MIME_TYPES,
   DesignReferenceManifestSchema,
@@ -126,7 +126,7 @@ export type RegisterDesignReferenceResult =
  * dimensions are probed via `sharp` BEFORE anything is written, so an
  * undecodable image never leaves an orphaned file behind. Never re-encodes
  * or downsamples — the bytes written are the bytes given, verbatim (SVG
- * would normally go through `landAssetBytes`'s sanitizer, but SVG is refused
+ * would normally go through the landing pipeline's sanitizer, but SVG is refused
  * outright before that point — see module doc).
  */
 export async function registerDesignReference(
@@ -163,7 +163,7 @@ export async function registerDesignReference(
   }
 
   const id = randomUUID()
-  const landed = landAssetBytes(dir, DESIGN_REFERENCE_ASSET_DIR, bytes, id)
+  const landed = landDesignReferenceBytes(dir, bytes, id)
   if (!landed.ok) return { ok: false, error: landed.error }
 
   const reference: DesignReference = {

@@ -1,4 +1,5 @@
 # 05 — Design pane + editor-chrome UX audit (read-only)
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: panel-designer · 2026-09-23 · no repo files modified.
 Ground truth: Penpot source at `../penpot/frontend/src/app/main/ui/**` plus Studio's own measured

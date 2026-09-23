@@ -128,6 +128,7 @@ const IDEMPOTENT_REPLAY_PATHS = new Set([
   '/admin/api/studio/save',
   '/admin/api/studio/page',
   '/admin/api/studio/boards',
+  '/admin/api/studio/asset-drop',
 ])
 
 /** The header carrying the per-attempt request id — see the module doc and `IDEMPOTENT_REPLAY_PATHS`. */

@@ -1,4 +1,5 @@
 # Auth and Access
+> **Purpose:** sessions, MFA, step-up, lockout, CSRF, capabilities and roles · **Read when:** touching sign-in, sessions or capability checks · **Trust:** current · **Owner:** security-guard · **Verified:** not yet
 
 The full authentication and authorization surface — login, sessions, MFA, capabilities, roles, lockout, step-up, CSRF defense, CORS.
 

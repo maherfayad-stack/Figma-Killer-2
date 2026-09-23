@@ -1,4 +1,5 @@
 # Generic Docker Image
+> **Purpose:** the production Docker image outside the VPS Compose files · **Read when:** building or running the image yourself · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This guide covers the production Docker image outside the bundled VPS Compose files.
 

@@ -1,10 +1,11 @@
 # Canvas Drag-and-Drop
+> **Purpose:** drag and drop in the editor: mechanisms, drop resolution, the D2 target architecture · **Read when:** touching any drag, drop or insert-at-a-point gesture · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-23
 
 How drag-and-drop works in the visual editor: dropping new modules from the picker / library, moving existing nodes around the page tree, wrap-to-container, multi-select moves, and the drop-zone overlay.
 
 **Four independent, incompatible DnD mechanisms coexist in Studio** — this is
-tracked architectural debt (`STUDIO-FIGMA-PARITY-PLAN.md` Track D2 proposes a
-single-engine unification), not a design choice. Do not assume `@dnd-kit/core`
+tracked architectural debt (see "The D2 target architecture, and how much of it
+exists" near the end of this doc), not a design choice. Do not assume `@dnd-kit/core`
 is present on a surface just because it is present on another — check the
 topology below first.
 
@@ -96,11 +97,12 @@ topology below first.
   no `DndContext` (`useCanvasInsertionDrag.ts`), sharing the canvas's drop-zone
   resolver through `canvasInsertionDrop.ts`. Its one live source is the canvas
   notch's Text / Div / Span primitives; the insert dialog that used to drag
-  module cards is deleted, and dragging from the Assets panel is a deliberate
-  follow-up (DS-4b). A media-asset counterpart
+  module cards is deleted; the Assets panel's cards drag through the same hook
+  (`AssetsPanel.tsx`), into static and live frames alike. A media-asset counterpart
   (`useMediaCanvasInsertionDrag.ts`) used to ride the same resolver from the
   Media Explorer panel; that panel was CMS-only chrome and both are gone.
-- The **Media workspace** (folders/assets — not the canvas) is a fourth
+- The **media picker** (`MediaPickerModal`'s folder tree and asset grid —
+  not the canvas) is a fourth
   mechanism: native HTML5 drag-and-drop (`draggable`, `dataTransfer` —
   `useMediaDnd.ts`, `mediaDragDrop.ts`, `mediaDnd.ts`). `dataTransfer` is
   unreadable during `dragover` (HTML spec "protected mode"), so legality
@@ -172,14 +174,14 @@ New-module insertion — raw pointer, no DndContext at all
     canvasInsertionDrop.ts's resolveCanvasPointerInsertionDrop, which shares
     canvasDnd.ts's resolver with the canvas reorder drag above.
 
-Media workspace (folders/assets) — native HTML5 DnD, a FOURTH mechanism
+Media picker (folders/assets in MediaPickerModal) — native HTML5 DnD, a FOURTH mechanism
 ─────────────────────────────────────────────────────────────────────────
   draggable + onDragStart/onDragOver/onDrop, dataTransfer payloads
   (useMediaDnd.ts, mediaDragDrop.ts, mediaDnd.ts). Unrelated to the canvas —
   documented here only so its existence isn't mistaken for a canvas pattern.
 ```
 
-Drag sources (canvas + DOM panel — the Media workspace is a separate topology, above):
+Drag sources (canvas + DOM panel — the media picker is a separate topology, above):
 
 | Source                              | Origin                           | Drop result                                                                |
 |--------------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
@@ -821,7 +823,7 @@ there is no `onDragEnd` to hook into. React to the resolved target in
 `handleWindowPointerUp` (`useCanvasReorderDrag.ts`) or the pointerup handler
 that closes the gesture (`useCanvasInsertionDrag.ts`).
 
-**On the Media workspace** (native HTML5 DnD): react in `onDrop` on the
+**In the media picker** (native HTML5 DnD): react in `onDrop` on the
 target element (`useMediaDnd.ts`'s `handleDrop`), same as any native
 drag-and-drop consumer. Don't try to route it through `@dnd-kit` — it isn't
 present on that surface.
@@ -832,7 +834,7 @@ present on that surface.
 
 | Pattern                                                                                             | Use instead                                                                                                    |
 |--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| Adding a NEW native HTML5 DnD surface outside the Media workspace                                     | Reuse the canvas pointer-drag pattern (`useCanvasReorderDrag.ts`) or `@dnd-kit/core` (DOM panel / Site Explorer). Native HTML5 DnD is scoped to the Media workspace only — and even there, legality checks during `dragover` must go through `readActiveMediaDragPayload()` (the session mirror), never `dataTransfer.getData()`, which the HTML spec mandates return `""` in "protected mode" |
+| Adding a NEW native HTML5 DnD surface outside the media picker                                        | Reuse the canvas pointer-drag pattern (`useCanvasReorderDrag.ts`) or `@dnd-kit/core` (DOM panel / Site Explorer). Native HTML5 DnD is scoped to the media picker and OS file drops only — and even there, legality checks during `dragover` must go through `readActiveMediaDragPayload()` (the session mirror), never `dataTransfer.getData()`, which the HTML spec mandates return `""` in "protected mode" |
 | `react-dnd`                                                                                             | Not used anywhere in this codebase — don't introduce it                                                            |
 | Adding `@dnd-kit/core` (or native HTML5 `dataTransfer` DnD) to a NEW file  | Both are pinned to an explicit allowlist in `src/__tests__/architecture/single-drag-mechanism.test.ts` — a new surface reaching for either fails that gate. Use the canvas's raw-pointer-event pattern instead |
 | Computing drop targets ad-hoc per surface                                                              | `resolveCanvasDropTarget(...)` / `resolveCanvasInsertionTarget(...)` (canvas) or `resolveDomDropTarget(...)` (DOM panel) — same zone math, same zoom handling |
@@ -860,7 +862,7 @@ present on that surface.
   - `src/admin/pages/site/canvas/canvasPointerRelay.ts` — cross-iframe pointer relay the reorder drag depends on
   - `src/admin/pages/site/panels/DomPanel/DomPanel.tsx` — the DOM panel's own `<DndContext>` (`autoScroll={false}` — see `useDomPanelDnd.ts`'s own auto-scroll)
   - `src/admin/pages/site/panels/DomPanel/useDomPanelDnd.ts` — DOM panel drag-state hook (real `@dnd-kit/core`)
-  - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — Media workspace native HTML5 DnD, incl. the `dragover` protected-mode session mirror
+  - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — the media picker's native HTML5 DnD, incl. the `dragover` protected-mode session mirror
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
   - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
@@ -894,38 +896,32 @@ previews WHILE the pointer is down for the canvas and DOM-panel surfaces (see
 gate is unchanged and remains authoritative); `Alt+↑`/`Alt+↓` keyboard
 reorder (see "Keyboard reorder (G12, partial)" above).
 
-**Known remaining gaps, not yet fixed** (see `STUDIO-FIGMA-PARITY-PLAN.md`
-Track D2 / `docs/audits/2026-08-06/07-drag-and-drop.md` for the full audit):
+## The D2 target architecture, and how much of it exists
 
-- **A canvas drag can never leave the frame it started in** (silent no-op if
-  released over a different frame) — `useCanvasReorderDrag.ts` still measures
-  candidates once, from one iframe, at `pointerdown`. This needs the
-  board-wide `frameCandidateIndex` the target architecture describes below;
-  not built this pass.
-- **You still cannot drag an element on the canvas by pressing it** — the
-  only trigger remains the selection toolbar's hand-grab button
-  (`SelectionToolbar.tsx`). `NodeRenderer.tsx` still has no drag-arming
-  pointer hook of its own.
-- **Insertion drags (module picker, media→canvas) still re-measure the whole
-  frame on every `pointermove`** — no RAF coalescing, no candidate caching.
-- **Insertion drags can still resolve against the wrong page** when the
-  pointer is over a non-active board frame (`canvasInsertionDrop.ts` picks
-  the viewport geometrically but resolves against `selectActiveCanvasPage`).
-- **Board furniture** (frames/notes/docs) still writes the store twice per
-  `pointermove`, has no multi-frame drag, no Escape-to-cancel, and variants
-  don't snap to each other (`boardSnapping.ts` keys peers by `pageId`).
-- **No file drop** onto the canvas or the Studio importer.
-- **No `KeyboardSensor`** on either `@dnd-kit/core` `<DndContext>` — a
-  `@dnd-kit`-driven drag itself still has no keyboard path (only the new
-  `Alt+↑`/`Alt+↓` plain-reorder command does).
-- **The target `dragSession` singleton + board-wide `frameCandidateIndex` +
-  one source-aware `resolveDrop` do not exist yet.** Three incompatible
-  mechanisms (raw pointer, `@dnd-kit/core`, native HTML5 `dataTransfer`)
-  still coexist — see the topology at the top of this doc. `@dnd-kit/core`
-  is NOT removed; `src/__tests__/architecture/single-drag-mechanism.test.ts`
-  contains it (and native HTML5 DnD) to an explicit allowlist so the
-  fragmentation cannot silently spread further while the real unification
-  is pending.
+The drag-and-drop audit of 2026-08-06 (`docs/audits/2026-08-06/07-drag-and-drop.md`) found sixteen drag surfaces, four incompatible mechanisms, six drop resolvers and three index-normalisation implementations. The target it set, which `src/__tests__/architecture/single-drag-mechanism.test.ts` points to when it fails:
+
+- **One drag session** per gesture, replacing the `data-studio-canvas-dragging` global attribute and the inline pointer loops. Pointer moves write a ref; one `requestAnimationFrame` resolves and paints; React state is committed **once**, on `pointerup`. The pattern to copy is `src/admin/shared/FloatingWindow/useDraggablePanel.ts`, which writes CSS custom properties during the move.
+- **A candidate index measured once per drag**, board-wide, so a drop can land in another frame and no `pointermove` forces layout.
+- **One source-aware drop resolution** that calls `previewStructuralMove`, so a refusal shows **while the pointer is still down**.
+- **Three thin adapters** over that core: canvas, tree row, board furniture.
+- **`@dnd-kit/core` removed.** It cannot cross the iframe boundary, which is why the canvas drag was hand-rolled beside it; under the no-old-and-new rule, one mechanism survives.
+
+What exists today:
+
+| Target piece | State | Where |
+|---|---|---|
+| Canvas reorder as one session, zero React commits and zero forced layout per move, Escape cancels, Shift locks the axis | built | `useCanvasReorderDrag.ts`, `canvasDragSession.ts`, `canvasDragPainter.ts` ("The drag session (S2)" above) |
+| Pressing an element body starts the same session as the hand-grab | built | `useCanvasBodyDragTrigger.ts` ("Body drag" below) |
+| A drag that crosses into another frame moves the markup between files | built | "The reflow preview (K6)" and the cross-frame transplant (`transplantJsxElement.ts`) |
+| Insertion drags measure each frame's candidates once per drag, resolve per animation frame, against the frame under the pointer (static or live) | built | `useCanvasInsertionDrag.ts`, `canvasInsertionDragSnapshot.ts` |
+| Refusal preview while the pointer is down (G5) | built | "Source-writeback refusal preview (G5)" above |
+| Board furniture: Escape abandons a frame drag | built | `BoardFramesLayer/useBoardFrameMoveDrag.ts` |
+| File dropped from the operating system onto the canvas | built | "The file-drag preview (G15)" above |
+| A tree-row adapter on the same session core | **not built**: the DOM panel's layer tree still runs its own `@dnd-kit/core` drag (`useDomPanelDnd.ts`) | |
+| `@dnd-kit/core` removed | **not built**: `AdminCanvasEditorBody.tsx` and the DOM panel still import it; `single-drag-mechanism.test.ts` pins every user to an allowlist | |
+| No `KeyboardSensor` on the `@dnd-kit` context | **gap**: a `@dnd-kit` drag has no keyboard path; `Alt+↑`/`Alt+↓` reorder is the keyboard alternative | `keybindings.ts` |
+
+Native HTML5 drag-and-drop stays where it is the only API that works: a file or folder dragged in from the operating system (`DataTransfer.files`, `webkitGetAsEntry()`), and the media picker's folder tree. Each such file is on the gate's allowlist with its reason.
 
 ---
 

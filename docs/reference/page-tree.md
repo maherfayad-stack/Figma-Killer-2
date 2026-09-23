@@ -1,4 +1,5 @@
 # Page Tree
+> **Purpose:** the NodeTree primitive and its tree-agnostic mutations · **Read when:** mutating a page or component tree · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 The `NodeTree<TNode>` primitive — the single tree-of-nodes shape used everywhere in this codebase: page trees, Visual Component trees, and slot fills.
 
