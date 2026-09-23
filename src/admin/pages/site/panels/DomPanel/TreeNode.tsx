@@ -28,7 +28,8 @@
  * - A windowed tree has no nested `role="group"` DOM to convey depth, so each
  *   row states its own position: `aria-level` / `aria-posinset` /
  *   `aria-setsize`, the flat-DOM form the WAI-ARIA tree pattern defines.
- * - onFocus/onBlur focus ring (WCAG SC 2.4.7).
+ * - A `:focus-visible` ring drawn by `TreeRow.module.css` (WCAG SC 2.4.7) —
+ *   CSS, not a focus state here, so a mouse click draws no ring.
  * - height: 28px (Guideline #357 — compact density; WCAG 2.5.5 touch target
  *   NOT required for editor chrome per user directive / Guideline #357).
  */
@@ -139,7 +140,6 @@ export const TreeNode = memo(function TreeNode({
   const { registerRow } = useDomPanelRowRegistry()
 
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null)
-  const [isFocused, setIsFocused] = useState(false)
   const [isRenaming, setIsRenaming] = useState(false)
   const [renameValue, setRenameValue] = useState('')
 
@@ -310,7 +310,6 @@ export const TreeNode = memo(function TreeNode({
         depth={depth}
         selected={selected}
         hovered={isHovered}
-        focused={isFocused}
         locked={node.locked}
         hidden={node.hidden}
         dragging={isDragging}
@@ -392,8 +391,6 @@ export const TreeNode = memo(function TreeNode({
         }}
         onMouseEnter={() => useEditorStore.getState().hoverNode(nodeId)}
         onMouseLeave={() => useEditorStore.getState().hoverNode(null)}
-        onFocus={() => setIsFocused(true)}
-        onBlur={() => setIsFocused(false)}
       >
         <LayerTreeNodeContent
           moduleId={node.moduleId}
