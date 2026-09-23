@@ -172,6 +172,21 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** 17 new/changed unit tests, each proven failing with its fix disabled in place, plus `tests/e2e/undo-tells-the-truth.e2e.ts` (ran, passes; fails with the fix off). Build + lint clean. Chunked suite: only the 16 pre-existing failures.
 - **Next:** owner dogfood (checklist in the PR body); P3-F replaces the delete skip with a real restore.
 
+### test-06 — Phase 1 exit gate: outside-edit e2e + regression audit (WB-1/2/7/23, ERR-1/3/4/5)
+- **Agent:** test-engineer · **Branch:** `test/phase-1-exit-gate` · **PR:** draft, base `feat/canvas-excellence` (the audit table is in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** `ROADMAP.md` §5 exit gate: a regression test that fails before its fix for every reproduced P1 finding, and an e2e that edits a page outside Studio mid-session, then edits and deletes on the canvas, and checks the file bytes.
+- **Done:**
+  - `tests/e2e/phase-1-exit-gate.e2e.ts`, 4 cases, Chromium, green twice. (1) outside edit, then the live reload, a text edit, a Delete and ⌘Z: the file is byte-exact after each step. (2–4) the outside write races a PENDING text edit (autosave off, flushed by the watcher push), an IN-FLIGHT text edit, and an IN-FLIGHT Delete (held with `page.route`). All three landed on the intended element, recorded as annotations.
+  - With `resolveEditIdentities` disabled in place, all three race cases fail on a wrong-element write. Case 1 does not fail that way: after the live reload its ids are fresh, so it proves P1-D's watcher, not the guard.
+  - Regression audit: each of the 8 findings has a committed test, and each test was proven to fail with its fix disabled in place, then restored with `git checkout -- <file>`. Table in the PR body.
+  - Shared `sourceNodeId()` in `tests/e2e/helpers/studioFixtureProject.ts` replaces three copies (`element-identity-guard`, `outside-edit-live-reload`, `structural-writeback`).
+  - `docs/e2e/README.md` coverage map: rows for the P1 specs.
+- **Decisions:** a racing edit may land OR be refused, never land elsewhere. `settleOnDisk` fails on any third file state that persists across 3 reads, so a read that races the server's non-atomic write cannot fail the case.
+- **Landmines:** `structural-writeback.e2e.ts` fails on the trunk BEFORE this change too. Its fixture is not pinned to `trust: 'static'`, so the Tier-2 default mounts a live frame as well (two canvas iframes, a strict-mode violation). Its second case then hits Windows `EPERM` re-creating the held fixture dir. Found, not fixed.
+- **Verification:** build + lint clean. Chunked suite: only pre-existing failures (bundle freshness, optimistic broadcast, bridge measurement, WebSocket, headless capture, dev server), plus three 5 s load timeouts that pass alone.
+- **Next:** none for Phase 1. Phase 2 can start.
+
 ---
 
 ## Blocked

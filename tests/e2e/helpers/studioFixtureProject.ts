@@ -430,6 +430,29 @@ export function decodeNodeSourceLocation(nodeId: string): SourceNodeLocation | n
   return { rel: match[1]!, line: Number(match[2]), col: Number(match[3]) }
 }
 
+/**
+ * The studio node id the parser mints for the Nth `<tag` in `source`:
+ * `rel:line:col`, line 1-based, col 1-based at the character right AFTER `<`.
+ *
+ * Derived from the fixture text rather than hardcoded, so editing a fixture —
+ * or writing a new version of it to disk mid-spec, which is how the P1 specs
+ * shift every id — cannot silently retarget a spec at the wrong element.
+ * Encodes the same grammar `decodeNodeSourceLocation` reads, for the same
+ * reason that one is restated rather than imported.
+ */
+export function sourceNodeId(source: string, rel: string, tag: string, occurrence = 1): string {
+  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
+  let match: RegExpExecArray | null
+  let count = 0
+  while ((match = re.exec(source)) !== null) {
+    count += 1
+    if (count !== occurrence) continue
+    const lines = source.slice(0, match.index + 1).split('\n')
+    return `${rel}:${lines.length}:${lines[lines.length - 1]!.length + 1}`
+  }
+  throw new Error(`sourceNodeId: the source has no <${tag} #${occurrence}`)
+}
+
 /** Read the `.tsx` a node id points at, out of the fixture project on disk. */
 export function readNodeSourceFile(fixture: FixtureProject, location: SourceNodeLocation): string {
   return fs.readFileSync(path.join(fixture.dir, ...location.rel.split('/')), 'utf8')
