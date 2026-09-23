@@ -58,6 +58,7 @@ import {
   EMPTY_RESOLUTION,
   EMPTY_TRANSPLANT_RESOLUTION,
   dragLabel,
+  followDragSessionThroughReparse,
   resolveDraggedIds,
   runCanvasDragFrame,
   type DragSession,
@@ -67,6 +68,7 @@ import { paintCanvasDrag } from './canvasDragPainter'
 import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
+import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
@@ -333,6 +335,32 @@ export function useCanvasReorderDrag({
   }
 
   /**
+   * ERR-23 — the board was re-read under the gesture. Follow every id the
+   * session holds to the element's new address (`followDragSessionThroughReparse`),
+   * or end the gesture when the dragged element is gone: a release against the
+   * pre-write ids would move nothing, or move whatever inherited the address.
+   * Read from the ORIGIN page when the frame has one — a cross-frame drag has
+   * already activated the destination, so the active page is the wrong end.
+   */
+  const handleReparse = (follow: NodeIdFollower) => {
+    const session = sessionRef.current
+    if (!session) return
+    // The free-move preview is written on the OLD element; drop it before the
+    // plan that names it goes.
+    if (session.free?.ok) clearFreeMovePreview(session.free.plan)
+    const state = useEditorStore.getState()
+    const tree =
+      session.originPageId && state.site
+        ? lookupCanvasPageById(state.site, session.originPageId)
+        : selectActiveCanvasPage(state)
+    if (!followDragSessionThroughReparse(session, follow, tree)) {
+      resetDrag()
+      return
+    }
+    if (session.active) scheduleFrame()
+  }
+
+  /**
    * Escape abandons the gesture. Nothing to undo — the tree has not been
    * touched — so this is a plain reset. Bound to BOTH documents because a
    * keystroke raised inside the frame's iframe never reaches the parent
@@ -454,8 +482,10 @@ export function useCanvasReorderDrag({
     window.addEventListener('pointercancel', handleWindowPointerCancel)
     window.addEventListener('keydown', handleKeyDown, true)
     frameDoc?.addEventListener('keydown', handleKeyDown, true)
+    const unsubscribeReparse = subscribeReparseFollow(handleReparse)
     teardownRef.current = () => {
       observer?.disconnect()
+      unsubscribeReparse()
       window.removeEventListener('pointermove', handleWindowPointerMove)
       window.removeEventListener('pointerup', handleWindowPointerUp)
       window.removeEventListener('pointercancel', handleWindowPointerCancel)

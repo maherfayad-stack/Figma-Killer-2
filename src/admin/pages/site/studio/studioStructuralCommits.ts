@@ -28,7 +28,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
-import { setPendingStructuralOutcome, type PendingStructuralHistory } from './pendingStructuralOutcome'
+import type { PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
   dissolveWrapperTemplate,
@@ -600,31 +600,6 @@ async function commitStructuralBody(
           : 'The code no longer has an element at the position the canvas was showing.',
       })
     }
-    // `store-13`/`store-14` — what this write CREATED and where it MOVED what
-    // it moved, claimed by the re-read below.
-    //
-    // Set BEFORE the resync, not after, because the narrow path applies its
-    // patch synchronously inside `resyncBoardAfterWrite` (it dispatches an
-    // admin event that `usePersistence` handles on the spot) — an answer left
-    // until afterwards would arrive one beat too late. Set on EVERY landed
-    // write, including the ones that create nothing: an empty box clears the
-    // slot, so a move can never inherit the copy a duplicate left behind.
-    //
-    // There is no user selection to steal: the resync re-mints every id the
-    // write shifted, and `patchPages` drops a selection that no longer
-    // resolves.
-    if (willReload) {
-      const outcome: StructuralWriteOutcome = {
-        createdNodeIds: result.createdNodeIds ?? [],
-        relocatedNodeIds: result.relocatedNodeIds ?? [],
-        removed: result.removed ?? [],
-        prunedImports: result.prunedImports ?? [],
-      }
-      setPendingStructuralOutcome({
-        selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
-        history: resolvePendingHistory(edits, options, outcome),
-      })
-    }
     // trap #5 — reload only when a write actually landed. Nothing reaching
     // disk means there is nothing to resync FROM; reloading anyway would
     // replace whatever the canvas is currently (optimistically) showing with
@@ -637,7 +612,27 @@ async function commitStructuralBody(
     // unchanged: still gated on `willReload`, still the thing that (per
     // (1) above) leaves a refused move/delete visually diverged until a
     // later reload happens to resync it.
-    if (willReload) await resyncBoardAfterWrite(result.touchedFiles ?? [])
+    //
+    // `store-13`/`store-14` — what this write CREATED and where it MOVED what
+    // it moved rides the resync itself (ERR-10, `pendingStructuralOutcome.ts`):
+    // it is applied by the re-read this write triggers, after that re-read's
+    // `patchPages`/`loadSite`, and by no other. The await covers the full
+    // reload too, so the queue behind this commit re-plans against the ids
+    // this write produced.
+    if (willReload) {
+      const outcome: StructuralWriteOutcome = {
+        createdNodeIds: result.createdNodeIds ?? [],
+        relocatedNodeIds: result.relocatedNodeIds ?? [],
+        removed: result.removed ?? [],
+        prunedImports: result.prunedImports ?? [],
+      }
+      await resyncBoardAfterWrite(result.touchedFiles ?? [], {
+        structuralOutcome: {
+          selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
+          history: resolvePendingHistory(edits, options, outcome),
+        },
+      })
+    }
   } catch (err) {
     // Fire-and-forget from the store's mutation guard, so this is the only
     // place the failure can be reported. No response was ever obtained, so
