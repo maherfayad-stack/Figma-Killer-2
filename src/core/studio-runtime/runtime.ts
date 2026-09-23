@@ -57,6 +57,7 @@ import {
   type RuntimeMode,
 } from './messages'
 import { installGestureForwarding } from './gestureForwarding'
+import { installKeyForwarding } from './keyForwarding'
 import { installInlineTextEdit } from './inlineTextEdit'
 import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
@@ -426,6 +427,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // Pointer + wheel forwarding, and design-mode ownership of the gesture —
   // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
   const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
+  // Design-mode keyboard → the parent's key dispatcher (P2-B) — `keyForwarding.ts`.
+  const disposeKeyForwarding = installKeyForwarding(doc, { getMode: () => mode, post: postOutbound })
 
   // `live-18` — double-click-to-edit text; see `inlineTextEdit.ts`'s module doc.
   const textEdit = installInlineTextEdit({ doc, getMode: () => mode, post: postOutbound })
@@ -644,6 +647,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       view.removeEventListener('message', onWindowMessage)
       view.removeEventListener('resize', scheduleReposition)
       disposeGestureForwarding()
+      disposeKeyForwarding()
       resize.dispose()
       textEdit.dispose()
       disposeErrorTaps()

@@ -63,7 +63,7 @@ import {
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
-import { findEnclosingComponentRef, findEnclosingInstance, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { findEnclosingComponentRef, findEnclosingInstance, resolveInstanceEntry, type AnnotatedPageNode } from './canvasSelectionUtils'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -230,22 +230,21 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     onNodeContextMenu(clickedNodeId, e, breakpointId, frameId)
   }
 
-  // instance-ui-01 — Figma's "Enter / double-click enters it and selects the
-  // inner node under the cursor": a double-click inside a not-yet-entered
-  // instance enters it (pushes `enteredInstanceIds`) and selects the EXACT
-  // descendant, bypassing `handleNodeClick`'s redirect and the module's
-  // ordinary double-click (inline edit). Already-entered instance: falls
-  // through to ordinary behaviour unchanged.
+  // instance-ui-01 — Figma's "double-click enters it and selects the inner
+  // node under the cursor": a double-click inside a not-yet-entered instance
+  // opens ONE level (pushes `enteredInstanceIds`) and selects what is under
+  // the cursor at the next level down — a nested instance whole, or the exact
+  // node (`resolveInstanceEntry`, P2-B). Bypasses `handleNodeClick`'s
+  // redirect and the module's ordinary double-click (inline edit). Nothing
+  // closed around the node: falls through to ordinary behaviour unchanged.
   const handleNodeDoubleClick = (clickedNodeId: string, e: React.MouseEvent) => {
     const state = useEditorStore.getState()
     const page = selectCanvasPageFor(state, contextPageId, frameId)
-    if (page) {
-      const enclosingInstance = findEnclosingInstance(page, clickedNodeId, state.enteredInstanceIds)
-      if (enclosingInstance !== null) {
-        state.enterInstance(enclosingInstance)
-        onNodeClick(clickedNodeId, e, breakpointId, frameId)
-        return
-      }
+    const entry = page ? resolveInstanceEntry(page, clickedNodeId, state.enteredInstanceIds) : null
+    if (entry) {
+      state.enterInstance(entry.enter)
+      onNodeClick(entry.select, e, breakpointId, frameId)
+      return
     }
     onNodeDoubleClick(clickedNodeId, e, breakpointId, frameId)
   }

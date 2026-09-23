@@ -12,8 +12,8 @@
  *   - NodeRenderer builds an `InlineEditBinding`, passes `inlineEdit` to the
  *     component, and focuses the element via `useLayoutEffect`;
  *   - the editor key ladder's `inline-edit` rung halts every canvas scope on
- *     `activeInlineEdit` so Delete/Cmd+D never fire mid-edit, and `useCanvas`'s
- *     React-side viewport keys bail on it separately;
+ *     `activeInlineEdit` so Delete/Cmd+D never fire mid-edit — the viewport
+ *     keys included, since P2-B moved them onto the ladder;
  *   - BreakpointFrame no longer mounts an inline-edit overlay (the node itself
  *     is the editor now).
  */
@@ -85,14 +85,18 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     expect(src).toContain('useEditorStore.getState().activeInlineEdit !== null')
   })
 
-  it('the canvas VIEWPORT keys bail separately, because React synthetic events cross the iframe', () => {
-    // The ladder above only covers the dispatcher's own `document` listener.
-    // `useCanvas`'s +/−/⇧1/⇧2 handler is a React `onKeyDown` on the canvas
-    // div, and a synthetic event raised inside a frame iframe still reaches it
-    // through the fiber tree — so `-` typed mid-edit would zoom the canvas out
-    // without this second, store-backed guard.
+  it('the canvas VIEWPORT keys ride the ladder, so the inline-edit halt covers them', () => {
+    // Until P2-B, `useCanvas`'s +/−/⇧1/⇧2 handler was a React `onKeyDown` on
+    // the canvas div — and a synthetic event raised inside a frame iframe
+    // still reaches one through the fiber tree, so `-` typed mid-edit zoomed
+    // the canvas out unless that handler re-checked `activeInlineEdit` by
+    // hand. The keys are a dispatcher scope now (`useCanvasViewportKeys`), and
+    // the `inline-edit` rung above halts them with everything else. Pin that
+    // there is no React key handler left to forget the check in.
     const src = readFileSync(CANVAS_VIEWPORT, 'utf-8')
-    expect(src).toContain('if (useEditorStore.getState().activeInlineEdit) return')
+    expect(src).toContain('useCanvasViewportKeys(')
+    expect(src).not.toContain('handleKeyDown')
+    expect(src).not.toContain("addEventListener('keydown'")
   })
 
   it('the iframe key-forwarding stands down while an inline edit is active', () => {

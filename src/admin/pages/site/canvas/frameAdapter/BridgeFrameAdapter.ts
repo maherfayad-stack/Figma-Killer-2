@@ -411,6 +411,22 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           patch: message.patch,
         })
         return
+      // P2-B — keyboard carries no node id, so, like `error`, it passes
+      // through with no wire -> canonical translation.
+      case 'key':
+        this.emit({
+          type: 'key',
+          phase: message.phase,
+          key: message.key,
+          code: message.code,
+          location: message.location,
+          repeat: message.repeat,
+          modifiers: message.modifiers,
+        })
+        return
+      case 'blur':
+        this.emit({ type: 'blur' })
+        return
       case 'wheel':
         this.emit({
           type: 'wheel',

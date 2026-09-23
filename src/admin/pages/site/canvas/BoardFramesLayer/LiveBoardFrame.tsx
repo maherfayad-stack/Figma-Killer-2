@@ -82,7 +82,7 @@ export function LiveBoardFrame({
   useBridgeFrameDiagnostics(adapter, frameId)
   // `live-12` — clicks and wheel forwarded out of the cross-origin frame
   // reach selection and zoom; without this they reached nothing.
-  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, isActive, onActivate })
+  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, pageId: page.id, isActive, onActivate })
 
   // `server/liveOrigin.ts` (L2) routes on the `/p/<projectKey>` path
   // segment — `useLiveOrigin` only knows the bare server-topology origin

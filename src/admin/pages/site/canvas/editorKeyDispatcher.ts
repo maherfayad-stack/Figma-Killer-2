@@ -57,9 +57,19 @@
  * ## keyup is a broadcast, not a claim
  *
  * `handleKeyUp` runs for EVERY registered scope regardless of `isActive`, and
- * cannot claim. It exists for one thing: ending an undo burst when a held key
- * is released (`endBoardGesture`). "The hold is over" is true whether or not
- * the scope that started it is still the active one.
+ * cannot claim. It exists for "a held key was released": ending an undo burst
+ * (`endBoardGesture`) and lowering the Space-pan flag. "The hold is over" is
+ * true whether or not the scope that started it is still the active one.
+ *
+ * ## Losing focus releases EVERY key (ERR-11)
+ *
+ * A key released while the window does not have focus sends its keyup to some
+ * other application, so a hold that was in progress when the user Alt-Tabbed
+ * away, or clicked into devtools, never ends — Space-pan left every frame
+ * unclickable until Space was pressed again. `handleKeyUp(null)` is the same
+ * broadcast with no event: "every key is up now". The dispatcher sends it on
+ * window `blur` and on the document going hidden, and the frame relays send it
+ * when a frame's own window loses focus (`canvasFrameKeyRelay.ts`).
  */
 
 /** The precedence ladder, highest first. The order IS the contract. */
@@ -85,8 +95,11 @@ export interface EditorKeyScope {
   isActive: () => boolean
   /** Returns true when the keystroke was CLAIMED and dispatch should stop. */
   handle: (event: KeyboardEvent) => boolean
-  /** Optional "a held key was released" broadcast. Never claims. */
-  handleKeyUp?: (event: KeyboardEvent) => void
+  /**
+   * Optional "a held key was released" broadcast. Never claims. `null` means
+   * EVERY key was released — the window lost focus (see the module doc).
+   */
+  handleKeyUp?: (event: KeyboardEvent | null) => void
 }
 
 const registered: EditorKeyScope[] = []
@@ -126,9 +139,26 @@ export function dispatchEditorKeyDown(event: KeyboardEvent): boolean {
   return false
 }
 
-/** Broadcast a key release to every registered scope. See the module doc. */
-export function dispatchEditorKeyUp(event: KeyboardEvent): void {
+/**
+ * Broadcast a key release to every registered scope — `null` for "every key is
+ * up" (focus left the window). See the module doc.
+ */
+export function dispatchEditorKeyUp(event: KeyboardEvent | null): void {
   for (const scope of registered) scope.handleKeyUp?.(event)
+}
+
+/**
+ * A window in the editor just lost focus — the editor's own, or a frame's.
+ * Release every key if focus actually LEFT the editor (Alt-Tab, devtools, the
+ * address bar), and do nothing if it only moved between the editor document
+ * and one of its frames: `Document.hasFocus()` is true while any descendant
+ * frame holds focus, so a click into a frame is not a release. Checked on the
+ * next task because focus lands on its new owner only after `blur` has run.
+ */
+export function releaseEditorKeysIfFocusLeft(editorDocument: Document): void {
+  setTimeout(() => {
+    if (!editorDocument.hasFocus()) dispatchEditorKeyUp(null)
+  }, 0)
 }
 
 /** Test seam — the ids currently registered, in ladder order. */
