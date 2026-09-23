@@ -368,7 +368,15 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // the way every edit above does. Owns its own `(pageId, locale,
     // nodeId)`-keyed baseline — see `localizedPageWriteback.ts` for why it
     // cannot share `loadedValues` with the default tree above.
-    const localizedEdits = collectLocalizedTextEdits(useEditorStore.getState().localizedPages)
+    //
+    // ERR-17 — the snapshot is kept: the baseline below must advance to what
+    // THIS save sent, not to whatever the store holds once the POST returns.
+    // Text typed while the save was in flight is not in `edits`; committing
+    // the live store would have adopted it as "already on disk" and it would
+    // never be sent. (Store state is immutable, so holding the reference IS
+    // the snapshot.)
+    const sentLocalizedPages = useEditorStore.getState().localizedPages
+    const localizedEdits = collectLocalizedTextEdits(sentLocalizedPages)
     edits.push(...localizedEdits)
 
     // `style-02` — the two baselines below must not advance past a REFUSED
@@ -482,7 +490,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // and it would keep the "pending" edit alive across reloads it
     // shouldn't be). See `localizedPageWriteback.ts`'s "Baseline discipline".
     if (localizedEdits.length > 0) {
-      commitLocalizedTextBaseline(useEditorStore.getState().localizedPages)
+      commitLocalizedTextBaseline(sentLocalizedPages)
     }
 
     // `panel-02` — advance the CSS diff baseline to what was just sent, so one

@@ -669,6 +669,18 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 
 **A guard-truncated result is never cached.** A truncated value describes the budget that happened to be left at that moment, not the code — caching one made *which page was parsed first* silently decide whether any copy resolved at all. `Budget.truncated` and `trackTruncation` enforce this; both caches check it.
 
+### The evaluator reports every file it reads a value out of (WB-2)
+
+`StaticEvalOptions.readFiles` is an out-param, shared across one page load like `pageBudget`: every file a value was read out of is added to it — a cross-file `const` (the file it is declared in), an import whose target is a `SourceFile` (recorded even when the binding is a function Tier C then calls), a `?raw` text file and an image, every file a Tier B provider trace read (the hook's, the context's, the provider's), and every file a CSS-in-JS extraction read (the styled component's own file, and its interpolations' theme tokens). The load merges the set into `pageParseCache`'s per-route dependency set, beside `inlineLocalComponents`' structural `dependencyFiles`.
+
+Before this, a page rendering `{COPY.title}` from `src/copy.ts` cached text read out of a file nothing watched. The outer `studioLoadMemo` correctly recomputed (its fingerprint covers every file), and the inner per-route cache then hit, because none of ITS files had moved — so a resolved-text edit (a `literal` edit at the `textOrigin`) was reverted by every later load.
+
+**A memo hit replays what the memo read.** The three memos (`moduleConstCache`, `providerTraceCache`, the css-in-js `fileCache`) are keyed by the file the ANSWER lives in, but the answer was read THROUGH other files. Each entry stores the files its computation read (`collectReads` in `evalReadFiles.ts`) and a hit adds them to the caller's set — otherwise only the first page to parse a dictionary would record the module behind it. Reads are collected for a memo entry even when the caller asked for none: the entry outlives the call.
+
+**A `literal` edit is shared** (`isSharedSourceNodeId`): a dictionary key is shared by design, so the save reports `sharedComponents` and the client's narrow resync reloads exactly the routes whose recorded dependencies include the origin file — every other node showing the same copy updates at once.
+
+What the set still does not cover, knowingly: a file whose mere EXISTENCE changes an answer without its text being read — a second `<Ctx.Provider>` added to an unrelated file (Tier B then becomes ambiguous), a barrel re-pointed at another component, a missing `?raw`/image file that later appears. `.svg` joined the outer memo's fingerprinted extensions so a `?raw` icon edit reaches the parse at all; a `?raw` import of any other extension still needs a source change or a restart to show.
+
 ### Structure is locked; values are decided per prop
 
 Two different facts used to share one field, and conflating them made most of an imported app uneditable.
@@ -721,7 +733,7 @@ That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProp
 
 **A `.map` row's copy of this fix comes for free.** A structured/unresolvable prop on an expanded loop ITEM (`ADD_ONS.map((addOn) => <Icon svg={addOn.icon} />)`, where `addOn.icon` still fails to resolve for some rows) is traced the same way, per row — the catch-all runs inside `iterationEvalContext`'s scope exactly like every other §7 resolution.
 
-**Known gap, not yet closed:** `codeText`'s UNRESOLVED case (`hasCodeText`, no `text`) is set at the page-parser level, but `parsedPageToSitePage.ts`'s fold into `PageNode.codeProps` currently only runs when `node.text !== undefined` — so the unresolved-text trace does not yet reach the panel. Not a write-safety hole (`setJsxText`'s own `assertTextOnlyChildren` independently fails closed on any non-text-leaf shape, so the codemod refuses regardless), but the panel still shows an empty, apparently-editable text field for this case until `studio-sync` gets the companion one-line change. See `STATE.md`'s `board-27b` entry.
+**The unresolved-text trace reaches the panel (WB-29).** `codeText`'s UNRESOLVED case (`hasCodeText`, no `text`) used to stop at the page-parser: `parsedPageToSitePage.ts` folded `codeText` into `PageNode.codeProps` only inside `if (node.text !== undefined)`, so `<a>{user.name}</a>` reached the panel as an empty, apparently-editable text field, and typing into it ended in a refused write. The fold now runs for both cases — a module with a text prop whose text the evaluator tried and could not read names that prop in `codeProps`, and `isPropWritableToSource` refuses it like any other code-valued prop. Regression test: `src/core/studio-sync/__tests__/codeProps.test.ts`.
 
 ### Resolved TEXT is editable, at its origin
 
@@ -771,6 +783,25 @@ This was a real hole, not a hypothetical one: the whole edit batch arrives from 
 - **An unwritable directory is refused on both spellings (P1-G).** `isWritableSourceRel` used to check path SHAPE only, so `.studio/anything.tsx:1:1` — or a `node_modules/`, `.git/` or `.claude/` script — was a valid target for every edit kind, a `transplant` destination and MCP `studio_apply_edits`/`studio_codemod` included. It now refuses any segment `unwritableWorkspaceSegment` (`@core/page-parser/workspaceWriteScope.ts`) names: the walk exclusions (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`) plus `.claude`, compared the way the filesystem resolves a name (case-folded, trailing dots/spaces and NTFS stream suffixes dropped). Because the decoder re-runs the guard on the real path, a link spelled like source that lands in one of them is refused too. The same predicate gates the CSS writeback, asset landing, the component-copy codemods and the agent's native writes — one list, no second copy. Its single extension point, `STUDIO_AUTHORED_SOURCE_PATTERNS` in `studioEditRouting.ts`, is empty: FC-1 opens exactly `.studio/canvas/<id>.tsx` there under its own review.
 
 A file that does not exist yet canonicalises through its deepest existing ancestor, so a symlinked project root (macOS' `/var` → `/private/var`) cannot put the project and the file on different sides of a link. A path through a **dangling** link is refused: a write follows the link, so "not created yet" would really mean "created wherever the link points". Every codemod still refuses a missing file on its own. `orderStudioEditsForApply` is the one caller that deliberately does NOT canonicalise — it sorts by line number, descending globally and therefore also within each file, so which file a `rel` names never enters the comparison and an O(n log n) burst of `realpath` calls on the save path would buy nothing.
+
+### Two instances' `style`/`class` edits merge; they do not replace (WB-7)
+
+Every instance of an inlined component writes back to one `line:col`, so `dedupeStudioEdits` collapses their edits to one. It used to keep only the last, which is right for a genuine conflict — one `title`, two values — and wrong for `style` and `class`, whose edits are SETS: instance A's `{ padding }` and `+a` were dropped, B's `{ margin }` and `+b` written, `written: 2` reported, and the client adopted both baselines. `studioEditMerge.ts` now unions style declarations and `remove` lists, and class `add`/`remove` token sets; a property or token both set and removed resolves by order (the later edit wins). The surviving edit carries the other node ids as `absorbedNodeIds`, and `expandMergedOutcomes` reports its refusal or skip once per node behind it, so no instance's baseline advances past a write that did not land. The refusal toast is keyed on the decoded source target, so those N reports are still one toast.
+
+### A file that does not parse is never written (WB-24)
+
+TypeScript's parser recovers a tree from a broken file instead of giving up — an unclosed `<p>` still yields nodes — so a page with a syntax error used to render from a guessed tree and stay fully editable, and a codemod could splice bytes into a location the file does not actually spell. `sourceSyntax.ts` (`@core/page-parser`) answers "does this file parse?" one way for both sides:
+
+| Side | What happens |
+|---|---|
+| Load | `loadWarnings.ts` asks the kept `Project` about each route's own file; a broken one still renders, and `StudioLoadResult.warnings` carries `{ code: 'syntax-error', pageId, file, line, col, message }` |
+| Write | `studioSyntaxGuard.ts`, asked by `applyStudioEditBatch` before each edit, reads every file the edit would write (its target, a transplant's destination, a stylesheet `create`'s page) as it sits on disk; a broken one refuses the edit with reason `syntax-error` and a message naming the file and the line. Other files in the same batch still write |
+
+Syntactic only: a type error or an unresolved import is the user's business and never blocks a write. The in-frame badge for a flagged page is canvas work not yet done; the refusal toast names the line on its own.
+
+### A `tsconfig.json` that does not parse costs its aliases, never the board (WB-23)
+
+ts-morph reads the tsconfig in `createWorkspaceProject`'s constructor and throws on one it cannot parse (`'}' expected.`), which made `/load` answer 500 and the board not open. The project is now built without it — path aliases stop resolving, nothing else changes — and the load reports `{ code: 'tsconfig-unreadable', file: 'tsconfig.json', message }` in `warnings`. Every caller of `createWorkspaceProject` (the catalog, the MCP tools, the codemods that build their own project) inherits the fallback. `withWorkspaceProject` rebuilds the kept `Project` when `tsconfig.json`'s `size:mtimeMs` moves, and its stamp is part of the parse cache's config hash, so fixing the file brings the aliases back without a restart.
 
 ### A save only reloads when a write actually landed
 
@@ -1633,6 +1664,10 @@ here once it is genuinely detectable.
 | Load/save endpoint contract | `server/handlers/__tests__/studio.test.ts` |
 | Save write-loop safety | `src/admin/pages/site/studio/__tests__/fsCodemodAdapter.test.ts` |
 | Literal writeback + writable-path guard | `server/handlers/__tests__/studioWriteback.test.ts` |
+| WB-2: every file a value was read out of, per source, replayed on a memo hit | `src/core/page-parser/__tests__/evalReadFiles.test.ts` |
+| WB-2: a resolved-text edit survives the next load, and its resync narrows to the readers | `server/handlers/__tests__/studioPageLoadEvaluatorDeps.test.ts` |
+| WB-7: two instances' style/class edits merge; refusals reach every instance | `server/handlers/__tests__/studioEditMerge.test.ts` |
+| WB-23/WB-24: unreadable tsconfig and syntax-error pages load, and writes to a broken file refuse | `server/handlers/__tests__/studioLoadDegradation.test.ts`, `src/core/page-parser/__tests__/sourceSyntax.test.ts` |
 | `setStringLiteral` fail-closed behaviour | `src/core/ast-codemods/__tests__/setStringLiteral.test.ts` |
 | Resolved text is editable at its origin, and nothing else is | `src/__tests__/studio/resolvedTextEditing.test.ts` |
 | CSS write-back: honest-target refusals | `src/core/css-codemods/__tests__/analyzeDeclarationTarget.test.ts` |

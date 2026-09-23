@@ -52,6 +52,8 @@ export {
   unwritableWorkspaceSegment,
 } from './workspaceWriteScope'
 export { resetParserCaches } from './parserCaches'
+export { fileSyntaxError, sourceFileSyntaxError } from './sourceSyntax'
+export type { SourceSyntaxError } from './sourceSyntax'
 export {
   PROJECT_DESIGN_SYSTEM_DIR,
   designSystemImportSpecifier,
@@ -62,7 +64,7 @@ export {
   resolveComponentSources,
   resolveExportedDeclaration,
 } from './componentSources'
-export type { ComponentSource } from './componentSources'
+export type { ComponentSource, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export {
   findNamedComponentDeclaration,

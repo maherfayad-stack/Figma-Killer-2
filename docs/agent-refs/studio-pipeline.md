@@ -31,7 +31,9 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
            resync after a structural write from 1.5–2 s to ~50–100 ms on a
            real project: rebuilding the Project re-parsed and re-bound every
            file for one changed line. Rebuilding it per call again is the
-           regression to refuse.
+           regression to refuse. A moved `tsconfig.json` stamp REBUILDS it
+           (aliases are read once, at construction); an unparseable one
+           builds without it and reports `tsconfig-unreadable` (WB-23).
         1. discoverPageFiles(pagesDir)           studioProjects.ts
         1b. discoverStories + buildStoryRouteEntries
                                                  studio/story{Discovery,Pages}.ts
@@ -183,6 +185,12 @@ Budgets: `maxDepth` 24 (binding hops only) · `maxSteps` 2000 per top-level call
 **A guard-truncated result is never cached** — caching one made "which page
 parsed first" decide whether any copy resolved.
 
+**Every file a value is read out of is reported** (WB-2) into
+`StaticEvalOptions.readFiles`, and the load adds it to the route's parse-cache
+dependency set. A memo hit replays the files its entry read (`collectReads`,
+`evalReadFiles.ts`). A new memo in the evaluator must do the same, or the
+second page to read a dictionary never records the module behind it.
+
 ---
 
 ## Writeback rules
@@ -199,6 +207,9 @@ parsed first" decide whether any copy resolved.
 | **`tag` has its own edit kind + codemod** | Routing it through `setJsxProp` added a literal `tag="section"` attribute and left the element a `<div>` — 140 fake controls on one corpus |
 | **Path containment in the decoder** | `rel` arrives from the client inside `nodeId`; the save route builds `join(dir, rel)` |
 | **`loadSite` keeps the currently-open page** when the incoming site still has its id | Resetting to home mid-edit reads as the canvas moving on its own |
+| **Two instances' `style`/`class` edits MERGE** (WB-7, `studioEditMerge.ts`) | Every instance of a shared component writes to one `line:col`; keeping the last dropped the other instance's declarations/tokens while `written` reported both. A genuine conflict (one prop, two values) is still last-wins, and a merged edit's refusal is reported for every instance behind it |
+| **A file that does not parse is never written** (WB-24, `studioSyntaxGuard.ts`) | TypeScript recovers a tree from a broken file; a codemod would locate and splice into a guess. Refused as `syntax-error`, naming the line; the load flags the page in `warnings` |
+| **A `literal` edit is shared** | A dictionary key is shared by design; the resync narrows to the routes that recorded the origin file (WB-2) |
 | **A write keeps the file's line endings** | The user's repo may be a CRLF checkout (Git's Windows default). `EolPreservingFileSystem` (`@core/page-parser`) hands ts-morph LF-only text and re-applies the file's own ending on write; the CSS codemods do the same at their text boundary. Formatting-preserving includes `\r\n` |
 
 Codemods live in `src/core/ast-codemods/` and preserve the file's quote style

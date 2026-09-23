@@ -105,6 +105,21 @@ export interface StaticEvalOptions {
    * unresolved, exactly like an unconfigured `workspaceRoot`.
    */
   cssModuleClassMaps?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  /**
+   * WB-2 — an OUT-param: every file a value was read out of (absolute,
+   * platform-native), added as the evaluator reads it. Shared across one page
+   * load exactly like `pageBudget`, so a route's parse can record everything
+   * it depended on — a cross-file const, an i18n dictionary, a provider, a
+   * `?raw`/image asset — and the parse cache can invalidate on any of them.
+   * See `./evalReadFiles`. Omit and nothing is reported.
+   */
+  readFiles?: Set<string>
+}
+
+/** A memoized value plus every file computing it read — a hit replays them (`./evalReadFiles`, "Memos replay what they read"). */
+export interface MemoizedValue {
+  value: StaticValue
+  files: readonly string[]
 }
 
 /** A component-body/module-scope binding chain — see `createEvalScope`. */
