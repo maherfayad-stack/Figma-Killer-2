@@ -43,6 +43,14 @@ export {
   listWorkspaceFiles,
   listWorkspaceSourceFiles,
 } from './workspaceFiles'
+export {
+  UNWRITABLE_WORKSPACE_DIR_NAMES,
+  isWorkspaceWritablePath,
+  pathEntryExists,
+  realWorkspaceRel,
+  realpathAllowingMissing,
+  unwritableWorkspaceSegment,
+} from './workspaceWriteScope'
 export { resetParserCaches } from './parserCaches'
 export {
   PROJECT_DESIGN_SYSTEM_DIR,
