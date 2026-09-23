@@ -32,7 +32,7 @@ const fetchRemoteAssetTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
     const result = await fetchRemoteAsset(dir, url, targetDir)
     if (!result.ok) return toolRefusal('remote-fetch-failed', result.error)
-    return { ok: true, dir, relPath: result.relPath, bytesWritten: result.bytesWritten }
+    return { ok: true, dir, relPath: result.relPath, deduped: result.deduped, bytesWritten: result.bytesWritten }
   },
 }
 

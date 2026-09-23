@@ -163,7 +163,11 @@ export async function registerDesignReference(
   }
 
   const id = randomUUID()
-  const landed = landAssetBytes(dir, DESIGN_REFERENCE_ASSET_DIR, bytes, id)
+  // `dedupe: false`: the file NAME is this reference's id (`readDesignReferenceBytes`
+  // re-derives it; removal deletes it), so two references must never share a file.
+  // Reuse of identical bytes happens one level up, per reference, through
+  // `findDesignReferenceByContentHash` (`turnDesignReferences.ts`).
+  const landed = landAssetBytes(dir, DESIGN_REFERENCE_ASSET_DIR, bytes, id, { dedupe: false })
   if (!landed.ok) return { ok: false, error: landed.error }
 
   const reference: DesignReference = {

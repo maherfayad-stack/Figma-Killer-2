@@ -995,7 +995,9 @@ How each piece knows:
 
 **Shared imports reload the board.** `isSharedSourceNodeId` treats every `kind: 'asset'` edit as shared, unconditionally — unlike an inlined component or route chrome, there is no cheap way to tell from the id alone whether ANOTHER node in the same file reads the same import, so the client always reloads on a successful write. Same "fail toward the reload" policy `meta-05` established for route chrome.
 
-**Literal `src` needed no new writeback.** `src="/img/hero.png"` was always just `setJsxProp` — WS-8.3 only added the picker UI in front of it (still routed through the ordinary optimistic prop diff, not `saveStudioAssetEdit`).
+**Literal `src` needed no new writeback.** `src="/img/hero.png"` was always just `setJsxProp` — WS-8.3 only added the picker UI in front of it (still routed through the ordinary optimistic prop diff, not `saveStudioAssetEdit`). Since IMG-1 the replacement file lands through `POST /admin/api/studio/asset-drop` (the app's `public/`), and the value written is the `src` the server returned (`assetSiteUrl.ts`). Before that it landed in `src/assets/` and wrote `'/' + relPath`, i.e. `src="/src/assets/x.png"`, which 404s in a production build.
+
+**Every landing is idempotent by content.** `landAssetBytes` reuses a byte-identical file already in the target directory (`deduped: true`) rather than writing `x-2.png`, claims a new name with an exclusive create, and reports the intrinsic `width`/`height` from the header bytes. `asset-upload`'s response is `{ ok, relPath, src, width, height, deduped }`, with `src` set only when the file landed under the app's `public/`.
 
 ---
 

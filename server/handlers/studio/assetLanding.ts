@@ -2,9 +2,14 @@
  * assetLanding — the single choke point that writes an image (or SVG) byte
  * buffer into a Studio project as a new, collision-safe file.
  *
- * Three callers converge here:
+ * Every caller converges here:
+ *   - `assetDrop.ts` (`POST /admin/api/studio/asset-drop`): a file dropped on
+ *     a frame or picked in the inspector, landed in the server-derived
+ *     `public/` so it can back a literal `src`.
  *   - `assetUpload.ts` (`POST /admin/api/studio/asset-upload`) — bytes come
  *     from a multipart upload the browser has already read into memory.
+ *   - `extractReferenceAsset.ts` (`studio_extract_reference_asset`): a crop of
+ *     a design reference, landed as an app asset.
  *   - `remoteAssetFetch.ts` (`studio_fetch_remote_asset`) — bytes come from a
  *     server-side fetch of a caller-supplied URL. Different transport, same
  *     destination, same threat model.
@@ -13,6 +18,14 @@
  *     target `.studio/` (see `DESIGN_REFERENCE_ASSET_DIR`) instead of an
  *     app-code asset directory, because a design reference is Studio's own
  *     state, never an `<img>` import target.
+ *
+ * A landing is idempotent by content (IMG-1): the same bytes landed twice in
+ * the same directory reuse the first file (`deduped: true`) instead of writing
+ * `photo-2.png`, which is also what makes a retried `asset-drop` safe to
+ * replay. A new name is claimed with an exclusive create (`wx`) after an
+ * `lstat` that counts any entry, a dangling symlink included, as taken (see
+ * `writeExclusive`). Every success also reports the intrinsic `width` /
+ * `height` read from the header (`imageDimensions.ts`).
  *
  * Every input here is adversarial regardless of caller: the target directory
  * may not exist yet, the declared filename is never trusted, and the actual
@@ -41,9 +54,11 @@
  * targeted string sanitizer is the correct, dependency-free choice here.
  */
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { existsSync, mkdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { sanitizeSvgBytes } from '../cms/svgSanitize'
+import { readImageDimensions } from './imageDimensions'
 
 /** Where a bare (no `targetDir`) asset write lands — the conventional home for local images in a Vite/CRA-shaped repo. */
 export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
@@ -60,8 +75,30 @@ export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
 export const DESIGN_REFERENCE_ASSET_DIR = '.studio/references'
 
 export type LandAssetResult =
-  | { ok: true; relPath: string }
+  | {
+      ok: true
+      /** Project-relative POSIX path of the file the bytes now live in. */
+      relPath: string
+      /** True when an identical file already sat in the target directory and was reused — nothing was written. */
+      deduped: boolean
+      /** Intrinsic pixel size from the header bytes (`imageDimensions.ts`); `null` when the header does not say. */
+      width: number | null
+      height: number | null
+    }
   | { ok: false; error: string }
+
+export interface LandAssetOptions {
+  /**
+   * Reuse a byte-identical file already in the target directory instead of
+   * writing a second copy (see `findIdenticalAsset`). On for every caller that
+   * lands an app asset, where a same-directory duplicate has no meaning and a
+   * retried request must not create one. OFF for a caller whose file NAME is
+   * an identity: `designReferenceStore.ts` names each file after its
+   * reference id, reads it back by that id, and deletes it on removal, so
+   * pointing two references at one file would break both.
+   */
+  dedupe: boolean
+}
 
 // ---------------------------------------------------------------------------
 // Target-directory containment — the target directory may not exist yet (a
@@ -196,27 +233,122 @@ export function sanitizeAssetBaseName(rawName: string): string {
   return truncated.length > 0 ? truncated : 'asset'
 }
 
-/** First non-colliding `<base>[-N].<ext>` inside `writeDir` — never silently overwrites an unrelated existing file. */
-function uniqueAssetPath(writeDir: string, base: string, ext: string): string {
-  let candidate = join(writeDir, `${base}.${ext}`)
-  for (let n = 2; existsSync(candidate); n += 1) {
-    candidate = join(writeDir, `${base}-${n}.${ext}`)
-    if (n > 1000) break // pathological — stop guessing rather than loop forever
+/**
+ * Largest `-N` suffix tried before giving up on a name. A directory holding a
+ * thousand `hero-N.png` files is pathological; refusing beats looping forever.
+ */
+const MAX_NAME_ATTEMPTS = 1000
+
+function sha256(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
+
+/**
+ * A file already in `writeDir` whose bytes equal `bytes`, or `null` (IMG-1,
+ * audit 07 §A.4).
+ *
+ * Bounded on purpose: `writeDir`'s own entries only (never recursive), only
+ * regular files (a symlink is never followed, so this can never hash a file
+ * outside the project), only the sniffed extension, and only a file whose
+ * size matches. The SHA-256 is computed for same-size candidates alone.
+ *
+ * Only a name this module could itself have written (`<sanitized base>.<ext>`)
+ * is eligible. A repo can arrive from GitHub holding `a"onerror=….png`, and
+ * reusing it would hand that name to an `<img src>` literal, which is the one
+ * thing `sanitizeAssetBaseName` exists to prevent.
+ */
+function findIdenticalAsset(writeDir: string, ext: string, bytes: Uint8Array): string | null {
+  let names: string[]
+  try {
+    names = readdirSync(writeDir, { withFileTypes: true })
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => {
+        if (!name.endsWith(`.${ext}`)) return false
+        const base = name.slice(0, -(ext.length + 1))
+        return sanitizeAssetBaseName(base) === base
+      })
+      .sort()
+  } catch {
+    return null
   }
-  return candidate
+
+  let incoming: string | null = null
+  for (const name of names) {
+    const full = join(writeDir, name)
+    try {
+      const stat = lstatSync(full)
+      if (!stat.isFile() || stat.size !== bytes.length) continue
+      incoming ??= sha256(bytes)
+      if (sha256(readFileSync(full)) === incoming) return full
+    } catch {
+      // Removed or unreadable between the listing and the read: not a match.
+    }
+  }
+  return null
+}
+
+function isErrnoCode(err: unknown, code: string): boolean {
+  return typeof err === 'object' && err !== null && 'code' in err && err.code === code
+}
+
+/** True when ANY directory entry sits at `path`, a dangling symlink included (`existsSync` follows links, so it reports a dangling one as absent). */
+function entryExists(path: string): boolean {
+  try {
+    lstatSync(path)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Create `<base>[-N].<ext>` in `writeDir`, moving to the next suffix when the
+ * name is taken. Two guards, for two different threats:
+ *
+ *   - `flag: 'wx'` (O_CREAT|O_EXCL): the existence check and the create are
+ *     ONE syscall, so a concurrent landing of the same name cannot slip
+ *     between them and be overwritten. `EEXIST` moves on to the next suffix.
+ *   - `entryExists` (an `lstat`) first: a name held by a SYMLINK is taken,
+ *     even a dangling one. A repo arrives from GitHub and git stores
+ *     symlinks, so `public/hero.png -> ../../outside.png` can be sitting
+ *     there. POSIX `O_EXCL` refuses a symlink by itself, but on Windows an
+ *     exclusive create FOLLOWS a dangling link and creates its target
+ *     (measured under Bun on Windows 11), so `wx` alone would write outside
+ *     the project there. The `lstat` is what closes that on every platform.
+ *
+ * `null` when every suffix up to {@link MAX_NAME_ATTEMPTS} is taken.
+ */
+function writeExclusive(writeDir: string, base: string, ext: string, bytes: Uint8Array): string | null {
+  const buffer = Buffer.from(bytes)
+  for (let n = 1; n <= MAX_NAME_ATTEMPTS; n += 1) {
+    const candidate = join(writeDir, n === 1 ? `${base}.${ext}` : `${base}-${n}.${ext}`)
+    if (entryExists(candidate)) continue
+    try {
+      writeFileSync(candidate, buffer, { flag: 'wx' })
+      return candidate
+    } catch (err) {
+      if (isErrnoCode(err, 'EEXIST')) continue
+      throw err
+    }
+  }
+  return null
 }
 
 /**
  * Land `bytes` into `dir`/`targetDirRaw` (or the default asset dir) as a new,
- * collision-safe file. `declaredFilename` is used ONLY for its base name (a
- * hint for the written filename) — the actual bytes decide the extension,
- * and SVG bytes are sanitized before the write. Never throws.
+ * collision-safe file, or (with `options.dedupe`) reuse a byte-identical file
+ * already there. `declaredFilename` is used ONLY for its base name (a hint
+ * for the written filename). The actual bytes decide the extension, and SVG
+ * bytes are sanitized before the write and before the dedupe comparison, so
+ * what is compared is what would land on disk. Never throws.
  */
 export function landAssetBytes(
   dir: string,
   targetDirRaw: string | undefined,
   bytes: Uint8Array,
   declaredFilename: string,
+  options: LandAssetOptions,
 ): LandAssetResult {
   const writeDir = resolveAssetWriteDir(dir, targetDirRaw)
   if (writeDir === null) return { ok: false, error: 'Invalid target directory.' }
@@ -233,10 +365,24 @@ export function landAssetBytes(
     finalBytes = sanitized
   }
 
-  mkdirSync(writeDir, { recursive: true })
-  const finalPath = uniqueAssetPath(writeDir, sanitizeAssetBaseName(declaredFilename), ext)
-  writeFileSync(finalPath, Buffer.from(finalBytes))
+  const dimensions = readImageDimensions(finalBytes, ext)
+  const width = dimensions?.width ?? null
+  const height = dimensions?.height ?? null
+  const toRelPath = (absolute: string) => relative(resolve(dir), absolute).split(sep).join('/')
 
-  const relPath = relative(resolve(dir), finalPath).split(sep).join('/')
-  return { ok: true, relPath }
+  let finalPath: string | null
+  try {
+    mkdirSync(writeDir, { recursive: true })
+    if (options.dedupe) {
+      const existing = findIdenticalAsset(writeDir, ext, finalBytes)
+      if (existing !== null) return { ok: true, relPath: toRelPath(existing), deduped: true, width, height }
+    }
+    finalPath = writeExclusive(writeDir, sanitizeAssetBaseName(declaredFilename), ext, finalBytes)
+  } catch (err) {
+    console.error('[assetLanding]', err)
+    return { ok: false, error: 'The image could not be written to the project.' }
+  }
+  if (finalPath === null) return { ok: false, error: 'No free file name is left for this image in the target folder.' }
+
+  return { ok: true, relPath: toRelPath(finalPath), deduped: false, width, height }
 }

@@ -1,6 +1,12 @@
 /**
  * assetDrop — `POST /admin/api/studio/asset-drop` (D2 G15): the write behind
- * dropping an image file from the operating system onto a board frame.
+ * every image that is about to be referenced by a LITERAL URL. Three callers:
+ * a file dropped from the operating system onto a board frame, the
+ * inspector's "Replace image" on an `<img>` whose `src` is a string, and the
+ * Fill section's image upload (a CSS `url()` is a literal too). IMG-1 moved
+ * the last two here; before that they went through `asset-upload`, landed in
+ * `src/assets/` and wrote `src="/src/assets/x.png"`, a URL that 404s in
+ * production.
  *
  * ## Why this is not `asset-upload`
  *
@@ -8,14 +14,32 @@
  * sniffing, the SVG sanitisation, the containment check and the collision-safe
  * write, and nothing here duplicates a byte of it. What it does NOT share is
  * the QUESTION. `asset-upload`'s caller already knows where the file goes: the
- * inspector's image-fill picker passes the directory an existing `import
+ * inspector's image replace passes the directory an existing `import
  * heroImg from '…'` points at, because it is about to repoint that import.
  *
- * A dropped file has no import to repoint and no picker to say where it
- * belongs, and the element the drop is about to write is `<img src="…">` — a
- * STRING ATTRIBUTE, not a binding. So this route answers the question that
- * upload's caller answered for itself: **which directory in THIS project can
- * back a literal `src`, and what is the literal?**
+ * A literal has no import to repoint, and the element it is written into
+ * takes `<img src="…">` — a STRING ATTRIBUTE, not a binding. So this route
+ * answers the question that upload's caller answered for itself: **which
+ * directory in THIS project can back a literal `src`, and what is the
+ * literal?** The literal is computed by `assetSiteUrl.ts`, the one rule for
+ * "file on disk → URL", and returned as `src`; the browser writes it verbatim.
+ *
+ * ## Response
+ *
+ * `{ ok: true, mode: 'public', relPath, src, width, height, deduped }`.
+ * `mode` is the discriminant for the import convention (IMG-10), which will
+ * add `{ mode: 'import', relPath, width, height, deduped }` with no `src`: a
+ * client that reads `src` without checking `mode` will stop compiling then,
+ * which is the point. `width`/`height` are the intrinsic size from the header
+ * bytes, or `null`. `deduped` is true when the bytes already sat in `public/`
+ * and that file was reused.
+ *
+ * ## Replay
+ *
+ * Landing is idempotent by content (`landAssetBytes` dedupes), and the route
+ * is also wrapped in `withIdempotentReplay`, so a retry carrying the same
+ * `X-Studio-Idempotency-Key` gets the first response back without the body
+ * being read again. The path is in `apiClient.ts`'s `IDEMPOTENT_REPLAY_PATHS`.
  *
  * ## One honest location: `public/`
  *
@@ -83,7 +107,9 @@ import { badRequest, jsonResponse } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
 import { landAssetBytes } from './assetLanding'
+import { PUBLIC_DIR, assetSiteUrlResolver } from './assetSiteUrl'
 import { resolveAppRoot } from './appRoot'
+import { withIdempotentReplay } from './idempotentReplay'
 import { resolveProjectProfile } from './projectProbe'
 import type { ProjectFramework } from './projectProfileSchema'
 
@@ -95,9 +121,6 @@ import type { ProjectFramework } from './projectProfileSchema'
  * hitting it.
  */
 export const MAX_ASSET_DROP_BYTES = 25 * 1024 * 1024
-
-/** The one directory a dropped asset may land in. See this module's own doc. */
-const PUBLIC_DIR = 'public'
 
 /**
  * The frameworks whose contract says `public/` is served from the site root,
@@ -168,18 +191,17 @@ export function resolveDroppedAssetHome(dir: string): AssetDropHome {
 }
 
 /**
- * The literal a `public/` file is reachable at — its name, at the site root.
- *
- * `relPath` comes back from `landAssetBytes` as a PROJECT-relative path
- * (`public/photo.png`, or `apps/web/public/photo.png` in a monorepo), and the
- * part that matters is only ever what follows `public/`: everything above it
- * is where the app lives on disk, which the browser never sees.
+ * The `200` body. `mode` is the discriminant IMG-10's import convention joins
+ * (see the module doc's "Response" section).
  */
-export function droppedAssetSrc(relPath: string): string {
-  const marker = `${PUBLIC_DIR}/`
-  const at = relPath.lastIndexOf(marker)
-  const tail = at === -1 ? relPath : relPath.slice(at + marker.length)
-  return `/${tail}`
+export interface AssetDropPublicResponse {
+  ok: true
+  mode: 'public'
+  relPath: string
+  src: string
+  width: number | null
+  height: number | null
+  deduped: boolean
 }
 
 export interface AssetDropDeps {
@@ -190,6 +212,8 @@ export interface AssetDropDeps {
    * `studio-workspace/` and could write a fixture into it.
    */
   resolveDir?: (requested: string | null | undefined) => string
+  /** Overrides the replay store's root (`resolveIdempotencyRoot`). Test-only, so a keyed request never writes into this repo's `.data/`. */
+  idempotencyRoot?: string
 }
 
 // `_url` is unused (this route branches on `pathname` alone) but kept in the
@@ -204,6 +228,10 @@ export async function tryServeStudioAssetDrop(
 ): Promise<Response | null> {
   if (pathname !== '/admin/api/studio/asset-drop' || req.method !== 'POST') return null
 
+  return withIdempotentReplay(req, () => landDroppedAsset(req, deps), deps.idempotencyRoot)
+}
+
+async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Response> {
   try {
     const form = await readFormDataWithLimit(req, MAX_ASSET_DROP_BYTES)
 
@@ -230,10 +258,29 @@ export async function tryServeStudioAssetDrop(
     if (!home.ok) return jsonResponse({ error: home.error }, { status: 409 })
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const landed = landAssetBytes(dir, home.relToProject, bytes, file.name)
+    const landed = landAssetBytes(dir, home.relToProject, bytes, file.name, { dedupe: true })
     if (!landed.ok) return badRequest(landed.error)
 
-    return jsonResponse({ ok: true, relPath: landed.relPath, src: droppedAssetSrc(landed.relPath) })
+    // The home IS `<appRoot>/public`, so the rule must call it build-safe. If
+    // it ever does not, the two halves disagree about the app root, and
+    // writing a dev-only URL into the user's source would be the exact bug
+    // this route exists to prevent: refuse instead.
+    const url = assetSiteUrlResolver(dir)(landed.relPath)
+    if (url === null || !url.buildSafe) {
+      console.error('[studio:asset-drop] landed outside the public root', landed.relPath)
+      return jsonResponse({ error: 'Studio could not work out the public URL of the image it just saved.' }, { status: 500 })
+    }
+
+    const body: AssetDropPublicResponse = {
+      ok: true,
+      mode: 'public',
+      relPath: landed.relPath,
+      src: url.src,
+      width: landed.width,
+      height: landed.height,
+      deduped: landed.deduped,
+    }
+    return jsonResponse(body)
   } catch (err) {
     rethrowProjectDirRefusal(err)
     console.error('[studio]', err)

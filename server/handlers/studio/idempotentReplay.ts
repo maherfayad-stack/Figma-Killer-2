@@ -2,8 +2,11 @@
  * idempotentReplay — durable replay protection for the Studio write routes
  * where a lost response must never turn into a second effect: `POST
  * /admin/api/studio/save` (structural edits — duplicate/insert/wrap/group/
- * move/…), `POST`/`DELETE /admin/api/studio/page`, and `POST
- * /admin/api/studio/boards`.
+ * move/…), `POST`/`DELETE /admin/api/studio/page`, `POST
+ * /admin/api/studio/boards`, and `POST /admin/api/studio/asset-drop` (IMG-1:
+ * a retried image landing would otherwise write `photo-2.png`; that route is
+ * also idempotent by content, since `landAssetBytes` dedupes, so a retry whose
+ * record was lost still reuses the first file rather than copying it).
  *
  * ## The gap this closes
  *
