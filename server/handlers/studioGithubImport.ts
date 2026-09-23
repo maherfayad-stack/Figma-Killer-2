@@ -58,6 +58,7 @@ import {
   writeArchiveToWorkspace,
 } from './studio/archiveIngest'
 import { isGithubOwnerSegment, isGithubRepoSegment } from './studio/gitPaths'
+import { projectsRootDir } from './studioProjects'
 
 /** Thrown for every rejection `runGithubImport` wants mapped to a specific HTTP status. */
 export class GithubImportError extends ArchiveIngestError {
@@ -137,13 +138,19 @@ export function buildGithubZipballUrl(owner: string, repo: string, ref?: string)
 }
 
 /**
- * Default, repo-scoped import target — its own project folder under
- * `studio-workspace/`, alongside every hand-authored project. Never the root
- * itself: the target is `studio-workspace/<owner>-<repo>/`, so the import's
- * target-clearing step only ever touches that one project subfolder.
+ * Default, repo-scoped import target — its own project folder under the
+ * workspace root (`projectsRootDir()`), alongside every hand-authored
+ * project. Never the root itself: the target is `<root>/<owner>-<repo>/`, so
+ * the import's target-clearing step only ever touches that one project
+ * subfolder.
+ *
+ * It MUST derive from `projectsRootDir()` and never rebuild the root from
+ * `process.cwd()`: a deployed image sets `STUDIO_WORKSPACE_DIR` to its
+ * persistent volume, and a second, cwd-based root would land every import
+ * outside that volume and outside the directory the launcher lists.
  */
 export function defaultGithubImportDir(owner: string, repo: string): string {
-  return join(process.cwd(), 'studio-workspace', `${owner}-${repo}`)
+  return join(projectsRootDir(), `${owner}-${repo}`)
 }
 
 /**

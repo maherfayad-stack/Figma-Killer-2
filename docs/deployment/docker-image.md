@@ -14,6 +14,7 @@ Run the image with:
 - `PORT` set to the platform's HTTP port
 - `DATABASE_URL` pointing at SQLite or Postgres
 - `UPLOADS_DIR` mounted on persistent storage
+- `STUDIO_WORKSPACE_DIR` (every user's projects) on persistent storage; the image default `/app/studio-workspace` is NOT a volume by itself
 - `STATIC_DIR=/app/dist`
 - `STUDIO_SECRET_KEY` set before configuring AI provider credentials, plugin secret settings, or TOTP MFA
 - `PUBLIC_ORIGIN` set to the site's public origin when the platform terminates HTTPS before forwarding to the container (auto-detected from `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN` on those platforms)
@@ -23,6 +24,7 @@ Use one persistent mount root when the platform only supports one app volume:
 ```txt
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
 ```
 
 ## Build Locally
@@ -56,13 +58,14 @@ docker run -d \
   -e DATABASE_URL="sqlite:/app/storage/data/cms.db" \
   -e STATIC_DIR=/app/dist \
   -e UPLOADS_DIR=/app/storage/uploads \
+  -e STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace \
   -e STUDIO_SECRET_KEY="replace-with-output-of-generate-secret-key" \
   -v studio-storage:/app/storage \
   --restart unless-stopped \
   studio:local
 ```
 
-The single volume stores both the SQLite database and uploaded media.
+The single volume stores the SQLite database, uploaded media, and the Studio workspace (every user's projects).
 
 ## Run With External Postgres
 
@@ -78,13 +81,16 @@ docker run -d \
   -e DATABASE_URL="postgres://user:password@host:5432/studio" \
   -e STATIC_DIR=/app/dist \
   -e UPLOADS_DIR=/app/storage/uploads \
+  -e STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace \
   -e STUDIO_SECRET_KEY="replace-with-output-of-generate-secret-key" \
   -v studio-storage:/app/storage \
   --restart unless-stopped \
   studio:local
 ```
 
-The app volume is still required in Postgres mode because uploads, fonts, plugin packs, and published disk artefacts live under `UPLOADS_DIR`.
+The app volume is still required in Postgres mode because the Studio workspace lives under `STUDIO_WORKSPACE_DIR`, and uploads, fonts, plugin packs, and published disk artefacts live under `UPLOADS_DIR`.
+
+A container created from an older command without `STUDIO_WORKSPACE_DIR` keeps its projects in its writable layer, which `docker rm` deletes. Move them before recreating it: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
 
 Replace `studio:local` with `ghcr.io/corebunch/studio:<tag>` when deploying from a published image.
 
@@ -102,6 +108,7 @@ Attach a Railway volume at `/app/storage`, set the health check path to `/health
 PORT=8080
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
 STATIC_DIR=/app/dist
 STUDIO_SECRET_KEY=<output of bun run scripts/generate-secret-key.ts>
 PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}
@@ -127,6 +134,7 @@ The SQLite Blueprint creates one image-backed web service and one persistent dis
 PORT=10000
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
 STATIC_DIR=/app/dist
 ```
 
@@ -139,6 +147,7 @@ Render auto-injects `RENDER_EXTERNAL_URL`, which Studio uses as the CSRF public 
 |---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:...`, `file:...`, `postgres://...`, or `postgresql://...` |
 | `UPLOADS_DIR` | Yes for durable media | Persistent upload directory |
+| `STUDIO_WORKSPACE_DIR` | Yes, on persistent storage | The workspace root: every user's projects. The image sets `/app/studio-workspace`; mount a volume there, or point it inside your volume (e.g. `/app/storage/studio-workspace`) |
 | `STATIC_DIR` | Yes in Docker | `/app/dist` |
 | `PORT` | Platform-dependent | HTTP listen port; defaults to `3001` |
 | `STUDIO_SECRET_KEY` | Yes for reversible server secrets | Output of `bun run scripts/generate-secret-key.ts` |
@@ -169,6 +178,6 @@ Expected response:
 - [railway.md](railway.md) — Railway template variables
 - [render.md](render.md) — Render Blueprint variables
 - [vps.md](vps.md) — Docker Compose install
-- [backup-restore.md](backup-restore.md) — backing up DB and uploads
+- [backup-restore.md](backup-restore.md) — backing up the workspace, DB and uploads
 - `Dockerfile` — production image definition
 - `server/config.ts` — runtime env parsing

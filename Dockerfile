@@ -37,6 +37,13 @@ ENV NODE_ENV=production
 ENV PORT=3001
 ENV STATIC_DIR=/app/dist
 ENV UPLOADS_DIR=/app/uploads
+# The Studio workspace: every user's real React projects, Studio's source of
+# truth, with no other copy. It MUST be on a mounted volume (compose.prod.yml
+# mounts the `workspace` volume here; the Railway/Render templates point this
+# variable into their /app/storage disk). The directory is created below and
+# owned by `bun` so an empty named volume mounted here inherits that owner.
+# Gated by src/__tests__/architecture/workspace-volume-persistence.test.ts.
+ENV STUDIO_WORKSPACE_DIR=/app/studio-workspace
 
 COPY --from=production-deps --chown=bun:bun /app/node_modules ./node_modules
 COPY --from=build --chown=bun:bun /app/dist ./dist
@@ -45,7 +52,7 @@ COPY --chown=bun:bun tsconfig*.json ./
 COPY --chown=bun:bun server ./server
 COPY --chown=bun:bun src ./src
 
-RUN mkdir -p /app/uploads /app/data && chown -R bun:bun /app
+RUN mkdir -p /app/uploads /app/data /app/studio-workspace && chown -R bun:bun /app
 
 USER bun
 EXPOSE 3001

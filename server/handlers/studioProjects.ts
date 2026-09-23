@@ -41,14 +41,25 @@ import { isRealpathContainedAllowingMissing } from './studio/workspacePackageRes
  * the container itself is never a project.
  *
  * `STUDIO_WORKSPACE_DIR` relocates that root, read per call so it can be set
- * for the duration of one test file. It exists because this directory is the
- * anchor of every containment guard in the feature (`assertWithinWorkspace`,
+ * for the duration of one test file. This directory is the anchor of every
+ * containment guard in the feature (`assertWithinWorkspace`,
  * `isRealpathContained`, git's `GIT_CEILING_DIRECTORIES`), so a test that
  * needs a project the guards accept would otherwise have to create it inside
  * the developer's OWN workspace — where a killed run leaves the fixture
  * behind and the launcher lists it as a real project. Tests point it at an OS
- * temp dir instead; unset (every normal run, dev or deployed) it is
- * `<cwd>/studio-workspace` exactly as before.
+ * temp dir instead.
+ *
+ * Deployments set it too: the Docker image sets `/app/studio-workspace`
+ * (mounted as the `workspace` volume by `compose.prod.yml`), and the
+ * Railway/Render templates set `/app/storage/studio-workspace` on their app
+ * disk, because this directory holds every user's projects with no other copy
+ * and must outlive the container (P1-H, gated by
+ * `workspace-volume-persistence.test.ts`). Unset (a dev checkout, a direct Bun
+ * install) it is `<cwd>/studio-workspace`.
+ *
+ * Every path Studio derives for a project (a new project, a GitHub import, a
+ * clone, an upload) must be built from THIS function, never from
+ * `process.cwd()`: a second root would put projects outside the volume.
  */
 export function projectsRootDir(): string {
   const override = process.env.STUDIO_WORKSPACE_DIR

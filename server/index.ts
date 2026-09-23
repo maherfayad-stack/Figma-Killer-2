@@ -37,6 +37,11 @@ startConversationPurgeTick(db)
 // `getGithubTokenForUser(userId)` be the single-argument function those
 // callers share — see `server/handlers/studio/githubToken.ts`.
 provideGithubCredentialDb(db)
+// The workspace root holds every user's projects with no other copy. Create
+// it if a fresh volume has none yet, and, in a container, warn loudly at boot
+// when it is not on a mounted volume (the next recreate would delete it).
+const { prepareWorkspaceRoot } = await import('./handlers/studio/workspacePersistence')
+prepareWorkspaceRoot()
 
 /**
  * Build the CORS response headers for an incoming request.

@@ -67,6 +67,8 @@ const OWN_READDIR_ALLOWLIST: Record<string, string> = {
   'ai-handlers-capability-gated.test.ts': 'same: one non-recursive readdirSync of one directory',
   'studio-tool-project-dir.test.ts': 'same: one non-recursive readdirSync of one directory',
   'studio-tool-refusals-are-coded.test.ts': 'same: one non-recursive readdirSync of one directory',
+  'workspace-volume-persistence.test.ts':
+    'one non-recursive readdirSync of the repo root for compose*.yml, an extension the cache does not hold',
   'shared-source-tree-walk.test.ts': 'this gate — it walks independently in order to check the cache',
 }
 

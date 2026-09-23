@@ -97,6 +97,7 @@ Use \`ghcr.io/corebunch/studio:${version}\` as the Railway service source. Attac
 PORT=8080
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
 STATIC_DIR=/app/dist
 RAILWAY_RUN_UID=0
 STUDIO_SECRET_KEY=<output of bun run scripts/generate-secret-key.ts>
@@ -104,6 +105,10 @@ PUBLIC_ORIGIN=https://\${{RAILWAY_PUBLIC_DOMAIN}}
 \`\`\`
 
 Read \`docs/deployment/railway.md\`, \`docs/deployment/vps.md\`, and \`docs/deployment/backup-restore.md\` before running a public site.
+
+## Upgrading an install from before the workspace volume
+
+Releases before this one kept the Studio workspace (every user's projects) in the container's writable layer, so recreating the container deleted it. Copy it out of the RUNNING container BEFORE you pull or recreate anything: follow "Moving the workspace onto a volume" in \`docs/deployment/backup-restore.md\`.
 
 ## Render Blueprint install
 

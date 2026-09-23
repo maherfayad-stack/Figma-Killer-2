@@ -63,6 +63,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### server-28 — P1-H: user projects survive a container recreate
+- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` off the trunk `666f68e3` · **PR:** see branch (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open; **needs a security-guard review**: volume permissions, bind-mount ownership)
+- **Goal:** ROADMAP P1-H. Put the workspace root (every user's projects, no other copy) on persistent storage in every shipped image, Compose stack and template; give live installs a safe one-time move; gate it.
+- **Done:**
+  - Image: `ENV STUDIO_WORKSPACE_DIR=/app/studio-workspace`, and the directory is created `bun`-owned (an empty named volume inherits that owner).
+  - `compose.prod.yml` mounts a new `workspace` named volume there (so every overlay mix inherits it). Render Blueprints, Railway docs, `docker run` examples and the release bundle's INSTALL.md set `STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace` on their one app disk.
+  - Bug fixed: `defaultGithubImportDir` built `<cwd>/studio-workspace/...` and ignored `STUDIO_WORKSPACE_DIR`, so with the variable set every GitHub import (route and MCP tool) landed outside the volume AND outside the listed root. Now `join(projectsRootDir(), …)`.
+  - Boot: `server/handlers/studio/workspacePersistence.ts` `prepareWorkspaceRoot()` creates a missing root, then (Linux) reads `/proc/self/mountinfo` and logs `[studio:workspace]` when the root is on a container's writable layer (overlay at `/`) or a tmpfs. It only logs.
+  - `trustGate.ts` comment: the default tier is `DEFAULT_TRUST_TIER` (`run-project`), not Tier 0.
+  - Docs: `docs/deployment/{README,backup-restore,docker-image,railway,render,vps,release-workflow}.md`; `backup-restore.md` → "Moving the workspace onto a volume" is the one-time migration (Compose: `docker compose cp` out of the OLD running container, `up -d`, copy back, `chown -R bun:bun`; Railway/Render: `cp -a` into `/app/storage` from a shell on the running service, then set the variable).
+- **Tests:**
+  - `src/__tests__/architecture/workspace-volume-persistence.test.ts` (27): parses the Dockerfile runtime stage, all 8 `compose.prod.yml` + overlay stacks, both Render Blueprints, and every `/app/storage` env block in the deployment docs and bundle script; checks the root the server resolves (`projectsRootDir()`) is covered by a declared volume. 16 of its tests failed against the pre-fix files.
+  - `studioGithubImport.test.ts` → `defaultGithubImportDir` (2): both failed before the fix.
+  - `server/handlers/studio/__tests__/workspacePersistence.test.ts` (12): the mountinfo decision, including the `/app/studio` vs `/app/studio-workspace` prefix trap.
+- **Decisions:** no Dockerfile `VOLUME` (anonymous volumes pile up unnamed, and managed platforms mount their own disks instead); the boot check warns and never refuses to start (refusing would take down installs that work today).
+- **Landmines:**
+  - **A live install loses its projects on the FIRST `up -d` with the new files unless the operator copies them out first.** Nothing in the new container can recover them. The release notes must lead with this (`release-workflow.md` says so).
+  - `.data/` (MCP server secrets, Claude CLI config, idempotency records) is still in the writable layer. It is not in P1-H's scope; see the PR's "Found, not fixed".
+- **Next:** security-guard review; owner merges; the next release's notes lead with the migration step.
+
 ---
 
 ## Blocked
