@@ -125,6 +125,16 @@ describe('reads go through the one containment rule', () => {
     expect(viaLink.code).toBe('path-outside-project')
   })
 
+  it('refuses an NTFS data stream and a Windows device name', async () => {
+    expect((await call('studio_read_file', { path: 'pages/Home.tsx:hidden' })).code).toBe('path-outside-project')
+    expect((await call('studio_write_file', { path: 'pages/Home.tsx:hidden', content: 'x' })).code).toBe('path-outside-project')
+    if (process.platform === 'win32') {
+      for (const device of ['CON', 'nul.tsx', 'pages/com1.css', 'LPT9']) {
+        expect((await call('studio_read_file', { path: device })).code, device).toBe('path-outside-project')
+      }
+    }
+  })
+
   it('accepts an absolute path that IS inside the project, and hands back the on-disk casing', async () => {
     const abs = path.join(dir, 'pages', 'Home.tsx')
     const result = await call('studio_read_file', { path: abs })

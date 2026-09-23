@@ -19,7 +19,9 @@
  * ## What it refuses, in order
  *
  *   1. **Not a path inside the project, lexically.** Empty, a NUL byte, a `..`
- *      segment, or an absolute path that is not under the project. An
+ *      segment, a `:` inside a segment (an NTFS alternate data stream), a
+ *      Windows device name (`CON`, `NUL`, `COM1.tsx` — a read of one blocks on
+ *      the console), or an absolute path that is not under the project. An
  *      absolute path INSIDE the project is accepted and made relative: models
  *      trained on native file tools send them, and refusing a correct target
  *      over its spelling only buys a wasted round.
@@ -92,6 +94,11 @@ function protectedPath(rawPath: string, why: string): AgentFileRefusal {
   return { ok: false, code: 'protected-path', message: `"${rawPath}" ${why}.`, remedy: PROTECTED_REMEDY }
 }
 
+/** `con`, `NUL.txt`, `com1.tsx`, `LPT9 ` — Windows reserved device names, whatever the extension. */
+function isWindowsDeviceName(segment: string): boolean {
+  return /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?$/i.test(segment.replace(/[. ]+$/, ''))
+}
+
 /** The protected-directory or secret-file reason for a project-relative path, or `null`. Pure. */
 function lexicalDenial(rel: string, intent: AgentFileIntent): string | null {
   const segments = rel.split('/')
@@ -126,6 +133,12 @@ export function resolveAgentFilePath(
   const segments = relInput.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== '.')
   if (segments.length === 0) return outside(rawPath, 'names the project root, not a file in it')
   if (segments.some((segment) => segment === '..')) return outside(rawPath, 'climbs out of the project with ".."')
+  // A colon inside a segment is an NTFS alternate data stream (or a drive) on
+  // Windows — a hidden second body behind an innocent file name.
+  if (segments.some((segment) => segment.includes(':'))) return outside(rawPath, 'names a data stream or a drive (":" inside a path segment)')
+  // CON, NUL, COM1… are devices on Windows, with any extension: a read of
+  // one blocks on the console, a write goes nowhere or to a port.
+  if (process.platform === 'win32' && segments.some(isWindowsDeviceName)) return outside(rawPath, 'names a Windows device (CON, NUL, COM1…), not a file')
   const lexicalRel = segments.join('/')
 
   const lexical = lexicalDenial(lexicalRel, intent)
