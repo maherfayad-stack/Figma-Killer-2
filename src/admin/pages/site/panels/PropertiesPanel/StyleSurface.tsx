@@ -8,7 +8,7 @@
  * property LISTS, and the sticky search bar + icon rail chrome around them.
  * All three are gone from this file. What survives, unchanged in shape, is
  * the SECTION CONTENT — `StyleSectionsEditor` and everything under it
- * (`docs/features/inspector-disclosure.md`'s laws, the field model, token
+ * (`docs/features/inspector.md`'s laws, the field model, token
  * autocomplete, provenance) — now called exactly ONCE per selection, over
  * one collapsed style bag (`../../inspector/collapsedStyleBag.ts`) instead
  * of two independent Element/Class renders.

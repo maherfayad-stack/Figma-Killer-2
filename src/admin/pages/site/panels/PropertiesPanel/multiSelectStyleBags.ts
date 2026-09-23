@@ -20,7 +20,7 @@
  *     node sets it inline; its value is the shared value when every node
  *     agrees and `MIXED` otherwise. `hasStyleValue(MIXED)` is true, so a
  *     mixed property correctly counts as SET for section disclosure (Law 1,
- *     docs/features/inspector-disclosure.md §4 G1) and for the "N set" meta.
+ *     docs/features/inspector.md §4 G1) and for the "N set" meta.
  *
  *   - **`currentStyles`** — "what is each node EFFECTIVELY showing?", the
  *     placeholder / unset-row layer. Per node this is the winning

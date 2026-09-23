@@ -1,5 +1,5 @@
 /**
- * Image fill, end to end through the panel (docs/features/inspector-disclosure.md §4 G6.5).
+ * Image fill, end to end through the panel (docs/features/inspector.md §4 G6.5).
  *
  * The one thing worth asserting at this level: picking a project image writes
  * a `background-image` layer whose URL is the one the USER'S build resolves —

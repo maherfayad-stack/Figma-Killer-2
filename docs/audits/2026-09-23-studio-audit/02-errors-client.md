@@ -1,4 +1,5 @@
 # Audit 02 — Client-side errors, refusals, stuck states and store/disk desync
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: store-engineer (read-only) · 2026-09-23 · branch `fix/studio-load-memo-cold-on-every-load`
 Scope: `src/admin/pages/site/**`, `src/core/page-tree`, `src/core/studio-*`, plus the editor-shell

@@ -1,4 +1,5 @@
 # 2026-09-23 Studio audit
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 > **Purpose:** the evidence behind [`ROADMAP.md`](../../../ROADMAP.md) · **Read when:** a work order cites an ID from here (PERF-, ERR-, WB-, IX-, UX-, AI-, IMG-, DET-, SVG-) · **Trust:** historical, dated 2026-09-23 at `560ddb0e`; line numbers drift, so re-read the code before acting · **Owner:** studio-scribe
 

@@ -1,11 +1,12 @@
 # User E2E Testing
+> **Purpose:** the Playwright e2e suite: the fourth gate, the disposable stack, authoring rules, coverage · **Read when:** writing or running an e2e spec · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 This folder defines the agent-run browser testing workflow for Studio.
 
 - `protocol.md` explains how an agent should run user-facing E2E audits.
 - `run-log-template.md` is copied into `runs/` for each audit (created on first
   use — this repo does not check in past run logs).
-- `agent-upgrade-dogfood.md` is the human test plan for the 2026-08-03
+- [`docs/archive/e2e/agent-upgrade-dogfood.md`](../archive/e2e/agent-upgrade-dogfood.md) is the human test plan for the 2026-08-03
   five-workstream agent upgrade (live canvas reload, component awareness, turn
   latency, visual measurement, Figma MCP). Everything in it passed unit,
   integration, and static gates but was **never driven through a browser** — the
@@ -56,7 +57,7 @@ bun run test:e2e           # starts its own stack — do not hand-start one firs
 `build`, `test`, and `lint` are the three gates every change runs. **A change
 that touches the canvas, a frame, an overlay, geometry, or a panel's height
 runs `bun run test:e2e` as well** — it is the fourth gate, not an optional
-extra. `standing-02` says why: happy-dom has no layout engine, so a unit test
+extra. The reason: happy-dom has no layout engine, so a unit test
 on those surfaces structurally cannot fail on the thing it is named after
 (WS-8.2 shipped a real frame-height defect behind a green one). Assert on
 *computed* layout — measured rects, `scrollHeight`, computed styles after
@@ -87,7 +88,7 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
 `inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
 those four measure **computed layout and frame time**, the one class of
-question happy-dom structurally cannot answer (`standing-02`). It stays its own
+question happy-dom structurally cannot answer. It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
 
@@ -229,6 +230,31 @@ first retry automatically.
   accessible name is not practical (canvas notch, toolbar actions, dialogs).
 - **Isolation.** With `workers: 1` all specs share one database; each spec works
   on its own uniquely-named page/fixture rather than sharing mutable state.
+
+### Authoring rules
+
+Learned from the 2026-09-19 cold-suite triage (`e2e-1`); each one caused real red specs.
+
+1. **Open the board with `openFixtureBoard`, never a spec's own `goto`**
+   (`tests/e2e/helpers/studioFixtureProject.ts`). The canvas has no scroll
+   container, and where a frame lands is decided by a "center on open" pass that
+   races the page documents it centres on. On a cold load the board can settle
+   with no frame in view, and a click at the frame's box centre lands on empty
+   canvas: the failure then reads like a product bug. `openFixtureBoard` presses
+   the product's own **Ctrl+0**; `panIntoView` puts the target under the pointer.
+2. **The single-selection write target is the ClassPicker pill.** Use
+   `class-chip-<name>` (`SelectorPillStack.tsx`) and read writability from the
+   enclosing `write-target-chip-<classId>`'s `data-locked`. `StyleTargetChip`
+   renders only for a multi-selection.
+3. **Size lives in Measures.** `MeasuresSection` renders `SizeSection` and is
+   always mounted; width is `css-size-input-width` (`textbox[name="Width"]`).
+4. **A same-file reparent is a write, not a refusal** (`moveJsxElement.ts`), and
+   a cross-file one goes through `transplantJsxElement.ts`. The refusal that
+   remains is about scope (`freeVariablesOutOfScopeAt`); no e2e covers it yet.
+
+The CMS half of the suite drives UIs PR #18 deleted (an Explorer tab row, a
+name-and-slug page dialog, a toolbar Publish action). Whether to re-point or
+delete those specs is an open row in `ROADMAP.md` §13.
 
 ### Automated coverage map
 

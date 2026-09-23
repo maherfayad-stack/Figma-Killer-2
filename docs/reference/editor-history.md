@@ -1,4 +1,5 @@
 # Editor Undo/Redo History
+> **Purpose:** patch-based undo/redo: HistoryEntry, the mutate helpers, coalescing · **Read when:** touching undo, redo or history coalescing · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 How the visual editor captures, stores, and applies undo/redo history using Mutative patch pairs.
 

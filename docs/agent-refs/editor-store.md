@@ -1,4 +1,5 @@
 # Editor store
+> **Purpose:** the Zustand editor store: slices, tree mutations, undo history, selection · **Read when:** touching store state, mutations or undo · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Zustand + Mutative, composed from slices. Source:
 `src/admin/pages/site/store/`.

@@ -1,4 +1,5 @@
 # Error Boundaries
+> **Purpose:** where error boundaries live and how errors are reported · **Read when:** adding a boundary or an error surface · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 Cookbook for `<ErrorBoundary>` placements and error reporting in the admin app. Where boundaries live, what `location` tags to use, and how to add a new one.
 

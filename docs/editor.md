@@ -1,4 +1,5 @@
 # Editor
+> **Purpose:** the admin shell and visual editor in depth: routing, store, canvas, sidebars, panels · **Read when:** changing the editor UI or its store wiring · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Deep dive on the admin app and the visual editor — how the SPA boots, how routing works, how the editor store mutates pages, how the canvas renders.
 

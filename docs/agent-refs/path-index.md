@@ -1,4 +1,5 @@
 # Path index — where everything lives
+> **Purpose:** where every file lives, marked Studio, shared or dormant CMS · **Read when:** always: "where does X live?" · **Trust:** index · **Owner:** studio-scribe · **Verified:** not yet
 
 Written for agents. Look here **before** grepping the repo.
 
@@ -356,6 +357,7 @@ source) where a plausible-looking change is how a real bug ships ·
 | 🟡 `src/modules/base/` | `base.container`, `base.text`, `base.button`, `base.image`, `base.link`, `base.svg`, … |
 | 🟢 `src/modules/alm/register.tsx` | The BUILT-IN design system's components as modules, from `alm-design-system` (`vendor/alm-design-system/`) + the generated manifest. Maps the manifest's `description` / `keywords` / `group` onto each module (`group` → `category`). This is Studio's OWN pack, not a project dependency — it renders at every trust tier and is not a candidate for `registerProjectModules.ts`'s generic `pkg.*` path, which serves genuinely third-party packages. |
 | 🟢 `src/modules/alm/manifest.generated.json` | 39 component specs — props, plus DS-6's `description`/`keywords`/`group`. Produced by `bun run alm:sync`. |
+| 🟡 `public/runtime/{react,react-dom,react-jsx-runtime,react-jsx-dev-runtime}.js` | Pre-built ESM shims that re-export the editor's own React instance (`globalThis.__studio.React`, installed by `src/admin/pluginRuntimeBootstrap.ts`), mapped by the import map in `index.html`. The plugin host and Studio's package-component bundles (`server/handlers/studio/componentBundle.ts`) both use them, so a bundled component shares the admin's React. Reuse them; do not add a second React shim. |
 | 🟢 `vendor/alm-design-system/` | **The built-in design system, vendored.** `src/` is the source of truth (40 `.jsx` + CSS, `context/`, `tokens/`, 568 icons); `dist/{index.js,index.css,tokens.generated.json,BUILD_HASH}` are committed build artefacts; `studio/{keywords,groups}.json` is Studio's own curation; `CLAUDE.md` / `design.md` are the upstream docs the manifest is built from. Wired in as `"alm-design-system": "file:./vendor/alm-design-system"`, exactly like `vendor/pixel-art-icons/`. |
 | 🟢 `scripts/sync-alm-design-system.ts` | `bun run alm:sync` — Vite lib-builds `dist/`, emits `tokens.generated.json` + `BUILD_HASH`, regenerates `manifest.generated.json`. `--check` (`bun run alm:check`) reports drift without writing. Absorbed the deleted `scripts/gen-alm-manifest.mjs`. |
 | 🟢 `src/core/design-system-manifest/` | Builds that manifest from the vendored docs: `vendorRoot.ts` (where the folder is), `vendorDocs.ts` (the markdown slicer that replaced the npm's `mcp/catalog.js`), `buildDesignSystemManifest.ts` (prop truth), `componentCuration.ts` (description/keywords/group), `extractColorTokens.ts` (`tokens.generated.json`), `designSystemSchemas.ts` (TypeBox for the three JSON boundaries). Node/Bun only — the browser reads the committed artefacts. |
@@ -440,7 +442,7 @@ source) where a plausible-looking change is how a real bug ships ·
 `src/admin/pages/users/`
 
 **Three corrections this list used to get wrong** — see
-[`STUDIO-CMS-REMOVAL-PLAN.md`](../../STUDIO-CMS-REMOVAL-PLAN.md)'s Traps section:
+[`docs/architecture.md`](../architecture.md) → "The dormant CMS half: four traps":
 
 - 🟡 **`src/core/publisher/` is load-bearing, not dormant.** It is the single
   class-CSS emission engine shared by publish and canvas: `ClassStyleInjector`

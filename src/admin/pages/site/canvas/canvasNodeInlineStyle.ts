@@ -4,7 +4,7 @@ import type { NodeStylesPreview } from '@site/store/slices/styleRuleSlice'
  * Merge a transient inline-style preview over a node's stored
  * `node.inlineStyles` — the Element (inline) target's mirror of
  * `getCanvasNodeClassIds`'s class-preview merge, and the canvas-render half
- * of Rule 7 (preview-then-commit, docs/features/inspector-disclosure.md /
+ * of Rule 7 (preview-then-commit, docs/features/inspector.md /
  * STUDIO-LIVE-CANVAS-PLAN.md Track P). The class-target preview
  * (`previewClassStyles`/`ClassStyleInjector`) has shipped end-to-end since
  * before this rule; the Element target had no preview channel at all —

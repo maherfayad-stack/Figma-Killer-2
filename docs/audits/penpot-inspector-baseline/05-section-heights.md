@@ -1,4 +1,5 @@
 # 05 — Studio's own per-section heights, and the 900px Design-tab budget
+> **Trust:** historical, dated 2026-09-09. Paths may be wrong. Never act on it.
 
 Unlike `00`–`04`, this file measures **Studio**, not Penpot. It exists because
 `docs/features/inspector.md` §6's oldest claim — *a text node's entire

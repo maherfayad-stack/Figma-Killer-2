@@ -1,4 +1,5 @@
 # Prototype export — the runnable shell in the workspace
+> **Purpose:** the runnable preview shell Studio scaffolds into a project, and "Download the code" · **Read when:** touching the generated prototype shell or the download · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 **Owner modules:** `server/handlers/studio/prototypeShell/` ·
 `server/handlers/studioDownload.ts`

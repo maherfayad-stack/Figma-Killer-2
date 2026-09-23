@@ -1,6 +1,5 @@
 # ROADMAP: the canvas excellence program
-
-> **Purpose:** the single living plan for Studio: what to build next, in what order, by whom · **Read when:** before designing any change, to find its work order · **Trust:** live (written 2026-09-23 at `560ddb0e`) · **Owner:** studio-architect keeps it current; studio-scribe folds finished bundles out
+> **Purpose:** the single living plan for Studio: what to build next, in what order, by whom, and the questions still open for the owner · **Read when:** before designing any change, to find its bundle · **Trust:** live (written 2026-09-23 at `560ddb0e`) · **Owner:** studio-architect keeps it current; studio-scribe folds finished bundles out · **Verified:** 2026-09-23
 
 The owner asked for eight things on 2026-09-23. The canvas should:
 - not lag;
@@ -69,26 +68,27 @@ may start before the previous one ends only where §11 (collision map) says the 
 
 ## 2. Owner decisions (answered 2026-09-23)
 
-The owner answered OD-1, OD-2, OD-5, OD-7 and OD-10/D1 directly. With the standing authorization
-re-confirmed (OD-2), every other row takes its recommendation. An item marked **(owner)** was answered
-in the owner's own words.
+All fourteen program decisions are settled. Their full text, with how each was answered, is in
+[`docs/decisions.md`](docs/decisions.md) → "The canvas excellence program". Bundles below cite them by id:
 
-| # | Decision | Status | Affects |
-|---|---|---|---|
-| OD-1 | Old plans: **archive** the seven that code cites to `docs/archive/plans/` (filenames unchanged). Delete the three with no citations (`WAVE7-STATUS`, `BUILTIN-DESIGN-SYSTEM`, `CMS-REMOVAL`) after harvesting them | **(owner) archive** | P0 |
-| OD-2 | The 2026-07-31 standing authorization ("run the whole plan without stopping to ask") | **(owner) re-confirmed 2026-09-23.** It moves to `docs/decisions.md` in P0-B. The limits still hold: no push to `main`, PRs open as drafts, and security-guard reviews what the plan marks for it | all |
-| OD-3 | Keep Figma's meaning for ⌘K, F, ⌘⇧C, ⌘⇧G, ⌘I and ⌘-drag. **⇧-click on the canvas becomes toggle**; range selection stays in the Layers panel | recommendation adopted | P2-B |
-| OD-4 | Inspector gap between sections goes 8 → 12 px; the Shadow + Blur → Effects merge pays for the height | recommendation adopted | P2-F |
-| OD-5 | Insert tools R/O/T/F become **armed tools**: hover previews, a click places at the pointer, a drag sets the size, T starts typing. ⏎ keeps the keyboard insert | **(owner) yes** | P5-E |
-| OD-6 | Marquee inside a frame starts on a press over the frame's root, where no child is under the pointer. ⌘-drag stays free-move | recommendation adopted | P5-E |
-| OD-7 | A structural gesture (move, delete, wrap, group, duplicate) on markup inside a **shared component** applies to **this instance only**, with no dialog. The editor detaches the instance and then replays the gesture, as one gesture and one undo. If detach refuses (for example a state hook), it makes a component copy for this call site (`Card` → `Card2`) and replays there. Only when both refuse does it show one honest refusal. **Value** edits (style, text) inside a component keep today's write-to-component behaviour with its blast-radius notice | **(owner) "assume it's only this one"** | P3-D |
-| OD-8 | A style or class edit on a `.map` row goes to the row template ("Applied to all N rows · Undo"). Reorder, delete or duplicate on a row edits the array literal | recommendation adopted | P3-C/D |
-| OD-9 | **Detach** = inline the component's JSX at the call site (it still renders, props no longer apply, anything can be edited), plus a separate **"Expose as prop"**. No hidden override layer | recommendation adopted | P5-C |
-| OD-10 | SVG: **D1 superseded by OD-14**: a shape drawn on empty board goes to the free canvas, and a shape drawn inside a frame lands in flow. D2 pencil key is ⇧P, with ⇧C as an alias. D3 external `.svg` files are read-only with "Inline to edit". D4 defers boolean ops. D5 default stroke is `currentColor`, 2 px, round. D6 the real shape updates live during a drag | **(owner) D1 → free canvas**; the rest adopted | P5-D |
-| OD-11 | Assistant imagery: licensed stock search now; AI image generation later, behind its own capability and credential | recommendation adopted | P4-E |
-| OD-12 | Image drop detects whether the project imports images or uses `public/` URLs. Public stays the default; Next.js is always public | recommendation adopted | P5-B |
-| OD-13 | URL-drag from another browser tab gets an SSRF-guarded fetch route, with a security review | recommendation adopted | P5-B |
-| OD-14 | **Free canvas** (owner, verbatim: *"right in the canvas I want a free canvas that I can drag an element/component or an image in it and it's not part of the pages, and it's still there just not part of the live preview, so it's figma like free canvas"*). The empty board around the frames holds **loose layers**: elements, component instances, images and SVGs placed at any x/y. They persist across reloads and never appear in a page, the live preview or a publish. They can be dragged into a frame and out again. Design: `docs/audits/2026-09-23-studio-audit/10-free-canvas.md`. Each layer is one real `.tsx` file at `.studio/canvas/<id>.tsx`, and its position is stored in `boards.json`. All layers render in one shared static iframe per board. **Sub-decisions, recommendations adopted:** OD-FC-1, loose layers do not sync through git, the same as `boards.json` today. OD-FC-2, loose layers paint below frames and lift above them while dragged | **(owner) new feature** | P5-G |
+| # | Short name | Affects |
+|---|---|---|
+| OD-1 | Archive the code-cited plans, delete the uncited three | P0 |
+| OD-2 | Standing authorization re-confirmed 2026-09-23 | all |
+| OD-3 | Figma shortcut meanings; ⇧-click toggles on the canvas | P2-B |
+| OD-4 | Inspector section gap 12 px; Shadow + Blur → Effects | P2-F |
+| OD-5 | Armed insert tools R/O/T/F | P5-E |
+| OD-6 | Marquee inside a frame | P5-E |
+| OD-7 | Structural gesture inside a shared component: this instance only | P3-D |
+| OD-8 | `.map` rows: style edits to the template, structure edits to the array | P3-C/D |
+| OD-9 | Detach inlines; "Expose as prop" is separate | P5-C |
+| OD-10 | SVG D1–D6 (D1 → free canvas) | P5-D |
+| OD-11 | Assistant imagery: stock now, generation later | P4-E |
+| OD-12 | Image drop follows the project's import convention | P5-B |
+| OD-13 | URL drag gets an SSRF-guarded fetch route | P5-B |
+| OD-14 (+ OD-FC-1/2) | Free canvas: loose layers on the board | P5-G |
+
+Questions still open for the owner are listed at the end of §13.
 
 ---
 
@@ -121,7 +121,7 @@ P1 Never corrupt, never lie ── barrier: nothing from P2/P3/P5 merges before 
 ## 4. Phase 0: consolidate the docs
 
 **Why first:** every later bundle writes a STATE entry and reads CLAUDE.md, BRIEF and this ROADMAP.
-Today those documents disagree with each other and with the code. **Precondition: met.** Every open draft line is merged into `chore/integrate-open-drafts` (PR #217, STATE `meta-19`). #99 was already in `main`, and #86 is superseded (see P0-I). The program trunk is `feat/canvas-excellence`, cut from that branch, and **every bundle PR targets the trunk**. #205 brought `STUDIO-SPEED-PLAN.md`: P0-B **folds its open work orders into §13 of this file** rather than keeping an eleventh root plan. The integration head carries the trust-default change (`run-project`, #198 line), and the docs must describe it.
+Today those documents disagree with each other and with the code. **Precondition: met.** Every open draft line is merged into `chore/integrate-open-drafts` (PR #217, STATE `meta-19`). #99 was already in `main`, and #86 is superseded (see P0-I). The program trunk is `feat/canvas-excellence`, cut from that branch, and **every bundle PR targets the trunk**. #205 brought `STUDIO-SPEED-PLAN.md`: P0-B folded its open work orders into §13 of this file and archived it. The integration head carries the trust-default change (`run-project`, #198 line), and the docs must describe it.
 
 Owner: **studio-scribe**. One PR per bundle, run strictly in order. Full procedure: 09-docs §2.4 and §3.
 
@@ -294,7 +294,7 @@ event. Today the keydown handler calls `preventDefault`, so a paste event never 
 ## 13. Open work carried from the archived plans
 
 **Already merged into the integration head** (`chore/integrate-open-drafts`, PR #217, STATE `meta-19`):
-- The speed plan's work orders #205–#216 (autosave cadence, optimistic style in live frames, hover coalescing, refusal within keydown, and #211–#216 from `tmp/speed-integration`). `STUDIO-SPEED-PLAN.md` is at the root; P0-B folds its open orders into this section.
+- The speed plan's work orders #205–#216 (autosave cadence, optimistic style in live frames, hover coalescing, refusal within keydown, and #211–#216 from `tmp/speed-integration`). Its open orders (speed-07, speed-08, speed-09) are in the tables below; the plan itself is archived at `docs/archive/plans/STUDIO-SPEED-PLAN.md`.
 - The live-frame fixes #202–#204 and #209.
 - The trust default change (#198).
 - #199, #200, #201 and #192.
@@ -303,7 +303,97 @@ event. Today the keydown handler calls `preventDefault`, so a paste event never 
 
 Before starting a bundle, check whether one of these already covers part of it. For example, #208 overlaps PERF-11 and PERF-1, and #201 overlaps ERR-2.
 
-P0-B fills this section from each archived plan's open rows (FEEL §9, PARITY §0a, IMPORT-V2 WS-4.4 / WS-5.6 /
-WS-8.1, LIVE-CANVAS L9, NEXT-WS WS-14.1/14.3/14.4/14.7, PROTOTYPE `back` flows, BUILTIN DS-4b, and the
-cold e2e triage), and folds in `STUDIO-SPEED-PLAN.md` from #205. Until P0-B lands, those plans remain the source for
-those items.
+### The product bar (IMPORT-V2 §1, in the owner's words)
+
+The ten asks the whole import roadmap answered, kept here as the bar every bundle is measured against:
+
+1. Import from GitHub **or upload**.
+2. "Add all the styles", and "import the npm packages … and modules for npm packages".
+3. Edit local components, and pass props at call sites.
+4. Smooth, no canvas glitch, the menu not far from the selection.
+5. Detach an instance to source.
+6. A right panel closer to Figma.
+7. Set all pages to one width; select all for bulk actions.
+8. Swap instances, upload images, dropdowns for known props.
+9. Freeze animation, kill all scroll.
+10. MCP tools for visual audit, bulk edits and structural guidance.
+
+### Open rows carried from the archived plans (2026-09-23)
+
+Each row names its source (plan section or STATE id) and the bundle above that already covers it, if any. Rows marked *unverified* were open when their plan was last updated and were not re-checked against the code on 2026-09-23.
+
+**Canvas and drag-and-drop**
+
+| Row | Source | Covered by |
+|---|---|---|
+| Remove `@dnd-kit/core`: the DOM panel's layer tree and `AdminCanvasEditorBody.tsx` still use it; a tree-row adapter on the shared drag session does not exist (`docs/reference/canvas-dnd.md` → "The D2 target architecture") | PARITY D2 | none |
+| Shadow + Blur become one Effects section (41 px of the F2 text-layer budget) | FEEL "still open", `panel-41` | P2-F (OD-4) |
+| Frame pool: keep bridge frames alive across page switches; prefer posters over a second live document while booting. (The two pools are already one, `framePool.ts`.) | SPEED speed-09 | none |
+| Remove the Tier-2 branches that still call `componentBundle.ts`; run the Track L exit check on a real Tier-2 board | LIVE-CANVAS L9 | none |
+| E2.5 panel surfaces: work in the tree, never verified (*unverified*) | PARITY §0a | none |
+| A7: Figma Dev Mode discoverability (*unverified*) | PARITY §0a | none |
+
+**Writeback and parser**
+
+| Row | Source | Covered by |
+|---|---|---|
+| Package-instance detach | IMPORT-V2 WS-4.4 | P5-C (partly) |
+| Emotion object styles (`css({ … })`, object `css` prop): refused by name on both sides | NEXT-WS WS-14.1 | none |
+| Storybook story `args` writeback: args-only call sites are locked | NEXT-WS WS-14.3 | none |
+| Selection colours: with 2+ nodes selected, list every distinct colour and rewrite them in one edit | NEXT-WS WS-14.4 | none |
+| `runScripts` default for freezing JS animation | IMPORT-V2 WS-8.1 | none |
+| `back`-shaped derived flows (`router.back()`, `navigate(-1)`) are not drawn | PROTOTYPE §9 | none |
+| Single undo step for Hug/Fill mode switches and constraint crosshair clicks (*unverified*) | WAVE7 W8-4 | P1-F (partly) |
+| Indeterminate state for `AlignGrid` / Clip content under multi-select (*unverified*) | WAVE7 W8-3 | none |
+
+**Speed and budgets**
+
+| Row | Source | Covered by |
+|---|---|---|
+| Project open: `/load` measured 1.05 s; target ≤ 300 ms warm (cache the CSS registry by stylesheet mtimes, stream the first page, never block load on git or thumbnails) | SPEED speed-07 | P6-B |
+| Budgets for click-to-ring, keydown-to-dialog, panel-edit-to-frame, hover store writes and load time in the `e2e-budgets` CI job (partial: cold click and the refusal dialog exist) | SPEED speed-08 | P2-A, P6-C |
+| The board bench's budgets are uncalibrated | IMPORT-V2 WS-5.6 | P2-A |
+| Live-frame memory baseline (`docs/audits/2026-09-13-live-frame-memory-baseline.md` is a placeholder) | LIVE-CANVAS L8 | P6-C |
+| W9-5 speed levers 4–6 and an on-disk parse cache for the Stop hook (*unverified*) | WAVE7 | P6-B (partly) |
+
+**Assistant** (all *unverified*, from the Waves 7–10 closing status of 2026-09-07)
+
+| Row | Source | Covered by |
+|---|---|---|
+| `studio_ingest_design_text` and text diffing; strict mode should refuse to claim text fidelity until it exists | WAVE7 W9-3 | none |
+| The creative and balanced halves of the mode-aware Stop gate | WAVE7 W9-2 | P4-D (partly) |
+| Connector-state UI in the Agent panel | WAVE7 W9-4 | P4-F (partly) |
+| Variant fan-out: `studio_plan_variants` plans, nothing creates the pages | WAVE7 W9-3 | none |
+
+**Security and server** (FEEL "still open")
+
+| Row | Source | Covered by |
+|---|---|---|
+| `GET github/device/poll` writes a credential under a GET; closing it changes how the route gate keys CSRF | `sec-18` | none |
+| `GET /load` spawns the Tier-1 style compiler at `site.read`; documented in `capabilities.md`, not gated | `sec-18` | none |
+| `ensureClaudeCliConfigDir` is fail-soft where Studio's own secret writers fail closed | `sec-18` | none |
+
+**End-to-end suite**
+
+| Row | Source | Covered by |
+|---|---|---|
+| The cold `bun run test:e2e` suite is not green (23 pass / 64 fail / 13 skip on 2026-09-18); every failure needs a verdict: delete the spec, move its fixture, fix the product, or annotate it with an owner. About 56 of the failures are CMS-half specs driving UIs PR #18 deleted | FEEL §8 (the one unmet DoD line), `verify-4`, `e2e-1` | none |
+
+**Docs, tooling and the CMS half**
+
+| Row | Source | Covered by |
+|---|---|---|
+| Dead-code sweep (`npx fallow dead-code`, `knip`), with `bun run fallow:health` before and after; `fallow:health` could not complete on 2026-09-07 | NEXT-WS WS-14.7, WAVE7 | none |
+| `no-circular-dependencies` fails as a 60 s timeout, not a cycle (`madge` alone takes about 82 s) (*unverified*) | WAVE7 | none |
+| The MCP server still names itself `alm-figma-killer` (`server/ai/mcp/server.ts`); a stray `pnpm-lock.yaml` sits at the root of a Bun-only repo | WAVE7 | none |
+| Split the docs over the ~600-line ceiling: `docs/features/agent.md`, `inspector.md`, `studio-import.md`, `docs/agent-refs/canvas-internals.md` | 09-docs §1 | none |
+| CMS removal, Tier 1 (safe, larger): the plugin subsystem, about 20,000 lines across `server/plugins/`, `src/core/plugins/`, `src/core/plugin-sdk/` and the QuickJS bootstrap; 18 architecture gates and about 14 docs change with it | CMS-REMOVAL | none |
+| CMS removal, Tier 2 (blocked on the owner, below): `server/publish/**`, and the CMS bundle import/export in `SiteImportModal` (a surgical split, since the same modal carries the live "drop a folder of HTML/CSS" importer) | CMS-REMOVAL | none |
+
+### Open questions for the owner
+
+- **Do live CMS installations still matter for this fork?** Yes: stop CMS removal at Tier 1 and gate rather than delete. No: `server/publish/**`, the CMS bundle import/export and the CMS persistence adapter can go, leaving one adapter and one code path. Sub-questions: do external MCP clients still need `site_publish`, and is portable full-site export/import between installations still a requirement? (CMS-REMOVAL "the decision")
+- **Should an Admin hold `studio.git.write`?** Today the HTTP git surface is gated on `site.structure.edit`, so Admin keeps the Version control panel without the agent's commit right. (`sec-14`)
+- **GitHub device-flow sign-in needs `GITHUB_OAUTH_CLIENT_ID`**, which only the owner can create (a GitHub OAuth App with Device Flow enabled). Until then G8 runs through the paste-a-token path. (`git-23`)
+- **How far to take Tailwind** beyond class edits (utility autocomplete, arbitrary values, variant prefixes)? (PARITY §15.5)
+- **Compact spacing and border rows** by default, with the diagram behind a toggle? Track P's Penpot rebuild may have settled this; confirm. (PARITY §15.4)

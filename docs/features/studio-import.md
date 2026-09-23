@@ -1,4 +1,5 @@
 # Studio Import
+> **Purpose:** the parser contract: how a React repository becomes a board · **Read when:** touching parsing, evaluation, inlining or CSS import · **Trust:** current · **Owner:** parser-surgeon · **Verified:** not yet
 
 Studio can open a **real React repository** — one written by hand or pulled straight from GitHub — as an editable board, without that repo knowing anything about Studio.
 

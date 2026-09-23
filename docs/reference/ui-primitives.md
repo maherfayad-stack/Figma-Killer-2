@@ -1,4 +1,5 @@
 # UI Primitives
+> **Purpose:** the shared UI primitives and when to use each · **Read when:** building any admin UI control · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 Cookbook for `src/ui/components/` — when to use each primitive, what its props mean, and the most common patterns.
 

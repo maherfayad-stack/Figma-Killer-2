@@ -1,4 +1,5 @@
 # Design Tokens
+> **Purpose:** the complete catalogue of CSS tokens in globals.css · **Read when:** picking or adding a token · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The complete catalog of design tokens declared in `src/styles/globals.css`. Every color, radius, shadow, font, font size, spacing value, and z-index used by the admin / editor / UI primitives is here. CSS Modules in `src/admin/`, `src/admin/pages/site/`, and `src/ui/` MUST reference these via `var(--*)` — hardcoded hex / rgb / hsl is gated by `css-token-policy.test.ts`, hardcoded font-size pixels are gated by `admin-typography-token-policy.test.ts`, and hardcoded margin / padding / gap pixels are gated by `admin-spacing-token-policy.test.ts`.
 

@@ -1,4 +1,5 @@
 # Canvas: iframe-per-viewport rendering
+> **Purpose:** how a static (portal) frame renders in its own iframe · **Read when:** touching frame rendering, injectors or cross-realm events · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 How the visual editor canvas renders page trees inside isolated per-viewport iframes, and how the design and live views are built on top of that foundation.
 

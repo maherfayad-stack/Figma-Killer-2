@@ -29,8 +29,8 @@
  * removed, DELETE the allowlists below (not just empty them) and tighten
  * this gate to a flat ban across all of `src/admin`.
  *
- * @see STUDIO-FIGMA-PARITY-PLAN.md — D2, "the target architecture"
- * @see docs/reference/canvas-dnd.md — current-state DnD reference
+ * @see docs/reference/canvas-dnd.md — "The D2 target architecture, and how much of it exists"
+ * @see docs/archive/plans/STUDIO-FIGMA-PARITY-PLAN.md — D2, where the target was first specced
  */
 
 import { describe, expect, it } from 'bun:test'
@@ -156,7 +156,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
           violations.map((v) => `  ${v}`).join('\n') +
           `\n\nEither add this file to DND_KIT_ALLOWLIST in this test with a reason, ` +
           `or (preferred) route the new surface through the raw-pointer-event drag ` +
-          `pattern instead — see STUDIO-FIGMA-PARITY-PLAN.md's D2 target architecture.`,
+          `pattern instead — see docs/reference/canvas-dnd.md, "The D2 target architecture".`,
       )
     }
     expect(violations).toHaveLength(0)
@@ -197,7 +197,7 @@ describe('Architecture — DnD mechanism containment (D2)', () => {
           violations.map((v) => `  ${v}`).join('\n') +
           `\n\nEither add this file to NATIVE_HTML5_DND_ALLOWLIST in this test with a reason, ` +
           `or (preferred) route the new surface through the raw-pointer-event drag ` +
-          `pattern instead — see STUDIO-FIGMA-PARITY-PLAN.md's D2 target architecture.`,
+          `pattern instead — see docs/reference/canvas-dnd.md, "The D2 target architecture".`,
       )
     }
     expect(violations).toHaveLength(0)

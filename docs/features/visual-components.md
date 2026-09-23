@@ -1,4 +1,5 @@
 # Visual Components
+> **Purpose:** Visual Components: slots, params, instantiation, the recursion guard · **Read when:** touching Visual Components or slots · **Trust:** current-cms · **Owner:** store-engineer · **Verified:** not yet
 
 Visual Components (VCs) — reusable subtrees with named parameters and named slots. A VC is authored once, instantiated on pages via a `base.visual-component-ref` node, and inlined by the publisher at render time.
 

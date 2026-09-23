@@ -1,4 +1,5 @@
 # Audit 01: canvas performance, lag and jank
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: perf-hunter (read-only). Branch audited: `fix/studio-load-memo-cold-on-every-load` @ `560ddb0e`.
 Scope: canvas, studio-board, editor store, overlays, pan/zoom, drag loops, iframe frames, injectors, live runtime, reparse/writeback, load path, benches.

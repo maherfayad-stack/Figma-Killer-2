@@ -1,4 +1,5 @@
 # Studio
+> **Purpose:** what Studio is, quick start and commands, for humans · **Read when:** you are a person setting Studio up or looking around · **Trust:** current · **Owner:** studio-scribe · **Verified:** not yet
 
 **A design tool whose source of truth is your React repo.**
 
@@ -108,12 +109,14 @@ See [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md).
 
 | Start here | |
 |---|---|
-| [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) | **Read first.** What the project is, current state, traps, task routing. |
 | [`CLAUDE.md`](CLAUDE.md) | The rule book — conventions every change must follow. |
+| [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) | **Read first.** What the project is, current state, traps, task routing. |
 | [`STATE.md`](STATE.md) | Live coordination board for work in flight. |
-| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The feature roadmap (WS-1…WS-9) — intent, not status. Per-track status is [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) §0a. |
-| [`docs/README.md`](docs/README.md) | Full documentation index. |
+| [`ROADMAP.md`](ROADMAP.md) | The one living plan: what gets built next, in which order. Settled owner decisions are in [`docs/decisions.md`](docs/decisions.md). |
+| [`docs/README.md`](docs/README.md) | The doc map: every doc, one row. |
 | [`docs/agent-refs/`](docs/agent-refs/) | Compressed references written for coding agents. |
+
+Reading order for an agent: `PROJECT-BRIEF.md` → `STATE.md` → `ROADMAP.md` → `docs/README.md` → the `docs/agent-refs/` page the BRIEF routes to.
 
 Deep dives worth knowing about:
 [`docs/features/studio-import.md`](docs/features/studio-import.md) (the parser

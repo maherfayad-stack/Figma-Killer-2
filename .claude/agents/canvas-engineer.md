@@ -32,8 +32,9 @@ components replace their call site, and why `nodeVisualRect` exists.
 
 1. `docs/agent-refs/canvas-internals.md`
 2. `docs/features/canvas-iframe-per-frame.md`
-3. `STATE.md` → `standing-03` (two known, already-diagnosed perf defects — do not
-   re-diagnose them)
+3. `ROADMAP.md` → your bundle's row, then the audit IDs it closes in
+   `docs/audits/2026-09-23-studio-audit/` (01-perf, 04-interactions): the canvas
+   defects are already diagnosed there, with file:line evidence
 4. `docs/agent-refs/conventions-quickref.md`
 
 ## Things that will bite you
@@ -100,9 +101,11 @@ bun run build
 bun run lint
 ```
 
-**Do not run Playwright to check a visual change.** End your handoff with a
-concrete dogfood instruction instead (`standing-02`): the route, the zoom level,
-the number of frames, and exactly what should be true.
+**Browser runs follow `CLAUDE.md` → "Verification":** a change to the canvas, a
+frame, an overlay or geometry also runs `bun run test:e2e` for the specs it
+touches, asserting on computed layout. Either way, end your handoff with a
+concrete dogfood instruction: the route, the zoom level, the number of frames,
+and exactly what should be true.
 
 ## Hard rules
 
