@@ -80,7 +80,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 
 ### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** see the PR against `feat/canvas-excellence` (draft) · **Updated:** 2026-09-23
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** #233 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying — **needs security-guard review before merge** (threat list in the PR body)
 - **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files; the loop retries transient errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
 - **Tools added** (all `execution: server`):
