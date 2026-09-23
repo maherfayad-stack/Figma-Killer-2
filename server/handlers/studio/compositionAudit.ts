@@ -44,9 +44,17 @@
  * ## Layout archetypes (A13)
  *
  * {@link LAYOUT_ARCHETYPES} is the shared vocabulary for the shapes a screen
- * is actually built out of — hero, feature grid, split, testimonial band,
- * pricing, footer. It lives here, beside the rules that grade composition,
- * and is consumed in two places that must agree:
+ * is actually built out of. Two pools, tagged by `surface` (AI-12): the web
+ * bands a marketing or product page is made of (hero, feature grid, split,
+ * testimonial band, pricing, footer), and the bands a MOBILE APP screen is
+ * made of (list rows, grouped settings list, form step, card feed, stats and
+ * chart, order summary, detail header, empty state). Studio projects are
+ * overwhelmingly app screens, and a variant set built from hero/pricing/footer
+ * for a 393px checkout screen produced a web page squeezed into a phone. App
+ * CHROME (the top bar, a tab bar or a pinned action) is not a band — it frames
+ * every app screen — so it is stated once, as {@link APP_CHROME_RULE}. It
+ * lives here, beside the rules that grade composition, and is consumed in two
+ * places that must agree:
  *
  *   - `variantSeeds.ts` gives each variant a different archetype SEQUENCE, so
  *     A/B/C differ in STRUCTURE and not only in tokens. Three screens with
@@ -117,49 +125,123 @@ export interface LayoutArchetype {
   readonly id: string
   readonly label: string
   readonly brief: string
+  /** Which kind of screen this band belongs on: a web page, a mobile app screen, or either. */
+  readonly surface: 'web' | 'app' | 'both'
 }
 
+/** The two kinds of screen a variant set is planned for. */
+export type ArchetypeSurface = 'web' | 'app'
+
 /**
- * The six shapes a marketing/product screen is almost always built out of.
+ * The shapes a screen is almost always built out of — six for a web page,
+ * eight for a mobile app screen (AI-12).
  *
- * Six, not twenty: the list exists so three variants can be given three
- * genuinely different SEQUENCES, and a pool that large enough to guarantee
- * distinctness is small enough that every entry is a shape a weaker model can
- * actually execute. Each `brief` names the structure and the one thing that
- * makes it read as that structure rather than as a stack of boxes.
+ * Small pools, not twenty entries each: each pool exists so three variants can
+ * be given three genuinely different SEQUENCES, and a pool that is just large
+ * enough to guarantee distinctness is small enough that every entry is a shape
+ * a weaker model can actually execute. Each `brief` names the structure and
+ * the one thing that makes it read as that structure rather than as a stack of
+ * boxes. {@link archetypesFor} picks the pool.
  */
 export const LAYOUT_ARCHETYPES: readonly LayoutArchetype[] = [
   {
     id: 'hero',
+    surface: 'web',
     label: 'Hero',
     brief: 'A hero band: one headline at the top of the type scale, one supporting line at body size, one primary action. Nothing else competes for attention in this band — a second button, a third line, or a headline at the same size as the section below it all cost the screen its entry point.',
   },
   {
     id: 'feature-grid',
+    surface: 'web',
     label: 'Feature grid',
     brief: 'A feature grid: three or four equal cards in a row (stacking on narrow widths), each with one icon or mark, one short title a step above body, and one or two lines of copy. Equal cards means EQUAL — same padding, same radius, same internal rhythm; a grid whose cards differ reads as a mistake rather than as emphasis.',
   },
   {
     id: 'split',
+    surface: 'web',
     label: 'Split',
     brief: 'A split band: content on one side, a single image or visual on the other, meeting on a shared vertical centre. Use logical properties so the split flips in RTL. The copy side carries the type hierarchy; the visual side carries no text at all.',
   },
   {
     id: 'testimonial-band',
+    surface: 'web',
     label: 'Testimonial band',
     brief: 'A testimonial band: one quotation set noticeably larger than body copy, with an attribution line below it at or under body size. One quote, not a carousel of three — the band earns its space by being the one thing on screen, and the size gap between quote and attribution is what makes it read as a quotation.',
   },
   {
     id: 'pricing',
+    surface: 'web',
     label: 'Pricing',
     brief: 'A pricing band: two or three plan columns, each with a name, a price set at the top of the type scale, a short feature list, and one action. Exactly one column is emphasised — by the accent, not by being bigger — and the others are visually identical to each other.',
   },
   {
     id: 'footer',
+    surface: 'web',
     label: 'Footer',
     brief: 'A footer: two to four link columns with a small column heading each, a divider or surface change separating it from the band above, and everything at or below body size. A footer that uses a heading size from the top of the scale competes with the hero it sits furthest from.',
   },
+  {
+    id: 'detail-header',
+    surface: 'app',
+    label: 'Detail header',
+    brief: 'A detail header: the one fact this screen is about, large — a balance, a plan name, a destination and date — with a single supporting line under it and at most one secondary action beside it. It sits directly under the top bar and is the entry point; nothing else on the screen uses its type size.',
+  },
+  {
+    id: 'list-rows',
+    surface: 'app',
+    label: 'List rows',
+    brief: 'A list of rows: each row a leading icon or avatar, a title with one line of meta under it, and a trailing value or chevron, every row at least 44px tall and the whole row tappable. Rows share one height and one inset; separation is a hairline divider or the gap between rows, never both.',
+  },
+  {
+    id: 'grouped-list',
+    surface: 'app',
+    label: 'Grouped list',
+    brief: 'A grouped settings list: rows gathered into two to four groups, each with a small uppercase or muted group label above an inset surface, and a larger gap between groups than between rows. Toggles and values sit right-aligned on one edge; a destructive row, if any, is last and alone.',
+  },
+  {
+    id: 'form-step',
+    surface: 'app',
+    label: 'Form step',
+    brief: 'A form step: one question or one group of related fields per screen, a step indicator above it, labels above inputs (never placeholder-as-label), and ONE primary action pinned at the bottom in thumb reach, full width, disabled until the step is valid. Error text sits under its own field.',
+  },
+  {
+    id: 'card-feed',
+    surface: 'app',
+    label: 'Card feed',
+    brief: 'A card feed: full-width cards stacked with one consistent gap, each card with one image or media block, a title, one line of meta and at most one action. Equal internal padding and one radius on every card; the feed scrolls, so the first card must read without scrolling.',
+  },
+  {
+    id: 'stats-chart',
+    surface: 'app',
+    label: 'Stats and chart',
+    brief: 'A stats band: two or three key numbers in a row, set large in tabular figures with a small label under each, then one chart for one measure over time with a period switcher (week / month / year). One accent marks the series that matters; axis labels stay at or below body size.',
+  },
+  {
+    id: 'order-summary',
+    surface: 'app',
+    label: 'Order summary',
+    brief: 'An order summary: line items with name left and price right in tabular figures, a divider, subtotal and fees muted, the total larger and bold, then one pinned primary action that repeats the total ("Pay $42.00"). Prices align on one right edge; nothing else competes with the pay action.',
+  },
+  {
+    id: 'empty-state',
+    surface: 'app',
+    label: 'Empty state',
+    brief: 'An empty state: centred in the space the content would fill, one real image or icon at a modest size, one short line saying what will appear here, one line saying how to make it appear, and one action that does it. It is written for this screen — never a generic "No data".',
+  },
 ]
+
+/**
+ * App chrome — the frame every mobile app screen sits in, which is not one of
+ * its bands. Quoted verbatim into the creative block and every app-surface
+ * variant directive.
+ */
+export const APP_CHROME_RULE =
+  'App chrome frames every app screen and is not a band: a top bar with the screen title and at most two actions, and at the bottom EITHER a tab bar of three to five destinations (a top-level screen) OR one pinned primary action (a task step, checkout, a form) — never both. Respect the safe areas: nothing interactive under the status bar or the home indicator.'
+
+/** The archetype pool for one kind of screen. */
+export function archetypesFor(surface: ArchetypeSurface): LayoutArchetype[] {
+  return LAYOUT_ARCHETYPES.filter((archetype) => archetype.surface === surface || archetype.surface === 'both')
+}
 
 /**
  * The rules that separate "compiles and renders" from "reads as designed",

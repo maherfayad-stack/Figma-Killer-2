@@ -42,7 +42,30 @@ import { generateVariantSeeds, MAX_VARIANTS_PER_SET } from '../../../../handlers
 import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 import { getVariantSet, listVariantSets, recordVariantSet } from '../../../../handlers/studio/variantStore'
+import type { ArchetypeSurface } from '../../../../handlers/studio/compositionAudit'
+import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
+import { readBoardsFile } from '../../../../handlers/studio/boardFrames'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
+
+/** Below this frame width a board is a phone/tablet app, not a web page. */
+const APP_FRAME_WIDTH_MAX = 768
+
+/**
+ * AI-12 — is this project's screen a web page or a mobile app screen? The
+ * project's recorded platform (`.studio/meta.json`, chosen at creation) wins;
+ * a project with none (every import) is judged by its board: the median frame
+ * width under 768px is an app. No frames at all reads as web, the pool that
+ * existed before app bands did.
+ */
+export function resolveArchetypeSurface(dir: string): ArchetypeSurface {
+  const platform = readStudioMeta(dir).platform
+  if (platform === 'mobile') return 'app'
+  if (platform === 'web') return 'web'
+  const widths = readBoardsFile(dir).boards.flatMap((board) => board.frames.map((frame) => frame.width)).filter((w): w is number => typeof w === 'number')
+  if (widths.length === 0) return 'web'
+  const sorted = [...widths].sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]! < APP_FRAME_WIDTH_MAX ? 'app' : 'web'
+}
 
 /** Long enough for a real brief, short enough that the whole set stays a few KB on disk and in a tool result. */
 const MAX_BRIEF_LENGTH = 4000
@@ -73,6 +96,11 @@ const PlanInputSchema = Type.Object(
         description: `How many variants. Defaults to 3, which is the number the creative brief asks for: two reads as A-or-B, four is more screens than a person will compare. Maximum ${MAX_VARIANTS_PER_SET}.`,
       }),
     ),
+    surface: Type.Optional(
+      Type.Union([Type.Literal('web'), Type.Literal('app')], {
+        description: 'Plan bands for a web page ("web": hero, feature grid, pricing, …) or a mobile app screen ("app": list rows, form step, order summary, empty state, …). Default: the project\'s platform, else its frame widths.',
+      }),
+    ),
     rngSeed: Type.Optional(
       Type.Integer({
         minimum: 0,
@@ -93,15 +121,16 @@ const planVariantsTool: AiTool = {
     'Nothing in the editor plans variants. The only thing this writes is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER agent turn can edit variant B\'s recorded density instead of re-rolling the set. The editor\'s own equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all, so there is no canvas action for this to be parity WITH.',
   requiredCapabilities: ['studio.write'],
   description:
-    'Turn ONE brief into N genuinely different screens instead of one screen with a different accent colour. Returns a style seed per variant — type contrast, spacing density, corner family, accent — each value taken from a token THIS project already declares, and each axis assigned without replacement so the variants differ structurally rather than by chance. Use it whenever you are about to build a from-scratch screen and the brief has room for more than one idea: a model given the same brief three times returns the same composition three times, because nothing in the second prompt differs from the first; this is where the difference comes from. Each variant comes back with a `pageName` (Home -> HomeA/HomeB/HomeC) and a self-contained `directive` — send that directive VERBATIM as the subagent prompt for that variant, since a subagent sees only the text it is given. This tool PLANS: you still create the pages and place them on the board yourself (that is the orchestrator\'s job under the parallel-work rules, not a subagent\'s), then fan out one subagent per variant. The set is recorded in .studio/variants.json with its seed, so "make B but tighter" is an edit to B\'s recorded density rather than a re-roll that loses everything the user liked — read it back with studio_list_variant_sets. Type contrast never goes below the same 1.6 ratio studio_quality_check\'s flat-type-hierarchy rule grades against, so a seed can never propose a screen its own audit would then fail.',
+    'Turn ONE brief into N genuinely different screens instead of one screen with a different accent. Returns a style seed per variant — type contrast, spacing density, corner family, accent, colour strategy, and a band sequence drawn from web or mobile-app archetypes to match the project — every value a token THIS project declares, each axis assigned without replacement so the variants differ in structure, not by chance. Use it before building a from-scratch screen when the brief has room for more than one idea: the same brief three times returns the same composition three times. Each variant comes back with a pageName (Home -> HomeA/HomeB/HomeC) and a self-contained directive: build that page from it verbatim (or send it verbatim as the whole prompt of a subagent). This tool PLANS: create the pages yourself and place them side by side with studio_arrange_frames. The set is recorded in .studio/variants.json, so "make B but tighter" is an edit to the seed of B (studio_list_variant_sets), never a re-roll. Type contrast never drops below the 1.6 ratio studio_quality_check grades.',
   inputSchema: PlanInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, baseName, brief, count, rngSeed } = input as {
+    const { dir: dirInput, baseName, brief, count, rngSeed, surface: surfaceInput } = input as {
       dir?: string
       baseName: string
       brief: string
       count?: number
       rngSeed?: number
+      surface?: ArchetypeSurface
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
@@ -126,7 +155,8 @@ const planVariantsTool: AiTool = {
     // else `balanced`. Under `free` the seeds draw from an extended pool; under
     // everything else they stay inside the project's own token space.
     const designPolicy = ctx.designPolicy ?? resolveProjectDesignPolicy(dir, studioAgentUserKey(ctx.userId))
-    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed, designPolicy })
+    const surface = surfaceInput ?? resolveArchetypeSurface(dir)
+    const variants = generateVariantSeeds({ tokens, brief, baseName, count: count ?? 3, rngSeed: seed, designPolicy, surface })
     const set = recordVariantSet(dir, { baseName, brief, rngSeed: seed, variants })
 
     return {
@@ -136,6 +166,7 @@ const planVariantsTool: AiTool = {
       rngSeed: seed,
       baseName,
       designPolicy,
+      surface,
       variants: set.variants,
       tokensIndexed: { colorCount: tokens.colors.length, sizeCount: tokens.fontSizes.length + tokens.lengths.length },
       note:
