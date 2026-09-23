@@ -207,7 +207,8 @@ describe('the git tool family — capability declarations', () => {
   })
 
   it('leaves studio_git_status as an ordinary read — reporting what you changed must not require permission to commit it', () => {
-    expect(statusTool.requiresWrite).toBe(false)
+    expect(statusTool.requiresWrite ?? false).toBe(false)
+    expect(statusTool.sideEffects).toBe('none')
     expect(statusTool.requiredCapabilities ?? []).toEqual([])
     expect(toolAllowedForCapabilities(statusTool, ['ai.chat'])).toBe(true)
   })

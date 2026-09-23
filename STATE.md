@@ -63,6 +63,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### mcp-26 — P4-A: the agent's tools tell the truth (AI-4, AI-5, AI-6, AI-24, AI-27)
+- **Agent:** mcp-tooling · **Branch:** `fix/agent-tools-tell-the-truth` (trunk `666f68e3` merged in) · **PR:** draft against `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** every tool result and every sentence the agent reads is true.
+- **Done:**
+  - AI-4: `studio_list_tokens` (`projectTokenTools.ts`) now reads the CSS the canvas loads. It uses `projectTokenSources.ts`, the single place that assembles it: built-in DS, package CSS, compiled chunks and the entry stylesheets. `listProjectTokens` returns value, dark, alias, family, role and `file:line`, paginated. The `framework.json` read is deleted. Four hand-assembled copies (compare, measure_reference, quality_check, plan_variants) now use the same collector.
+  - AI-5: `mutates` is split into `requiresWrite` (the gate) and a required `sideEffects: none|cache|write` (the loop). Observers run concurrently and are never deduped. The dedupe is a per-turn `TurnWriteLedger` keyed on a write epoch.
+  - AI-6: the phantom `studio_design_system_guide` is removed. `no-phantom-tool-names.test.ts` scans mode/policy blocks, the prompt, every description and schema field, the strings of in-canvas-only modules, and the finding text. It fixed 10 descriptions and 4 remedies/hints.
+  - AI-24: the parity `Task` row is now `native`. agent.md's tool count, tool index (with a Loop column) and withheld table are gated by `agent-doc-tool-surface-parity.test.ts`.
+  - AI-27: a schema failure returns `input-schema-mismatch` with the path, the expected shape, what was received, and a validated minimal example (`toolInputRefusal.ts`).
+- **Decisions:**
+  - The write gate is unchanged, pinned by `tool-write-gate-unchanged-by-side-effects.test.ts` (frozen list of 53 tools).
+  - A refused write records at its epoch but does not advance it.
+  - Compiled Sass/PostCSS chunks now carry a marker line. `STYLE_CACHE_FORMAT` is bumped, so the style cache recompiles once.
+- **Landmines:**
+  - Token readers now also see entry stylesheets (`src/index.css`), so quality_check and measure_reference may find more tokens and fonts than before.
+  - `withWorkspaceProject` is used by `collectProjectTokenSources`.
+- **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
+
 ---
 
 ## Blocked

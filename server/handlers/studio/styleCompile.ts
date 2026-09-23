@@ -44,6 +44,7 @@ import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative } from 'node:path'
 import { isDesignSystemPath, listWorkspaceFiles } from '@core/page-parser'
+import { splitLines } from '@core/utils/lineEndings'
 import { joinAppRoot } from './appRoot'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
 import { CSS_MODULE_FILE_RE, readCappedFile } from './styleCompileFileRead'
@@ -113,7 +114,7 @@ export function splitCompiledStyleChunks(concatenated: string): StyleChunk[] {
     const css = current.lines.join('\n').replace(/\n+$/, '')
     if (css.trim().length > 0 || current.label !== '') chunks.push({ kind: current.kind, label: current.label, css })
   }
-  for (const line of concatenated.split('\n')) {
+  for (const line of splitLines(concatenated)) {
     const marker = CHUNK_MARKER_RE.exec(line)
     if (marker) {
       flush()

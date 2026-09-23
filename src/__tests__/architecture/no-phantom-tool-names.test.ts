@@ -37,8 +37,7 @@
  * not a phantom.
  */
 import { describe, expect, it } from 'bun:test'
-import { readdirSync } from 'node:fs'
-import { join } from 'node:path'
+import { dirname, join, relative, sep } from 'node:path'
 import { Node, Project } from 'ts-morph'
 import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
@@ -46,6 +45,7 @@ import { DESIGN_POLICY_BLOCK, MODE_BLOCK } from '../../../server/ai/tools/studio
 import { mcpToolsForCapabilities } from '../../../server/ai/mcp/registry'
 import type { AiTool } from '../../../server/ai/runtime/types'
 import { CORE_CAPABILITIES } from '../../core/capabilities'
+import { walkSourceTree } from './helpers/sourceTree'
 
 const REPO_ROOT = join(import.meta.dir, '..', '..', '..')
 const STUDIO_TOOLS_DIR = join(REPO_ROOT, 'server', 'ai', 'mcp', 'tools', 'studio')
@@ -108,15 +108,16 @@ function phantomsIn(text: string, offered: ReadonlySet<string>): string[] {
  */
 async function inCanvasOnlyModules(): Promise<string[]> {
   const out: string[] = []
-  for (const file of readdirSync(STUDIO_TOOLS_DIR)) {
-    if (!file.endsWith('.ts') || file.endsWith('.test.ts')) continue
-    const exported = Object.values(await import(join(STUDIO_TOOLS_DIR, file)) as Record<string, unknown>)
+  // Direct children only: a tool module lives at the top of the studio tools folder.
+  for (const absPath of walkSourceTree(STUDIO_TOOLS_DIR, ['.ts'])) {
+    if (dirname(absPath) !== STUDIO_TOOLS_DIR || absPath.endsWith('.test.ts')) continue
+    const exported = Object.values(await import(absPath) as Record<string, unknown>)
     const names = exported
       .flatMap((value) => (Array.isArray(value) ? value : [value]))
       .filter((value): value is AiTool =>
         typeof value === 'object' && value !== null && typeof (value as AiTool).name === 'string' && 'inputSchema' in value)
       .map((tool) => tool.name)
-    if (names.length > 0 && names.every((name) => IN_CANVAS.has(name))) out.push(`server/ai/mcp/tools/studio/${file}`)
+    if (names.length > 0 && names.every((name) => IN_CANVAS.has(name))) out.push(relative(REPO_ROOT, absPath).split(sep).join('/'))
   }
   return out
 }
