@@ -288,6 +288,13 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 
 See [docs/deployment/](../deployment/).
 
+### Docs
+
+| Test                                          | What it enforces                                                                 |
+|-----------------------------------------------|----------------------------------------------------------------------------------|
+| `doc-headers.test.ts`                         | Every maintained doc (the six root docs, `docs/**` outside `archive/`, `audits/` and `state-archive/`, `scripts/bench/README.md`) has the `Purpose · Read when · Trust · Owner · Verified` header on line 2 under a `# Title`; every historical doc declares itself in its first two lines; and no code, maintained doc or root doc names a path in `DEAD_DOC_PATHS` (retired docs agents kept citing). Rules: [`docs/CONVENTIONS.md`](../CONVENTIONS.md) → "The header line". |
+| `css-token-vocabulary.test.ts`, `studio-tool-refusals-are-coded.test.ts`, `no-alm-npm-specifier.test.ts` | Also read docs by path: `docs/design.md`, `docs/reference/design-tokens.md`, `docs/reference/ui-primitives.md`; `docs/features/agent.md`'s refusal table; the agent-refs, features and reference folders plus `PROJECT-BRIEF.md` and `CLAUDE.md`. Move or split those docs and the gate moves with them. `scripts/build-release-bundle.ts` also ships `docs/deployment/*.md` by path. |
+
 ## Anatomy of an architecture test
 
 Most tests follow one of three shapes.
