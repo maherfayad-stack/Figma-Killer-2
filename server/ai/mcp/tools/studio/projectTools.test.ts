@@ -90,9 +90,10 @@ describe('studio project MCP tools', () => {
     const listed = result.projects[0]!
     expect(listed.dir).toBe(tmpDir)
     expect(listed.pageCount).toBe(1)
-    // Never inferred from what is on disk: an unprobed project is Tier 0, and
-    // this listing is one of the places an agent decides what it may run.
-    expect(listed.trust).toBe('static')
+    // Never inferred from what is on disk: an unprobed project defaults to
+    // run-project (DEFAULT_TRUST_TIER, owner decision 2026-09-20), and this
+    // listing is one of the places an agent decides what it may run.
+    expect(listed.trust).toBe('run-project')
   })
 
   it('studio_project_profile probes a fresh project', async () => {
@@ -259,8 +260,9 @@ describe('studio project MCP tools', () => {
 
   // ── studio_install_deps trust-tier gate (WS-12 §2.3) ──────────────────
 
-  it('studio_install_deps refuses at the default Tier 0 (static) trust — no .studio/meta.json at all', async () => {
+  it('studio_install_deps refuses at Tier 0 (static) trust', async () => {
     write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: { react: '^18.0.0' } }))
+    write(tmpDir, '.studio/meta.json', JSON.stringify({ trust: 'static' }))
     const result = (await tool('studio_install_deps').handler!({ dir: tmpDir }, {} as never)) as {
       ok: boolean
       code?: string
@@ -269,6 +271,18 @@ describe('studio project MCP tools', () => {
     expect(result.ok).toBe(false)
     expect(result.code).toBe('trust-tier-required')
     expect(result.error).toContain('Tier 0')
+  })
+
+  it('studio_install_deps proceeds with no .studio/meta.json at all — every project defaults to run-project', async () => {
+    write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: {} }))
+    fs.mkdirSync(path.join(tmpDir, 'node_modules'), { recursive: true })
+    const result = (await tool('studio_install_deps').handler!({ dir: tmpDir }, {} as never)) as {
+      ok: boolean
+      code?: string
+      alreadyInstalled?: boolean
+    }
+    expect(result.code).not.toBe('trust-tier-required')
+    expect(result.alreadyInstalled).toBe(true)
   })
 
   it('studio_install_deps refuses at an EXPLICIT static trust tier too', async () => {
@@ -304,6 +318,7 @@ describe('studio project MCP tools', () => {
     // purely off .studio/meta.json's own trust field, never off anything the
     // caller can pass in the tool call itself.
     write(tmpDir, 'package.json', JSON.stringify({ name: 'fixture', dependencies: {} }))
+    write(tmpDir, '.studio/meta.json', JSON.stringify({ trust: 'static' }))
     const result = (await tool('studio_install_deps').handler!(
       { dir: tmpDir, permissionMode: 'bypassPermissions' } as never,
       {} as never,

@@ -178,6 +178,9 @@ describe('extractProjectTokens — tailwind-theme source', () => {
       ].join('\n'),
     )
 
+    // Explicitly static: every project is `run-project` by default now, and
+    // this test is about the path that never executes the toolchain.
+    write('.studio/meta.json', JSON.stringify({ trust: 'static' }))
     const profile = probeProject(tmpDir)
     expect(profile.styleToolchain.tailwind).not.toBeNull()
 
@@ -196,7 +199,7 @@ describe('extractProjectTokens — tailwind-theme source', () => {
     expect(typography?.some((s) => s.min === 10)).toBe(true)
     expect(typography?.some((s) => s.min === 16)).toBe(true)
 
-    // Tier 1 never ran at the default Tier 0 trust — this is a genuinely
+    // Tier 1 never ran at the explicit Tier 0 trust — this is a genuinely
     // different (static, no-execution) path, and the propagated warning
     // proves it never silently promoted anything.
     expect(result.warnings.some((w) => w.code === 'style-toolchain-requires-trust-promotion')).toBe(true)

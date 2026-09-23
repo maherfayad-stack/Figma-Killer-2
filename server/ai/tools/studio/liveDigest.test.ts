@@ -198,7 +198,9 @@ describe('buildStudioLiveDigest — capabilities', () => {
     expect(capabilities.typecheck).toEqual({ available: false, reason: 'unknown' })
   })
 
-  it('typecheck: unavailable with reason "trust-tier" on a fresh (default static-trust) project', async () => {
+  it('typecheck: unavailable with reason "trust-tier" on a project explicitly demoted to static', async () => {
+    mkdirSync(join(dir, '.studio'), { recursive: true })
+    writeFileSync(join(dir, '.studio', 'meta.json'), JSON.stringify({ trust: 'static' }))
     const digest = await buildStudioLiveDigest(dir, emptySnapshot, 'conv-tsc-trust', { staleness: createStalenessTracker() })
     expect(digest.capabilities.typecheck).toEqual({ available: false, reason: 'trust-tier' })
   })

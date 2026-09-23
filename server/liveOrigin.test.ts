@@ -302,15 +302,15 @@ describe('handleLiveOriginFetch', () => {
     expect(new URL(recorded[0].url).host).toBe(new URL(UPSTREAM_ORIGIN).host)
   })
 
-  it('sets a CSP frame-ancestors header scoped to the configured public origin, and no X-Frame-Options', async () => {
+  it('sets a CSP frame-ancestors header listing exactly the framing origins it was given, and no X-Frame-Options', async () => {
     registerProject('acme-app', 'ready')
     const req = stubRequest('http://live.local/p/acme-app/')
-    const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN], fakeUpstreamFetch([]))
-    expect(res?.headers.get('content-security-policy')).toBe(`frame-ancestors ${PUBLIC_ORIGIN}; frame-src 'none'`)
+    const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN, 'http://127.0.0.1:3001'], fakeUpstreamFetch([]))
+    expect(res?.headers.get('content-security-policy')).toBe(`frame-ancestors ${PUBLIC_ORIGIN} http://127.0.0.1:3001; frame-src 'none'`)
     expect(res?.headers.get('x-frame-options')).toBeNull()
   })
 
-  it('falls back to frame-ancestors none when no public origin is configured', async () => {
+  it('an empty framing-origin list answers frame-ancestors none — nobody may embed it', async () => {
     registerProject('acme-app', 'ready')
     const req = stubRequest('http://live.local/p/acme-app/')
     const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [], fakeUpstreamFetch([]))
@@ -413,6 +413,7 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
       ...config,
       livePort: 0,
       publicOrigins: [PUBLIC_ORIGIN],
+      liveFrameAncestors: [PUBLIC_ORIGIN],
     })
   })
 

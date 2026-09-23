@@ -61,11 +61,13 @@ every script the build reaches. That is a strictly higher bar than the Tier 1
 `componentBundle.ts` and `styleCompile.ts` require: those build a bounded set of
 package components, this builds and then **publishes** the whole app.
 
-`meta-03` decision 1 fixes a fresh import at Tier 0 and never auto-promotes, so
-the panel's job below the gate is to say so honestly. Promoting to Tier 2 is
-deliberately **not** a button in this section: it is the consent that lets
-Studio execute the repository, and it should not sit one click away from
-"Deploy".
+Every project starts at Tier 2 (`run-project`, `DEFAULT_TRUST_TIER` — owner
+decision, 2026-09-20) by default, so this gate is reachable today only for a
+project explicitly demoted to `static` via the Live pill's "Back to static" —
+the panel's job below the gate is to say so honestly when that has happened.
+Promoting back to Tier 2 is deliberately **not** a button in this section: it
+is the consent that lets Studio execute the repository, and it should not sit
+one click away from "Deploy".
 
 ---
 

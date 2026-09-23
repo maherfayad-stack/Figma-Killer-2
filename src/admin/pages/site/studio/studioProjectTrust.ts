@@ -92,26 +92,18 @@ export function setStudioProjectKey(next: string | null): void {
  * `Static · Live` pill can say which runtime is showing and, when it is the
  * static one, whether "Run the real app" is even on the table.
  *
- * Mirrors the wire shape only — the decision itself is never made here, for
- * the same reason `trustTier.ts` re-checks it before auto-promoting: a
+ * Mirrors the wire shape only — the decision itself is never made here: a
  * capability the client asserts and the server trusts is not a gate.
  */
 export const LiveCapabilitySchema = Type.Object({
   capable: Type.Boolean(),
-  reason: Type.Optional(Type.Union([Type.Literal('not-vite'), Type.Literal('no-lockfile')])),
+  reason: Type.Optional(Type.Literal('not-vite')),
 })
 export type LiveCapability = Static<typeof LiveCapabilitySchema>
 
 export const StudioTrustStatusSchema = Type.Object({
   trust: TrustTierSchema,
   live: LiveCapabilitySchema,
-  /**
-   * This project has already had its ONE automatic promotion (§6 decision 2).
-   * A latch, not a current state: it stays true for a project whose owner
-   * clicked Undo, which is precisely what stops the next open re-promoting it
-   * and making that Undo a no-op with extra steps.
-   */
-  autoPromoted: Type.Boolean(),
 })
 export type StudioTrustStatus = Static<typeof StudioTrustStatusSchema>
 
@@ -151,24 +143,6 @@ export async function setStudioProjectTrust(dir: string, trust: TrustTier): Prom
  */
 export async function promoteProjectToTier1(dir: string): Promise<void> {
   await setStudioProjectTrust(dir, 'render-packages')
-}
-
-/**
- * §6 decision 2 — Studio's own one-time promotion of a Vite project to Tier 2
- * on first open. Separate from {@link setStudioProjectTrust} because it is a
- * genuinely different act with a different origin, recorded differently on
- * disk, and because the server REFUSES it (409) unless every condition of the
- * owner's override still holds. Nothing here decides anything: the caller
- * says "I believe this project qualifies", and the server checks.
- */
-export async function autoPromoteProjectToTier2(dir: string): Promise<void> {
-  await apiRequest('/admin/api/studio/trust-tier', {
-    method: 'POST',
-    body: { dir, trust: 'run-project', autoPromoted: true },
-    schema: Type.Object({ ok: Type.Boolean(), trust: TrustTierSchema }),
-  })
-  const status = await fetchStudioTrustStatus(dir)
-  setStudioTrustTier(status.trust)
 }
 
 /**

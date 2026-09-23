@@ -44,14 +44,12 @@ function emptyStream(): ReadableStream<Uint8Array> {
 
 interface FakeProcessOptions {
   stdoutChunks?: string[]
-  hangUntilKilled?: boolean
 }
 
 function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessLike; wasKilled: () => boolean } {
   let killed = false
   let resolveExited!: (code: number) => void
   const exited = new Promise<number>((resolve) => { resolveExited = resolve })
-  if (!opts.hangUntilKilled) resolveExited(0)
 
   const proc: SpawnedProcessLike = {
     stdout: opts.stdoutChunks ? streamFromChunks(opts.stdoutChunks) : emptyStream(),
@@ -129,18 +127,18 @@ describe('studio_render_reference', () => {
     }
 
     expect(result.ok).toBe(true)
-    expect(result.data!.url).toBe('http://localhost:5173/?page=homepage')
+    expect(result.data!.url).toBe('http://127.0.0.1:5173/?page=homepage')
     expect(result.data!.width).toBe(390)
-    expect(gotoUrls).toEqual(['http://localhost:5173/?page=homepage'])
+    expect(gotoUrls).toEqual(['http://127.0.0.1:5173/?page=homepage'])
     expect(result.images).toBeDefined()
     expect(result.images!.length).toBe(1)
     expect(result.images![0]!.mimeType).toBe('image/png')
   })
 
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
-    writePackageJson(tmpDir, { dev: 'some-slow-thing' })
+    writePackageJson(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
-    const { proc, wasKilled } = makeFakeProcess({ hangUntilKilled: true })
+    const { proc, wasKilled } = makeFakeProcess()
 
     const overrides: ReferenceRenderOverrides = {
       spawn: () => proc,
@@ -260,15 +258,17 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
     expect(result.trust).toBe('render-packages')
   })
 
-  it('refuses a project with no .studio/meta.json at all — the default is Tier 0, never "unknown means yes"', async () => {
+  it('a project with no .studio/meta.json at all is at the default tier — run-project — and proceeds', async () => {
     writePackageJson(tmpDir, { dev: 'vite' })
 
-    const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
-    const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string; trust?: string }
+    const tool = createReferenceRenderTool({
+      spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5198/\n'] }).proc,
+      launchBrowser: async () => makeFakeBrowser(TINY_PNG_BASE64).browser,
+    })
+    const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string }
 
-    expect(result.ok).toBe(false)
-    expect(result.code).toBe('trust-tier-required')
-    expect(result.trust).toBe('static')
+    expect(result.ok).toBe(true)
+    expect(result.code).toBeUndefined()
   })
 
   it('proceeds once the project is promoted to run-project', async () => {

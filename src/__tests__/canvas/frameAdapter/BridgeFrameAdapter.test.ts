@@ -25,7 +25,8 @@ interface StubChannel {
 }
 
 /** `autoReplyMeasure`: immediately (next microtask) answers every posted `measure` with a `measure:result` echoing back each ref's own `nodeId`/`occurrenceIndex` and a fixed rect — enough for the shared contract suite's "measure resolves" assertion without a real frame. */
-function makeStubChannel(options: { autoReplyMeasure?: boolean } = {}): StubChannel {
+/** `announceReady` (default true): the stub frame reports `ready` the instant the adapter subscribes, the way a booted runtime does — an adapter queues every post until then. */
+function makeStubChannel(options: { autoReplyMeasure?: boolean; announceReady?: boolean } = {}): StubChannel {
   let handler: ((ev: MessageEvent) => void) | null = null
   const posted: InboundEnvelope[] = []
   const channel: BridgeFrameChannel = {
@@ -48,7 +49,9 @@ function makeStubChannel(options: { autoReplyMeasure?: boolean } = {}): StubChan
       }
     },
     addEventListener: (type, h) => {
-      if (type === 'message') handler = h
+      if (type !== 'message') return
+      handler = h
+      if (options.announceReady !== false) h({ origin: FRAME_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent)
     },
     removeEventListener: (type, h) => {
       if (type === 'message' && handler === h) handler = null
@@ -292,5 +295,34 @@ describe('BridgeFrameAdapter — frame:resize', () => {
     stub.dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 842 }))
 
     expect(heights).toEqual([842])
+  })
+})
+
+describe('BridgeFrameAdapter — nothing is posted before the frame is ready', () => {
+  it('queues every post until the frame reports ready, then flushes them in order', () => {
+    const stub = makeStubChannel({ announceReady: false })
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    adapter.applyOverlay('sel', '.x{}')
+    adapter.hover(null)
+    adapter.select([{ nodeId: 'n1' }])
+    expect(stub.posted).toHaveLength(0)
+
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }), FRAME_ORIGIN)
+    expect(stub.posted.map((envelope) => envelope.message.type)).toEqual(['applyOverlay', 'hover', 'select'])
+
+    adapter.removeOverlay('sel')
+    expect(stub.posted.at(-1)!.message.type).toBe('removeOverlay')
+  })
+
+  it('a ready from the wrong origin flushes nothing', () => {
+    const stub = makeStubChannel({ announceReady: false })
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['n1'] })
+    adapters.push(adapter)
+
+    adapter.hover(null)
+    stub.dispatch(toOutboundEnvelope({ type: 'ready' }), 'https://attacker.test')
+    expect(stub.posted).toHaveLength(0)
   })
 })

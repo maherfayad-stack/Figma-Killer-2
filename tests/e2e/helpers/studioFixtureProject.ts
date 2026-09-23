@@ -122,23 +122,19 @@ export function removeFixtureProject(fixture: FixtureProject): void {
   console.warn(`[studioFixtureProject] could not remove ${fixture.dir} — a process still holds it open.`)
 }
 
-/** The three `.studio/meta.json` fields the trust-tier contract is written in. */
+/** The `.studio/meta.json` field the trust-tier contract is written in. */
 export interface FixtureTrustMeta {
-  /** Absent means Tier 0 — `trustTier.ts` defaults a missing field to `static`. */
+  /** Absent means `DEFAULT_TRUST_TIER` (`run-project`, Tier 2) — every project starts there by default (owner decision, 2026-09-20). */
   trust?: string
-  /** True when the promotion's ORIGIN was Studio rather than a click. */
-  trustAutoPromoted?: boolean
-  /** Epoch ms of the ONE automatic promotion. Its presence is the latch. */
-  trustAutoPromotedAt?: number
 }
 
 /**
- * Read the fixture's trust fields straight off disk.
+ * Read the fixture's trust field straight off disk.
  *
- * Deliberately the FILE and not the `/trust-tier` route: the route is the thing
- * under test, and a gate that has stopped writing the latch would still report
- * whatever it holds in memory. `.studio/meta.json` is where the once-only
- * promise actually lives across a reload.
+ * Deliberately the FILE and not the `/trust-tier` route: the route is the
+ * thing under test, and a handler that stopped writing the field would still
+ * report whatever it holds in memory. `.studio/meta.json` is where the fact
+ * actually lives across a reload.
  */
 export function readFixtureTrustMeta(fixture: FixtureProject): FixtureTrustMeta {
   const metaPath = path.join(fixture.dir, '.studio', 'meta.json')
@@ -148,9 +144,6 @@ export function readFixtureTrustMeta(fixture: FixtureProject): FixtureTrustMeta 
   const record = raw as Record<string, unknown>
   return {
     trust: typeof record.trust === 'string' ? record.trust : undefined,
-    trustAutoPromoted: typeof record.trustAutoPromoted === 'boolean' ? record.trustAutoPromoted : undefined,
-    trustAutoPromotedAt:
-      typeof record.trustAutoPromotedAt === 'number' ? record.trustAutoPromotedAt : undefined,
   }
 }
 

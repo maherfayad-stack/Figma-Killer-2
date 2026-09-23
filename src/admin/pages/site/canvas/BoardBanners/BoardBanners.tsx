@@ -15,9 +15,14 @@
  *
  * The stack itself is `pointer-events: none`, so an empty one never eats a
  * board click; each card turns them back on for itself.
+ *
+ * `LiveAutoPromoteNotice`, once the third card here, was retired when the
+ * owner made every project start at Tier 2 (`run-project`) by default
+ * (2026-09-20) — there is no lower default left to promote FROM, so nothing
+ * ever needs announcing. `LiveRuntimePill`'s "Back to static" is the durable
+ * way to see and change a project's tier now.
  */
 import { DesignSystemMigrateBanner } from '../DesignSystemMigrateBanner'
-import { LiveAutoPromoteNotice } from '../LiveAutoPromoteNotice'
 import { StyleCompileConsentBanner } from '../StyleCompileConsentBanner'
 import styles from './BoardBanners.module.css'
 
@@ -26,10 +31,6 @@ export function BoardBanners() {
     <div className={styles.stack}>
       <DesignSystemMigrateBanner />
       <StyleCompileConsentBanner />
-      {/* Last: the only card here that reports something that already
-          happened rather than asking for something. The two above are
-          blocking problems and should be read first. */}
-      <LiveAutoPromoteNotice />
     </div>
   )
 }

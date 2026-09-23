@@ -162,6 +162,32 @@ function rectRelativeToBody(el: Element, body: HTMLElement): NodeRect {
  * the default for `options.parentWindow` — every other cross-window
  * reference is a parameter, so this is fully exercisable in happy-dom.
  */
+/**
+ * Which of the allowed parent origins actually framed this document — the
+ * origin of `document.referrer` when it is on the list, else `null` (opened
+ * in a plain tab, framed by something not on the list, or the referrer
+ * withheld). The shell's `main.jsx` boots the bridge only for a non-null
+ * answer, and the runtime then talks to that one origin exclusively — the
+ * allowlist narrows who may be a parent; the referrer names which one is.
+ *
+ * `document.referrer` is the parent document's URL for an iframe the parent
+ * navigated, reduced to its origin by the admin's own
+ * `Referrer-Policy: strict-origin-when-cross-origin`; the origin is all this
+ * needs. A forged referrer cannot widen anything: it is checked against the
+ * list, and the list is the same set the live listener's CSP
+ * `frame-ancestors` already restricts framing to.
+ */
+export function resolveParentOrigin(allowedOrigins: readonly string[], referrer: string): string | null {
+  if (!referrer) return null
+  let origin: string
+  try {
+    origin = new URL(referrer).origin
+  } catch {
+    return null
+  }
+  return allowedOrigins.includes(origin) ? origin : null
+}
+
 export function createStudioRuntimeBridge(options: StudioRuntimeBridgeOptions): StudioRuntimeBridge {
   const doc = options.document ?? document
   const parentWindow = options.parentWindow ?? window.parent

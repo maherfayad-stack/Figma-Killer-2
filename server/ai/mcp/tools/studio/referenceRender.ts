@@ -28,9 +28,14 @@
  * `Write`/`Edit` by the generated `PreToolUse` hook
  * (`handlers/studio/agentWriteScope.ts`), because otherwise the gate below
  * would be a file the caller it gates could edit. What the tier does NOT
- * prove is that a human weighed this particular project: §6 decision 2 of
- * STUDIO-FIGMA-FEEL-PLAN.md promotes a Vite project with a lockfile on first
- * open. `docs/reference/capabilities.md` states the full boundary.
+ * prove is that a human weighed this particular project: every project
+ * starts at `run-project` (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20),
+ * so both of this tool's gates are satisfied by default for every project
+ * Studio can run, and no human ever answered a question to get there. **Tier
+ * 2 is a PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — anything that
+ * genuinely needs a human to have agreed must ask at the point of use, and
+ * the single-operator posture is what makes the default acceptable at all.
+ * `docs/reference/capabilities.md` states the full boundary.
  *
  * Because both gates exist, the CAPABILITY can now be held by an ordinary
  * operator: `studio.run.project` is granted to the built-in Admin role

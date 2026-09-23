@@ -45,7 +45,7 @@
  * along with `transform`, not just `transform`. `main.jsx` imports
  * `virtual:studio-runtime` UNCONDITIONALLY (`createStudioRuntimeBridge`'s
  * boot gate needs it every time, including a plain `npm run build`, where it
- * resolves to inert `{ parentOrigin: null, projectKey: 'unknown' }` data) —
+ * resolves to inert `{ parentOrigins: [], projectKey: 'unknown' }` data) —
  * so the half that resolves/loads that virtual module (`runtimeConfigPlugin`)
  * must run at build time too, while the half that stamps `data-node-id`
  * (`idStampPlugin`) must not. One `apply: 'serve'`-scoped plugin object
@@ -54,7 +54,7 @@
 import { relative, sep } from 'node:path'
 import type { Plugin } from 'vite'
 import { stampHostElementIds } from './idStamp'
-import { readStudioRuntimeConfigFromEnv, STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from './runtimeConfig'
+import { readStudioRuntimeConfigFromEnv, STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from './runtimeConfig'
 
 /** Mirrors `EXCLUDED_WORKSPACE_DIR_NAMES` (`@core/page-parser`) — see this file's header for why it is copied rather than imported. Keep the two lists in sync by hand. */
 const EXCLUDED_DIR_NAMES = new Set(['.studio', '.git', 'node_modules', 'dist', '.next', '.turbo'])
@@ -102,9 +102,9 @@ export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin
     // `virtual:studio-runtime` unconditionally, so this half must resolve
     // during `vite build` too (Download the code / preview deploys), not
     // only `vite dev`. Always safe: outside a dev server `devServer.ts`
-    // itself spawned, `STUDIO_PARENT_ORIGIN_ENV`/`STUDIO_PROJECT_KEY_ENV`
+    // itself spawned, `STUDIO_PARENT_ORIGINS_ENV`/`STUDIO_PROJECT_KEY_ENV`
     // are simply unset, so a build always resolves to
-    // `{ parentOrigin: null, projectKey: 'unknown' }` — inert data.
+    // `{ parentOrigins: [], projectKey: 'unknown' }` — inert data.
     resolveId(id) {
       if (id === VIRTUAL_MODULE_ID) return RESOLVED_VIRTUAL_MODULE_ID
       return undefined
@@ -148,7 +148,28 @@ export function studioRuntimeIdPlugin(options?: { nodeIdAttr?: string }): Plugin
     },
   }
 
-  return [runtimeConfigPlugin, idStampPlugin]
+  // A peer resetting a socket is not a reason for the dev server to exit.
+  // Studio frames this server through `server/liveOrigin.ts`, whose outbound
+  // WebSocket client (Bun's) tears its TCP connection down with a RST rather
+  // than a closing handshake — on `.close()`, and again when an abandoned
+  // socket is finally collected. Vite's HMR server has no `'error'` listener
+  // on the raw `net.Socket` at that moment, so Node treats the `ECONNRESET`
+  // as an unhandled `'error'` event and the whole process exits (reproduced
+  // on Vite 8 / Node 24 every time a live frame re-navigated). Listening —
+  // and doing nothing — on every connection makes the reset what it is: one
+  // client gone. `server.httpServer` is `null` in middleware mode, where no
+  // socket is ours to guard.
+  const socketGuardPlugin: Plugin = {
+    name: 'studio-runtime-socket-guard',
+    apply: 'serve',
+    configureServer(server) {
+      server.httpServer?.on('connection', (socket) => {
+        socket.on('error', () => {})
+      })
+    },
+  }
+
+  return [runtimeConfigPlugin, idStampPlugin, socketGuardPlugin]
 }
 
-export { VIRTUAL_MODULE_ID, STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV }
+export { VIRTUAL_MODULE_ID, STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV }

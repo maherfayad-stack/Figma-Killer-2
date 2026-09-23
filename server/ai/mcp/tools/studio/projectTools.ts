@@ -41,7 +41,7 @@ import {
   projectsRootDir,
 } from '../../../../handlers/studioProjects'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
-import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
+import { DEFAULT_TRUST_TIER, readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
 import { startInstallJob, getInstallJob, probeInstallStatus } from '../../../../handlers/studio/installDeps'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
@@ -86,7 +86,7 @@ const listProjectsTool: AiTool = {
           dir: p.dir,
           name: p.name,
           pageCount: p.pageCount,
-          trust: meta.trust ?? 'static',
+          trust: meta.trust ?? DEFAULT_TRUST_TIER,
           profile: {
             framework: profile.framework,
             packageManager: profile.packageManager,
@@ -116,7 +116,7 @@ const projectProfileTool: AiTool = {
     const dir = resolveToolProjectDir(dirInput, ctx)
     const meta = readStudioMeta(dir)
     const profile = resolveProjectProfile(dir)
-    return { dir, name: projectDisplayName(dir), trust: meta.trust ?? 'static', profile }
+    return { dir, name: projectDisplayName(dir), trust: meta.trust ?? DEFAULT_TRUST_TIER, profile }
   },
 }
 
@@ -141,7 +141,7 @@ const installDepsTool: AiTool = {
     // authorization boundary, not rely on a caller-supplied mode (this
     // check has no notion of "bypass" at all — there is nothing for a
     // permission mode to widen).
-    const trust = readStudioMeta(dir).trust ?? 'static'
+    const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
     if (trust === 'static') {
       return toolRefusal(
         'trust-tier-required',

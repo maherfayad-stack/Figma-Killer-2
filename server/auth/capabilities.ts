@@ -107,10 +107,10 @@ const adminCapabilities: CoreCapability[] = [
   // Be precise about what the second gate proves, because it is less than it
   // reads like (`sec-12`):
   //
-  //   - It proves the PROJECT is at `run-project`. Under §6 decision 2 a Vite
-  //     project with a lockfile is promoted on first OPEN, so for those
-  //     projects the tier is not evidence that any human considered the
-  //     question — only that the project is of a shape Studio can run.
+  //   - It proves the PROJECT is at `run-project`. Every project starts there
+  //     by default (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20), so the
+  //     tier is not evidence that any human considered the question — only
+  //     that the project has not been explicitly demoted to `static`.
   //   - It does prove the agent did not promote itself: `.studio/` is refused
   //     to the CLI driver's native `Write`/`Edit` by the generated
   //     `PreToolUse` hook (`handlers/studio/agentWriteScope.ts`). Without that

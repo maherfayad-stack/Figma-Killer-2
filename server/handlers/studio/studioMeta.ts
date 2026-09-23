@@ -18,7 +18,7 @@
  * `parseJsonWithFallback` rather than throwing: a corrupted or hand-mangled
  * sidecar must not brick the project, it should just fall back to defaults
  * everywhere (folder name as display name, `<dir>/pages`, no locale
- * preference, Tier 0 trust).
+ * preference, `DEFAULT_TRUST_TIER` trust).
  *
  * `pagesDir` gets one more guard AFTER schema validation:
  * `isSafePagesDirOverride` rejects `..` traversal and absolute paths. This is
@@ -48,7 +48,17 @@ import { DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 
 /**
  * The three trust tiers §0 of the V2 plan declares per project. Default:
- * `'static'` (Tier 0 — nothing runs) for every fresh import.
+ * `'run-project'` (Tier 2) for every project — owner decision, 2026-09-20,
+ * superseding the earlier "Tier 0, never auto-promoted" default (see
+ * `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2's superseded note). The parse
+ * itself never executes anything at any tier; the tier only decides whether
+ * Studio may run the workspace's OWN code (its style toolchain, its package
+ * components, its dev server) on top of the parse. Nothing promotes
+ * automatically any more because nothing needs to — a project the owner
+ * wants sandboxed is lowered explicitly via the Live pill's "Back to static",
+ * and every Tier-2 entry point still checks both gates (the connector
+ * capability AND `trust === 'run-project'` exactly) through `trustGate.ts`,
+ * so a project explicitly set to `static` is refused exactly as before.
  *
  * Exported so the routes that read/write this field (`trustTier.ts`,
  * `styleCompileConsent.ts`) validate against the SAME schema this file
@@ -63,7 +73,7 @@ export const TrustTierSchema = Type.Union([
   Type.Literal('run-project'),
 ])
 export type TrustTier = Static<typeof TrustTierSchema>
-export const DEFAULT_TRUST_TIER: TrustTier = 'static'
+export const DEFAULT_TRUST_TIER: TrustTier = 'run-project'
 
 const FrameDefaultsSchema = Type.Object({
   width: Type.Optional(Type.Number({ minimum: 1 })),
@@ -294,31 +304,6 @@ export const StudioMetaSchema = Type.Object({
    * question is about THIS repository, so the answer belongs beside it.
    */
   styleCompilePromptDismissed: Type.Optional(Type.Boolean()),
-  /**
-   * P8 / §6 decision 2 — Studio promoted this project to Tier 2
-   * (`run-project`) BY ITSELF, on first open, because it is a Vite project
-   * with a lockfile. The owner overrode the "promotion is always an explicit
-   * click" rule for exactly that case on 2026-09-17; see `CLAUDE.md`'s
-   * invariant 1 and `PROJECT-BRIEF.md` §2.
-   *
-   * Two fields rather than one, and both load-bearing:
-   *
-   *   - `trustAutoPromoted` records that the promotion's ORIGIN was Studio,
-   *     not a person. `trust` alone cannot answer "who decided this", and an
-   *     audit of a machine that runs a user's code has to be able to.
-   *   - `trustAutoPromotedAt` is the ONCE latch. Auto-promotion is offered
-   *     exactly once per project, ever: the notice's "Undo" writes `trust`
-   *     back to `static` and deliberately leaves BOTH of these in place, so
-   *     the next open sees a project that has already had its one automatic
-   *     promotion and leaves it alone. Clearing them on undo would re-promote
-   *     on the next load and make the undo a no-op with extra steps.
-   *
-   * Never written for an explicit user click — that stays a bare `trust`
-   * write, which is how the two origins stay distinguishable on disk.
-   */
-  trustAutoPromoted: Type.Optional(Type.Boolean()),
-  /** Epoch ms of the one automatic promotion. Presence is the latch — see {@link StudioMetaSchema}'s `trustAutoPromoted`. */
-  trustAutoPromotedAt: Type.Optional(Type.Number()),
   /**
    * Cached `ProjectProfile` probe result. A cache that no longer matches the
    * schema (an older profile shape, a hand-mangled file) fails validation and

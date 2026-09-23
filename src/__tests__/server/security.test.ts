@@ -1,6 +1,5 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
-  DEV_ORIGIN_ALLOWLIST,
   clientIp,
   configurePublicOrigins,
   configureTrustedProxyCidrs,
@@ -13,6 +12,7 @@ import {
   resetTrustedProxyCidrs,
   stampSocketIp,
 } from '../../../server/auth/security'
+import { DEV_ORIGIN_ALLOWLIST } from '../../../server/config'
 
 /**
  * Build a Request whose headers contain Fetch-spec "forbidden header names"

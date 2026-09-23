@@ -38,7 +38,7 @@
 import { Type } from '@core/utils/typeboxHelpers'
 import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
+import { DEFAULT_TRUST_TIER, readStudioMeta } from '../../../../handlers/studio/studioMeta'
 import { runProjectTypecheck, type TypecheckRunResult } from '../../../../handlers/studio/typecheck'
 import type { TscDiagnostic } from '../../../../handlers/studio/tscDiagnostics'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -141,7 +141,7 @@ const studioTypecheckTool: AiTool = {
     // WS-12 §2.3 posture, identical to studio_install_deps: refuse at the
     // tool's own authorization boundary, off the persisted trust field only —
     // there is no permission mode this check could be asked to bypass.
-    const trust = readStudioMeta(dir).trust ?? 'static'
+    const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
     if (trust === 'static') {
       return toolRefusal(
         'trust-tier-required',

@@ -382,16 +382,18 @@ export async function tryServeStudio(
       const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
-      // or render the "promote to render" placeholder (Tier 0, the default
-      // for every fresh import — `meta-03` decision 1). Read fresh, same
-      // posture as every other read path here (never auto-promoted).
+      // or render the "promote to render" placeholder (Tier 0, reachable now
+      // only by an explicit demotion — every project starts at `run-project`,
+      // `DEFAULT_TRUST_TIER`, owner decision 2026-09-20). Read fresh, same
+      // posture as every other read path here (nothing writes this field as
+      // a side effect of loading a page).
       const meta = readStudioMeta(dir)
       const trust = meta.trust ?? DEFAULT_TRUST_TIER
       const paletteHiddenModuleIds = meta.paletteHiddenModuleIds ?? []
       // L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` live-origin
       // routing key (`server/liveOrigin.ts`), `null` below Tier 2 (no live
-      // origin to scope a URL against). Same "never auto-promoted, read
-      // fresh" posture as `trust` above.
+      // origin to scope a URL against). Same "read fresh, never written as a
+      // side effect" posture as `trust` above.
       const projectKey = trust === 'run-project' ? registeredMcpServerProjectKey(dir) : null
 
       // WS-5.5 — `?stream=1` (the canvas's own loader, `fsCodemodAdapter.ts`)

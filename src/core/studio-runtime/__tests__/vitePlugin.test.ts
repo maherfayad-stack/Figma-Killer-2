@@ -1,5 +1,5 @@
 /**
- * vitePlugin — unit tests for the `studioRuntimeIdPlugin()` two-plugin split
+ * vitePlugin — unit tests for the `studioRuntimeIdPlugin()` three-plugin split
  * (live-08).
  *
  * `apply: 'serve'` is a PLUGIN-level field in the installed Vite — it
@@ -13,7 +13,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import type { Plugin } from 'vite'
-import { studioRuntimeIdPlugin, STUDIO_PARENT_ORIGIN_ENV, STUDIO_PROJECT_KEY_ENV } from '../vitePlugin'
+import { studioRuntimeIdPlugin, STUDIO_PARENT_ORIGINS_ENV, STUDIO_PROJECT_KEY_ENV } from '../vitePlugin'
 
 /** Test-only accessor — Vite's hook fields are typed as `ObjectHook<Fn>`, a `Fn | { handler: Fn }` union, but every hook in this plugin is authored as a bare function, never the object form. */
 function callHook<T>(hook: unknown, ...args: unknown[]): T {
@@ -21,10 +21,10 @@ function callHook<T>(hook: unknown, ...args: unknown[]): T {
 }
 
 describe('studioRuntimeIdPlugin', () => {
-  it('returns exactly two plugin objects', () => {
+  it('returns exactly three plugin objects', () => {
     const plugins = studioRuntimeIdPlugin()
     expect(Array.isArray(plugins)).toBe(true)
-    expect(plugins.length).toBe(2)
+    expect(plugins.length).toBe(3)
   })
 
   it('the config plugin carries no `apply` restriction, so it runs during `vite build` too', () => {
@@ -42,42 +42,42 @@ describe('studioRuntimeIdPlugin', () => {
   it('the config plugin loads STUDIO_RUNTIME_CONFIG from process.env, matching readStudioRuntimeConfigFromEnv', () => {
     const [configPlugin] = studioRuntimeIdPlugin()
     const originalKey = process.env[STUDIO_PROJECT_KEY_ENV]
-    const originalOrigin = process.env[STUDIO_PARENT_ORIGIN_ENV]
+    const originalOrigin = process.env[STUDIO_PARENT_ORIGINS_ENV]
     try {
       process.env[STUDIO_PROJECT_KEY_ENV] = 'demo-project'
-      process.env[STUDIO_PARENT_ORIGIN_ENV] = 'https://studio.example.com'
+      process.env[STUDIO_PARENT_ORIGINS_ENV] = 'https://studio.example.com, http://localhost:3001'
 
       const source = callHook<string | undefined>(configPlugin!.load, '\0virtual:studio-runtime')
       expect(source).toContain('export const STUDIO_RUNTIME_CONFIG =')
       expect(source).toContain('"projectKey":"demo-project"')
-      expect(source).toContain('"parentOrigin":"https://studio.example.com"')
+      expect(source).toContain('"parentOrigins":["https://studio.example.com","http://localhost:3001"]')
       expect(source).toContain('"nodeIdAttr":"data-node-id"')
 
       expect(callHook<string | undefined>(configPlugin!.load, './App.jsx')).toBeUndefined()
     } finally {
       if (originalKey === undefined) delete process.env[STUDIO_PROJECT_KEY_ENV]
       else process.env[STUDIO_PROJECT_KEY_ENV] = originalKey
-      if (originalOrigin === undefined) delete process.env[STUDIO_PARENT_ORIGIN_ENV]
-      else process.env[STUDIO_PARENT_ORIGIN_ENV] = originalOrigin
+      if (originalOrigin === undefined) delete process.env[STUDIO_PARENT_ORIGINS_ENV]
+      else process.env[STUDIO_PARENT_ORIGINS_ENV] = originalOrigin
     }
   })
 
   it('the config plugin degrades to inert data when the env vars are unset — the "vite build" / "npm run dev" case', () => {
     const [configPlugin] = studioRuntimeIdPlugin()
     const originalKey = process.env[STUDIO_PROJECT_KEY_ENV]
-    const originalOrigin = process.env[STUDIO_PARENT_ORIGIN_ENV]
+    const originalOrigin = process.env[STUDIO_PARENT_ORIGINS_ENV]
     try {
       delete process.env[STUDIO_PROJECT_KEY_ENV]
-      delete process.env[STUDIO_PARENT_ORIGIN_ENV]
+      delete process.env[STUDIO_PARENT_ORIGINS_ENV]
 
       const source = callHook<string | undefined>(configPlugin!.load, '\0virtual:studio-runtime')
       expect(source).toContain('"projectKey":"unknown"')
-      expect(source).toContain('"parentOrigin":null')
+      expect(source).toContain('"parentOrigins":[]')
     } finally {
       if (originalKey === undefined) delete process.env[STUDIO_PROJECT_KEY_ENV]
       else process.env[STUDIO_PROJECT_KEY_ENV] = originalKey
-      if (originalOrigin === undefined) delete process.env[STUDIO_PARENT_ORIGIN_ENV]
-      else process.env[STUDIO_PARENT_ORIGIN_ENV] = originalOrigin
+      if (originalOrigin === undefined) delete process.env[STUDIO_PARENT_ORIGINS_ENV]
+      else process.env[STUDIO_PARENT_ORIGINS_ENV] = originalOrigin
     }
   })
 
@@ -106,10 +106,10 @@ describe('studioRuntimeIdPlugin', () => {
     expect(callHook(idStampPlugin!.transform, code, '/workspace/pages/Home.css')).toBeUndefined()
   })
 
-  it('the call site\'s `plugins: [react(), studioRuntimeIdPlugin()]` shape (VITE_CONFIG\'s own template text) needs no edit — a nested array of two named plugins, which Vite/Rollup\'s own `plugins` option flattens one level (documented in `UserConfig.plugins`\'s `PluginOption[]` type; not re-exercised here, since doing so would require Vite\'s own container)', () => {
+  it('the call site\'s `plugins: [react(), studioRuntimeIdPlugin()]` shape (VITE_CONFIG\'s own template text) needs no edit — a nested array of three named plugins, which Vite/Rollup\'s own `plugins` option flattens one level (documented in `UserConfig.plugins`\'s `PluginOption[]` type; not re-exercised here, since doing so would require Vite\'s own container)', () => {
     const react = { name: 'vite:react' } as unknown as Plugin
     const configLike: Array<Plugin | Plugin[]> = [react, studioRuntimeIdPlugin()]
     expect(configLike[1]).toBeInstanceOf(Array)
-    expect((configLike[1] as Plugin[]).map((p) => p.name)).toEqual(['studio-runtime-config', 'studio-runtime-id-plugin'])
+    expect((configLike[1] as Plugin[]).map((p) => p.name)).toEqual(['studio-runtime-config', 'studio-runtime-id-plugin', 'studio-runtime-socket-guard'])
   })
 })

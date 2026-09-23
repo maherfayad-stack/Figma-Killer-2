@@ -91,26 +91,34 @@ never silently no-ops.
 1. **Parse, never execute.** No component is rendered server-side, no hook is
    called. Every value on the canvas was read out of the AST. This is why there
    is a hand-written bounded evaluator with explicit tiers instead of "just run
-   it". *The trust-tier relaxation has now shipped, and it is narrow:* at Tier 0
-   (`static`, the default) nothing of the user's ever runs. Promoting to Tier 1
-   (`render-packages`) buys exactly two things — the workspace's own style
-   toolchain compiles in a capped subprocess (`styleCompileTier1.ts`) and its
-   package components are bundled and rendered in the canvas
-   (`componentBundle.ts`). **The parse itself never executes anything at any
-   tier**, and Tier 2 (`run-project`) is genuinely distinct from Tier 1: the
-   dev-server manager, the preview deploy, and the agent's
+   it". **Every project starts at Tier 2 (`run-project`) by default —
+   `DEFAULT_TRUST_TIER`, owner decision, 2026-09-20** (superseding the narrower
+   2026-09-17 override below). **The parse itself never executes anything at
+   any tier**; the tier only decides whether Studio may run the workspace's OWN
+   code (its style toolchain, its package components, its dev server) on top of
+   the parse. The tier is a per-project fact the owner can lower (the Live
+   pill's "Back to static") and raise again — nothing promotes automatically
+   any more because nothing needs to. Tier 1 (`render-packages`) buys exactly
+   two things — the workspace's own style toolchain compiles in a capped
+   subprocess (`styleCompileTier1.ts`) and its package components are bundled
+   and rendered in the canvas (`componentBundle.ts`) — reachable now only for a
+   project explicitly demoted below Tier 2, since Tier 2 already implies it
+   (`trust !== 'static'`). Tier 2 (`run-project`) is genuinely distinct from
+   Tier 1 still: the dev-server manager, the preview deploy, and the agent's
    `studio_render_reference` all demand `trust === 'run-project'` exactly, via
    `server/handlers/studio/trustGate.ts` — not the looser `trust !== 'static'`
-   that Tier-1 consumers read. There is **one narrow automatic promotion, the
-   owner's call on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2): a
-   Vite project with a lockfile is promoted to `run-project` on first open —
-   once per project, ever, with a notice and an **Undo** in the board chrome,
-   the origin recorded on disk, and every condition re-checked server-side in
-   `trustTier.ts`. Read that promotion for what it is: **Tier 2 for a Vite
-   project is a product default, not a consent boundary** (`sec-12`). Anything
-   that needs a human to have agreed must ask at the point of use. Tier-1
-   promotion is still always an explicit click, and a non-Vite project is never
-   promoted by Studio at all.
+   that Tier-1 consumers read, so a project explicitly set to `static` is
+   refused exactly as before. Read the default for what it is: **Tier 2 is a
+   PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — every project ships
+   with `studio_render_reference`'s gates satisfied by default, and no human
+   answers a question to get there. Anything that needs a human to have agreed
+   must ask at the point of use, and the single-operator posture is what makes
+   the default acceptable at all. (Superseded: before 2026-09-20, one narrow
+   automatic promotion — the owner's call on 2026-09-17,
+   `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 — promoted only a Vite project
+   with a lockfile, once, with a notice and an Undo in the board chrome. That
+   mechanism (`LiveAutoPromoteNotice`) is gone; there is no lower default left
+   to promote FROM.)
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -127,7 +135,7 @@ never silently no-ops.
 | Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
 | Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
 | **Active plan** | [`STUDIO-FIGMA-FEEL-PLAN.md`](STUDIO-FIGMA-FEEL-PLAN.md) — **the plan currently being executed** (opened 2026-09-17). Tracks Z (zero noise, a barrier before everything else), S (snappy), K (keys and hands), P (panels/prototype/preview), A (agent), G (GitHub), V (verification). Its §0 lists what is already true, §6 the owner's seven decisions, §7 the defects found in the audit that opened it |
-| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — **landed**: Tier 2 live runtime frames (L1–L8), refusals-as-choices (R1–R3) and the Penpot-measured inspector rebuild (P0–P6) are all in the tree. L9 is the only unstarted work order, and no project has ever been promoted to Tier 2, so Track L is code-verified rather than user-verified |
+| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — **landed**: Tier 2 live runtime frames (L1–L8), refusals-as-choices (R1–R3) and the Penpot-measured inspector rebuild (P0–P6) are all in the tree. L9 is the only unstarted work order. Every project now starts at Tier 2 by default (2026-09-20), so Track L is exercised on every project open, not just a promoted one |
 | Built-in design system | [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) — **shipped (DS-1…DS-9)**, 2026-09-17. The `@alm-design/design-system` npm is retired: the design system is vendored at `vendor/alm-design-system/`, projects carry their own `design-system/` folder, the insert dialog is an **Assets** panel of live previews, and the toolbar `+` is **Add page**. Only DS-4b (drag a card to the canvas) is open |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
@@ -168,33 +176,34 @@ never silently no-ops.
   to hashed class names and resolved through the evaluator
   (`styles.card`, `cn()`/`clsx()`/`classnames()`); Tailwind v3/v4, Sass, and
   PostCSS compiled by running the workspace's own toolchain once the project
-  is promoted past Tier 0 trust — `server/handlers/studio/styleCompile.ts`
+  is off Tier 0 trust — which every project is by default since 2026-09-20 —
+  `server/handlers/studio/styleCompile.ts`
 - Vendor package CSS (WS-2.3): a bare-specifier `.css` import
   (`import '@acme/ui/dist/style.css'`) is resolved against the project's own
   `node_modules` and injected into the canvas iframe as a read-only
   `@layer vendor` bucket (`ProjectCssInjector`), ordered below the editable
   `@layer user-authored` class registry — Tier 0 safe, no trust gate
 - **Trust tiers.** `.studio/meta.json`'s `trust` field has three values —
-  `static` (Tier 0, the never-auto-promoted default), `render-packages`
-  (Tier 1), `run-project` (Tier 2) — read/written by
-  `server/handlers/studio/trustTier.ts` and driven from the client by
-  `promoteProjectToTier1` (`studio/studioProjectTrust.ts`). Promotion to
-  **Tier 1** is an explicit user click. Promotion to **Tier 2 has one narrow
-  exception the owner called on 2026-09-17** (`STUDIO-FIGMA-FEEL-PLAN.md` §6
-  decision 2): a **Vite project with a lockfile** is auto-promoted to
-  `run-project` on first open — once, ever — with a notice and an **Undo** in
-  the board chrome (`canvas/LiveAutoPromoteNotice/`). The origin and the
-  once-latch live on disk (`trustAutoPromoted`/`trustAutoPromotedAt`), and
-  `trustTier.ts` re-checks every condition server-side. A non-Vite project is
-  never touched — the canvas pill reads "Live needs Vite" (§6 decision 5,
-  deferred). Tier 2
-  (`run-project`) now has a real gated consumer beyond the MCP visual-audit
+  `static` (Tier 0), `render-packages` (Tier 1), `run-project` (Tier 2) —
+  read/written by `server/handlers/studio/trustTier.ts` and driven from the
+  client by `setStudioProjectTrust`/`promoteProjectToTier1`
+  (`studio/studioProjectTrust.ts`). **Every project starts at `run-project`
+  (Tier 2) by default — `DEFAULT_TRUST_TIER`, owner decision, 2026-09-20** —
+  superseding the earlier, narrower 2026-09-17 override
+  (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2) that auto-promoted only a Vite
+  project with a lockfile, once, via a board notice with an Undo
+  (`LiveAutoPromoteNotice` — retired in the same change). Nothing promotes
+  automatically any more because nothing needs to: the tier is a per-project
+  fact the owner can lower (the Live pill's "Back to static") and raise again.
+  A non-Vite project's Live pill still reads "Live needs Vite" (§6 decision 5,
+  deferred) — that capability check is unrelated to the trust tier and stays.
+  Tier 2 (`run-project`) has a real gated consumer beyond the MCP visual-audit
   tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
   (Track L, `live-01`) — one reused, idle-timed subprocess per project,
   exposed as a polled `status`/`start`/`stop` route family and prewarmed the
-  instant a Tier-2 project's canvas mounts.
+  instant a Tier-2 project's canvas mounts (now every project, on open).
   **A Tier-2 action needs two independent gates, and the tier is the one that
-  cannot be delegated.** The `studio.run.project` capability (now held by
+  cannot be delegated.** The `studio.run.project` capability (held by
   Owner *and* Admin, A10) says a caller may run project code at all; the
   project's own tier says *this* project may be run. Every Tier-2 entry point
   checks both through the one shared helper — `requireTrustTier` for an HTTP
@@ -203,7 +212,10 @@ never silently no-ops.
   `studio_render_reference` checked only the capability, which made it
   strictly weaker than the route performing the identical spawn (`sec-05`
   finding 1); the trap to avoid is adding a Tier-2 tool that leans on the
-  capability alone.
+  capability alone. **Tier 2 is a PRODUCT DEFAULT, not a consent boundary**
+  (`sec-12`) — every project ships with both gates satisfied by default, and
+  no human answered a question to get there; anything that genuinely needs a
+  human to have agreed must ask at the point of use.
 - **A built-in design system, and an Assets panel to insert from**
   (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
   design system is **vendored into Studio** at `vendor/alm-design-system/` and
@@ -388,11 +400,14 @@ per-track ledger is
 tracks partially-landed tracks (D2's structural drag work, Track G density,
 A7) at a resolution this file should not try to carry.
 
-One update from the style-compile consent work (2026-09-06): a fresh
-Tailwind/Sass/PostCSS import no longer sits silently unstyled at Tier 0 —
-the board asks once, on load, via `StyleCompileConsentBanner`
-(`src/admin/pages/site/canvas/StyleCompileConsentBanner/`); promotion to
-Tier 1 remains an explicit user action through the existing trust-tier route.
+One update from the style-compile consent work (2026-09-06), itself
+superseded by the 2026-09-20 default-tier change: a fresh Tailwind/Sass/
+PostCSS import no longer sits silently unstyled at Tier 0 — the board asks
+once, on load, via `StyleCompileConsentBanner`
+(`src/admin/pages/site/canvas/StyleCompileConsentBanner/`). Since every
+project now starts at Tier 2, a fresh import clears that gate before the
+banner would ever have a reason to show; the banner is reachable today only
+for a project explicitly demoted to `static`.
 
 - **A style change scoped to a real `@media` breakpoint does not reach disk.**
   The codemod and the wire both support it — `insertRule`/`setDeclaration`
@@ -407,12 +422,13 @@ Tier 1 remains an explicit user action through the existing trust-tier route.
   (Tailwind/Sass/PostCSS output, a non-`.css` module) goes to `unmapped` and is
   toasted. This is correct behaviour, not a bug — but it is why a Tailwind
   project's styles are edited through the `class` path, not the style path.
-- **Tailwind v3/v4, Sass and PostCSS compilation requires Tier-1 promotion.**
-  WS-2.1 built the pipeline and it runs in a capped subprocess
-  (`styleCompileTier1.ts`), but a fresh import sits at Tier 0 and never
-  auto-runs it, so a newly imported Tailwind/Sass project renders **unstyled**
-  until a human clicks promote. The refusal is explicit
-  (`style-toolchain-requires-trust-promotion`), not silent.
+- **Tailwind v3/v4, Sass and PostCSS compile on first load, in a capped
+  subprocess** (`styleCompileTier1.ts`): every project starts at Tier 2
+  (`DEFAULT_TRUST_TIER`, 2026-09-20), which clears the Tier-1 gate
+  (`trust !== 'static'`), so a fresh import is styled with no click. The
+  refusal (`style-toolchain-requires-trust-promotion`) is still real, but
+  only a project explicitly demoted to `static` via the Live pill's "Back to
+  static" reaches it — and that project renders unstyled until promoted again.
 - `.module.scss` / `.module.sass` / `.module.less` are **detected and warned
   about** (`css-module-sass-not-supported`) but not compiled — only plain
   `.module.css` is.
