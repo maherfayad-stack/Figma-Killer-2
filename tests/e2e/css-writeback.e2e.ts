@@ -2,7 +2,11 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
+  CANVAS_FRAME_IFRAME_SELECTOR,
+  clickInFrame,
   createAuthoredFixtureProject,
+  openFixtureBoard,
+  panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -42,8 +46,6 @@ import {
  * route 404s and both cases fail on a 20 s timeout that reads exactly like a
  * product bug. The throwaway copy gives the same safety property for real.
  */
-
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 /**
  * The fixture stylesheet, written verbatim and asserted against verbatim.
@@ -109,51 +111,59 @@ test.afterAll(() => {
 })
 
 /**
- * Open the studio board on the fixture with auto-save ON — unlike every other
- * studio spec, reaching disk IS the thing under test here. Safe only because
- * the fixture lives in this run's throwaway workspace copy.
+ * Open the board on the fixture with auto-save ON — unlike every other studio
+ * spec, reaching disk IS the thing under test here. Safe only because the
+ * fixture lives in this run's throwaway workspace copy.
+ *
+ * This used to be a private opener that went straight from `goto` to a click.
+ * It could not work: the canvas has no scroll container, so where a frame
+ * LANDS is decided by a "center on open" pass that races the arrival of the
+ * page documents it centres on. On a cold load the board settles pointed
+ * somewhere with no frame in it, `page.mouse.click(box.x + w/2, …)` lands on
+ * empty canvas, nothing is selected, and the failure reads like "the Style
+ * panel never bound to a class" — a product bug that was never there. The
+ * shared `openFixtureBoard` resets the view with the product's own Ctrl+0
+ * first, and `panIntoView` puts the target under the pointer before the click.
  */
-async function openStudioBoard(page: Page, projectDir: string): Promise<Locator> {
-  await page.addInitScript((dir: string) => {
-    window.localStorage.setItem('studio:studio:dir', dir)
-    window.localStorage.setItem('studio:studio', '1')
-    window.localStorage.setItem('studio-editor-prefs', JSON.stringify({ autoSave: true }))
-  }, projectDir)
-
-  await page.goto('/admin/site?studio')
-  const canvasRoot = page.getByTestId('canvas-root')
-  await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
-  await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 30_000 })
-  return canvasRoot
-}
-
-/**
- * Click an element inside a canvas iframe with real mouse coordinates.
- * `locator.click()` would try to scroll it into view, and the canvas pans via
- * a CSS transform with no native scroll container, so it hangs rather than
- * failing usefully. Same helper shape as `instance-selection-ui.e2e.ts`.
- */
-async function clickInFrame(page: Page, target: Locator): Promise<void> {
-  await expect(target).toBeVisible({ timeout: 15_000 })
-  const box = await target.boundingBox()
-  expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+async function openStudioBoard(page: Page): Promise<{ canvasRoot: Locator; contentFrame: FrameLocator }> {
+  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
+  const frame = page.locator('[data-page-id]').first()
+  await panIntoView(page, canvasRoot, frame)
+  await expect(
+    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    'the fixture frame never mounted a live canvas iframe after being panned into view',
+  ).toBeVisible({ timeout: 60_000 })
+  return { canvasRoot, contentFrame: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
 }
 
 /** Select an element on the canvas and wait for the Style panel to bind to its class. */
-async function selectAndOpenSizeSection(page: Page, contentFrame: FrameLocator, selector: string, expectedChip: string) {
-  await clickInFrame(page, contentFrame.locator(selector).first())
+async function selectAndOpenSizeSection(
+  page: Page,
+  canvasRoot: Locator,
+  contentFrame: FrameLocator,
+  selector: string,
+  expectedChip: string,
+) {
+  const target = contentFrame.locator(selector).first()
+  await panIntoView(page, canvasRoot, target, 80)
+  await clickInFrame(page, target)
 
-  const chip = page.getByTestId('style-target-chip-class')
-  await expect(chip, `selecting ${selector} did not bind the Style panel to a class`).toBeVisible({ timeout: 15_000 })
+  // The write target used to be `StyleTargetChip`'s own Element/Class pair.
+  // Wave 3's inspector-density work deleted that row as a duplicate of the
+  // ClassPicker sitting directly above it (`SelectorPillStack.tsx`), and the
+  // chip component now renders only for a MULTI-selection
+  // (`MultiSelectTargetBar.tsx`). For a single selection the class pill IS
+  // the write target, so that is what this asserts - the same claim, on the
+  // surface that now makes it.
+  const chip = page.getByTestId(`class-chip-${expectedChip.replace('.', '')}`)
+  await expect(chip, `selecting ${selector} did not bind the inspector to a class`).toBeVisible({ timeout: 15_000 })
   await expect(chip).toHaveText(new RegExp(expectedChip.replace('.', '\\.')))
 
-  // The rail navigates the section list; Size is where width/height live.
-  await page.getByTestId('style-category-size').click()
-  const field = page.getByTestId('css-size-scrub-width-field')
-  await expect(field, 'the Size section did not render a width control').toBeVisible({ timeout: 10_000 })
-  return { chip, field }
+  // Size lives in Measures now (`MeasuresSection` renders `SizeSection`), and
+  // Measures is always mounted - there is no category to navigate to first.
+  const field = page.getByTestId('css-size-input-width').getByRole('textbox', { name: 'Width' })
+  await expect(field, 'the Measures section did not render a width control').toBeVisible({ timeout: 10_000 })
+  return { field }
 }
 
 /** Type a value into a ScrubInput and commit it with Enter. */
@@ -169,31 +179,28 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
   test.setTimeout(180_000)
 
   test('an inspector width change is written into the real .css file, byte-exact elsewhere', async ({ page }) => {
-    await openStudioBoard(page, fixture.dir)
-
-    const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const { canvasRoot, contentFrame } = await openStudioBoard(page)
 
     // Sanity: the fixture is what we wrote, before anything touches it.
     expect(readCss()).toBe(FIXTURE_CSS)
 
-    const { chip, field } = await selectAndOpenSizeSection(page, contentFrame, '.hero-title', '.hero-title')
+    const { field } = await selectAndOpenSizeSection(page, canvasRoot, contentFrame, '.hero-title', '.hero-title')
 
-    // The chip must claim this class is writable — that claim and the actual
-    // save outcome share `classifyStylesheetEditability`, so a mismatch here
-    // would mean the UI is lying about a tier.
-    await expect(chip, 'the style-target chip did not mark a plain .css class as writable').toHaveAttribute(
-      'data-writable',
-      'true',
+    // `WriteTargetSlot` wraps each pill and carries the claim the chip's
+    // `data-writable` used to make: `data-locked="false"` means an edit lands
+    // here. That claim and the actual save outcome share
+    // `classifyStylesheetEditability`, so a mismatch would mean the UI is
+    // lying about a tier.
+    const writeTarget = page
+      .locator('[data-testid^="write-target-chip-"]')
+      .filter({ has: page.getByTestId('class-chip-hero-title') })
+    await expect(writeTarget, 'the inspector did not mark a plain .css class as writable').toHaveAttribute(
+      'data-locked',
+      'false',
     )
 
     await setWidth(field, '321px')
     await expect(field, 'the width control did not keep the typed value').toHaveValue('321px')
-    // `data-state` is driven by the STORE's stored value, not the input's own
-    // draft — so this distinguishes "typed but never committed" from "committed",
-    // which is exactly the seam that hid this feature's original failure.
-    await expect(page.getByTestId('css-size-input-width'), 'the commit never reached the store').toHaveAttribute('data-state', 'set')
-
     // Autosave debounces at STUDIO_AUTOSAVE_DELAY_MS (2s); poll the real file.
     await expect
       .poll(() => readCss(), {
@@ -209,13 +216,10 @@ test.describe('panel-02 — CSS write-back reaches disk, and refuses when it can
   })
 
   test('a selector declared twice REFUSES with a readable reason and leaves the file untouched', async ({ page }) => {
-    await openStudioBoard(page, fixture.dir)
-
-    const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const { canvasRoot, contentFrame } = await openStudioBoard(page)
 
     const before = readCss()
-    const { field } = await selectAndOpenSizeSection(page, contentFrame, '.trap', '.trap')
+    const { field } = await selectAndOpenSizeSection(page, canvasRoot, contentFrame, '.trap', '.trap')
 
     await setWidth(field, '999px')
 

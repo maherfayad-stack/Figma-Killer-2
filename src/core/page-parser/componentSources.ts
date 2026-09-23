@@ -49,6 +49,16 @@ export type ComponentSource =
    */
   | { kind: 'design-system'; name: string }
 
+/** The file set a workspace project covers, as globs — one definition, so the
+ * cached project below can never cover a different set from a fresh one. */
+function workspaceGlobs(workspaceRoot: string): string[] {
+  const root = path.resolve(workspaceRoot).split(path.sep).join('/')
+  return [
+    `${root}/**/*.{ts,tsx,js,jsx}`,
+    ...[...EXCLUDED_WORKSPACE_DIR_NAMES].map((name) => `!${root}/**/${name}/**`),
+  ]
+}
+
 /**
  * Builds one ts-morph `Project` covering every `.ts`/`.tsx`/`.js`/`.jsx` file
  * under `workspaceRoot`, excluding `EXCLUDED_WORKSPACE_DIR_NAMES` (never add
@@ -88,12 +98,76 @@ export function createWorkspaceProject(workspaceRoot: string): Project {
     ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
   })
 
-  const root = path.resolve(workspaceRoot).split(path.sep).join('/')
-  project.addSourceFilesAtPaths([
-    `${root}/**/*.{ts,tsx,js,jsx}`,
-    ...[...EXCLUDED_WORKSPACE_DIR_NAMES].map((name) => `!${root}/**/${name}/**`),
-  ])
+  project.addSourceFilesAtPaths(workspaceGlobs(workspaceRoot))
   return project
+}
+
+/**
+ * The same workspace project, REUSED across reads and refreshed from disk on
+ * every checkout.
+ *
+ * ## Why this exists
+ *
+ * `createWorkspaceProject` parses every source file in the workspace, and it
+ * was being rebuilt on every `GET /admin/api/studio/load` — which the board
+ * calls to re-sync after EVERY structural edit. Measured on a 64-source-file
+ * project: 302-484 ms per rebuild, of a ~494 ms load whose page parses were
+ * already cached. The user paid it for a duplicate, an insert, a wrap, a group
+ * and an ungroup alike, to rebuild a graph that had not changed.
+ *
+ * ## Why it is safe to reuse, and where the line is
+ *
+ * Every source file is refreshed from the file system before the project is
+ * handed out, so a cached project can never serve text that is staler than a
+ * freshly built one would have: a changed file is re-read, a deleted file is
+ * forgotten, and a file that appeared since the last checkout is added. The
+ * refresh also DISCARDS any in-memory edit nobody saved, which is the property
+ * that makes reuse safe rather than merely fast.
+ *
+ * **Read paths only.** A codemod mutates its project and then saves it, and
+ * two of those interleaving through one shared project would let one write see
+ * the other's unsaved AST. `src/core/ast-codemods/*` therefore keeps calling
+ * `createWorkspaceProject` and gets its own, which is the right trade: a
+ * codemod runs once per gesture, a load runs on every gesture, and correctness
+ * of the write is the thing this product cannot get wrong.
+ *
+ * One entry, not a map: the editor has one project open, and holding several
+ * parsed workspaces alive is memory nobody asked for. Opening a second project
+ * simply replaces the entry.
+ */
+let cachedProject: { root: string; project: Project } | null = null
+
+export function acquireReadOnlyWorkspaceProject(workspaceRoot: string): Project {
+  const root = path.resolve(workspaceRoot)
+  if (cachedProject?.root !== root) {
+    cachedProject = { root, project: createWorkspaceProject(workspaceRoot) }
+    return cachedProject.project
+  }
+
+  const { project } = cachedProject
+  // `refreshFromFileSystemSync` re-reads the file and reports what happened;
+  // a `Deleted` result has already forgotten the source file, so the loop
+  // needs no removal of its own. Iterating a COPY because that forgetting
+  // mutates the project's own list.
+  for (const sourceFile of [...project.getSourceFiles()]) {
+    try {
+      sourceFile.refreshFromFileSystemSync()
+    } catch {
+      // Unreadable mid-refresh (a file being rewritten underneath us). Drop it
+      // rather than keep text we can no longer vouch for; the glob below adds
+      // it back on the next checkout once it settles.
+      project.removeSourceFile(sourceFile)
+    }
+  }
+  // Files that appeared since the last checkout. Already-added paths are a
+  // no-op, so this is the whole "what's new" story.
+  project.addSourceFilesAtPaths(workspaceGlobs(workspaceRoot))
+  return project
+}
+
+/** Test-only: drop the cached project so one test cannot leak a parse into the next. */
+export function clearReadOnlyWorkspaceProject(): void {
+  cachedProject = null
 }
 
 /**

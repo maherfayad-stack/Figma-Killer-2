@@ -60,12 +60,15 @@
  *    patch. Everything else about a Storybook project now narrows: the common
  *    case, an edit to a component several stories render, names exactly those
  *    stories' pages.
- * 3. **A touched file no cached route claims widens.** This is the rule that
- *    covers `pageParseCache.ts`'s documented ONE-LEVEL-DEEP limitation: a
- *    component three levels down a nested composition appears in no route's
- *    recorded dependency set, so it produces no dependents and the whole
- *    request widens rather than reloading nothing. It also covers config
- *    files, stylesheets, and anything else outside the parse graph.
+ * 3. **A touched file no cached route claims widens.** `pageParseCache.ts`'s
+ *    recorded dependency set is TRANSITIVE now (`inlineLocalComponents`'
+ *    `dependencyFiles` out-param walks every nesting level, not just a
+ *    route's direct local imports) — so this rule no longer exists to paper
+ *    over a nested-composition blind spot. What it still covers, honestly:
+ *    config files, stylesheets, dead code no route imports, and anything else
+ *    outside the parse graph. A file with no dependent produces no honest
+ *    scope to narrow to, and the whole request widens rather than reloading
+ *    nothing.
  * 4. **A cached route that is no longer discoverable widens.** Its page id
  *    cannot be derived any more (the page was deleted or renamed by the very
  *    edit that triggered this), which is a change of global board shape — a
@@ -205,8 +208,8 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
       if (!pageId) return null
       pageIds.add(pageId)
     }
-    // Rule 3 — nothing claims this file: outside the parse graph, or deeper
-    // than `pageParseCache.ts`'s one-level dependency tracking can see.
+    // Rule 3 — nothing claims this file: outside the parse graph entirely
+    // (config, stylesheet, dead code no route imports).
     if (dependents === 0) return null
   }
 

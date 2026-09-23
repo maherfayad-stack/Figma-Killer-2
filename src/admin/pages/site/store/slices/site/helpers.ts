@@ -15,12 +15,13 @@ import { addPage, createNode, reconcileSiteExplorerInPlace, reindexNodeParents }
 import type { VisualComponent } from '@core/visualComponents'
 import { syncAllVCRefSlotInstances, allTreeNodeMaps } from '../vcSlotReconcile'
 import { collectSlotOutletNames } from '@core/visualComponents'
-import { create } from 'mutative'
+import { apply, create } from 'mutative'
 import type { Draft, Patches } from 'mutative'
 import type { ImportFragment } from '@core/htmlImport'
 import type { NewStyleRule } from '@core/siteImport'
 import { addImportedScriptDependencies, addImportedScripts, addImportedStylesheets } from './importedSiteFiles'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
+import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import type { EditorStore } from '@site/store/types'
 import { commitHistoryEntry } from './historyStack'
@@ -338,6 +339,94 @@ export function buildSiteHelpers(
   }
 
   /**
+   * `perf-10` — an OPTIMISTIC preview of a structural SOURCE write (insert /
+   * duplicate / wrap / group), applied to the SAME `NodeTree` the canvas
+   * already renders from, entirely OUTSIDE undo history and dirty tracking.
+   *
+   * Unlike every `mutate*` helper above, this does NOT call
+   * `runHistoricMutation`: no `commitHistoryEntry`, no `_dirtySave`, no
+   * `hasUnsavedChanges`. The gesture's REAL undo entry and REAL dirty state
+   * come from the source write landing (`store-14`'s patch-free `source`
+   * history entry) — a preview that also pushed history or marked the
+   * document dirty would be a second, phantom edit racing the real one, and
+   * autosave would try to persist a node the file does not contain yet.
+   *
+   * Routes through the SAME `resolveActiveTreeTarget` every named mutation
+   * uses (built against a draft of `site` alone, not the whole store — this
+   * never touches editor-state fields), so a preview lands on the right
+   * page/VC. Deliberately skips `runActiveTreeRecipe`'s VC slot-outlet sync:
+   * the preview is a transient visual stand-in, gone within one resync, and
+   * is never itself the thing a VC ref's slot instances get reconciled
+   * against.
+   *
+   * Returns `null` when the recipe reported no change (nothing to roll
+   * back); otherwise a `rollback` closure that undoes exactly this preview
+   * via Mutative's own `apply` — the same idiom `undo`/`redo` use — computed
+   * against whatever `site` is CURRENT when it's called, not the stale
+   * snapshot from when the preview ran, so an unrelated edit in between is
+   * never clobbered.
+   *
+   * See `structuralOptimism.ts` for why this is safe to leave un-rolled-back
+   * on a SUCCESSFUL write: the resync that follows replaces the touched page
+   * object wholesale, which erases the preview node as a side effect no
+   * matter what id it was given.
+   */
+  function previewActiveTreeMutation(
+    fn: (tree: NodeTree<PageNode>, site: SiteDocument) => SiteMutationResult,
+  ): (() => void) | null {
+    const cur = get()
+    if (!cur.site) return null
+    let result: SiteMutationResult = false
+    const [nextSite, patches, inverse] = create(
+      cur.site,
+      (draft) => {
+        const target = resolveActiveTreeTarget({
+          site: draft as SiteDocument,
+          activeDocument: cur.activeDocument,
+          activePageId: cur.activePageId,
+        })
+        if (!target) {
+          result = false
+          return
+        }
+        result = fn(target.tree, draft as SiteDocument)
+      },
+      { enablePatches: true },
+    )
+    if (result === false || patches.length === 0) return null
+
+    const siteBefore = cur.site
+    set((state) => {
+      state.site = nextSite
+      applyNodeIndexPatch(
+        nodeIndexesOf(state),
+        siteBefore,
+        nextSite,
+        collectDirtyFromSitePatches(patches, siteBefore, nextSite),
+      )
+    })
+
+    let rolledBack = false
+    return () => {
+      if (rolledBack) return
+      rolledBack = true
+      const now = get()
+      if (!now.site) return
+      const restoredSite = apply(now.site, inverse)
+      set((state) => {
+        state.site = restoredSite
+        applyNodeIndexPatch(
+          nodeIndexesOf(state),
+          now.site!,
+          restoredSite,
+          collectDirtyFromSitePatches(inverse, now.site!, restoredSite),
+        )
+        pruneCanvasSelectionDraft(state)
+      })
+    }
+  }
+
+  /**
    * Mutate the entire site — all pages and style rules — in ONE undoable
    * history snapshot. The recipe receives a SiteDocument draft and transaction
    * helpers for adding or overwriting pages and style rules.
@@ -602,5 +691,6 @@ export function buildSiteHelpers(
     mutateSiteState,
     mutateAllPagesAndSite,
     mutateTreesForNodeIds,
+    previewActiveTreeMutation,
   }
 }

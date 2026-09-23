@@ -67,7 +67,7 @@ import {
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Project } from 'ts-morph'
-import { getCachedRouteParse, localSourceAbsFiles, setCachedRouteParse } from './pageParseCache'
+import { getCachedRouteParse, setCachedRouteParse } from './pageParseCache'
 import type { RoutePageEntry } from './routePageEntry'
 import type { DiscoveredStory } from './storyDiscovery'
 
@@ -123,13 +123,14 @@ export function storyPageIdFromRoutePath(routePath: string): string | null {
  * from a broken one.
  *
  * Each built story is recorded in `pageParseCache` under
- * {@link storyCacheKey}, with the same dependency set the other two producers
- * record: its own file plus every local component it resolved. That buys the
- * cheap half (a reopened board re-materializes only the stories whose inputs
- * moved) and, the reason it was owed, the half `reloadScope.ts` needs — a
- * story route with recorded dependencies is a route the narrow reload can
- * REASON about, instead of the blanket "this project has stories, widen
- * everything" it had to assume while stories recorded nothing.
+ * {@link storyCacheKey}, with the same TRANSITIVE dependency set the other two
+ * producers record: its own file plus every local component `inlineLocalComponents`
+ * read while expanding it, at every nesting level (`FreshBuiltStory.dependencyFiles`,
+ * below). That buys the cheap half (a reopened board re-materializes only the
+ * stories whose inputs moved) and, the reason it was owed, the half
+ * `reloadScope.ts` needs — a story route with recorded dependencies is a route
+ * the narrow reload can REASON about, instead of the blanket "this project has
+ * stories, widen everything" it had to assume while stories recorded nothing.
  */
 export function buildStoryRouteEntries(
   dir: string,
@@ -154,19 +155,20 @@ export function buildStoryRouteEntries(
         workspaceRoot: dir,
         cssModuleClassMaps,
       }
-      built =
+      const fresh =
         story.body.kind === 'jsx'
           ? buildJsxStory(dir, project, story, story.body.fn, evalOptions)
           : buildArgsStory(dir, project, story, story.body, evalOptions)
+      built = fresh
       // A skipped story is deliberately NOT cached: "this produced nothing"
       // is the one answer worth recomputing, since the file it depends on is
       // exactly what a user fixes next.
-      if (built) {
+      if (fresh) {
         setCachedRouteParse(
           cacheKey,
           configHash,
-          [story.absFile, ...localSourceAbsFiles(built.componentSources, dir)],
-          built,
+          [story.absFile, ...fresh.dependencyFiles],
+          { expanded: fresh.expanded, componentSources: fresh.componentSources },
         )
       }
     }
@@ -191,6 +193,18 @@ interface BuiltStory {
 }
 
 /**
+ * A freshly-built story additionally carries its TRANSITIVE local-component
+ * dependency set — `inlineLocalComponents`' `dependencyFiles` out-param,
+ * populated at every nesting level, not just the story's own direct call
+ * sites. A CACHE HIT (`BuiltStory` alone, above) has no need of it: the
+ * dependency set was already recorded in `pageParseCache` the first time this
+ * story was built, and re-deriving it on every hit would defeat the cache.
+ */
+interface FreshBuiltStory extends BuiltStory {
+  dependencyFiles: Set<string>
+}
+
+/**
  * The jsx-only shape: the story's function IS a component for parsing
  * purposes, so it takes the identical path a page component takes. Passing the
  * function as `parseJsxTree`'s `componentFn` is what lets §7 read its own
@@ -202,7 +216,7 @@ function buildJsxStory(
   story: DiscoveredStory,
   fn: FunctionLike,
   evalOptions: StaticEvalOptions,
-): BuiltStory | undefined {
+): FreshBuiltStory | undefined {
   const sourceFile = project.getSourceFile(story.absFile)
   if (!sourceFile) return undefined
 
@@ -216,9 +230,11 @@ function buildJsxStory(
   // call-site node ids, which only exist before splicing. Same order, same
   // reason, as `parseStandardRouteEntry`.
   const componentSources = resolveComponentSources(project, story.absFile, dir, parsed)
+  const dependencyFiles = new Set<string>()
   return {
-    expanded: inlineLocalComponents(parsed, componentSources, project, dir, { evalOptions }),
+    expanded: inlineLocalComponents(parsed, componentSources, project, dir, { evalOptions, dependencyFiles }),
     componentSources,
+    dependencyFiles,
   }
 }
 
@@ -233,7 +249,7 @@ function buildArgsStory(
   story: DiscoveredStory,
   body: Extract<DiscoveredStory['body'], { kind: 'args' }>,
   evalOptions: StaticEvalOptions,
-): BuiltStory | undefined {
+): FreshBuiltStory | undefined {
   const callSiteId = `${story.relFile}:${story.line}:${story.col}`
   const argNames = Object.keys(body.args)
 
@@ -259,8 +275,10 @@ function buildArgsStory(
 
   const parsed: ParsedPage = { rootIds: [callSiteId], nodes: { [callSiteId]: callSite } }
   const componentSources: Record<string, ComponentSource> = { [callSiteId]: body.componentSource }
+  const dependencyFiles = new Set<string>()
   return {
-    expanded: inlineLocalComponents(parsed, componentSources, project, dir, { evalOptions }),
+    expanded: inlineLocalComponents(parsed, componentSources, project, dir, { evalOptions, dependencyFiles }),
     componentSources,
+    dependencyFiles,
   }
 }

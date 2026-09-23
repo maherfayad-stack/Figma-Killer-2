@@ -12,5 +12,6 @@ export {
   responseErrorMessage,
   ApiError,
   isAbortError,
+  GATEWAY_RETRY_BACKOFF_MS,
   type FetchLike,
 } from './apiClient'

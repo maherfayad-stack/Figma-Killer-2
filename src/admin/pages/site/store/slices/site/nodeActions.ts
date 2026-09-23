@@ -49,6 +49,7 @@ import { createImageDropActions } from './imageDropActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
+import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { createStudioSourceWrites } from './studioSourceWrites'
@@ -302,6 +303,12 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     },
 
     deleteNode: (nodeId) => {
+      // `perf-10` — a Delete on the thing a still-in-flight insert/duplicate/
+      // wrap just previewed would otherwise take the "ordinary CMS node"
+      // path (a preview id is never `isSourceDerivedNodeId`) against a node
+      // the write's own resync is about to erase anyway. Treated exactly like
+      // a missing node. See `structuralOptimism.ts`'s "one gap left open".
+      if (excludePendingOptimisticTargets([nodeId]).length === 0) return
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
       const plan = planSourceDelete([readTree()?.nodes[nodeId]])

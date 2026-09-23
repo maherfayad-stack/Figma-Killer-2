@@ -2,7 +2,11 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
+  CANVAS_FRAME_IFRAME_SELECTOR,
+  clickInFrame,
   createAuthoredFixtureProject,
+  openFixtureBoard,
+  panIntoView,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -38,7 +42,6 @@ import {
  * both cases died on a timeout that read exactly like a product bug.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 /**
  * The fixture page, written verbatim and asserted against verbatim.
@@ -115,27 +118,23 @@ test.afterAll(() => {
 })
 
 /** Open the studio board on the fixture — safe to write because it is in the run's throwaway workspace copy. */
-async function openStudioBoard(page: Page, projectDir: string): Promise<FrameLocator> {
-  await page.addInitScript((dir: string) => {
-    window.localStorage.setItem('studio:studio:dir', dir)
-    window.localStorage.setItem('studio:studio', '1')
-    window.localStorage.setItem('studio-editor-prefs', JSON.stringify({ autoSave: true }))
-  }, projectDir)
-
-  await page.goto('/admin/site?studio')
-  await expect(page.getByTestId('canvas-root')).toBeVisible({ timeout: 20_000 })
-  await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
+async function openStudioBoard(page: Page): Promise<{ canvasRoot: Locator; contentFrame: FrameLocator }> {
+  // `openFixtureBoard` rather than a private `goto`: the canvas has no scroll
+  // container, so where a frame LANDS is decided by a "center on open" pass
+  // that races the arrival of the page documents it centres on. On a cold load
+  // the board settles pointed somewhere with no frame in it, every
+  // `page.mouse.click(box.x + w/2, ...)` lands on empty canvas, nothing is
+  // selected, and the failure reads like "the element never appeared in the
+  // layers tree" - a product bug that was never there. The shared opener
+  // resets the view with the product's own Ctrl+0 first.
+  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = page.locator('[data-page-id]').first()
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 30_000 })
-  return frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
-}
-
-/** Click an element inside a canvas iframe with real mouse coordinates (the canvas pans by transform, so `.click()` hangs). */
-async function clickInFrame(page: Page, target: Locator): Promise<void> {
-  await expect(target).toBeVisible({ timeout: 15_000 })
-  const box = await target.boundingBox()
-  expect(box, 'click target has no bounding box').not.toBeNull()
-  await page.mouse.click(box!.x + box!.width / 2, box!.y + box!.height / 2)
+  await panIntoView(page, canvasRoot, frame)
+  await expect(
+    frame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    'the fixture frame never mounted a live canvas iframe after being panned into view',
+  ).toBeVisible({ timeout: 60_000 })
+  return { canvasRoot, contentFrame: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
 }
 
 /**
@@ -204,14 +203,16 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
   test.setTimeout(180_000)
 
   test('dragging one sibling past another rewrites the JSX, byte-exact elsewhere', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixture.dir)
+    const { canvasRoot, contentFrame } = await openStudioBoard(page)
     expect(readPage(), 'the fixture was modified before the test ran').toBe(FIXTURE_PAGE)
 
     // Selecting on the canvas auto-expands the layers tree to the node's row.
     // Addressed by node id, not class: `className` is translated to `classIds`
     // at parse time and dropped, so a project with no `.css` renders no class
     // attribute at all. `data-node-id` is what the canvas actually stamps.
-    await clickInFrame(page, contentFrame.locator(`[data-node-id="${nodeId('p', 2)}"]`).first())
+    const secondTarget = contentFrame.locator(`[data-node-id="${nodeId('p', 2)}"]`).first()
+    await panIntoView(page, canvasRoot, secondTarget, 80)
+    await clickInFrame(page, secondTarget)
     const tree = await openLayers(page)
 
     const secondId = nodeId('p', 2)
@@ -247,33 +248,54 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
     expect(readPage()).toBe(expected)
   })
 
-  test('dragging an element into a different parent REFUSES, and touches nothing', async ({ page }) => {
-    const contentFrame = await openStudioBoard(page, fixture.dir)
+  test('dragging an element into a different parent in the same file rewrites the JSX', async ({ page }) => {
+    // THIS CASE USED TO ASSERT A REFUSAL, and that premise is now obsolete.
+    // W4-1 made a same-file reparent a real write: `moveJsxElement.ts` takes a
+    // `destinationLine`/`destinationCol` naming the NEW PARENT and places the
+    // subtree with `jsxChildPlacement.ts` - the same function an insert uses -
+    // so the drag the old case performed is no longer refused, it lands. The
+    // refusal that survives is about SCOPE, not about crossing a parent:
+    // `freeVariablesOutOfScopeAt` refuses markup lifted out of a `.map`
+    // callback (and `refuseStructuralEdit`'s `cross-file` answers a move
+    // between files, which `transplantJsxElement.ts` then writes when it is
+    // honest). Neither has a case here yet - see `docs/e2e/COLD-SUITE-TRIAGE.md`.
+    const { canvasRoot, contentFrame } = await openStudioBoard(page)
     const before = readPage()
 
-    await clickInFrame(page, contentFrame.locator(`[data-node-id="${nodeId('em')}"]`).first())
-    const tree = await openLayers(page)
+    const innerTarget = contentFrame.locator(`[data-node-id="${nodeId('em')}"]`).first()
+    await panIntoView(page, canvasRoot, innerTarget, 80)
+    await clickInFrame(page, innerTarget)
+    await openLayers(page)
 
-    const innerId = nodeId('em')
-    const innerRow = page.getByTestId(`dom-tree-item-${innerId}`)
+    const innerRow = page.getByTestId(`dom-tree-item-${nodeId('em')}`)
     await expect(innerRow, 'the nested element never appeared in the layers tree').toBeVisible({ timeout: 10_000 })
 
-    // `.inner` lives inside `.box`; `.first` is a child of `<section>`. Dropping
-    // on `.first`'s top edge asks for a new parent, which has no source
-    // position to be written to.
+    // `.inner` lives inside `.box`; `.first` is a child of `<section>`.
+    // Dropping on `.first`'s top edge asks for a new parent in the same file.
     const firstRow = page.getByTestId(`dom-tree-item-${nodeId('p', 1)}`)
     await expect(firstRow).toBeVisible()
 
-    const idsBefore = await rowIds(tree)
     await dragRow(page, innerRow, firstRow, 'before')
 
-    // The user reads a reason. `pushToast` renders with role="alert".
-    const alert = page.locator('[role="alert"]', { hasText: /different parent/i })
-    await expect(alert, 'a reparent drag produced no explanation at all').toBeVisible({ timeout: 15_000 })
+    // The write is the assertion: `.inner` left `.box` and now sits inside
+    // `<section>` ahead of `.first`, and `.box` is left without it.
+    await expect
+      .poll(() => readPage(), {
+        message: 'the reparent drag never reached pages/Home.tsx on disk',
+        timeout: 30_000,
+      })
+      .not.toBe(before)
 
-    // Refused BEFORE mutating: the tree is exactly as it was…
-    expect(await rowIds(tree), 'a refused move still reordered the layers tree').toEqual(idsBefore)
-    // …and so is the file.
-    expect(readPage(), 'a refused move still modified the source file').toBe(before)
+    const after = readPage()
+    const innerAt = after.indexOf('className="inner"')
+    const firstAt = after.indexOf('className="first"')
+    const boxAt = after.indexOf('className="box"')
+    expect(innerAt, 'the moved element is no longer in the file at all').toBeGreaterThan(-1)
+    expect(innerAt, 'the moved element did not land ahead of .first').toBeLessThan(firstAt)
+    expect(innerAt, 'the moved element never left .box').toBeLessThan(boxAt)
+
+    // Everything the move did NOT name survives verbatim.
+    expect(after, 'the reparent reformatted the comment').toContain('{/* this comment must not move */}')
+    expect(after, 'the reparent dropped a sibling').toContain('className="second"')
   })
 })

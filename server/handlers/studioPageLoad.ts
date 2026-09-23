@@ -60,6 +60,7 @@ import { join, relative, sep } from 'node:path'
 import {
   composeAppRouterRoute,
   createPageEvalBudget,
+  acquireReadOnlyWorkspaceProject,
   createWorkspaceProject,
   cssInJsStylesheet,
   inlineLocalComponents,
@@ -80,7 +81,6 @@ import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
   hashWorkspaceConfig,
-  localSourceAbsFiles,
   setCachedRouteParse,
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
@@ -207,8 +207,14 @@ function parseStandardRouteEntry(
     // resolved fresh, inside `inlineLocalComponents` itself, against that
     // sub-tree's own file.
     sources = resolveComponentSources(project, file, dir, parsed)
-    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
-    setCachedRouteParse(cacheKey, configHash, [file, ...localSourceAbsFiles(sources, dir)], {
+    // `dependencyFiles` collects the TRANSITIVE local-component set —
+    // `inlineLocalComponents` populates it at every nesting level, not just
+    // the direct call sites `sources` classified. See its own doc for why
+    // this closes the "a component three levels deep changed and this route's
+    // cache never noticed" gap `pageParseCache.ts` used to have.
+    const dependencyFiles = new Set<string>()
+    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
+    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles], {
       expanded,
       componentSources: sources,
     })
@@ -277,7 +283,11 @@ function parseAppRouterRouteEntry(
 
     const parsed = parsePageFile(file, dir, project, evalOptions)
     const pageSources = resolveComponentSources(project, file, dir, parsed)
-    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions })
+    // See `parseStandardRouteEntry`'s matching comment — this is the page's
+    // own transitive local-component set. The layout chain's own (also
+    // transitive, WS-1.3-composed) set comes back on `composed.dependencyFiles`.
+    const pageDependencyFiles = new Set<string>()
+    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions, dependencyFiles: pageDependencyFiles })
 
     const composed = composeAppRouterRoute({
       page: pageExpanded,
@@ -292,7 +302,7 @@ function parseAppRouterRouteEntry(
     setCachedRouteParse(
       cacheKey,
       configHash,
-      [file, ...layoutAbsFiles, ...localSourceAbsFiles(sources, dir)],
+      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles],
       { expanded, componentSources: sources },
     )
   }
@@ -439,8 +449,15 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
   // a fresh per-file Project (parsePageFile's own default) can't see
-  // across files at all. See createWorkspaceProject's doc comment.
-  const project = createWorkspaceProject(dir)
+  // across files at all.
+  //
+  // ACQUIRED, not built: this function runs on every board re-sync, which is
+  // after every structural gesture, and building the project from scratch
+  // measured 302-484 ms of a ~494 ms load on a 64-file project. The cached one
+  // is refreshed from disk on the way out, so it never serves staler text than
+  // a fresh build would — see `acquireReadOnlyWorkspaceProject`. This is a READ
+  // path; codemods keep building their own.
+  const project = acquireReadOnlyWorkspaceProject(dir)
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -633,7 +650,7 @@ export async function loadStudioPageInLocale(dir: string, pageId: string, locale
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return null
 
-  const project = createWorkspaceProject(dir)
+  const project = acquireReadOnlyWorkspaceProject(dir)
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)
