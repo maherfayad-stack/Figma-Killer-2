@@ -18,7 +18,8 @@
  * - NodeRenderer components memo'd per node — only affected nodes re-render on edit
  *
  * Accessibility:
- * - tabIndex={0} so the canvas receives keyboard events
+ * - tabIndex={0} so the canvas can hold focus — Tab / ⇧Tab cycle siblings only
+ *   while focus is on the canvas (`isCanvasKeyboardSurface`)
  * - aria-label for screen reader orientation
  * - prefers-reduced-motion: CSS transitions are disabled for users who opt out
  */
@@ -188,7 +189,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // returning from preview.
   const {
     bind,
-    handleKeyDown: canvasKeyDown,
     panBy,
     centerOnBreakpointFrame,
     transformRef,
@@ -334,12 +334,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // sequence WITHIN a rung, which matters for `node` (the selection ladder is
   // consulted before the node shortcuts) and for `board` (no overlaps).
   //
-  // The canvas div's own `onKeyDown` is now just `useCanvas`'s viewport keys
-  // (+ / − / ⇧1 / ⇧2). Delete and ⌘D used to be there too, which is why this
-  // file also carried a SECOND, `document`-level Delete listener with its own
-  // focus test — a React handler on the canvas div stops firing the moment the
-  // user clicks the Properties panel. Both are gone; `useCanvasNodeShortcuts`
-  // is the one owner, scoped by intent.
+  // The canvas div has no `onKeyDown` at all any more. Delete and ⌘D used to
+  // be there, and later the viewport keys (+ / − / ⇧1 / ⇧2) — a React handler
+  // on the canvas div stops firing the moment the user clicks the Properties
+  // panel. Every one of them is a scope on the ladder now; the viewport keys
+  // are registered by `useCanvas` itself (`useCanvasViewportKeys`, P2-B).
 
   // `prototype-link` — Delete removes the selected connector, Escape deselects
   // it. Above `node` so a Delete pressed with BOTH a connector and an element
@@ -451,7 +450,6 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // (+ / − / ⇧1 / ⇧2), which are legitimately focus-scoped — they act on the
   // thing under the cursor's canvas, not on a selection. Every selection-acting
   // shortcut moved to the editor key ladder (see the scopes block above).
-  const onCanvasKeyDown = isLive ? undefined : canvasKeyDown
   const onCanvasClick = isLive ? undefined : handleCanvasClick
 
   return (
@@ -469,19 +467,12 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           data-vc-mode={activeDocument?.kind === 'visualComponent' ? 'true' : undefined}
           className={styles.canvas}
           // Spread gesture handlers from useGesture (wheel, drag, pinch)
-          // FIRST, before the explicit handlers below — @use-gesture's own
-          // `drag` action binds its OWN `onKeyDown`/`onKeyUp` (arrow-key
-          // accessible dragging; see `keyDown`/`keyUp` in
-          // `@use-gesture/core`'s pointer action). JSX prop spreading is
-          // last-one-wins, so spreading this AFTER `onKeyDown` (as it used
-          // to be) silently discarded EVERY canvas keyboard shortcut —
-          // Escape, +/-, Ctrl+C/X/V/D — to that library-internal handler.
-          // `board-02` found this while diagnosing why Escape didn't clear
-          // a frame selection. Only the viewport keys ride this prop now
-          // (`K1`), but the spread order still matters for them. Empty in
-          // preview mode — see gestureBindings above.
+          // FIRST, before the explicit handlers below. `board-02` once lost
+          // every canvas shortcut to the library's own arrow-key drag
+          // `onKeyDown` riding this spread; `useCanvas` now turns that off
+          // (`drag.keys: false`) and the canvas div binds no key handler of
+          // its own. Empty in preview mode — see gestureBindings above.
           {...gestureBindings}
-          onKeyDown={onCanvasKeyDown}
           onClick={onCanvasClick}
           onFocus={() => setFocusedPanel('canvas')}
         >

@@ -1,12 +1,14 @@
 /**
  * useCanvasToolShortcuts — a `board` scope: the bare-letter tool keys
- * `T` `F` `C` `H` `K` `R` `O`.
+ * `V` `T` `F` `C` `H` `K` `R` `O`.
  *
  * `T` inserts a text node, `F` a container INSIDE the selection, `C` enters
  * comment mode. `K4` added four more: `H` latches the hand tool, `K` latches
  * the scale tool, and `R` / `O` insert a box — square, or round via
- * `border-radius: 50%` — BESIDE the selection. Named after Figma's, because
- * that is where the muscle memory comes from.
+ * `border-radius: 50%` — BESIDE the selection. P2-B added `V` (IX-11): the
+ * move tool, which puts EVERY armed tool away — hand, scale and comment — and
+ * is the one key that always means "back to normal". Named after Figma's,
+ * because that is where the muscle memory comes from.
  *
  * WHAT "INSERT" MEANS HERE, AND WHY IT IS NOT A DRAW GESTURE
  * ─────────────────────────────────────────────────────────
@@ -98,6 +100,16 @@ export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void
         event.preventDefault()
         const store = useEditorStore.getState()
         store.setCommentToolActive(!store.commentToolActive)
+        return true
+      }
+
+      // V — home. Not a toggle: pressing it with nothing armed is a no-op
+      // that still claims the key, so a stray V never reaches the browser.
+      if (getKeybindingForCommand('tools.move')?.match(event)) {
+        event.preventDefault()
+        const store = useEditorStore.getState()
+        if (store.canvasTool !== 'move') store.setCanvasTool('move')
+        if (store.commentToolActive) store.setCommentToolActive(false)
         return true
       }
 

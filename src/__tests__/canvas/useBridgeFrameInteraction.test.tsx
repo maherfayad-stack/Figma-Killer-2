@@ -59,7 +59,7 @@ function makeFakeAdapter() {
 }
 
 function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter: FrameDocumentAdapter; isActive?: boolean; onActivate?: (breakpointId: string) => void }) {
-  useBridgeFrameInteraction(adapter, { breakpointId: 'bp-mobile', frameId: 'frame-1', isActive, onActivate })
+  useBridgeFrameInteraction(adapter, { breakpointId: 'bp-mobile', frameId: 'frame-1', pageId: 'page-1', isActive, onActivate })
   return null
 }
 
@@ -159,8 +159,8 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={first.adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    // pointer, wheel, resize:commit, text:editStart, text:commit, text:cancel
-    expect(first.subscriptions()).toBe(6)
+    // pointer, wheel, resize:commit, text:editStart, key, blur, text:commit, text:cancel
+    expect(first.subscriptions()).toBe(8)
     view.unmount()
     expect(first.subscriptions()).toBe(0)
   })

@@ -528,7 +528,7 @@ frame clears the node selection and vice versa (mutual exclusivity), so
 - **Selection entry points:** frame header click (replace) / Shift-click
   (toggle) in `BoardFramesLayer.tsx`; `⌘/Ctrl+A` on empty canvas
   (`selectAllFrames`, wired through the keybindings registry as the virtual
-  command `board.selectAllFrames`); marquee-drag on empty canvas
+  command `canvas.selectAll`, which with a node selected means its siblings instead — P2-B); marquee-drag on empty canvas
   (`useMarqueeSelection.ts` + `framesInMarquee.ts`). The marquee hit-tests each
   frame's **rendered** box, measured once at pointerdown — not the board-space
   rect `frameVirtualization.ts` derives from `board.frames[].height`, which is a

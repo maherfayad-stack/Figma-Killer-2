@@ -1,7 +1,8 @@
 /**
  * useCanvasSelectionKeyboard — the `node` scope's FIRST handler, and the ONE
- * owner of Enter, ⇧Enter, Escape and ⌘R for the canvas selection. It is
- * therefore the whole "how do I get back to nothing selected" ladder:
+ * owner of Enter, ⇧Enter, Escape, ⌘R, Tab / ⇧Tab and ⌘A for the canvas
+ * selection. It is therefore the whole "how do I get back to nothing
+ * selected" ladder:
  *
  *   1. `Enter` with a `studio.instance` selected steps INTO it (WS-4.2).
  *   2. `Enter` otherwise selects the anchor's FIRST CHILD — Figma's
@@ -14,6 +15,15 @@
  *      frames and annotations selected at once), so clearing a subset would
  *      leave the board looking deselected while Delete still had a target.
  *   6. `⌘R` opens the canvas rename dialog on the anchor (`layers.rename`).
+ *   7. `Tab` / `⇧Tab` select the next / previous sibling, wrapping (IX-3) —
+ *      ONLY while focus is on the canvas, a frame, or nowhere
+ *      (`isCanvasKeyboardSurface`). Inside a panel Tab walks the fields,
+ *      and taking that away is an accessibility regression, not a shortcut.
+ *   8. `⌘A` selects the anchor's siblings; again, it climbs a level (IX-4).
+ *      At the tree root there is no node level left, so it hands over to the
+ *      board's "every frame" (`useBoardSelectAllShortcut`'s meaning). It
+ *      claims the key whenever a node is selected: before P2-B nobody did, and
+ *      the browser selected the admin chrome's text instead.
  *
  * **Escape stays "deselect", it does NOT become "select parent"** (viewport-01).
  * Figma binds ⇧Enter for that and Esc for deselect, and rung 5 above is the
@@ -40,7 +50,7 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
+import { isCanvasKeyboardSurface, isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /**
@@ -98,6 +108,9 @@ export function useCanvasSelectionKeyboard(
         getKeybindingForCommand('layers.selectParent')?.match(event) ? 'selectParent'
         : getKeybindingForCommand('layers.selectFirstChild')?.match(event) ? 'selectFirstChild'
         : getKeybindingForCommand('layers.rename')?.match(event) ? 'rename'
+        : getKeybindingForCommand('layers.selectNextSibling')?.match(event) ? 'nextSibling'
+        : getKeybindingForCommand('layers.selectPreviousSibling')?.match(event) ? 'previousSibling'
+        : getKeybindingForCommand('canvas.selectAll')?.match(event) ? 'selectAll'
         : event.key === 'Escape' ? 'deselect'
         : null
       if (!intent) return false
@@ -105,6 +118,27 @@ export function useCanvasSelectionKeyboard(
       // An overlay that owns Escape itself keeps it — clearing the canvas
       // selection underneath an open modal is never what the user asked for.
       if (isInsideKeyOwningOverlay(event.target)) return false
+
+      if (intent === 'nextSibling' || intent === 'previousSibling') {
+        // Canvas-scoped (rung 7 above): a panel keeps Tab for focus order.
+        if (!isCanvasKeyboardSurface(event)) return false
+        const store = useEditorStore.getState()
+        if (!store.selectedNodeId) return false
+        // Claimed even when there is no sibling to move to: the canvas owns
+        // Tab here, and letting it through would walk focus out of the canvas.
+        event.preventDefault()
+        store.selectSiblingNode(intent === 'nextSibling' ? 'next' : 'previous')
+        return true
+      }
+
+      if (intent === 'selectAll') {
+        const store = useEditorStore.getState()
+        // Nothing selected: the board rung's "every frame" is the meaning.
+        if (!store.selectedNodeId) return false
+        event.preventDefault()
+        if (!store.selectAllSiblingNodes()) store.selectAllFrames()
+        return true
+      }
 
       if (intent === 'selectParent') {
         if (!useEditorStore.getState().selectParentNode()) return false

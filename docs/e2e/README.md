@@ -306,7 +306,7 @@ work that was never folded into that matrix at all — each spec below cites the
 | `panel-02` (WS-6.3) | A Figma-inspector value edit lands in the project's real `.css` file, or refuses | `css-writeback.e2e.ts` |
 | WS-2.3 (canvas-03) | `@layer vendor, user-authored;` actually resolves the way `canvasCssLayers.ts` assumes, in a real browser | `vendor-css-cascade.e2e.ts` |
 | design-system insert | Adding a design-system component renders with its own package CSS instead of unstyled text | `design-system-insert.e2e.ts` |
-| board-02 (WS-7.1) | `selectedFrameIds`, marquee selection, `FrameBulkInspector`, `board.selectAllFrames` | `board-frame-bulk-selection.e2e.ts` |
+| board-02 (WS-7.1) | `selectedFrameIds`, marquee selection, `FrameBulkInspector`, `canvas.selectAll` (was `board.selectAllFrames`) | `board-frame-bulk-selection.e2e.ts` |
 | canvas-02 → test-01 → canvas-04 | Frame "fit height to content" | `frame-fit-height.e2e.ts` |
 | canvas-06 | Overlay/bottom-sheet screens render as the real app renders them | `canvas-06-sheet-render-fidelity.e2e.ts` |
 | select-01 | Escape always gets you back to nothing selected | `canvas-deselect.e2e.ts` |
