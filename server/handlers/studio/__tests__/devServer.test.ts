@@ -33,42 +33,20 @@ import {
   tryServeStudioDevServer,
   type DevServerOverrides,
 } from '../devServer'
+import { spawnDevServerProcess } from '../devServerOutput'
 import { isProcessAlive, STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
 import { writeStudioMeta } from '../studioMeta'
 import type { SpawnedProcessLike } from '../subprocessRunner'
 
-function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
-    },
-  })
-}
-
-function emptyStream(): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start() {
-      // Never closes — simulates a dev server that keeps running (no EOF)
-      // without ever printing a URL, so `pumpAndWatch` never resolves the
-      // stream side; the boot-timeout race is what settles the test.
-    },
-  })
-}
-
-interface FakeProcessOptions {
-  stdoutChunks?: string[]
-}
-
-/** A fake dev-server process. Like a real one it stays alive until it is killed — or until the test ends it with `exit(code)`, which is how a crash after `ready` is modelled. */
-function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessLike; wasKilled: () => boolean; exit: (code: number) => void } {
+/** A fake dev-server process. Like a real one it stays alive until it is killed — or until the test ends it with `exit(code)`, which is how a crash after `ready` is modelled. Its output is not a stream: a real child writes to the log FILE the manager hands every spawn (`live-16`), so `fakeDevServer` writes there too. */
+function makeFakeProcess(): { proc: SpawnedProcessLike; wasKilled: () => boolean; exit: (code: number) => void } {
   let killed = false
   let resolveExited!: (code: number) => void
   const exited = new Promise<number>((resolve) => { resolveExited = resolve })
 
   const proc: SpawnedProcessLike = {
-    stdout: opts.stdoutChunks ? streamFromChunks(opts.stdoutChunks) : emptyStream(),
-    stderr: emptyStream(),
+    stdout: null,
+    stderr: null,
     exited,
     pid: 4242,
     kill: () => {
@@ -77,6 +55,16 @@ function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessL
     },
   }
   return { proc, wasKilled: () => killed, exit: (code: number) => resolveExited(code) }
+}
+
+/** A spawn override standing in for a dev server that prints `stdoutChunks` as it boots — into `options.logPath`, the one place a real child's output goes. No chunks models a server that keeps running without ever printing a URL. */
+function fakeDevServer(stdoutChunks: string[] = []): { spawn: NonNullable<DevServerOverrides['spawn']>; proc: SpawnedProcessLike; wasKilled: () => boolean; exit: (code: number) => void } {
+  const fake = makeFakeProcess()
+  const spawn: NonNullable<DevServerOverrides['spawn']> = (_argv, options) => {
+    fs.writeFileSync(options.logPath, stdoutChunks.join(''), 'utf8')
+    return fake.proc
+  }
+  return { ...fake, spawn }
 }
 
 function writePackageJson(dir: string, scripts: Record<string, string>): void {
@@ -146,9 +134,9 @@ describe('ensureDevServer', () => {
   it('boots the dev server and discovers its printed URL', async () => {
     const tmpDir = makeTmpDir('studio-devserver-boot-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const { proc } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'] })
+    const { spawn } = fakeDevServer(['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'])
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+    const result = await ensureDevServer(tmpDir, { spawn })
 
     expect(result.ok).toBe(true)
     expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
@@ -161,11 +149,9 @@ describe('ensureDevServer', () => {
     // Vite v8 colorizes just the port digits: the ':' and the digits are
     // split by an escape sequence. Without stripping first, URL_PATTERN's
     // `:\d+` never matches.
-    const { proc } = makeFakeProcess({
-      stdoutChunks: ['  ➜  Local:   http://localhost:\x1b[1m5173\x1b[22m/\x1b[39m\n'],
-    })
+    const { spawn } = fakeDevServer(['  ➜  Local:   http://localhost:\x1b[1m5173\x1b[22m/\x1b[39m\n'])
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+    const result = await ensureDevServer(tmpDir, { spawn })
 
     expect(result.ok).toBe(true)
     expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
@@ -179,9 +165,9 @@ describe('ensureDevServer', () => {
     // never be swallowed into the host. Asserted rather than assumed: this is
     // the one subprocess reader under `server/` that matches against raw
     // CHUNKS instead of lines, so it is the one `splitLines` cannot protect.
-    const { proc } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\r\n', '  ➜  Local:   http://localhost:5173/\r\n'] })
+    const { spawn } = fakeDevServer(['  VITE v5.0.0  ready\r\n', '  ➜  Local:   http://localhost:5173/\r\n'])
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+    const result = await ensureDevServer(tmpDir, { spawn })
 
     expect(result.ok).toBe(true)
     expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5173')
@@ -191,9 +177,9 @@ describe('ensureDevServer', () => {
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-timeout-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const { proc, wasKilled } = makeFakeProcess()
+    const { spawn, wasKilled } = fakeDevServer()
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => proc, bootTimeoutMs: 15 })
+    const result = await ensureDevServer(tmpDir, { spawn, bootTimeoutMs: 15 })
 
     expect(result.ok).toBe(false)
     expect(!result.ok && result.error.length > 0).toBe(true)
@@ -205,9 +191,9 @@ describe('ensureDevServer', () => {
     const tmpDir = makeTmpDir('studio-devserver-notvite-')
     let spawnCount = 0
     const overrides: DevServerOverrides = {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5178/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5178/\n']).spawn(argv, options)
       },
     }
 
@@ -231,7 +217,7 @@ describe('ensureDevServer', () => {
     const tmpDir = makeTmpDir('studio-devserver-noscript-')
     writePackageJson(tmpDir, { build: 'vite build' })
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess().proc })
+    const result = await ensureDevServer(tmpDir, { spawn: fakeDevServer().spawn })
 
     expect(result.ok).toBe(false)
     expect(!result.ok && result.error).toContain('dev')
@@ -243,9 +229,9 @@ describe('ensureDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     let capturedEnv: Record<string, string> | undefined
     const overrides: DevServerOverrides = {
-      spawn: (_argv, options) => {
+      spawn: (argv, options) => {
         capturedEnv = options.env
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5173/\n']).spawn(argv, options)
       },
     }
 
@@ -265,9 +251,9 @@ describe('ensureDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     let capturedEnv: Record<string, string> | undefined
     const overrides: DevServerOverrides = {
-      spawn: (_argv, options) => {
+      spawn: (argv, options) => {
         capturedEnv = options.env
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5173/\n']).spawn(argv, options)
       },
     }
 
@@ -287,9 +273,9 @@ describe('ensureDevServer', () => {
       process.env.PUBLIC_ORIGIN = 'https://studio.example.com'
       let capturedEnvWithOrigin: Record<string, string> | undefined
       await ensureDevServer(tmpDir, {
-        spawn: (_argv, options) => {
+        spawn: (argv, options) => {
           capturedEnvWithOrigin = options.env
-          return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+          return fakeDevServer(['Local: http://localhost:5173/\n']).spawn(argv, options)
         },
       })
       const withOrigin = (capturedEnvWithOrigin?.[STUDIO_PARENT_ORIGINS_ENV] ?? '').split(',')
@@ -300,9 +286,9 @@ describe('ensureDevServer', () => {
       delete process.env.PUBLIC_ORIGIN
       let capturedEnvWithoutOrigin: Record<string, string> | undefined
       await ensureDevServer(tmpDir, {
-        spawn: (_argv, options) => {
+        spawn: (argv, options) => {
           capturedEnvWithoutOrigin = options.env
-          return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).proc
+          return fakeDevServer(['Local: http://localhost:5174/\n']).spawn(argv, options)
         },
       })
       const withoutOrigin = (capturedEnvWithoutOrigin?.[STUDIO_PARENT_ORIGINS_ENV] ?? '').split(',')
@@ -325,9 +311,9 @@ describe('ensureDevServer', () => {
 
     let capturedEnv: Record<string, string> | undefined
     const overrides: DevServerOverrides = {
-      spawn: (_argv, options) => {
+      spawn: (argv, options) => {
         capturedEnv = options.env
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5175/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5175/\n']).spawn(argv, options)
       },
     }
 
@@ -350,9 +336,9 @@ describe('ensureDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5174/\n']).spawn(argv, options)
       },
     }
 
@@ -380,9 +366,9 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5175/\n'] }).proc
+        return fakeDevServer(['Local: http://localhost:5175/\n']).spawn(argv, options)
       },
     }
 
@@ -404,9 +390,9 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess().proc
+        return fakeDevServer().spawn(argv, options)
       },
       bootTimeoutMs: 10,
     }
@@ -428,10 +414,10 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
     writePackageJson(tmpDir, { dev: 'vite' })
     const fakes: ReturnType<typeof makeFakeProcess>[] = []
     const overrides: DevServerOverrides = {
-      spawn: () => {
-        const fake = makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5177/\n'] })
+      spawn: (argv, options) => {
+        const fake = fakeDevServer(['Local: http://localhost:5177/\n'])
         fakes.push(fake)
-        return fake.proc
+        return fake.spawn(argv, options)
       },
     }
 
@@ -455,9 +441,9 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
   it('stop kills a running process and resets status to stopped; stopping twice is a no-op', async () => {
     const tmpDir = makeTmpDir('studio-devserver-stop-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const { proc, wasKilled } = makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5176/\n'] })
+    const { spawn, wasKilled } = fakeDevServer(['Local: http://localhost:5176/\n'])
 
-    startDevServer(tmpDir, { spawn: () => proc })
+    startDevServer(tmpDir, { spawn })
     await waitUntil(() => getDevServerStatus(tmpDir).phase === 'ready')
 
     expect(stopDevServer(tmpDir)).toEqual({ phase: 'stopped', pid: null, startedAt: null, log: '' })
@@ -511,7 +497,7 @@ describe('tryServeStudioDevServer', () => {
     const res = await call(
       '/admin/api/studio/dev-server/start',
       post({ dir: tmpDir }),
-      { spawn: () => { spawned = true; return makeFakeProcess().proc } },
+      { spawn: (argv, options) => { spawned = true; return fakeDevServer().spawn(argv, options) } },
     )
 
     expect(res?.status).toBe(409)
@@ -527,7 +513,7 @@ describe('tryServeStudioDevServer', () => {
     const startRes = await call(
       '/admin/api/studio/dev-server/start',
       post({ dir: tmpDir }),
-      { spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5177/\n'] }).proc },
+      { spawn: fakeDevServer(['Local: http://localhost:5177/\n']).spawn },
     )
     expect(startRes?.status).toBe(200)
     const startBody = (await startRes!.json()) as { phase: string }
@@ -561,6 +547,37 @@ describe('tryServeStudioDevServer', () => {
   })
 })
 
+// `live-16` — the one place the survival property lives: a child whose output
+// goes to a file has nothing to lose when the process that spawned it goes.
+describe('spawnDevServerProcess', () => {
+  it('sends the child\'s stdout and stderr to the log file, not to a pipe this process would have to keep reading', async () => {
+    const logPath = path.join(stateDir, 'nested', 'real-spawn.log')
+    fs.writeFileSync(path.join(stateDir, 'stale.log'), 'from a previous server\n')
+
+    const proc = spawnDevServerProcess(
+      [process.execPath, '-e', 'console.log("Local: http://localhost:5199/"); console.error("a warning line")'],
+      { cwd: stateDir, env: { PATH: process.env.PATH ?? '' }, logPath },
+    )
+
+    expect(proc.stdout).not.toBeInstanceOf(ReadableStream)
+    expect(proc.stderr).not.toBeInstanceOf(ReadableStream)
+    expect(await proc.exited).toBe(0)
+    const text = fs.readFileSync(logPath, 'utf8')
+    expect(text).toContain('Local: http://localhost:5199/')
+    expect(text).toContain('a warning line')
+  })
+
+  it('opens the log fresh, so a respawn does not read the previous server\'s URL out of the old file', async () => {
+    const logPath = path.join(stateDir, 'respawn.log')
+    fs.writeFileSync(logPath, 'Local: http://localhost:1/\n')
+
+    const proc = spawnDevServerProcess([process.execPath, '-e', 'console.log("fresh")'], { cwd: stateDir, env: { PATH: process.env.PATH ?? '' }, logPath })
+
+    await proc.exited
+    expect(fs.readFileSync(logPath, 'utf8')).toBe('fresh\n')
+  })
+})
+
 // `live-11` — a ready dev server outlives this process and is adopted back.
 describe('dev-server records — adoption across a server restart', () => {
   const READY_CHUNKS = ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n']
@@ -572,25 +589,31 @@ describe('dev-server records — adoption across a server restart', () => {
   it('writes a record once ready, and stop removes it', async () => {
     const tmpDir = makeTmpDir('studio-devserver-record-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const { proc, wasKilled } = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
+    const { spawn, wasKilled } = fakeDevServer(READY_CHUNKS)
 
-    const result = await ensureDevServer(tmpDir, { spawn: () => proc })
+    const result = await ensureDevServer(tmpDir, { spawn })
     expect(result.ok).toBe(true)
     expect(recordFiles()).toHaveLength(1)
-    const record = JSON.parse(fs.readFileSync(path.join(stateDir, recordFiles()[0]), 'utf8')) as { pid: number; baseUrl: string }
+    const record = JSON.parse(fs.readFileSync(path.join(stateDir, recordFiles()[0]), 'utf8')) as { pid: number; baseUrl: string; logPath: string }
     expect(record).toMatchObject({ pid: 4242, baseUrl: 'http://127.0.0.1:5173' })
+    // `live-16` — the child's output lives in a file next to the record, and
+    // the status log is what was tailed out of it.
+    expect(path.dirname(record.logPath)).toBe(stateDir)
+    expect(fs.readFileSync(record.logPath, 'utf8')).toBe(READY_CHUNKS.join(''))
+    expect(getDevServerStatus(tmpDir).log).toContain('VITE v5.0.0')
 
     stopDevServer(tmpDir)
     expect(wasKilled()).toBe(true)
     expect(recordFiles()).toHaveLength(0)
+    expect(fs.existsSync(record.logPath)).toBe(false)
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
   it('after a restart, adopts the recorded server instead of spawning a second one', async () => {
     const tmpDir = makeTmpDir('studio-devserver-adopt-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const first = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
-    expect((await ensureDevServer(tmpDir, { spawn: () => first.proc })).ok).toBe(true)
+    const first = fakeDevServer(READY_CHUNKS)
+    expect((await ensureDevServer(tmpDir, { spawn: first.spawn })).ok).toBe(true)
 
     // The process restarts: the registry is gone, the child and its record are
     // not. (No status poll here — a poll adopts with the DEFAULT checks, and
@@ -600,9 +623,9 @@ describe('dev-server records — adoption across a server restart', () => {
     let spawned = 0
     const probed: string[] = []
     const result = await ensureDevServer(tmpDir, {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawned += 1
-        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+        return fakeDevServer(READY_CHUNKS).spawn(argv, options)
       },
       isProcessAlive: (pid) => pid === 4242,
       probe: async (baseUrl, basePath) => {
@@ -619,6 +642,9 @@ describe('dev-server records — adoption across a server restart', () => {
     expect(status.phase).toBe('ready')
     expect(status.pid).toBe(4242)
     expect(status.log).toContain('adopted')
+    // `live-16` — an adopted server's output is still readable: the tail
+    // picks the recorded log file up where it is.
+    await waitUntil(() => getDevServerStatus(tmpDir).log.includes('VITE v5.0.0'))
     expect(first.wasKilled()).toBe(false)
 
     // Stop signals the adopted pid only through the record's own kill path — nothing else to assert here without a real process, but the record must go.
@@ -630,7 +656,7 @@ describe('dev-server records — adoption across a server restart', () => {
   it('a plain status poll after a restart adopts the recorded server too — the proxy never has to wait for a start call', async () => {
     const tmpDir = makeTmpDir('studio-devserver-poll-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
     // No overrides reach a status poll, so the default checks run: the fake
@@ -644,9 +670,9 @@ describe('dev-server records — adoption across a server restart', () => {
   it('a status poll adopts a recorded server whose pid is alive — it is this process\'s own pid here', async () => {
     const tmpDir = makeTmpDir('studio-devserver-poll-live-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    const alive = makeFakeProcess({ stdoutChunks: READY_CHUNKS })
+    const alive = fakeDevServer(READY_CHUNKS)
     // The fake process reports pid 4242; rewrite the record to a pid that IS alive so the default check passes.
-    expect((await ensureDevServer(tmpDir, { spawn: () => alive.proc })).ok).toBe(true)
+    expect((await ensureDevServer(tmpDir, { spawn: alive.spawn })).ok).toBe(true)
     const file = path.join(stateDir, recordFiles()[0])
     const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
     // …and to an origin nothing listens on, so the default probe's answer does
@@ -667,14 +693,14 @@ describe('dev-server records — adoption across a server restart', () => {
   it('a record whose pid is gone is discarded and a fresh server is spawned', async () => {
     const tmpDir = makeTmpDir('studio-devserver-dead-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
     let spawned = 0
     const result = await ensureDevServer(tmpDir, {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawned += 1
-        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+        return fakeDevServer(READY_CHUNKS).spawn(argv, options)
       },
       isProcessAlive: () => false,
       probe: async () => {
@@ -691,17 +717,17 @@ describe('dev-server records — adoption across a server restart', () => {
   it('a record whose origin no longer answers is discarded and a fresh server is spawned in the same start', async () => {
     const tmpDir = makeTmpDir('studio-devserver-stale-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
     let spawned = 0
     let probed = 0
     const result = await ensureDevServer(tmpDir, {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawned += 1
         // The fresh server lands on ANOTHER port — its own output, not the
         // adoption line about the old one, must be where the URL comes from.
-        return makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5178/\n'] }).proc
+        return fakeDevServer(['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5178/\n']).spawn(argv, options)
       },
       isProcessAlive: () => true,
       probe: async () => {
@@ -731,7 +757,7 @@ describe('dev-server records — adoption across a server restart', () => {
     expect(isProcessAlive(process.pid)).toBe(true)
     const tmpDir = makeTmpDir('studio-devserver-pid0-')
     writePackageJson(tmpDir, { dev: 'vite' })
-    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     const file = path.join(stateDir, recordFiles()[0]!)
     const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
     fs.writeFileSync(file, JSON.stringify({ ...record, pid: 0 }), 'utf8')

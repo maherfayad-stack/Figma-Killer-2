@@ -428,6 +428,13 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
 
   const server = Bun.serve<LiveOriginSocketData>({
     port: config.livePort,
+    // Bun's default request idle timeout is 10 s. A proxied request that
+    // streams longer than that — Vite holding a module request while it
+    // re-optimizes dependencies — was cut off mid-body, and the frame got
+    // half a module ("request timed out after 10 seconds" in the log). The
+    // admin listener already runs with no idle timeout; the two must match,
+    // or a frame breaks where the editor would not (`live-16`).
+    idleTimeout: 0,
 
     fetch(req, server) {
       return handleLiveOriginFetch(req, server, frameAncestors)
