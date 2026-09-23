@@ -162,6 +162,32 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   6. Shift-select the instance and another layer: the component section disappears.
   7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
 
+### canvas-23 — P2-B: selection and keyboard hands (IX-2, IX-3, IX-4, IX-11, IX-15, ERR-11, ERR-21)
+- **Agent:** canvas-engineer · **Branch:** `feat/figma-selection-and-keyboard` off `91df2c59` (trunk `db824fb3` merged in) · **PR:** see the PR list, draft, base `feat/canvas-excellence`; long form in its body · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** ⇧-click toggles on the canvas, range stays in Layers (`canvasClickSelectionMode`). Tab / ⇧Tab cycle siblings, canvas-scoped (`isCanvasKeyboardSurface`). ⌘A: siblings, then climb, then all frames. V = move tool. Zoom, ⌘0/⇧0, ⇧1/⇧2 and Space are one `global`-rung scope (`hooks/useCanvasViewportKeys.ts`); the canvas div has no `onKeyDown`. Losing focus releases held keys. `isTextInputTarget` = text-entry and not read-only. `keybindings.ts` has the OD-3 conflict register; the viewport keys moved to `keybindingViewport.ts`. `board.selectAllFrames` is renamed `canvas.selectAll`.
+- **Also fixed (P2-G's finding):** a click inside nested instances selects the OUTERMOST one, and a double-click opens one level (`resolveInstanceEntry`). Live frames skipped the instance boundary entirely until now.
+- **Canvas files touched:** `canvas/{canvasFrameKeyRelay (new), canvasPanInput, canvasSelectionUtils, editorKeyDispatcher, editorKeyGuards, useEditorKeyDispatcher, useIframeEventForwarding, useCanvasSelectionKeyboard, useCanvasToolShortcuts, useBoardSelectAllShortcut, useCanvasNodeInteraction, useCanvasFormControlSuppression, NodeRenderer (double-click only), CanvasRoot}.tsx?`, `canvas/BoardFramesLayer/{useBridgeFrameInteraction, LiveBoardFrame}`, `canvas/frameAdapter/{FrameDocumentAdapter, BridgeFrameAdapter}`, `hooks/{useCanvas, useCanvasViewportKeys (new)}`, `store/slices/{selectionSlice, selectionResolve, selectionTraversalActions}`, `core/studio-runtime/{keyForwarding, keyMessages (new), messages, messageShapes, runtime}` + `generated/runtimeBridgeBundle.ts`.
+- **Tests:** 11 regressions, each shown failing with its fix disabled in place. New e2e `selection-keyboard-hands.e2e.ts`: 5/5 green (portal + live frame).
+- **Landmines:**
+  - **Events × keyboard:** a frame's keyup is NOT cloned onto the parent — it goes straight into `dispatchEditorKeyUp`. A clone would double-fire the Alt ladder and Alt-measure, which listen in every frame document already. P2-C's key-hold coalescing gets its keyups this way, from portal and live frames alike.
+  - **Events × focus:** window `blur` also fires when focus moves INTO a frame. `releaseEditorKeysIfFocusLeft` checks `document.hasFocus()` a task later, so only a real departure releases. Space-pan lowers BOTH keyboard sources on any release, and every Space keydown (repeats too) re-asserts its source.
+  - **Events × Tab:** portal frames `preventDefault` Tab in the frame, then forward it. Bridge frames cancel every design-mode keydown in-frame, except one typed into a contentEditable or text field.
+  - **Injectors:** none touched.
+  - **Height:** none touched. But a selection can pan the board (`focusActiveBreakpoint`). An e2e point measured before a click can land under a side panel after it (it opened board rename once). Re-centre before a double-click.
+  - `runtimeBridgeBundle.ts` was patched with the diff between a pristine and a modified local build, because `studio-runtime:sync` differs on this CRLF tree. Re-sync on an LF tree.
+  - `studio-feel.e2e.ts`'s refusal case now double-clicks into the clock's instances. A click selects the instance now.
+- **Next:** the owner dogfoods (below); P2-C builds node arrows on the release broadcast.
+- **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, all three frames:
+  1. Click a box, then ⇧-click a second one: both are selected. ⇧-click the first again: only the second stays.
+  2. Click an element, press Tab: the next sibling is selected. ⇧Tab goes back; the last one wraps to the first. Click into an inspector field and press Tab: focus moves between fields and the canvas selection does not change.
+  3. With an element selected, press ⌘A: its siblings are selected. Press again: the parent's level is selected. No admin text is highlighted.
+  4. Press H, then V: the cursor is back to the arrow. Press C, then V: comment mode is off.
+  5. Click into the Properties panel, press − and +: the canvas zooms. ⇧1 fits, ⇧0 goes to 100%.
+  6. Hold Space and Alt-Tab away, release Space, come back: clicking an element selects it and does not pan.
+  7. Click the status-bar clock on SMS: SheetHeader is selected ("SheetHeader · Local"). Double-click: IOSStatusBar is selected. Double-click again: the clock is selected.
+  8. Pick a value in an inspector dropdown, then press Delete: the selected element is deleted.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -200,6 +226,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 **Design pane (P2)**
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry under `## Now`
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry under `## Now`
+- `canvas-23` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-23` entry under `## Now`
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`

@@ -612,20 +612,39 @@ test.describe('V1: the studio feels like a design tool', () => {
     const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
     const target = await firstInlinedLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
-    await clickInFrame(page, target)
 
-    // Confirm the CLICK actually selected the inlined status-bar clock, not
-    // some other node — `SharedComponentNotice`'s own `role="note"` banner
-    // ("Part of IOSStatusBar…") only renders for a selection whose id is
-    // `isInlinedNodeId`, which is exactly the shape `shared-component` needs
-    // to refuse the coming delete with a remedy. More reliable than the
-    // in-frame selection ring here: selecting this node auto-focuses the
-    // canvas on it (`focusActiveBreakpoint`), and the resulting pan/zoom can
-    // still be settling when the ring would otherwise be checked.
+    // A click inside a component instance selects the INSTANCE (Figma; P2-B
+    // made live frames apply the boundary portal frames always had), and each
+    // double-click opens one level. The clock sits inside `IOSStatusBar`,
+    // itself possibly inside another component, so open levels until the
+    // clock itself is the selection — at most three, never one more than
+    // needed: a double-click on an already-open text node starts an inline
+    // edit instead.
+    //
+    // Confirmed by `SharedComponentNotice`'s own `role="note"` banner
+    // ("Part of IOSStatusBar…"), which only renders for a selection whose id
+    // is `isInlinedNodeId` — exactly the shape `shared-component` needs to
+    // refuse the coming delete with a remedy. More reliable than the in-frame
+    // selection ring here: selecting this node auto-focuses the canvas on it
+    // (`focusActiveBreakpoint`), and the resulting pan/zoom can still be
+    // settling when the ring would otherwise be checked.
     const sharedComponentNotice = page.getByRole('note').filter({ hasText: 'Part of' })
+    await clickInFrame(page, target)
+    for (let level = 0; level < 3; level += 1) {
+      if (await sharedComponentNotice.isVisible().catch(() => false)) break
+      // A selection can move the board (`focusActiveBreakpoint`), so the
+      // clock is re-centred before every double-click — measured before,
+      // the point can end up under a side panel.
+      await panIntoView(page, canvasRoot, target, 80)
+      await page.waitForTimeout(400)
+      const box = await target.boundingBox()
+      expect(box, 'the clock has no bounding box').not.toBeNull()
+      await page.mouse.dblclick(box!.x + box!.width / 2, box!.y + box!.height / 2)
+      await page.waitForTimeout(400)
+    }
     await expect(
       sharedComponentNotice,
-      'clicking the iOS status bar clock did not select an inlined shared-component node',
+      'opening the components around the iOS status bar clock never selected the inlined clock itself',
     ).toBeVisible({ timeout: 15_000 })
 
     // Delete is a `node`-scope keyboard shortcut and needs the canvas to hold
