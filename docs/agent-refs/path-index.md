@@ -428,7 +428,7 @@ source) where a plausible-looking change is how a real bug ships ·
 `src/admin/pages/users/`
 
 **Three corrections this list used to get wrong** — see
-[`STUDIO-CMS-REMOVAL-PLAN.md`](../../STUDIO-CMS-REMOVAL-PLAN.md)'s Traps section:
+[`docs/architecture.md`](../architecture.md) → "The dormant CMS half: four traps":
 
 - 🟡 **`src/core/publisher/` is load-bearing, not dormant.** It is the single
   class-CSS emission engine shared by publish and canvas: `ClassStyleInjector`

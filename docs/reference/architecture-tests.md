@@ -213,7 +213,7 @@ See [docs/features/agent.md](../features/agent.md).
 | `media-storage-no-bytes-in-sandbox.test.ts`   | Plugin sandboxes can't read raw media bytes; only host adapters can.             |
 | `media-storage-panel.test.ts`                 | Media storage panel UI matches the registered adapter set.                       |
 
-See docs/features/media.md.
+There is no separate media feature doc: the variant pipeline is `server/handlers/cms/mediaVariants.ts` and its worker pool, listed in [`docs/architecture.md`](../architecture.md) → "Layer responsibilities".
 
 ### Publisher
 
@@ -257,9 +257,7 @@ The following test lives in `src/__tests__/server/` (not `architecture/`) but en
 |-----------------------------------------------|----------------------------------------------------------------------------------|
 | `importPathTraversal.test.ts`                 | `assertPathWithin` blocks `..` traversal and absolute escapes; `MediaAssetExportSchema.storagePath` pattern rejects traversal at the schema boundary (ISS-009). |
 
-See [`docs/features/site-import.md`](../features/site-import.md). (This used to
-point at a `docs/features/site-transfer.md` that was never written; the CMS
-bundle transfer path is described in the import page instead.)
+See [`docs/features/site-import.md`](../features/site-import.md), which also describes the CMS bundle transfer path.
 
 ### Loop sources
 

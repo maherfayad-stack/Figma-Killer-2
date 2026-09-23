@@ -1,6 +1,6 @@
 # Plugin System
 
-> This describes the inherited CMS plugin subsystem. It is present, functional, and load-bearing for anyone who installs a plugin, but Studio itself does not build features on it — see `STUDIO-CMS-REMOVAL-PLAN.md` (Tier 1: removable in principle, not removed).
+> This describes the inherited CMS plugin subsystem. It is present, functional, and load-bearing for anyone who installs a plugin, but Studio itself does not build features on it — see [`docs/architecture.md`](../architecture.md) → "The dormant CMS half" and the CMS-removal rows in [`ROADMAP.md`](../../ROADMAP.md) §13 (Tier 1: removable in principle, not removed).
 
 End-to-end description of the plugin system: what plugins are, how they ship, how they run sandboxed, what they can do, and how to author them.
 

@@ -646,7 +646,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     expect(
       elapsedMs,
       `keydown → RefusalDialog visible exceeded ${BUDGET_REFUSAL_DIALOG_MS}ms — speed-05's whole point is that this ` +
-        'answer happens outside the keydown task; read STUDIO-SPEED-PLAN.md speed-05 before loosening it',
+        'answer happens outside the keydown task; read docs/archive/plans/STUDIO-SPEED-PLAN.md speed-05 before loosening it',
     ).toBeLessThan(BUDGET_REFUSAL_DIALOG_MS)
 
     // The dialog answered the RIGHT refusal — `shared-component`'s own

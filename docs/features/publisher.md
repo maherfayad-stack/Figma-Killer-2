@@ -4,7 +4,7 @@ The publisher — the page-tree-to-HTML/CSS renderer. Takes a `Page` (a `NodeTre
 
 The published output has **no framework runtime**, **no client-side hydration of layout**, and **no decorative markup** the browser doesn't need. Plugins can inject frontend assets at four anchor points (`head`, `head-end`, `body-start`, `body-end`), but the page structure itself is static.
 
-> `src/core/publisher/` is load-bearing for Studio itself — Studio's AI executor, canvas preview, and base image/video modules all import from it, not just the CMS publish flow. `server/publish/**`, the server-side wrapper described below, is CMS-only and is a candidate for future removal (see `STUDIO-CMS-REMOVAL-PLAN.md`, Tier 2) pending a product decision on external MCP publish access — but `src/core/publisher/` itself never is.
+> `src/core/publisher/` is load-bearing for Studio itself — Studio's AI executor, canvas preview, and base image/video modules all import from it, not just the CMS publish flow. `server/publish/**`, the server-side wrapper described below, is CMS-only and is a candidate for future removal (the CMS-removal rows in [`ROADMAP.md`](../../ROADMAP.md) §13, Tier 2) pending a product decision on external MCP publish access — but `src/core/publisher/` itself never is.
 
 ---
 
@@ -169,7 +169,7 @@ When the walker hits a `base.loop` node, it calls `renderLoop`:
 3. Walks the loop's child variants in round-robin. For each item it derives a fresh child `RenderConfig` whose `templateContext.entryStack` is a **new array** `[...baseStack, item]` — there is no in-place push/pop on a shared array, so child nodes' `dynamicBindings` resolve `currentEntry.<field>` against that item while a VC ref (or nested loop) in the body sees an immutable per-iteration snapshot. The outer config is never mutated, so the loop's siblings keep seeing the outer template entry.
 4. Concatenates the rendered variant HTML and returns it. If `pagination === 'infinite'`, the loop id is added to `acc.infiniteLoopIds` so `publishPage` knows to inject the loop runtime.
 
-See docs/features/loops.md for sources, filters, and registration.
+Loop sources, their filters and their registration live in `src/core/loops/` (`registry.ts`, `sources/`, `types.ts`); plugins register sources through `api.cms.*` ([`plugin-system.md`](plugin-system.md)).
 
 ---
 

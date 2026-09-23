@@ -1,7 +1,7 @@
 /**
  * ExportSection — Penpot's Export section (`STATE.md` `panel-25`, item 10 of
  * the P3 mapping table — `STUDIO-LIVE-CANVAS-PLAN.md` §P3;
- * `docs/features/inspector-disclosure.md` §4 G11). Migrated onto its own
+ * `docs/features/inspector.md` §4 G11). Migrated onto its own
  * `INSPECTOR_SECTIONS` manifest entry, mirroring items 1-9's own posture:
  * takes no props, renders `null` on no selection. It was already the
  * closest section to P3-shaped before this pass (node-level, single mount,

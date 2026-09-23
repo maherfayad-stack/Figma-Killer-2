@@ -46,7 +46,7 @@ export interface ClassStyleSectionDefinition {
   icon: IconComponent
   defaultOpen?: boolean
   /**
-   * Figma's Fill/Stroke/Effects list law (docs/features/inspector-disclosure.md
+   * Figma's Fill/Stroke/Effects list law (docs/features/inspector.md
    * §1 Law 1 / §4 G1): when nothing in this section is set — on the active
    * tab OR any other breakpoint/condition — it renders as a single header
    * line with a "+", not its full property grid. `StyleSectionGroup` in

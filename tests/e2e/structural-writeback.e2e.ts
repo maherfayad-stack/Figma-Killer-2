@@ -258,7 +258,7 @@ test.describe('struct-01 — a structural edit reaches the .tsx, or says why it 
     // `freeVariablesOutOfScopeAt` refuses markup lifted out of a `.map`
     // callback (and `refuseStructuralEdit`'s `cross-file` answers a move
     // between files, which `transplantJsxElement.ts` then writes when it is
-    // honest). Neither has a case here yet - see `docs/e2e/COLD-SUITE-TRIAGE.md`.
+    // honest). Neither has a case here yet - see `docs/archive/e2e/COLD-SUITE-TRIAGE.md`.
     const { canvasRoot, contentFrame } = await openStudioBoard(page)
     const before = readPage()
 

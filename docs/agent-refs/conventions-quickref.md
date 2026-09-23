@@ -261,6 +261,14 @@ handoff ends with a dogfood checklist for the owner.
 
 ---
 
+### Commits
+
+One commit per work order, so a bad one can be reverted alone instead of
+unpicked from a blob. The branch, PR and staging rules are `CLAUDE.md` →
+"Repository workflow and PR conventions".
+
+---
+
 ## 12. Docs
 
 Change code that a doc describes → update the doc in the **same change**.

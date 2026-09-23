@@ -3,8 +3,8 @@
 How drag-and-drop works in the visual editor: dropping new modules from the picker / library, moving existing nodes around the page tree, wrap-to-container, multi-select moves, and the drop-zone overlay.
 
 **Four independent, incompatible DnD mechanisms coexist in Studio** — this is
-tracked architectural debt (`STUDIO-FIGMA-PARITY-PLAN.md` Track D2 proposes a
-single-engine unification), not a design choice. Do not assume `@dnd-kit/core`
+tracked architectural debt (see "The D2 target architecture, and how much of it
+exists" near the end of this doc), not a design choice. Do not assume `@dnd-kit/core`
 is present on a surface just because it is present on another — check the
 topology below first.
 

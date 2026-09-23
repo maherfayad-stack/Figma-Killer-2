@@ -1020,7 +1020,7 @@ describe('ClassPropertyRow — token-aware properties', () => {
     const fontSizeInput = fontSizeRow?.querySelector('input') as HTMLInputElement
     // Test fixture has no typography groups configured, so `--text-l` is not
     // one of this field's own tokens: it is a project-variable binding and
-    // renders as the "Apply variable" chip (inspector-disclosure.md §10.4)
+    // renders as the "Apply variable" chip (inspector.md §10.4)
     // over an empty input, not as the raw var() expression.
     expect(fontSizeInput.value).toBe('')
     const chip = fontSizeRow?.querySelector('[data-testid="variable-chip"]')

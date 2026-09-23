@@ -1,7 +1,7 @@
 /**
  * boxShadowLayers — pure parse/serialise for the CSS shadow values
  * `box-shadow` and `text-shadow`
- * (docs/features/inspector-disclosure.md §4 G8/G9, F21).
+ * (docs/features/inspector.md §4 G8/G9, F21).
  *
  * Both are a comma-separated LIST of layers, and each layer is itself a
  * small, order-flexible grammar:

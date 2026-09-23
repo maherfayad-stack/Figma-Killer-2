@@ -158,7 +158,7 @@
 
 /*
  * Static header — a section with nothing to disclose (Law 1's empty state,
- * docs/features/inspector-disclosure.md §1). No toggle, so the title is a
+ * docs/features/inspector.md §1). No toggle, so the title is a
  * plain span; it keeps the toggle's box so an empty section and a filled one
  * sit on the same baseline and the actions land in the same place.
  */

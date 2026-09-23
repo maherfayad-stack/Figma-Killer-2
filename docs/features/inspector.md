@@ -15,36 +15,17 @@ the measurement gate, `§7` the do-not-copy list, `§8` the resolved decisions.
 existed and is deliberately never reused; `§5` was empty until W8-1 wrote the
 field model into it, which added a section without renumbering one.)
 
-> **History.** This content was the delivery plan `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`,
-> retired once its work orders shipped. The plan's own progress bookkeeping is
-> gone (git remembers it); the design rules, which the code still cites, live
-> here. Per-track status for the wider parity effort is
-> [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-> the single status ledger. The narrative summary of these laws, in design
-> language, is [`docs/design.md`](../design.md) → "The inspector".
->
-> **Track P shipped.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P (Penpot-exact
-> inspector) rebuilt this panel on top of everything below, structure first:
-> P1 wrapped the panel in a new Design / Prototype / Inspect shell
-> (`src/admin/pages/site/inspector/`), collapsed the old independent
-> Element/Class blocks into one `StyleSectionsEditor` call driven by
-> `resolveWriteTarget.ts` ("the write target is a rule, not a mode"), and
-> deleted the sticky search bar + `StyleCategoryRail` from the single-node
-> surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s separate
-> global/ambient-selector surface keeps both, since a bare CSS selector has
-> no element-vs-class ambiguity to resolve. Every law and primitive below is
-> unchanged in shape; P3 completed (`STATE.md` `panel-25` — 11 of 11
-> sections migrated, Studio extras/item 11 the last), every category
-> `StyleSectionsEditor.tsx` used to render (now deleted) re-skinned to the
-> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`) as its
-> own `INSPECTOR_SECTIONS` manifest entry; P4 (`panel-23`) rewired
-> computed-value reads onto `SelectionModel`; P5 (`panel-26`) sourced those
-> values through the live DOM at Tier 2. **P6 (`STATE.md` `panel-27`) is
-> this file's own retirement** — the file you are reading is the renamed
-> `inspector-disclosure.md`, and §6 below is now the real, running gate
-> instead of the "Not implemented" placeholder it used to be. This page
-> remains the authoritative reference for the vocabulary the source cites;
-> only its filename and §6 changed.
+> **How the panel is built.** The inspector is the Penpot-exact panel of
+> Track P: a Design / Prototype / Inspect shell (`src/admin/pages/site/inspector/`),
+> one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
+> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
+> target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
+> a mode"), and computed values are read through `SelectionModel` (from the live
+> DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> selector, keeps its search bar and category rail. Every law and primitive below
+> applies to all of it. The same rules in design language are in
+> [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this
+> way is LIVE §7.3 in [`docs/decisions.md`](../decisions.md).
 
 ---
 
@@ -52,9 +33,8 @@ field model into it, which added a section without renumbering one.)
 
 G1–G12 shipped: G9 completed in W8-1, G11 (Export) added in W8-4, G12
 (Studio extras) added when P3 completed (`STATE.md` `panel-25`, item 11).
-One piece did not, and is tracked as an
-open workstream in
-[`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
+One piece did not, and is an open row in
+[`ROADMAP.md`](../../ROADMAP.md) §13:
 
 | Open | What is missing |
 |---|---|
@@ -2119,7 +2099,5 @@ Ownership, when routing work: `panel-designer` owns the sections and primitives;
   language, plus panel geometry, skins, provenance and placeholders
 - [`docs/reference/ui-primitives.md`](../reference/ui-primitives.md) — the
   primitives these goals are built on
-- [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-  the single per-track status ledger
-- [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md) — where G6.4
-  and the §6 gate are tracked
+- [`ROADMAP.md`](../../ROADMAP.md) §13 — where G6.4 (selection colours) is
+  tracked

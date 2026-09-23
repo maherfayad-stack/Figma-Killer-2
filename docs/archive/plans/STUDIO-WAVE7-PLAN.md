@@ -44,7 +44,7 @@ each section detailed enough to implement from alone. `STUDIO-FIGMA-PARITY-PLAN.
 - DB schema changes (W10 only): additive migrations in BOTH `migrations-pg.ts`
   and `migrations-sqlite.ts`, same ID, same semantics. Never destructive.
 - Docs track code in the same PR. Inspector PRs must keep
-  `docs/features/inspector-disclosure.md`'s §-numbering stable (~50 source files
+  `docs/features/inspector.md`'s §-numbering stable (~50 source files
   cite it by number). Append a `STATE.md` handoff per the protocol.
 - UI changes are NOT validated by e2e — ship with gates green and a
   "needs human dogfood" note in the STATE handoff.
@@ -246,7 +246,7 @@ tracks. Every numeric in the panel scrubs, nudges, and does math identically.
 - THEN: a **measurement gate test** — `scrollHeight <= clientHeight` for a text
   node's panel at 900px viewport + per-section height budgets, so W8's geometry
   can't silently regress. Pair it with the width invariant already documented
-  in `docs/features/inspector-disclosure.md` §6:
+  in `docs/features/inspector.md` §6:
   `scrollWidth === clientWidth` for every `[data-style-section]` at the 260px
   panel minimum, so a control that refuses to shrink can't put itself back on
   top of the category rail.
