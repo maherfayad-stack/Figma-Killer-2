@@ -238,9 +238,9 @@ describe('sizingPatch(fixed) with the element cascade (the canvas resize)', () =
     expect(sizingPatch('fixed', 'width', FLEX_ROW, {}, 240, { flexGrow: '0', flexBasis: '200px' }).flex).toBe('0 1 auto')
   })
 
-  it('drops an inline longhand that would fight the shorthand', () => {
-    const patch = sizingPatch('fixed', 'width', FLEX_ROW, { flexGrow: '2' }, 240, { flexGrow: '2', flexBasis: 'auto' })
-    expect(patch).toEqual({ width: '240px', flex: '0 1 auto', flexGrow: undefined })
+  it('overrides a non-marker inline `flex` the stored-only answer leaves alone', () => {
+    const patch = sizingPatch('fixed', 'width', FLEX_ROW, { flex: '2' }, 240, { flexGrow: '2', flexBasis: '0%' })
+    expect(patch).toEqual({ width: '240px', flex: '0 1 auto' })
   })
 
   it('writes nothing extra when the cascade already honours the width', () => {

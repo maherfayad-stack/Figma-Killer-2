@@ -121,8 +121,6 @@ const STRETCH_VALUE = 'stretch'
  * marker this model reads back as Hug or Fill, so it reads as Fixed.
  */
 const FLEX_MAIN_FIXED_VALUE = '0 1 auto'
-/** The `flex` longhands a Fixed write replaces with {@link FLEX_MAIN_FIXED_VALUE}. */
-const FLEX_LONGHANDS = ['flexGrow', 'flexShrink', 'flexBasis'] as const
 
 /**
  * What the element's CASCADE says about its flex sizing — its computed
@@ -255,8 +253,8 @@ function frozenLength(measuredValue: unknown): string {
  * `flexCascade` (optional, `fixed` on a flex main axis only): when the
  * element's cascade would still grow it or give it a basis once the markers
  * above are cleared, a width alone changes nothing on screen — so the patch
- * also writes `flex: 0 1 auto` (and drops any inline `flex-*` longhand that
- * would fight it). Without it the patch is exactly the stored-only answer.
+ * also writes `flex: 0 1 auto`. Without it the patch is exactly the
+ * stored-only answer.
  */
 export function sizingPatch(
   mode: SizingMode,
@@ -279,9 +277,6 @@ export function sizingPatch(
     }
     if (role === 'flex-main' && flexCascade && cascadeOverridesMainSize(flexCascade)) {
       patch.flex = FLEX_MAIN_FIXED_VALUE
-      for (const longhand of FLEX_LONGHANDS) {
-        if (hasStyleValue(stored[longhand])) patch[longhand] = undefined
-      }
     }
     if (role) {
       const self = selfProperty(role, axis)

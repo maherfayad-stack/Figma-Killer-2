@@ -61,7 +61,7 @@ export function guardDragSession(options: DragSessionGuardOptions): () => void {
   const { documents, focusWindow, onReleaseLost, onAbandon } = options
   const buttonMask = options.buttonMask ?? PRIMARY_BUTTON_MASK
   let ended = false
-  let focusCheck: ReturnType<typeof setTimeout> | null = null
+  let focusCheck: number | null = null
 
   const end = (action: () => void) => {
     if (ended) return
