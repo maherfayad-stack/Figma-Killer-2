@@ -24,6 +24,7 @@ import { SelectorsPanel } from '@site/panels/SelectorsPanel'
 import { GitPanel } from '@site/panels/GitPanel'
 import { FrameworkChangeConfirmProvider } from '@admin/shared/dialogs/FrameworkChangeConfirmDialog'
 import { SidebarResizeHandle } from '@admin/shared/SidebarResizeHandle'
+import { AgentPanelSkeleton } from './AgentPanelSkeleton'
 import styles from './LeftSidebar.module.css'
 
 // Image preparation and provider catalogue code belong to the AI surface, not
@@ -242,7 +243,9 @@ export function LeftSidebar({
               {/* eslint-disable-next-line react-compiler/react-compiler */}
               <AgentStoreProvider store={useEditorStore}>
                 <PanelBoundary id="agent" label="AI assistant" frame="panel">
-                  <Suspense fallback={null}>
+                  {/* The panel's silhouette, not `null`: a first open used to
+                      show an empty column for the whole chunk load (UX-24). */}
+                  <Suspense fallback={<AgentPanelSkeleton />}>
                     <AgentPanel variant="docked" />
                   </Suspense>
                 </PanelBoundary>

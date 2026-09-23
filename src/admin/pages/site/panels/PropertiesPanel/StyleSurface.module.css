@@ -166,7 +166,7 @@
     flex-direction: column;
     align-items: center;
     gap: var(--inspector-space-m);
-    padding: var(--space-4xl) var(--space-5xl) var(--space-5xl);
+    padding: var(--inspector-space-xl) var(--inspector-pad-x);
     text-align: center;
 }
 
@@ -192,7 +192,7 @@
     gap: var(--inspector-space-s);
     margin: var(--inspector-space-s) var(--inspector-pad-x) var(--inspector-space-xl);
     padding: var(--inspector-space-l);
-    border-radius: 12px;
+    border-radius: var(--panel-radius);
     background: var(--bg-surface);
 }
 
@@ -234,7 +234,7 @@
 }
 
 .generatedUtilityMeta span {
-    border-radius: 999px;
+    border-radius: var(--input-radius);
     background: var(--overlay-5);
     color: var(--text-subtle);
     font-size: var(--text-2xs);

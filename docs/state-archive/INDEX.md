@@ -5,8 +5,15 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 226 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 233 entries, archived 2026-09-23, newest first
 
+- 2026-09-23 · `panel-45` · P2-H: panel polish (PR #239) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-23` · P2-D: resize that obeys CSS (PR #237) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `panel-44` · P2-G: the Component section (PR #236) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `perf-11` · P2-A: perf quick wins + benches (PR #235) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `panel-43` · P2-F: design pane spacing (PR #234) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `mcp-28` · P4-C: the API-key path can build (PR #233) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `test-06` · Phase 1 exit gate: outside-edit e2e + regression audit (PR #232) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `mcp-27` · P4-B: Studio's system prompt reaches the Claude CLI (PR #231) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `store-17` · P1-F: undo tells the truth (PR #230) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `server-29` · P1-D: notice edits made outside Studio (PR #229) · [`2026-09.md`](2026-09.md)

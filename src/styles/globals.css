@@ -174,6 +174,10 @@
     --success-30: rgba(52, 211, 153, 0.3);
     --success-40: rgba(52, 211, 153, 0.4);
     --info-text: #c4b5fd;
+    /* The info tone's one surface tint — a fact card that blocks nothing
+       (`SourceConstraintNotice`'s info variant, `SlotFillNotice`). Literal,
+       like `--warning-10`, so a light-theme region recomputes it. */
+    --info-10: rgba(196, 181, 253, 0.1);
 
     /* Code syntax - GitHub Dark inspired */
     --syntax-keyword: #ff7b72;
@@ -319,24 +323,18 @@
        reads as one quiet block instead of a ladder of outlines. */
     --inspector-field-radius: 8px;
     /* Redefined off `--overlay-5` (`04-token-gaps.md`) — Penpot's field fill
-       is its own literal surface colour, not a translucent overlay wash. */
+       is its own literal surface colour, not a translucent overlay wash.
+
+       The hover fill is a literal too, and for the same reason (P2-H,
+       UX-11). It used to be `--overlay-10`, and a field REPLACES its fill on
+       hover rather than layering over it — so over the docked panel's black
+       `--bg-body` the hovered field painted ~#1a1a1a, DARKER than the
+       #212426 it rests at. Hover must move a field away from the panel
+       behind it, never back toward it: one step lighter here, and in the
+       light theme (whose panel is darker than its fields) one step whiter. */
     --inspector-field-bg: #212426;
-    --inspector-field-bg-hover: var(--overlay-10);
+    --inspector-field-bg-hover: #2a2e31;
     --inspector-divider: var(--overlay-10);
-    /* Penpot's two identity accents (`04-token-gaps.md`'s own proposal, not
-       this app's numbered `--accent-*` scale). Two SEPARATELY NAMED tokens,
-       not a dark/light pair of one token — Penpot itself measures a
-       different hue for the accent it draws on a dark field vs. a light
-       one, not a lightness-only swap of the same colour, so both are always
-       available regardless of the admin's own editor theme. A future
-       section that needs "the accent for a dark-surfaced control" reaches
-       for `-dark`; "for a light-surfaced control" reaches for `-light`. */
-    --inspector-accent-dark: #7efff5;
-    --inspector-accent-light: #6911d4;
-    /* Penpot's muted uppercase section-header label colour — distinct from
-       the admin's own `--text-subtle` (measured separately, `04-token-
-       gaps.md`). */
-    --inspector-section-label-color: #8f9da3;
 
     /* Scrollbars */
     --scrollbar-size: 6px;
@@ -696,7 +694,11 @@
     --text-bright: #111827;
     --text: #1f2937;
     --text-muted: #4b5563;
-    --text-subtle: #6b7280;
+    /* #5b6270, not Tailwind's gray-500 (#6b7280): the docked sidebars sit on
+       `--bg-body`, where gray-500 measured 3.9:1 — below WCAG AA for the
+       captions, units and empty states that read it (P2-H, UX-15). This is
+       4.9:1 there and 6.1:1 on `--bg-surface`. */
+    --text-subtle: #5b6270;
     --text-disabled: #9ca3af;
 
     /* Identity accents tuned as foregrounds for light surfaces. */
@@ -740,6 +742,7 @@
     --success-text: #047857;
     --success-text-muted: #065f46;
     --info-text: #4338ca;
+    --info-10: rgba(67, 56, 202, 0.1);
 
     /* Shadows and focus */
     --shadow-panel-inset-bottom: inset 0 -1px 0 var(--overlay-10);
@@ -773,12 +776,11 @@
     --plugins-hero-tint-a: rgba(142, 230, 200, 0.18);
     --plugins-hero-tint-b: rgba(155, 220, 255, 0.2);
 
-    /* Inspector — Penpot geometry pass (`STATE.md` `panel-25`). The identity
-       accents (`--inspector-accent-dark`/`-light`) are NOT theme-conditional
-       — see their own `:root` comment — so only the two genuinely
-       theme-varying tokens are redefined here. */
+    /* Inspector field fill. The panel behind it (`--bg-body`) is DARKER than
+       the field here, so hover lifts toward white — see the `:root` note on
+       `--inspector-field-bg-hover`. */
     --inspector-field-bg: #f3f4f6;
-    --inspector-section-label-color: #495e74;
+    --inspector-field-bg-hover: var(--bg-surface);
 }
 
 /* Reduced motion support — Constraint from UX Guideline #189 */

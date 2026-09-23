@@ -10,6 +10,8 @@
 import { Suspense, lazy } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { Panel } from '@admin/shared/Panel'
+import { SkeletonTree } from '@ui/components/Skeleton'
+import styles from './ExplorerPanel.module.css'
 
 // lazy() keeps StudioExplorer (+ StudioBoardsList, StudioPagesTree, their
 // prefs + CSS) out of the eager editor-body chunk until the panel actually
@@ -34,9 +36,21 @@ export function ExplorerPanel({ editable = true }: ExplorerPanelProps) {
       onClose={() => setOpen(false)}
       body="bare"
     >
-      <Suspense fallback={null}>
+      {/* A tree silhouette while the chunk loads, not `null`: Layers is the
+          most-opened panel, and its first open used to be a blank column for
+          the whole download (P2-H, UX-24). */}
+      <Suspense fallback={<ExplorerPanelSkeleton />}>
         <StudioExplorer editable={editable} />
       </Suspense>
     </Panel>
+  )
+}
+
+/** The Layers tree's silhouette, shown until the explorer chunk lands. */
+export function ExplorerPanelSkeleton() {
+  return (
+    <div className={styles.loading} aria-busy="true" data-testid="explorer-panel-skeleton">
+      <SkeletonTree ariaLabel="Loading layers" />
+    </div>
   )
 }

@@ -94,6 +94,22 @@
     overflow: hidden;
 }
 
+/* The node-level notices (shared component, slot fill, source constraint,
+   branch choice) — one band on the panel gutter, so each tinted card sits
+   on the same 12px inset as the ClassPicker below it instead of running
+   edge to edge (P2-H, UX-25). `:empty` because every notice renders null
+   when it has nothing to say: an empty band must cost no height. */
+.nodeNotices {
+    flex-shrink: 0;
+    display: grid;
+    gap: var(--inspector-space-2xs);
+    padding: var(--inspector-space-m) var(--inspector-pad-x) 0;
+}
+
+.nodeNotices:empty {
+    display: none;
+}
+
 /*  `position: relative` + `z-index: 1` make this the containing block AND
     stacking context for the `::after` fade, so the gradient renders above
     the scrolling StyleSurface that follows. Bottom padding is intentionally

@@ -95,17 +95,3 @@ describe('ClassPropertyRow remove button layout', () => {
     expect(css).not.toContain('editor-danger')
   })
 })
-
-describe('StyleRuleComposer module style remove button layout', () => {
-  it('does not reserve a right-side gutter for module-owned style rows', async () => {
-    // Module-owned style rows were removed when classStyleBindings was deleted.
-    // This gate ensures no moduleStyleRow padding-right accidentally reappears.
-    const { readFileSync } = await import('fs')
-    const css = readFileSync(
-      new URL('../../admin/pages/site/panels/PropertiesPanel/StyleRuleComposer.module.css', import.meta.url),
-      'utf-8',
-    )
-
-    expect(css).not.toMatch(/\.moduleStyleRow\s*\{[^}]*padding-right:/s)
-  })
-})

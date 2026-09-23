@@ -49,7 +49,7 @@ Every interactive control in `src/admin/` goes through one of these. Bare `<butt
 | Primitive          | When to use                                                          | Key props                                                  |
 |--------------------|----------------------------------------------------------------------|------------------------------------------------------------|
 | `Stack`            | Small vertical / horizontal flex layouts, especially plugin admin UI  | `direction`, `gap`, `align`, `justify`, `wrap`, `height`   |
-| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `meta`, `indicator`, `forceOpen`, `empty`, `flush`; `SectionStaticHeader` beside it |
+| `Section`          | Collapsible titled section inside a panel (accordion)                | `title`, `children`, `defaultOpen`, `icon`, `status`, `indicator`, `forceOpen`, `empty`, `flush`; `SectionStaticHeader` beside it |
 | `ControlRow`       | Label + control row in property panels                               | `label`, `description`, `children`                         |
 | `Separator`        | Visual divider between sections                                      | `orientation: 'horizontal' \| 'vertical'`                  |
 | `Card`             | Token-backed panel surface for plugin/admin grouped content          | `padding`, `bordered`                                      |
@@ -444,9 +444,9 @@ For searchable submenus that host a non-menuitem widget (e.g. a search input), p
 
 Layout primitives for property panels.
 
-`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value). `forceOpen` overrides local state and keeps the section always open. `empty` does the opposite and more: it says the section has nothing to disclose, so the header renders alone — no chevron, no toggle, no body, `children` ignored — leaving whatever `actions` supplies (Law 1 of the inspector's disclosure rules; an accordion over an empty body is an affordance that lies). The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
+`Section` is a collapsible accordion block. Each instance manages its own open/closed state via `defaultOpen` (the initial value); its toggle draws the inspector's own focus ring (`--overlay-50`, inset 1px) rather than the browser outline. `forceOpen` says the section is open by construction, so it draws the static header (below) over an always-rendered body — no toggle button, no chevron, no `aria-expanded` announcing a disclosure that cannot close (P2-H: it used to keep the button and make its click a no-op). `empty` does the opposite and more: it says the section has nothing to disclose, so the header renders alone — no chevron, no toggle, no body, `children` ignored — leaving whatever `actions` supplies (Law 1 of the inspector's disclosure rules; an accordion over an empty body is an affordance that lies). The `flush` prop removes the section's own vertical padding so spacing comes entirely from the parent container's grid gap — used by the Properties panel (1px-gap card pattern). The `indicator` prop renders a small green dot next to the title to signal active state (e.g. properties are set in this section).
 
-`SectionStaticHeader` (exported beside `Section`) is that `empty` header on its own — title, icon, `meta`, `actions`, 32px, no toggle. It exists for blocks that are always open by construction rather than by state: the Properties panel's Module block (`ModuleBlock.tsx`) and the Component section (`ComponentSection.tsx`, "Button · Local" with Detach and Swap in `actions`) draw their titles with it, so they are the same recipe as every section title around them. Its `meta` is drawn right after the title, as a qualifier of it; `Section`'s own `meta` is a status pushed to the far end of the toggle.
+`SectionStaticHeader` (exported beside `Section`) is that `empty` / `forceOpen` header on its own — title, icon, `meta`, `indicator`, `status`, `actions`, 32px, no toggle. It exists for blocks that are always open by construction rather than by state: the Properties panel's Module block (`ModuleBlock.tsx`) and the Component section (`ComponentSection.tsx`, "Button · Local" with Detach and Swap in `actions`) draw their titles with it, so they are the same recipe as every section title around them. `meta` is drawn right after the title, as a qualifier of it ("Button · Local"); `status` — on `Section` too — is a state pushed to the header's far end ("1 ready", "3 set", "Conflict").
 
 `.sectionBody` (exported from the same module's CSS) is the grid wrapper for a section's rows. It clamps itself and its children to `min-width: 0`: a panel that can be dragged to 260px has no room for a control that refuses to shrink, and the properties panel's scroll container clips on x, so an over-wide section draws across the category rail instead of scrolling.
 
@@ -469,7 +469,7 @@ import { ControlRow } from '@ui/components/ControlRow'
   icon={LayoutIcon}
   defaultOpen={sectionsExpanded}
   indicator={hasSetProperties}
-  meta="3 set"
+  status="3 set"
   flush
 >
   {/* content */}

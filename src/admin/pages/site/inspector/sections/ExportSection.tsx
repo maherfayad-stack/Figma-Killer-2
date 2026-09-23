@@ -342,7 +342,7 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
       flush
       indicator
       indicatorTestId="export-section-dot"
-      meta={`${rows.length} ready`}
+      status={`${rows.length} ready`}
       actions={addButton}
     >
       <div className={sectionStyles.sectionBody}>

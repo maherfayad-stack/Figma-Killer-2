@@ -60,6 +60,17 @@
 }
 
 /*
+ * The inspector's own focus ring — the `--overlay-50` a focused field draws
+ * as its border — rather than the browser's default outline, which is a
+ * different colour, width and offset in every engine (P2-H, UX-26). Inset by
+ * its own width, so the section's hairline above never clips it.
+ */
+.sectionToggle:focus-visible {
+    outline: 1px solid var(--overlay-50);
+    outline-offset: -1px;
+}
+
+/*
  * Identity mark and disclosure chevron, stacked in one 16px box.
  *
  * The chevron is absent at rest — a resting panel should read as flat titled
@@ -125,7 +136,10 @@
     color: var(--text);
 }
 
-.sectionMeta {
+/* `.sectionMeta` qualifies the title ("Button · Local"); `.sectionStatus`
+   is a state pushed to the header's far end ("1 ready"). Same type. */
+.sectionMeta,
+.sectionStatus {
     max-width: 118px;
     overflow: hidden;
     text-overflow: ellipsis;

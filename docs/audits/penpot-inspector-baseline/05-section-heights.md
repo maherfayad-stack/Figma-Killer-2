@@ -173,6 +173,13 @@ F2's and F4's Module blocks lost 3px per stacked prop row (95 → 92,
 145 → 139): `ControlRow`'s gaps read the frozen inspector scale inside the
 panel now.
 
+**P2-H (panel polish)** re-measured all five. F1–F4 are unchanged (598 / 769 /
+715 / 595). **F5 is 276 → 256**: the "Inline styles come from this
+component's own source." notice under the Component section used fluid
+`--space-4xl`/`--space-5xl` padding (about 20 + 24px at 1400px) and now uses
+the frozen `--inspector-space-xl` (12 + 12px, UX-27). The Component section
+itself is still 137px.
+
 ### Where the room comes from
 
 Measured on the docked panel at a 900px viewport, top to bottom. The scroll

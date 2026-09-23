@@ -90,11 +90,11 @@
       }
     },
     "f5-instance": {
-      "contentHeight": 276,
+      "contentHeight": 256,
       "clientHeight": 746,
       "scrollHeight": 746,
       "overflowPx": 0,
-      "headroomPx": 470,
+      "headroomPx": 490,
       "sections": {
         "component": 137
       }

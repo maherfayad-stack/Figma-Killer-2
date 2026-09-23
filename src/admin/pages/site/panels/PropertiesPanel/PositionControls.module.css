@@ -59,7 +59,7 @@
     right: 4px;
     width: 18px;
     height: 18px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--bg-surface-2);
     border: 1px solid var(--border-muted);
     color: var(--text-muted);
@@ -131,7 +131,7 @@
     right: 4px;
     width: 18px;
     height: 18px;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: var(--bg-surface-2);
     border: 1px solid var(--border-muted);
     color: var(--text-muted);
