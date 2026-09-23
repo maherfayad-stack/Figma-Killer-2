@@ -329,6 +329,15 @@ export interface ParsedNode {
    */
   assetOrigin?: ValueOrigin
   /**
+   * P1-A — this element's identity as read: `<tag>#<hash>` over its opening
+   * tag and its own direct text (`./sourceFingerprint.ts`). Carried to the
+   * client as `PageNode.sourceFingerprint` and sent back with every write
+   * aimed at this node, so the server can refuse `element-moved` when the
+   * file changed and a different element now sits at `line:col`. Absent on a
+   * `.map` row: its id has no writable location to guard.
+   */
+  fingerprint?: string
+  /**
    * Set on every node produced by inlining a local component (§2), naming the
    * component it came from (`'SheetHeader'`). Provenance, NOT a lock: the node
    * is editable, and its writeback target is that component's own source

@@ -79,7 +79,30 @@ export interface StudioLoadResult {
    * every story as an ordinary page).
    */
   stories: StorySummary[]
+  /**
+   * WB-23/WB-24 — what this load had to give up, per project or per page,
+   * instead of failing. Empty on a healthy project. Rides the `/load` meta
+   * line (`studioLoadStreamSchema.ts`'s `StudioLoadWarningSchema` is the wire
+   * mirror of `StudioLoadWarning`).
+   */
+  warnings: StudioLoadWarning[]
 }
+
+/**
+ * One thing a load degraded instead of failing. `code` is stable — the client
+ * keys off it.
+ *
+ * - `tsconfig-unreadable` — `tsconfig.json` does not parse, so the project was
+ *   built without it: its path aliases do not resolve, everything else loads
+ *   (`createWorkspaceProject`).
+ * - `syntax-error` — a page's own file does not parse. TypeScript recovers a
+ *   tree anyway, so the page still renders, but that tree is a guess: every
+ *   write to the file is refused, naming this line, until it parses again
+ *   (`studioSyntaxGuard.ts`).
+ */
+export type StudioLoadWarning =
+  | { code: 'tsconfig-unreadable'; file: 'tsconfig.json'; message: string }
+  | { code: 'syntax-error'; pageId: string; file: string; line: number; col: number; message: string }
 
 /** `loadStudioPages` options — today only the targeted-reload page filter. */
 export interface StudioLoadOptions {

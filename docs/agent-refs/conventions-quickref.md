@@ -146,6 +146,15 @@ Studio reads and writes the user's repo. Every path is untrusted.
 - Reject: absolute paths, UNC paths, `..` on **either** separator, empty
   segments, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`
   (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`).
+- **A WRITE asks one predicate: `@core/page-parser`'s `workspaceWriteScope.ts`**
+  (P1-G). `UNWRITABLE_WORKSPACE_DIR_NAMES` is the walk exclusions plus
+  `.claude`; `unwritableWorkspaceSegment(rel)` is the pure check (case-folded,
+  trailing dots/spaces and NTFS stream suffixes dropped);
+  `isWorkspaceWritablePath(root, abs)` adds containment and the same check on
+  the REAL path, and refuses a path through a dangling link. The writeback
+  decoder, CSS writeback, asset landing, the component-copy codemods and the
+  agent's native-write hook all use it — never write a new
+  `segments.some(EXCLUDED_WORKSPACE_DIR_NAMES.has)` for a write.
 - **Containment is checked on the real path, after resolving symlinks.** A repo
   can arrive from GitHub and git stores symlinks — a textual check is bypassable.
   That includes the WRITEBACK decoder: `studioEditLocation(dir, nodeId)` and

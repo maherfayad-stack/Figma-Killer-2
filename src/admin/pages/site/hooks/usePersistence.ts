@@ -76,7 +76,8 @@ import {
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
-import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
+import { noteBoardRead } from '@site/studio/sourceIdentity'
+import { applySitePagesPatch, applyStructuralWriteOutcome } from './siteReloadApply'
 import { registerEditorSave } from './editorSaveRef'
 import { nextAutoSaveDelayMs, resolveAutoSaveDelayMs } from './autosaveSchedule'
 
@@ -92,8 +93,11 @@ import {
   CMS_SITE_PAGES_PATCH_EVENT,
   CMS_SITE_RELOAD_EVENT,
   EDITOR_SAVE_REQUEST_EVENT,
+  claimCmsSiteReloadRequests,
   consumePendingCmsSiteReload,
   hasPendingCmsSiteReload,
+  latestCmsSiteReloadRequest,
+  registerCmsSiteReloader,
   type CmsSitePagesPatchDetail,
 } from '@admin/state/adminEvents'
 
@@ -167,39 +171,14 @@ function applyDefaultBreakpointPreference(
 }
 
 /**
- * `store-13`/`store-14` — apply what the structural source write that just
- * landed means, now that the board has read it back: put the selection on what
- * it made or moved, and give the gesture its undo entry.
- *
- * Runs at both ends of the re-read: the narrow `patchPages` path and the full
- * `loadSite()` one. Both halves come from `pendingStructuralOutcome.ts`, which
- * the commit filled before triggering either — see that module for why the
- * handoff is a box rather than a callback, and why the two answers share one
- * slot.
- *
- * Every id is checked against `_nodeIdToPageIds` (O(1) per id, the WS-5.2
- * index) before the SELECTION uses it, and a write whose elements did not come
- * back selects nothing at all rather than part of itself: a half-applied
- * selection points the inspector at one of several things the user just made,
- * which reads as the gesture having half-failed. The history entry is recorded
- * either way — a gesture whose result the board cannot point at was still
- * written to the file, and ⌘Z has to be able to take it back.
- *
- * Exported as a test seam, the same way `resolveAutoSaveDelayMs` is: the two
- * callers are inside effects, and the behaviour worth pinning — "the gesture's
- * result is what the board points at once the resync lands, and one ⌘Z undoes
- * it" — is otherwise only reachable by mounting the whole hook.
+ * ERR-10 — once a reload's document is in the store, apply the structural
+ * outcome of every reload request it covers, in request order, and resolve
+ * their promises. See `requestCmsSiteReload`.
  */
-export function applyStructuralWriteOutcome(): void {
-  const outcome = takePendingStructuralOutcome()
-  if (!outcome) return
-  const state = useEditorStore.getState()
-  if (outcome.history) state.recordStructuralSourceWrite(outcome.history)
-  const { selectNodeIds } = outcome
-  if (selectNodeIds.length === 0) return
-  if (!selectNodeIds.every((id) => state._nodeIdToPageIds.has(id))) return
-  if (selectNodeIds.length === 1) state.selectNode(selectNodeIds[0]!)
-  else state.selectMany([...selectNodeIds])
+function settleReloadRequests(covers: number): void {
+  const claimed = claimCmsSiteReloadRequests(covers)
+  for (const outcome of claimed.structuralOutcomes) applyStructuralWriteOutcome(outcome)
+  claimed.settle()
 }
 
 export function usePersistence(
@@ -375,6 +354,8 @@ export function usePersistence(
       }
 
       const idToTry = requestedSiteId || 'default'
+      // ERR-10 — any reload requested before this fetch starts is answered by it.
+      const covers = latestCmsSiteReloadRequest()
 
       if (idToTry) {
         try {
@@ -384,6 +365,8 @@ export function usePersistence(
           if (site && !cancelled) {
             if (pendingCmsSiteReload) consumePendingCmsSiteReload()
             loadSite(site)
+            noteBoardRead(site.pages, 'reset') // P1-A — who every source position names, as just read
+            settleReloadRequests(covers)
             applyDefaultBreakpointPreference(site.breakpoints)
             loadedRef.current = true
             setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
@@ -445,29 +428,56 @@ export function usePersistence(
   // External "site changed at the server" hook. Non-editor workspaces call
   // `requestCmsSiteReload()`, which retains the reload if this hook is not
   // mounted yet and dispatches `CMS_SITE_RELOAD_EVENT` for live editor mounts.
+  //
+  // ERR-10 — two rules keep a burst of reloads honest:
+  //   1. A monotonic token. Each `reload()` takes the next one when it starts;
+  //      when its fetch resolves, it applies only if no later reload has
+  //      started since. Two fetches can resolve in either order, and applying
+  //      the older one last put the board back to a document from before the
+  //      newer write. A superseded response is dropped — the newer reload
+  //      covers every request this one did (see rule 2).
+  //   2. Requests are settled by the reload that covers them. The reload
+  //      records `latestCmsSiteReloadRequest()` before it fetches, and once
+  //      its document is in the store it applies the structural outcome of
+  //      every request up to that number, in order, and resolves their
+  //      promises. That is what makes `requestCmsSiteReload()` awaitable, and
+  //      what lets `resyncBoardAfterWrite` hold the structural queue until the
+  //      board has actually caught up.
+  const reloadTokenRef = useRef(0)
   useEffect(() => {
     if (!enabled) return undefined
 
     async function reload() {
+      const token = ++reloadTokenRef.current
+      const covers = latestCmsSiteReloadRequest()
       const idToTry = requestedSiteId || 'default'
       const pendingCmsSiteReload = hasPendingCmsSiteReload()
       try {
         // Adapter validates internally (Constraint #230).
         const site = await adapterRef.current.loadSite(idToTry)
+        if (token !== reloadTokenRef.current) return
         if (!site) {
           if (pendingCmsSiteReload) consumePendingCmsSiteReload()
+          settleReloadRequests(covers)
           return
         }
         const { loadSite, setHasUnsavedChanges } = useEditorStore.getState()
         loadSite(site)
+        noteBoardRead(site.pages, 'reset') // P1-A — see `sourceIdentity.ts`
         applyDefaultBreakpointPreference(site.breakpoints)
         // The site doc on disk is now authoritative; clear the unsaved flag so
         // the auto-save loop doesn't immediately overwrite it back.
         setHasUnsavedChanges(false)
-        applyStructuralWriteOutcome()
+        settleReloadRequests(covers)
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
+        // A failure a newer reload has already overtaken is not the board's
+        // state any more; that reload reports its own outcome.
+        if (token !== reloadTokenRef.current) return
+        // Nothing waiting on this reload is left hanging: the queue behind a
+        // structural write must not stall on a board that could not catch up.
+        settleReloadRequests(covers)
         // The write already landed on disk — this is the board failing to
         // catch up with it. Silent, it reads as "nothing happened" and the
         // only recovery the user can find is a page refresh; say so instead.
@@ -485,8 +495,12 @@ export function usePersistence(
       void reload()
     }
 
+    const unregisterReloader = registerCmsSiteReloader()
     window.addEventListener(CMS_SITE_RELOAD_EVENT, handleReload)
-    return () => window.removeEventListener(CMS_SITE_RELOAD_EVENT, handleReload)
+    return () => {
+      window.removeEventListener(CMS_SITE_RELOAD_EVENT, handleReload)
+      unregisterReloader()
+    }
   }, [enabled, requestedSiteId])
 
   // Track C5 — the targeted-reload counterpart to the full reload above.
@@ -500,17 +514,7 @@ export function usePersistence(
     if (!enabled) return undefined
 
     function handlePagesPatch(evt: Event) {
-      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
-      // Forwarded whole rather than field-by-field: the registries travel with
-      // the pages they were parsed alongside, and dropping them here is the
-      // bug this listener's sender exists to avoid.
-      useEditorStore.getState().patchPages({
-        pages: detail.pages,
-        removedPageIds: detail.removedPageIds,
-        styleRules: detail.styleRules,
-        conditions: detail.conditions,
-      })
-      applyStructuralWriteOutcome()
+      applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
     }
 
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, handlePagesPatch)

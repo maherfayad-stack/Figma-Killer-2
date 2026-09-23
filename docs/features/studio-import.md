@@ -469,7 +469,44 @@ Unlike the old replace-in-place design, a call site's own literal props (`<Icon 
 
 ### Detach and swap (WS-4.4/4.5)
 
-`src/core/ast-codemods/detachComponent.ts` inlines a LOCAL instance's own JSX at its call site, substituting the callee's params with the call site's own argument **expressions** (never evaluated values — `title={plan.name}` stays a binding), reconciling every import the pasted JSX now needs, and removing the component's import if this was its last usage. It **refuses**, with a specific reason, rather than guessing: a hook call anywhere in the body (`uses-hooks`), a `.map` over one of the component's own props (`maps-over-props`), an undestructured `props` parameter (`unsupported-params`), a package (not local) component (`package-component`), or an unresolvable declaration (`unresolvable`). A component with more than one JSX-bearing `return` (parser-06 already selects one) is **not** refused — detach inlines the branch actually shown and reports it via `branchNote`.
+`src/core/ast-codemods/detachComponent.ts` inlines a LOCAL instance's own JSX at its call site, substituting the callee's params with the call site's own argument **expressions** (never evaluated values — `title={plan.name}` stays a binding), reconciling every import the pasted JSX now needs, and removing the component's import if this was its last usage. Owner decision OD-9: the result still renders, the component's props no longer apply, and the user can edit anything freely. A component with more than one JSX-bearing `return` (parser-06 already selects one) is **not** refused — detach inlines the branch actually shown and reports it via `branchNote`.
+
+**It fails closed (DET-1/DET-2, audit 07 §B.1).** Until this pass the header said "fails closed" and the code did not: it substituted a param only when it was the whole `{param}`, so `className={cn(styles.card, className)}`, `{featured && …}`, `` `/p/${id}` ``, `{ width: size }` and `{title.toUpperCase()}` were pasted with a bare `className`/`featured`/`id`/`size`/`title` left in the page — a `ReferenceError`, or worse, a silent rebind to the page component's own binding of the same name. It also trusted any page import that merely shared a NAME, so Card's `styles` (Card.module.css) became the page's `styles` (Home.module.css). Every identifier is now resolved with the TypeScript checker **in the component's file** — which declaration it names, not what it is spelled — and then placed so it names the same thing in the page:
+
+| The JSX reads | Becomes |
+|---|---|
+| a destructured param, in **any** expression position (call argument, `&&` operand, template span, object value, method receiver, shorthand `{ size }`) | the call site's own expression, parenthesized only where the grammar would re-associate it (`{(a + b) * 2}`) |
+| a param the call site **omitted** | its destructured default, or `undefined` — that is exactly what an omitted prop is. An attribute whose whole value becomes `undefined` is dropped; a child `{hint}` disappears |
+| a param with a default, and a call-site value that may be `undefined` | `item.tone === undefined ? 'neutral' : item.tone` — the rule destructuring itself applies |
+| a substituted string | JSX text in a child slot (`<h2>Confirm</h2>`, not `{"Confirm"}`), an attribute string in an attribute (`className="neutral"`, not `className={'neutral'}`) — only when that spelling means exactly the same string (no `{}<>`, no edge whitespace or newline; no `"` or `&` in an attribute) |
+| a param read through a call-site spread `<Card {...plan}/>` (DET-2) | `plan.title`, unless an explicit attribute AFTER the spread sets it (that attribute wins) |
+| the component's `...rest`, spread onto an element (DET-2) | the call site's leftover attributes, verbatim, at that position — a leftover that repeats one of the element's own attributes replaces the earlier one, exactly as the spread did; `rest.x` reads the call site's `x` |
+| a body `const` read once, outside any callback, computed from params and module scope | its initializer, inlined |
+| a module-scope name of the component's file | imported into the page: an equivalent existing import is reused (same module, same export — however it is spelled), else the name is imported as-is when free, else **aliased** (`import cardStyles from '…/Card.module.css'`, `import { Icon as CardIcon }`), renamed exactly because the rename is keyed on the symbol |
+| a global | left as is — and must not be shadowed where the markup lands |
+| `children`, in a child slot | the call site's children, verbatim (the whitespace JSX itself ignores — a run containing a newline at either edge — is trimmed) |
+
+Side-effect imports of the component's file (`import './Card.css'`) are mirrored into the page, because a free-variable walk cannot see them and the detached markup's classes need that sheet. The call site's `key` is carried onto the inlined root (`<Fragment key>` for a fragment root or a non-JSX root, importing `Fragment` from `react`); `ref` is an ordinary prop (React 19's rule).
+
+The refusals, each leaving **both files byte-identical** (the plan is computed and checked before the first byte changes; nothing is saved on any refusal):
+
+| Reason | When | Offers "Duplicate as a new file" |
+|---|---|---|
+| `package-component` | the callee is an installed package or the project's own `design-system/` folder | no (WS-4.4 eject is open) |
+| `unresolvable` / `not-a-component` / `no-renderable-jsx` | as their names say | no |
+| `uses-hooks` | any hook in the body (DET-3 will move context readers) | yes |
+| `maps-over-props` | the JSX `.map`s over one of its own props | yes |
+| `unsupported-params` | an undestructured `props`; a nested destructure the JSX reads; a param used in a type position, or as a tag name the call-site value cannot spell (`as="section"` → `<section>` works; `as={cond ? A : B}` does not); a call-site string carrying an HTML entity that must move into a JS expression; `children` used as a value when several children are passed | yes |
+| `spread-ambiguous` | an explicit attribute BEFORE a spread the param could come from; two spreads; a spread of a non-identifier (`{...getPlan()}`); a call-site spread (or call-site children) into a component that forwards `...rest` | yes |
+| `body-local` | a body value the JSX reads that is not a single-use `const` of params and module scope: read twice, read inside a callback (inlining would recompute it per call), computed from another body value, destructured, a body `function`, or used as a JSX tag | yes |
+| `unbound-reference` | a module-scope helper the component's file declares but does **not** export (the old codemod imported it anyway — an import of a name that module does not have), a name from the scope around the component, or anything the post-build gate cannot account for | yes |
+| `name-collision` | a global the page shadows at the call site; a same-file component whose module-scope name a local shadows at the call site; a call-site value that one of the component's own inner bindings would capture (`title={item.name}` substituted inside the component's own `ROWS.map((item) => …)`) | yes |
+
+**The post-build gate.** After the plan is written into the page in memory, `subtreeFreeVariables.ts` re-reads the inserted markup and checks every free name against what the plan promised — a call-site name must bind exactly as it did at the call site, an imported one at module scope, a global not at all — and `introducesSyntaxErrors` (`reinsertJsxSource.ts`) compares syntactic diagnostics against the original. Anything unaccounted for refuses (`unbound-reference` / `name-collision`) and restores the page's text; a syntax regression is an invariant violation and throws, also without writing. That walk now reads EVERY identifier in the subtree — a `{...rest}` spread attribute and a non-JSX root's condition used to be invisible to it, which extract and move shared.
+
+The codemod is four modules by responsibility: `detachComponent.ts` (the entry, the refusal vocabulary, the gate, the write), `detachSource.ts` (reading the signature, the call site, and the spelling rules for a value), `detachPlanner.ts` (rewriting the JSX by symbol) and `detachNames.ts` (module-scope names, imports and aliases, and the ledger the gate checks).
+
+`src/core/ast-codemods/importReconcile.ts` is where the identity rule lives for every JSX-moving codemod: `importModuleKey` (resolved file, or a relative specifier's absolute target, or a bare specifier), `planImportBinding` (pure — reuse, keep, or alias) and `applyImportBinding` (merges a named import into an existing declaration of the same module). `addReconciledImports` is built on them and returns the rename map.
 
 `src/core/ast-codemods/extractComponentCopy.ts` is the refusal escape hatch: duplicate the component under the next free numeric suffix (`Card` → `Card2`), rename the copy's own export, and repoint just the one call site — no inlining, so none of detach's refusal conditions apply.
 
@@ -477,7 +514,7 @@ Unlike the old replace-in-place design, a call site's own literal props (`<Icon 
 
 All three share `resolveComponentCallSite.ts`'s "what does this JSX tag identifier actually refer to" resolution — the same local/package classification, barrel/rename-aware lookup, and declaration walk `inlineLocalComponents.ts` uses for the identical question.
 
-Measured against the real eSIM corpus (139 `studio.instance` nodes on the board): 59 detach cleanly; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4).
+Measured against the real eSIM corpus (139 `studio.instance` nodes on the board) **before DET-1**: 59 "detached cleanly"; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4). Some of those 59 were the silent-rebind and unbound-name writes described above, so that number is an upper bound; re-measuring the corpus is part of DET-3.
 
 ### Imports are followed through barrels
 
@@ -669,6 +706,18 @@ Resolving a whole `translations` object is memoized per `SourceFile`, and a prov
 
 **A guard-truncated result is never cached.** A truncated value describes the budget that happened to be left at that moment, not the code — caching one made *which page was parsed first* silently decide whether any copy resolved at all. `Budget.truncated` and `trackTruncation` enforce this; both caches check it.
 
+### The evaluator reports every file it reads a value out of (WB-2)
+
+`StaticEvalOptions.readFiles` is an out-param, shared across one page load like `pageBudget`: every file a value was read out of is added to it — a cross-file `const` (the file it is declared in), an import whose target is a `SourceFile` (recorded even when the binding is a function Tier C then calls), a `?raw` text file and an image, every file a Tier B provider trace read (the hook's, the context's, the provider's), and every file a CSS-in-JS extraction read (the styled component's own file, and its interpolations' theme tokens). The load merges the set into `pageParseCache`'s per-route dependency set, beside `inlineLocalComponents`' structural `dependencyFiles`.
+
+Before this, a page rendering `{COPY.title}` from `src/copy.ts` cached text read out of a file nothing watched. The outer `studioLoadMemo` correctly recomputed (its fingerprint covers every file), and the inner per-route cache then hit, because none of ITS files had moved — so a resolved-text edit (a `literal` edit at the `textOrigin`) was reverted by every later load.
+
+**A memo hit replays what the memo read.** The three memos (`moduleConstCache`, `providerTraceCache`, the css-in-js `fileCache`) are keyed by the file the ANSWER lives in, but the answer was read THROUGH other files. Each entry stores the files its computation read (`collectReads` in `evalReadFiles.ts`) and a hit adds them to the caller's set — otherwise only the first page to parse a dictionary would record the module behind it. Reads are collected for a memo entry even when the caller asked for none: the entry outlives the call.
+
+**A `literal` edit is shared** (`isSharedSourceNodeId`): a dictionary key is shared by design, so the save reports `sharedComponents` and the client's narrow resync reloads exactly the routes whose recorded dependencies include the origin file — every other node showing the same copy updates at once.
+
+What the set still does not cover, knowingly: a file whose mere EXISTENCE changes an answer without its text being read — a second `<Ctx.Provider>` added to an unrelated file (Tier B then becomes ambiguous), a barrel re-pointed at another component, a missing `?raw`/image file that later appears. `.svg` joined the outer memo's fingerprinted extensions so a `?raw` icon edit reaches the parse at all; a `?raw` import of any other extension still needs a source change or a restart to show.
+
 ### Structure is locked; values are decided per prop
 
 Two different facts used to share one field, and conflating them made most of an imported app uneditable.
@@ -706,7 +755,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 
 Through `lock-01`, `codeProps` named a prop whenever §7's evaluator **resolved** it, or when it held a structured/JSX value with no scalar form. Everything §7 tried and could NOT resolve — a bare identifier bound to hook state, a member/element-access chain, a template literal with an unresolvable interpolation (`className` included), a ternary/`&&`/`||`/`??` whose condition isn't statically decidable, a call outside Tier C's whitelist, a JSX-valued prop on a plain HTML element — carried no value AND no `codeProps` entry. Same for the equivalent shapes in `style={{…}}` and a node's own sole-text-child expression.
 
-That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProps` entry as "writable", and `setJsxProp` (the codemod behind an ordinary prop edit) has **no guard** against replacing a non-literal attribute's initializer — it just calls `existingAttribute.setInitializer(...)` unconditionally. So a prop the parser silently dropped looked, to the panel, exactly like an ordinary empty field: type into it, save, and the edit would bake a literal straight over an expression the user never even saw, deleting the binding. This is the identical destructive-write hole `lock-01`'s function-prop precedent (`onClose={fn}` -> `codeProps`, no value) had already closed for ONE shape; board-27b generalizes it to every shape `extractProps`/`extractInlineStyles` fall through on.
+That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProps` entry as "writable", and `setJsxProp` (the codemod behind an ordinary prop edit) had **no guard** against replacing a non-literal attribute's initializer — it called `existingAttribute.setInitializer(...)` unconditionally. (Since WB-11 it refuses `binding-overwrite` itself — see [The element identity guard](#the-element-identity-guard-p1-a); the trace below is still what keeps the panel honest.) So a prop the parser silently dropped looked, to the panel, exactly like an ordinary empty field: type into it, save, and the edit would bake a literal straight over an expression the user never even saw, deleting the binding. This is the identical destructive-write hole `lock-01`'s function-prop precedent (`onClose={fn}` -> `codeProps`, no value) had already closed for ONE shape; board-27b generalizes it to every shape `extractProps`/`extractInlineStyles` fall through on.
 
 | Layer | What changed |
 |---|---|
@@ -721,7 +770,7 @@ That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProp
 
 **A `.map` row's copy of this fix comes for free.** A structured/unresolvable prop on an expanded loop ITEM (`ADD_ONS.map((addOn) => <Icon svg={addOn.icon} />)`, where `addOn.icon` still fails to resolve for some rows) is traced the same way, per row — the catch-all runs inside `iterationEvalContext`'s scope exactly like every other §7 resolution.
 
-**Known gap, not yet closed:** `codeText`'s UNRESOLVED case (`hasCodeText`, no `text`) is set at the page-parser level, but `parsedPageToSitePage.ts`'s fold into `PageNode.codeProps` currently only runs when `node.text !== undefined` — so the unresolved-text trace does not yet reach the panel. Not a write-safety hole (`setJsxText`'s own `assertTextOnlyChildren` independently fails closed on any non-text-leaf shape, so the codemod refuses regardless), but the panel still shows an empty, apparently-editable text field for this case until `studio-sync` gets the companion one-line change. See `STATE.md`'s `board-27b` entry.
+**The unresolved-text trace reaches the panel (WB-29).** `codeText`'s UNRESOLVED case (`hasCodeText`, no `text`) used to stop at the page-parser: `parsedPageToSitePage.ts` folded `codeText` into `PageNode.codeProps` only inside `if (node.text !== undefined)`, so `<a>{user.name}</a>` reached the panel as an empty, apparently-editable text field, and typing into it ended in a refused write. The fold now runs for both cases — a module with a text prop whose text the evaluator tried and could not read names that prop in `codeProps`, and `isPropWritableToSource` refuses it like any other code-valued prop. Regression test: `src/core/studio-sync/__tests__/codeProps.test.ts`.
 
 ### Resolved TEXT is editable, at its origin
 
@@ -759,7 +808,7 @@ It now has its own edit kind and codemod. `saveSite` collapses `tag`/`customTag`
 
 ### The writeback path is contained
 
-`studioEditLocation` now rejects a `rel` that is absolute, contains a `..` or empty segment, or does not end in a JS/TS extension.
+`studioEditLocation` now rejects a `rel` that is absolute, contains a `..` or empty segment, names a directory no Studio writer may touch, or does not end in a JS/TS extension.
 
 This was a real hole, not a hypothetical one: the whole edit batch arrives from the client with `rel` inside each `nodeId`, and the save route builds its target with `join(dir, rel)` — so a `nodeId` of `../../.ssh/config:1:1` was an arbitrary file write. Nothing legitimate produces one (the parser mints ids from `path.relative(workspaceRoot, file)` for files it already found inside the workspace), and the check lives in the single decoder every path shares, so ordering, dedupe, touched-file collection, and apply all inherit it.
 
@@ -768,7 +817,46 @@ This was a real hole, not a hypothetical one: the whole edit batch arrives from 
 - **Two spellings can name one file.** `pages/Home.tsx` vs `pages/home.tsx` on a case-insensitive filesystem (this machine, every Windows install, default macOS), or `mirror/Home.tsx` where `mirror` is a symlink or an NTFS junction to `pages` — the kind git stores, so an imported repo carries it. `sec-17` found the consequence: `transplantJsxElement`'s same-file guard compared the two strings, so a cross-frame move between two aliases wrote the destination and then clobbered it with the origin's text minus the moved element — the markup gone, inserted nowhere, `{ ok: true }` reported, and no undo entry for that family. That fix compared two realpaths inside one codemod; `sec-18` closed the property at the decoder, so `dedupeStudioEdits`' key, the batch's touched-file set, and every codemod's `join(dir, rel)` now agree about how many files a batch touches.
 - **A lexical guard is not containment.** A `.tsx` symlink INSIDE the project pointing at a file outside it has no `..`, is not absolute, and has the right extension — it passed cleanly and was written. `relative()` against the real project root turns it into a leading `..`, and the same guard then refuses it.
 
-A file that does not exist yet keeps its lexical `rel`: there is nothing to canonicalise against, the lexical guard has already passed, and every codemod refuses a missing file on its own. `orderStudioEditsForApply` is the one caller that deliberately does NOT canonicalise — it sorts by line number, descending globally and therefore also within each file, so which file a `rel` names never enters the comparison and an O(n log n) burst of `realpath` calls on the save path would buy nothing.
+- **An unwritable directory is refused on both spellings (P1-G).** `isWritableSourceRel` used to check path SHAPE only, so `.studio/anything.tsx:1:1` — or a `node_modules/`, `.git/` or `.claude/` script — was a valid target for every edit kind, a `transplant` destination and MCP `studio_apply_edits`/`studio_codemod` included. It now refuses any segment `unwritableWorkspaceSegment` (`@core/page-parser/workspaceWriteScope.ts`) names: the walk exclusions (`.studio`, `.git`, `node_modules`, `dist`, `.next`, `.turbo`) plus `.claude`, compared the way the filesystem resolves a name (case-folded, trailing dots/spaces and NTFS stream suffixes dropped). Because the decoder re-runs the guard on the real path, a link spelled like source that lands in one of them is refused too. The same predicate gates the CSS writeback, asset landing, the component-copy codemods and the agent's native writes — one list, no second copy. Its single extension point, `STUDIO_AUTHORED_SOURCE_PATTERNS` in `studioEditRouting.ts`, is empty: FC-1 opens exactly `.studio/canvas/<id>.tsx` there under its own review.
+
+A file that does not exist yet canonicalises through its deepest existing ancestor, so a symlinked project root (macOS' `/var` → `/private/var`) cannot put the project and the file on different sides of a link. A path through a **dangling** link is refused: a write follows the link, so "not created yet" would really mean "created wherever the link points". Every codemod still refuses a missing file on its own. `orderStudioEditsForApply` is the one caller that deliberately does NOT canonicalise — it sorts by line number, descending globally and therefore also within each file, so which file a `rel` names never enters the comparison and an O(n log n) burst of `realpath` calls on the save path would buy nothing.
+
+### Two instances' `style`/`class` edits merge; they do not replace (WB-7)
+
+Every instance of an inlined component writes back to one `line:col`, so `dedupeStudioEdits` collapses their edits to one. It used to keep only the last, which is right for a genuine conflict — one `title`, two values — and wrong for `style` and `class`, whose edits are SETS: instance A's `{ padding }` and `+a` were dropped, B's `{ margin }` and `+b` written, `written: 2` reported, and the client adopted both baselines. `studioEditMerge.ts` now unions style declarations and `remove` lists, and class `add`/`remove` token sets; a property or token both set and removed resolves by order (the later edit wins). The surviving edit carries the other node ids as `absorbedNodeIds`, and `expandMergedOutcomes` reports its refusal or skip once per node behind it, so no instance's baseline advances past a write that did not land. The refusal toast is keyed on the decoded source target, so those N reports are still one toast.
+
+### A file that does not parse is never written (WB-24)
+
+TypeScript's parser recovers a tree from a broken file instead of giving up — an unclosed `<p>` still yields nodes — so a page with a syntax error used to render from a guessed tree and stay fully editable, and a codemod could splice bytes into a location the file does not actually spell. `sourceSyntax.ts` (`@core/page-parser`) answers "does this file parse?" one way for both sides:
+
+| Side | What happens |
+|---|---|
+| Load | `loadWarnings.ts` asks the kept `Project` about each route's own file; a broken one still renders, and `StudioLoadResult.warnings` carries `{ code: 'syntax-error', pageId, file, line, col, message }` |
+| Write | `studioSyntaxGuard.ts`, asked by `applyStudioEditBatch` before each edit, reads every file the edit would write (its target, a transplant's destination, a stylesheet `create`'s page) as it sits on disk; a broken one refuses the edit with reason `syntax-error` and a message naming the file and the line. Other files in the same batch still write |
+
+Syntactic only: a type error or an unresolved import is the user's business and never blocks a write. The in-frame badge for a flagged page is canvas work not yet done; the refusal toast names the line on its own.
+
+### A `tsconfig.json` that does not parse costs its aliases, never the board (WB-23)
+
+ts-morph reads the tsconfig in `createWorkspaceProject`'s constructor and throws on one it cannot parse (`'}' expected.`), which made `/load` answer 500 and the board not open. The project is now built without it — path aliases stop resolving, nothing else changes — and the load reports `{ code: 'tsconfig-unreadable', file: 'tsconfig.json', message }` in `warnings`. Every caller of `createWorkspaceProject` (the catalog, the MCP tools, the codemods that build their own project) inherits the fallback. `withWorkspaceProject` rebuilds the kept `Project` when `tsconfig.json`'s `size:mtimeMs` moves, and its stamp is part of the parse cache's config hash, so fixing the file brings the aliases back without a restart.
+
+### The element identity guard (P1-A)
+
+A node id is a POSITION. When a file changes under the board — the agent's own Edit tool, VS Code, `git pull`, a structural write still in flight — the same `line:col` names a different element, and a prop, text or delete edit used to land on that neighbour and report `written: 1` (audit WB-1; ERR-4 is the in-flight case). Measured: a prop and a text edit aimed at `<li title="b">Two</li>` rewrote the previous sibling; a delete aimed at "One" removed "Zero".
+
+So every element and every literal origin the parser reads carries a fingerprint of what it read there — `<tag>#<hash>` over the opening tag plus the element's own direct text, or `literal#<hash>` over a literal token (`sourceFingerprint.ts` in `@core/page-parser`; the wire shape is in `@core/page-tree`). Every write sends the fingerprints of the ids it names as `expect`, and `findMovedEdits` (`server/handlers/studioEditIdentity.ts`) refuses `element-moved` — before a single byte of the batch is written — when the element at that position is not the one expected. The board recovers from that refusal silently: re-read the file, re-find the element by the same fingerprint (exactly one match, or nothing), re-post once. Only an element that cannot be found again is reported, as one warning.
+
+Three decisions worth knowing before touching it:
+
+| Decision | Why |
+|---|---|
+| Opening tag **plus direct text**, not the opening tag alone and not the subtree | `<li>One</li>` and `<li>Two</li>` share an opening tag, and a shifted line usually lands exactly on such a sibling. The subtree would change every ancestor's identity on every descendant edit, so the board could not keep its record current from the save response alone |
+| Whitespace-insensitive | A CRLF checkout, a re-indent, or a formatter breaking a long tag must not read as a different element — the guard would refuse honest writes |
+| A value write REPORTS the new identity (`fingerprints` on the `/save` response) | A prop/class/style/tag/text write changes the very bytes hashed, without moving anything, and the board does not re-read a file for a write that shifted nothing. Without the report, Studio's own previous write would make the next edit to the same element refuse |
+
+`setJsxProp` also refuses by itself now (WB-11): an attribute whose initializer is not a string, number or boolean literal refuses `binding-overwrite` instead of baking a literal over the binding — the client's `codeProps` guard was the only protection, and an agent's `studio_apply_edits` never passes through it.
+
+Not guarded yet: `css` edits (a file and a selector, no position) and `styled` edits (their template location is not on a node). The client half — the identity table, the recovery, and the structural queue's re-finding of ids — is in `docs/agent-refs/studio-pipeline.md` → "Element identity".
 
 ### A save only reloads when a write actually landed
 
@@ -1623,12 +1711,19 @@ here once it is genuinely detectable.
 | Store gate, panel gate, and the writability predicate agreeing | `src/__tests__/studio/resolvedTextEditing.test.ts` |
 | Store refuses a code-valued prop/style, admits a structurally-locked literal one | `src/__tests__/editor-store/lockedNodeGuards.test.ts` |
 | Element rename, and its refusals (component reference, non-tag name) | `src/core/ast-codemods/__tests__/setJsxTagName.test.ts` |
+| Detach: symbol-based substitution everywhere, `undefined` for omitted props, literal collapsing, aliasing, body locals, spread/rest, `key` — and every refusal leaving the workspace byte-identical | `src/core/ast-codemods/__tests__/detachComponent.test.ts` |
+| Import identity: reuse vs alias vs add, side-effect mirroring, mixed-import removal | `src/core/ast-codemods/__tests__/importReconcile.test.ts` |
+| The shared free-variable walk (spread attributes, non-JSX roots, member tags, loop bindings) | `src/core/ast-codemods/__tests__/subtreeFreeVariables.test.ts` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |
 | Load/save endpoint contract | `server/handlers/__tests__/studio.test.ts` |
 | Save write-loop safety | `src/admin/pages/site/studio/__tests__/fsCodemodAdapter.test.ts` |
 | Literal writeback + writable-path guard | `server/handlers/__tests__/studioWriteback.test.ts` |
+| WB-2: every file a value was read out of, per source, replayed on a memo hit | `src/core/page-parser/__tests__/evalReadFiles.test.ts` |
+| WB-2: a resolved-text edit survives the next load, and its resync narrows to the readers | `server/handlers/__tests__/studioPageLoadEvaluatorDeps.test.ts` |
+| WB-7: two instances' style/class edits merge; refusals reach every instance | `server/handlers/__tests__/studioEditMerge.test.ts` |
+| WB-23/WB-24: unreadable tsconfig and syntax-error pages load, and writes to a broken file refuse | `server/handlers/__tests__/studioLoadDegradation.test.ts`, `src/core/page-parser/__tests__/sourceSyntax.test.ts` |
 | `setStringLiteral` fail-closed behaviour | `src/core/ast-codemods/__tests__/setStringLiteral.test.ts` |
 | Resolved text is editable at its origin, and nothing else is | `src/__tests__/studio/resolvedTextEditing.test.ts` |
 | CSS write-back: honest-target refusals | `src/core/css-codemods/__tests__/analyzeDeclarationTarget.test.ts` |

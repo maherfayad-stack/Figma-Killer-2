@@ -497,10 +497,19 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
     expect(constraint.actions[0]?.kind).toBe('extract')
   })
 
-  it('row 21 — name-collision carries no action', () => {
+  it('row 21 — name-collision offers the extract hatch (audit 07 §B.7: a repointed copy rebinds nothing)', () => {
     const constraint = explainDetachConstraint('name-collision', 'A binding with that name already exists.')
     assertWellFormed(constraint)
-    expect(constraint.actions).toEqual([])
+    expect(constraint.actions[0]?.kind).toBe('extract')
+  })
+
+  it('DET-1/DET-2 — every new fail-closed Detach reason offers the extract hatch', () => {
+    for (const reason of ['spread-ambiguous', 'body-local', 'unbound-reference']) {
+      const constraint = explainDetachConstraint(reason, 'Detach refused.')
+      assertWellFormed(constraint)
+      expect(constraint.reason).toBe(reason as typeof constraint.reason)
+      expect(constraint.actions[0]?.kind).toBe('extract')
+    }
   })
 
   it('B2 — css-module-binding offers "edit the class definition"', () => {

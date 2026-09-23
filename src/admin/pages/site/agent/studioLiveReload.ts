@@ -27,6 +27,7 @@ import { fetchBoards } from '../studio/boardsApi'
 import { fetchComments } from '../studio/commentsApi'
 import { studioWriteDir } from '../studio/studioWorkspaceDir'
 import { fetchStudioPagesById } from '../studio/studioLiveReloadFetch'
+import { noteBoardRead } from '../studio/sourceIdentity'
 import { getAgentStoreApi } from './storeRef'
 
 const getStoreState = (): EditorStore => getAgentStoreApi<EditorStore>().getState()
@@ -107,6 +108,7 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
       // like on screen.
       const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(input.pageIds)
       getStoreState().patchPages({ pages, removedPageIds: missingPageIds, styleRules, conditions })
+      noteBoardRead(pages, 'merge') // P1-A — the agent's write renumbered these; see `sourceIdentity.ts`
     } catch (err) {
       console.error('[studioLiveReload] page reload failed — canvas may be stale for the touched page(s):', err)
       failed.push('pages')

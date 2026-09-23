@@ -55,6 +55,7 @@
 import { createHash } from 'node:crypto'
 import { Node, type ConditionalExpression, type ImportDeclaration, type SourceFile } from 'ts-morph'
 import { resolveExportedDeclaration } from './componentSources'
+import { collectReads, recordReadFile, recordReadFiles } from './evalReadFiles'
 import { createEvalScope, createPageEvalBudget, evaluateExpression } from './staticEval'
 import type { EvalScope, StaticEvalOptions, StaticValue } from './staticEval'
 import {
@@ -139,7 +140,12 @@ function syntheticClassName(componentName: string, relFile: string, line: number
 export function extractCssInJs(sourceFile: SourceFile, relFile: string, evalOptions?: StaticEvalOptions): CssInJsFile {
   const cacheKey = evalOptions?.preferredKey ?? ''
   const cached = fileCache.get(sourceFile)?.get(cacheKey)
-  if (cached) return cached
+  if (cached) {
+    // WB-2 — an extraction reads its interpolations through other files (a
+    // theme token, a mixin); a hit replays them so the page still records them.
+    recordReadFiles(evalOptions?.readFiles, cached.reads)
+    return cached.file
+  }
   // A file whose template interpolates a mixin from a file that imports back
   // from it would otherwise recurse forever — the memo below only fills in
   // AFTER extraction finishes, so it cannot break the cycle by itself. Same
@@ -148,12 +154,17 @@ export function extractCssInJs(sourceFile: SourceFile, relFile: string, evalOpti
   if (inFlight.has(sourceFile)) return EMPTY_CSS_IN_JS_FILE
 
   const budget = createPageEvalBudget(CSS_IN_JS_EVAL_BUDGET)
+  const extractOptions: StaticEvalOptions = { ...evalOptions, pageBudget: budget }
   let result: CssInJsFile
+  let reads: readonly string[]
   inFlight.add(sourceFile)
   try {
     const roles = importedRoles(sourceFile)
     if (roles.size === 0) return EMPTY_CSS_IN_JS_FILE
-    result = extractFile(sourceFile, relFile, roles, { ...evalOptions, pageBudget: budget })
+    ;({ result, files: reads } = collectReads(extractOptions, () => {
+      recordReadFile(extractOptions.readFiles, sourceFile)
+      return extractFile(sourceFile, relFile, roles, extractOptions)
+    }))
   } catch (err) {
     console.error('[cssInJsExtract]', err)
     return EMPTY_CSS_IN_JS_FILE
@@ -170,12 +181,13 @@ export function extractCssInJs(sourceFile: SourceFile, relFile: string, evalOpti
       byKey = new Map()
       fileCache.set(sourceFile, byKey)
     }
-    byKey.set(cacheKey, result)
+    byKey.set(cacheKey, { file: result, reads })
   }
   return result
 }
 
-let fileCache = new WeakMap<SourceFile, Map<string, CssInJsFile>>()
+/** One extracted file plus every file its extraction read — see `extractCssInJs`'s hit path. */
+let fileCache = new WeakMap<SourceFile, Map<string, { file: CssInJsFile; reads: readonly string[] }>>()
 
 /** Drops every extracted file — an extraction follows imports into other files, so a kept `Project` resets this whenever one changes (`./parserCaches`). */
 export function forgetCssInJsFileCache(): void {
@@ -603,6 +615,9 @@ function bindingIn(
 ): StyledBinding | undefined {
   const rel = relativePosix(workspaceRoot, target.getFilePath())
   if (rel === undefined) return undefined
+  // WB-2 — whether `target` declares a styled binding is a fact about its
+  // text; a page that asked must be re-parsed when that file changes.
+  recordReadFile(evalOptions?.readFiles, target)
   const file = extractCssInJs(target, rel, evalOptions)
   if (file.bindings.size === 0) return undefined
   if (exportedName !== 'default') return file.bindings.get(exportedName)

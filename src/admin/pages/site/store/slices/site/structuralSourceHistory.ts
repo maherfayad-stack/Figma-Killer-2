@@ -54,8 +54,8 @@ type StructuralSourceHistoryActions = Pick<SiteSlice, 'recordStructuralSourceWri
 
 /**
  * Apply what a landed structural write means for the undo stack — called by
- * `usePersistence.ts` once the board has read the write back, draining
- * `pendingStructuralOutcome.ts`.
+ * `siteReloadApply.ts` once the board has read the write back, applying the
+ * `pendingStructuralOutcome.ts` value that rode that re-read.
  *
  * `push` is an ordinary gesture: one new entry, one ⌘Z. `fill` (`store-15`) is
  * `delete`'s own forward commit filling in the `inverse` of the entry its own

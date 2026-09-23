@@ -32,6 +32,14 @@ export {
   toRuntimeStampId,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
+export {
+  ELEMENT_MOVED_REASON,
+  SourceFingerprintExpectationsSchema,
+  SourceFingerprintSchema,
+  sourceFingerprintLabel,
+  sourceLocationKey,
+} from './sourceFingerprint'
+export type { SourceFingerprint, SourceFingerprintExpectations } from './sourceFingerprint'
 export { classifyJsxTagKind } from './jsxTagKind'
 export type { JsxTagKind } from './jsxTagKind'
 export {

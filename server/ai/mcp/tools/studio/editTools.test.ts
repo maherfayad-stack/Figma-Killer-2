@@ -159,11 +159,9 @@ describe('studio_codemod', () => {
     )) as { ok: boolean; shifted?: boolean }
     expect(result.ok).toBe(true)
     expect(result.shifted).toBe(true)
-    // Substituted as a JSX expression container holding the call site's own
-    // string-literal text (`{"Hi"}`), not a bare text child — every
-    // substitution `buildInlinedJsxText` makes is wrapped in `{…}` uniformly
-    // (see its doc comment); React renders the two identically.
-    expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<div className="card">{"Hi"}</div>')
+    // A substituted string lands as JSX text, not `{"Hi"}` — audit 07 DET-1:
+    // the form Studio's own text editing handles natively.
+    expect(fs.readFileSync(path.join(tmpDir, 'pages', 'Home.tsx'), 'utf8')).toContain('<div className="card">Hi</div>')
   })
 
   it('detach refuses a component that uses a hook, with a specific reason', async () => {

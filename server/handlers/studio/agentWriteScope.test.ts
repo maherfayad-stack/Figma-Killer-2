@@ -13,7 +13,8 @@ import { describe, expect, it, afterEach } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { AGENT_UNWRITABLE_DIR_NAMES, agentWriteRefusalReason } from './agentWriteScope'
+import { UNWRITABLE_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { agentWriteRefusalReason } from './agentWriteScope'
 
 const created: string[] = []
 
@@ -52,6 +53,25 @@ describe('agentWriteRefusalReason — what an agent may not write', () => {
     const dir = tmpProject()
     expect(agentWriteRefusalReason(join(dir, '.STUDIO', 'meta.json'), dir)).not.toBeNull()
     expect(agentWriteRefusalReason(join(dir, '.Claude', 'settings.local.json'), dir)).not.toBeNull()
+  })
+
+  it('refuses spellings Windows resolves to the control plane — trailing dot, trailing space, NTFS stream', () => {
+    const dir = tmpProject()
+    expect(agentWriteRefusalReason(join(dir, '.studio.', 'meta.json'), dir)).not.toBeNull()
+    expect(agentWriteRefusalReason(join(dir, '.claude ', 'settings.local.json'), dir)).not.toBeNull()
+    expect(agentWriteRefusalReason(join(dir, '.git::$INDEX_ALLOCATION', 'hooks', 'pre-commit'), dir)).not.toBeNull()
+  })
+
+  it('refuses a write through a dangling symlink, which would land wherever it points', () => {
+    const dir = tmpProject()
+    const outside = mkdtempSync(join(tmpdir(), 'studio-agent-write-scope-outside-'))
+    created.push(outside)
+    try {
+      symlinkSync(join(outside, 'payload.sh'), join(dir, 'src', 'run.sh'))
+    } catch {
+      return // unprivileged file symlinks are not always available on Windows
+    }
+    expect(agentWriteRefusalReason(join(dir, 'src', 'run.sh'), dir)).not.toBeNull()
   })
 
   it('refuses .claude/, which holds the settings file wiring this very hook', () => {
@@ -122,7 +142,7 @@ describe('agentWriteRefusalReason — what an agent may not write', () => {
 
   it('names .studio, .claude and .git — the escalation set, not a subset', () => {
     for (const name of ['.studio', '.claude', '.git', 'node_modules']) {
-      expect(AGENT_UNWRITABLE_DIR_NAMES.has(name), `${name} must be unwritable`).toBe(true)
+      expect(UNWRITABLE_WORKSPACE_DIR_NAMES.has(name), `${name} must be unwritable`).toBe(true)
     }
   })
 })

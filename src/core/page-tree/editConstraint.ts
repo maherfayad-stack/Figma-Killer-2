@@ -91,6 +91,11 @@ export type ConstraintReason =
   | 'unsupported-params'
   | 'no-renderable-jsx'
   | 'name-collision'
+  // DET-1/DET-2 (audit 07 §B.7) — detach fails closed rather than writing
+  // code that reads the wrong binding or none at all.
+  | 'spread-ambiguous'
+  | 'body-local'
+  | 'unbound-reference'
   // Row 22 — Swap refusal (component shape mismatch, etc).
   | 'swap-refused'
   // Row 23 — save-time prop/text/style edit reached no writable location, only
@@ -365,6 +370,12 @@ const DETACH_ACTIONS: ReadonlySet<string> = new Set([
   'maps-over-props',
   'unsupported-params',
   'no-renderable-jsx',
+  // Audit 07 §B.7: a copy of the component has none of these problems — it
+  // is repointed, never inlined, so nothing it reads has to rebind.
+  'spread-ambiguous',
+  'body-local',
+  'unbound-reference',
+  'name-collision',
 ])
 
 /**

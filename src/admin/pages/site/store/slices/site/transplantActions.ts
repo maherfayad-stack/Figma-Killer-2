@@ -82,7 +82,14 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
       // a second drag fired before the first one's resync would plan against
       // the still-unshifted original and post a SECOND real write. Parked and
       // re-planned once the first has landed, rather than refused.
-      if (deferWhileStructuralCommitInFlight(() => { actions.transplantNodes(nodeIds, destination) })) return
+      if (
+        deferWhileStructuralCommitInFlight(
+          (relocate) => { actions.transplantNodes(nodeIds.map(relocate), { ...destination, parentId: relocate(destination.parentId) }) },
+          [...nodeIds, destination.parentId],
+        )
+      ) {
+        return
+      }
 
       const state = get()
       const site = state.site

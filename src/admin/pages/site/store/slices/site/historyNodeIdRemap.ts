@@ -95,6 +95,11 @@ export function buildReparseNodeIdRemap(
   for (const beforePage of before.pages) {
     const afterPage = afterById.get(beforePage.id)
     if (!afterPage) return new Map()
+    // An untouched page (`patchPages` keeps its object) renamed nothing, and
+    // walking it would contribute nothing — skipping it keeps a narrow resync
+    // O(touched pages) now that ERR-5 asks for this remap on every reload that
+    // has a held id, not only when there is history.
+    if (afterPage === beforePage) continue
     const pageRemap = new Map<string, string>()
     if (!walkTreePair(beforePage, afterPage, beforePage.rootNodeId, afterPage.rootNodeId, pageRemap)) {
       continue

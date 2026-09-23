@@ -527,8 +527,8 @@ export interface SiteSlice {
   /**
    * `store-14` — apply what a landed STRUCTURAL SOURCE write means for the undo
    * stack: push the gesture's own entry, or refresh the one an undo/redo just
-   * moved. Called by `usePersistence.ts` when it drains
-   * `pendingStructuralOutcome.ts`, which is the first moment the board holds
+   * moved. Called by `siteReloadApply.ts` with the
+   * `pendingStructuralOutcome.ts` value that rode the re-read — the first moment the board holds
    * the nodes the write made — see `structuralSourceHistory.ts`.
    */
   recordStructuralSourceWrite: (history: PendingStructuralHistory) => void
