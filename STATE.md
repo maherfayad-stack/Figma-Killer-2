@@ -115,7 +115,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
 
 ### mcp-27 — P4-B: Studio's system prompt reaches the Claude CLI (AI-1, AI-3)
-- **Agent:** mcp-tooling · **Branch:** `fix/agent-prompt-reaches-the-cli` (trunk `f0956720` merged in) · **PR:** draft against `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Agent:** mcp-tooling · **Branch:** `fix/agent-prompt-reaches-the-cli` (trunk `f0956720` merged in) · **PR:** #231 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open)
 - **Goal:** the default (CLI) agent path gets the same guidance as the HTTP path: static prefix, `MODE_BLOCK`, `DESIGN_POLICY_BLOCK`, subagent contract.
 - **Done:**
