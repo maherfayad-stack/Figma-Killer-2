@@ -78,6 +78,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Height:** none touched. But a selection can pan the board (`focusActiveBreakpoint`). An e2e point measured before a click can land under a side panel after it (it opened board rename once). Re-centre before a double-click.
   - `runtimeBridgeBundle.ts` was patched with the diff between a pristine and a modified local build, because `studio-runtime:sync` differs on this CRLF tree. Re-sync on an LF tree.
   - `studio-feel.e2e.ts`'s refusal case now double-clicks into the clock's instances. A click selects the instance now.
+- **Merged into the trunk** (orchestrator): `runtimeBridgeBundle.ts` regenerated from the merged runtime sources because it conflicted with P2-D's hand patch. On the merged trunk, `selection-keyboard-hands.e2e.ts` failed once, twice on the outermost-instance live-frame case, then passed 6/6 twice. The first failure was a flake right after the bundle was regenerated, most likely a cold Vite start.
 - **Next:** the owner dogfoods (below); P2-C builds node arrows on the release broadcast.
 - **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, all three frames:
   1. Click a box, then ⇧-click a second one: both are selected. ⇧-click the first again: only the second stays.
