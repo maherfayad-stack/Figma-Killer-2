@@ -3153,6 +3153,29 @@ None blocking — this design is directly implementable by `panel-designer` (the
 
 ## Now
 
+### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
+- **Agent:** orchestrator (main session)
+- **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
+- **Branch:** `feat/canvas-excellence`, the program trunk, cut from `chore/integrate-open-drafts` (`9fc88346`, PR #217). Every bundle PR targets this trunk.
+- **Updated:** 2026-09-23
+- **Goal:** the owner's 2026-09-23 ask: no lag, zero visible errors, Penpot/Figma gestures, design-pane spacing, the best possible assistant, image drag & drop, SVG draw/edit, component detach, a free canvas, and a docs cleanup. Ten Opus audits (`docs/audits/2026-09-23-studio-audit/`) were bundled into phases P0–P6 in `ROADMAP.md`.
+- **Owner decisions:**
+  - archive the old plans;
+  - armed draw tools;
+  - a structural gesture inside a shared component applies to this instance only (detach, then replay);
+  - a new free canvas (OD-14 / P5-G), where loose layers are `.studio/canvas/<id>.tsx` rendered in one static iframe per board.
+- **Findings a later agent must not rediscover:**
+  - Line:col ids hit the WRONG element after an outside edit, or a delete during an in-flight move (WB-1, ERR-4). This is the Phase 1 barrier.
+  - Dictionary edits revert on reload (WB-2).
+  - Style/class edits on two instances collapse to one (WB-7).
+  - The selection is not remapped after a resync (ERR-5).
+  - The mode and design-policy prompt blocks never reach the Claude-CLI path (AI-1).
+  - `isWritableSourceRel` accepts any `.studio/*.tsx` path (P1-G).
+- **Landmines:**
+  - STATE.md is frozen while P0-C restructures it. During that window, bundle agents put their STATE entry in their PR body under `## STATE entry`, and the orchestrator folds them in afterwards.
+  - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
+- **Next:** P0 (studio-scribe), P1 bundles and P4-A, in parallel per ROADMAP §11.
+
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree)
 - **Stage:** done — branch `chore/integrate-open-drafts` off `origin/main` `51b19940`, one draft PR against `main`. Nothing was merged into `main`, no existing PR was edited or closed, no branch was force-pushed.
