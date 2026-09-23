@@ -7,7 +7,7 @@
  * CRITICAL Studio rule: `rootNodeId` must point at a `base.body` node, so
  * this converter synthesises one and hangs the parsed root nodes under it.
  */
-import { CUSTOM_HTML_TAG_VALUE, htmlTagControl } from '@modules/base/utils/htmlTag'
+import { CUSTOM_HTML_TAG_VALUE, TEXT_HTML_TAG_SET, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
 import { hasWritableSourceLocation, styleValueKey } from '../page-tree'
 import type { Page, PageNode } from '../page-tree'
@@ -215,9 +215,16 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
           props.customTag = tag
         }
       } else if (moduleId === 'base.text' && tag !== 'p') {
-        // `resolveModuleId` only picks `base.text` for a tag it can render, so
-        // there is no custom-tag fallback to reach here.
-        props.tag = tag
+        // P3-B (WB-3) — `resolveModuleId` picks `base.text` for any element
+        // whose text is its content (`isTextHostTag`); the ones outside the
+        // text select's named list (`<li>`, `<label>`, `<td>`) ride the same
+        // `custom` escape hatch `base.container` uses.
+        if (TEXT_HTML_TAG_SET.has(tag)) {
+          props.tag = tag
+        } else {
+          props.tag = CUSTOM_HTML_TAG_VALUE
+          props.customTag = tag
+        }
       } else if (moduleId === 'base.svg' && tag !== 'svg') {
         // `base.svg` is reached two ways, and only ONE of them names a real
         // element: a literal `<svg>` in source (tag === 'svg', no wrapper —
