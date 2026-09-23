@@ -26,7 +26,7 @@
  * and `stopGateCheck.ts`. This is defence in depth on one surface (the only
  * one that grants native file writes), not the last line anywhere.
  */
-import { agentWriteRefusalReason } from '../agentWriteScope'
+import { agentWriteRefusal } from '../agentWriteScope'
 
 interface PreToolUseInput {
   readonly tool_input?: { readonly file_path?: string }
@@ -46,10 +46,10 @@ async function main(): Promise<number> {
   const filePath = input.tool_input?.file_path
   if (!filePath) return 0
 
-  const reason = agentWriteRefusalReason(filePath, input.cwd ?? process.cwd())
-  if (reason === null) return 0
+  const refusal = agentWriteRefusal(filePath, input.cwd ?? process.cwd())
+  if (refusal === null) return 0
 
-  console.error(reason)
+  console.error(refusal.message)
   return 2
 }
 

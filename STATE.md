@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
-- **Next:** Phase 1 exit gate passed (#232). Merged in Phase 2: P2-F #234, P2-A #235. Running: P2-G, P4-C (security fixes). Then P2-H, P2-B→C→E, P2-D, P2-I. **P2-I must A/B the cold click-to-ring** on a quiet machine (P2-A measured a 432 → 485 ms mean, within load noise; suspect: lazy portal observers paying setup on the first selection). Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
+- **Next:** Phase 1 exit gate passed (#232). Merged in Phase 2: P2-F #234, P2-A #235, P2-G #236, P2-D #237; P4-C #233. Running: P2-B, P2-H, P4-D. Then P2-C→E and P2-I (after P2-B). P2-C must also fix `canvasFreeMove` writing the kebab key `inset-inline-start` into JSX `style={{}}` (P2-D finding, `canvas-23`). **P2-I must A/B the cold click-to-ring** on a quiet machine (P2-A measured a 432 → 485 ms mean, within load noise; suspect: lazy portal observers paying setup on the first selection). Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -77,6 +77,34 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** `structural-writeback.e2e.ts` fails on the trunk BEFORE this change too. Its fixture is not pinned to `trust: 'static'`, so the Tier-2 default mounts a live frame as well (two canvas iframes, a strict-mode violation). Its second case then hits Windows `EPERM` re-creating the held fixture dir. Found, not fixed.
 - **Verification:** build + lint clean. Chunked suite: only pre-existing failures (bundle freshness, optimistic broadcast, bridge measurement, WebSocket, headless capture, dev server), plus three 5 s load timeouts that pass alone.
 - **Next:** none for Phase 1. Phase 2 can start.
+
+
+### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** #233 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verifying — review F1–F9 addressed; re-review R1 (F3 bypass through `prototype/studioRuntime.generated.js`) fixed; **needs security-guard sign-off**
+- **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files; the loop retries transient errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
+- **Tools added** (all `execution: server`):
+  - `studio_grep` (read, no caps; registry + HTTP agent) — `{ query (literal), path?, caseSensitive?, limit? }`.
+  - `studio_write_file` / `studio_edit_file` / `studio_edit_files` (HTTP agent ONLY; `ai.tools.write` + `studio.write`; `sideEffects: write`) — `{ path, content, expectedHash? }`, `{ path, oldString, newString, replaceAll?, expectedHash? }`, `{ edits: [≤50] }`. No `dir` field. Missing precondition → `no-open-project`: "No Studio project is open for this turn, so there is nowhere to write. Ask the user to open the project in Studio and send the message again."
+  - `studio_read_file`, `studio_list_files`, `studio_get_node_source` moved to `fileReadTools.ts` and now also on the HTTP agent surface.
+- **Done:**
+  - One containment rule, `server/handlers/studio/agentFileAccess.ts` (real path, case-folded dirs, `agentWriteRefusal` + `isWorkspaceWritablePath` for writes, credential files, NTFS streams, Windows devices, 1024/255-char caps; hard links refused by the writers).
+  - Review F3: `hostExecutedWorkspaceFile` (`@core/page-parser`) inside the ONE agent write gate `agentWriteRefusal` (was `agentWriteRefusalReason`, now `{ code, message }`) → `needs-user` on the CLI hook AND the HTTP tools for build config, `package.json`, env/npm config, `.husky`/`.vscode`/CI/commit-hook runners, `CLAUDE.md`.
+  - Re-review R1: the same gate refuses Studio's preview shell (`prototype/`, `studioShellWorkspaceFile`, `protected-path`; a test derives the list from the shell templates) and the depth-2 relative-import closure of every root host config (`hostConfigImports.ts`, `needs-user`, mtime-cached).
+  - Writes hold `withProjectWriteLock`, check `expectedHash`, `appendTurnWrite`, and `pushStudioDiskChange` once per call. `studioHttpTurn.ts` generates the project guide and resets the turn log for HTTP turns.
+  - `selectStudioTools(..., { fileAccess })` + `agentFileAccessForProvider`; the prompt derives its file paragraph from the tools (`agentFileAccessFor`); the `needs-user` paragraph is on both paths.
+  - Loop: `providerRetry.ts` (AI-8, `retrying` event + panel headline), wind-down + tools-off summary round (AI-10), `anthropicModelProfile.ts` + truncation continuation + effort mapping + `unsupportedParameter` fallback (AI-11). `toolLoop.ts` split: `toolDispatch.ts`, `heavyElision.ts`, `toolLoopTypes.ts`.
+  - Fixed on the way: `studio_get_node_source` read outside the project via `../` in a node id; `studio_read_file` excluded `.git`/`.studio` case-sensitively.
+- **Decisions:** the write tools are NOT in the external MCP catalog (no external connector is ever bound, so they could only refuse). Thinking blocks live only in the turn's in-memory history, never persisted (AI-11's "new AiContentBlock kind" not done — no later turn needs them). Pre-image checkpoints (AI-7) are P4-F's.
+- **Landmines:** any Studio writer that is NOT an agent must not call `agentWriteRefusal` (the prototype shell writes `vite.config.js`). `tool-write-gate-unchanged-by-side-effects.test.ts` now has `WRITE_GATED_ADDED_SINCE`; `no-phantom-tool-names` and the parity matrix gate cover the HTTP surface too. `TurnResult.stop` is gone (`truncated` + `toolCalls.length`).
+- **Verification:** after the review fixes and the trunk merge (`c9ef0b76`): build, lint, tsc clean; every chunk run under the heavy-run lock with `server/handlers` split; only pre-existing failures (PR body). No e2e: a real turn needs a provider key.
+- **Next (open follow-ups, owners named):**
+  - F7: `pruneLegacyGuideArtefacts` deletes 18 fixed `.claude/` names with no ownership/hash check, and the guide generator writes `CLAUDE.md`/`.claude/*` without a real-path check (a `.claude` junction escapes) — pre-existing CLI-path code in `projectGuide*.ts`; owner: server-engineer.
+  - F3.4: `devServer.ts` spawns `npm run dev`, which runs a repo-supplied `predev`/`postdev`; switch to `npm run --ignore-scripts dev` (or exec Vite directly) — owner: the Tier-2 dev-server bundle.
+  - F5: temp-file + rename for crash-atomic writes (needs EPERM-on-Windows handling and mode preservation).
+  - F8: `studio_fetch_remote_asset` host restriction or first-use confirmation — P4-E.
+  - R1 residuals (security re-review 2 APPROVED with these open, `review-233`): imports of a NESTED app's config (scan `resolveAppRoot` next), depth-3 imports, backtick `import()`, postcss plugin-map keys, tsconfig-`paths` imports, a symlinked config, a dev script's custom `--config`, Tailwind v4 `@plugin`/`@config`. Each needs an import chain already present; none exists in a scaffolded project.
+- **Human action needed:** dogfood with an Anthropic API key (script in the PR body). Security sign-off done.
 
 ---
 
@@ -133,6 +161,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   5. Swap: a popover with a search field opens from the ⇄ button.
   6. Shift-select the instance and another layer: the component section disappears.
   7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
+
+### canvas-23 — P2-D: resize that obeys CSS (IX-6a, 6b, 6c, 6d, IX-18, ERR-12)
+- **Agent:** canvas-engineer · **Branch:** `fix/resize-obeys-css` off `28bbf963` · **PR:** #237 (draft, base `feat/canvas-excellence`; long form + gate triage in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** an element resize writes what CSS will render, reads ⇧/⌥ live, keeps an absolute element's opposite edge, shows W×H, and no canvas drag outlives a lost release or a focus loss.
+- **Done:**
+  - `@core/studio-runtime`: `elementResizeRules.ts` rewritten (`resizeElementBox`: border-box geometry → CSS size per `box-sizing`, live modifiers, offsets for `absolute|fixed`, RTL `insetInlineStart`); new `elementResizeMeasure.ts` (`readResizeBoxStart`, `isPositionedFreely`) and `dragSessionGuard.ts`; `resizeHandles.ts` (live frames) uses all three plus the badge; `resize:commit` schema gains offsets; bridge bundle patched (see Landmines).
+  - Portal: `useElementResizeDrag.ts` rewritten; new `canvas/elementResizeSizing.ts` routes each written axis through `elementSizing.ts`'s `sizingPatch('fixed')`, which gained an optional `flexCascade` (a class `flex: 1` → `flex: 0 1 auto`); restorable preview; one `setNodeInlineStyles` per drag.
+  - IX-18: badge child of the handle frame (`CanvasResizeHandles.tsx`, CSS in `selectionChromeCss.ts`), text from the ring rect via `positionResizeFrame` (`canvasSelectionOverlayPositioning.ts`, `BreakpointSelectionOverlay.tsx` −1 line).
+  - ERR-12: guard in resize (both hosts), reorder, insertion, prototype-link drag, comment pin, marquee, guide move + create (+ pointer capture and the iframe relay for both guide drags).
+  - Found while testing, fixed: the click ending a resize bubbled to the page body and selected it (pre-existing).
+- **Canvas files touched:** `useElementResizeDrag.ts`, `elementResizeSizing.ts` (new), `CanvasResizeHandles.tsx`, `canvasSelectionOverlayPositioning.ts`, `BreakpointSelectionOverlay.tsx`, `canvasFreeMove.ts`, `resizeOffer.ts` (doc), `useCanvasReorderDrag.ts`, `useCanvasInsertionDrag.ts`, `RulerGuidesLayer/RulerGuidesLayer.tsx`, `CanvasRulers/useRulerGuideCreation.ts`, `BoardPrototypeLayer/BoardPrototypeLayer.tsx`, `BoardCommentsLayer/CommentPin.tsx`, `BoardFramesLayer/useMarqueeSelection.ts`, `frameAdapter/FrameDocumentAdapter.ts`.
+- **Decisions:** the badge shows only while a drag is live (single selection); flex companions are skipped for a positioned element; a lost release COMMITS at the last shown point, a blur CANCELS; the scale tool is read from the store at pointerdown.
+- **Landmines:**
+  - **Resize writes the CSS width, not the rect width.** Anything that measures a rect and writes a size must convert per `box-sizing` (`readResizeBoxStart`).
+  - **Events × injectors:** the resize's key listeners run in CAPTURE on both the frame and parent documents and `stopPropagation` Shift/Alt/Escape, so the Alt tree ladder, K5 measure and the dispatcher's Escape-deselect never see them mid-drag. A bare Alt keyup is `preventDefault`ed (Windows menu focus would blur the page and abandon the drag through the guard).
+  - **Events × height:** the badge hangs 6px + ~18px below the element; in a LIVE frame (no gesture freeze) a selection at the very bottom of the body can grow `scrollHeight` mid-drag.
+  - **The guard's blur is only a hint** — focus moving into a frame blurs the parent window; it re-checks `document.hasFocus()` one task later. P2-B's pan-latch blur reset is separate and must stay separate.
+  - `runtimeBridgeBundle.ts` was produced by applying the source diff to the committed artifact (the leftover drift from a local build equals the pre-existing bun-version drift). Re-run `studio-runtime:sync` on an LF tree before trusting the freshness gate.
+- **Next:** owner dogfood (below and in the PR). Live frames still lack the flex companions (resolver needs stored styles across the wire).
+- **Dogfood (`test4`, static tier, `/admin/site`, 100%, one frame):** (1) select a padded card, drag its E edge 40px: the box grows 40px (not 40 + padding), W×H pill under it while dragging, card still selected after; (2) a `flex: 1` row child: drag E, it stays where released; (3) ⇧ mid-drag without moving locks the ratio, ⌥ grows from the centre; (4) an absolute element's W handle: the right edge stays put; (5) drag a ruler guide over a frame and release there: the guide stops; Alt-Tab mid-drag: it snaps back.
 
 ### panel-45 — P2-H: panel polish (UX-11, 12, 13, 15, 20, 21, 24, 25, 26, 27)
 - **Agent:** panel-designer · **Branch:** `feat/inspector-panel-polish` off `db824fb3` · **PR:** see the PR body (draft, base `feat/canvas-excellence`; long form there) · **Updated:** 2026-09-24

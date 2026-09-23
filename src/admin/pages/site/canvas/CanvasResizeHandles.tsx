@@ -26,9 +26,9 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { RESIZE_HANDLES } from '@core/studio-runtime'
+import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
-import { RESIZE_HANDLE_ATTR, useElementResizeDrag } from './useElementResizeDrag'
+import { useElementResizeDrag } from './useElementResizeDrag'
 
 interface CanvasResizeHandlesProps {
   /** The single selected node. May not be resizable — `canOfferResize` decides. */
@@ -65,21 +65,10 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
     display,
   })
 
-  // `ownerDocument` rather than the iframe's `contentDocument`: this element IS
-  // in the iframe document, so the two can never disagree, and it arrives
-  // exactly when the document is ready.
-  // `K4` — with the scale tool (`K`) armed the handles keep the element's
-  // aspect ratio and write both dimensions. Read from the store here rather
-  // than inside the drag hook so the effect that binds the handles re-runs
-  // when the tool changes mid-session; the drag itself captures the flag at
-  // pointerdown, so toggling `K` never changes a gesture already in flight.
-  const proportional = useEditorStore((s) => s.canvasTool === 'scale')
-
   useElementResizeDrag({
     frame,
     iframeDoc: sizeable ? iframeDoc : null,
     nodeId,
-    proportional,
   })
 
   // Rendering nothing is the honest answer in every case `canOfferResize`
@@ -99,6 +88,10 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
       {RESIZE_HANDLES.map((handle) => (
         <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
       ))}
+      {/* IX-18 — the W×H badge; shown by the injected CSS only while a drag
+          marks this frame, its text written by the drag and the overlay's
+          measure pass. */}
+      <div {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
     </div>
   )
 }

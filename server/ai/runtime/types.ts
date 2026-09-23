@@ -310,6 +310,15 @@ export type AiStreamEvent =
    * that it moved.
    */
   | { type: 'routing'; mode: 'pinned' | 'auto'; effort: string; shape?: string; reason: string }
+  /**
+   * The provider was momentarily unable (a rate limit, an overload, a 5xx, a
+   * dropped connection) and the HTTP tool loop is about to re-send the same
+   * request after `delayMs` (AI-8, `drivers/http/providerRetry.ts`). Display
+   * only, like `routing`: never persisted, never fed back to a model. It is a
+   * quiet status, NOT an error — the turn is still alive, and an `error` only
+   * follows if every retry is spent.
+   */
+  | { type: 'retrying'; attempt: number; maxAttempts: number; delayMs: number; reason: string }
   /** Terminal error — stream is about to end abnormally. */
   | { type: 'error'; message: string }
   /** Stream ended cleanly. */

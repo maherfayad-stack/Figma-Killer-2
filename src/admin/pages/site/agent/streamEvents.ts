@@ -15,6 +15,8 @@
  *   usage         per-turn token + cost totals
  *   reasoning     extended-thinking text chunk (WS-12 §5.4, unverified —
  *                 see server/ai/drivers/claudeCliEvents.ts's doc comment)
+ *   retrying      the provider was momentarily unable and the server is
+ *                 re-sending the request (AI-8) — a status, never an error
  *   error         server-side terminal error
  *   done          stream finished cleanly
  *
@@ -105,6 +107,13 @@ export const ServerStreamEventSchema = Type.Union([
     shape: Type.Optional(Type.String()),
     reason: Type.String(),
   }),
+  Type.Object({
+    type: Type.Literal('retrying'),
+    attempt: Type.Number(),
+    maxAttempts: Type.Number(),
+    delayMs: Type.Number(),
+    reason: Type.String(),
+  }),
   Type.Object({ type: Type.Literal('done') }),
   Type.Object({ type: Type.Literal('error'), message: Type.String() }),
 ])
@@ -112,6 +121,20 @@ export const ServerStreamEventSchema = Type.Union([
 // ---------------------------------------------------------------------------
 // Stream event processor
 // ---------------------------------------------------------------------------
+
+/**
+ * Assistant turns currently showing a retry notice. Checked before clearing so
+ * the per-token `text` path costs a set lookup, not a store update.
+ */
+const retryingTurns = new Set<string>()
+
+function clearRetrying(set: EditorStoreSet, assistantId: string): void {
+  if (!retryingTurns.delete(assistantId)) return
+  set((state) => {
+    const msg = state.agentMessages.find((m) => m.id === assistantId)
+    if (msg?.retrying) delete msg.retrying
+  })
+}
 
 export async function processStreamEvent(
   event: ServerStreamEvent,
@@ -128,7 +151,22 @@ export async function processStreamEvent(
    */
   buildSnapshot?: () => unknown,
 ): Promise<void> {
+  // Anything the turn produces means the provider is answering again, and a
+  // turn that ended (done or error) is no longer retrying either.
+  if (event.type !== 'retrying' && event.type !== 'context' && event.type !== 'bridgeReady') clearRetrying(set, assistantId)
+
   switch (event.type) {
+    case 'retrying': {
+      // A status, never an error: the headline says so, and nothing is added
+      // to the transcript.
+      retryingTurns.add(assistantId)
+      set((state) => {
+        const msg = state.agentMessages.find((m) => m.id === assistantId)
+        if (msg) msg.retrying = { attempt: event.attempt, maxAttempts: event.maxAttempts }
+      })
+      break
+    }
+
     case 'text': {
       textSink.append(assistantId, event.text)
       // A9 — the model reports "step k/N" as it works (the static prompt's

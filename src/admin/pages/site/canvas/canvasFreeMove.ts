@@ -51,6 +51,7 @@
  * React's re-render is the last thing to touch the property).
  */
 import { registry } from '@core/module-engine'
+import { isPositionedFreely } from '@core/studio-runtime'
 import {
   explainStaticParentConstraint,
   getNodeHtmlTag,
@@ -131,11 +132,6 @@ export interface FreeMoveStyleInput {
   left: string
   top: string
   insetInlineStart: string
-}
-
-/** True when this element already decides its own position through `left`/`top`. */
-export function isPositionedFreely(position: string): boolean {
-  return position === 'absolute' || position === 'fixed'
 }
 
 /**

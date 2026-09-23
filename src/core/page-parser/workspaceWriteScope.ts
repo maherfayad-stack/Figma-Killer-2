@@ -43,7 +43,7 @@
  */
 import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR } from './workspaceFiles'
 
 /**
  * Directory names no Studio write may land in, at any depth: the walk
@@ -60,7 +60,24 @@ export const UNWRITABLE_WORKSPACE_DIR_NAMES: ReadonlySet<string> = new Set<strin
 /** A path segment as the filesystem will resolve it, for comparison only. */
 function comparableSegment(segment: string): string {
   const withoutStream = segment.split(':')[0] ?? segment
-  return withoutStream.replace(/[. ]+$/, '').toLowerCase()
+  return stripTrailingDotsAndSpaces(withoutStream).toLowerCase()
+}
+
+/**
+ * `segment` without its trailing dots and spaces — the characters Windows
+ * drops when it resolves a name. A plain index walk, deliberately: the regex
+ * `/[. ]+$/` it replaces backtracks quadratically on a long run of dots or
+ * spaces followed by anything else, and a 40,000-character path segment from
+ * a model froze the whole server for seconds (security review of #233, F1).
+ */
+export function stripTrailingDotsAndSpaces(segment: string): string {
+  let end = segment.length
+  while (end > 0) {
+    const char = segment.charCodeAt(end - 1)
+    if (char !== 0x2e && char !== 0x20) break
+    end -= 1
+  }
+  return end === segment.length ? segment : segment.slice(0, end)
 }
 
 /**
@@ -70,11 +87,165 @@ function comparableSegment(segment: string): string {
  * `.git` is a gitdir pointer, and rewriting it re-targets the repository.
  */
 export function unwritableWorkspaceSegment(rel: string): string | null {
+  return firstSegmentNamedIn(rel, UNWRITABLE_WORKSPACE_DIR_NAMES)
+}
+
+/**
+ * The READ-side twin of {@link unwritableWorkspaceSegment}: the first segment
+ * naming a directory no Studio walk or agent read enters
+ * (`EXCLUDED_WORKSPACE_DIR_NAMES` — `.studio`, `.git`, `node_modules`, build
+ * output), compared the same filesystem way. `.claude` is deliberately
+ * readable: it holds the design-system reference files the agent is told to
+ * read. Pure, like its twin.
+ */
+export function excludedWorkspaceSegment(rel: string): string | null {
+  return firstSegmentNamedIn(rel, EXCLUDED_WORKSPACE_DIR_NAMES)
+}
+
+function firstSegmentNamedIn(rel: string, names: ReadonlySet<string>): string | null {
   for (const segment of rel.split(/[\\/]+/)) {
-    if (UNWRITABLE_WORKSPACE_DIR_NAMES.has(comparableSegment(segment))) return segment
+    if (names.has(comparableSegment(segment))) return segment
   }
   return null
 }
+
+/**
+ * Whether a file NAME (the last segment) is one that conventionally holds a
+ * credential: `.env` and its variants (but not the committed `.example` /
+ * `.sample` / `.template` shapes), package-manager and network auth files, and
+ * private-key material. Compared the filesystem way, like the directory sets.
+ *
+ * No agent file tool reads or writes one. A tool result is a transcript line a
+ * provider stores; a key in it has left the machine.
+ */
+export function isSecretBearingFileName(name: string): boolean {
+  const comparable = comparableSegment(name)
+  if (comparable === '.env') return true
+  if (comparable.startsWith('.env.')) return !PUBLIC_ENV_SUFFIXES.has(comparable.slice('.env.'.length))
+  if (SECRET_FILE_NAMES.has(comparable)) return true
+  if (SECRET_FILE_STEMS.some((stem) => comparable.startsWith(stem))) return true
+  return SECRET_FILE_EXTENSIONS.some((ext) => comparable.endsWith(ext))
+}
+
+const PUBLIC_ENV_SUFFIXES: ReadonlySet<string> = new Set(['example', 'sample', 'template', 'defaults'])
+const SECRET_FILE_NAMES: ReadonlySet<string> = new Set([
+  '.envrc',
+  '.dev.vars',
+  '.npmrc',
+  '.yarnrc.yml',
+  '.netrc',
+  '.pgpass',
+  '.pypirc',
+  '.git-credentials',
+  'credentials.json',
+  'id_rsa',
+  'id_dsa',
+  'id_ecdsa',
+  'id_ed25519',
+])
+const SECRET_FILE_EXTENSIONS: readonly string[] = ['.pem', '.key', '.p12', '.pfx', '.keystore', '.jks', '.tfvars']
+const SECRET_FILE_STEMS: readonly string[] = ['secrets.']
+
+// ---------------------------------------------------------------------------
+// Files that run on the host, outside the page sandbox
+// ---------------------------------------------------------------------------
+
+/**
+ * Why an AGENT may not write `rel` without the user, or `null` when it may.
+ *
+ * ## The line this draws (security review of #233, F3)
+ *
+ * The screens an agent writes — `.tsx`, `.ts`, `.css`, assets — run in the
+ * preview browser, and writing them is the whole job. The files below run on
+ * the user's MACHINE instead, in Node or a shell, as the user, with no click
+ * in between: Vite restarts itself and re-evaluates its config the moment the
+ * file changes, `npm run dev` runs a `predev` script, a git hook runs on the
+ * next commit, VS Code runs a task, a CI workflow runs on push. Every project
+ * defaults to Tier 2 and the dev server starts as soon as a board opens, so a
+ * prompt-injected instruction planted in anything the agent reads could turn
+ * one ordinary-looking write into code execution with nobody asked. CLAUDE.md
+ * states the rule: Tier 2 is a product default, not a consent boundary, and
+ * anything that needs a human to have agreed must ask at the point of use.
+ * `CLAUDE.md` itself is in the list for the same reason one level up: it is
+ * not executed, but it is standing instruction for every later turn.
+ *
+ * So the agent asks. The refusal (`needs-user`) tells it to show the user the
+ * exact change and let them make or approve it.
+ *
+ * ## What it is not
+ *
+ * Not a sandbox. Any module a config file imports still runs in Node, and a
+ * dependency can do anything once installed. This removes the ZERO-click path
+ * from a single write; it does not make a project's code safe to run.
+ *
+ * Consulted by `agentWriteRefusal` (`server/handlers/studio/agentWriteScope.ts`)
+ * — the ONE agent write gate, which both the `claude` CLI's `PreToolUse` hook
+ * and the HTTP drivers' file tools call. Never by Studio's own writers: the
+ * prototype shell writes `vite.config.js` and dependency installs write
+ * `package.json`, on the user's behalf and in code Studio ships.
+ */
+export function hostExecutedWorkspaceFile(rel: string): string | null {
+  const segments = rel.split(/[\\/]+/).filter((segment) => segment.length > 0).map(comparableSegment)
+  const name = segments[segments.length - 1] ?? ''
+  for (const [index, segment] of segments.entries()) {
+    if (index === segments.length - 1) break
+    if (segment === '.husky') return 'a git hook (.husky/), which runs on the next commit'
+    if (segment === '.vscode') return 'editor configuration (.vscode/), whose tasks and launch configs run commands'
+    if (segment === '.github' && segments[index + 1] === 'workflows') return 'a CI workflow (.github/workflows/), which runs on push'
+    if (segment === '.devcontainer') return 'a dev-container definition (.devcontainer/), which runs commands when the container builds'
+    if (segment === '.circleci') return 'a CI definition (.circleci/), which runs on push'
+  }
+  if (name === '.gitlab-ci.yml') return 'a CI definition, which runs on push'
+  if (name.startsWith('.lintstagedrc') || name === 'lefthook.yml' || name === 'lefthook.yaml' || name === '.lefthook.yml' || name === '.pre-commit-config.yaml') {
+    return 'a commit-hook configuration, whose commands run on the next commit'
+  }
+  if (name === 'package.json') return 'the package manifest, whose scripts run on install and on every dev-server start (dependencies go through studio_install_deps)'
+  if (name === 'claude.md' || name === 'claude.local.md') return 'standing instructions for every later agent turn'
+  if (name === '.npmrc' || name.startsWith('.yarnrc') || name === 'bunfig.toml' || name === '.gitmodules' || name === '.mcp.json') {
+    return 'package-manager, git or tool configuration the host reads and acts on'
+  }
+  if (name === '.env' || name.startsWith('.env.') || name === '.envrc') return 'environment configuration the host loads'
+  if (isHostConfigFileName(name) || name === 'babel.config.json') return 'build-tool configuration, which runs in Node the moment the dev server or a build loads it'
+  return null
+}
+
+/**
+ * Whether a file NAME is a build-tool config a tool imports and runs in Node
+ * (`vite.config.ts`, `postcss.config.cjs`, `.babelrc.js`). Exported for the
+ * import-closure half of the agent write gate
+ * (`server/handlers/studio/hostConfigImports.ts`), which scans exactly these
+ * files for the local modules they load.
+ */
+export function isHostConfigFileName(name: string): boolean {
+  const comparable = comparableSegment(name)
+  return HOST_CONFIG_FILE.test(comparable) || HOST_RC_FILE.test(comparable)
+}
+
+/**
+ * Whether `rel` is inside Studio's generated preview shell (`prototype/`,
+ * `PROTOTYPE_SHELL_DIR`) — every file the shell templates emit except the two
+ * root bootstrap files (`vite.config.js`, a host config and `needs-user`;
+ * `index.html`, which only the browser runs). Studio writes and rewrites
+ * these on every open, and the scaffolded `vite.config.js` imports one of
+ * them (`prototype/studioRuntime.generated.js`), so an agent write there
+ * runs in Node when Vite restarts. No agent writes them: `protected-path`.
+ * `prototypeShell.test.ts` holds every template path to this predicate, so a
+ * new shell file cannot land outside it unnoticed.
+ */
+export function studioShellWorkspaceFile(rel: string): boolean {
+  const first = rel.split(/[\\/]+/).find((segment) => segment.length > 0)
+  return first !== undefined && comparableSegment(first) === PROTOTYPE_SHELL_DIR
+}
+
+/** A project-relative path in the form the filesystem compares it: separators unified, each segment case-folded with trailing dots and stream suffixes dropped. */
+export function comparableWorkspaceRel(rel: string): string {
+  return rel.split(/[\\/]+/).filter((segment) => segment.length > 0).map(comparableSegment).join('/')
+}
+
+/** `vite.config.ts`, `vite.prod.config.mjs`, `tailwind.config.cjs`, `eslint.config.js` — anything named as a tool config that a tool imports and runs. */
+const HOST_CONFIG_FILE = /^[a-z0-9_.-]+\.config\.[cm]?[jt]s$/
+/** `.babelrc`, `.postcssrc.js`, `.eslintrc.cjs` — the rc-file family those tools also load. */
+const HOST_RC_FILE = /^\.(?:babel|postcss|eslint|prettier|swc|stylelint)rc(?:\.[a-z]+)?$/
 
 /**
  * The real path of `path` — symlinks and junctions resolved, on-disk casing

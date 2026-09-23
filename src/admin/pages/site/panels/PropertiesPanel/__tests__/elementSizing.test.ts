@@ -221,3 +221,37 @@ describe('sizingUnavailableReason', () => {
     expect(sizingUnavailableReason(null)).toContain('parent')
   })
 })
+
+// ---------------------------------------------------------------------------
+// IX-6b — Fixed when the CASCADE decides a flex item's main size
+// ---------------------------------------------------------------------------
+
+describe('sizingPatch(fixed) with the element cascade (the canvas resize)', () => {
+  it('overrides a grow that survives clearing the inline markers (a class `flex: 1`)', () => {
+    const patch = sizingPatch('fixed', 'width', FLEX_ROW, {}, 240, { flexGrow: '1', flexBasis: '0%' })
+    expect(patch).toEqual({ width: '240px', flex: '0 1 auto' })
+    // Still reads back as Fixed — the value is not a Hug or Fill marker.
+    expect(currentSizingMode('width', FLEX_ROW, { width: '240px', flex: '0 1 auto' })).toBe('fixed')
+  })
+
+  it('overrides a basis alone, since a basis wins over width too', () => {
+    expect(sizingPatch('fixed', 'width', FLEX_ROW, {}, 240, { flexGrow: '0', flexBasis: '200px' }).flex).toBe('0 1 auto')
+  })
+
+  it('overrides a non-marker inline `flex` the stored-only answer leaves alone', () => {
+    const patch = sizingPatch('fixed', 'width', FLEX_ROW, { flex: '2' }, 240, { flexGrow: '2', flexBasis: '0%' })
+    expect(patch).toEqual({ width: '240px', flex: '0 1 auto' })
+  })
+
+  it('writes nothing extra when the cascade already honours the width', () => {
+    expect(sizingPatch('fixed', 'width', FLEX_ROW, { flex: '1 1 0' }, 240, { flexGrow: '0', flexBasis: 'auto' })).toEqual({
+      width: '240px',
+      flex: undefined,
+    })
+  })
+
+  it('only ever applies to the flex MAIN axis', () => {
+    expect(sizingPatch('fixed', 'height', FLEX_ROW, {}, 90, { flexGrow: '1', flexBasis: '0%' })).toEqual({ height: '90px' })
+    expect(sizingPatch('fixed', 'width', BLOCK, {}, 90, { flexGrow: '1', flexBasis: '0%' })).toEqual({ width: '90px' })
+  })
+})

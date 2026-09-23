@@ -927,9 +927,14 @@ describe('createStudioRuntimeBridge — resize handles', () => {
   const HANDLE = '[data-canvas-resize-handle]'
   const PREVIEW_ATTR = 'data-studio-resize-preview'
 
+  /**
+   * A move during a drag carries the held button, as a real browser reports
+   * it: a move with `buttons: 0` is how the drag guard (ERR-12) recognises a
+   * release it never heard, and ends the drag.
+   */
   function pointerEvent(type: string, init: MouseEventInit): Event {
     const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
-    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+    return new Ctor(type, { bubbles: true, cancelable: true, ...(type === 'pointermove' ? { buttons: 1 } : {}), ...init })
   }
   function mountBox(display = 'block'): HTMLElement {
     const box = document.createElement('div')
