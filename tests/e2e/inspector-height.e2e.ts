@@ -42,28 +42,34 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  *
  * panel-39's blanket `POPULATED_SECTION_OVERFLOW_PX = 210` is gone: three of
  * the four fixtures now fit the room outright, so a 210px slack on all four
- * would hide a 200px regression on any of them. Measured after panel-41, at
- * 1400x900 (`contentHeight`, not `scrollHeight` — see the assertion's own
- * comment for why the clamped one cannot show headroom):
+ * would hide a 200px regression on any of them. Measured after P2-F (the
+ * design pane's spacing), at 1400x900 (`contentHeight`, not `scrollHeight` —
+ * see the assertion's own comment for why the clamped one cannot show
+ * headroom):
  *
- *   | Fixture | content | room | over | was (panel-39) |
+ *   | Fixture | content | room | over | was (panel-41) |
  *   |---|---:|---:|---:|---:|
- *   | F1 rectangle | 608 | 746 | **0** (138 spare) | 0 (28 spare) |
- *   | F2 text | 782 | 746 | **36** | 198 over |
- *   | F3 flex board | 725 | 746 | **0** (21 spare) | 191 over |
- *   | F4 image | 603 | 746 | **0** (143 spare) | 55 over |
+ *   | F1 rectangle | 598 | 746 | **0** (148 spare) | 608 (138 spare) |
+ *   | F2 text | 772 | 746 | **26** | 782 (36 over) |
+ *   | F3 flex board | 715 | 746 | **0** (31 spare) | 725 (21 spare) |
+ *   | F4 image | 601 | 746 | **0** (145 spare) | 603 (143 spare) |
+ *
+ * P2-F SPENT height on segregation — a 12px section gap instead of 8
+ * (`--inspector-section-gap`, owner decision OD-4), a real 32px header, 8px
+ * of bottom padding and a hairline on the Module block — and paid for it by
+ * merging Shadow + Blur into one Effects section (-45) and tightening the
+ * rows inside Text and Measures to 4px (-12, -8). Every fixture came out
+ * shorter than it went in.
  *
  * The one exception is **F2**, and `TEXT_LAYER_OVERFLOW_PX` states its size.
- * Its cause, with numbers: a text layer's Design tab carries 488px of values
- * the user's source actually sets — Text 189 (Figma's own four typography
- * rows), Measures 122, Fill 65, Layer 32, and an 80px Module block holding
- * the node's own `text` content — plus 198px of six one-row collapsed
- * sections, 80px of gaps and 16px of container padding. Nothing there is
- * pre-drawn; closing the last 36px means either collapsing a section that
- * has values in it, or merging Shadow + Blur into Figma's single **Effects**
- * section (WS-6.1's own diagram), which is worth a measured 41px and is a
- * section-manifest restructure, not a density change. See
- * `docs/features/inspector.md` §6.
+ * Its cause, with numbers: a text layer's Design tab carries 483px of values
+ * the user's source actually sets — Text 177 (Figma's own four typography
+ * rows), Measures 114, Fill 65, Layer 32, and a 95px Module block holding
+ * the node's own `text` content — plus 165px of five one-row collapsed
+ * sections (Layout, Stroke, Effects, Export, More), 108px of gaps and 16px of
+ * container padding. Nothing there is pre-drawn; closing the last 26px means
+ * collapsing a section that has values in it, or giving back the section gap
+ * the owner asked for. See `docs/features/inspector.md` §6.
  *
  * Every other fixture is asserted STRICTLY against the room. Adding a second
  * exception means naming its cause in §6, in the same change.
@@ -125,16 +131,17 @@ const HEIGHT_BUDGET_VIEWPORT = { width: 1400, height: 900 } as const
 /**
  * The ONE exception to the strict budget, and it belongs to ONE fixture —
  * see this file's header for the per-section numbers behind it. Measured
- * after panel-41 the F2 text node is 36px over; this is that number with
- * room for the sub-pixel and font-metric differences between machines.
+ * after P2-F the F2 text node is 26px over; this is that number with the
+ * same 24px of room panel-41 left for the sub-pixel and font-metric
+ * differences between machines (it was 60 against 36).
  *
- * It is deliberately far below the 152px the More disclosure is worth
+ * It is deliberately far below the 164px the More disclosure is worth
  * (`src/__tests__/inspector/measurement.test.ts` computes that number), the
  * 167px the collapsed Layout section is worth, and the 122px the Module
  * block's Law-3 fold is worth on an image, so un-folding any of them still
  * trips this gate — on F2 as well as on the three strict fixtures.
  */
-const TEXT_LAYER_OVERFLOW_PX = 60
+const TEXT_LAYER_OVERFLOW_PX = 50
 
 /** The fixture `TEXT_LAYER_OVERFLOW_PX` applies to, and the only one. */
 const OVERFLOW_EXCEPTION_FIXTURE_ID = 'f2-text'
@@ -255,7 +262,18 @@ test.afterAll(() => {
   // Guarded by the `ws145-e2e-` prefix this spec itself generated — never a
   // bare rm of whatever `fixtureDir` happens to hold.
   if (fixtureDir && path.basename(fixtureDir).startsWith('ws145-e2e-')) {
-    fs.rmSync(fixtureDir, { recursive: true, force: true })
+    try {
+      fs.rmSync(fixtureDir, { recursive: true, force: true })
+    } catch (err) {
+      // On Windows the still-running dev server's watcher holds a handle on
+      // the open project, so the rm answers EPERM until the stack shuts down.
+      // Harmless: `WORKSPACE_ROOT` is this run's throwaway copy, and
+      // `scripts/e2e-dev.ts` wipes it before the next run.
+      console.warn(
+        '[inspector-height.e2e] fixture cleanup deferred to the next run:',
+        err instanceof Error ? err.message : err,
+      )
+    }
   }
 })
 
@@ -275,6 +293,16 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 30_000 })
   await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+  // `speed-04`'s own defect (`studio-feel.e2e.ts` pins the same wait): a live
+  // board frame mounts the portal fallback AND the bridge frame together until
+  // the bridge is ready, so the page container briefly carries TWO
+  // `iframe[title^="Canvas frame"]` — and `frameLocator()` throws a
+  // strict-mode violation on the ambiguity. Settle to one before resolving
+  // into it.
+  await expect(
+    page.locator('[data-page-id]').first().locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    'the first board frame never settled to one canvas iframe',
+  ).toHaveCount(1, { timeout: 30_000 })
   return canvasRoot
 }
 

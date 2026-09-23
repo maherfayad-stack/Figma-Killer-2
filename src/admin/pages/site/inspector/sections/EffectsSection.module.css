@@ -1,10 +1,8 @@
 /*
- * ShadowSection — the Shadow `PropertyList` (one row per box/text shadow
- * layer, plus the raw-text-refusal fallback row) and its `EffectEditorPopover`-
- * style layer editor. Ported from the pre-migration `panels/PropertiesPanel/
- * EffectsSection.module.css` — the swatch + shadow-field rules are unchanged,
- * the blur-only rules (`.settingsBadge`) did not come with them (`STATE.md`
- * `panel-25`, P3 item 7 — Shadow's own manifest section).
+ * EffectsSection — the Effects `PropertyList` (one row per shadow layer, one
+ * per blur, plus the raw-text refusal rows) and `EffectEditorPopover`'s
+ * fields. The merge of the former `ShadowSection.module.css` and
+ * `BlurSection.module.css` (P2-F, OD-4); the rules themselves are unchanged.
  */
 
 /* ── Leading swatch (shadow layers) ────────────────────────────────────── */
@@ -22,7 +20,7 @@
     border: var(--inspector-space-4xs) solid var(--effect-swatch-color);
 }
 
-/* ── Raw-text fallback (honest refusal) ───────────────────────────────── */
+/* ── Raw-text fallback (honest refusal, and Mixed) ────────────────────── */
 
 .rawEditor {
     display: flex;

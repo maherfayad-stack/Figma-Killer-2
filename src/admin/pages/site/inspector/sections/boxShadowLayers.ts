@@ -24,9 +24,9 @@
  * plan's §7) — a value that doesn't round-trip stays a raw string, in full,
  * with a reason, never silently reformatted or truncated.
  *
- * `ShadowSection.tsx` (`STATE.md` `panel-25`, P3 item 7 — moved here with its
- * only caller when the old `EffectsSection.tsx` split into Shadow + Blur) is
- * the only intended caller: `parseShadowValue` classifies the whole stored
+ * `EffectsSection.tsx` (P2-F — Shadow and Blur merged back into one Effects
+ * section; this module moved here with its only caller in P3 item 7) is the
+ * only intended caller: `parseShadowValue` classifies the whole stored
  * value, and the section renders either N structured `PropertyList` rows
  * (the `'layers'` case) or a single raw-text fallback row (the `'raw'` case)
  * from the result.
@@ -65,7 +65,7 @@ export const BoxShadowLayerSchema = Type.Object({
 export type BoxShadowLayer = Static<typeof BoxShadowLayerSchema>
 
 /**
- * The four ways `ShadowSection` can render a stored `box-shadow` value.
+ * The four ways `EffectsSection` can render a stored `box-shadow` value.
  * `'empty'`, `'raw'` and `'mixed'` all carry no editable layers, but they are
  * three different facts — `'raw'` means the user has a real value that this
  * module refuses to restructure, and it must still render (as text), never
@@ -256,7 +256,7 @@ export function serializeBoxShadowLayers(layers: readonly BoxShadowLayer[]): str
 }
 
 // ---------------------------------------------------------------------------
-// Public entry point — what ShadowSection actually calls.
+// Public entry point — what EffectsSection actually calls.
 // ---------------------------------------------------------------------------
 
 /**
@@ -307,7 +307,7 @@ export function parseShadowValue(
 }
 
 // ---------------------------------------------------------------------------
-// Layer-list edit helpers — used by ShadowSection's add / remove / reorder.
+// Layer-list edit helpers — used by EffectsSection's add / remove / reorder.
 // ---------------------------------------------------------------------------
 
 /** A fresh drop/inner shadow, in the same shape `0 4px 4px rgba(0, 0, 0, 0.25)` parses to. */

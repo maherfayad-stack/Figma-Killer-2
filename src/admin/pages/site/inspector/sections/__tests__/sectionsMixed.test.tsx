@@ -1,6 +1,6 @@
 /**
  * The four `PropertyList`-shaped Design-tab sections under a multi-selection
- * that DISAGREES — Fill, Layer, Shadow, Blur (`STATE.md` `panel-38`,
+ * that DISAGREES — Fill, Layer, and Effects' shadow and blur rows (`STATE.md` `panel-38`,
  * `docs/features/inspector.md` §9.3).
  *
  * S5 widened `useSelectionModel()` to N nodes, which puts the `MIXED` Symbol
@@ -34,8 +34,7 @@ import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 import { FillSection } from '../FillSection'
 import { LayerSection } from '../LayerSection'
-import { ShadowSection } from '../ShadowSection'
-import { BlurSection } from '../BlurSection'
+import { EffectsSection } from '../EffectsSection'
 import { makeSite, makePage, makeNode } from '../../../../../../__tests__/fixtures'
 import '@modules/base/index'
 
@@ -255,13 +254,13 @@ describe('LayerSection — Mixed', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Shadow
+// Effects — shadows (the former Shadow section, merged in P2-F)
 // ---------------------------------------------------------------------------
 
-describe('ShadowSection — Mixed', () => {
+describe('EffectsSection — Mixed shadows', () => {
   it('never renders the stringified sentinel into the raw shadow field', () => {
     selectTwo({ boxShadow: '0 1px 2px #000' }, { boxShadow: '0 4px 8px #333' })
-    render(<ShadowSection />)
+    render(<EffectsSection />)
 
     expect(screen.queryByText(/Symbol\(/)).toBeNull()
     const row = screen.getByRole('listitem')
@@ -270,7 +269,7 @@ describe('ShadowSection — Mixed', () => {
 
   it('offers the whole declaration as a Mixed field in the row popover', () => {
     selectTwo({ boxShadow: '0 1px 2px #000' }, { boxShadow: '0 4px 8px #333' })
-    render(<ShadowSection />)
+    render(<EffectsSection />)
 
     fireEvent.click(screen.getByRole('listitem'))
     const field = screen.getByRole('textbox', { name: /box.?shadow/i }) as HTMLInputElement
@@ -280,9 +279,9 @@ describe('ShadowSection — Mixed', () => {
 
   it('disables the drop/inner shadow add items while box-shadow is mixed', () => {
     selectTwo({ boxShadow: '0 1px 2px #000' }, { boxShadow: '0 4px 8px #333' })
-    render(<ShadowSection />)
+    render(<EffectsSection />)
 
-    fireEvent.click(screen.getByTestId('shadow-section-add'))
+    fireEvent.click(screen.getByTestId('effects-section-add'))
     // `Button` converts `disabled` + `tooltip` into `aria-disabled` so the
     // reason can still be hovered — see its own doc.
     expect(screen.getByRole('menuitem', { name: 'Drop shadow' }).getAttribute('aria-disabled')).toBe('true')
@@ -293,13 +292,13 @@ describe('ShadowSection — Mixed', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Blur
+// Effects — blurs (the former Blur section, merged in P2-F)
 // ---------------------------------------------------------------------------
 
-describe('BlurSection — Mixed', () => {
+describe('EffectsSection — Mixed blurs', () => {
   it('renders a Mixed row rather than an empty body under a forced-open section', () => {
     selectTwo({ filter: 'blur(4px)' }, { filter: 'blur(12px)' })
-    render(<BlurSection />)
+    render(<EffectsSection />)
 
     const row = screen.getByRole('listitem')
     expect(within(row).getByText('Mixed')).toBeTruthy()
@@ -307,7 +306,7 @@ describe('BlurSection — Mixed', () => {
 
   it('one typed filter reaches BOTH layers, in one history entry', () => {
     selectTwo({ filter: 'blur(4px)' }, { filter: 'blur(12px)' })
-    render(<BlurSection />)
+    render(<EffectsSection />)
 
     fireEvent.click(screen.getByRole('listitem'))
     const field = screen.getByRole('textbox', { name: /filter/i })
@@ -322,9 +321,11 @@ describe('BlurSection — Mixed', () => {
 
   it('disables "Add layer blur" while filter is mixed', () => {
     selectTwo({ filter: 'blur(4px)' }, { filter: 'blur(12px)' })
-    render(<BlurSection />)
+    render(<EffectsSection />)
 
-    fireEvent.click(screen.getByTestId('blur-section-add'))
-    expect(screen.getByRole('menuitem', { name: 'Layer blur' })).toHaveProperty('disabled', true)
+    fireEvent.click(screen.getByTestId('effects-section-add'))
+    // `Button` converts `disabled` + `tooltip` into `aria-disabled`, so the
+    // "different values here" reason can still be hovered.
+    expect(screen.getByRole('menuitem', { name: 'Layer blur' }).getAttribute('aria-disabled')).toBe('true')
   })
 })

@@ -1,34 +1,22 @@
 /* ModuleBlock — the Design tab's Module section (moved out of StyleSurface). */
 
 /*
- * This mini-section is hand-rolled rather than `<Section>` (it has no
- * disclosure toggle of its own), so — unlike every real `INSPECTOR_SECTIONS`
- * entry — nothing here automatically supplies `--inspector-pad-x`.
- *
- * The block padding is `--inspector-space-2xs` top and bottom, the panel's
- * within-group step, NOT the 10px it used to carry: every other section's
- * title sits in a 32px header row whose only vertical space is the shared
- * between-section gap, and this one was paying for a second, larger one.
+ * The props block's boundary (P2-F, UX-1). The header is
+ * `SectionStaticHeader` — `Section.module.css`'s own 32px recipe, which is
+ * also what supplies this block's header `--inspector-pad-x` — so the only
+ * chrome this file owns is the hairline that CLOSES the block. It sits on
+ * the bottom edge, not the top: the thing it separates is the element's own
+ * props from the headerless Layer row under them, and Layer has no header
+ * or divider of its own to do it. The colour is the panel's one divider token,
+ * `--inspector-divider`, the same line every `Section` draws on its top.
  */
-.header {
-    display: flex;
-    align-items: center;
-    gap: var(--inspector-space-2xs);
-    padding: var(--inspector-space-2xs) var(--inspector-pad-x);
-    color: var(--text-subtle);
-}
-
-.title {
-    font-size: var(--text-2xs);
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+.block {
+    border-bottom: 1px solid var(--inspector-divider);
 }
 
 /* The Law-3 fold, flush right of the title — the section-header "actions"
    slot shape every real `<Section>` already uses. */
 .foldToggle.foldToggle {
-    margin-inline-start: auto;
     gap: var(--inspector-space-4xs);
     color: var(--text-subtle);
     font-size: var(--text-2xs);
@@ -48,6 +36,29 @@
     transform: rotate(90deg);
 }
 
-.body {
-    padding-inline: var(--inspector-pad-x);
+/*
+ * Rows sit the within-group step apart (4px — Penpot's
+ * `.variant-property-list { gap: var(--sp-xs) }`, `menus/component.scss`),
+ * not `.sectionBody`'s shared 8px: the props of one element are facets of one
+ * thing. The doubled class out-specifies `.sectionBody`'s gap without
+ * depending on which of the two stylesheets the bundler emits last.
+ *
+ * The 8px bottom padding is Penpot's `.component-content`
+ * `padding-block-end: var(--sp-s)` — the air between the last prop and the
+ * hairline, so the line reads as the END of the props rather than as
+ * underlining the last one.
+ */
+.body.body {
+    gap: var(--inspector-space-2xs);
+    padding: 0 var(--inspector-pad-x) var(--inspector-space-m);
+}
+
+/*
+ * A module with no resident rows (a plain `<div>`, or every prop folded)
+ * would otherwise keep an 8px padded box under its header — a gap before the
+ * hairline with nothing in it. `:empty` holds because an empty fragment and
+ * a closed fold render no DOM at all.
+ */
+.body:empty {
+    display: none;
 }

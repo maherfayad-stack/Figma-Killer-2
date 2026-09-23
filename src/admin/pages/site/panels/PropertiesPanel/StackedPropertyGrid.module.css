@@ -10,6 +10,14 @@
     gap: var(--inspector-group-gap);
 }
 
+/* `rhythm="within-group"` — the rows are facets of ONE concept (Text's
+   family / weight+size / line-height+spacing), so they sit the panel's
+   within-group 4px apart, Penpot's `menus/text.scss` `gap: var(--sp-xs)`.
+   Declared after `.grid` in the same file, so source order settles it. */
+.gridWithinGroup {
+    gap: var(--inspector-space-2xs);
+}
+
 .pairGrid {
     display: grid;
     grid-template-columns: 1fr 1fr;
