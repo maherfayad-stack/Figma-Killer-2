@@ -83,39 +83,25 @@
  * what remembers the rest, not a replayed `AiMessage[]` log the way every HTTP
  * driver in this directory does it.
  *
- * ## `req.systemPrompt`'s STATIC PREFIX is not forwarded — its DYNAMIC
- * SUFFIX is (the write-verification gate)
+ * ## `req.systemPrompt` IS forwarded, whole (AI-1)
  *
- * For the same reason `req.tools` is not: the CLI is an agent, not a raw
- * model. It supplies its own operating instructions, and the static half of
- * Studio's chat system prompt (`systemPrompt.ts`'s `buildStaticPromptPrefix`
- * — role, workflow, failure examples) describes a tool surface this driver
- * never hands it; the project's own generated `CLAUDE.md`, loaded for free
- * from the subprocess `cwd` (see the guide generation below), covers the same
- * ground in this driver's own vocabulary instead.
+ * Unlike `req.tools`, Studio's system prompt means exactly as much to the CLI
+ * agent as to a raw model: it is where the fidelity mode, the design policy,
+ * the step budget, the failure list and the subagent contract live. The static
+ * prefix (with `MODE_BLOCK` and `DESIGN_POLICY_BLOCK` at its end) and the
+ * dynamic suffix (board state, armed design references, per-page write/verify
+ * status, capability facts) are appended after the CLI's own base prompt
+ * through `--append-system-prompt-file`. `claudeCliSystemPrompt.ts` owns the
+ * split, the file, and why it is a file (the prompt is larger than Windows'
+ * whole command-line limit). The generated `CLAUDE.md` carries project facts
+ * only, so the two never state competing policy.
  *
- * On a WARM session the suffix cannot ride `--append-system-prompt` past the
- * first turn — it is argv, fixed at spawn. A warm turn whose suffix has
- * CHANGED therefore carries it inside the user message instead, and only when
- * it changed (`WarmSessionLease.takeSystemState`): re-sending an unchanged
- * board digest every turn would stack a fresh copy into the conversation's
- * permanent history, which is the opposite of what the cache-stability
- * reasoning below is protecting.
- *
- * The DYNAMIC SUFFIX (`SYSTEM_PROMPT_DYNAMIC_BOUNDARY` onward — board state,
- * armed design references, per-page write/verify status, capability facts)
- * is different in kind: it is per-turn, per-project LIVE STATE that cannot
- * live in `CLAUDE.md` without busting that file's own turn-to-turn stability
- * (and the prompt-cache reuse that stability buys — WS-11 §4.0's $0.168
- * warning). This was the exact gap a real, measured session fell into: the
- * digest that states plainly whether a just-written page has a passing
- * `studio_compare` was computed on every turn and never reached this driver
- * at all, so an agent authoring files natively through this driver had no
- * live signal that anything was unverified — only the Stop-hook gate below
- * caught it, after the fact. `--append-system-prompt` below forwards ONLY
- * this suffix (never the static prefix CLAUDE.md already covers) — small,
- * appended after the CLI's own base prompt and `CLAUDE.md`, so it costs a
- * few hundred uncached tokens per turn rather than perturbing what IS cached.
+ * A WARM session's prompt is fixed at spawn. The static half is therefore in
+ * the pool's reuse fingerprint (a changed mode, policy or prompt respawns),
+ * and a CHANGED dynamic suffix rides inside the user message instead, only
+ * when it changed (`WarmSessionLease.takeSystemState`): re-sending an
+ * unchanged board digest every turn would stack a fresh copy into the
+ * conversation's permanent history.
  *
  * Whether THIS turn establishes or resumes is decided by
  * `shouldEstablishClaudeCliSession`: does the CLI already have a transcript
@@ -127,7 +113,7 @@
  *
  * ## Native tool surface (sec-XX)
  *
- * `--tools` below is a hard ceiling on native built-ins — at most `Task`/`Read`, never `Bash`/`Write`/`Edit`/`Glob`/`Grep`/`WebFetch`. Reasoning: `resolveNativeToolAllowlist`'s own doc comment (`claudeCliToolSurface.ts`).
+ * `--tools` below is a hard ceiling on native built-ins — `Read`/`Write`/`Edit`/`Glob`/`Grep`/`Task` with a project open, never `Bash`/`WebFetch`. Reasoning: `resolveNativeToolAllowlist`'s own doc comment (`claudeCliToolSurface.ts`).
  */
 
 import type { AiAuthMode, AiContentBlock, AiProviderId, AiStreamEvent } from '../runtime/types'
@@ -162,7 +148,8 @@ import {
 } from './claudeCliAttachments'
 import { cleanupMcpConfigFile, tryWriteMcpConfigFile } from './claudeCliMcpConfigFile'
 import { clearCliNeedsAuthCache, recallCliSignIns } from '../credentials/cliMcpConnectionProbe'
-import { buildClaudeCliArgv, buildMcpConfig, dynamicSystemPromptSuffix } from './claudeCliArgv'
+import { buildClaudeCliArgv, buildMcpConfig } from './claudeCliArgv'
+import { claudeCliSystemPrompt, cleanupSystemPromptFile, tryWriteSystemPromptFile } from './claudeCliSystemPrompt'
 import { runWarmTurn } from './claudeCliWarmTurn'
 
 const SUPPORTED_AUTH_MODES: AiAuthMode[] = ['apiKey']
@@ -456,11 +443,11 @@ export async function* streamClaudeCli(
     addDirs: [attachmentsRoot],
     sessionFlag,
     sessionId,
-    // The write-verification gate — ONLY the dynamic suffix (never the static
-    // prefix CLAUDE.md already covers), and only when a real project is open.
-    // See this file's own doc comment, "req.systemPrompt's STATIC PREFIX...".
-    systemPromptSuffix: workspaceCwd ? dynamicSystemPromptSuffix(req.systemPrompt) : null,
   } as const
+  // Studio's whole system prompt, only when a real project is open (without
+  // one this is the CMS prompt, which describes tools this turn does not
+  // hold). See this file's own doc comment, "req.systemPrompt IS forwarded".
+  const systemPrompt = workspaceCwd ? claudeCliSystemPrompt(req.systemPrompt) : null
 
   // WS-12 §5.3 — staged attachments are turn-scoped working data, never left
   // behind regardless of how the turn ended, which path served it, or whether
@@ -478,6 +465,7 @@ export async function* streamClaudeCli(
     if (!options.disableWarmSession) {
       const served = yield* runWarmTurn(req, options, {
         argvOptions,
+        systemPrompt,
         cwd,
         env,
         prompt,
@@ -526,11 +514,19 @@ export async function* streamClaudeCli(
     const mcpConfigFile = turn.connector
       ? await tryWriteMcpConfigFile(buildMcpConfig(turn.connector, options.serverPort, projectServers, registeredServers))
       : null
+    // Turn-scoped, like the MCP config file above; a warm session's lives as
+    // long as the session instead.
+    const systemPromptFile = systemPrompt ? tryWriteSystemPromptFile(systemPrompt) : null
 
     try {
       yield* translateClaudeCliStream(
         spawnClaudeCliNdjson({
-          argv: buildClaudeCliArgv({ ...argvOptions, mcpConfigPath: mcpConfigFile?.path ?? null, inputFormat: 'text' }),
+          argv: buildClaudeCliArgv({
+            ...argvOptions,
+            mcpConfigPath: mcpConfigFile?.path ?? null,
+            appendSystemPromptFile: systemPromptFile?.path ?? null,
+            inputFormat: 'text',
+          }),
           cwd,
           env,
           stdin: new TextEncoder().encode(prompt),
@@ -562,6 +558,7 @@ export async function* streamClaudeCli(
       if (mcpConfigFile) {
         cleanupMcpConfigFile(mcpConfigFile.dir)
       }
+      if (systemPromptFile) cleanupSystemPromptFile(systemPromptFile.dir)
     }
   } finally {
     if (attachmentStaging) {

@@ -493,7 +493,7 @@ export function renderComponentReference(guide: DesignSystemGuide): string {
     '',
     'Generated from the package\'s own docs on every chat turn. Do not hand-edit.',
     '',
-    `Every component below is a real named export of ${guide.importStyle.kind === 'folder' ? `this project's \`${guide.importStyle.dirName}/\` folder` : `\`${guide.packageName}\``}. Import it — do not re-implement it, and do not substitute a raw HTML element, an emoji, or a text glyph for one.`,
+    `Every component below is a real named export of ${guide.importStyle.kind === 'folder' ? `this project's \`${guide.importStyle.dirName}/\` folder` : `\`${guide.packageName}\``}, imported by name. Whether a screen must use it is this session's design policy, stated in Studio's system prompt, not here.`,
     '',
   ]
   if (guide.importContract) {

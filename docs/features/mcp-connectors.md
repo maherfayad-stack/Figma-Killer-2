@@ -738,11 +738,11 @@ Measured on a real spawn, three stdio MCP servers attached, turn 2 of a conversa
 
 **The cold path remains, and is not a shim.** It is the crash-recovery mechanism: a turn whose warm process is dead, or which dies before producing any output, silently re-runs cold and the user sees a normal (slightly slower) reply rather than an error about a subprocess they never asked for. Once a turn has streamed text, a death degrades to the same honest terminal error the cold path has always produced — never a silent retry that would duplicate the reply.
 
-Module map: `claudeCliStdinProtocol.ts` (the wire format) → `claudeCliWarmSession.ts` (one live process: turns, abort, death detection) → `claudeCliSessionPool.ts` (which conversation gets which process, reuse key, idle/lifetime/pool caps) → `claudeCliWarmTurn.ts` (serving one turn: the connector, the registries, the board-state carry) → `claudeCli.ts` (try warm, else cold).
+Module map: `claudeCliStdinProtocol.ts` (the wire format) → `claudeCliWarmSession.ts` (one live process: turns, abort, death detection) → `claudeCliSessionPool.ts` (which conversation gets which process, reuse key, idle/lifetime/pool caps) → `claudeCliWarmTurn.ts` (serving one turn: the connector, the registries, the reuse fingerprint, the board-state carry) → `claudeCli.ts` (try warm, else cold).
 
 Two consequences worth knowing when reading the driver:
 
-- **The dynamic system-prompt suffix** (board state, per-page write/verify status) rides `--append-system-prompt` at spawn, which a warm process cannot be given again. A later turn carries it **inside the user message**, and only when it has actually changed — re-sending an unchanged board digest every turn would stack a copy into the conversation's permanent history.
+- **Studio's system prompt** (static prefix with the mode and design-policy blocks, then the dynamic suffix) rides `--append-system-prompt-file` at spawn (`claudeCliSystemPrompt.ts` — a file because it exceeds Windows' command-line limit), which a warm process cannot be given again. The static half's sha256 is in the reuse fingerprint, so a mode, policy or prompt change respawns. A later turn carries a changed dynamic suffix (board state, per-page write/verify status) **inside the user message**, and only when it has actually changed — re-sending an unchanged board digest every turn would stack a copy into the conversation's permanent history.
 - **`CLAUDE.md` is read once, at startup.** `generateStudioProjectGuide` is manifest-gated and returns an empty `written` list on the common turn where nothing changed, which makes "the guide was actually rewritten" a free, exact signal that the warm session is stale — and that turn respawns.
 
 ---
