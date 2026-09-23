@@ -69,6 +69,7 @@ import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@s
 import { resolveCanvasPointerInsertionDrop, type CanvasDropPreview } from './canvasInsertionDrop'
 import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
+import { guardDragSession } from '@core/studio-runtime'
 
 /** Pointer travel (screen px) before a press becomes a drag rather than a click. */
 const DRAG_THRESHOLD_PX = 6
@@ -125,6 +126,7 @@ export function useCanvasInsertionDrag<TGhost>({
 
     const startX = event.clientX
     const startY = event.clientY
+    let lastPoint = { clientX: startX, clientY: startY }
     let started = false
     const snapshot = beginInsertionDragSnapshotSession()
 
@@ -178,6 +180,7 @@ export function useCanvasInsertionDrag<TGhost>({
     }
 
     const teardown = () => {
+      disposeGuard()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', up)
       window.removeEventListener('pointercancel', cancel)
@@ -192,6 +195,7 @@ export function useCanvasInsertionDrag<TGhost>({
     }
 
     const move = (moveEvent: PointerEvent) => {
+      lastPoint = { clientX: moveEvent.clientX, clientY: moveEvent.clientY }
       if (!started) {
         if (Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY) < DRAG_THRESHOLD_PX) return
         started = true
@@ -200,7 +204,7 @@ export function useCanvasInsertionDrag<TGhost>({
       scheduleResolve(moveEvent.clientX, moveEvent.clientY)
     }
 
-    const up = (upEvent: PointerEvent) => {
+    const up = (upEvent: Pick<PointerEvent, 'clientX' | 'clientY'>) => {
       // Resolve BEFORE teardown, synchronously — never wait another
       // animation frame for a release that ends the gesture anyway. The
       // relay also has to still be armed for the drop point to hit-test
@@ -237,6 +241,15 @@ export function useCanvasInsertionDrag<TGhost>({
 
     teardownRef.current?.()
     markCanvasPointerRelay(event.pointerId)
+    // ERR-12 — a move with the button up: the release landed where no relay
+    // heard it, so drop at the last point the preview showed. A window blur
+    // abandons the insert.
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: () => up(lastPoint),
+      onAbandon: cancel,
+    })
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', up)
     window.addEventListener('pointercancel', cancel)

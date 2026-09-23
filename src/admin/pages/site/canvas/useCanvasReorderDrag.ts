@@ -70,6 +70,7 @@ import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
+import { guardDragSession } from '@core/studio-runtime'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
@@ -477,6 +478,17 @@ export function useCanvasReorderDrag({
       observer.observe(frameBody)
     }
 
+    // ERR-12 — a move with the button up means the release landed somewhere
+    // no relay heard (outside the window, the browser chrome): drop at the
+    // last resolved target, exactly as a heard release would. A window blur
+    // abandons the drag. Every move reaches the PARENT document, natively or
+    // through the iframe relay, so that is the one document to watch.
+    const disposeGuard = guardDragSession({
+      documents: [document],
+      focusWindow: window,
+      onReleaseLost: handleWindowPointerUp,
+      onAbandon: handleWindowPointerCancel,
+    })
     window.addEventListener('pointermove', handleWindowPointerMove)
     window.addEventListener('pointerup', handleWindowPointerUp)
     window.addEventListener('pointercancel', handleWindowPointerCancel)
@@ -484,6 +496,7 @@ export function useCanvasReorderDrag({
     frameDoc?.addEventListener('keydown', handleKeyDown, true)
     const unsubscribeReparse = subscribeReparseFollow(handleReparse)
     teardownRef.current = () => {
+      disposeGuard()
       observer?.disconnect()
       unsubscribeReparse()
       window.removeEventListener('pointermove', handleWindowPointerMove)

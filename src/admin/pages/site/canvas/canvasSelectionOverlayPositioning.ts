@@ -1,4 +1,5 @@
 import { registry } from '@core/module-engine'
+import { RESIZE_ACTIVE_ATTR, RESIZE_SIZE_BADGE_ATTR, writeSizeBadge } from '@core/studio-runtime'
 import { getNodeDisplayName, getNodeHtmlTag, type Page } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type {
@@ -88,6 +89,21 @@ export function positionOverlayElement(
     height: `${rect.height}px`,
   })
   appliedOverlayPlacements.set(element, rect)
+}
+
+/**
+ * Place the resize-handle frame on the selection ring's rect — and, while a
+ * drag marks it (`RESIZE_ACTIVE_ATTR`), keep its W×H badge (IX-18) reading
+ * that SAME rect. One measurement feeds the ring, the handles and the number,
+ * in the write phase of the overlay's pass, so the three can never disagree
+ * and the badge costs no read of its own. The rect is iframe-local, so the
+ * number is in frame px at every zoom.
+ */
+export function positionResizeFrame(frame: HTMLElement | null, rect: CanvasOverlayRect | null): void {
+  positionOverlayElement(frame, rect)
+  if (!frame || !rect || !frame.hasAttribute(RESIZE_ACTIVE_ATTR)) return
+  const badge = frame.querySelector<HTMLElement>(`[${RESIZE_SIZE_BADGE_ATTR}]`)
+  if (badge) writeSizeBadge(badge, rect.width, rect.height)
 }
 
 export function hideOverlayElement(element: HTMLElement | null): void {

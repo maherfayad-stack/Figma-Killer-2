@@ -162,6 +162,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   6. Shift-select the instance and another layer: the component section disappears.
   7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
 
+### canvas-23 — P2-D: resize that obeys CSS (IX-6a, 6b, 6c, 6d, IX-18, ERR-12)
+- **Agent:** canvas-engineer · **Branch:** `fix/resize-obeys-css` off `28bbf963` · **PR:** #237 (draft, base `feat/canvas-excellence`; long form + gate triage in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** an element resize writes what CSS will render, reads ⇧/⌥ live, keeps an absolute element's opposite edge, shows W×H, and no canvas drag outlives a lost release or a focus loss.
+- **Done:**
+  - `@core/studio-runtime`: `elementResizeRules.ts` rewritten (`resizeElementBox`: border-box geometry → CSS size per `box-sizing`, live modifiers, offsets for `absolute|fixed`, RTL `insetInlineStart`); new `elementResizeMeasure.ts` (`readResizeBoxStart`, `isPositionedFreely`) and `dragSessionGuard.ts`; `resizeHandles.ts` (live frames) uses all three plus the badge; `resize:commit` schema gains offsets; bridge bundle patched (see Landmines).
+  - Portal: `useElementResizeDrag.ts` rewritten; new `canvas/elementResizeSizing.ts` routes each written axis through `elementSizing.ts`'s `sizingPatch('fixed')`, which gained an optional `flexCascade` (a class `flex: 1` → `flex: 0 1 auto`); restorable preview; one `setNodeInlineStyles` per drag.
+  - IX-18: badge child of the handle frame (`CanvasResizeHandles.tsx`, CSS in `selectionChromeCss.ts`), text from the ring rect via `positionResizeFrame` (`canvasSelectionOverlayPositioning.ts`, `BreakpointSelectionOverlay.tsx` −1 line).
+  - ERR-12: guard in resize (both hosts), reorder, insertion, prototype-link drag, comment pin, marquee, guide move + create (+ pointer capture and the iframe relay for both guide drags).
+  - Found while testing, fixed: the click ending a resize bubbled to the page body and selected it (pre-existing).
+- **Canvas files touched:** `useElementResizeDrag.ts`, `elementResizeSizing.ts` (new), `CanvasResizeHandles.tsx`, `canvasSelectionOverlayPositioning.ts`, `BreakpointSelectionOverlay.tsx`, `canvasFreeMove.ts`, `resizeOffer.ts` (doc), `useCanvasReorderDrag.ts`, `useCanvasInsertionDrag.ts`, `RulerGuidesLayer/RulerGuidesLayer.tsx`, `CanvasRulers/useRulerGuideCreation.ts`, `BoardPrototypeLayer/BoardPrototypeLayer.tsx`, `BoardCommentsLayer/CommentPin.tsx`, `BoardFramesLayer/useMarqueeSelection.ts`, `frameAdapter/FrameDocumentAdapter.ts`.
+- **Decisions:** the badge shows only while a drag is live (single selection); flex companions are skipped for a positioned element; a lost release COMMITS at the last shown point, a blur CANCELS; the scale tool is read from the store at pointerdown.
+- **Landmines:**
+  - **Resize writes the CSS width, not the rect width.** Anything that measures a rect and writes a size must convert per `box-sizing` (`readResizeBoxStart`).
+  - **Events × injectors:** the resize's key listeners run in CAPTURE on both the frame and parent documents and `stopPropagation` Shift/Alt/Escape, so the Alt tree ladder, K5 measure and the dispatcher's Escape-deselect never see them mid-drag. A bare Alt keyup is `preventDefault`ed (Windows menu focus would blur the page and abandon the drag through the guard).
+  - **Events × height:** the badge hangs 6px + ~18px below the element; in a LIVE frame (no gesture freeze) a selection at the very bottom of the body can grow `scrollHeight` mid-drag.
+  - **The guard's blur is only a hint** — focus moving into a frame blurs the parent window; it re-checks `document.hasFocus()` one task later. P2-B's pan-latch blur reset is separate and must stay separate.
+  - `runtimeBridgeBundle.ts` was produced by applying the source diff to the committed artifact (the leftover drift from a local build equals the pre-existing bun-version drift). Re-run `studio-runtime:sync` on an LF tree before trusting the freshness gate.
+- **Next:** owner dogfood (below and in the PR). Live frames still lack the flex companions (resolver needs stored styles across the wire).
+- **Dogfood (`test4`, static tier, `/admin/site`, 100%, one frame):** (1) select a padded card, drag its E edge 40px: the box grows 40px (not 40 + padding), W×H pill under it while dragging, card still selected after; (2) a `flex: 1` row child: drag E, it stays where released; (3) ⇧ mid-drag without moving locks the ratio, ⌥ grows from the centre; (4) an absolute element's W handle: the right edge stays put; (5) drag a ruler guide over a frame and release there: the guide stops; Alt-Tab mid-drag: it snaps back.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

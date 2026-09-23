@@ -11,13 +11,13 @@ import { describe, expect, it } from 'bun:test'
 import {
   FREE_MOVE_SNAP_PX,
   freeMoveStylePatch,
-  isPositionedFreely,
   planFreeMoveProperties,
   readFreeMoveBase,
   stepFreeMove,
   type FreeMovePlan,
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
+import { isPositionedFreely } from '@core/studio-runtime'
 
 function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput {
   return {

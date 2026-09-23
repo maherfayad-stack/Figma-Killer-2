@@ -467,14 +467,18 @@ export const WheelMessageSchema = Type.Object({
 
 /** A committed size, as the source will spell it: an integer pixel count. Bounded so a forged value can never reach the store as an absurd width. */
 const CssPixelLengthSchema = Type.String({ pattern: '^[0-9]{1,6}px$' })
+/** A committed offset of a positioned element — the same bound, but an offset may be negative. */
+const CssPixelOffsetSchema = Type.String({ pattern: '^-?[0-9]{1,6}px$' })
 
 /**
  * `live-13` — a finished drag on the in-frame resize handles
  * (`resizeHandles.ts`) that changed the element's size. The frame previewed
  * the drag itself; the parent commits `patch` to the node's inline style
  * through the store, exactly the write `useElementResizeDrag` makes for a
- * portal frame. Only the dimensions the drag changed are present, each an
+ * portal frame. Only the properties the drag changed are present, each an
  * integer `px` string — nothing here names a selector or reaches the DOM.
+ * The offsets appear only for a `position: absolute | fixed` element whose
+ * west/north edge (or centre, under ⌥) moved (IX-6d).
  */
 export const ResizeCommitMessageSchema = Type.Object({
   type: Type.Literal('resize:commit'),
@@ -483,6 +487,9 @@ export const ResizeCommitMessageSchema = Type.Object({
   patch: Type.Object({
     width: Type.Optional(CssPixelLengthSchema),
     height: Type.Optional(CssPixelLengthSchema),
+    left: Type.Optional(CssPixelOffsetSchema),
+    insetInlineStart: Type.Optional(CssPixelOffsetSchema),
+    top: Type.Optional(CssPixelOffsetSchema),
   }),
 })
 

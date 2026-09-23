@@ -14,6 +14,14 @@
  * through the store, never from here); this module owns the geometry the
  * frame alone can see.
  *
+ * The geometry itself is `elementResizeRules.ts` and the pointerdown read is
+ * `elementResizeMeasure.ts` — the SAME two modules the portal drag uses, so
+ * `box-sizing`, the live ⇧/⌥ modifiers and a positioned element's offsets
+ * behave identically in both kinds of frame. What a bridge frame does NOT get
+ * yet is the flex/grid sizing companions (IX-6b): the resolver that decides
+ * them (`elementSizing.ts`) is the parent's and reads the node's stored
+ * styles, which this side of the wire does not have.
+ *
  * ## Preview through a stylesheet, not the element's own `style`
  *
  * During the drag the size is previewed by stamping the element with
@@ -34,15 +42,20 @@
  * `!important` on the preview rule is deliberate and runtime-owned: the
  * element's own inline width is exactly what the preview has to beat.
  */
+import { guardDragSession } from './dragSessionGuard'
+import { readResizeBoxStart } from './elementResizeMeasure'
 import {
   isSizeableDisplay,
   MIN_ELEMENT_SIZE,
   RESIZE_HANDLES,
-  resizeElementSize,
+  resizeElementBox,
+  resizeModifiersOf,
+  resizeStartStep,
   resizeStylePatch,
-  type ElementSize,
-  type ElementSizePatch,
+  type ElementResizePatch,
+  type ResizeBoxStart,
   type ResizeHandle,
+  type ResizeStep,
 } from './elementResizeRules'
 import { presentedElementOf, rectRelativeToBody } from './nodeDom'
 
@@ -50,9 +63,24 @@ import { presentedElementOf, rectRelativeToBody } from './nodeDom'
 export const RESIZE_FRAME_ATTR = 'data-canvas-resize-frame'
 /** The attribute each handle carries, naming the direction it drags — `selectionChromeCss.ts` styles it. */
 export const RESIZE_HANDLE_ATTR = 'data-canvas-resize-handle'
+/** On the frame for exactly the length of a drag; `selectionChromeCss.ts` shows the size badge under it. */
+export const RESIZE_ACTIVE_ATTR = 'data-canvas-resizing'
+/** The W×H badge inside the frame (IX-18). */
+export const RESIZE_SIZE_BADGE_ATTR = 'data-canvas-size-badge'
 /** Stamped on the element whose size is being previewed; the preview rule keys on it. */
 export const RESIZE_PREVIEW_ATTR = 'data-studio-resize-preview'
 export const RESIZE_PREVIEW_STYLE_ID = 'studio-runtime-resize-preview'
+
+/**
+ * Write the W×H badge's text: the MEASURED border box, in frame px, rounded —
+ * what the user sees, which under `content-box` is more than the `width` the
+ * drag writes. Skips the write when the text is unchanged (a same-value
+ * `textContent` write still replaces the text node).
+ */
+export function writeSizeBadge(badge: HTMLElement, width: number, height: number): void {
+  const label = `${Math.round(width)} × ${Math.round(height)}`
+  if (badge.textContent !== label) badge.textContent = label
+}
 
 export interface ResizeTargetRef {
   nodeId: string
@@ -66,15 +94,15 @@ export interface ResizeHandlesOptions {
   ensureOverlayRoot(): HTMLElement | null
   /** The element carrying the target's node id, or `null` when the frame has none. */
   resolveTarget(target: ResizeTargetRef): Element | null
-  /** A finished drag that changed the size — the caller relays it to the parent. */
-  onCommit(target: ResizeTargetRef, patch: ElementSizePatch): void
+  /** A finished drag that changed the element — the caller relays it to the parent. */
+  onCommit(target: ResizeTargetRef, patch: ElementResizePatch): void
   /** The preview moved the element's box — the caller repositions its rings. */
   onPreview(): void
 }
 
 export interface ResizeHandlesController {
-  /** Shows the handles on `target` (or hides them for `null`); `proportional` is `K4`'s scale tool, captured at pointerdown. */
-  setTarget(target: ResizeTargetRef | null, proportional: boolean): void
+  /** Shows the handles on `target` (or hides them for `null`); `scaleTool` is `K4`'s scale tool, captured at pointerdown. */
+  setTarget(target: ResizeTargetRef | null, scaleTool: boolean): void
   /** Re-reads the target's box — the caller's ring reposition pass calls this. */
   reposition(): void
   /** Drops the held preview; the source now carries the size, or the target moved on. */
@@ -82,13 +110,23 @@ export interface ResizeHandlesController {
   dispose(): void
 }
 
+/** The CSS property each patch key previews as. */
+const PREVIEW_PROPERTY: Readonly<Record<keyof ElementResizePatch, string>> = {
+  width: 'width',
+  height: 'height',
+  left: 'left',
+  insetInlineStart: 'inset-inline-start',
+  top: 'top',
+}
+
 export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandlesController {
   const { doc, view, ensureOverlayRoot, resolveTarget, onCommit, onPreview } = options
 
   let frame: HTMLDivElement | null = null
+  let sizeBadge: HTMLDivElement | null = null
   let target: ResizeTargetRef | null = null
   let element: HTMLElement | null = null
-  let proportional = false
+  let scaleTool = false
   let previewed: HTMLElement | null = null
   let previewStyle: HTMLStyleElement | null = null
   let endDrag: ((commit: boolean) => void) | null = null
@@ -105,6 +143,9 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
       el.setAttribute(RESIZE_HANDLE_ATTR, handle)
       frame.appendChild(el)
     }
+    sizeBadge = doc.createElement('div')
+    sizeBadge.setAttribute(RESIZE_SIZE_BADGE_ATTR, 'true')
+    frame.appendChild(sizeBadge)
     frame.addEventListener('pointerdown', onPointerDown)
     root.appendChild(frame)
     return frame
@@ -126,10 +167,13 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     el.style.width = `${rect.width}px`
     el.style.height = `${rect.height}px`
     el.style.transform = `translate(${rect.x}px, ${rect.y}px)`
+    // IX-18 — the badge reads the SAME measured box the frame was just placed
+    // on, so it can never disagree with the handles around it.
+    if (endDrag && sizeBadge) writeSizeBadge(sizeBadge, rect.width, rect.height)
   }
 
-  function setTarget(next: ResizeTargetRef | null, nextProportional: boolean): void {
-    proportional = nextProportional
+  function setTarget(next: ResizeTargetRef | null, nextScaleTool: boolean): void {
+    scaleTool = nextScaleTool
     const changed = next?.nodeId !== target?.nodeId || next?.occurrenceIndex !== target?.occurrenceIndex
     if (changed) {
       endDrag?.(false)
@@ -146,7 +190,7 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     reposition()
   }
 
-  function writePreview(el: HTMLElement, start: ElementSize, next: ElementSize): void {
+  function writePreview(el: HTMLElement, start: ResizeBoxStart, step: ResizeStep): void {
     if (!previewStyle?.isConnected) {
       previewStyle = doc.createElement('style')
       previewStyle.id = RESIZE_PREVIEW_STYLE_ID
@@ -158,9 +202,10 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
       el.setAttribute(RESIZE_PREVIEW_ATTR, '')
       previewed = el
     }
-    const declarations: string[] = []
-    if (next.width !== start.width) declarations.push(`width: ${next.width}px !important`)
-    if (next.height !== start.height) declarations.push(`height: ${next.height}px !important`)
+    const patch = resizeStylePatch(start, step) ?? {}
+    const declarations = (Object.keys(patch) as Array<keyof ElementResizePatch>).map(
+      (key) => `${PREVIEW_PROPERTY[key]}: ${patch[key]} !important`,
+    )
     previewStyle.textContent = declarations.length > 0 ? `[${RESIZE_PREVIEW_ATTR}] { ${declarations.join('; ')}; }` : ''
   }
 
@@ -181,12 +226,13 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
 
     const dragged = element
     const draggedTarget = target
-    const keepRatio = proportional
-    const rect = dragged.getBoundingClientRect()
-    const start: ElementSize = { width: rect.width, height: rect.height }
+    const keepRatio = scaleTool
+    const start = readResizeBoxStart(view, dragged)
     const startX = event.clientX
     const startY = event.clientY
-    let last = start
+    let pointer = { x: startX, y: startY }
+    let modifiers = resizeModifiersOf(event, keepRatio)
+    let last = resizeStartStep(start)
 
     try {
       handleEl.setPointerCapture(event.pointerId)
@@ -206,23 +252,31 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
       reposition()
       onPreview()
     }
-    const onMove = (moveEvent: PointerEvent) => {
-      last = resizeElementSize(handle, start, moveEvent.clientX - startX, moveEvent.clientY - startY, MIN_ELEMENT_SIZE, keepRatio)
+    const step = () => {
+      last = resizeElementBox(handle, start, pointer.x - startX, pointer.y - startY, modifiers, MIN_ELEMENT_SIZE)
       pendingFrame ??= raf(applyPending)
+    }
+    const onMove = (moveEvent: PointerEvent) => {
+      pointer = { x: moveEvent.clientX, y: moveEvent.clientY }
+      modifiers = resizeModifiersOf(moveEvent, keepRatio)
+      step()
     }
     const finish = (commit: boolean) => {
       endDrag = null
+      disposeGuard()
+      frame?.removeAttribute(RESIZE_ACTIVE_ATTR)
       if (pendingFrame !== null) caf(pendingFrame)
       doc.removeEventListener('pointermove', onMove, true)
       doc.removeEventListener('pointerup', onUp, true)
       doc.removeEventListener('pointercancel', onCancel, true)
-      doc.removeEventListener('keydown', onKeyDown, true)
+      doc.removeEventListener('keydown', onKey, true)
+      doc.removeEventListener('keyup', onKey, true)
       try {
         handleEl.releasePointerCapture(event.pointerId)
       } catch (_err) {
         // Already released with the pointer — nothing to undo.
       }
-      const patch = commit ? resizeStylePatch(handle, start, last, keepRatio) : null
+      const patch = commit ? resizeStylePatch(start, last) : null
       if (!patch) {
         // Nothing to wait for from the source: a cancelled drag, or one that
         // came back to its start — drop the preview now.
@@ -240,11 +294,32 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     }
     const onUp = () => finish(true)
     const onCancel = () => finish(false)
-    const onKeyDown = (keyEvent: KeyboardEvent) => {
-      if (keyEvent.key === 'Escape') finish(false)
+    // IX-6c — ⇧/⌥ take effect the moment they change, not on the next move.
+    const onKey = (keyEvent: KeyboardEvent) => {
+      if (keyEvent.type === 'keydown' && keyEvent.key === 'Escape') {
+        finish(false)
+        return
+      }
+      if (keyEvent.key !== 'Shift' && keyEvent.key !== 'Alt') return
+      // A bare Alt release focuses the browser's menu on Windows, which would
+      // blur the page and abandon the drag through the guard below.
+      if (keyEvent.key === 'Alt') keyEvent.preventDefault()
+      modifiers = resizeModifiersOf(keyEvent, keepRatio)
+      step()
     }
     endDrag = finish
+    frame?.setAttribute(RESIZE_ACTIVE_ATTR, 'true')
+    // Seeded from the start box so the first painted frame already reads right.
+    if (sizeBadge) writeSizeBadge(sizeBadge, start.width + start.insetWidth, start.height + start.insetHeight)
 
+    // ERR-12 — registered BEFORE the session's own listeners, so a move with
+    // the button already up finishes the drag before it is read as a step.
+    const disposeGuard = guardDragSession({
+      documents: [doc],
+      focusWindow: view,
+      onReleaseLost: () => finish(true),
+      onAbandon: () => finish(false),
+    })
     // Capture phase, deliberately: `gestureForwarding.ts` stops a design-mode
     // pointer's propagation at the document in ITS capture listener, and a
     // release that lands on the page (a browser that refused the pointer
@@ -253,7 +328,8 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     doc.addEventListener('pointermove', onMove, true)
     doc.addEventListener('pointerup', onUp, true)
     doc.addEventListener('pointercancel', onCancel, true)
-    doc.addEventListener('keydown', onKeyDown, true)
+    doc.addEventListener('keydown', onKey, true)
+    doc.addEventListener('keyup', onKey, true)
   }
 
   return {
@@ -266,6 +342,7 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
       frame?.removeEventListener('pointerdown', onPointerDown)
       frame?.remove()
       frame = null
+      sizeBadge = null
       element = null
       target = null
     },

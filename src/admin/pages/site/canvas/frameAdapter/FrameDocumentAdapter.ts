@@ -32,7 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { ElementSizePatch, RuntimeErrorKind } from '@core/studio-runtime'
+import type { ElementResizePatch, RuntimeErrorKind } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -140,7 +140,7 @@ export type FrameRuntimeEvent =
    * strings). Bridge mode only in practice: a portal frame's handles are the
    * parent's own React elements (`CanvasResizeHandles`) and commit directly.
    */
-  | { type: 'resize:commit'; nodeId: string; patch: ElementSizePatch }
+  | { type: 'resize:commit'; nodeId: string; patch: ElementResizePatch }
   /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
   | {
       type: 'wheel'

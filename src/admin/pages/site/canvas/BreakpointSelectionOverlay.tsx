@@ -101,6 +101,7 @@ import {
   positionInspector,
   positionNodeBadge,
   positionOverlayElement,
+  positionResizeFrame,
   positionToolbar,
   publishSelectionAnchor,
   resolveNodeBadgeLabel,
@@ -438,14 +439,12 @@ export function BreakpointSelectionOverlay({
 
     // ── Ring/badge WRITE phase ────────────────────────────────────────────
     for (const { ring, rect } of ringPlacements) positionOverlayElement(ring, rect)
-    // Resize handles ride the SAME measured rect as the ring, so they cannot
-    // drift off the box they belong to. WHETHER they exist at all is
-    // `canOfferResize`'s decision, made in `CanvasResizeHandles` against the
-    // node's module and its presented element — so there is no second gate
-    // here: a frame that should not be offered was never rendered, and
-    // re-deriving the rule in this tick is how the two get to disagree.
+    // Resize handles (and, mid-drag, their W×H badge) ride the SAME measured
+    // rect as the ring, so they cannot drift off the box they belong to.
+    // WHETHER they exist is `canOfferResize`'s call, in `CanvasResizeHandles`
+    // — no second gate here: re-deriving it is how the two would disagree.
     const soleRing = ringPlacements.length === 1 ? ringPlacements[0] : undefined
-    positionOverlayElement(resizeFrameRef.current, soleRing ? soleRing.rect : null)
+    positionResizeFrame(resizeFrameRef.current, soleRing ? soleRing.rect : null)
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,

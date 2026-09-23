@@ -1,7 +1,7 @@
 /**
  * resizeOffer — the one rule for "should this node get drag handles at all?".
  *
- * Pure and separate from `elementResize.ts` (which is geometry) because this
+ * Pure and separate from `elementResizeRules.ts` (which is geometry) because this
  * is POLICY, and policy that disagrees with the write path is the bug it
  * exists to prevent. Studio's §2 invariant is that an edit surface either
  * writes, refuses with a reason, or is not offered — handles that track the
