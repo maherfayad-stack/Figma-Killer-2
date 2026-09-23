@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### server-28 — P1-H: user projects survive a container recreate
-- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` off the trunk `666f68e3` · **PR:** see branch (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` off the trunk `666f68e3` · **PR:** #228 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open; **needs a security-guard review**: volume permissions, bind-mount ownership)
 - **Goal:** ROADMAP P1-H. Put the workspace root (every user's projects, no other copy) on persistent storage in every shipped image, Compose stack and template; give live installs a safe one-time move; gate it.
 - **Done:**
