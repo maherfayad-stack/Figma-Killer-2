@@ -22,7 +22,7 @@ import { packageModuleId } from '@core/module-engine'
 import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
 import { applyStudioEdit, dedupeStudioEdits, orderStudioEditsForApply } from '../studioWriteback'
 import { assignPageIds, pageIdFromRelPath } from '../studioPageIds'
-import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput } from '../studioProjects'
+import { discoverPageFiles, listStudioProjects, pageComponentNameFromInput, projectsRootDir } from '../studioProjects'
 import { collectWorkspaceFiles } from '../studioDownload'
 import { probeProject } from '../studio/projectProbe'
 import { mergeStudioMeta } from '../studio/studioMeta'
@@ -1450,9 +1450,10 @@ describe('POST /admin/api/studio/import-github — Phase 7B route wiring', () =>
       // The summary step's whole reason for existing: it reports what the
       // board is about to show, not just how many bytes moved.
       expect(summary.pageCount).toBe(1)
-      // Server-derived target, NOT the caller's tmpDir.
+      // Server-derived target, NOT the caller's tmpDir: its own folder under
+      // the configured workspace root (never a second, cwd-based root).
       expect(summary.dir).not.toBe(tmpDir)
-      expect(summary.dir.split(path.sep).join('/')).toContain('studio-workspace/acme-widgets')
+      expect(summary.dir).toBe(path.join(projectsRootDir(), 'acme-widgets'))
       expect(fs.existsSync(path.join(summary.dir, 'pages', 'Home.tsx'))).toBe(true)
       // The caller-supplied directory was never touched.
       expect(fs.existsSync(path.join(tmpDir, 'pages'))).toBe(false)

@@ -13,6 +13,7 @@ import {
   collectAppRouterLayoutChain,
   discoverAppRouterRoutes,
   discoverPageFiles,
+  listStudioProjectDirs,
   mergeProjectFrameDefaults,
   nextPageName,
   projectPagesDir,
@@ -545,5 +546,24 @@ describe('resolveExistingProjectDir', () => {
     await withOutsideWorkspaceDir('resolve-existing-project-dir', async (outside) => {
       expect(resolveExistingProjectDir(outside)).toBeNull()
     })
+  })
+})
+
+// P1-H review F9: a block-device filesystem mounted AT the workspace root has a
+// root-owned `lost+found`. It is not a project and must not be listed as one.
+describe('listStudioProjectDirs — filesystem bookkeeping is never a project', () => {
+  let root: string
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-lost-found-'))
+  })
+
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true })
+  })
+
+  it('skips lost+found and .trash, and lists the real project', () => {
+    for (const dir of ['lost+found', '.trash', 'my-app']) fs.mkdirSync(path.join(root, dir))
+    expect(listStudioProjectDirs(root)).toEqual([path.join(root, 'my-app')])
   })
 })

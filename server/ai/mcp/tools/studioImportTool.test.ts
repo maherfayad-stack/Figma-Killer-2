@@ -16,6 +16,7 @@ import { parseValue } from '@core/utils/typeboxHelpers'
 import type { ToolContext } from '../../runtime/types'
 import { mcpToolsForCapabilities } from '../registry'
 import { listImportedPagePaths } from './studioImportTool'
+import { projectsRootDir } from '../../../handlers/studioProjects'
 
 function fakeCtx(): ToolContext {
   return {
@@ -160,7 +161,8 @@ describe('studio_import_project — handler', () => {
     createdDirs.push(result.dir)
 
     expect(requestedHeaders?.authorization).toBe('Bearer secret-token')
-    expect(result.dir.split(path.sep).join('/')).toContain(`studio-workspace/${owner}-${repo}`)
+    // Derived server-side, under the configured workspace root (never a cwd-based second root).
+    expect(result.dir).toBe(path.join(projectsRootDir(), `${owner}-${repo}`))
     expect(result.files).toBe(2)
     expect(result.skipped).toBe(0)
     expect(result.pageCount).toBe(1)

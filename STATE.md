@@ -114,6 +114,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `withWorkspaceProject` is used by `collectProjectTokenSources`.
 - **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
 
+### server-28 — P1-H: user projects survive a container recreate
+- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` (trunk `5d454bf2` merged in) · **PR:** #228 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verifying. The security review came back CHANGES-REQUIRED (F1 to F11); every finding is fixed in this round. Needs re-review by security-guard.
+- **Goal:** ROADMAP P1-H. Put the workspace root and Studio's private data on persistent storage in every shipped image, Compose stack and template; give live installs a safe one-time move; gate it.
+- **Done:**
+  - Image: `STUDIO_WORKSPACE_DIR=/app/studio-workspace` and `STUDIO_DATA_DIR=/app/.data`. Only `uploads`, `data`, `studio-workspace`, `.data` and `.tmp` are `bun`-owned; Studio's code stays root-owned (F3).
+  - Compose adds the `workspace` and `private` volumes. Render, Railway, `docker run` and the bundle use `/app/storage/studio-workspace` and `/app/storage/.data` (F2).
+  - `server/runtimeDirs.ts`: one parser for both settings (blank, padded or relative throws; F8), and `resolveStudioDataRoot`, now the default under the four `.data` stores.
+  - `workspaceRootGuard.ts` (F1): boot REFUSES a workspace root that is, contains, or sits inside the DB dir, uploads, `STATIC_DIR`, Studio's code, or a private-data root, compared on real paths. `server/index.ts` exits before the DB opens.
+  - `prepareWorkspaceRoot` takes injectable inputs and is tested (F5), and warns for the data root too.
+  - `isRealpathStrictlyInsideAllowingMissing`: the one write-target rule, shared by `gitClone.ts` and the archive funnel's clear (F4).
+  - `lost+found` is never a project (F9). `trustGate.ts` notes that a misread now FAILS OPEN (F10). `.dockerignore` excludes `studio-workspace` and `.data` (F11).
+  - `defaultGithubImportDir` follows `projectsRootDir()`.
+  - Docs: the "dedicated directory" rule, a restore that verifies the archive before deleting (F6), and a migration that stops the app, copies into a fresh directory, compares counts, and creates the container without starting it (F7).
+- **Tests (each proved failing before its fix):** `workspaceRootGuard.test.ts` (14 of 21), `archiveIngest.test.ts` containment (5), `workspace-volume-persistence.test.ts` (16 on the original files, 14 more on the round-1 files), `studioGithubImport` (2), the `lost+found` listing test (1). `workspacePersistence.test.ts` (21) covers new code.
+- **Decisions:** the guard is fatal, but the persistence check only warns. Sitting INSIDE the cwd or the DB dir is allowed (the image default and the e2e `.tmp` layout). No Dockerfile `VOLUME`.
+- **Landmines:**
+  - **A live install loses its projects and secrets on the FIRST recreate with the new files unless the operator copies them out first.** The release notes must lead with this.
+  - Setting `STUDIO_WORKSPACE_DIR=/app/storage` now stops the server at boot on purpose.
+- **Next:** security-guard re-review; owner merges.
+
 ---
 
 ## Blocked

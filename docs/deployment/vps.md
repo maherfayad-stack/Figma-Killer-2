@@ -11,14 +11,16 @@ The VPS stack uses the same production image as managed platforms. Compose only 
 
 | Mode | Source-build command | Containers | Persistent volumes |
 |---|---|---|---|
-| SQLite | `docker compose -f compose.prod.yml -f compose.sqlite.yml -f compose.build.yml up -d --build` | `app` | `data`, `uploads` |
-| Postgres | `docker compose -f compose.prod.yml -f compose.build.yml up -d --build` | `app`, `postgres` | `postgres_data`, `uploads` |
-| SQLite + TLS | `docker compose -f compose.prod.yml -f compose.sqlite.yml -f compose.tls.yml -f compose.build.yml up -d --build` | `app`, `caddy` | `data`, `uploads`, `caddy_data` |
-| Postgres + TLS | `docker compose -f compose.prod.yml -f compose.tls.yml -f compose.build.yml up -d --build` | `app`, `postgres`, `caddy` | `postgres_data`, `uploads`, `caddy_data` |
+| SQLite | `docker compose -f compose.prod.yml -f compose.sqlite.yml -f compose.build.yml up -d --build` | `app` | `workspace`, `private`, `data`, `uploads` |
+| Postgres | `docker compose -f compose.prod.yml -f compose.build.yml up -d --build` | `app`, `postgres` | `workspace`, `private`, `postgres_data`, `uploads` |
+| SQLite + TLS | `docker compose -f compose.prod.yml -f compose.sqlite.yml -f compose.tls.yml -f compose.build.yml up -d --build` | `app`, `caddy` | `workspace`, `private`, `data`, `uploads`, `caddy_data` |
+| Postgres + TLS | `docker compose -f compose.prod.yml -f compose.tls.yml -f compose.build.yml up -d --build` | `app`, `postgres`, `caddy` | `workspace`, `private`, `postgres_data`, `uploads`, `caddy_data` |
 
 SQLite is the default for most single-site installs. Postgres is for multiple simultaneous admin writers, horizontal app scale, or operators who already want Postgres.
 
 When using a published image, set `STUDIO_IMAGE` and omit `compose.build.yml` plus `--build`.
+
+**Upgrading an install created before the `workspace` and `private` volumes existed?** Its projects, MCP secrets and CLI logins are in the app container's writable layer, and the `up -d` that applies the new Compose files deletes them. Copy them out first: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
 Before adding AI provider credentials, saving plugin secret settings, or enabling TOTP MFA in production, set `STUDIO_SECRET_KEY` to the output of `bun run scripts/generate-secret-key.ts`.
 
 ## Install From A Release Bundle
@@ -83,6 +85,8 @@ Persistent data:
 
 | Volume | Mount path | Contents |
 |---|---|---|
+| `workspace` | `/app/studio-workspace` | Every user's projects (Studio's documents) |
+| `private` | `/app/.data` | MCP server secrets, Claude CLI logins, idempotency records |
 | `data` | `/app/data` | SQLite database |
 | `uploads` | `/app/uploads` | Media, fonts, plugins, published artefacts |
 
@@ -131,6 +135,8 @@ Persistent data:
 
 | Volume | Mount path | Contents |
 |---|---|---|
+| `workspace` | `/app/studio-workspace` | Every user's projects (Studio's documents) |
+| `private` | `/app/.data` | MCP server secrets, Claude CLI logins, idempotency records |
 | `postgres_data` | `/var/lib/postgresql/data` | Postgres data directory |
 | `uploads` | `/app/uploads` | Media, fonts, plugins, published artefacts |
 
@@ -220,7 +226,7 @@ DATABASE_URL=sqlite:./data/cms.db \
   bun run server/index.ts
 ```
 
-Replace `DATABASE_URL` with a Postgres connection string for Postgres mode. `STATIC_DIR` must point at the built admin SPA (`dist/` after `bun run build`).
+Replace `DATABASE_URL` with a Postgres connection string for Postgres mode. `STATIC_DIR` must point at the built admin SPA (`dist/` after `bun run build`). The workspace defaults to `./studio-workspace` and the private data to `./.data` in the checkout; set `STUDIO_WORKSPACE_DIR` / `STUDIO_DATA_DIR` (absolute paths) to keep them elsewhere.
 
 Wrap the command in a process supervisor (systemd, pm2, supervisord) for auto-restart on crash and on server boot. Put an HTTPS-capable reverse proxy (Caddy, Nginx, Cloudflare Tunnel) in front for TLS, and set `PUBLIC_ORIGIN=https://your-domain` so the CSRF origin check matches the public URL even though the proxy hands the Bun process plain HTTP. `TRUSTED_PROXY_CIDRS` is independent of CSRF: set it to the proxy's source CIDR only if you want real client IPs in audit logs and rate-limit keys, and leave it empty if the app is directly exposed.
 
@@ -228,7 +234,9 @@ Wrap the command in a process supervisor (systemd, pm2, supervisord) for auto-re
 
 `docker compose down` stops containers and keeps named volumes.
 
-`docker compose down -v` deletes named volumes. For Studio that means deleting the CMS database and uploaded media. Use it only when intentionally wiping the install.
+`docker compose down -v` deletes named volumes. For Studio that means deleting every user's projects (the `workspace` volume), the MCP secrets and CLI logins (`private`), the database and uploaded media. Use it only when intentionally wiping the install.
+
+If you replace the `workspace` or `private` named volume with a bind mount, the host directory must be writable by the container's non-root `bun` user: see [backup-restore.md](backup-restore.md) → "Ownership, and bind mounts".
 
 Backups are covered in [backup-restore.md](backup-restore.md).
 
