@@ -301,8 +301,13 @@
     --inspector-group-gap: 8px;
     /* Caption ("Line height") to the field it names. */
     --inspector-caption-gap: 3px;
-    /* The remaining text-label column, for rows with no honest glyph. */
-    --inspector-label-w: 68px;
+    /* The remaining text-label column, for rows with no honest glyph — in
+       practice a module's or a component's own prop names. 96px (P2-G, UX-10):
+       68px fit ~10 characters, so `fetchPriority`, `placeholder`,
+       `ariaLabel` and any `onSomething` ellipsised. Penpot's prop row gives
+       the name 3 of 8 grid columns (104px); 96 leaves the field ~158px at the
+       290px default width. */
+    --inspector-label-w: 96px;
     /* The vertical category rail's column. The content column beside it is
        sized `minmax(0, 1fr)` against this, so the rail is reserved space in
        the grid rather than a strip floating over the sections — the two

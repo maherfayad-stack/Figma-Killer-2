@@ -400,15 +400,16 @@ meaning comes from a glyph inside it.
 
 | Token | Value | Use |
 |---|---|---|
-| `--inspector-row-h` | 24px | Field and icon-button height |
+| `--inspector-row-h` | 32px | Field and icon-button height |
 | `--inspector-header-h` | 32px | Section header |
-| `--inspector-pad-x` | 8px | Section horizontal padding |
+| `--inspector-pad-x` | 12px | Section horizontal padding |
+| `--inspector-section-gap` | 12px | Between two sections |
 | `--inspector-field-gap` | 6px | Between two fields on one row |
 | `--inspector-group-gap` | 8px | Between caption groups |
 | `--inspector-caption-gap` | 3px | Caption to the field it names |
-| `--inspector-label-w` | 68px | The remaining text-label column |
+| `--inspector-label-w` | 96px | The remaining text-label column — module and component prop names |
 | `--inspector-rail-w` | 32px | The category rail's grid column |
-| `--inspector-field-radius` | 5px | Field corner |
+| `--inspector-field-radius` | 8px | Field corner |
 | `--inspector-field-bg` / `-hover` | overlay 5% / 10% | Field fill |
 | `--inspector-divider` | overlay 10% | The hairline between sections |
 

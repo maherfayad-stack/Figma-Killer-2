@@ -1,7 +1,8 @@
 # 05 — Studio's own per-section heights, and the 900px Design-tab budget
 > **Trust:** historical, dated 2026-09-09; the tables were re-measured on
 > 2026-09-23 by P2-F (the design pane's spacing), which is what the "P2-F"
-> columns and sections below record. Paths may still be wrong elsewhere.
+> columns and sections below record, and again the same day by P2-G (the
+> Component section, which added F5). Paths may still be wrong elsewhere.
 
 Unlike `00`–`04`, this file measures **Studio**, not Penpot. It exists because
 `docs/features/inspector.md` §6's oldest claim — *a text node's entire
@@ -149,7 +150,28 @@ designed. That was the panel-37 defect.
 | F3 flex board | 715 | 746 | **0** (31 spare) | 725, 0 (21 spare) | 191 over | 387 over |
 | F4 image | 601 | 746 | **0** (145 spare) | 603, 0 (143 spare) | 55 over | 417 over |
 
-Total overflow across the four: **1702 → 444 → 36 → 26**.
+Total overflow across the four: **1702 → 444 → 36 → 26 → 23**.
+
+**P2-G (the Component section)** re-measured all four and added **F5, a local
+component instance** (`<FixtureButton label variant />`, three declared
+props). Before P2-G F5 had no Component section to measure: an instance with
+no writable class drew the "no writable style" notice in place of every
+section, its props included.
+
+| Fixture | P2-G `contentHeight` | Room | Over by | P2-F |
+|---|---:|---:|---:|---:|
+| F1 rectangle | 598 | 746 | **0** (148 spare) | 598 |
+| F2 text | 769 | 746 | **23** | 772 |
+| F3 flex board | 715 | 746 | **0** (31 spare) | 715 |
+| F4 image | 595 | 746 | **0** (151 spare) | 601 |
+| F5 instance | 276 | 746 | **0** (470 spare) | notice only |
+
+F5's Component section is **137px**: the hairline, one 32px title row
+("FixtureButton · Local" with Detach and Swap), and three 32px prop rows 4px
+apart. The old three-bar drawing computes to about 213px for the same props.
+F2's and F4's Module blocks lost 3px per stacked prop row (95 → 92,
+145 → 139): `ControlRow`'s gaps read the frozen inspector scale inside the
+panel now.
 
 ### Where the room comes from
 
@@ -288,13 +310,13 @@ One fixture, and every pixel of it is a **populated** section — a value the
 user's own source sets, drawn once, at the 32px row height `04-token-gaps.md`
 measures off Penpot — or the section gap the owner asked for.
 
-**F2 (text), 26 over — 772 against 746:**
+**F2 (text), 23 over — 769 against 746:**
 
 | Block | px |
 |---|---:|
 | `text` — family; weight+size; line-height+letter-spacing; align (Figma's own four rows) | 177 |
 | `measures` — W/H, CSS position mode, rotation+radius | 114 |
-| Module block — header, the node's own `text` content, padding, hairline | 95 |
+| Module block — header, the node's own `text` content, padding, hairline | 92 |
 | `fill` — the text colour the class sets | 65 |
 | `layer` — opacity, blend, visibility | 32 |
 | five collapsed one-row sections (layout, stroke, effects, export, more) | 165 |
@@ -302,9 +324,9 @@ measures off Penpot — or the section gap the owner asked for.
 
 Nothing there is pre-drawn. The Shadow + Blur merge this section used to name
 as "the one lever" is done (P2-F, −45px on every fixture), and it paid for the
-segregation rather than closing the gap: closing the last 26px now means
+segregation rather than closing the gap: closing the last 23px now means
 collapsing a section that has values in it, or giving back spacing the owner
-asked for. `TEXT_LAYER_OVERFLOW_PX` is 50 — the measured 26 plus the same 24px
+asked for. `TEXT_LAYER_OVERFLOW_PX` is 47 — the measured 23 plus the same 24px
 of machine-to-machine slack it carried before.
 
 Two smaller observations, still open:
