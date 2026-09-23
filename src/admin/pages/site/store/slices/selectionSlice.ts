@@ -5,7 +5,7 @@ import type { BaseNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
 import { flattenSubtree, getParent } from '@core/page-tree'
-import { getActiveTree, resolveSelectableNode } from './selectionResolve'
+import { filterMultiSelectableIds, getActiveTree, resolveSelectableNode } from './selectionResolve'
 import { createSelectionTraversalActions } from './selectionTraversalActions'
 
 /**
@@ -90,12 +90,18 @@ interface SelectionSlice {
    * - `toggle`: add or remove `id` from the selection set.
    * - `range`: select every node between the current anchor and `id` (DFS order).
    *
-   * Modifier-aware callers pass `mode` based on `e.metaKey || e.ctrlKey` (toggle)
-   * or `e.shiftKey` (range).
+   * The two surfaces read the modifiers differently (OD-3): the CANVAS maps
+   * ⇧-click AND ⌘/Ctrl-click to `toggle` (Figma's and Penpot's canvas), while
+   * the Layers panel keeps ⇧-click = `range`, where a contiguous run of rows
+   * is what a list means. See `canvasClickSelectionMode`.
    */
   selectNode: (id: string | null, mode?: SelectionMode, options?: SelectNodeOptions) => void
-  /** Replace the current selection with the given set. */
-  selectMany: (ids: string[]) => void
+  /**
+   * Replace the current selection with the given set. `options.frameId` keeps
+   * the ring on the board frame the set came from (WS-10 variant frames), the
+   * same option `selectNode` takes.
+   */
+  selectMany: (ids: string[], options?: SelectNodeOptions) => void
   /** Add a node to the selection set (no-op if already present). */
   addToSelection: (id: string) => void
   /** Remove a node from the selection set (no-op if absent). */
@@ -141,6 +147,20 @@ interface SelectionSlice {
    * nothing is selected or the anchor is a leaf.
    */
   selectFirstChildNode: () => boolean
+  /**
+   * P2-B (IX-3) — Tab / ⇧Tab: the anchor's next / previous sibling in source
+   * order, wrapping, skipping hidden and locked siblings. A multi-selection
+   * first collapses to its anchor. Returns `false` when there is nothing to
+   * move to. Implemented in `selectionTraversalActions.ts`.
+   */
+  selectSiblingNode: (direction: 'next' | 'previous') => boolean
+  /**
+   * P2-B (IX-4) — ⌘A with a node selected: every visible, unlocked sibling of
+   * the anchor; when those are ALL already selected, climb one level. Returns
+   * `false` only when there is no level left to climb to (the anchor is the
+   * tree root), which the caller answers with the board's own "all frames".
+   */
+  selectAllSiblingNodes: () => boolean
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -222,10 +242,10 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     applySelection(set, current, nextIds, options)
   },
 
-  selectMany: (ids) => {
+  selectMany: (ids, options) => {
     const current = get()
     const filtered = filterMultiSelectableIds(current, ids)
-    applySelection(set, current, filtered)
+    applySelection(set, current, filtered, options)
   },
 
   addToSelection: (id) => {
@@ -476,34 +496,6 @@ function applySelection(
       state.componentizeEditorRequest = null
     }
   })
-}
-
-/**
- * Filter ids to only those that may legally participate in a multi-selection.
- * Rules:
- * - The page/VC tree root cannot be part of a multi-selection (only solo).
- * - A `base.slot-instance` whose parent is a `base.visual-component-ref` is
- *   structural (managed by syncSlotInstances) and may not be multi-selected.
- * - Every id must resolve via `resolveSelectableNode` — the active
- *   document's tree normally, or (WS-7.3) any page curated as a frame on the
- *   active studio board.
- *
- * Returned ids preserve input order.
- */
-function filterMultiSelectableIds(state: EditorStore, ids: string[]): string[] {
-  const result: string[] = []
-  for (const id of ids) {
-    const resolved = resolveSelectableNode(state, id)
-    if (!resolved) continue
-    const { node, tree } = resolved
-    if (id === tree.rootNodeId) continue
-    if (node.moduleId === 'base.slot-instance') {
-      const parent = getParent(tree, id)
-      if (parent?.moduleId === 'base.visual-component-ref') continue
-    }
-    result.push(id)
-  }
-  return result
 }
 
 /**

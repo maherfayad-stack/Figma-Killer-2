@@ -36,6 +36,7 @@ import {
   dispatchEditorKeyDown,
   dispatchEditorKeyUp,
   registerEditorKeyScope,
+  releaseEditorKeysIfFocusLeft,
   type EditorKeyScope,
   type EditorKeyScopeId,
 } from './editorKeyDispatcher'
@@ -68,11 +69,11 @@ export function useEditorKeyScope(
   id: EditorKeyScopeId,
   isActive: () => boolean,
   handle: (event: KeyboardEvent) => boolean,
-  handleKeyUp?: (event: KeyboardEvent) => void,
+  handleKeyUp?: (event: KeyboardEvent | null) => void,
 ): void {
   const isActiveEvent = useEffectEvent(isActive)
   const handleEvent = useEffectEvent(handle)
-  const handleKeyUpEvent = useEffectEvent((event: KeyboardEvent) => handleKeyUp?.(event))
+  const handleKeyUpEvent = useEffectEvent((event: KeyboardEvent | null) => handleKeyUp?.(event))
 
   useEffect(
     () =>
@@ -98,12 +99,24 @@ export function useEditorKeyDispatcher(): void {
       dispatchEditorKeyDown(event)
     }
     const onKeyUp = (event: KeyboardEvent) => dispatchEditorKeyUp(event)
+    // ERR-11 — focus leaving the editor releases every key: whatever is still
+    // held will send its keyup to some other application. A blur that only
+    // moved focus INTO a frame is not a release (`releaseEditorKeysIfFocusLeft`);
+    // a frame losing focus in its turn is reported by its relay.
+    const onWindowBlur = () => releaseEditorKeysIfFocusLeft(document)
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') dispatchEditorKeyUp(null)
+    }
 
     document.addEventListener('keydown', onKeyDown)
     document.addEventListener('keyup', onKeyUp)
+    window.addEventListener('blur', onWindowBlur)
+    document.addEventListener('visibilitychange', onVisibilityChange)
     return () => {
       document.removeEventListener('keydown', onKeyDown)
       document.removeEventListener('keyup', onKeyUp)
+      window.removeEventListener('blur', onWindowBlur)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
     }
   }, [])
 }

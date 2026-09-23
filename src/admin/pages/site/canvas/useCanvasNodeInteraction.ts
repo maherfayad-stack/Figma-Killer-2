@@ -27,6 +27,7 @@ import type { PrototypeLink, PrototypeTriggerKind } from '@core/studio-prototype
 import { useEditorStore } from '@site/store/store'
 import { followPrototypeLinkAt, releasePrototypePress } from '@site/studio/playNavigation'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
+import { canvasClickSelectionMode } from './canvasSelectionUtils'
 
 export interface CanvasNodeInteractionOptions {
   /** False on a read-only canvas: right-click and double-click stand down. */
@@ -210,10 +211,10 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
         return
       }
     }
-    // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles, Shift-
-    // click extends a range from the anchor. Plain clicks replace the
-    // selection (default mode in `selectNode`).
-    const mode = e.shiftKey ? 'range' : e.metaKey || e.ctrlKey ? 'toggle' : 'replace'
+    // Modifier-aware selection (OD-3): ⇧-click and ⌘/Ctrl-click TOGGLE, as on
+    // Figma's canvas; a plain click replaces. Range stays a Layers-panel
+    // gesture — see `canvasClickSelectionMode`.
+    const mode = canvasClickSelectionMode(e)
     // WS-10 Phase 2 — `frameId` scopes this selection to the originating
     // BoardFrame so a sibling "duplicate as variant" frame of the same page
     // doesn't also light up. See `selectedNodeFrameId`'s doc.

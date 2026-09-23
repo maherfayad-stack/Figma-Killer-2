@@ -113,10 +113,17 @@ export function findEnclosingComponentRef(
  * until a NESTED instance boundary is crossed.
  *
  * Walks from `nodeId` up through its ancestors (inclusive) and returns the
- * id of the NEAREST `studio.instance` ancestor that is NOT in
+ * id of the OUTERMOST `studio.instance` ancestor that is NOT in
  * `enteredInstanceIds`. Returns `null` when `nodeId` isn't inside any
  * not-yet-entered instance — either it's outside every instance, or every
  * instance ancestor on its path has been entered.
+ *
+ * OUTERMOST, not nearest (P2-B): a `Button` instance inside a `Card`
+ * instance is part of the card until the card is entered. Returning the
+ * nearest made the first click on the button select the BUTTON, and a
+ * double-click then entered the button while the card stayed closed — so the
+ * next click selected the card again. Figma selects the card, and each
+ * double-click opens one level (`resolveInstanceEntry`).
  *
  * `tree` is a `Page` (or any `NodeTree<PageNode>`) — callers pass the
  * specific frame's page via `selectCanvasPageFor`, matching the VC lock-down
@@ -129,17 +136,63 @@ export function findEnclosingInstance(
 ): string | null {
   const visited = new Set<string>()
   let current: PageNode | undefined = tree.nodes[nodeId]
+  let outermost: string | null = null
 
   while (current) {
     if (visited.has(current.id)) return null // cycle guard
     visited.add(current.id)
 
     if (current.moduleId === 'studio.instance' && !enteredInstanceIds.includes(current.id)) {
-      return current.id
+      outermost = current.id
     }
 
     current = getParent(tree, current.id)
   }
 
-  return null
+  return outermost
+}
+
+/**
+ * A double-click on `nodeId` inside a not-yet-entered instance: which
+ * instance it OPENS, and what it selects once that one is open — the next
+ * closed instance on the way down, or `nodeId` itself when there is none.
+ * One level per double-click, as in Figma. `null` when `nodeId` is not
+ * inside any closed instance (the double-click means something else).
+ */
+export function resolveInstanceEntry(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+  enteredInstanceIds: readonly string[],
+): { enter: string; select: string } | null {
+  const enter = findEnclosingInstance(tree, nodeId, enteredInstanceIds)
+  if (enter === null) return null
+  const select = findEnclosingInstance(tree, nodeId, [...enteredInstanceIds, enter]) ?? nodeId
+  return { enter, select }
+}
+
+// ---------------------------------------------------------------------------
+// canvasClickSelectionMode
+// ---------------------------------------------------------------------------
+
+/**
+ * What a click on the CANVAS does to the selection, given its modifiers
+ * (OD-3, IX-2): ⇧-click and ⌘/Ctrl-click both TOGGLE the node in or out —
+ * Figma's and Penpot's canvas (`actions.cljs`: `select-shape id shift?`).
+ *
+ * The canvas used to read ⇧ as a tree RANGE, the Layers panel's meaning. On
+ * a board a range is a depth-first run through the source tree, so ⇧-clicking
+ * two cards selected every node between them — headings, icons, wrappers — a
+ * selection nobody could see the shape of. The Layers panel keeps ⇧ = range
+ * (`TreeNode.tsx`), where the rows between the two clicks ARE the range.
+ *
+ * Every canvas click path calls this — the frame's React click, a bridge
+ * frame's forwarded click, and a native `<select>` activation — so the three
+ * can never disagree about a modifier.
+ */
+export function canvasClickSelectionMode(modifiers: {
+  shiftKey: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+}): 'toggle' | 'replace' {
+  return modifiers.shiftKey || modifiers.metaKey || modifiers.ctrlKey ? 'toggle' : 'replace'
 }

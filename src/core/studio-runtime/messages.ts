@@ -68,10 +68,12 @@
  */
 import { Type, type Static } from '@sinclair/typebox'
 import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from './dropCandidateMessages'
-import { NodeRectSchema } from './messageShapes'
+import { FrameBlurMessageSchema, KeyMessageSchema } from './keyMessages'
+import { NodeRectSchema, PointerModifiersSchema } from './messageShapes'
 
 export { DROP_CANDIDATES_MAX, DROP_CANDIDATE_CHILD_RECTS_MAX, DropCandidatesMessageSchema, DropCandidatesResultMessageSchema, type DropCandidateWire } from './dropCandidateMessages'
 export { NodeRectSchema, type NodeRect } from './messageShapes'
+export { FrameBlurMessageSchema, KEY_NAME_MAX, KeyMessageSchema, type KeyMessage } from './keyMessages'
 
 /** The `source` every envelope carries, so unrelated `postMessage` traffic is ignored outright. */
 export const RUNTIME_MESSAGE_SOURCE = 'studio-live-runtime'
@@ -87,13 +89,6 @@ const ColorSchemeSchema = Type.Union([Type.Literal('light'), Type.Literal('dark'
 export const RuntimeModeSchema = Type.Union([Type.Literal('design'), Type.Literal('live')])
 export type RuntimeMode = Static<typeof RuntimeModeSchema>
 
-
-const PointerModifiersSchema = Type.Object({
-  shiftKey: Type.Boolean(),
-  altKey: Type.Boolean(),
-  ctrlKey: Type.Boolean(),
-  metaKey: Type.Boolean(),
-})
 
 // ---------------------------------------------------------------------------
 // Inbound — parent -> frame
@@ -666,6 +661,8 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   FrameResizeMessageSchema,
   ErrorMessageSchema,
   DropCandidatesResultMessageSchema,
+  KeyMessageSchema,
+  FrameBlurMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 

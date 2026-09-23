@@ -151,6 +151,23 @@ export type FrameRuntimeEvent =
       clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
+  /**
+   * P2-B — a design-mode keystroke inside a bridge frame, already cancelled
+   * there. `useBridgeFrameInteraction` replays it through
+   * `canvasFrameKeyRelay.ts`, the portal frame's own keyboard path. Bridge
+   * mode only: a portal frame's keyboard is heard natively.
+   */
+  | {
+      type: 'key'
+      phase: 'down' | 'up'
+      key: string
+      code: string
+      location: number
+      repeat: boolean
+      modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+    }
+  /** P2-B / ERR-11 — the bridge frame's window lost focus; any key held in it may have been released elsewhere. */
+  | { type: 'blur' }
   /** `live-18` — a double-click on a text-bearing node inside the frame; the parent decides allowed/refused via `startTextEdit`. */
   | { type: 'text:editStart'; nodeId: string }
   /** `live-18` — Enter (no Shift) or blur ended the session with this final text. */

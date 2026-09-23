@@ -146,7 +146,7 @@ as **chrome-namespaced** aliases (`--chrome-font-sans`, `--chrome-text-*`,
 | Scroll | none (canvas pans) | native |
 | Wheel | forwarded to parent pan/zoom | not forwarded |
 | Pointer | forwarded for space-pan / drags | not forwarded |
-| Keyboard | cloned onto parent `document`; `Tab` blocked | not forwarded |
+| Keyboard | keydown cloned onto parent `document` (`Tab` cancelled in the frame, then forwarded); keyup ends holds | not forwarded |
 | Chrome CSS | applied | not applied |
 | Authored form controls | suppressed (a press selects the node) | left alone (focus, type, pick) |
 | The component's own `onClick` | swallowed — the canvas owns the click | runs, alongside the canvas's own activation |
@@ -702,9 +702,19 @@ events. Five cases are bridged explicitly:
    frame's `contentDocument`, which then translates the iframe-local point into
    parent client coordinates itself (`iframeLocalPointToParentClientPoint`).
    Only the moves that follow ride the relay. See `docs/reference/canvas-dnd.md`.
-3. **Keyboard** — a cloned `keydown` is dispatched on the **parent `document`**
-   (not the iframe element — that would double-fire the canvas-root handler that
-   already gets it via fiber bubbling). `Tab` is blocked, never forwarded.
+3. **Keyboard** — one relay for both frame kinds, `canvasFrameKeyRelay.ts`
+   (P2-B). A portal frame hears its native events; a Tier 2 bridge frame's
+   runtime posts them as `key` / `blur` messages (`keyForwarding.ts`, design
+   mode only, never while the user types into the frame). A `keydown` becomes a
+   clone on the **parent `document`** (not the iframe element — that would
+   double-fire the canvas-root handler that already gets it via fiber
+   bubbling). `Tab` is cancelled inside the frame, so it cannot walk the
+   authored page's links, and then **forwarded** like any key: the `node` rung
+   reads it as "next sibling". A `keyup` is NOT cloned — it goes straight into
+   the dispatcher's release broadcast (`dispatchEditorKeyUp`), because a cloned
+   keyup would also reach the Alt ladder and Alt-measure, which already listen
+   in every frame document. A frame's window losing focus is relayed too (see
+   "Focus loss" below).
 4. **OS file drag/drop** (D2 G15, `canvasFrameDragRelay.ts`) — **every**
    `dragover`/`drop` in a design frame's document is cancelled there, because
    the browser's default is to navigate the document that received it and that
@@ -766,19 +776,52 @@ by **mount order**. There is now exactly one:
 - Shared guards live in `canvas/editorKeyGuards.ts` (`isTextInputTarget`,
   `isInsideKeyOwningOverlay`) — the overlay selector used to be copy-pasted into
   four files under two names.
+- `useCanvas` registers the `global`-rung viewport scope
+  (`hooks/useCanvasViewportKeys.ts`, P2-B / IX-15): + / = / − / _ zoom, ⌘0 and
+  ⇧0 zoom to 100%, ⇧1 fit, ⇧2 fit the selection, Space held to pan. They were a
+  React `onKeyDown` on the canvas div (dead after one click into a panel) and
+  two raw `document` listeners. The canvas div binds no key handler at all now,
+  and `@use-gesture`'s own arrow-key drag is off (`drag.keys: false`).
 - `keybindings-single-dispatcher.test.ts` gates it: exactly one
-  `addEventListener('keydown'` under `canvas/`, plus a justified allowlist for
-  the iframe bridge and the gesture-local Escape listeners (a resize drag, a
+  `addEventListener('keydown'` under `canvas/` **and `hooks/`** (widened in
+  P2-B), plus a justified allowlist for the iframe bridge, `usePersistence`'s
+  window-level ⌘S, and the gesture-local Escape listeners (a resize drag, a
   comment-pin drag, an armed comment tool, a link pick, the Alt-hold ladder).
+  A hook that hands back a `handleKeyDown` for someone else to bind fails it
+  too.
 
 The rules the ladder replaced prose with:
 
+- **Focus loss releases every key (ERR-11).** `handleKeyUp(null)` is the
+  release broadcast with no event: "every key is up". The dispatcher sends it on
+  window `blur` — but only when focus actually LEFT the editor
+  (`releaseEditorKeysIfFocusLeft` checks `document.hasFocus()` on the next
+  task; a click into a frame is not a release) — and on the document going
+  hidden. Frames relay their own window's blur. Space-pan lowers BOTH keyboard
+  sources on any release (`releaseCanvasKeyboardPan`), because a press and its
+  release can land in different documents; every Space keydown re-asserts its
+  source, so over-clearing self-heals. The hand tool's latch is never touched.
+- **What counts as typing (ERR-21).** `isTextInputTarget` is a text-entry
+  `<input>` or `<textarea>` that is not read-only, or a contentEditable. The
+  `Select` trigger (a read-only combobox input), checkboxes and ranges are not,
+  so Delete / ⌘D / ⌘C reach the selection with one of them focused. Space keeps
+  the wider `isSpaceOwningControlTarget` (any form control), because Space
+  activates a checkbox. Duck-typed on `tagName`, so it also works on a target
+  from a frame's realm.
+- **Tab is canvas-scoped; ⌘A is not (IX-3, IX-4).** Every `node`-rung key is
+  scoped by intent except Tab / ⇧Tab, which cycle siblings only while focus is
+  on the canvas, a frame, or nowhere (`isCanvasKeyboardSurface`) — inside a
+  panel Tab walks the fields. ⌘A with a node selected selects its siblings,
+  again climbs a level, and at the root hands over to the board's "all
+  frames"; it is claimed whenever a node is selected, so the browser never
+  selects the chrome's text.
+- **V is home (IX-11)** — the move tool, and it disarms the comment tool too.
 - **Escape is "deselect", not "select parent"** — traversal took Figma's own
   Enter/⇧Enter, because re-pointing Escape re-opens the bug `select-01` fixed.
 - `board.nudgeFrames` is the only bare-arrow binding in the registry and it is
   scoped by **what is selected**, never globally: with a node selected the
-  arrows stay unclaimed (a node has no canvas position — moving one would be a
-  style write with its own refusal story). A mixed marquee (notes AND frames)
+  arrows stay unclaimed for P2-C's node nudge (IX-1). Sibling selection went to
+  Tab / ⇧Tab, not the arrows. A mixed marquee (notes AND frames)
   nudges the notes, because `annotation` outranks `board`.
 - Delete with a prototype connector AND an element selected removes the
   connector, because `prototype-link` outranks `node`. This used to be a
@@ -830,11 +873,11 @@ until the resync lands.
 rung claims every keystroke and acts on none, and
 `useIframeEventForwarding.onKeyDown` returns early without forwarding —
 otherwise Cmd+Z runs the store `undo()` while the contentEditable DOM keeps the
-text, and store and DOM diverge. There is a **third** path that needs its own
-guard: `useCanvas`'s viewport keys (+ / − / ⇧1 / ⇧2) are still a React
-`onKeyDown` on the canvas div, and a React synthetic event *does* cross the
-iframe boundary through the fiber tree even though a native one does not — so
-that handler carries its own `activeInlineEdit` bail.
+text, and store and DOM diverge. A bridge frame's runtime never posts a key
+typed into a contentEditable at all (`keyForwarding.ts`). The third path the
+viewport keys used to be — a React `onKeyDown` on the canvas div, which a
+synthetic event from inside a frame still reaches through the fiber tree — is
+gone since P2-B: those keys are a ladder scope, so the halt covers them.
 
 ### A live frame does not stop propagation, and one press is one activation
 
@@ -946,6 +989,20 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
 ---
 
 ## Selection and geometry
+
+**A canvas click (OD-3, IX-2):** plain click replaces; ⇧-click and ⌘/Ctrl-click
+both TOGGLE (`canvasClickSelectionMode`, `canvasSelectionUtils.ts`) — the frame's
+React click, a bridge frame's forwarded click and a native `<select>`
+activation all call it. Range stays a Layers-panel gesture (`TreeNode.tsx`).
+
+**Instances (`studio.instance`):** a click or hover inside a closed instance
+lands on the OUTERMOST closed one (`findEnclosingInstance`), and a double-click
+opens one level (`resolveInstanceEntry`): the card, then the button inside it,
+then the exact node. Portal frames apply it in `NodeRenderer`, bridge frames
+in `useBridgeFrameInteraction` (a double-click there arrives as
+`text:editStart` and is answered "not allowed" after the entry). It was the
+nearest instance until P2-B, and bridge frames skipped it entirely — a click on
+a component in a live frame selected the element inside it.
 
 - `canvasDomGeometry.ts` — cross-iframe measurement, `nodeVisualRect`
   (child-union fallback for box-less nodes), `panToCenterBreakpointFrame`.
@@ -1529,11 +1586,12 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 
 | Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
 |---|---|---|
-| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
+| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) — a click or hover target inside a closed `studio.instance` first resolved to the OUTERMOST closed instance, as `NodeRenderer` does (P2-B) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
 | `resize:commit` (`{ width?, height?, left?, insetInlineStart?, top? }` as integer `px` strings; offsets may be negative) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
 | `text:editStart` (`live-18`, design mode only) / `text:commit` (final text, bounded to 20 000 chars) / `text:cancel` | `inlineTextEdit.ts` — a double-click on a stamped element opens a session; the runtime owns the whole contentEditable lifecycle itself (seeding, focus, select-all, Escape/Enter, blur) and only the request and the final result cross the wire | `useBridgeFrameInteraction` → `text:editStart` runs the SAME `startInlineEdit` predicate the portal double-click handler applies and replies via `adapter.startTextEdit(nodeId, allowed, text?)`; `text:commit` calls `applyInlineEditValue` + `endInlineEdit`; `text:cancel` calls `cancelInlineEdit` — nothing is written to the store until commit, so cancel (and an HMR update landing mid-edit) is a plain no-op here |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
+| `key` (P2-B; `down`/`up`, `key`/`code` ≤ 32 chars, `location`, `repeat`, modifiers) / `blur` | `keyForwarding.ts` — capture-phase `keydown`/`keyup` on the document and `blur` on its window, DESIGN mode only, never for a key typed into a contentEditable or a text field; a design-mode keydown is cancelled and stopped in the frame | `useBridgeFrameInteraction` → `canvasFrameKeyRelay.ts`, the portal frame's own relay: `down` becomes a keydown clone on the parent `document` (the one dispatcher), `up` goes into the release broadcast, `blur` releases every held key if focus left the editor (ERR-11) |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 
