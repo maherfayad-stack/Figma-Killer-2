@@ -373,3 +373,32 @@ export interface StructuralSourceGesture {
   inverseTemplate: StructuralInverseTemplate
   inverse: StructuralEditPayload[] | null
 }
+
+/**
+ * `store-14` — how a ⌘G / wrap says what its own ⌘Z is.
+ *
+ * The inverse of "put a container around this" is "dissolve that container" —
+ * the same `ungroup` write ⌘⇧G performs, which restores the children at their
+ * own indentation and takes the wrapper's import with it.
+ *
+ * That only holds for an INTRINSIC wrapper. `unwrapJsxElement` refuses a
+ * COMPONENT tag by name (`has-behaviour`): its own file decides what it
+ * renders, so removing the call site is not "ungroup", it is deleting a
+ * component usage. A group into a design-system container therefore has no
+ * inverse this protocol can write, and says so at ⌘Z rather than posting a
+ * write the server would refuse with a sentence about behaviour the user never
+ * mentioned.
+ */
+export function dissolveWrapperTemplate(wrapper: {
+  name: string
+  importSpecifier?: string
+  designSystemImport?: true
+}): StructuralInverseTemplate {
+  if (wrapper.importSpecifier === undefined && wrapper.designSystemImport === undefined) {
+    return { kind: 'ungroup-created' }
+  }
+  return {
+    kind: 'unsupported',
+    message: `That group was written as a <${wrapper.name}> component, and Studio only dissolves plain containers — taking it back out would mean deleting a component call site, which is a different change from the one you made. Remove it in code, or use your editor’s undo.`,
+  }
+}

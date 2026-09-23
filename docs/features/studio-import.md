@@ -960,7 +960,7 @@ Measured on the eSIM corpus before these rules: 154 nodes rendered the word "Tex
 
 `GET /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>` serves an imported page's own images.
 
-`resolveImageAssetImport` (`assetImports.ts`) resolves a local image import to a `studio-asset:<workspace-rel>` sentinel; `rewriteStudioAssetSentinels` turns that into the URL above once `dir` is in scope. That rewrite lives in the load pipeline rather than the pure converter because the query-param shape belongs with the endpoint that owns it.
+`resolveImageAssetImport` (`assetImports.ts`) resolves a local image import to a `studio-asset:<workspace-rel>` sentinel; `rewriteStudioAssetSentinels` turns that into the URL above once `dir` is in scope. The load pipeline calls that rewrite, which lives in `server/handlers/studioAsset.ts` beside the endpoint rather than in the pure converter, because the query-param shape belongs with the endpoint that owns it.
 
 **Resolution runs through the evaluator, not through a special case at the attribute.** It sits in the same "an import with no `SourceFile`" branch as `?raw` text, because that is exactly what an image import is — ts-morph tracks only JS/TS, so a `.png` specifier never resolves to a module. Matching a bare identifier at `<img src={…}>` used to be the only path, and it is close to the rarest shape in a real repo: the eSIM corpus reaches every one of its images as `deal.image` off a `const DEALS = [{ image: dealCard1 }, …]`, as `SLIDE_IMAGES[index]`, or as a prop handed to a child component. Going through the evaluator means every shape it already understands — member chains, array indexing, aliases, call-site substitution — works here for free.
 

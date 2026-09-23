@@ -12,7 +12,7 @@
  * `resolveTextProp` (bound as the two converter callbacks below) map a parsed
  * node to an Studio module id and its inline-text-edit prop — they encode the
  * base-module catalogue's rules, not this pipeline's, so they live in their
- * own module. `rewriteStudioAssetSentinels` turns a resolved local-image import into a
+ * own module. `rewriteStudioAssetSentinels` (`studioAsset.ts`) turns a resolved local-image import into a
  * fetchable `/admin/api/studio/asset` URL. `loadStudioPages` is the per-page
  * parse → inline → convert sequence that ties all of the above together for
  * every discovered page file, sharing one workspace-wide ts-morph `Project`
@@ -64,7 +64,6 @@ import {
   inlineLocalComponents,
   parsePageFile,
   resolveComponentSources,
-  STUDIO_ASSET_SENTINEL,
   type ComponentSource,
   type CssInJsTemplate,
   type ParsedPage,
@@ -84,6 +83,7 @@ import {
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
 import { withWorkspaceProject } from './studio/workspaceProject'
+import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
 // for its result shape — see `studioLoadContract.ts` for why they live apart.
 export type { StudioLoadOptions, StudioLoadResult } from './studio/studioLoadContract'
@@ -107,36 +107,6 @@ import {
   assignPageIds,
   slugFromAppRoute,
 } from './studioPageIds'
-
-/**
- * Rewrites every `studio-asset:<workspace-rel>` sentinel prop value (§5.1 —
- * `parsePageFile`'s image-import resolution) into a URL the browser can
- * actually fetch: `/admin/api/studio/asset?dir=<encoded>&path=<encoded>`.
- *
- * Lives here (the page-load pipeline), not in `@core/page-parser` or
- * `@core/studio-sync/parsedPageToSitePage` (§5.2's other option): turning a
- * workspace-relative path into a URL is a route-shape decision — the query
- * param names, the endpoint path itself — that belongs with the endpoint that
- * owns that shape (`/admin/api/studio/asset`, `server/handlers/studioAsset.ts`),
- * not with the pure page-tree converter, which has no notion of `dir` or HTTP
- * routing at all today. Keeping it here means a future route change never
- * touches the parser or the converter.
- *
- * Mutates `page.nodes` in place — the pages array was just built fresh by
- * `parsedPageToSitePage` for this same request, so there is no shared/cached
- * object to accidentally corrupt.
- */
-function rewriteStudioAssetSentinels(page: Page, dir: string): void {
-  const dirParam = encodeURIComponent(dir)
-  for (const node of Object.values(page.nodes)) {
-    for (const [key, value] of Object.entries(node.props)) {
-      if (typeof value === 'string' && value.startsWith(STUDIO_ASSET_SENTINEL)) {
-        const relPath = value.slice(STUDIO_ASSET_SENTINEL.length)
-        node.props[key] = `/admin/api/studio/asset?dir=${dirParam}&path=${encodeURIComponent(relPath)}`
-      }
-    }
-  }
-}
 
 /**
  * W4-4 Phase A — the `extraCss` blob `loadStudioStyles` parses: the compiled
