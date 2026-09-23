@@ -30,6 +30,7 @@ import { makePage, makeSite } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
 import type { InboundEnvelope } from '@core/studio-runtime'
 import '@modules/base/index'
+import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 
 const FILE = 'app/page.tsx'
 const at = (line: number) => `${FILE}:${line}:5`
@@ -60,6 +61,9 @@ let iframe: HTMLIFrameElement
 let realFetch: typeof globalThis.fetch
 
 beforeEach(() => {
+  // ERR-4 — a commit one spec left in flight would park the next spec's
+  // gesture behind it (module-level queue state).
+  resetStructuralCommitQueue()
   posted = []
   const channel: BridgeFrameChannel = {
     postMessage: (message) => posted.push(message as InboundEnvelope),

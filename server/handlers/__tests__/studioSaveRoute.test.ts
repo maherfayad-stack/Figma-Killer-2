@@ -43,6 +43,7 @@ const SaveResponseSchema = Type.Object({
   removed: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), text: Type.String(), wholeLine: Type.Boolean() }))),
   prunedImports: Type.Optional(Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) }))),
   refusals: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), reason: Type.String(), message: Type.String() }))),
+  fingerprints: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), fingerprint: Type.String() }))),
 })
 
 beforeAll(async () => {
@@ -73,12 +74,12 @@ afterEach(() => {
   fs.rmSync(root, { recursive: true, force: true })
 })
 
-async function save(edits: unknown[]) {
+async function save(edits: unknown[], expectations?: Record<string, string>) {
   const url = new URL('http://localhost/admin/api/studio/save')
   const req = new Request(url, {
     method: 'POST',
     headers: { 'content-type': 'application/json', origin: 'http://localhost' },
-    body: JSON.stringify({ dir: projectDir, edits }),
+    body: JSON.stringify({ dir: projectDir, edits, ...(expectations ? { expect: expectations } : {}) }),
   })
   const res = await studioRoutes.serve(req, url)
   expect(res).not.toBeNull()
@@ -139,5 +140,19 @@ describe('POST /admin/api/studio/save — the delete material ⌘Z is built from
     expect(body.written).toBe(0)
     expect(body.refusals?.map((r) => r.reason)).toEqual(['not-jsx-content'])
     expect(fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe(PAGE)
+  })
+})
+
+describe('POST /admin/api/studio/save — the element identity guard (P1-A) crosses the route', () => {
+  it('honours expect, and forwards the new identity of each landed value write', async () => {
+    const pId = nodeIdOf(PAGE, 'p')
+    const wrong = await save([{ kind: 'text', nodeId: pId, text: 'Changed' }], { [pId]: 'p#00000000' })
+    expect(wrong.written).toBe(0)
+    expect(wrong.refusals?.map((r) => r.reason)).toEqual(['element-moved'])
+    expect(fs.readFileSync(path.join(projectDir, 'pages', 'Home.tsx'), 'utf8')).toBe(PAGE)
+
+    const written = await save([{ kind: 'text', nodeId: pId, text: 'Changed' }])
+    expect(written.written).toBe(1)
+    expect(written.fingerprints).toEqual([{ nodeId: pId, fingerprint: expect.stringMatching(/^p#[0-9a-f]{8}$/) }])
   })
 })

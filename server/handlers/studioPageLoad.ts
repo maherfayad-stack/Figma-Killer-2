@@ -71,6 +71,7 @@ import {
 } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
 import type { Project } from 'ts-morph'
+import type { WorkspaceProjectWarning } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
@@ -82,7 +83,8 @@ import {
   setCachedRouteParse,
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
-import { withWorkspaceProject } from './studio/workspaceProject'
+import { withWorkspaceProject, workspaceTsconfigStamp } from './studio/workspaceProject'
+import { collectLoadWarnings } from './studio/loadWarnings'
 import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
 // for its result shape — see `studioLoadContract.ts` for why they live apart.
@@ -168,8 +170,11 @@ function parseStandardRouteEntry(
     // not just one call. `workspaceRoot` enables `?raw` text-import
     // resolution (inline SVG icons). `cssModuleClassMaps` (WS-2.2) is
     // `styleCompile.ts`'s compiled output — enables `import styles from
-    // './Card.module.css'` -> `styles.card`.
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
+    // './Card.module.css'` -> `styles.card`. `readFiles` (WB-2) collects
+    // every file a VALUE was read out of — a dictionary, a cross-file const, a
+    // provider, a `?raw` icon — so the cache below invalidates on them too.
+    const readFiles = new Set<string>()
+    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps, readFiles }
     const parsed = parsePageFile(file, dir, project, evalOptions)
     // `resolveComponentSources` MUST run on the pre-inline tree — it keys
     // off call-site node ids, which only exist before splicing (§2.6).
@@ -184,7 +189,7 @@ function parseStandardRouteEntry(
     // cache never noticed" gap `pageParseCache.ts` used to have.
     const dependencyFiles = new Set<string>()
     expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
-    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles], {
+    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles, ...readFiles], {
       expanded,
       componentSources: sources,
     })
@@ -249,7 +254,8 @@ function parseAppRouterRouteEntry(
     expanded = cached.expanded
     sources = cached.componentSources
   } else {
-    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps }
+    const readFiles = new Set<string>()
+    const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps, readFiles }
 
     const parsed = parsePageFile(file, dir, project, evalOptions)
     const pageSources = resolveComponentSources(project, file, dir, parsed)
@@ -272,7 +278,7 @@ function parseAppRouterRouteEntry(
     setCachedRouteParse(
       cacheKey,
       configHash,
-      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles],
+      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles, ...readFiles],
       { expanded, componentSources: sources },
     )
   }
@@ -413,7 +419,7 @@ function discoverProjectStories(
 async function computeStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
-    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
+    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] }
   }
 
   // One shared, workspace-wide ts-morph Project so a page's local
@@ -421,10 +427,15 @@ async function computeStudioPages(dir: string): Promise<StudioLoadResult> {
   // a fresh per-file Project (parsePageFile's own default) can't see
   // across files at all. Kept across loads and synced to the disk by
   // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
-  return withWorkspaceProject(dir, (project) => computeStudioPagesWith(dir, pagesDir, project))
+  return withWorkspaceProject(dir, (project, projectWarnings) => computeStudioPagesWith(dir, pagesDir, project, projectWarnings))
 }
 
-async function computeStudioPagesWith(dir: string, pagesDir: string, project: Project): Promise<StudioLoadResult> {
+async function computeStudioPagesWith(
+  dir: string,
+  pagesDir: string,
+  project: Project,
+  projectWarnings: readonly WorkspaceProjectWarning[],
+): Promise<StudioLoadResult> {
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -442,8 +453,9 @@ async function computeStudioPagesWith(dir: string, pagesDir: string, project: Pr
   // pass below: a changed framework classification, preview locale, or
   // compiled CSS-Modules class map invalidates every route's cache entry at
   // once (`pageParseCache.ts`'s own doc explains why a per-file mtime alone
-  // can't catch this).
-  const configHash = hashWorkspaceConfig([framework, preferredKey, compiledStyles.moduleClassMaps])
+  // can't catch this). The tsconfig's stamp joins them: its path aliases
+  // decide which file every aliased import resolves to (WB-23).
+  const configHash = hashWorkspaceConfig([framework, preferredKey, compiledStyles.moduleClassMaps, workspaceTsconfigStamp(dir)])
 
   // Parse + inline EVERY route first, then resolve CSS, then convert. The CSS
   // registry is site-wide (pages routinely share a stylesheet), so it has to be
@@ -524,6 +536,7 @@ async function computeStudioPagesWith(dir: string, pagesDir: string, project: Pr
     vendorCss: compiledStyles.vendorCss,
     authoredCss,
     stories: storySummaries,
+    warnings: collectLoadWarnings(dir, project, projectWarnings, routeEntries),
   }
 }
 
@@ -625,7 +638,7 @@ async function loadStudioPageInLocaleWith(dir: string, pagesDir: string, project
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)
   const { styles: compiledStyles } = await compileProjectStyles(dir, profile)
-  const configHash = hashWorkspaceConfig([framework, locale, compiledStyles.moduleClassMaps])
+  const configHash = hashWorkspaceConfig([framework, locale, compiledStyles.moduleClassMaps, workspaceTsconfigStamp(dir)])
 
   let entry: RoutePageEntry | undefined
   if (framework === 'next-app') {

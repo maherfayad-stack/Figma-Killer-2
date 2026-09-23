@@ -77,6 +77,7 @@ import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
+import { noteBoardRead } from '@site/studio/sourceIdentity'
 import { registerEditorSave } from './editorSaveRef'
 import { nextAutoSaveDelayMs, resolveAutoSaveDelayMs } from './autosaveSchedule'
 
@@ -384,6 +385,7 @@ export function usePersistence(
           if (site && !cancelled) {
             if (pendingCmsSiteReload) consumePendingCmsSiteReload()
             loadSite(site)
+            noteBoardRead(site.pages, 'reset') // P1-A — who every source position names, as just read
             applyDefaultBreakpointPreference(site.breakpoints)
             loadedRef.current = true
             setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
@@ -460,6 +462,7 @@ export function usePersistence(
         }
         const { loadSite, setHasUnsavedChanges } = useEditorStore.getState()
         loadSite(site)
+        noteBoardRead(site.pages, 'reset') // P1-A — see `sourceIdentity.ts`
         applyDefaultBreakpointPreference(site.breakpoints)
         // The site doc on disk is now authoritative; clear the unsaved flag so
         // the auto-save loop doesn't immediately overwrite it back.
@@ -510,6 +513,7 @@ export function usePersistence(
         styleRules: detail.styleRules,
         conditions: detail.conditions,
       })
+      noteBoardRead(detail.pages, 'merge') // P1-A — see `sourceIdentity.ts`
       applyStructuralWriteOutcome()
     }
 
