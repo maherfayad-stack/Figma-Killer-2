@@ -163,7 +163,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
 
 ### canvas-23 — P2-D: resize that obeys CSS (IX-6a, 6b, 6c, 6d, IX-18, ERR-12)
-- **Agent:** canvas-engineer · **Branch:** `fix/resize-obeys-css` off `28bbf963` · **PR:** draft, base `feat/canvas-excellence` (long form in the PR body) · **Updated:** 2026-09-24
+- **Agent:** canvas-engineer · **Branch:** `fix/resize-obeys-css` off `28bbf963` · **PR:** #237 (draft, base `feat/canvas-excellence`; long form + gate triage in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open)
 - **Goal:** an element resize writes what CSS will render, reads ⇧/⌥ live, keeps an absolute element's opposite edge, shows W×H, and no canvas drag outlives a lost release or a focus loss.
 - **Done:**
