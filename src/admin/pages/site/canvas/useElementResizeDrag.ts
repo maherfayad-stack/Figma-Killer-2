@@ -75,6 +75,9 @@ import {
 } from '@core/studio-runtime'
 import { createInlineStylePreview, planResizeSizing, resizeInlinePatch } from './elementResizeSizing'
 
+/** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
+const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
+
 interface ElementResizeDragOptions {
   /** The handle container portalled into the iframe overlay root, or `null`. */
   frame: HTMLElement | null
@@ -139,7 +142,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         // `K4` — the scale tool (`K`) locks the ratio as if ⇧ were held. Read
         // once, here: the tool is latched for the gesture, ⇧ and ⌥ are live.
         const scaleTool = state.canvasTool === 'scale'
-        const stored = findNodeById(state, nodeId)?.inlineStyles ?? {}
+        const stored = findNodeById(state, nodeId)?.inlineStyles ?? NO_INLINE_STYLES
         const plan = planResizeSizing(view, target, start, stored)
         const preview = createInlineStylePreview(target)
         const startX = event.clientX
