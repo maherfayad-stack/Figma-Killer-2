@@ -33,6 +33,9 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { pushToast } from '@ui/components/Toast'
 import { studioWriteDir } from './studioWorkspaceDir'
+import { captureIdentities, expectationsFor, recordOwnWrites, type IdentityCapture } from './sourceIdentity'
+import { structuralEditNodeIds, type StructuralEditPayload } from './structuralUndoPlan'
+import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
 
 /**
@@ -151,6 +154,13 @@ export const StudioSaveResponseSchema = Type.Object({
   prunedImports: Type.Optional(
     Type.Array(Type.Object({ file: Type.String(), declarations: Type.Array(Type.String()) })),
   ),
+  /**
+   * P1-A — each landed value write's target identity AFTER the write, keyed by
+   * the edit's own node id. `postEdits` hands it to `sourceIdentity.ts`, so the
+   * next write to the same element expects what is on disk now rather than
+   * what the board read. `Type.Optional`, same tolerant-rollout reasoning.
+   */
+  fingerprints: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), fingerprint: Type.String() }))),
 })
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
@@ -189,18 +199,47 @@ export function notifyCreatedStylesheets(
   }
 }
 
-/** Post one edit to `/save` and return the parsed response. The shared body of every one-shot commit below. */
-function postOneEdit(edit: Record<string, unknown>): Promise<StudioSaveResponse> {
-  return postEdits([edit])
+/**
+ * Post one edit to `/save` and return the parsed response. The shared body of
+ * every one-shot commit below — each is a single deliberate click, so the
+ * moment it posts IS the moment the user acted, and that is when its
+ * identities are captured.
+ *
+ * An `element-moved` refusal (P1-A) is re-planned once against the re-read
+ * board (`elementMovedRecovery.ts`) and the retry's answer returned instead;
+ * when there is nothing honest to retry against, the ORIGINAL refusal comes
+ * back, and the caller's own refusal surface is the one message the user sees.
+ */
+async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSaveResponse> {
+  const identities = captureIdentities(structuralEditNodeIds(edit))
+  const result = await postEdits([edit], identities)
+  if (elementMovedNodeIds(result.refusals).size === 0) return result
+  return (await retryAfterElementMoved([edit], identities, result.touchedFiles ?? [], postEdits)) ?? result
 }
 
-/** Post a batch of edits to `/save`. The save route orders them bottom-to-top before applying. */
-export function postEdits(edits: readonly Record<string, unknown>[]): Promise<StudioSaveResponse> {
-  return apiRequest('/admin/api/studio/save', {
+/**
+ * Post a batch of edits to `/save`. The save route orders them bottom-to-top
+ * before applying.
+ *
+ * `identities` (P1-A) is what the writer captured about each node id its edits
+ * name — sent as `expect`, so an edit whose position now holds a different
+ * element refuses `element-moved` instead of writing to it; and it is where the
+ * response's post-write identities land (`recordOwnWrites`). Every writer that
+ * posts through here — the autosave diff, every structural commit, every
+ * one-shot — rides the same guard.
+ */
+export async function postEdits(
+  edits: readonly Record<string, unknown>[],
+  identities?: IdentityCapture,
+): Promise<StudioSaveResponse> {
+  const expect = identities ? expectationsFor(identities) : {}
+  const result = await apiRequest('/admin/api/studio/save', {
     method: 'POST',
-    body: { dir: studioWriteDir(), edits },
+    body: { dir: studioWriteDir(), edits, ...(Object.keys(expect).length > 0 ? { expect } : {}) },
     schema: StudioSaveResponseSchema,
   })
+  recordOwnWrites(identities, result.fingerprints ?? [])
+  return result
 }
 
 /**
@@ -227,6 +266,11 @@ export function postEdits(edits: readonly Record<string, unknown>[]): Promise<St
 export async function saveStudioAssetEdit(nodeId: string, assetPath: string): Promise<void> {
   const result = await postOneEdit({ kind: 'asset', nodeId, assetPath })
 
+  const moved = elementMovedNodeIds(result.refusals)
+  if (moved.size > 0) {
+    warnElementMoved(moved)
+    return
+  }
   if (result.skipped > 0) {
     pushToast({
       kind: 'error',

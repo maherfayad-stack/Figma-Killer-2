@@ -36,7 +36,7 @@
  * UI noise control with no undo, no persistence, and no renderer — the same
  * shape and the same reason as `studioRawCssStores.ts`'s tiny external stores.
  */
-import { explainCssRuleConstraint } from '@core/page-tree'
+import { decodeSourceNodeId, explainCssRuleConstraint } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
 import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
 import type { ClassTokenRefusal } from './classNameWriteback'
@@ -64,6 +64,9 @@ const REFUSAL_TITLES: Record<string, string> = {
   css: 'Style not saved to source',
   class: 'Class change not saved to source',
   style: 'Inline style not saved to source',
+  // WB-11 — `binding-overwrite`: the attribute holds code, and a literal
+  // written over it would delete the binding.
+  prop: 'Property not saved to source',
   // W4-4 Phase B — a declaration edit that could not land inside a
   // styled-component template (an interpolated value, a covering shorthand, a
   // declaration written in a spliced mixin).
@@ -84,12 +87,22 @@ function toastOnce(key: string, toast: ToastInput): void {
   pushToast(toast)
 }
 
-/** Reports every server-side per-edit refusal from one save response. */
+/**
+ * Reports every server-side per-edit refusal from one save response.
+ *
+ * Keyed on the refusal's SOURCE TARGET, not its node id. Every instance of a
+ * shared component writes back to one location, and WB-7's merge reports one
+ * refused write once per instance that contributed to it (so each instance's
+ * baseline is held back) — that is one refusal to the user, not N toasts.
+ */
 export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[]): void {
   for (const refusal of refusals) {
-    toastOnce(`${refusal.kind}::${refusal.nodeId}::${refusal.reason}`, {
+    const target = decodeSourceNodeId(refusal.nodeId)
+    const targetKey = target ? `${target.rel}:${target.line}:${target.col}` : refusal.nodeId
+    toastOnce(`${refusal.kind}::${targetKey}::${refusal.reason}`, {
       kind: 'error',
-      title: REFUSAL_TITLES[refusal.kind] ?? 'Edit refused',
+      // WB-24 — any kind refuses this way, and the file, not the edit, is the story.
+      title: refusal.reason === 'syntax-error' ? 'Not saved: the file has a syntax error' : (REFUSAL_TITLES[refusal.kind] ?? 'Edit refused'),
       body: refusal.message,
     })
   }

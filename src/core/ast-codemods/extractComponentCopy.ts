@@ -15,7 +15,7 @@
 import * as path from 'node:path'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { NewLineKind, Node, Project, QuoteKind, type SourceFile } from 'ts-morph'
-import { EolPreservingFileSystem, createWorkspaceProject } from '@core/page-parser'
+import { EolPreservingFileSystem, createWorkspaceProject, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { relativeSpecifier, removeImportIfLastUsage } from './importReconcile'
@@ -29,7 +29,7 @@ export interface ExtractComponentCopyParams {
   project?: Project
 }
 
-export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'copy-exists'
+export type ExtractComponentCopyRefusalReason = 'not-a-component' | 'unresolvable' | 'copy-exists' | 'unwritable-target'
 
 export interface ExtractComponentCopyRefusal {
   reason: ExtractComponentCopyRefusalReason
@@ -90,12 +90,22 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   const newName = nextAvailableName(baseName, (candidate) => existsSync(path.join(dir, `${candidate}${ext}`)))
   const newPath = path.join(dir, `${newName}${ext}`)
   if (existsSync(newPath)) return refuse('copy-exists', `${newName}${ext} already exists next to ${baseName}${ext}.`)
+  // P1-G — the copy lands beside the component's OWN file, which the call
+  // site's import chose, not the writeback guard: `import { Card } from
+  // '../.studio/Card'` would otherwise create `.studio/Card2.tsx`. The shared
+  // write scope refuses that, a link into one, and a dangling link at the name.
+  if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
+    return refuse(
+      'unwritable-target',
+      `${baseName}${ext} lives somewhere Studio does not write to (${path.relative(workspaceRoot, dir).split(path.sep).join('/') || '.'}), so it cannot be duplicated there.`,
+    )
+  }
 
   // Copy the file text, then rename the export (function/const declaration
   // name, and its `export default`/named export form) inside the COPY only —
   // the original file and every other call site are untouched.
   const originalText = readFileSync(targetPath, 'utf8')
-  writeFileSync(newPath, originalText, 'utf8')
+  writeFileSync(newPath, originalText, { encoding: 'utf8', flag: 'wx' })
 
   const copyProject = new Project({
     useInMemoryFileSystem: false,

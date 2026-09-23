@@ -166,25 +166,29 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
     // an explicit attribute always wins (e.g. `<Button label="x">y</Button>`
     // is a real, if odd, source shape; the attribute is the author's intent).
     let originTextProp: string | null = null
-    if (node.text !== undefined) {
-      const textProp = opts.resolveTextProp(moduleId)
-      if (textProp !== null && !(textProp in props)) {
-        props[textProp] = node.text
-        // Text that came from an expression is only writable if the parser found
-        // the string literal it reads (`textOrigin`) — `saveSite` then aims a
-        // `literal` edit there instead of overwriting the JSX. With no origin
-        // there is nowhere honest to write, so the text prop joins `codeProps`.
-        if (node.textOrigin) originTextProp = textProp
-        else if (node.codeText) codeProps.push(textProp)
-        // R2 — the parser records text's resolution under the key `'text'`
-        // (`callSiteProps:text` once remapped above); rekey it to the
-        // module's own text prop name, same as `codeProps.push` above.
-        const textResolutionKey = node.instanceOf ? 'callSiteProps:text' : 'text'
-        const textResolution = resolvedProps[textResolutionKey]
-        if (textResolution) {
-          delete resolvedProps[textResolutionKey]
-          resolvedProps[textProp] = textResolution
-        }
+    const textProp = opts.resolveTextProp(moduleId)
+    if (node.text === undefined) {
+      // WB-29 (board-27b's companion) — text the parser tried and could NOT
+      // resolve (`<a>{user.name}</a>`: `codeText`, no `text`) is still text
+      // written in code. Without this the module's text prop looked like an
+      // ordinary empty field, and typing into it ended in a refused write.
+      if (node.codeText && textProp !== null && !(textProp in props)) codeProps.push(textProp)
+    } else if (textProp !== null && !(textProp in props)) {
+      props[textProp] = node.text
+      // Text that came from an expression is only writable if the parser found
+      // the string literal it reads (`textOrigin`) — `saveSite` then aims a
+      // `literal` edit there instead of overwriting the JSX. With no origin
+      // there is nowhere honest to write, so the text prop joins `codeProps`.
+      if (node.textOrigin) originTextProp = textProp
+      else if (node.codeText) codeProps.push(textProp)
+      // R2 — the parser records text's resolution under the key `'text'`
+      // (`callSiteProps:text` once remapped above); rekey it to the
+      // module's own text prop name, same as `codeProps.push` above.
+      const textResolutionKey = node.instanceOf ? 'callSiteProps:text' : 'text'
+      const textResolution = resolvedProps[textResolutionKey]
+      if (textResolution) {
+        delete resolvedProps[textResolutionKey]
+        resolvedProps[textProp] = textResolution
       }
     }
 
@@ -291,6 +295,9 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ...(node.textOrigin ? { textOrigin: node.textOrigin } : {}),
       // WS-8.3 — same straight copy, for the import behind a resolved image.
       ...(node.assetOrigin ? { assetOrigin: node.assetOrigin } : {}),
+      // P1-A — the element's identity as read; every write aimed at it sends
+      // this back so the server can refuse `element-moved`. See `PageNode.sourceFingerprint`.
+      ...(node.fingerprint ? { sourceFingerprint: node.fingerprint } : {}),
       // §2 — which local component this node was inlined out of. Provenance,
       // not a lock: the properties panel warns that an edit here rewrites that
       // component's file and so lands on every instance of it.

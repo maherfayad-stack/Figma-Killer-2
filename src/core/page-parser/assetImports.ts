@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import * as path from 'node:path'
 import type { Node, SourceFile } from 'ts-morph'
+import { literalFingerprint } from './sourceFingerprint'
 
 /** Vite's `?raw` text-inlining suffix, e.g. `'./check-line.svg?raw'`. */
 const RAW_TEXT_SPECIFIER_RE = /\.(svg|txt|html?|md|csv)\?raw$/i
@@ -101,6 +102,8 @@ export interface ImportSpecifierLocation {
   line: number
   /** 1-based column of the module-specifier string literal token. */
   col: number
+  /** P1-A — the specifier literal's identity as read, same as `ValueOrigin.fingerprint`. */
+  fingerprint: string
 }
 
 /** A file an import names, once it is known to exist inside the workspace. */
@@ -129,7 +132,7 @@ function importSpecifierLocation(
   const rel = path.relative(resolvedRoot, path.resolve(sourceFile.getFilePath()))
   if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return undefined
   const { line, column } = sourceFile.getLineAndColumnAtPos(specifierNode.getStart())
-  return { rel: rel.split(path.sep).join('/'), line, col: column }
+  return { rel: rel.split(path.sep).join('/'), line, col: column, fingerprint: literalFingerprint(specifierNode) }
 }
 
 /**
@@ -216,11 +219,13 @@ export function resolveRawTextImport(
   sourceFile: SourceFile,
   localName: string,
   workspaceRoot: string | undefined,
-): string | undefined {
+): { text: string; file: string } | undefined {
   const file = resolveImportedFile(sourceFile, localName, workspaceRoot, RAW_TEXT_SPECIFIER_RE, true)
   if (!file || file.bytes > MAX_RAW_TEXT_BYTES) return undefined
   try {
-    return readFileSync(file.real, 'utf8').trim()
+    // `file` — the real path read, so the evaluator can report it as a
+    // dependency of whatever page this text lands on (WB-2).
+    return { text: readFileSync(file.real, 'utf8').trim(), file: file.real }
   } catch {
     return undefined
   }
@@ -254,10 +259,10 @@ export function resolveImageAssetImport(
   sourceFile: SourceFile,
   localName: string,
   workspaceRoot: string | undefined,
-): { path: string; origin?: ImportSpecifierLocation } | undefined {
+): { path: string; origin?: ImportSpecifierLocation; file: string } | undefined {
   const file = resolveImportedFile(sourceFile, localName, workspaceRoot, IMAGE_SPECIFIER_RE, false)
   if (!file) return undefined
-  return { path: `${STUDIO_ASSET_SENTINEL}${file.rel}`, origin: file.specifierLocation }
+  return { path: `${STUDIO_ASSET_SENTINEL}${file.rel}`, origin: file.specifierLocation, file: file.real }
 }
 
 /**

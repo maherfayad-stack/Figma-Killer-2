@@ -19,10 +19,10 @@
  * `studioWriteback.ts` re-exports all of it, so every existing import keeps
  * working and the writeback path still has one front door.
  */
-import { realpathSync } from 'node:fs'
-import { basename, dirname, join, relative, resolve, sep } from 'node:path'
-import { INLINE_ID_SEPARATOR } from '@core/page-parser'
+import { join } from 'node:path'
+import { INLINE_ID_SEPARATOR, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
+import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import type { StudioEdit } from './studioEditSchemas'
@@ -90,11 +90,14 @@ function decodeNodeIdLocation(nodeId: string): StudioEditLocation | null {
  * It also turns the lexical guard into a real containment check. A `.tsx`
  * symlink INSIDE the project pointing outside it passed the old guard (no
  * `..`, not absolute, right extension) and was written; now `relative()`
- * reports a `..` segment and the decode refuses.
+ * reports a `..` segment and the decode refuses. The same re-check is what
+ * refuses a link spelled like source whose real path is inside `.studio/`,
+ * `.git/` or any other directory {@link isWritableSourceRel} refuses (P1-G).
  *
- * A file that does not exist yet keeps its lexical `rel` — there is nothing to
- * canonicalise against, the lexical guard has already passed, and every
- * codemod here refuses a missing file on its own.
+ * A file that does not exist yet canonicalises through its deepest existing
+ * ancestor (so a symlinked project root, or macOS' `/var` → `/private/var`,
+ * cannot put `dir` and the file on different sides of a link); a path through
+ * a DANGLING link is refused, because a write would follow it.
  */
 export function studioEditLocation(dir: string, nodeId: string): StudioEditLocation | null {
   const decoded = decodeNodeIdLocation(nodeId)
@@ -113,48 +116,16 @@ export function studioEditLocation(dir: string, nodeId: string): StudioEditLocat
 export function canonicalSourceRel(dir: string, rel: string): string | null {
   if (!isWritableSourceRel(rel)) return null
 
-  const abs = join(dir, ...rel.split(/[/\\]+/))
-  // `realpathSync.native` is the OS call: it resolves symlinks and junctions
-  // AND returns the on-disk casing, which the JS implementation does not.
-  const realDir = realpathOr(dir)
-  const realAbs = realpathOr(abs)
-
-  const canonical = relative(realDir, realAbs).split(sep).join('/')
-  // Re-run the lexical guard on the RESULT. `relative()` is what turns "a
-  // symlink pointing out of the project" into a leading `..`, and the guard
-  // is what refuses it.
-  return isWritableSourceRel(canonical) ? canonical : null
-}
-
-/**
- * The real path of `path` — resolved through the DEEPEST ancestor that exists
- * when `path` itself does not yet.
- *
- * Resolving only the whole path, and falling back to the plain `resolve()`
- * when it is missing, made a not-yet-created file the one case where a
- * symlinked project root put `dir` and `join(dir, rel)` on different sides
- * of the link: `realpathSync.native(dir)` came back as `/private/var/…` while
- * the missing file stayed `/var/…`, so `relative()` climbed out through `..`
- * and the guard refused a file the codemod was about to create in the right
- * place. macOS `os.tmpdir()` is exactly such a link, which is why every test
- * fixture under it hit this; a project checked out through a symlink hits it
- * on the first new-file write.
- */
-function realpathOr(path: string): string {
-  const missing: string[] = []
-  let current = resolve(path)
-  for (;;) {
-    try {
-      return join(realpathSync.native(current), ...missing.reverse())
-    } catch {
-      const parent = dirname(current)
-      // The filesystem root always exists; reaching it without a hit means
-      // the path is unreadable rather than missing — return it resolved.
-      if (parent === current) return resolve(path)
-      missing.push(basename(current))
-      current = parent
-    }
-  }
+  // `realWorkspaceRel` (`@core/page-parser`'s shared write scope) resolves
+  // symlinks and junctions through the deepest ancestor that exists, so a
+  // file this batch is about to create still canonicalises; restores the
+  // on-disk casing; and answers `null` for a path that escapes `dir` or runs
+  // through a dangling link (which a write would follow).
+  const canonical = realWorkspaceRel(dir, join(dir, ...rel.split(/[/\\]+/)))
+  // Re-run the lexical guard on the RESULT: a symlink spelled like source
+  // that really lands in `.studio/` comes back as a `.studio/…` rel, and the
+  // directory check refuses it.
+  return canonical !== null && isWritableSourceRel(canonical) ? canonical : null
 }
 
 /** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */
@@ -174,6 +145,14 @@ const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
  * app source and nowhere else, and every codemod here parses its target as
  * TypeScript/JavaScript anyway.
  *
+ * The directory check is the third (P1-G). Every directory Studio owns or that
+ * is not the user's source — `.studio` (the trust tier, MCP approvals), `.claude`
+ * (the agent's own hook settings), `.git` (executable by proxy), `node_modules`,
+ * build output — is refused through the ONE predicate every Studio writer
+ * shares, `unwritableWorkspaceSegment` (`@core/page-parser`). Before it,
+ * `.studio/anything.tsx:1:1` was a valid target for every edit kind.
+ * `canonicalSourceRel` re-runs this whole guard on the REAL path.
+ *
  * Exported (not just used internally) so `studio/reloadScope.ts` (Track C5)
  * can apply the SAME adversarial-path guard to the `files` list a reload-scope
  * request round-trips back to the server, rather than a second, parallel
@@ -184,7 +163,27 @@ export function isWritableSourceRel(rel: string): boolean {
   if (rel.startsWith('/') || rel.startsWith('\\') || /^[a-zA-Z]:/.test(rel)) return false
   const segments = rel.split(/[/\\]/)
   if (segments.some((segment) => segment === '..' || segment === '')) return false
+  if (unwritableWorkspaceSegment(rel) !== null && !isStudioAuthoredSourceRel(rel)) return false
   return WRITABLE_SOURCE_EXTENSION.test(rel)
+}
+
+/**
+ * Source files Studio itself authors INSIDE an otherwise unwritable directory:
+ * the one extension point in {@link isWritableSourceRel}'s directory check,
+ * and deliberately EMPTY.
+ *
+ * It exists for the free canvas (`docs/audits/2026-09-23-studio-audit/10-free-canvas.md`,
+ * FC-1), whose loose layers are real `.tsx` modules at `.studio/canvas/<id>.tsx`.
+ * FC-1 adds exactly one anchored pattern here — `^\.studio/canvas/cl[a-z0-9]{10}\.tsx$`,
+ * never a prefix — under its own security review, and flips the pinning test
+ * in `studioWritebackExcludedDirs.test.ts`. Nothing else belongs in it. It
+ * widens this node-id decoder only: the agent's native writes
+ * (`agentWriteScope.ts`), CSS writeback and asset landing never consult it.
+ */
+const STUDIO_AUTHORED_SOURCE_PATTERNS: readonly RegExp[] = []
+
+function isStudioAuthoredSourceRel(rel: string): boolean {
+  return STUDIO_AUTHORED_SOURCE_PATTERNS.some((pattern) => pattern.test(rel))
 }
 
 /**
@@ -201,13 +200,21 @@ export function isWritableSourceRel(rel: string): boolean {
  *
  * An asset edit's target is an IMPORT DECLARATION, which any number of JSX
  * usages in the same file can read (`<img src={hero}/>` appearing twice) —
- * unlike a plain prop/style/tag/literal edit, whose `nodeId` names the ONE
- * element (or ONE dictionary entry) being changed, there is no cheap way to
+ * unlike a plain prop/style/tag edit, whose `nodeId` names the ONE element
+ * being changed, there is no cheap way to
  * tell from the id alone whether another node depends on the same import.
  * Treated as shared unconditionally: same "fail toward the reload" policy as
  * route chrome below — the cost of a false positive is one redundant reload,
  * the cost of a false negative is a board showing an image that no longer
  * matches source.
+ *
+ * WB-2 — a `literal` edit is shared too. Its target is a dictionary entry
+ * or a module-scope const (`textOrigin`), and a dictionary key is shared BY
+ * DESIGN: every other node — on this page or any other — that resolves to the
+ * same literal still shows the old copy until something re-reads it. The
+ * resync that follows is narrow: `reloadScope.ts` asks which routes recorded
+ * the origin file among their dependencies (the evaluator reports every file
+ * it reads a value out of — `pageParseCache.ts`), and reloads exactly those.
  *
  * WS-4.4/4.5 — `detach`/`swap` are ALSO treated as shared unconditionally:
  * both always rewrite JSX structure (adding/removing imports, replacing an
@@ -230,7 +237,7 @@ export function isWritableSourceRel(rel: string): boolean {
  * anything despite this.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
-  if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap') return true
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind))) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
@@ -265,7 +272,7 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
 }
 
 /**
- * Collapses edits that resolve to the SAME source location, keeping the last.
+ * Collapses edits that resolve to the SAME source location into one.
  *
  * Two board nodes can share one writeback target: every instance of an inlined
  * component maps back to the same lines in that component's file (measured on
@@ -273,6 +280,13 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * Without this, editing two instances in a single batch would apply both writes
  * to the same position — the second reading a file the first already changed,
  * for a silent last-write-wins with a stale intermediate.
+ *
+ * WB-7 — collapsing is not always "keep the last". A `style` or `class` edit
+ * carries a SET of changes, and two instances' sets are both wanted, so they
+ * are MERGED; only a genuine conflict (one property, one token, one prop value)
+ * is last-wins. The node ids that collapsed ride along on the surviving edit as
+ * `absorbedNodeIds`, so its outcome is reported for every one of them. See
+ * `studioEditMerge.ts`.
  *
  * `dir` is here so the key is the CANONICAL `rel` (`studioEditLocation`):
  * before `sec-18` this keyed on the raw string, so `pages/Home.tsx:10:5` and
@@ -324,8 +338,8 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
   edits: readonly T[],
-): T[] {
-  const byTarget = new Map<string, T>()
+): DedupedStudioEdit<T>[] {
+  const byTarget = new Map<string, DedupedStudioEdit<T>>()
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(dir, edit.nodeId)
@@ -351,7 +365,9 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       continue
     }
     const prop = 'prop' in edit ? String((edit as { prop?: unknown }).prop) : ''
-    byTarget.set(`${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}`, edit)
+    const key = `${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}`
+    const earlier = byTarget.get(key)
+    byTarget.set(key, earlier ? collapseSameTargetEdits(earlier, edit) : edit)
   }
   return [...byTarget.values(), ...passthrough]
 }

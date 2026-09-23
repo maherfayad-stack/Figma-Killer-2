@@ -1,4 +1,4 @@
-export { setJsxProp } from './setJsxProp'
+export { setJsxProp, JsxPropTargetError } from './setJsxProp'
 export type { SetJsxPropParams } from './setJsxProp'
 export { readJsxProps } from './readJsxProps'
 export type { JsxLiteralProps, ReadJsxPropsParams } from './readJsxProps'
@@ -173,3 +173,4 @@ export type { ComponentCallSite } from './componentCallSites'
  */
 export { createProject, findJsxElementAtLocation, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
+export { readSourceFingerprintAt } from './sourceFingerprintAt'

@@ -440,3 +440,60 @@ export function dragLabel(tree: NodeTree<PageNode>, draggedIds: string[], dragge
 function canHaveChildren(moduleId: string): boolean {
   return registry.get(moduleId)?.canHaveChildren === true
 }
+
+/**
+ * ERR-23 — re-address a live session after a reparse landed mid-gesture.
+ *
+ * A drag writes nothing until `pointerup`, but the board can be re-read under
+ * it at any moment (an agent's write, the resync of the previous gesture). The
+ * session captured its ids and its tree at `pointerdown`, so the release used
+ * to commit against the PRE-write ids: a thrown "stale target" swallowed into
+ * a `console.warn`, or — when the write permuted line numbers — a move of
+ * whichever element inherited the dragged one's address.
+ *
+ * Every id the session holds goes through `follow`, the same answer the store
+ * just mapped the selection through (`reparseNodeFollow.ts`), and everything
+ * resolved against the old tree is thrown away so the next frame resolves it
+ * again against `tree`: the drop target, the cross-frame verdict, the reflow
+ * preview, and the free-move plan (which names the old element). The candidate
+ * rects are marked stale because the frame re-rendered with new
+ * `data-node-id`s.
+ *
+ * Returns `false` when any dragged element has no honest counterpart in the
+ * new tree. The gesture cannot mean anything any more and the caller ends it.
+ */
+export function followDragSessionThroughReparse(
+  session: DragSession,
+  follow: (oldId: string) => string | null,
+  tree: NodeTree<PageNode> | null,
+): boolean {
+  if (!tree) return false
+  const inTree = (id: string | null): id is string => id !== null && Boolean(tree.nodes[id])
+  const draggedIds: string[] = []
+  for (const id of session.draggedIds) {
+    const next = follow(id)
+    if (!inTree(next)) return false
+    draggedIds.push(next)
+  }
+  const draggedId = follow(session.draggedId)
+  if (!inTree(draggedId)) return false
+
+  session.draggedIds = draggedIds
+  session.draggedId = draggedId
+  if (session.selectOnActivate !== null) {
+    const next = follow(session.selectOnActivate)
+    session.selectOnActivate = inTree(next) ? next : null
+  }
+  session.tree = tree
+  session.index.stale = true
+  session.resolution = EMPTY_RESOLUTION
+  session.foreign = null
+  session.foreignResolution = EMPTY_TRANSPLANT_RESOLUTION
+  session.reflow = EMPTY_REFLOW
+  session.reflowKey = ''
+  session.reflowCandidates = null
+  session.free = undefined
+  session.freeWanted = undefined
+  session.freeStep = null
+  return true
+}

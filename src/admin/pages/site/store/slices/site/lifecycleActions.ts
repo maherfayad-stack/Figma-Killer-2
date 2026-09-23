@@ -23,7 +23,10 @@ import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
 import { retainBoardOnlyEntries } from '../boardHistory'
 import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
+import { createReparseNodeFollower, publishReparseFollow, type NodeIdFollower } from './reparseNodeFollow'
 import type { SiteSlice, SiteSliceHelpers } from './types'
+import type { Draft } from 'mutative'
+import type { EditorStore } from '@site/store/types'
 
 type LifecycleActions = Pick<
   SiteSlice,
@@ -41,6 +44,72 @@ function reindexSiteTreeParents(site: SiteDocument): void {
   for (const page of site.pages) reindexNodeParents(page.nodes)
   for (const vc of site.visualComponents ?? []) reindexNodeParents(vc.tree.nodes)
   for (const layout of site.layouts ?? []) reindexNodeParents(layout.nodes)
+}
+
+/** True when the canvas is holding at least one node id a reload could re-address. */
+function holdsNodeIds(state: EditorStore): boolean {
+  return (
+    state.selectedNodeIds.length > 0 ||
+    state.hoveredNodeId !== null ||
+    state.activeInlineEdit !== null ||
+    state.enteredInstanceIds.length > 0
+  )
+}
+
+function sameIds(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((id, i) => id === b[i])
+}
+
+/** `ids` through `follow`, dropping what did not follow and any duplicate two old ids now share. */
+function followIds(ids: readonly string[], follow: NodeIdFollower): string[] {
+  const followed: string[] = []
+  for (const id of ids) {
+    const next = follow(id)
+    if (next !== null && !followed.includes(next)) followed.push(next)
+  }
+  return followed
+}
+
+/**
+ * ERR-5 — carry every node id the canvas is holding across a reparse, through
+ * `follow` (`reparseNodeFollow.ts`): to the element's new address when it has
+ * one, dropped when it does not. Never left pointing at whatever inherited the
+ * old address. Shared by `loadSite` and `patchPages`, so the two reload paths
+ * cannot disagree about where the selection went.
+ */
+function followCanvasStateThroughReparse(state: Draft<EditorStore>, follow: NodeIdFollower): void {
+  const hadSelection = state.selectedNodeIds.length > 0
+  const selection = followIds(state.selectedNodeIds, follow)
+  if (!sameIds(selection, state.selectedNodeIds)) state.selectedNodeIds = selection
+  const anchor = selection.length > 0 ? selection[selection.length - 1]! : null
+  if (state.selectedNodeId !== anchor) state.selectedNodeId = anchor
+  if (hadSelection && selection.length === 0) {
+    state.selectedNodeFrameId = null
+    state.hoveredNodeId = null
+    state.hoveredBreakpointId = null
+    state.hoveredFrameId = null
+    state.activeClassId = null
+  }
+
+  if (state.hoveredNodeId !== null) {
+    const hovered = follow(state.hoveredNodeId)
+    if (hovered === null) {
+      state.hoveredNodeId = null
+      state.hoveredBreakpointId = null
+      state.hoveredFrameId = null
+    } else if (hovered !== state.hoveredNodeId) {
+      state.hoveredNodeId = hovered
+    }
+  }
+
+  if (state.activeInlineEdit) {
+    const edited = follow(state.activeInlineEdit.nodeId)
+    if (edited === null) state.activeInlineEdit = null
+    else if (edited !== state.activeInlineEdit.nodeId) state.activeInlineEdit.nodeId = edited
+  }
+
+  const entered = followIds(state.enteredInstanceIds, follow)
+  if (!sameIds(entered, state.enteredInstanceIds)) state.enteredInstanceIds = entered
 }
 
 export function createLifecycleActions({
@@ -107,12 +176,29 @@ export function createLifecycleActions({
       // matched, or there was no history to re-address) leaves the
       // survivability fallback below to decide exactly as it did before. See
       // `historyNodeIdRemap.ts`.
+      //
+      // ERR-5 — the same reparse re-addresses what the canvas is HOLDING
+      // (selection, hover, inline edit, entered instances, a live drag), so
+      // the remap is computed whenever there is anything to re-address, not
+      // only when there is history.
       const before = get()
       const hasHistory = before._historyPast.length > 0 || before._historyFuture.length > 0
       const remap =
-        hasHistory && before.site
+        (hasHistory || holdsNodeIds(before)) && before.site
           ? buildReparseNodeIdRemap(before.site, site)
           : new Map<string, string>()
+      const follow: NodeIdFollower = before.site
+        ? createReparseNodeFollower({
+            before: before.site,
+            after: site,
+            pagesOf: before._nodeIdToPageIds,
+            touchedPageIds: new Set(site.pages.map((page) => page.id)),
+            strictRemap: remap,
+            // `activeDocument` is reset below: a Visual Component or layout
+            // node id no longer names anything on screen.
+            offPageIds: 'drop',
+          })
+        : () => null
       set((state) => {
         const past = remapHistoryEntries(state._historyPast, remap)
         const future = remapHistoryEntries(state._historyFuture, remap)
@@ -181,7 +267,14 @@ export function createLifecycleActions({
           nodeIndexesOf(state),
           site,
         )
+        // ERR-5 — `loadSite` used to leave every held id exactly as it was, so
+        // a full reload after a write above the selection left it naming
+        // whatever inherited the address, or naming nothing at all.
+        followCanvasStateThroughReparse(state, follow)
       })
+      // ERR-23 — a drag session holds ids outside the store; it follows
+      // through the same answer the selection just did.
+      publishReparseFollow(follow)
     },
 
     clearSite: () => {
@@ -303,10 +396,22 @@ export function createLifecycleActions({
       const knownNodeIds = collectAllNodeIds(nextSite)
       // `store-08` — same re-addressing as `loadSite`: the narrow resync after
       // a structural write re-reads exactly the pages whose ids just shifted.
+      // ERR-5 — and the same remap feeds the canvas-state follower below, so
+      // it is computed whenever there is history OR a held id.
+      const before = get()
       const historyRemap =
-        get()._historyPast.length > 0 || get()._historyFuture.length > 0
+        before._historyPast.length > 0 || before._historyFuture.length > 0 || holdsNodeIds(before)
           ? buildReparseNodeIdRemap(site, nextSite)
           : new Map<string, string>()
+      const follow = createReparseNodeFollower({
+        before: site,
+        after: nextSite,
+        pagesOf: before._nodeIdToPageIds,
+        touchedPageIds: upsertedIds,
+        strictRemap: historyRemap,
+        // Visual Component and layout trees are not touched by a page patch.
+        offPageIds: 'keep',
+      })
 
       // Board-frame cleanup for a genuinely removed page — computed against
       // FROZEN (pre-`set()`) state, matching every other board mutation in
@@ -387,31 +492,12 @@ export function createLifecycleActions({
           state.activeDocument = null
         }
 
-        // A selected/edited node id survives iff it still resolves to at
-        // least one page in the freshly-updated index — an insert/delete
-        // shifts every `relFile:line:col` id below it (see
-        // `server/ai/tools/studio/staleness.ts`'s "shifted" contract), so a
-        // shifted id simply won't be a key in the fresh page's node map
-        // and drops out of `_nodeIdToPageIds` on its own.
-        const survivingSelection = state.selectedNodeIds.filter((id) => state._nodeIdToPageIds.has(id))
-        if (survivingSelection.length !== state.selectedNodeIds.length) {
-          state.selectedNodeIds = survivingSelection
-          state.selectedNodeId = survivingSelection.length > 0 ? survivingSelection[survivingSelection.length - 1]! : null
-          if (survivingSelection.length === 0) {
-            state.selectedNodeFrameId = null
-            state.hoveredNodeId = null
-            state.hoveredBreakpointId = null
-            state.hoveredFrameId = null
-            state.activeClassId = null
-          }
-        }
-        if (state.activeInlineEdit && !state._nodeIdToPageIds.has(state.activeInlineEdit.nodeId)) {
-          state.activeInlineEdit = null
-        }
-        const survivingEntered = state.enteredInstanceIds.filter((id) => state._nodeIdToPageIds.has(id))
-        if (survivingEntered.length !== state.enteredInstanceIds.length) {
-          state.enteredInstanceIds = survivingEntered
-        }
+        // ERR-5 — every held id follows its ELEMENT, not its address. The old
+        // rule ("survives iff it still resolves") was right when a shift
+        // vacated an address and silently wrong when it permuted one: an
+        // insert above the selection hands its `rel:line:col` to the new
+        // element, which still resolves. See `reparseNodeFollow.ts`.
+        followCanvasStateThroughReparse(state, follow)
 
         // A removed page must not leave a ghost board frame or a dangling
         // page-id-keyed frame selection (WS-7.1). A REAL, confirmed removal
@@ -427,6 +513,9 @@ export function createLifecycleActions({
           state.selectedFrameIds = state.selectedFrameIds.filter((id) => !actuallyRemovedIds.has(id))
         }
       })
+      // ERR-23 — a drag session holds ids outside the store; it follows
+      // through the same answer the selection just did.
+      publishReparseFollow(follow)
 
       if (overwrittenDirtyTitles.length > 0) {
         pushToast({

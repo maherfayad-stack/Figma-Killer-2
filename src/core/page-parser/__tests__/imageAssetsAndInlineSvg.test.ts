@@ -176,7 +176,7 @@ describe('assetOrigin (WS-8.3) — the import specifier behind a resolved image'
     const image = images(parse('pages/Hero.jsx'))[0]!
     expect(image.props.src).toBe(`${STUDIO_ASSET_SENTINEL}media/one.png`)
     const expected = locate(source, "'../media/one.png'")
-    expect(image.assetOrigin).toEqual({ rel: 'pages/Hero.jsx', line: expected.line, col: expected.col })
+    expect(image.assetOrigin).toMatchObject({ rel: 'pages/Hero.jsx', line: expected.line, col: expected.col })
   })
 
   it('resolves through an alias to the ORIGINAL import statement', () => {
@@ -192,7 +192,7 @@ describe('assetOrigin (WS-8.3) — the import specifier behind a resolved image'
 
     const image = images(parse('pages/Alias.jsx'))[0]!
     const expected = locate(source, "'../media/one.png'")
-    expect(image.assetOrigin).toEqual({ rel: 'pages/Alias.jsx', line: expected.line, col: expected.col })
+    expect(image.assetOrigin).toMatchObject({ rel: 'pages/Alias.jsx', line: expected.line, col: expected.col })
   })
 
   it('is absent for a literal src (nothing to redirect an import at)', () => {

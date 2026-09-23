@@ -97,7 +97,7 @@ import * as path from 'node:path'
 import { existsSync } from 'node:fs'
 import { Node, Project, QuoteKind, SyntaxKind, type SourceFile } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, refusePlacement, type StructuralRefusalReason } from '@core/page-tree'
-import { createWorkspaceProject, eolFileSystemOf } from '@core/page-parser'
+import { createWorkspaceProject, eolFileSystemOf, isWorkspaceWritablePath } from '@core/page-parser'
 import { findJsxElementAtLocationOrThrow, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
 import { addReconciledImports, relativeSpecifier, removeImportIfLastUsage, topLevelBindingNames } from './importReconcile'
 import { analyzeFreeVariables, type FreeVariable } from './subtreeFreeVariables'
@@ -166,11 +166,16 @@ export interface SlotChildDecision {
  * reused, not reinvented, per this module's own doc — even though this
  * codemod only ever RETURNS that subset of the wider type (a reorder/delete/
  * insert-only reason like `multi-select` can never come out of
- * `refusePlacement`, which this file is the only caller of here). Three
- * reasons are genuinely new here: `spread-props`, `name-taken`, and (E2.2)
- * `slot-name-conflict`.
+ * `refusePlacement`, which this file is the only caller of here). Four
+ * reasons are genuinely new here: `spread-props`, `name-taken`, (E2.2)
+ * `slot-name-conflict`, and (P1-G) `unwritable-target`.
  */
-export type ExtractSubtreeRefusalReason = StructuralRefusalReason | 'spread-props' | 'name-taken' | 'slot-name-conflict'
+export type ExtractSubtreeRefusalReason =
+  | StructuralRefusalReason
+  | 'spread-props'
+  | 'name-taken'
+  | 'slot-name-conflict'
+  | 'unwritable-target'
 
 export interface ExtractSubtreeRefusal {
   reason: ExtractSubtreeRefusalReason
@@ -402,6 +407,17 @@ export function extractSubtreeToComponent(params: ExtractSubtreeToComponentParam
   // Reason 6.
   const nameTaken = nameTakenMessage(project, pageFile, newPath, componentName, params.existingComponentNames)
   if (nameTaken) return refuse('name-taken', nameTaken)
+
+  // P1-G — the new file must be one Studio may write (`@core/page-parser`'s
+  // shared write scope). The page itself passed the writeback guard, but the
+  // file created beside it is a second target: a DANGLING link already named
+  // `<componentName>.tsx` would carry the write wherever it points.
+  if (!isWorkspaceWritablePath(workspaceRoot, newPath)) {
+    return refuse(
+      'unwritable-target',
+      `${componentName}.tsx cannot be created next to this page — that path is a link Studio will not write through, or sits in a directory Studio does not write to.`,
+    )
+  }
 
   // Reason 7a — two slot decisions naming the same slot.
   const duplicateSlotName = findDuplicate(resolvedSlots.map((s) => s.slotName))

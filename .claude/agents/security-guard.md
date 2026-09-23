@@ -29,7 +29,9 @@ what's at stake.
 - [ ] UNC paths and drive letters rejected
 - [ ] `..` and empty segments rejected **on both `/` and `\`**
 - [ ] `EXCLUDED_WORKSPACE_DIR_NAMES` enforced (`.studio`, `.git`, `node_modules`,
-      `dist`, `.next`, `.turbo`)
+      `dist`, `.next`, `.turbo`) — for a WRITE, through `@core/page-parser`'s
+      `workspaceWriteScope.ts` (adds `.claude`, case/trailing-dot/stream
+      spellings, the real path, dangling links), never a hand-rolled list
 - [ ] **Containment checked on the real path, after resolving symlinks** — a repo
       arrives from GitHub, git stores symlinks, so a textual check is bypassable.
       This was a real hole, not a hypothetical: a `node_modules` entry could read

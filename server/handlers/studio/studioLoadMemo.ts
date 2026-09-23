@@ -22,7 +22,7 @@
  * "did anything at all change" is the only question, and the cheapest honest
  * answer is a fingerprint over every source-relevant file in the workspace:
  * `relPath:size:mtimeMs` for every `.ts/.tsx/.js/.jsx/.mjs/.cjs/.css/.scss/
- * .sass/.less/.json` file `listWorkspaceFiles` walks, plus `.studio/meta.json`
+ * .sass/.less/.json/.svg` file `listWorkspaceFiles` walks, plus `.studio/meta.json`
  * explicitly (`.studio` is in `EXCLUDED_WORKSPACE_DIR_NAMES`, and meta.json
  * decides `pagesDir`, the preview locale, the framework profile, the trust
  * tier and whether stories are on).
@@ -60,8 +60,13 @@ import { join } from 'node:path'
 import { listWorkspaceFiles } from '@core/page-parser'
 import type { StudioLoadResult } from './studioLoadContract'
 
-/** Extensions whose content can change what `loadStudioPages` returns. */
-const FINGERPRINTED_EXTENSIONS = /\.(tsx?|jsx?|mjs|cjs|css|scss|sass|less|json)$/i
+/**
+ * Extensions whose content can change what `loadStudioPages` returns. `svg`
+ * (WB-2) because a `?raw` icon import's VALUE is the file's text — the parse
+ * cache records the file as a dependency, and that is only worth anything if
+ * this memo lets the load reach it.
+ */
+const FINGERPRINTED_EXTENSIONS = /\.(tsx?|jsx?|mjs|cjs|css|scss|sass|less|json|svg)$/i
 
 /**
  * `.studio/meta.json` fields that change WITHOUT changing a load result, and
