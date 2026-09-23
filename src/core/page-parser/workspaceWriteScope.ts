@@ -70,11 +70,58 @@ function comparableSegment(segment: string): string {
  * `.git` is a gitdir pointer, and rewriting it re-targets the repository.
  */
 export function unwritableWorkspaceSegment(rel: string): string | null {
+  return firstSegmentNamedIn(rel, UNWRITABLE_WORKSPACE_DIR_NAMES)
+}
+
+/**
+ * The READ-side twin of {@link unwritableWorkspaceSegment}: the first segment
+ * naming a directory no Studio walk or agent read enters
+ * (`EXCLUDED_WORKSPACE_DIR_NAMES` — `.studio`, `.git`, `node_modules`, build
+ * output), compared the same filesystem way. `.claude` is deliberately
+ * readable: it holds the design-system reference files the agent is told to
+ * read. Pure, like its twin.
+ */
+export function excludedWorkspaceSegment(rel: string): string | null {
+  return firstSegmentNamedIn(rel, EXCLUDED_WORKSPACE_DIR_NAMES)
+}
+
+function firstSegmentNamedIn(rel: string, names: ReadonlySet<string>): string | null {
   for (const segment of rel.split(/[\\/]+/)) {
-    if (UNWRITABLE_WORKSPACE_DIR_NAMES.has(comparableSegment(segment))) return segment
+    if (names.has(comparableSegment(segment))) return segment
   }
   return null
 }
+
+/**
+ * Whether a file NAME (the last segment) is one that conventionally holds a
+ * credential: `.env` and its variants (but not the committed `.example` /
+ * `.sample` / `.template` shapes), package-manager and network auth files, and
+ * private-key material. Compared the filesystem way, like the directory sets.
+ *
+ * No agent file tool reads or writes one. A tool result is a transcript line a
+ * provider stores; a key in it has left the machine.
+ */
+export function isSecretBearingFileName(name: string): boolean {
+  const comparable = comparableSegment(name)
+  if (comparable === '.env') return true
+  if (comparable.startsWith('.env.')) return !PUBLIC_ENV_SUFFIXES.has(comparable.slice('.env.'.length))
+  if (SECRET_FILE_NAMES.has(comparable)) return true
+  return SECRET_FILE_EXTENSIONS.some((ext) => comparable.endsWith(ext))
+}
+
+const PUBLIC_ENV_SUFFIXES: ReadonlySet<string> = new Set(['example', 'sample', 'template', 'defaults'])
+const SECRET_FILE_NAMES: ReadonlySet<string> = new Set([
+  '.npmrc',
+  '.yarnrc.yml',
+  '.netrc',
+  '.pypirc',
+  '.git-credentials',
+  'id_rsa',
+  'id_dsa',
+  'id_ecdsa',
+  'id_ed25519',
+])
+const SECRET_FILE_EXTENSIONS: readonly string[] = ['.pem', '.key', '.p12', '.pfx']
 
 /**
  * The real path of `path` — symlinks and junctions resolved, on-disk casing

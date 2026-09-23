@@ -14,14 +14,10 @@
  *   1. Verifies `ai.chat` + ownership of the conversation.
  *   2. Loads + decrypts the credential (rejects if rotated).
  *   3. Resolves the driver for the credential's provider.
- *   4. Validates `workspaceDir` once (`resolveValidatedWorkspaceDir`) and uses
- *      the result for TWO things (WS-12): which toolset `selectStudioTools`
- *      offers (the real Studio tools vs. the CMS `site` tools), and which
- *      system prompt gets built below. `workspaceDir` is also forwarded
- *      verbatim on `AiStreamRequest` for `claudeCli` (WS-11), which does its
- *      OWN, separate validation before using it as a subprocess `cwd` — this
- *      handler's validation is for tool/prompt selection only, not a trust
- *      decision claudeCli.ts can skip re-making.
+ *   4. Validates `workspaceDir` once (`resolveValidatedWorkspaceDir`): it picks
+ *      the toolset (Studio vs. CMS `site`; with Studio, the provider picks the
+ *      file surface) and the prompt. `claudeCli` re-validates it before using
+ *      it as a subprocess `cwd` — this is selection, not a trust decision.
  *   4b. Scopes the turn to a project: the validated dir's project key must
  *      match the conversation's stamped one (409 if it does not), and stamps
  *      an as-yet-unscoped conversation with it (migration 022).
@@ -74,7 +70,7 @@ import {
   canonicaliseAiUserContent,
   preflightAiUserContent,
 } from '../inputImages'
-import { selectStudioTools } from '../tools'
+import { agentFileAccessForProvider, selectStudioTools } from '../tools'
 import { StudioAgentSnapshotSchema } from '../tools/studio/snapshot'
 import {
   createBridge,
@@ -87,6 +83,7 @@ import { resolveValidatedWorkspaceDir } from '../../handlers/studio/workspaceDir
 import { resolveProjectFidelityMode } from '../../handlers/studio/projectFidelityMode'
 import { resolveProjectDesignPolicy } from '../../handlers/studio/projectDesignPolicy'
 import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
+import { prepareStudioHttpTurn } from '../studioHttpTurn'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
 import type { AiStreamEvent } from '../runtime/types'
@@ -254,7 +251,9 @@ async function handleAiChat(
     req.signal,
   )
   if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
-  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null })
+  // The CLI brings native file tools; every HTTP driver gets Studio's (AI-2). The prompt reads this same array.
+  const fileAccess = agentFileAccessForProvider(credential.providerId)
+  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null, fileAccess })
   if (requestedImage && !modelCapabilities.visionInput) {
     return jsonResponse(
       { error: 'The selected model does not support image input. Choose a vision-capable model.' },
@@ -522,6 +521,9 @@ async function handleAiChat(
           sessionEpoch: latestConversation.sessionEpoch,
         }
 
+        // What `claudeCli.ts` does before its spawn: the project guide and a fresh turn-write log.
+        if (validatedWorkspaceDir && fileAccess === 'studio-tools') prepareStudioHttpTurn(validatedWorkspaceDir, user.id)
+
         const persister = createConversationsPersister(db, conversation.id, {
           providerId: credential.providerId,
           modelId: conversation.modelId,
@@ -689,11 +691,6 @@ function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T 
   })
 }
 
-// `buildCmsSiteSystemPrompt`/`buildStudioProjectSystemPrompt` moved to
-// `server/ai/chatSystemPrompt.ts` (module-size-budgets.test.ts; also kept OUT
-// of `server/ai/handlers/` because it never touches a `Request` and would
-// otherwise trip `ai-handlers-capability-gated.test.ts`) — re-exported here so
-// this stays their canonical import path (`server/ai/handlers/chat`), which
-// `src/__tests__/agent/studioProjectSystemPrompt.test.ts` and this file's own
-// callers above both use.
+// Re-exported so `server/ai/handlers/chat` stays their import path; they live in
+// `../chatSystemPrompt.ts` because they never touch a `Request` (ai-handlers-capability-gated).
 export { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'

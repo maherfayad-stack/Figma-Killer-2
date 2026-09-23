@@ -25,6 +25,9 @@
  * Adding a new write tool is a deliberate edit to the table below, which is
  * the point: the set of things an `ai.chat`-only caller cannot reach should
  * never change as a side effect of something else.
+ *
+ * {@link WRITE_GATED_ADDED_SINCE} is that edit, made deliberately, one entry
+ * per new tool, with the bundle that added it.
  */
 import { describe, expect, it } from 'bun:test'
 import { Type } from '@core/utils/typeboxHelpers'
@@ -32,7 +35,7 @@ import { CORE_CAPABILITIES, type CoreCapability } from '../../core/capabilities'
 import { mcpToolsForCapabilities, mcpToolsForStudioWorkspace } from '../../../server/ai/mcp/registry'
 import { siteTools } from '../../../server/ai/tools/site'
 import { selectStudioTools } from '../../../server/ai/tools'
-import { studioAgentTools } from '../../../server/ai/tools/studio'
+import { studioAgentTools, studioHttpAgentTools } from '../../../server/ai/tools/studio'
 import { executeAiTool } from '../../../server/ai/drivers/http/execTool'
 import type { AiTool } from '../../../server/ai/runtime/types'
 
@@ -93,6 +96,24 @@ const WRITE_GATED_BEFORE_THE_SPLIT: Readonly<Record<string, readonly CoreCapabil
   studio_upload_asset: ['studio.write'],
 }
 
+/**
+ * Write-gated tools added AFTER the split, each a deliberate decision:
+ *
+ *   - P4-C (AI-2): the API-key path's file authoring. Offered only on the HTTP
+ *     drivers' surface (`studioHttpAgentTools`), write-gated exactly like
+ *     every other Studio write (`ai.tools.write` + `studio.write`).
+ */
+const WRITE_GATED_ADDED_SINCE: Readonly<Record<string, readonly CoreCapability[]>> = {
+  studio_edit_file: ['studio.write'],
+  studio_edit_files: ['studio.write'],
+  studio_write_file: ['studio.write'],
+}
+
+const WRITE_GATED: Readonly<Record<string, readonly CoreCapability[]>> = {
+  ...WRITE_GATED_BEFORE_THE_SPLIT,
+  ...WRITE_GATED_ADDED_SINCE,
+}
+
 /** The observers the audit named — write-gated, and never a `'write'` to the loop. */
 const WRITE_GATED_OBSERVERS = [
   'studio_screenshot',
@@ -109,7 +130,7 @@ const ALL_BUT_WRITE = ALL.filter((cap) => cap !== 'ai.tools.write')
 /** Every tool on every surface, first definition per name — the same union the pre-split dump was taken from. */
 function everyTool(): AiTool[] {
   const byName = new Map<string, AiTool>()
-  for (const tool of [...mcpToolsForCapabilities(ALL), ...siteTools, ...studioAgentTools]) {
+  for (const tool of [...mcpToolsForCapabilities(ALL), ...siteTools, ...studioAgentTools, ...studioHttpAgentTools]) {
     if (!byName.has(tool.name)) byName.set(tool.name, tool)
   }
   return [...byName.values()]
@@ -118,7 +139,7 @@ function everyTool(): AiTool[] {
 describe('the write gate is exactly what it was before sideEffects existed', () => {
   it('every previously write-gated tool is still requiresWrite, with the same capabilities', () => {
     const byName = new Map(everyTool().map((tool) => [tool.name, tool]))
-    for (const [name, caps] of Object.entries(WRITE_GATED_BEFORE_THE_SPLIT)) {
+    for (const [name, caps] of Object.entries(WRITE_GATED)) {
       const tool = byName.get(name)
       expect(tool, `${name} was write-gated before the split and no longer exists on any surface`).toBeDefined()
       expect(tool!.requiresWrite, `${name} lost its ai.tools.write gate`).toBe(true)
@@ -128,7 +149,7 @@ describe('the write gate is exactly what it was before sideEffects existed', () 
 
   it('no other tool became write-gated, and none silently lost the gate', () => {
     const gated = everyTool().filter((tool) => tool.requiresWrite === true).map((tool) => tool.name).sort()
-    expect(gated).toEqual(Object.keys(WRITE_GATED_BEFORE_THE_SPLIT).sort())
+    expect(gated).toEqual(Object.keys(WRITE_GATED).sort())
   })
 
   it('a caller with every capability but ai.tools.write is offered none of them, on any surface', () => {
@@ -137,8 +158,9 @@ describe('the write gate is exactly what it was before sideEffects existed', () 
       ...mcpToolsForStudioWorkspace(ALL_BUT_WRITE),
       ...selectStudioTools(ALL_BUT_WRITE),
       ...selectStudioTools(ALL_BUT_WRITE, { studioProjectOpen: true }),
+      ...selectStudioTools(ALL_BUT_WRITE, { studioProjectOpen: true, fileAccess: 'studio-tools' }),
     ].map((tool) => tool.name)
-    for (const name of Object.keys(WRITE_GATED_BEFORE_THE_SPLIT)) {
+    for (const name of Object.keys(WRITE_GATED)) {
       expect(offered, `${name} was offered to a caller without ai.tools.write`).not.toContain(name)
     }
   })

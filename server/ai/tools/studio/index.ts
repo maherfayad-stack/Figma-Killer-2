@@ -10,17 +10,14 @@
  * `site_*` toolset the MCP registry also advertises. Two things were wrong
  * with that, and they compounded:
  *
- *   - **Most of it is now dead weight.** The agent authors files with native
- *     `Read`/`Write`/`Edit`/`Glob`/`Grep` inside the project `cwd`
- *     (`claudeCliToolSurface.ts`). Every tool that existed only because the
- *     agent had no filesystem — `studio_read_file`, `studio_list_files`,
- *     `studio_create_page`, `studio_apply_edits`, `studio_codemod`,
- *     `studio_find_nodes`, `studio_get_node_source` — is strictly slower than
- *     the native equivalent and, in the write cases, pushed the model toward
- *     one enormous inline `style={{…}}` because that was the shape the edit
- *     API rewarded. They stay in the MCP registry for external clients that
- *     genuinely have no filesystem access to the project; they are not what
- *     the in-canvas agent is offered.
+ *   - **Most of it is now dead weight.** The agent authors whole files: with
+ *     native `Read`/`Write`/`Edit`/`Glob`/`Grep` inside the project `cwd`
+ *     on the `claude` CLI (`claudeCliToolSurface.ts`), and with the Studio
+ *     file tools on the HTTP drivers (`studioHttpAgentTools`, below). The AST
+ *     edit API (`studio_apply_edits`, `studio_codemod`, `studio_create_page`,
+ *     `studio_find_nodes`) is strictly slower than that and pushed the model
+ *     toward one enormous inline `style={{…}}`. It stays in the MCP registry
+ *     for external clients; it is not what the in-canvas agent is offered.
  *   - **A large toolset is itself a latency and accuracy cost.** Every tool
  *     definition is re-sent on every turn, and a model choosing among ~60
  *     tools — half of them for a CMS this project does not use — picks wrong
@@ -42,23 +39,38 @@
  */
 import type { AiTool } from '../types'
 import { studioMcpTools } from '../../mcp/tools/studio'
-import { STUDIO_AGENT_TOOL_NAMES } from './agentToolNames'
+import { studioAgentFileWriteTools } from '../../mcp/tools/studio/fileWriteTools'
+import { STUDIO_AGENT_TOOL_NAMES, STUDIO_HTTP_AGENT_FILE_TOOL_NAMES } from './agentToolNames'
 
-const byName = new Map(studioMcpTools.map((tool) => [tool.name, tool]))
+const byName = new Map([...studioMcpTools, ...studioAgentFileWriteTools].map((tool) => [tool.name, tool]))
 
-export const studioAgentTools: AiTool[] = STUDIO_AGENT_TOOL_NAMES.map((name) => {
+function resolveAgentTool(name: string): AiTool {
   const tool = byName.get(name)
   if (!tool) {
     // A rename in `mcp/tools/studio/*.ts` that orphans a name here would
     // otherwise silently drop a capability from the agent's surface, and the
     // only symptom would be the model working around a tool it was never
     // offered. Fail loudly at module load instead.
-    throw new Error(`[ai/tools/studio] STUDIO_AGENT_TOOL_NAMES names "${name}", which is not a registered Studio MCP tool.`)
+    throw new Error(`[ai/tools/studio] "${name}" is named for the agent's surface but is not a registered Studio tool.`)
   }
   return tool
-})
+}
 
-export { STUDIO_AGENT_TOOL_NAMES } from './agentToolNames'
+/** What the in-canvas agent gets on the `claude` CLI path, which brings its own native file tools. */
+export const studioAgentTools: AiTool[] = STUDIO_AGENT_TOOL_NAMES.map(resolveAgentTool)
+
+/**
+ * What the in-canvas agent gets on an HTTP driver: everything above, plus the
+ * file tools an HTTP driver has no native equivalent of (P4-C, AI-2 — see
+ * `STUDIO_HTTP_AGENT_FILE_TOOL_NAMES`).
+ */
+export const studioHttpAgentTools: AiTool[] = [
+  ...studioAgentTools,
+  ...STUDIO_HTTP_AGENT_FILE_TOOL_NAMES.map(resolveAgentTool),
+]
+
+export { STUDIO_AGENT_TOOL_NAMES, STUDIO_HTTP_AGENT_FILE_TOOL_NAMES, agentFileAccessFor } from './agentToolNames'
+export type { AgentFileAccess } from './agentToolNames'
 export {
   buildStudioAgentSystemPrompt,
   studioPromptContextFromProfile,

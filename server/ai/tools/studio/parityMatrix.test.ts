@@ -8,7 +8,13 @@ import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { STUDIO_CANVAS_PARITY_MATRIX } from './parityMatrix'
-import { studioAgentTools } from './index'
+import { studioHttpAgentTools } from './index'
+
+/**
+ * The widest agent surface — the HTTP drivers get everything the CLI path
+ * does plus Studio's file tools (P4-C) — so every check below covers both.
+ */
+const studioAgentTools = studioHttpAgentTools
 
 const AGENT_DOC = join(import.meta.dir, '..', '..', '..', '..', 'docs', 'features', 'agent.md')
 

@@ -1,8 +1,14 @@
 /**
  * Barrel — every studio MCP tool (WS-9), composed into `../../registry.ts`.
+ *
+ * The file-authoring tools (`./fileWriteTools.ts`) are deliberately NOT here:
+ * they write only into the project a chat turn is about, and no external
+ * connector is ever bound to one. The in-canvas agent's HTTP surface composes
+ * them in directly (`server/ai/tools/studio/index.ts`).
  */
 import type { AiTool } from '../../../runtime/types'
 import { studioProjectMcpTools } from './projectTools'
+import { studioFileReadMcpTools } from './fileReadTools'
 import { studioEditMcpTools } from './editTools'
 import { studioFidelityReportTool } from './fidelityReport'
 import { studioExportMcpTools } from './exportFrames'
@@ -41,6 +47,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioTypecheckMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
+  ...studioFileReadMcpTools,
   ...studioEditMcpTools,
   studioFidelityReportTool,
   ...studioExportMcpTools,

@@ -45,6 +45,8 @@ export {
 } from './workspaceFiles'
 export {
   UNWRITABLE_WORKSPACE_DIR_NAMES,
+  excludedWorkspaceSegment,
+  isSecretBearingFileName,
   isWorkspaceWritablePath,
   pathEntryExists,
   realWorkspaceRel,
