@@ -146,6 +146,10 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'The path is inside the project but is not the user\'s source: a directory Studio owns or that is not source (.studio, .claude, .git, node_modules, build output), a credential file (.env, .npmrc, key material), or a file with other hard-linked names. No agent file tool reads or writes it.',
   },
+  'needs-user': {
+    retryable: false,
+    meaning: 'The file runs on the user\'s machine outside the page — build-tool config, package.json, env and package-manager config, git hooks, .vscode, CI workflows — or is standing agent instruction (CLAUDE.md). No agent writes it on either path: show the user the exact change and ask them to make or approve it. Screen files (.tsx, .ts, .css, assets) stay writable.',
+  },
   'not-text': {
     retryable: false,
     meaning: 'The file (or the content supplied) is binary or not valid UTF-8, so a text tool cannot hand it back or rewrite it byte-faithfully. Images and fonts go through the asset tools.',

@@ -46,11 +46,13 @@ export {
 export {
   UNWRITABLE_WORKSPACE_DIR_NAMES,
   excludedWorkspaceSegment,
+  hostExecutedWorkspaceFile,
   isSecretBearingFileName,
   isWorkspaceWritablePath,
   pathEntryExists,
   realWorkspaceRel,
   realpathAllowingMissing,
+  stripTrailingDotsAndSpaces,
   unwritableWorkspaceSegment,
 } from './workspaceWriteScope'
 export { resetParserCaches } from './parserCaches'

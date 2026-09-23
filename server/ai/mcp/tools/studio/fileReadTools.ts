@@ -23,6 +23,7 @@ import type { AiTool, ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { canonicalSummaryForFile } from '../../../../handlers/studio/canonicalPageCheck'
 import {
+  AGENT_PATH_MAX_CHARS,
   nonTextReason,
   readTextFile,
   resolveAgentFilePath,
@@ -50,6 +51,7 @@ const ReadFileInputSchema = Type.Object(
   {
     dir: DIR_FIELD,
     path: Type.String({
+      maxLength: AGENT_PATH_MAX_CHARS,
       description: 'Path of the file inside the project, relative to its root, e.g. "pages/Home.tsx" or "src/components/SheetHeader.tsx". An absolute path inside the project is accepted too.',
     }),
   },
@@ -104,7 +106,7 @@ const ListFilesInputSchema = Type.Object(
   {
     dir: DIR_FIELD,
     path: Type.Optional(
-      Type.String({ description: 'Folder to list, relative to the project root, e.g. "pages" or "styles/imported". Omit for the whole project.' }),
+      Type.String({ maxLength: AGENT_PATH_MAX_CHARS, description: 'Folder to list, relative to the project root, e.g. "pages" or "styles/imported". Omit for the whole project.' }),
     ),
     limit: Type.Optional(
       Type.Integer({ minimum: 1, maximum: LIST_FILES_MAX, description: `Maximum paths to return (default ${LIST_FILES_MAX}).` }),
@@ -173,10 +175,11 @@ const GrepInputSchema = Type.Object(
     dir: DIR_FIELD,
     query: Type.String({
       minLength: 1,
+      maxLength: 1_000,
       description: 'The text to find — a LITERAL string, not a regular expression (so "styles.row" and "a(b)" match exactly what they say). One line at a time: a query containing a line break matches nothing.',
     }),
     path: Type.Optional(
-      Type.String({ description: 'Only search under this folder (or this one file), relative to the project root, e.g. "pages". Omit to search the whole project.' }),
+      Type.String({ maxLength: AGENT_PATH_MAX_CHARS, description: 'Only search under this folder (or this one file), relative to the project root, e.g. "pages". Omit to search the whole project.' }),
     ),
     caseSensitive: Type.Optional(Type.Boolean({ description: 'Match letter case exactly. Default false.' })),
     limit: Type.Optional(
@@ -267,6 +270,7 @@ const GetNodeSourceInputSchema = Type.Object(
   {
     dir: DIR_FIELD,
     nodeId: Type.String({
+      maxLength: 2 * AGENT_PATH_MAX_CHARS,
       description:
         'A studio node id, e.g. "src/screens/Home.tsx:65:16" or an inlined composite id "pages/Home.jsx:77:19~components/Icon.jsx:3:6".',
     }),

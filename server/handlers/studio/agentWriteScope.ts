@@ -51,8 +51,8 @@
  * property being defended is narrower and is the one A10 relies on: *the
  * agent* cannot manufacture its own consent.
  */
-import { isAbsolute, relative, resolve } from 'node:path'
-import { realpathAllowingMissing, unwritableWorkspaceSegment } from '@core/page-parser'
+import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { hostExecutedWorkspaceFile, realpathAllowingMissing, unwritableWorkspaceSegment } from '@core/page-parser'
 
 /**
  * The forbidden segment in `candidate`, if it has one — measured RELATIVE to
@@ -78,13 +78,39 @@ import { realpathAllowingMissing, unwritableWorkspaceSegment } from '@core/page-
  * measure its segments against.
  */
 function forbiddenSegment(base: string, candidate: string): string | null {
-  const rel = relative(base, candidate)
-  if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null
-  return unwritableWorkspaceSegment(rel)
+  const rel = relativeInside(base, candidate)
+  return rel === null ? null : unwritableWorkspaceSegment(rel)
 }
 
 /**
- * The reason this write must be refused, or `null` when it may proceed.
+ * `candidate` relative to `base`, or `null` when it is not inside it. A
+ * segment that merely STARTS with two dots (`..foo/`) is inside: only `..`
+ * itself climbs out (security review of #233, F9).
+ */
+function relativeInside(base: string, candidate: string): string | null {
+  const rel = relative(base, candidate)
+  if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null
+  return rel
+}
+
+/**
+ * Why an agent write is refused. `protected-path`: Studio's control plane or
+ * a non-source directory, never writable by an agent. `needs-user`: a file
+ * that runs on the host (`hostExecutedWorkspaceFile`) — the user makes or
+ * approves the change. `path-outside-project`: where the write would land is
+ * unknown (a dangling link).
+ */
+export interface AgentWriteRefusal {
+  readonly code: 'protected-path' | 'needs-user' | 'path-outside-project'
+  readonly message: string
+}
+
+/**
+ * Why this agent write must be refused, or `null` when it may proceed. The
+ * ONE agent write gate: the `claude` CLI's `PreToolUse` hook
+ * (`hooks/denyControlPlaneWrite.ts`) and the HTTP drivers' file tools
+ * (`agentFileAccess.ts`) both ask it, so the two paths cannot disagree about
+ * what an agent may write.
  *
  * Checks the textual resolution AND the symlink-resolved real path (each
  * against the matching form of `cwd`): a link pointing INTO the control plane
@@ -94,15 +120,17 @@ function forbiddenSegment(base: string, candidate: string): string | null {
  * path to judge, and a write would follow the link wherever it points — so it
  * is refused too.
  */
-export function agentWriteRefusalReason(filePath: string, cwd: string): string | null {
+export function agentWriteRefusal(filePath: string, cwd: string): AgentWriteRefusal | null {
   const textual = isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath)
   const realCwd = realpathAllowingMissing(cwd)
   const realTarget = realpathAllowingMissing(textual)
   if (realCwd === null || realTarget === null) {
-    return (
-      `Refused: "${filePath}" runs through a link Studio cannot resolve, so where the write would land is unknown. `
-      + 'Write the project\'s own source through a path that exists.'
-    )
+    return {
+      code: 'path-outside-project',
+      message:
+        `Refused: "${filePath}" runs through a link Studio cannot resolve, so where the write would land is unknown. `
+        + 'Write the project\'s own source through a path that exists.',
+    }
   }
   const pairs: ReadonlyArray<readonly [string, string]> = [
     [resolve(cwd), textual],
@@ -112,12 +140,26 @@ export function agentWriteRefusalReason(filePath: string, cwd: string): string |
   for (const [base, candidate] of pairs) {
     const segment = forbiddenSegment(base, candidate)
     if (segment === null) continue
-    return (
-      `Refused: "${filePath}" is inside "${segment}/", which Studio owns and no agent write may touch. `
-      + 'Trust tiers, MCP-server approvals, generated hook settings and git internals all live there — '
-      + 'changing any of them would be granting yourself a permission the user never gave. '
-      + 'Write the project\'s own source instead, and ask the user for anything that needs their consent.'
-    )
+    return {
+      code: 'protected-path',
+      message:
+        `Refused: "${filePath}" is inside "${segment}/", which Studio owns and no agent write may touch. `
+        + 'Trust tiers, MCP-server approvals, generated hook settings and git internals all live there — '
+        + 'changing any of them would be granting yourself a permission the user never gave. '
+        + 'Write the project\'s own source instead, and ask the user for anything that needs their consent.',
+    }
+  }
+  for (const [base, candidate] of pairs) {
+    const rel = relativeInside(base, candidate)
+    const why = rel === null ? null : hostExecutedWorkspaceFile(rel)
+    if (why === null) continue
+    return {
+      code: 'needs-user',
+      message:
+        `Not written: "${filePath}" is ${why}. It runs on the user's machine outside the page, so a change to it needs the user. `
+        + 'Show the user the exact change and ask them to make or approve it, then carry on with the screen files — '
+        + '.tsx, .ts, .css and assets stay yours to write.',
+    }
   }
   return null
 }

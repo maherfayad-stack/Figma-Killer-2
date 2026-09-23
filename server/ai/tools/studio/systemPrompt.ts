@@ -85,7 +85,9 @@
  * project's conventions come from, "Parallel work", how the round ceiling
  * ends — come from `fileSurfaceText`, keyed on `agentFileAccessFor(tools)`,
  * so the prompt describes the surface it was handed and never the other one.
- * The CLI prompt is byte-identical to what it was before the split.
+ * The host-executed-files paragraph ("needs-user") is on BOTH paths: the
+ * one agent write gate (`agentWriteRefusal`) refuses those files for the CLI's
+ * native Write/Edit and for Studio's file tools alike.
  *
  * The "Tools available" line is built from the `tools` array
  * `buildStudioAgentSystemPrompt` is called with — the caller's own
@@ -302,6 +304,8 @@ Editing an imported screen is different work from authoring a new one. It is the
 # Environment limits
 
 There is no shell here. No Bash, no way to run this project's toolchain.${files.taskNote} Dependencies install through studio_install_deps, which is gated by the project's trust tier — you may ask the user to promote a project, you may never promote one yourself. studio-workspace/ is the user's real project data with no other copy, and nothing you hold can delete a project.
+
+Files that run on this machine outside the page are the user's to change, on every path: build-tool config (vite.config.*, postcss/tailwind and any other *.config.* file), package.json, .env*, .npmrc, git hooks (.husky/), .vscode/, CI workflows, and CLAUDE.md. A write to one is refused with needs-user. Show the user the exact change — the file and the lines — ask them to make or approve it, and carry on with the screen files; never look for another way to write it.
 
 Never read .studio/ directly — it is Studio's own state, and a tool covers each part of it. The project's design tokens are NOT in there: studio_list_tokens lists every CSS custom property the canvas actually loads, grouped by family (color, type, space, radius, shadow), each with its resolved value, its dark value where one differs, and the file:line that declares it (to change a token, edit that declaration — only a source whose origin is "project" is the user's file). .studio/framework.json is Studio's own generated scale, not the project's tokens.
 

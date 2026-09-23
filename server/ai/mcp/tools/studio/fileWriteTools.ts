@@ -55,6 +55,7 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { AGENT_FILE_MAX_BYTES, pathRefusal } from './fileReadTools'
 import { pushStudioDiskChange } from './liveReloadPush'
 import {
+  AGENT_PATH_MAX_CHARS,
   contentHash,
   hasOtherHardLinks,
   readTextFile,
@@ -68,6 +69,7 @@ import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 
 const EXPECTED_HASH_FIELD = Type.Optional(
   Type.String({
+    maxLength: 64,
     description: 'The `hash` studio_read_file (or a previous write/edit of this file) returned. The write refuses with stale-source when the file on disk no longer has that hash — someone changed it after you read it.',
   }),
 )
@@ -155,8 +157,8 @@ function afterWrites(dir: string, ctx: ToolContext, written: readonly AgentFileT
 
 const WriteFileInputSchema = Type.Object(
   {
-    path: Type.String({ description: 'Path of the file inside the open project, relative to its root, e.g. "pages/Checkout.tsx". Missing folders are created.' }),
-    content: Type.String({ description: `The COMPLETE new content of the file — not a fragment. At most ${AGENT_FILE_MAX_BYTES.toLocaleString('en-US')} bytes of UTF-8 text.` }),
+    path: Type.String({ maxLength: AGENT_PATH_MAX_CHARS, description: 'Path of the file inside the open project, relative to its root, e.g. "pages/Checkout.tsx". Missing folders are created.' }),
+    content: Type.String({ maxLength: AGENT_FILE_MAX_BYTES, description: `The COMPLETE new content of the file — not a fragment. At most ${AGENT_FILE_MAX_BYTES.toLocaleString('en-US')} bytes of UTF-8 text.` }),
     expectedHash: EXPECTED_HASH_FIELD,
   },
   { additionalProperties: false },
@@ -170,18 +172,21 @@ const writeFileTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Create a file, or replace one whole, in the open project — the way to write a new screen (its .tsx and its .module.css) in one call each. The canvas re-renders the file as soon as it lands. Creating a file needs only path and content. Replacing an EXISTING file needs expectedHash (from studio_read_file): without it, or when the file changed since that read, it refuses with stale-source rather than overwrite work you never saw — for a small change to an existing file use studio_edit_file instead. Refuses protected-path for anything in .studio/, .claude/, .git/, node_modules/ or build output and for credential files, and path-outside-project for anything outside the project. Returns { path, created, bytes, hash } — hash is the new version, good for the next edit. Requires studio.write.',
+    'Create a file, or replace one whole, in the open project — the way to write a new screen (its .tsx and its .module.css) in one call each. The canvas re-renders the file as soon as it lands. Creating a file needs only path and content. Replacing an EXISTING file needs expectedHash (from studio_read_file): without it, or when the file changed since that read, it refuses with stale-source rather than overwrite work you never saw — for a small change to an existing file use studio_edit_file instead. Refuses needs-user for a file that runs on the user machine outside the page (vite/postcss/tailwind and other *.config.* files, package.json, .env*, .npmrc, git hooks, .vscode/, CI workflows) or CLAUDE.md: show the user the exact change and ask them to make it. Refuses protected-path for anything in .studio/, .claude/, .git/, node_modules/ or build output and for key material, and path-outside-project for anything outside the project. Returns { path, created, bytes, hash } — hash is the new version, good for the next edit. Requires studio.write.',
   inputSchema: WriteFileInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { path: rawPath, content, expectedHash } = input as { path: string; content: string; expectedHash?: string }
     const dir = turnProject(ctx)
     if (typeof dir !== 'string') return dir
-    const target = resolveAgentFilePath(dir, rawPath, 'write')
-    if (!target.ok) return pathRefusal(target)
-    const contentProblem = checkContent(content, target.rel)
-    if (contentProblem) return contentProblem
 
     const outcome = await withProjectWriteLock(dir, () => {
+      // Resolved INSIDE the lock, right before the write: it does not close
+      // the window for a link swapped in by something running as the user,
+      // but it shrinks it to this call (security review of #233, F6).
+      const target = resolveAgentFilePath(dir, rawPath, 'write')
+      if (!target.ok) return pathRefusal(target)
+      const contentProblem = checkContent(content, target.rel)
+      if (contentProblem) return contentProblem
       const current = currentText(target, expectedHash)
       if (isRefusal(current)) return current
       if (current.content !== null && expectedHash === undefined) {
@@ -217,12 +222,13 @@ const writeFileTool: AiTool = {
 // ---------------------------------------------------------------------------
 
 const EditFields = {
-  path: Type.String({ description: 'Path of an EXISTING file inside the open project, relative to its root, e.g. "pages/Checkout.module.css".' }),
+  path: Type.String({ maxLength: AGENT_PATH_MAX_CHARS, description: 'Path of an EXISTING file inside the open project, relative to its root, e.g. "pages/Checkout.module.css".' }),
   oldString: Type.String({
     minLength: 1,
+    maxLength: AGENT_FILE_MAX_BYTES,
     description: 'The exact text to replace, copied from the file — whitespace, indentation and line breaks included. It must occur exactly once unless replaceAll is true; include a line or two of surrounding context to make it unique.',
   }),
-  newString: Type.String({ description: 'The text that replaces oldString. May be empty, to delete it.' }),
+  newString: Type.String({ maxLength: AGENT_FILE_MAX_BYTES, description: 'The text that replaces oldString. May be empty, to delete it.' }),
   replaceAll: Type.Optional(Type.Boolean({ description: 'Replace every occurrence of oldString instead of requiring exactly one. Default false.' })),
   expectedHash: EXPECTED_HASH_FIELD,
 }
@@ -265,6 +271,18 @@ function applyEdit(content: string, edit: EditInput, rel: string): { content: st
       remedy: 'Read the file again with studio_read_file and copy the exact text, including whitespace and line breaks.',
     })
   }
+  // The result's size, known BEFORE it is built: a one-character oldString
+  // occurring 100,000 times with a 10 KB newString is a gigabyte, and building
+  // it to find out is what would take the server down (review of #233, F2).
+  const replacements = edit.replaceAll ? count : 1
+  const projectedBytes = Buffer.byteLength(content, 'utf8')
+    + replacements * (Buffer.byteLength(newString, 'utf8') - Buffer.byteLength(oldString, 'utf8'))
+  if (projectedBytes > AGENT_FILE_MAX_BYTES) {
+    return toolRefusal('file-too-large', `The edit would make "${rel}" ${projectedBytes.toLocaleString('en-US')} bytes, over the ${AGENT_FILE_MAX_BYTES.toLocaleString('en-US')}-byte cap, so it was not applied.`, {
+      remedy: 'Split the file, or change fewer occurrences at a time.',
+      details: { projectedBytes, occurrences: count },
+    })
+  }
   if (count > 1 && !edit.replaceAll) {
     return toolRefusal('edit-ambiguous', `oldString occurs ${count} times in "${rel}" (lines ${lines.join(', ')}${count > lines.length ? ', …' : ''}).`, {
       remedy: 'Add surrounding lines to oldString until it names exactly one place, or pass replaceAll:true if every occurrence should change.',
@@ -290,10 +308,11 @@ const editFileTool: AiTool = {
     const edit = input as EditInput
     const dir = turnProject(ctx)
     if (typeof dir !== 'string') return dir
-    const target = resolveAgentFilePath(dir, edit.path, 'write')
-    if (!target.ok) return pathRefusal(target)
 
     return withProjectWriteLock(dir, () => {
+      // Inside the lock, right before the write — see studio_write_file.
+      const target = resolveAgentFilePath(dir, edit.path, 'write')
+      if (!target.ok) return pathRefusal(target)
       const current = currentText(target, edit.expectedHash)
       if (isRefusal(current)) return current
       if (current.content === null) {
@@ -334,21 +353,22 @@ const editFilesTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    `Apply up to ${EDIT_FILES_MAX_EDITS} exact-string edits across one or more existing files ALL-OR-NOTHING: every edit is checked first (path rules, oldString found exactly once unless replaceAll, expectedHash), and if any one would refuse, NOTHING is written and the refusal names the edit (editIndex). Use it for a change that must not land half-way — a component and its stylesheet, a renamed class or prop across files, a translation key added to every dictionary. The canvas reloads once for the whole batch. Returns { files: [{ path, hash }], edits }. Requires studio.write.`,
+    `Apply up to ${EDIT_FILES_MAX_EDITS} exact-string edits across one or more existing files ALL-OR-NOTHING: every edit is checked first (path rules, oldString found exactly once unless replaceAll, expectedHash), and if any one would refuse, NOTHING is written and the refusal names the edit (editIndex). The guarantee is against refusals and write errors (a failed write restores the files already written), not against the server itself crashing mid-batch. Use it for a change that must not land half-way — a component and its stylesheet, a renamed class or prop across files, a translation key added to every dictionary. The canvas reloads once for the whole batch. Returns { files: [{ path, hash }], edits }. Requires studio.write.`,
   inputSchema: EditFilesInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { edits } = input as { edits: readonly EditInput[] }
     const dir = turnProject(ctx)
     if (typeof dir !== 'string') return dir
 
-    const targets: AgentFileTarget[] = []
-    for (const [index, edit] of edits.entries()) {
-      const target = resolveAgentFilePath(dir, edit.path, 'write')
-      if (!target.ok) return withEditIndex(pathRefusal(target), index)
-      targets.push(target)
-    }
-
     return withProjectWriteLock(dir, () => {
+      // Inside the lock, right before the writes — see studio_write_file.
+      const targets: AgentFileTarget[] = []
+      for (const [index, edit] of edits.entries()) {
+        const target = resolveAgentFilePath(dir, edit.path, 'write')
+        if (!target.ok) return withEditIndex(pathRefusal(target), index)
+        targets.push(target)
+      }
+
       // Plan every file's final content before touching the disk.
       const plans = new Map<string, { target: AgentFileTarget; original: string; next: string }>()
       for (const [index, edit] of edits.entries()) {

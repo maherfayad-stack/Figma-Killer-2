@@ -23,6 +23,8 @@ import type { ToolContext } from '../../../runtime/types'
 import { studioFileReadMcpTools } from './fileReadTools'
 import { studioAgentFileWriteTools } from './fileWriteTools'
 import { STUDIO_LIVE_RELOAD_TOOL_NAME } from './liveReloadPush'
+import { resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
+import { unwritableWorkspaceSegment } from '@core/page-parser'
 
 const tools = [...studioFileReadMcpTools, ...studioAgentFileWriteTools]
 function tool(name: string) {
@@ -189,9 +191,11 @@ describe('writes go through the same rule plus the agentWriteScope deny list', (
     expect(fs.existsSync(path.join(dir, '.git', 'hooks', 'pre-commit'))).toBe(false)
   })
 
-  it('never writes a credential file', async () => {
-    expect((await call('studio_write_file', { path: '.env.local', content: 'X=1' })).code).toBe('protected-path')
-    expect((await call('studio_write_file', { path: '.npmrc', content: 'registry=x' })).code).toBe('protected-path')
+  it('never writes a credential file: env and npm config need the user, key material is protected', async () => {
+    expect((await call('studio_write_file', { path: '.env.local', content: 'X=1' })).code).toBe('needs-user')
+    expect((await call('studio_write_file', { path: '.npmrc', content: 'registry=x' })).code).toBe('needs-user')
+    expect((await call('studio_write_file', { path: 'certs/server.pem', content: 'x' })).code).toBe('protected-path')
+    expect(fs.existsSync(path.join(dir, '.env.local'))).toBe(false)
   })
 
   it('never writes through a link that leaves the project, or into a directory linked to the control plane', async () => {
@@ -357,5 +361,119 @@ describe('studio_edit_files is all-or-nothing', () => {
     expect(result.code).toBe('protected-path')
     expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx'), 'utf8')).toContain('>Hi<')
     expect(fs.readFileSync(path.join(dir, '.studio', 'meta.json'), 'utf8')).toBe('{"trust":"static"}')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// Security review of #233
+// ---------------------------------------------------------------------------
+
+describe('F1 — no path costs more than linear time', () => {
+  it('a 40,000-character run of spaces before one character is folded in linear time', () => {
+    const started = performance.now()
+    unwritableWorkspaceSegment(`${' '.repeat(40_000)}x`)
+    expect(performance.now() - started).toBeLessThan(50)
+  })
+
+  it('a 40,000-character path segment is refused at once, by every agent file tool', async () => {
+    const huge = `${'.'.repeat(40_000)}x`
+    const started = performance.now()
+    const direct = resolveAgentFilePath(dir, huge, 'read')
+    expect(performance.now() - started).toBeLessThan(50)
+    expect(direct.ok).toBe(false)
+    expect((await call('studio_read_file', { path: huge })).code).toBe('path-outside-project')
+    expect((await call('studio_get_node_source', { nodeId: `${huge}:1:1` })).code).toBe('path-outside-project')
+  })
+
+  it('a segment over 255 characters is refused, and every path field carries a maxLength', async () => {
+    expect((await call('studio_read_file', { path: `pages/${'a'.repeat(256)}.tsx` })).code).toBe('path-outside-project')
+    for (const name of ['studio_read_file', 'studio_list_files', 'studio_grep', 'studio_write_file', 'studio_edit_file']) {
+      const schema = tool(name).inputSchema as unknown as { properties: { path: { maxLength?: number } } }
+      expect(schema.properties.path.maxLength, name).toBe(1024)
+    }
+  })
+})
+
+describe('F2 — replaceAll refuses an oversized result before building it', () => {
+  it('the refusal comes from the projected size, not from a string already built', async () => {
+    write('pages/Grow.css', 'a'.repeat(150_000))
+    const result = await call('studio_edit_file', { path: 'pages/Grow.css', oldString: 'a', newString: 'b'.repeat(20), replaceAll: true })
+    expect(result.code).toBe('file-too-large')
+    expect(result.projectedBytes).toBe(150_000 * 20)
+  })
+
+  it('a one-character oldString times a 10 KB newString is refused from its projected size', async () => {
+    write('pages/Big.css', 'a'.repeat(150_000))
+    const result = await call('studio_edit_file', { path: 'pages/Big.css', oldString: 'a', newString: 'b'.repeat(10_000), replaceAll: true })
+    expect(result.code).toBe('file-too-large')
+    expect(result.projectedBytes).toBe(150_000 * 10_000)
+    expect(fs.readFileSync(path.join(dir, 'pages', 'Big.css'), 'utf8')).toBe('a'.repeat(150_000))
+  })
+})
+
+describe('F3 — files that run on the host need the user (needs-user), on the HTTP path', () => {
+  const HOST_FILES = [
+    'vite.config.ts',
+    'Vite.Config.JS',
+    'postcss.config.cjs',
+    'tailwind.config.js',
+    '.babelrc',
+    'package.json',
+    '.env.production',
+    '.npmrc',
+    '.husky/pre-commit',
+    '.vscode/tasks.json',
+    '.github/workflows/ci.yml',
+    'bunfig.toml',
+    'CLAUDE.md',
+    'pages/CLAUDE.md',
+  ]
+
+  it('studio_write_file refuses each class with needs-user and writes nothing', async () => {
+    for (const rel of HOST_FILES) {
+      const result = await call('studio_write_file', { path: rel, content: 'export default {}' })
+      expect(result.code, rel).toBe('needs-user')
+      expect(result.error, rel).toContain('ask them to make or approve it')
+      expect(fs.existsSync(path.join(dir, ...rel.split('/'))), rel).toBe(false)
+    }
+  })
+
+  it('studio_edit_file and a studio_edit_files batch refuse too, and the batch writes nothing', async () => {
+    write('vite.config.js', 'export default {}\n')
+    const read = await call('studio_read_file', { path: 'vite.config.js' })
+    expect(read.ok).toBe(true)
+    const single = await call('studio_edit_file', { path: 'vite.config.js', oldString: 'export default', newString: 'import("node:child_process");\nexport default', expectedHash: read.hash })
+    expect(single.code).toBe('needs-user')
+    const batch = await call('studio_edit_files', {
+      edits: [
+        { path: 'pages/Home.tsx', oldString: 'Hi', newString: 'Hello' },
+        { path: 'vite.config.js', oldString: 'export default', newString: 'x; export default' },
+      ],
+    })
+    expect(batch.code).toBe('needs-user')
+    expect(batch.editIndex).toBe(1)
+    expect(fs.readFileSync(path.join(dir, 'vite.config.js'), 'utf8')).toBe('export default {}\n')
+    expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx'), 'utf8')).toContain('>Hi<')
+  })
+
+  it('screen files stay writable: .tsx, .ts, .css and assets', async () => {
+    for (const rel of ['pages/Settings.tsx', 'src/lib/format.ts', 'pages/Settings.module.css', 'public/logo.svg']) {
+      expect((await call('studio_write_file', { path: rel, content: 'x' })).ok, rel).toBe(true)
+    }
+  })
+})
+
+describe('F4 and F8', () => {
+  it('a write never creates a name ending in a dot or a space, or made only of dots', async () => {
+    for (const rel of ['.../x.tsx', 'pages./x.tsx', 'pages/x.tsx ', 'pages/x.tsx.']) {
+      expect((await call('studio_write_file', { path: rel, content: 'x' })).code, rel).toBe('path-outside-project')
+    }
+  })
+
+  it('.envrc, .dev.vars, *.tfvars and secrets.* are never read', async () => {
+    for (const rel of ['.envrc', '.dev.vars', 'infra/prod.tfvars', 'config/secrets.json']) {
+      write(rel, 'SECRET=hunter2')
+      expect((await call('studio_read_file', { path: rel })).code, rel).toBe('protected-path')
+    }
   })
 })

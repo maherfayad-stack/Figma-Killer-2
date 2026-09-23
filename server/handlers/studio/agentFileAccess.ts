@@ -18,24 +18,34 @@
  *
  * ## What it refuses, in order
  *
- *   1. **Not a path inside the project, lexically.** Empty, a NUL byte, a `..`
+ *   1. **Not a path inside the project, lexically.** Longer than
+ *      `AGENT_PATH_MAX_CHARS` (or a segment over 255), empty, a NUL byte, a `..`
  *      segment, a `:` inside a segment (an NTFS alternate data stream), a
  *      Windows device name (`CON`, `NUL`, `COM1.tsx` — a read of one blocks on
  *      the console), or an absolute path that is not under the project. An
  *      absolute path INSIDE the project is accepted and made relative: models
  *      trained on native file tools send them, and refusing a correct target
- *      over its spelling only buys a wasted round.
+ *      over its spelling only buys a wasted round. A write also refuses a
+ *      name ending in a dot or a space (Windows tools cannot open it).
  *   2. **A protected directory**, compared the way the filesystem resolves a
  *      name (case-folded, trailing dots and NTFS stream suffixes dropped —
  *      `@core/page-parser`'s shared sets). Reads refuse the walk exclusions
  *      (`.studio`, `.git`, `node_modules`, build output); writes refuse those
- *      plus `.claude` — `agentWriteRefusalReason`, the SAME deny list the CLI
- *      path's hook enforces.
- *   3. **A secret-bearing file name** (`.env`, `.npmrc`, key material), for
- *      reads and writes alike: a tool result is a transcript line a provider
- *      stores.
- *   4. **Anything the REAL path says otherwise.** Symlinks and junctions are
- *      resolved (on-disk casing restored, 8.3 names expanded) and 1–3 are
+ *      plus `.claude` — `agentWriteRefusal`, the SAME gate the CLI path's
+ *      hook enforces.
+ *   3. **A file that runs on the host** (`hostExecutedWorkspaceFile`: build
+ *      config, `package.json`, env and package-manager config, git hooks,
+ *      `.vscode/`, CI workflows, `CLAUDE.md`), for writes: `needs-user` — the
+ *      agent shows the change and the user makes or approves it. Also part of
+ *      `agentWriteRefusal`, so the CLI path asks too. This removes the
+ *      zero-click path from one write to host execution; it is NOT a sandbox —
+ *      anything such a config imports still runs in Node.
+ *   4. **A secret-bearing file name** (`.env`, `.npmrc`, key material), for
+ *      reads: a tool result is a transcript line a provider stores. Writes of
+ *      the env and package-manager ones are `needs-user` (3), of key material
+ *      `protected-path`.
+ *   5. **Anything the REAL path says otherwise.** Symlinks and junctions are
+ *      resolved (on-disk casing restored, 8.3 names expanded) and 2–4 are
  *      re-applied to where the access would actually land. A link that
  *      escapes the project, or that dangles (a write would follow it), is
  *      refused. Writes additionally pass `isWorkspaceWritablePath`, the
@@ -60,8 +70,18 @@ import {
   isSecretBearingFileName,
   isWorkspaceWritablePath,
   realWorkspaceRel,
+  stripTrailingDotsAndSpaces,
 } from '@core/page-parser'
-import { agentWriteRefusalReason } from './agentWriteScope'
+import { agentWriteRefusal } from './agentWriteScope'
+
+/**
+ * Longest path, and longest single segment, a model may name. Far above any
+ * real project path (Windows' own MAX_PATH is 260) and small enough that no
+ * per-path work can become a denial of service (security review of #233, F1).
+ * The tool schemas carry the same number as `maxLength`.
+ */
+export const AGENT_PATH_MAX_CHARS = 1024
+const AGENT_PATH_SEGMENT_MAX_CHARS = 255
 
 export type AgentFileIntent = 'read' | 'write'
 
@@ -75,7 +95,7 @@ export interface AgentFileTarget {
 
 export interface AgentFileRefusal {
   readonly ok: false
-  readonly code: 'path-outside-project' | 'protected-path'
+  readonly code: 'path-outside-project' | 'protected-path' | 'needs-user'
   readonly message: string
   readonly remedy: string
 }
@@ -90,13 +110,23 @@ function outside(rawPath: string, why: string): AgentFileRefusal {
   return { ok: false, code: 'path-outside-project', message: `"${rawPath}" ${why}.`, remedy: OUTSIDE_REMEDY }
 }
 
+/** A host-executed file: the agent shows the change and the user makes it (`hostExecutedWorkspaceFile`). */
+function needsUser(message: string): AgentFileRefusal {
+  return {
+    ok: false,
+    code: 'needs-user',
+    message,
+    remedy: 'Show the user the exact change (the file and the lines) in your reply and ask them to make or approve it; do not look for another way to write it.',
+  }
+}
+
 function protectedPath(rawPath: string, why: string): AgentFileRefusal {
   return { ok: false, code: 'protected-path', message: `"${rawPath}" ${why}.`, remedy: PROTECTED_REMEDY }
 }
 
 /** `con`, `NUL.txt`, `com1.tsx`, `LPT9 ` — Windows reserved device names, whatever the extension. */
 function isWindowsDeviceName(segment: string): boolean {
-  return /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?$/i.test(segment.replace(/[. ]+$/, ''))
+  return /^(?:con|prn|aux|nul|com[0-9¹²³]|lpt[0-9¹²³])(?:\..*)?$/i.test(stripTrailingDotsAndSpaces(segment))
 }
 
 /** The protected-directory or secret-file reason for a project-relative path, or `null`. Pure. */
@@ -119,6 +149,8 @@ export function resolveAgentFilePath(
   intent: AgentFileIntent,
 ): AgentFileTarget | AgentFileRefusal {
   if (rawPath.length === 0 || rawPath.includes('\0')) return outside(rawPath, 'is not a usable path')
+  // Before any other work: nothing below may ever see an unbounded string.
+  if (rawPath.length > AGENT_PATH_MAX_CHARS) return outside(`${rawPath.slice(0, 80)}…`, `is longer than ${AGENT_PATH_MAX_CHARS} characters`)
 
   const root = resolve(dir)
   let relInput = rawPath
@@ -132,6 +164,9 @@ export function resolveAgentFilePath(
 
   const segments = relInput.split(/[\\/]+/).filter((segment) => segment.length > 0 && segment !== '.')
   if (segments.length === 0) return outside(rawPath, 'names the project root, not a file in it')
+  if (segments.some((segment) => segment.length > AGENT_PATH_SEGMENT_MAX_CHARS)) {
+    return outside(rawPath, `has a name longer than ${AGENT_PATH_SEGMENT_MAX_CHARS} characters`)
+  }
   if (segments.some((segment) => segment === '..')) return outside(rawPath, 'climbs out of the project with ".."')
   // A colon inside a segment is an NTFS alternate data stream (or a drive) on
   // Windows — a hidden second body behind an innocent file name.
@@ -139,20 +174,33 @@ export function resolveAgentFilePath(
   // CON, NUL, COM1… are devices on Windows, with any extension: a read of
   // one blocks on the console, a write goes nowhere or to a port.
   if (process.platform === 'win32' && segments.some(isWindowsDeviceName)) return outside(rawPath, 'names a Windows device (CON, NUL, COM1…), not a file')
+  // A name ending in a dot or a space, or made only of dots, is created
+  // literally under Bun (it writes through the \\?\ prefix) and then cannot be
+  // opened or deleted by Explorer, git for Windows or Node (review of #233, F4).
+  if (intent === 'write' && segments.some((segment) => stripTrailingDotsAndSpaces(segment) !== segment)) {
+    return outside(rawPath, 'has a name ending in a dot or a space, which Windows tools cannot open')
+  }
   const lexicalRel = segments.join('/')
 
-  const lexical = lexicalDenial(lexicalRel, intent)
+  // A read refuses protected directories and credential files by name first.
+  // A write asks the one agent write gate below, which also knows which files
+  // need the user — so an env file refuses as needs-user, not as unreadable.
+  const lexical = intent === 'read' ? lexicalDenial(lexicalRel, intent) : null
   if (lexical !== null) return protectedPath(rawPath, lexical)
 
   const abs = join(root, ...segments)
   const realRel = realWorkspaceRel(root, abs)
   if (realRel === null) return outside(rawPath, 'resolves outside the project (through a symlink or junction), or through a link that points nowhere')
 
-  // The CLI path's own deny list, on the textual AND the real path: one list
-  // for both ways an agent can write. A dangling link cannot reach this line,
-  // because `realWorkspaceRel` already refused it.
-  if (intent === 'write' && agentWriteRefusalReason(abs, root) !== null) {
-    return protectedPath(rawPath, 'is inside a directory Studio owns (.studio, .claude, .git, node_modules or build output), which no agent write may touch')
+  // The CLI path's own write gate, on the textual AND the real path: one
+  // predicate for both ways an agent can write. A dangling link cannot reach
+  // this line, because `realWorkspaceRel` already refused it.
+  if (intent === 'write') {
+    const refusal = agentWriteRefusal(lexicalRel, root)
+    if (refusal?.code === 'needs-user') return needsUser(refusal.message)
+    if (refusal !== null) {
+      return protectedPath(rawPath, 'is inside a directory Studio owns (.studio, .claude, .git, node_modules or build output), which no agent write may touch')
+    }
   }
   const real = lexicalDenial(realRel, intent)
   if (real !== null) return protectedPath(rawPath, `resolves to "${realRel}", which ${real}`)

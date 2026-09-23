@@ -521,8 +521,8 @@ async function handleAiChat(
           sessionEpoch: latestConversation.sessionEpoch,
         }
 
-        // What `claudeCli.ts` does before its spawn: the project guide and a fresh turn-write log.
-        if (validatedWorkspaceDir && fileAccess === 'studio-tools') prepareStudioHttpTurn(validatedWorkspaceDir, user.id)
+        // What `claudeCli.ts` does before its spawn (guide + fresh turn-write log) — only for a caller who may write (review of #233, F7).
+        if (validatedWorkspaceDir && tools.some((t) => t.name === 'studio_write_file')) prepareStudioHttpTurn(validatedWorkspaceDir, user.id)
 
         const persister = createConversationsPersister(db, conversation.id, {
           providerId: credential.providerId,
