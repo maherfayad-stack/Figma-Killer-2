@@ -62,6 +62,9 @@ examples/studio-sample-project/  — a three-page React repo (plain JSX, co-loca
 
 src/core/page-parser/
 ├── parsePageFile.ts          — the ts-morph JSX walk → ParsedPage
+├── componentDeclaration.ts   — which function's returns ARE a component's JSX: memo/forwardRef unwrap,
+│                                and (pages only) a class's render() or an unknown HOC's argument
+├── reactImports.ts           — "is this name React's own export?" (memo, forwardRef, Fragment)
 ├── inlineLocalComponents.ts  — local-component expansion: structure, composite ids, call-site replacement
 ├── componentSubstitution.ts  — the value half: call-site props → the component's own JSX
 ├── staticLoopExpansion.ts    — `.map` over a resolved array → one node per item
@@ -515,6 +518,8 @@ The codemod is four modules by responsibility: `detachComponent.ts` (the entry, 
 
 All three share `resolveComponentCallSite.ts`'s "what does this JSX tag identifier actually refer to" resolution — the same local/package classification, barrel/rename-aware lookup, and declaration walk `inlineLocalComponents.ts` uses for the identical question.
 
+**A `memo`/`forwardRef` component detaches as the function it wraps (P3-B).** `resolveComponentCallSite` reads the component through `getFunctionLikeNode`, which unwraps React's own `memo`/`forwardRef` (below), so detach inlines exactly the markup the instance rendered. A `forwardRef` component whose markup reads its `ref` refuses (the `ref` parameter is not a prop the call site can supply), and so does a namespace member (`<UI.Card/>`): detach, extract and swap rewrite and de-import the tag's ROOT identifier, which there is the whole namespace — `unresolvable`, every file byte-identical. `extractComponentCopy` repoints a call site with a DEFAULT import when the component is its file's default export (it used to write `import { Card2 }` for a default-exported `Card2`, which binds nothing; `CallTarget.isDefaultExport`).
+
 Measured against the real eSIM corpus (139 `studio.instance` nodes on the board) **before DET-1**: 59 "detached cleanly"; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4). Some of those 59 were the silent-rebind and unbound-name writes described above, so that number is an upper bound; re-measuring the corpus is part of DET-3.
 
 ### Imports are followed through barrels
@@ -522,6 +527,18 @@ Measured against the real eSIM corpus (139 `studio.instance` nodes on the board)
 A named import is classified against the file that actually DECLARES it, not the file the specifier names — `resolveExportedDeclaration` walks `export { X } from './X'` and `export * from './X'` chains via ts-morph's own `getExportedDeclarations()`, and returns the declaration's own name so a renaming barrel (`export { Card as PlanCard }`) resolves too.
 
 Without this, `import { Card } from '../components'` recorded a local component whose file (`components/index.ts`) declares nothing, inlining bailed, and the node stayed an opaque box. A barrel between a page and its components is one of the most common layouts there is; the validation corpus simply does not use one.
+
+**P3-B (WB-4) — the declaration NODE, not its name.** `resolveExportedDeclaration` now hands back the declaration itself (`ExportedDeclaration.node`) and `CallTarget.declaration` carries it to the reader, instead of re-finding the component by name in the declaring file. Re-finding by name is what turned every `export { default as Arrow } from './Arrow'` into an "Unknown module": a default export may have no name at all (`export default memo(() => …)`, `export default () => …`), and `const Arrow = …; export default Arrow` has a name that is not itself `export`ed. Default imports follow the same graph (`export { default } from './Card'`, `import Card from './Card'; export default Card`).
+
+**A namespace member is an export to follow.** `<UI.Arrow/>` off `import * as UI from '../components'` is classified and inlined against the file that DECLARES `Arrow`, through any barrels, exactly like `import { Arrow }`. A member tag on anything ELSE — `<Card.Header/>` off `import Card from './Card'`, a compound component — is declined and stays opaque: it is a property of `Card`, not `Card`, and the old root-identifier lookup rendered `Card`'s whole JSX at that call site, the wrong component (pinned in `ordinaryReactShapes.test.ts`).
+
+**The barrels are dependencies.** `CallTarget.via` is every file the import passed through (`reexportChainFiles` follows ONE name's route through `export { … } from` / `export * from`), and `inlineLocalComponents` records them in `dependencyFiles` beside the declaring file. A barrel decides WHICH component renders without being the page or the component, so re-pointing it now invalidates the route's cached parse (`pageParseCache.ts`) instead of being invisible until a restart. Only the one name's route is recorded, so editing an unrelated component behind the same barrel costs the page nothing.
+
+### `memo` and `forwardRef` are the function they wrap (P3-B, WB-4)
+
+`memo(X)` renders exactly what `X` renders (it only skips re-renders) and `forwardRef(fn)` renders exactly what `fn` renders (it only hands `fn` a `ref`), so `getFunctionLikeNode` (`componentDeclaration.ts`) reads either as its argument, nested (`memo(forwardRef(…))`), through `as`/`satisfies`/parentheses, and through a same-file name (`memo(Inner)`). Every reader shares it — the page walk, inlining, detach, swap, the slot codemods — so `export const Card = memo(function Card(…) {…})` inlines, substitutes and writes back exactly like a plain function: its nodes' ids and writes land in that function's JSX, the one honest target.
+
+Only React's OWN `memo`/`forwardRef` count (`reactImports.ts`): the callee must be imported from `'react'` — `import { memo }` (an alias counts), or `React.memo` off a default or namespace import of `'react'`. A project's own function named `memo` could do anything, so it stays unread. The argument must be a function or a name declared at the top level of the SAME file — never a component from another file, because the ids are minted from the file the declaration was read in. Nothing is called: this is a read of which function was handed in, not an execution of the wrapper.
 
 ### A component's own JSX is re-read against the call site's values
 
@@ -717,7 +734,7 @@ Before this, a page rendering `{COPY.title}` from `src/copy.ts` cached text read
 
 **A `literal` edit is shared** (`isSharedSourceNodeId`): a dictionary key is shared by design, so the save reports `sharedComponents` and the client's narrow resync reloads exactly the routes whose recorded dependencies include the origin file — every other node showing the same copy updates at once.
 
-What the set still does not cover, knowingly: a file whose mere EXISTENCE changes an answer without its text being read — a second `<Ctx.Provider>` added to an unrelated file (Tier B then becomes ambiguous), a barrel re-pointed at another component, a missing `?raw`/image file that later appears. `.svg` joined the outer memo's fingerprinted extensions so a `?raw` icon edit reaches the parse at all; a `?raw` import of any other extension still needs a source change or a restart to show.
+What the set still does not cover, knowingly: a file whose mere EXISTENCE changes an answer without its text being read — a second `<Ctx.Provider>` added to an unrelated file (Tier B then becomes ambiguous), a missing `?raw`/image file that later appears. (A barrel re-pointed at another COMPONENT is covered since P3-B — see "Imports are followed through barrels"; a barrel in front of a VALUE the evaluator reads is still only as covered as the files `readFiles` records.) `.svg` joined the outer memo's fingerprinted extensions so a `?raw` icon edit reaches the parse at all; a `?raw` import of any other extension still needs a source change or a restart to show.
 
 ### Structure is locked; values are decided per prop
 
@@ -1030,20 +1047,39 @@ The alternative was keeping the interior as real nodes with `base.container` car
 | Source | moduleId |
 |---|---|
 | `kind: 'component'` | `alm.<Name>` |
-| `div`, `section`, `main`, `header`, `footer`, `nav`, `article`, `aside` | `base.container` |
 | `img` / `a` | `base.image` / `base.link` |
 | an element carrying resolved SVG markup (`svg` prop), whatever its tag | `base.svg`, re-emitting that tag as its host — see "…but only when the span is Studio's own" |
 | `svg` | `base.svg`, its subtree serialised into markup — see "An `<svg>` written as JSX elements" |
-| any other tag **with element children**, or **with no text** | `base.container` |
+| any tag **with element children**, or **with no text** | `base.container` |
 | `button` with text, no children | `base.button` |
-| a tag `base.text` can render, with text, no children | `base.text` |
-| any other tag | `base.container` |
+| any tag whose text is its visible content (`isTextHostTag`), with text, no children — `div`, `li`, `label`, `td`, `section`, `code`, … | `base.text`, on its own tag (a named `tag`, else `tag: 'custom'` + `customTag`) |
+| a text-only tag whose text is NOT its content (`textarea`, `option`, `title`, `template`, `noscript`), or one no module may emit (`style`, `script`) | `base.container` |
 
 `base.text` and `base.button` need the care. Both are leaves (`canHaveChildren: false`) — a `<button><Icon/><span>Save</span></button>` mapped to `base.button` would **silently drop its children** — and both render a hardcoded placeholder, the literal words "Text" and "Button", when their content prop is empty. That placeholder is right for a hand-authored page (an empty text block stays visible and clickable) and pure noise on an imported one, where real repos are full of `<span className="hp-avatar" />` icon slots drawn entirely by CSS.
 
-Every tag-bearing module also keeps its real host tag, or a module default silently rewrites the element: `base.container` would turn an `<h1>` into a `<div>`, and `base.text` would turn an inline `<span>` into a block `<p>`. `base.container` can represent any tag (via `tag`/`customTag`); `base.text` has no custom escape hatch, so a tag outside `TEXT_HTML_TAGS` (`<label>`, `<figcaption>`) goes to `base.container` instead of being defaulted to `<p>`.
+Every tag-bearing module also keeps its real host tag, or a module default silently rewrites the element: `base.container` would turn an `<h1>` into a `<div>`, and `base.text` would turn an inline `<span>` into a block `<p>`. Both represent any tag through `tag`/`customTag` — `base.text` since P3-B.
+
+**Text inside a container tag is a text node (P3-B, WB-3).** A text-only `<div>`, `<li>`, `<label>`, `<td>` or `<section>` used to become `base.container` — the `CONTAINER_TAGS` check ran first, and `base.text` had no escape hatch for `<label>` — and `base.container` has no text prop, so the copy was simply gone from the canvas. It is now `base.text` on its own element; the tag rule is ONE function, `isTextHostTag` (`@modules/base/utils/htmlTag`), asked by both `moduleMapping.ts` and `base.text`'s renderer (`resolveTextTag`), so what the import maps and what the canvas draws cannot disagree. Its literal text writes back through the ordinary `text` edit (`setJsxText`, the element's sole text child) and a tag change through the ordinary `tag` edit; the P1-A fingerprint needs nothing new — the node IS the element, same id, same opening tag and direct text. The cost, deliberately taken: `base.text` is a leaf, so nothing can be dropped INTO an imported `<li>Item</li>` on the canvas; a text-only element in the source has no element children to place one beside.
 
 Measured on the eSIM corpus before these rules: 154 nodes rendered the word "Text", 21 rendered "Button", 10 buttons dropped their children, and 33 spans/headings rendered as paragraphs.
+
+### `<Fragment>` and `<React.Fragment>` are fragments (P3-B, WB-26)
+
+React's own `Fragment` renders no element, exactly like `<>…</>`, so the walk flattens it the same way: its children become its parent's, and it is not a node (a `key` on it is React's bookkeeping). It used to be a capitalized tag like any other — `pkg.react.React.Fragment`, a package placeholder with the whole subtree inside it. Recognised only through `reactImports.ts`' provenance rule (imported from `'react'`, an alias counts); a project's own component named `Fragment` is inlined like any other. Its children are written at their own locations; like `<>`, a reorder between a child inside it and a sibling outside it refuses `not-siblings`.
+
+### A page's default export — memo, a class, an unknown HOC, or named (P3-B, WB-5)
+
+`readPageComponent` (`componentDeclaration.ts`) is how `parsePageFile` finds the component a PAGE renders. Beyond everything `findComponentDeclaration` reads (including `export default memo(Page)`, which is simply `Page`):
+
+| Default export | What renders |
+|---|---|
+| `class Page extends Component { render() { return <…/> } }` | the JSX `render()` returns — the same read as a function component's `return`. `this.props`/`this.state` values do not resolve and are traced as code, never guessed |
+| `withLayout(Page)`, `connect(mapState)(Page)`, `withA(withB(Page))`, `const P = withX(Page); export default P` | `Page` — the first argument that is a component declared in this file and returns JSX (a helper such as `withData(fetchUser, Page)`'s `fetchUser` is passed over) — with `resolution.note` on its roots: *"this page is wrapped by withLayout() — whatever it adds around it is not shown"* |
+| anything else | no nodes, and `ParsedPage.unreadableExport` naming the shape |
+
+The unknown-HOC read is page-only on purpose. It is not Tier D — no branch is picked and the wrapper never runs; it reads which component was handed in, the same kind of positional read parser-06 makes — but rendering `Page` without `withLayout`'s chrome is only honest with the note beside it, and `getFunctionLikeNode` (inlining, detach, swap) has no note to give: detaching `<Card/>` where `Card = withTheme(CardBody)` would paste `CardBody` and silently drop the theme, so those readers keep treating an unknown HOC as unreadable. A class component used as `<Card/>` from another file is likewise not inlined (a class has no parameter list to substitute call-site props into).
+
+**Never a blank frame.** An unreadable default export — `lazy(() => import('./X'))`, a component imported from another file (`import X from './X'; export default X`, `export { default } from './X'`), a class with no JSX `render()`, a plain object, or no component at all — sets `ParsedPage.unreadableExport` (`{ line, col, message }`), which `loadWarnings.ts` turns into an `unreadable-page-export` load warning. The client keeps the last load's warnings (`studioLoadWarningsStore.ts`), and `CanvasEmptyPageHint` shows the sentence — *"The default export of pages/Later.tsx is a call to lazy(), which Studio would have to run to see what it renders."* — instead of "This page is empty. Add the first element", which would be false twice: the page has content, and an element added there would land in a file whose real component Studio never showed. A readable component that renders nothing (`return null`) is not flagged; that page IS empty.
 
 ---
 
@@ -1692,6 +1728,8 @@ here once it is genuinely detectable.
 - **A prop §7 resolved is read-only** — that one prop, not its literal siblings and not the node ([above](#structure-is-locked-values-are-decided-per-prop)). Editing a resolved value would replace the expression that produces it.
 - **Nothing on a `.map` row is editable except its own copy.** One piece of source JSX renders every row, so a prop or style write there would change all of them. Its text escapes this because each iteration resolved a different array element and `textOrigin` names the literal.
 - **Renaming a component reference.** `setJsxTagName` renames HTML elements only; `<Sheet>` → `<Dialog>` would need the new name imported and in scope.
+- **A page re-exported from another file** (`export { default } from '../screens/Home'`) renders nothing in its own frame; the frame names the shape (P3-B) and the other file's own frame, if it is a page, shows it. Following it would mean parsing another file's component under this route's id and cache — not done.
+- **An unknown HOC around a COMPONENT** (`<Card/>` where `Card = withTheme(CardBody)`) stays an "Unknown module" box; only a PAGE reads through an unknown HOC, with a note (P3-B — see "A page's default export"). The same for a class component used from another file, and for a member tag that is not a namespace member (`<Card.Header/>`).
 - **The node-id grammar lives in one place now** (`@core/page-tree`'s `sourceNodeId`), consumed by the parser and the client save adapter. `server/handlers/studioWriteback.ts` still has its own `NODE_LOC_ID` regex, because it pairs the decode with a write-permission check on the path; the two agree but nothing enforces that they keep agreeing.
 
 ---
@@ -1708,6 +1746,10 @@ here once it is genuinely detectable.
 | `?raw` imports, `node_modules`, symlink containment, transform fallback | `src/core/page-parser/__tests__/rawSvgImports.test.ts` |
 | Image imports through data structures, inline-`<svg>` serialisation, Tier A operators | `src/core/page-parser/__tests__/imageAssetsAndInlineSvg.test.ts` |
 | A repo unlike the validation corpus (barrels, named exports, typed data, CSS modules, hooks) | `src/core/page-parser/__tests__/genericRepoShapes.test.ts` |
+| P3-B: memo/forwardRef spellings (and a look-alike `memo` refused), default re-export barrels, namespace members, `Card.Header` declined, re-export route files, Fragment (and a project's own `Fragment` kept), class/HOC pages, every unreadable shape named | `src/core/page-parser/__tests__/ordinaryReactShapes.test.ts` |
+| P3-B end to end: text in container tags, wrapped/re-exported components, Fragment, class/HOC/unreadable pages — each loaded, written back and the file bytes asserted; a re-pointed barrel invalidates the cached parse | `server/handlers/__tests__/studioOrdinaryReactShapes.test.ts` |
+| P3-B: detach of memo components, the forwardRef-with-ref and namespace-member refusals (byte-identical), extract's default-import spelling | `src/core/ast-codemods/__tests__/wrappedComponentCodemods.test.ts` |
+| P3-B: a custom-tag text node's text and tag edits; the frame's unreadable-export notice | `src/admin/pages/site/studio/__tests__/customTagTextWriteback.test.ts`, `src/admin/pages/site/canvas/__tests__/canvasEmptyPageHint.test.tsx` |
 | CSS-in-JS extraction: both libraries' idioms, nesting, the drop cases, and the refusals | `src/core/page-parser/__tests__/cssInJsExtraction.test.ts` |
 | CSS-in-JS write-back: the value edits that land, and every named refusal | `src/core/ast-codemods/__tests__/setStyledDeclaration.test.ts` |
 | CSS-in-JS write-back, client half: the styled edit plan, the cleared-declaration report, and the class-token refusal | `src/__tests__/studio/styledRuleWriteback.test.ts` |
