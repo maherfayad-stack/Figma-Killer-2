@@ -107,7 +107,13 @@
 
 /*  Soft fade just below the ClassPicker — mirrors the bottom search bar's
     gradient so content scrolling up under the picker fades out instead of
-    snapping to a hard color edge. */
+    snapping to a hard color edge.
+
+    Only while something HAS scrolled under it (P2-F, UX-6). At rest there is
+    nothing above the first section to fade, and the gradient simply dimmed
+    the Module block's title sitting inside its 16px. `StyleSurface` sets
+    `data-scrolled` on its own scroll container (a later sibling of this
+    element) once `scrollTop > 0`. */
 .headerClassPicker::after {
     content: '';
     position: absolute;
@@ -116,6 +122,12 @@
     height: 16px;
     pointer-events: none;
     background: linear-gradient(180deg, var(--panel-fade-bg) 0%, transparent);
+    opacity: 0;
+    transition: opacity 120ms ease;
+}
+
+.headerClassPicker:has(~ [data-scrolled='true'])::after {
+    opacity: 1;
 }
 
 .headerNodeTitle {

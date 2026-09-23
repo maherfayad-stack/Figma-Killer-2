@@ -26,11 +26,27 @@
  * header it saves `N`. It is a fold, not a deletion — one click mounts every
  * row with the same `property-control-<key>` test ids and the same
  * `ParamPromotableRow` wiring the Visual-Component param surface drives.
+ *
+ * ## A real boundary (P2-F, UX-1)
+ *
+ * The props block is the selected element's own identity, and it used to be
+ * drawn as the WEAKEST header in the panel — a ~10px uppercase subtle label
+ * with 4px of padding — and to end 8px above the headerless Layer row with no
+ * line and no title between them. So a prop row sat exactly as far from its
+ * sibling prop as from the unrelated opacity row below it, which is the
+ * "cramped, not segregated" feel the owner named.
+ *
+ * Now the block is bounded on both sides by the panel's own vocabulary: its
+ * title is `SectionStaticHeader` — the same 32px, bold, full-contrast recipe
+ * as every section title below it — its rows sit the within-group 4px apart,
+ * its body ends in 8px of padding, and the block closes on a hairline. Props
+ * → [8px] → hairline → [section gap] → Layer.
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { Button } from '@ui/components/Button'
+import { SectionStaticHeader } from '@ui/components/Section'
 import { cn } from '@ui/cn'
 import { ChevronRightIcon } from 'pixel-art-icons/icons/chevron-right'
 import sectionStyles from '@ui/components/Section/Section.module.css'
@@ -47,39 +63,36 @@ interface ModuleBlockProps {
 
 export function ModuleBlock({ definition, resident, folded, foldedCount }: ModuleBlockProps) {
   const [showFolded, setShowFolded] = useState(false)
-  // definition.icon is an IconComponent — must assign to a PascalCase var.
-  const ModuleIcon = definition.icon
+
+  const foldToggle =
+    foldedCount > 0 ? (
+      <Button
+        variant="ghost"
+        size="micro"
+        className={styles.foldToggle}
+        aria-expanded={showFolded}
+        tooltip={
+          showFolded
+            ? 'Hide the properties this element does not set'
+            : 'Show the properties this element does not set'
+        }
+        onClick={() => setShowFolded((open) => !open)}
+        data-testid="module-more-properties-toggle"
+      >
+        <span className={cn(styles.chevron, showFolded && styles.chevronOpen)}>
+          <ChevronRightIcon size={11} aria-hidden="true" />
+        </span>
+        {`${foldedCount} more`}
+      </Button>
+    ) : undefined
 
   return (
-    <>
-      <div className={styles.header}>
-        {ModuleIcon && <ModuleIcon size={14} aria-hidden="true" />}
-        <span className={styles.title}>{definition.name}</span>
-        {foldedCount > 0 && (
-          <Button
-            variant="ghost"
-            size="micro"
-            className={styles.foldToggle}
-            aria-expanded={showFolded}
-            tooltip={
-              showFolded
-                ? 'Hide the properties this element does not set'
-                : 'Show the properties this element does not set'
-            }
-            onClick={() => setShowFolded((open) => !open)}
-            data-testid="module-more-properties-toggle"
-          >
-            <span className={cn(styles.chevron, showFolded && styles.chevronOpen)}>
-              <ChevronRightIcon size={11} aria-hidden="true" />
-            </span>
-            {`${foldedCount} more`}
-          </Button>
-        )}
-      </div>
-      <div className={cn(styles.body, sectionStyles.sectionBody)} data-testid="module-properties">
+    <div className={styles.block}>
+      <SectionStaticHeader title={definition.name} icon={definition.icon} actions={foldToggle} />
+      <div className={cn(sectionStyles.sectionBody, styles.body)} data-testid="module-properties">
         {resident}
         {showFolded && folded}
       </div>
-    </>
+    </div>
   )
 }

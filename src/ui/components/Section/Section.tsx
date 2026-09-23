@@ -87,21 +87,7 @@ export function Section({
   if (empty) {
     return (
       <div className={cn(styles.section, flush && styles.sectionFlush)}>
-        <div className={styles.sectionHeader}>
-          <span className={styles.sectionStaticTitle}>
-            {SectionIcon && (
-              <span className={styles.sectionMarker} aria-hidden="true">
-                <span className={styles.sectionMarkerIcon}>
-                  <SectionIcon size={13} />
-                </span>
-              </span>
-            )}
-            <span className={styles.sectionTitleGroup}>
-              <span className={styles.sectionTitle}>{title}</span>
-            </span>
-          </span>
-          {actions && <span className={styles.sectionActions}>{actions}</span>}
-        </div>
+        <SectionStaticHeader title={title} icon={SectionIcon} actions={actions} />
       </div>
     );
   }
@@ -158,6 +144,43 @@ export function Section({
         {actions && <span className={styles.sectionActions}>{actions}</span>}
       </div>
       {expanded && <div className={styles.sectionContent}>{children}</div>}
+    </div>
+  );
+}
+
+interface SectionStaticHeaderProps {
+  title: string;
+  icon?: IconComponent;
+  /** Trailing header slot — same contract as `Section`'s own `actions`. */
+  actions?: React.ReactNode;
+}
+
+/**
+ * The section header with nothing to disclose: title, identity mark and the
+ * trailing actions slot, at the header's full 32px — no toggle, no chevron.
+ *
+ * `Section` draws it for Law 1's `empty` state. It is exported for the one
+ * block that is always open by construction rather than by state — the
+ * Properties panel's Module block (`ModuleBlock.tsx`), which is not a
+ * disclosure at all — so that block's title is the SAME recipe as every
+ * section title below it instead of a hand-rolled, weaker copy (UX-1).
+ */
+export function SectionStaticHeader({ title, icon: HeaderIcon, actions }: SectionStaticHeaderProps) {
+  return (
+    <div className={styles.sectionHeader}>
+      <span className={styles.sectionStaticTitle}>
+        {HeaderIcon && (
+          <span className={styles.sectionMarker} aria-hidden="true">
+            <span className={styles.sectionMarkerIcon}>
+              <HeaderIcon size={13} />
+            </span>
+          </span>
+        )}
+        <span className={styles.sectionTitleGroup}>
+          <span className={styles.sectionTitle}>{title}</span>
+        </span>
+      </span>
+      {actions && <span className={styles.sectionActions}>{actions}</span>}
     </div>
   );
 }

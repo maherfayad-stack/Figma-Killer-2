@@ -155,8 +155,8 @@ Stroke's row reads four sides through a uniform/mixed model with its own
 `ColorValueInput`+`placeholder` idiom (distinct from Fill's "show the real
 value, muted" idiom — see `StrokeSection.tsx`), and Shadow/Blur's rows are
 structured multi-field values (offset/blur/spread/colour, or a blur radius)
-with **no muted-rendering concept at all today** (`ShadowSection.tsx`'s own
-doc: "no `currentStyles` bag is built here" — a genuinely separate, larger
+with **no muted-rendering concept at all today** (`EffectsSection.tsx`, which
+merged them in P2-F: "no `currentStyles` bag is built here" — a genuinely separate, larger
 feature: parsing a computed `box-shadow`/`filter` string into a synthetic
 muted layer, then wiring per-synthetic-layer write-target resolution). A
 future session must still reuse `rendersUnstoredValue`, not reimplement this
@@ -626,11 +626,17 @@ a shell (**G7.6**).
 
 ### G8 — Effects (F13/F20–F22)
 
-> **Superseded, `STATE.md` `panel-25` P3 items 7-8, 11.** `EffectsSection.tsx`/
-> `EffectEditorPopover.tsx` are deleted — Penpot has no single "Effects"
-> section, so this split into `ShadowSection.tsx` (`boxShadow`/`textShadow`,
-> item 7) and `BlurSection.tsx` (`filter`/`backdropFilter`, item 8), each its
-> own `INSPECTOR_SECTIONS` manifest entry. **G8.4**'s own `transform`/
+> **Merged again, P2-F (owner decision OD-4).** P3 items 7-8 had split this
+> section into `ShadowSection.tsx` and `BlurSection.tsx`, following Penpot,
+> which keeps them apart. Figma draws one **Effects** section, the owner's bar
+> is Figma, and the split cost a 33px header plus a section gap on every
+> selection — so shadows and blurs are one `INSPECTOR_SECTIONS` entry again:
+> `inspector/sections/EffectsSection.tsx`, one header, one `+` menu (Drop
+> shadow, Inner shadow, Text shadow | Layer blur, Background blur), one
+> `PropertyList` with the shadow rows first, and one per-row editor,
+> `EffectEditorPopover.tsx`. The models below did not change.
+>
+> *Earlier history, `STATE.md` `panel-25` P3 items 7-8, 11:* **G8.4**'s own `transform`/
 > `transformOrigin` ⚙ has no Penpot section either — item 11 (Studio extras)
 > gave it a real one, `TransformSection.tsx`, ending its stopover in
 > `classStyleSections.ts`'s registry. The vocabulary below (the typed "+"
@@ -899,8 +905,8 @@ P3's last item folded the remaining "no Penpot home" concerns into their own
 `INSPECTOR_SECTIONS` manifest entries — the same one-continuously-scrolling
 column every other section renders in, no separate tab. **S5 then moved four
 of them off the Design tab's always-mounted height**, because none of them is
-something a designer reaches for often enough to pay 152px for on every
-selection (164px before panel-39 moved the section gap to 8px — see §6):
+something a designer reaches for often enough to pay 164px for on every
+selection at the 12px section gap (152px while panel-39 held it at 8px — see §6):
 
 | order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
@@ -938,7 +944,7 @@ ladder would reintroduce the per-node-kind branching this whole series spent
 eleven sections removing. `component` is a near-verbatim move
 (`InstanceCallSiteView.tsx`, renamed) off its old bespoke Module-section
 home; `transform`/`interaction` follow
-Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Shadow/Blur;
+Law 1's empty-header/`forceOpen` disclosure exactly like Stroke/Effects;
 `animations` is the heaviest port, combining what used to be two exports
 (`AnimationsSection` the body, `AnimationsSectionActions` the header "+"
 menu) into one component with its own local Law-1 disclosure —
@@ -1035,7 +1041,7 @@ a breakpoint/condition tab is active — not only for a property nothing
 declares anywhere. See §4's Law 1 for the full account, the non-inherited
 "true CSS initial value" guard (`cssInitialValues.ts`) that keeps an ordinary
 element from flooding open (never consulted for the "declared elsewhere"
-branch — a real source is never a UA default), and why Stroke/Shadow/Blur
+branch — a real source is never a UA default), and why Stroke/Effects
 remain governed by the STORED-bag-only rule this paragraph originally stated
 for their OWN list rows (their scalar sibling fields, e.g. Stroke's weight
 inputs, already go through `resolveStyleFieldDisplay` and were never affected
@@ -1387,22 +1393,23 @@ which the Module block was the last surface to break.
 
 One fixture is left, and every pixel of its overflow is a value the user's
 own source sets, rendered once, at the 32px row height Penpot measures
-(`04-token-gaps.md`).
+(`04-token-gaps.md`) — plus the section gap the owner asked for (P2-F, below).
 
-**F2 (text), 36px over — 782 against 746.** Its Design tab carries:
+**F2 (text), 26px over — 772 against 746** (it was 36 over before P2-F). Its
+Design tab carries:
 
 | Block | px | What it is |
 |---|---:|---|
-| Text | 189 | Figma's own four typography rows (family; weight+size; line-height+letter-spacing; align) |
-| Measures | 122 | W/H, the CSS position mode, rotation+radius |
-| Module | 80 | the node's own `text` content, now sized to the text |
+| Text | 177 | Figma's own four typography rows (family; weight+size; line-height+letter-spacing; align), 4px apart |
+| Measures | 114 | W/H, the CSS position mode, rotation+radius, 4px apart |
+| Module | 95 | a 32px header, the node's own `text` content sized to the text, 8px of padding, a hairline |
 | Fill | 65 | the text colour the class sets |
 | Layer | 32 | opacity, blend, visibility |
-| 6 collapsed one-row sections | 198 | Layout, Stroke, Shadow, Blur, Export, More |
-| gaps + container padding | 96 | 10 × 8px, plus 2 × 8px |
+| 5 collapsed one-row sections | 165 | Layout, Stroke, Effects, Export, More |
+| gaps + container padding | 124 | 9 × 12px, plus 2 × 8px |
 
-Nothing there is pre-drawn. Closing the last 36px means either collapsing a
-section that has values in it, or the lever below.
+Nothing there is pre-drawn. Closing the last 26px means collapsing a section
+that has values in it, or giving back segregation the owner asked for.
 
 #### The gate: one budget, one named exception
 
@@ -1413,7 +1420,9 @@ so reclaiming chrome moves the budget by itself. panel-39's blanket
 outright, so a uniform 210px slack would hide a 200px regression on any of
 them.
 
-What replaces it is `TEXT_LAYER_OVERFLOW_PX` (60), applying to **`f2-text`
+What replaces it is `TEXT_LAYER_OVERFLOW_PX` (50 — the measured 26 plus the
+same 24px of machine-to-machine slack panel-41 left; it was 60 against 36),
+applying to **`f2-text`
 and no other fixture**, for the one cause tabulated above. F1, F3 and F4 are
 asserted strictly (`contentHeight <= clientHeight`). A second exception means
 naming its cause in this section, in the same change.
@@ -1422,7 +1431,7 @@ The folds the budget rests on are pinned as **structure** as well, because a
 height number cannot say WHICH fold was deleted when it goes red:
 
 - the four Studio-extras sections are folded behind one More disclosure at
-  rest, and one click reaches all four (worth 152px);
+  rest, and one click reaches all four (worth 164px);
 - the Module block folds the props the source does not set, and one click
   mounts them under the same `property-control-<key>` ids (worth 122px on
   the image fixture);
@@ -1437,28 +1446,44 @@ the **Module block** — `StyleSurface.tsx` gives it `data-section-id="module"`
 precisely because being outside the manifest is why it went unbudgeted until
 panel-37 measured it.
 
-#### The one open lever, with its number
+#### P2-F — segregation, paid for by the Effects merge
 
-**Shadow and Blur are one section in Figma, and in WS-6.1's own diagram:
-`Effects  shadow / blur  + −`.** Studio draws them as two collapsed
-one-row sections, which costs 33px of header plus an 8px gap — a measured
-**41px on every selection**. Merging them would put F2 at **741 against 746**
-and every fixture strictly inside the budget, letting the last exception go.
+The owner's ask (2026-09-23): *"improve the design pane, add spacing to
+segregate a bit, specially in between props and the element below"*. The
+panel's proximity hierarchy was flat — a prop row sat 8px from its sibling
+prop and 8px from the unrelated opacity row below it, with no line and no
+title between them (`docs/audits/2026-09-23-studio-audit/05-design-pane-ux.md`
+§0, UX-1…UX-6). What changed, measured at 1400×900:
 
-It is deliberately not done here: it is a section-manifest change plus a
-restructure of `ShadowSection.tsx` (636 lines) and `BlurSection.tsx` (416),
-both rewritten days earlier by `panel-38` for the Mixed contract (§9.3), and
-it needs a merged add-menu over five items with their own disabled rules. It
-is a parity change with its own dogfood, not a density trim, and it deserves
-its own work order.
+| Change | Where | Measured |
+|---|---|---:|
+| **The props block has a real boundary** — its title is `SectionStaticHeader` (the 32px, bold, full-contrast recipe every section title uses, not a ~10px uppercase label), its body ends in 8px of padding, and the block closes on an `--inspector-divider` hairline (UX-1) | `ModuleBlock.tsx/.module.css`, `Section.tsx` | **+7px** on F1/F3, **+15px** on F2/F4 |
+| **Between sections is its own token**, `--inspector-section-gap`, at 12px (OD-4; UX-2). It was 8px on the claim that 8 is Penpot's section gap — Penpot's flex gap is 8, but every menu also ends in an 8px `margin-block-end`, so its real boundary is 16 (the Δ16 in `02-measurements.md`) | `globals.css`, `StyleSurface.module.css` | **+32…+36px** |
+| **Rows inside one group sit 4px apart** — Module props, Text's four rows (`StackedPropertyGrid rhythm="within-group"`), Measures' size / position / rotation, a component's props (UX-3; Penpot `menus/text.scss`, `menus/measures.scss`, `menus/component.scss`) | `ModuleBlock`, `TextSection`, `StackedPropertyGrid`, `MeasuresSection`, `ComponentSection` CSS | **−12px** Text, **−8px** Measures |
+| **Shadow + Blur are one Effects section** (UX-5, OD-4) | `EffectsSection.tsx`, `EffectEditorPopover.tsx`, `sections/index.ts` | **−45px** everywhere |
+| **The ClassPicker fade only shows once scrolled** — at rest it dimmed the Module title under it (UX-6) | `StyleSurface.tsx` (`data-scrolled`), `PropertiesPanel.module.css` | 0 |
 
-Two further observations from the same measurement, for whoever takes it:
+| Fixture | before | after | room |
+|---|---:|---:|---:|
+| F1 rectangle | 608 | **598** | 746 |
+| F2 text | 782 | **772** (26 over) | 746 |
+| F3 flex board | 725 | **715** | 746 |
+| F4 image | 603 | **601** | 746 |
+
+Every fixture came out shorter than it went in: the segregation is paid for.
+The spacing hierarchy is now three named steps — **4px** within a group
+(`--inspector-space-2xs`), **8px** between groups inside a section
+(`--inspector-space-m`), **12px** between sections
+(`--inspector-section-gap`) — documented once, in `globals.css`'s inspector
+block.
+
+Two further observations from panel-41's measurement, still open:
 
 - F4's Fill section renders `forceOpen` with a body of zero rows (33px of
   header plus nothing). That is the Law-1 "empty section is not a
   disclosure" case, and fixing it is worth 8px on that fixture.
-- `Measures` is 122px on every fixture but F1, where `position: relative`
-  adds the TRBL grid and it becomes 199px. F1 has 138px of spare room, so
+- `Measures` is 114px on every fixture but F1, where `position: relative`
+  adds the TRBL grid and it becomes 191px. F1 has 148px of spare room, so
   that is not currently a problem — but it is the largest single block in the
   panel and the first thing to check if the budget tightens again.
 
@@ -1478,10 +1503,11 @@ computed from the frozen tokens and asserted in the static half:
 | 11 inline sections + 4 Studio extras inline (pre-S5) | 920 |
 | 10 inline sections + 1 collapsed `More` header (S5) | 756 |
 | …at panel-39's 8px section gap | 716 |
-| …with Layout collapsed until a layout exists (panel-39) | **612** |
+| …with Layout collapsed until a layout exists (panel-39) | 612 |
+| …P2-F: 12px `--inspector-section-gap`, Shadow + Blur → Effects, no phantom gap for an empty Align | **596** |
 
-The More fold is worth **152px** at the 8px gap (it was 164 at 12px — three
-fewer gaps × 4px); collapsing Layout is worth a further **104px** in this
+The More fold is worth **164px** at the 12px section gap (it was 152 while
+panel-39 held the gap at 8px — three fewer gaps × 4px); collapsing Layout is worth a further **104px** in this
 computed model and a measured **167px** in a real browser, because the real
 body carries a flex/grid block and a settings row a row count does not try to
 predict. `docs/audits/penpot-inspector-baseline/05-section-heights.md`
@@ -1494,7 +1520,7 @@ row count for a static sum to see — which is exactly why the height assertion
 is a Playwright spec measuring the real scroll container rather than an
 arithmetic claim. The Module block used to be in that list and is not any
 more: it carries `data-section-id="module"`, so it appears in the measured
-artefact's per-section table (80px on a text node, 130px on an image) and
+artefact's per-section table (95px on a text node, 145px on an image) and
 can no longer grow unnoticed by both gates at once.
 
 **The width invariant still holds, verbatim in spirit.** Every section
