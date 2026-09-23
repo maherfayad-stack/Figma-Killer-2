@@ -122,9 +122,18 @@ same files already have, not a new failure mode.
 **9.1 — project + board orientation** (read-only, no `requiredCapabilities`):
 `studio_list_projects`, `studio_project_profile` (the cached/fresh
 `ProjectProfile` + probe warnings), `studio_list_pages`, `studio_get_node_source`
-(node id → `{ file, line, col, snippet }`, decoding `@core/page-tree`'s
+(node id → `{ file, line, col, snippet, hash }`, decoding `@core/page-tree`'s
 `sourceNodeId` grammar), `studio_find_nodes` (query by moduleId/tag/class/text/
-lock state/codeProps presence).
+lock state/codeProps presence), and the file reads `studio_read_file`,
+`studio_list_files` and `studio_grep` (a literal search, capped and
+byte-budgeted). Every path any of them names — a node id's file part included
+— goes through one containment rule, `server/handlers/studio/agentFileAccess.ts`
+(P4-C): real-path containment, `.studio`/`.git`/`node_modules`/build output
+refused in any case spelling, credential files (`.env*`, `.npmrc`, keys) never
+read. The HTTP drivers' write twins (`studio_write_file`, `studio_edit_file`,
+`studio_edit_files`) are deliberately NOT in this catalog: they write only into
+the project a chat turn is bound to, and no external connector is ever bound
+to one — see `docs/features/agent.md` → "The HTTP drivers' file tools". The same section documents `needs-user`: no agent write, on the CLI path or the HTTP path, touches a file that runs on the host (build-tool config, `package.json`, `.env*`, `.npmrc`, git hooks, `.vscode/`, CI workflows) or `CLAUDE.md` — one predicate, `hostExecutedWorkspaceFile`, behind one gate, `agentWriteRefusal`, because CLAUDE.md's rule is that anything that needs a human to have agreed must ask at the point of use.
 
 **9.1 — mutating:** `studio_install_deps` + `studio_install_status` (the WS-1.4
 polled install job). Requires `studio.write`.

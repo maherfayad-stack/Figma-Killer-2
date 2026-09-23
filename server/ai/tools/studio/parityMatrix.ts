@@ -13,8 +13,10 @@
  *     rows carry no Studio-side gate at all — they are bounded by the
  *     subprocess's working directory, not by a capability check — and a
  *     reader of this table must be able to see that difference.
- *   - `tool` — a real Studio MCP tool the agent is offered
- *     (`agentToolNames.ts`).
+ *   - `tool` — a real Studio tool the agent is offered
+ *     (`agentToolNames.ts`). On the HTTP drivers, which have no native tools,
+ *     the `native` rows are done through the file-authoring `tool` row below
+ *     (P4-C): the same edit, landed by Studio instead of by the CLI.
  *   - `withheld` — deliberately not available, with the reason stated.
  *
  * The AST edit tools (`studio_apply_edits`, `studio_codemod`) still exist and
@@ -66,8 +68,15 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Swap a component instance', status: { kind: 'native', how: 'Edit the element name and its import.' } },
   { action: 'Extract a component', status: { kind: 'native', how: 'Write the new component file, then Edit the call site to import it.' } },
   { action: 'Create a page', status: { kind: 'native', how: 'Write the component file and its stylesheet; studio_screenshot places the board frame on the first capture.' } },
-  { action: 'Read a project file', status: { kind: 'native', how: 'Read, Glob, Grep.' } },
+  { action: 'Read a project file', status: { kind: 'native', how: 'Read, Glob, Grep on the claude CLI path; studio_read_file, studio_list_files, studio_grep and studio_get_node_source on the HTTP drivers.' } },
   { action: 'List projects', status: { kind: 'native', how: 'Exactly one project is open per turn and its path is already in the prompt.' } },
+
+  {
+    // The HTTP drivers' way to do every `native` edit row above: an API key
+    // gives the model no file tools of its own (AI-2).
+    action: 'Write or edit a source file on an HTTP driver (API key, OpenAI, OpenRouter, Ollama, custom)',
+    status: { kind: 'tool', toolNames: ['studio_write_file', 'studio_edit_file', 'studio_edit_files'] },
+  },
 
   // ── Studio tools: what the filesystem cannot do.
   { action: 'Resize / move a board frame (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
@@ -176,6 +185,6 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   },
   {
     action: 'Reach a file outside the open project',
-    status: { kind: 'withheld', reason: "The subprocess cwd is the containment-checked project directory, and the CLI refuses a write outside it plus --add-dir (this turn's attachment staging, nothing else)." },
+    status: { kind: 'withheld', reason: "The subprocess cwd is the containment-checked project directory, and the CLI refuses a write outside it plus --add-dir (this turn's attachment staging, nothing else). On the HTTP drivers every file tool goes through one containment rule (agentFileAccess.ts): inside the project on the real path, never into .studio/.claude/.git/node_modules, never a credential file." },
   },
 ]

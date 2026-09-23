@@ -14,14 +14,18 @@
  * other would make the list's own initialisation order depend on a module
  * cycle.
  *
+ * This list is what BOTH paths get. The HTTP drivers additionally get
+ * {@link STUDIO_HTTP_AGENT_FILE_TOOL_NAMES}, below — see there for why.
+ *
  * What is deliberately absent, in two groups.
  *
  * Everything that existed only because the agent had no filesystem:
- * `studio_read_file`, `studio_list_files`, `studio_create_page`,
- * `studio_apply_edits`, `studio_codemod`, `studio_find_nodes`,
- * `studio_get_node_source` are all strictly slower than the native
- * `Read`/`Write`/`Edit`/`Glob`/`Grep` the driver now grants
- * (`claudeCliToolSurface.ts`).
+ * `studio_create_page`, `studio_apply_edits`, `studio_codemod` and
+ * `studio_find_nodes` are strictly slower than writing the file, and in the
+ * write cases they pushed the model toward one enormous inline `style={{…}}`
+ * because that was the shape the edit API rewarded. The CLI path writes with
+ * its native `Read`/`Write`/`Edit`/`Glob`/`Grep`
+ * (`claudeCliToolSurface.ts`); the HTTP path with the file tools below.
  *
  * And the two measurement tools `studio_compare` replaced.
  * `studio_diff_frames` takes its baseline as a base64 STRING; a capture
@@ -145,3 +149,47 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   'studio_install_deps',
   'studio_install_status',
 ]
+
+/**
+ * The file tools the HTTP drivers get ON TOP of {@link STUDIO_AGENT_TOOL_NAMES}
+ * (P4-C, AI-2) — and the `claude` CLI path never does.
+ *
+ * The CLI authors files with its own native tools, bounded by the subprocess
+ * `cwd` and the `PreToolUse` deny hook, and a second, slower way to do the
+ * same thing would only split its attention. An HTTP driver (an Anthropic API
+ * key, OpenAI, OpenRouter, Ollama, a custom endpoint) has NO native tools, so
+ * without these it could look at a screen and never write one — while the
+ * prompt told it to. These are that surface, as Studio tools: every path
+ * through one containment rule (`agentFileAccess.ts`), every write under the
+ * project write lock, stale-hash guarded, logged and live-reloaded.
+ *
+ * `studio_read_file` is also how the prompt tells the two surfaces apart
+ * (`agentFileAccessFor`): it is an ungated read, so every HTTP caller holds
+ * it, read-only or not, and no CLI caller ever does.
+ */
+export const STUDIO_HTTP_AGENT_FILE_TOOL_NAMES: readonly string[] = [
+  'studio_read_file',
+  'studio_list_files',
+  'studio_grep',
+  // The selected node id in the live digest is a file:line; this turns it
+  // into the code and the file's hash in one call (AI-9's HTTP half).
+  'studio_get_node_source',
+  'studio_write_file',
+  'studio_edit_file',
+  'studio_edit_files',
+]
+
+/**
+ * How a turn's agent touches files: `native` (the `claude` CLI's own tools)
+ * or `studio-tools` (the HTTP drivers' {@link STUDIO_HTTP_AGENT_FILE_TOOL_NAMES}).
+ */
+export type AgentFileAccess = 'native' | 'studio-tools'
+
+/**
+ * Which file surface an already-selected tool list implies. Derived from the
+ * tools rather than passed alongside them, so the prompt that describes the
+ * surface can never disagree with the surface it was handed.
+ */
+export function agentFileAccessFor(toolNames: readonly string[]): AgentFileAccess {
+  return toolNames.includes('studio_read_file') ? 'studio-tools' : 'native'
+}

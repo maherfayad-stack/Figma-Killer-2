@@ -1651,3 +1651,23 @@ describe('setAgentProvider', () => {
     }
   })
 })
+
+// ---------------------------------------------------------------------------
+// processStreamEvent — a provider retry is a status, never an error (AI-8)
+// ---------------------------------------------------------------------------
+
+describe('processStreamEvent — retrying', () => {
+  it('marks the turn as retrying without an error, and the next output clears it', async () => {
+    const { assistantId } = freshAgentState()
+    const bridge = emptyBridge()
+    const run = (event: Parameters<typeof processStreamEvent>[0]) =>
+      processStreamEvent(event, assistantId, noopTextSink, useEditorStore.setState, bridge, null, executeAgentTool)
+
+    await run({ type: 'retrying', attempt: 1, maxAttempts: 3, delayMs: 1000, reason: 'Anthropic service error (529)' })
+    expect(useEditorStore.getState().agentMessages[0]!.retrying).toEqual({ attempt: 1, maxAttempts: 3 })
+    expect(useEditorStore.getState().agentError).toBeNull()
+
+    await run({ type: 'text', text: 'hello' })
+    expect(useEditorStore.getState().agentMessages[0]!.retrying).toBeUndefined()
+  })
+})

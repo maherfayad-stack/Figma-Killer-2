@@ -5,10 +5,9 @@ import {
   MAX_TOOL_ROUNDS,
   PROVIDER_RETRY_IMAGE_OMITTED,
   messageCacheBreakpoints,
-  projectHeavyElision,
-  type ProviderAdapter,
-  type TurnToolResult,
 } from '../../../server/ai/drivers/http/toolLoop'
+import type { ProviderAdapter, TurnToolResult } from '../../../server/ai/drivers/http/toolLoopTypes'
+import { projectHeavyElision } from '../../../server/ai/drivers/http/heavyElision'
 import type { AiStreamRequest } from '../../../server/ai/drivers/types'
 import type { AiBrowserBridge, AiStreamEvent, AiTool, AiToolOutput, ToolSideEffects } from '../../../server/ai/runtime/types'
 
@@ -382,11 +381,11 @@ describe('a repeated mutating call is answered, not re-executed', () => {
     expect(handlerCalls).toHaveLength(1)
 
     // And the SECOND ceiling stops the turn before all fifty rounds are paid
-    // for: a model repeating itself is not going to stop on its own.
-    expect(requestBodies).toHaveLength(MAX_TOOL_ROUNDS)
-    const last = events.at(-1) as { type: string; message: string }
-    expect(last.type).toBe('error')
-    expect(last.message).toContain('site_duplicate_node')
+    // for: a model repeating itself is not going to stop on its own. The cap
+    // spends exactly one more request, with tools off, on a summary (AI-10).
+    expect(requestBodies).toHaveLength(MAX_TOOL_ROUNDS + 1)
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.at(-1)?.type).toBe('usage')
 
     const toolResults = events.filter((e) => e.type === 'toolResult') as Array<{ ok: boolean; error?: string }>
     expect(toolResults).toHaveLength(MAX_TOOL_ROUNDS)
@@ -447,36 +446,72 @@ describe('a repeated mutating call is answered, not re-executed', () => {
   })
 })
 
-describe('the tool-round cap', () => {
-  test('ends the turn with one error naming the last tool, and persists the usage first', async () => {
+describe('the tool-round cap ends the turn well (AI-10)', () => {
+  const SUMMARY = sse(
+    { type: 'message_start', message: { usage: { input_tokens: 10 } } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Built two screens; the third is not verified.' } },
+    { type: 'content_block_stop', index: 0 },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 9 } },
+    { type: 'message_stop' },
+  )
+
+  test('warns three rounds ahead, then ends on a tools-off summary round instead of an error', async () => {
     const serverCalls: unknown[] = []
-    const requestBodies = scriptedFetch(
-      Array.from({ length: 10 }, (_, i) => toolUseTurn([{ id: `e${i}`, name: 'echo' }])),
-    )
+    const requestBodies = scriptedFetch([
+      ...Array.from({ length: 5 }, (_, i) => toolUseTurn([{ id: `e${i}`, name: 'echo' }])),
+      SUMMARY,
+    ])
     const req: AiStreamRequest = {
       ...makeRequest({ async callBrowser() { return { ok: true } } }, serverCalls),
-      maxToolRounds: 3,
+      maxToolRounds: 5,
     }
 
     const events: AiStreamEvent[] = []
     for await (const event of anthropicDriver.stream(req)) events.push(event)
 
-    // Three provider rounds, then the loop stops it — the fourth POST is never made.
-    expect(requestBodies).toHaveLength(3)
-    expect(serverCalls).toHaveLength(3)
+    // Five tool rounds, then ONE more request: the summary.
+    expect(serverCalls).toHaveLength(5)
+    expect(requestBodies).toHaveLength(6)
 
-    const last = events.at(-1) as { type: string; message: string }
-    expect(last.type).toBe('error')
-    expect(last.message).toContain('3 tool rounds')
-    expect(last.message).toContain('echo')
-    // Usage is emitted BEFORE the terminal error: the provider billed every
-    // one of those rounds whether or not the turn reached an answer.
-    expect(events.at(-2)?.type).toBe('usage')
+    // The wind-down note rides the tool results of round 2 — 3 rounds left —
+    // so it is first seen by request 3, and by no request before it.
+    expect(JSON.stringify(requestBodies[1])).not.toContain('tool rounds are left')
+    expect(JSON.stringify(requestBodies[2])).toContain('3 tool rounds are left')
+
+    // The summary request keeps the tool definitions (cache, history) but may
+    // not call one, and tells the model why.
+    for (const body of requestBodies.slice(0, 5)) expect(body.tool_choice).toBeUndefined()
+    expect(requestBodies[5]!.tool_choice).toEqual({ type: 'none' })
+    expect(requestBodies[5]!.tools).toBeDefined()
+    expect(JSON.stringify(requestBodies[5])).toContain('your tools are now switched off')
+
+    // No error event: the turn ends on the model's own account of itself.
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('')).toContain('the third is not verified')
+    expect(events.at(-1)?.type).toBe('usage')
+  })
+
+  test('a failed summary request ends the turn quietly, with its usage', async () => {
+    const requestBodies: unknown[] = []
+    globalThis.fetch = (async (_url: string, init: RequestInit) => {
+      requestBodies.push(JSON.parse(init.body as string))
+      if (requestBodies.length <= 2) return sseResponse(toolUseTurn([{ id: `e${requestBodies.length}`, name: 'echo' }]))
+      return new Response('{"error":{"message":"nope"}}', { status: 400 })
+    }) as typeof fetch
+    const req: AiStreamRequest = { ...makeRequest({ async callBrowser() { return { ok: true } } }, []), maxToolRounds: 2 }
+
+    const events: AiStreamEvent[] = []
+    for await (const event of anthropicDriver.stream(req)) events.push(event)
+
+    expect(requestBodies).toHaveLength(3)
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+    expect(events.at(-1)?.type).toBe('usage')
   })
 
   test('leaves a turn that finishes inside the cap alone', async () => {
     const serverCalls: unknown[] = []
-    scriptedFetch([toolUseTurn([{ id: 'e0', name: 'echo' }]), TURN2])
+    const requestBodies = scriptedFetch([toolUseTurn([{ id: 'e0', name: 'echo' }]), TURN2])
     const req: AiStreamRequest = {
       ...makeRequest({ async callBrowser() { return { ok: true } } }, serverCalls),
       maxToolRounds: 3,
@@ -485,6 +520,8 @@ describe('the tool-round cap', () => {
     const events: AiStreamEvent[] = []
     for await (const event of anthropicDriver.stream(req)) events.push(event)
 
+    expect(requestBodies).toHaveLength(2)
+    expect(JSON.stringify(requestBodies)).not.toContain('[Studio]')
     expect(events.some((e) => e.type === 'error')).toBe(false)
     expect(events.filter((e) => e.type === 'text').map((e) => (e as { text: string }).text).join('')).toBe('all done')
   })

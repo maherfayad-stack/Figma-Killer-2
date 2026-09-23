@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { buildStudioAgentSystemPrompt, type StudioPromptContext } from './systemPrompt'
-import { studioAgentTools } from './index'
+import { studioAgentTools, studioHttpAgentTools } from './index'
 import type { StudioLiveDigest } from './liveDigest'
 
 /** Every `studio_snake_case` token appearing anywhere in `text`, de-duplicated. */
@@ -59,6 +59,38 @@ describe('Studio system prompt — tool registry parity', () => {
     expect(studioAgentTools.some((t) => t.name === 'studio_fidelity_report')).toBe(true)
     const [prefix] = buildStudioAgentSystemPrompt(null, studioAgentTools)
     expect(prefix).toContain('studio_fidelity_report')
+  })
+})
+
+describe('Studio system prompt — each path is told the file tools it actually has (P4-C, AI-2)', () => {
+  const WRITE_TOOLS = new Set(['studio_write_file', 'studio_edit_file', 'studio_edit_files'])
+
+  it('the HTTP path is told about the Studio file tools, not native ones it lacks, and not Task', () => {
+    const [prefix] = buildStudioAgentSystemPrompt(null, studioHttpAgentTools)
+    expect(prefix).toContain('studio_write_file creates a file')
+    expect(prefix).toContain('studio_edit_files applies several such edits')
+    expect(prefix).not.toContain('Read, Write, Edit, Glob and Grep')
+    expect(prefix).not.toContain('you already have it')
+    expect(prefix).not.toContain('Task')
+    expect(prefix).not.toContain('subagent_type')
+    // It reads the project's conventions itself; nothing loads them for it.
+    expect(prefix).toContain("Read the project's CLAUDE.md once, with studio_read_file")
+    // And it knows how the round ceiling ends (AI-10).
+    expect(prefix).toContain('your tools are switched off for one last reply')
+  })
+
+  it('an HTTP caller who may not write is told so, instead of being told to write', () => {
+    const readOnly = studioHttpAgentTools.filter((t) => !WRITE_TOOLS.has(t.name))
+    const [prefix] = buildStudioAgentSystemPrompt(null, readOnly)
+    expect(prefix).toContain('You cannot write files this turn')
+    expect(prefix).not.toContain('studio_write_file')
+  })
+
+  it('the claude CLI path keeps its native-tool guidance and the subagent contract', () => {
+    const [prefix] = buildStudioAgentSystemPrompt(null, studioAgentTools)
+    expect(prefix).toContain('Read, Write, Edit, Glob and Grep')
+    expect(prefix).toContain("subagent_type is ALWAYS 'general-purpose'")
+    expect(prefix).not.toContain('studio_write_file')
   })
 })
 

@@ -32,9 +32,11 @@ import type {
   AiResolvedCredential,
   AiStreamRequest,
 } from './types'
-import { runToolLoop, type ProviderAdapter, type TurnResult, type TurnToolCall, type TurnToolResult, type TurnTranslator, type TurnUsage } from './http/toolLoop'
+import { runToolLoop } from './http/toolLoop'
+import type { ProviderAdapter, TurnResult, TurnToolCall, TurnToolResult, TurnTranslator, TurnUsage } from './http/toolLoopTypes'
 import type { SseFrame } from './http/sse'
-import { parseToolArguments } from './http/toolArgs'
+import { parseToolArguments, toolArgumentsParse } from './http/toolArgs'
+import { anthropicModelProfile, anthropicReasoningFields } from './anthropicModelProfile'
 import {
   buildToolDefinitions,
   withMessageCacheBreakpoints,
@@ -42,6 +44,7 @@ import {
   type AnthropicImageBlock,
   type AnthropicMessage,
   type AnthropicTextBlock,
+  type AnthropicThinkingBlock,
   type AnthropicToolResultBlock,
 } from './anthropicWire'
 
@@ -51,12 +54,6 @@ const ANTHROPIC_BASE_URL = 'https://api.anthropic.com/v1'
 const ANTHROPIC_ENDPOINT = `${ANTHROPIC_BASE_URL}/messages`
 const ANTHROPIC_MODELS_ENDPOINT = `${ANTHROPIC_BASE_URL}/models`
 const ANTHROPIC_VERSION = '2023-06-01'
-
-// Per-turn output cap. Anthropic requires `max_tokens`; the prior SDK left it
-// to its own default. 8192 comfortably covers a single agent turn (a few
-// insertHtml chunks + a short narration) without risking truncation; multi-turn
-// work continues across loop iterations, not within one response.
-const MAX_OUTPUT_TOKENS = 8192
 
 /**
  * The prefix `claude setup-token` emits. It is NOT an API key: it authorises
@@ -242,22 +239,33 @@ const anthropicAdapter: ProviderAdapter<AnthropicMessage> = {
     return mapHistory(req.messages)
   },
 
-  buildRequestBody(messages, req, cacheBreakpoints) {
+  buildRequestBody(messages, req, cacheBreakpoints, options) {
+    // `max_tokens` and the reasoning fields are per MODEL — see
+    // `anthropicModelProfile.ts` for why 8192 for everything was a bug.
+    const profile = anthropicModelProfile(req.modelId)
     // Three of the four cache breakpoints are placed here; see
     // `anthropicWire.ts`'s module doc for the budget and the order.
     const body: Record<string, unknown> = {
       model: req.modelId,
-      max_tokens: MAX_OUTPUT_TOKENS,
+      max_tokens: profile.maxOutputTokens,
       system: buildSystemBlocks(req.systemPrompt),
       messages: withMessageCacheBreakpoints(messages, cacheBreakpoints),
       stream: true,
+      ...(options.reasoning ? anthropicReasoningFields(profile, req.effort) : {}),
     }
-    if (req.tools.length > 0) body.tools = buildToolDefinitions(req.tools)
+    if (req.tools.length > 0) {
+      body.tools = buildToolDefinitions(req.tools)
+      if (options.toolChoice === 'none') body.tool_choice = { type: 'none' }
+    }
     return body
   },
 
-  buildToolResultMessage(results) {
-    return buildToolResultMessage(results)
+  buildToolResultMessage(results, notes) {
+    return buildToolResultMessage(results, notes)
+  },
+
+  buildUserNoteMessage(text) {
+    return { role: 'user', content: [{ type: 'text', text }] }
   },
 
   createTurnTranslator() {
@@ -384,15 +392,21 @@ function toolResultBlock(msg: Extract<AiMessage, { role: 'tool' }>): AnthropicTo
   }
 }
 
-function buildToolResultMessage(results: TurnToolResult[]): AnthropicMessage {
+function buildToolResultMessage(results: TurnToolResult[], notes: readonly string[]): AnthropicMessage {
+  // Notes ride in the SAME user turn, after the results: Anthropic requires
+  // strict user/assistant alternation, and a tool_result turn followed by a
+  // separate note turn would be two user turns in a row.
   return {
     role: 'user',
-    content: results.map((r) => ({
-      type: 'tool_result' as const,
-      tool_use_id: r.id,
-      content: toolOutputToContent(r.output),
-      is_error: r.output.ok ? undefined : true,
-    })),
+    content: [
+      ...results.map((r) => ({
+        type: 'tool_result' as const,
+        tool_use_id: r.id,
+        content: toolOutputToContent(r.output),
+        is_error: r.output.ok ? undefined : true,
+      })),
+      ...notes.map((text) => ({ type: 'text' as const, text })),
+    ],
   }
 }
 
@@ -437,6 +451,8 @@ const AnthropicSseEventSchema = Type.Object(
           id: Type.Optional(Type.String()),
           name: Type.Optional(Type.String()),
           input: Type.Optional(Type.Unknown()),
+          // redacted_thinking carries its opaque payload here.
+          data: Type.Optional(Type.String()),
         },
         { additionalProperties: true },
       ),
@@ -447,6 +463,8 @@ const AnthropicSseEventSchema = Type.Object(
           type: Type.Optional(Type.String()),
           text: Type.Optional(Type.String()),
           partial_json: Type.Optional(Type.String()),
+          thinking: Type.Optional(Type.String()),
+          signature: Type.Optional(Type.String()),
           stop_reason: Type.Optional(Type.Union([Type.String(), Type.Null()])),
         },
         { additionalProperties: true },
@@ -480,15 +498,30 @@ interface MutableUsage {
   cache_creation_input_tokens?: number
 }
 
+/**
+ * Stream errors that mean "the provider was momentarily unable", not "this
+ * request is wrong" — the loop retries these when nothing reached the user yet.
+ */
+const TRANSIENT_STREAM_ERROR_TYPES: ReadonlySet<string> = new Set(['overloaded_error', 'api_error', 'rate_limit_error'])
+
 export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage> {
   // Block order as it streams, so the assistant turn rebuilds text/tool_use
   // blocks in the sequence the model emitted them.
   private readonly order: number[] = []
   private readonly textByIndex = new Map<number, string>()
   private readonly toolByIndex = new Map<number, { id: string; name: string; json: string }>()
+  /**
+   * Thinking blocks, kept whole — text AND signature. With extended thinking
+   * on, the assistant turn a tool loop sends back must carry them unmodified,
+   * or the next round is refused. They live only in this turn's in-memory
+   * history; the persisted transcript never stores them (a later turn does not
+   * need a previous turn's thinking).
+   */
+  private readonly thinkingByIndex = new Map<number, AnthropicThinkingBlock>()
   private readonly toolCalls: TurnToolCall[] = []
   private usage: MutableUsage = {}
   private stopReason: string | null = null
+  private transientFailure = false
 
   translate(frame: SseFrame): AiStreamEvent[] {
     let event: Static<typeof AnthropicSseEventSchema>
@@ -518,6 +551,12 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
         } else if (block?.type === 'text') {
           this.order.push(index)
           this.textByIndex.set(index, '')
+        } else if (block?.type === 'thinking') {
+          this.order.push(index)
+          this.thinkingByIndex.set(index, { type: 'thinking', thinking: '', signature: '' })
+        } else if (block?.type === 'redacted_thinking' && typeof block.data === 'string') {
+          this.order.push(index)
+          this.thinkingByIndex.set(index, { type: 'redacted_thinking', data: block.data })
         }
         return []
       }
@@ -533,6 +572,14 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
           const tool = this.toolByIndex.get(index)
           if (tool) tool.json += delta.partial_json
         }
+        const thinking = this.thinkingByIndex.get(index)
+        if (thinking?.type === 'thinking') {
+          if (delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') {
+            thinking.thinking += delta.thinking
+            return [{ type: 'reasoning', text: delta.thinking }]
+          }
+          if (delta?.type === 'signature_delta' && typeof delta.signature === 'string') thinking.signature += delta.signature
+        }
         return []
       }
 
@@ -540,8 +587,13 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
         const index = event.index ?? 0
         const tool = this.toolByIndex.get(index)
         if (!tool) return []
-        const input = parseToolArguments(tool.json)
-        this.toolCalls.push({ id: tool.id, name: tool.name, input })
+        const parsed = toolArgumentsParse(tool.json)
+        const input = parsed.ok ? parsed.value : {}
+        // Whether the arguments are whole is only known once the message
+        // stops: a max_tokens stop right after this block means an
+        // unparseable argument string was cut off, not malformed. `finish`
+        // decides; the call is recorded with what arrived.
+        this.toolCalls.push({ id: tool.id, name: tool.name, input, ...(parsed.ok ? {} : { incomplete: true }) })
         return [{
           type: 'toolCall',
           toolCallId: tool.id,
@@ -558,6 +610,7 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
       }
 
       case 'error': {
+        this.transientFailure = TRANSIENT_STREAM_ERROR_TYPES.has(event.error?.type ?? '')
         const detail = event.error?.message
         return [{
           type: 'error',
@@ -576,6 +629,11 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
   finish(): TurnResult<AnthropicMessage> {
     const content: AnthropicContentBlock[] = []
     for (const index of this.order) {
+      const thinking = this.thinkingByIndex.get(index)
+      if (thinking) {
+        content.push(thinking)
+        continue
+      }
       const text = this.textByIndex.get(index)
       if (text !== undefined) {
         if (text) content.push({ type: 'text', text })
@@ -587,12 +645,20 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
       }
     }
 
+    const truncated = this.stopReason === 'max_tokens'
     return {
-      stop: this.stopReason !== 'tool_use',
-      toolCalls: this.toolCalls,
+      // An argument string that did not parse is a cut-off one only when the
+      // output limit stopped the message; otherwise it is the model's own
+      // malformed JSON, which runs and gets the schema refusal as before.
+      toolCalls: truncated ? this.toolCalls : this.toolCalls.map(({ incomplete: _incomplete, ...call }) => call),
+      truncated,
       assistantMessage: content.length > 0 ? { role: 'assistant', content } : null,
       usage: this.toTurnUsage(),
     }
+  }
+
+  isTransientFailure(): boolean {
+    return this.transientFailure
   }
 
   private mergeUsage(usage: MutableUsage): void {
