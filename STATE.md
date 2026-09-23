@@ -110,7 +110,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** the orchestrator merges after the Phase 1 exit gate. P2-I tightens the sweep and hover budgets.
 
 ### panel-44 — P2-G: the Component section (UX-4, UX-7, UX-10, UX-14, UX-16)
-- **Agent:** panel-designer · **Branch:** `feat/component-section-one-title-row` off `91df2c59` · **PR:** draft, base `feat/canvas-excellence` (long form in the PR body) · **Updated:** 2026-09-24
+- **Agent:** panel-designer · **Branch:** `feat/component-section-one-title-row` off `91df2c59` · **PR:** #236 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Goal:** an instance's props directly under Measures, under one title row, honest under multi-select; prop names readable; text props that commit instead of writing per keystroke.
 - **Done:**
