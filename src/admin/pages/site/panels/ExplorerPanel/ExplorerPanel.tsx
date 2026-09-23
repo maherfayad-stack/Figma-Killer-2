@@ -39,15 +39,18 @@ export function ExplorerPanel({ editable = true }: ExplorerPanelProps) {
       {/* A tree silhouette while the chunk loads, not `null`: Layers is the
           most-opened panel, and its first open used to be a blank column for
           the whole download (P2-H, UX-24). */}
-      <Suspense
-        fallback={
-          <div className={styles.loading} aria-busy="true" data-testid="explorer-panel-skeleton">
-            <SkeletonTree ariaLabel="Loading layers" />
-          </div>
-        }
-      >
+      <Suspense fallback={<ExplorerPanelSkeleton />}>
         <StudioExplorer editable={editable} />
       </Suspense>
     </Panel>
+  )
+}
+
+/** The Layers tree's silhouette, shown until the explorer chunk lands. */
+export function ExplorerPanelSkeleton() {
+  return (
+    <div className={styles.loading} aria-busy="true" data-testid="explorer-panel-skeleton">
+      <SkeletonTree ariaLabel="Loading layers" />
+    </div>
   )
 }

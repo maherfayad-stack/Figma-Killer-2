@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { cleanup, fireEvent, render, screen } from '@testing-library/react'
-import { ExplorerPanel } from '@site/panels/ExplorerPanel'
+import { ExplorerPanelSkeleton } from '@site/panels/ExplorerPanel'
 import { useEditorStore } from '@site/store/store'
 import { AgentPanelSkeleton } from '@site/sidebars/LeftSidebar/AgentPanelSkeleton'
 
@@ -19,18 +19,25 @@ afterEach(cleanup)
 
 const SRC_ROOT = join(import.meta.dir, '../..')
 
+// Both cases are wiring + render, not "render the lazy panel and catch the
+// fallback": a `lazy()` component suspends only until its module has loaded
+// ONCE per process, so a sibling test file that already mounted the panel
+// would make a render-the-panel assertion pass or fail by file order.
+
 describe('Layers — first open', () => {
-  it('shows a tree skeleton while the explorer chunk is still loading', () => {
-    const { unmount } = render(<ExplorerPanel />)
-    // Synchronously, on the very first commit: `lazy()` always suspends on
-    // its first render, so this is exactly the frame the user used to see
-    // as an empty panel.
+  it('mounts the tree skeleton as the explorer Suspense fallback', () => {
+    const source = readFileSync(
+      join(SRC_ROOT, 'admin/pages/site/panels/ExplorerPanel/ExplorerPanel.tsx'),
+      'utf8',
+    )
+    expect(source).toMatch(/<Suspense fallback=\{<ExplorerPanelSkeleton \/>\}>\s*<StudioExplorer /)
+  })
+
+  it('draws a busy tree silhouette', () => {
+    render(<ExplorerPanelSkeleton />)
     const skeleton = screen.getByTestId('explorer-panel-skeleton')
     expect(skeleton.getAttribute('aria-busy')).toBe('true')
     expect(screen.getByRole('status', { name: 'Loading layers' })).toBeTruthy()
-    // Unmount before the chunk resolves: this case is about the fallback,
-    // and the explorer body needs a project this test does not load.
-    unmount()
   })
 })
 
