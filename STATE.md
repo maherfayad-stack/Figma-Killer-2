@@ -184,7 +184,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Dogfood (`test4`, static tier, `/admin/site`, 100%, one frame):** (1) select a padded card, drag its E edge 40px: the box grows 40px (not 40 + padding), W×H pill under it while dragging, card still selected after; (2) a `flex: 1` row child: drag E, it stays where released; (3) ⇧ mid-drag without moving locks the ratio, ⌥ grows from the centre; (4) an absolute element's W handle: the right edge stays put; (5) drag a ruler guide over a frame and release there: the guide stops; Alt-Tab mid-drag: it snaps back.
 
 ### panel-45 — P2-H: panel polish (UX-11, 12, 13, 15, 20, 21, 24, 25, 26, 27)
-- **Agent:** panel-designer · **Branch:** `feat/inspector-panel-polish` off `db824fb3` · **PR:** see the PR body (draft, base `feat/canvas-excellence`; long form there) · **Updated:** 2026-09-24
+- **Agent:** panel-designer · **Branch:** `feat/inspector-panel-polish` off `db824fb3` · **PR:** #239 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Goal:** the finish on the Design pane and Layers: hover that lifts, readable captions, visible keyboard focus, a selection that reads as one, no blank first open.
 - **Done:**
