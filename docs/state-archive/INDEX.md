@@ -5,8 +5,14 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 220 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 226 entries, archived 2026-09-23, newest first
 
+- 2026-09-23 · `mcp-27` · P4-B: Studio's system prompt reaches the Claude CLI (PR #231) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `store-17` · P1-F: undo tells the truth (PR #230) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `server-29` · P1-D: notice edits made outside Studio (PR #229) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `server-28` · P1-H: user projects survive a container recreate (PR #228) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `mcp-26` · P4-A: the agent's tools tell the truth (PR #227) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-22` · P1-E3: the SVG→JSX converter never writes code that crashes React (PR #226) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `asset-06` · P1-E2: one image landing contract + security review fixes (PR #223) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `parser-16` · P1-E1: detach fails closed (PR #224) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `store-16` · P1-B: held ids follow the element across a reparse; full reload awaitable (PR #222) · [`2026-09.md`](2026-09.md)

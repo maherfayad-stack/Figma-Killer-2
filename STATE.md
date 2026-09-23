@@ -32,8 +32,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
-- **Progress:** merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P0 #225, P1-E2 #223 (after a security review caught a CSS-injection path in asset URLs). At most 3 agents run at once, because of the owner's RAM.
-- **Next:** P1-D and P1-F are running, then the Phase 1 exit gate, then Phase 2. Landed since P0: P1-E3 (#226), P4-A (#227), P1-H (#228, Docker workspace volume).
+- **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
+- **Next:** the Phase 1 exit gate (`test/phase-1-exit-gate`: outside-edit e2e + regression audit), then Phase 2 from P2-A; P4-C runs alongside.
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -62,137 +62,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - ~~The Docker images and templates kept `studio-workspace/` outside every volume.~~ Fixed by P1-H (#228, `server-28`).
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
-
-### canvas-22 — P1-E3: the SVG→JSX converter never writes code that crashes React
-- **Agent:** canvas-engineer · **Branch:** `fix/svg-to-jsx-never-writes-broken-code` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open)
-- **Goal:** ROADMAP P1-E (SVG part). Closes audit `08-svg.md` §2 defects 2, 3 and 5. Defect 4 (the `href` sanitizer hook) waits for P5-D and its security review.
-- **Scope:** `src/admin/pages/site/studio/{svgToJsxNode.ts, svgImportStyles.ts (new)}`, `src/__tests__/studio/svgToJsxNode.test.ts`, `docs/editor.md`, `docs/agent-refs/path-index.md`. No canvas DOM, injector, height or event code, no `sanitize.ts`, no parser.
-- **Done so far:**
-  - A `style="…"` string becomes presentation attributes (SVG's presentation set intersected with React's alias list) plus a `style` OBJECT for the rest. It is never written as a string. Values only CSS can resolve (`var()`, `calc()`, reset keywords) stay in the object.
-  - `<style>`: single-class rules, including comma lists, are inlined by the real cascade (rule < inline < `!important`). The block and any `<defs>` it leaves empty are dropped. Any other selector or `@`-rule is refused with a sentence that names it.
-  - ids get a per-conversion random suffix. `url(#…)`, `href`/`xlink:href="#…"` and `aria-labelledby`/`-describedby` are rewritten to match. A bare `#hex` colour is never touched.
-  - Both SVG writers (`SlotPicker.tsx`, `insertablePropValues.ts`) already use this converter, and a grep found no other writer.
-- **Next step:** owner dogfood (script in the PR body), then merge.
-- **Decisions:**
-  - Paint that arrived as SVG-internal CSS now lands as presentation attributes, the weakest cascade source, so the user's page CSS can recolour it. This is deliberate and matches Penpot.
-  - The converter still sanitises first.
-  - The audit §5.5 rename to `svgMarkupToInsertNode` is left to SVG-5.
-- **Landmines:**
-  - Under happy-dom, DOMPurify drops a `<style>` inside `<svg>` together with everything after it; a browser keeps it. `<style>` tests must call `convertSanitizedSvg`, not `svgToJsxNode`.
-  - `sanitizeSvg` still strips `href`, so the href rewrite does nothing until P5-D adds its hook.
-  - DOMPurify does not vet CSS `url()`, so a remote `url()` in `fill` or `style` survives (pre-existing; listed under "Found, not fixed" in the PR).
-  - Under Bun, `vite build` hung twice after "modules transformed" while the machine was loaded. It built under Node, and a later retry under Bun built normally.
-- **Verification:**
-  - 15 new tests, proven to fail on the old converter, including React's real "style prop expects a mapping" error. `svgToJsxNode.test.ts` now passes 26/26.
-  - `bun run build` and lint are clean.
-  - Chunked `bun test --parallel=1`, 30 failures in total, all live-browser, dev-server, WebSocket, optimistic-broadcast or bundle-freshness tests, none touching the converter:
-    - `architecture`: 1 (bundle freshness)
-    - rest of `src/__tests__`: 4 (optimistic broadcast)
-    - `src/core`: 0
-    - `src/admin`: 5 (bridge measurement)
-    - `src/modules` and `src/ui`: 0
-    - `server`: 21 (headless capture, dev server, WebSocket)
-- **Human action needed:** dogfood `/admin/site` icon-slot upload. The four steps are in the PR body.
-
-### mcp-26 — P4-A: the agent's tools tell the truth (AI-4, AI-5, AI-6, AI-24, AI-27)
-- **Agent:** mcp-tooling · **Branch:** `fix/agent-tools-tell-the-truth` (trunk `666f68e3` merged in) · **PR:** draft against `feat/canvas-excellence` · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open)
-- **Goal:** every tool result and every sentence the agent reads is true.
-- **Done:**
-  - AI-4: `studio_list_tokens` (`projectTokenTools.ts`) now reads the CSS the canvas loads. It uses `projectTokenSources.ts`, the single place that assembles it: built-in DS, package CSS, compiled chunks and the entry stylesheets. `listProjectTokens` returns value, dark, alias, family, role and `file:line`, paginated. The `framework.json` read is deleted. Four hand-assembled copies (compare, measure_reference, quality_check, plan_variants) now use the same collector.
-  - AI-5: `mutates` is split into `requiresWrite` (the gate) and a required `sideEffects: none|cache|write` (the loop). Observers run concurrently and are never deduped. The dedupe is a per-turn `TurnWriteLedger` keyed on a write epoch.
-  - AI-6: the phantom `studio_design_system_guide` is removed. `no-phantom-tool-names.test.ts` scans mode/policy blocks, the prompt, every description and schema field, the strings of in-canvas-only modules, and the finding text. It fixed 10 descriptions and 4 remedies/hints.
-  - AI-24: the parity `Task` row is now `native`. agent.md's tool count, tool index (with a Loop column) and withheld table are gated by `agent-doc-tool-surface-parity.test.ts`.
-  - AI-27: a schema failure returns `input-schema-mismatch` with the path, the expected shape, what was received, and a validated minimal example (`toolInputRefusal.ts`).
-- **Decisions:**
-  - The write gate is unchanged, pinned by `tool-write-gate-unchanged-by-side-effects.test.ts` (frozen list of 53 tools).
-  - A refused write records at its epoch but does not advance it.
-  - Compiled Sass/PostCSS chunks now carry a marker line. `STYLE_CACHE_FORMAT` is bumped, so the style cache recompiles once.
-- **Landmines:**
-  - Token readers now also see entry stylesheets (`src/index.css`), so quality_check and measure_reference may find more tokens and fonts than before.
-  - `withWorkspaceProject` is used by `collectProjectTokenSources`.
-- **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
-
-### mcp-27 — P4-B: Studio's system prompt reaches the Claude CLI (AI-1, AI-3)
-- **Agent:** mcp-tooling · **Branch:** `fix/agent-prompt-reaches-the-cli` (trunk `f0956720` merged in) · **PR:** #231 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open)
-- **Goal:** the default (CLI) agent path gets the same guidance as the HTTP path: static prefix, `MODE_BLOCK`, `DESIGN_POLICY_BLOCK`, subagent contract.
-- **Done:**
-  - `server/ai/drivers/claudeCliSystemPrompt.ts`: splits `req.systemPrompt` at the boundary, sha256 of the static half = prompt version, writes static + dynamic to a private temp file passed as `--append-system-prompt-file`. Cold turn: deleted in `finally`. Warm: deleted on `dispose`.
-  - Warm reuse fingerprint (`claudeCliWarmTurn.ts`) carries the prompt version: a mode, policy or prompt change respawns.
-  - Generated `CLAUDE.md` = project facts only (`projectGuide.ts` `buildGuide`); `GUIDE_DEFINITION_VERSION` 9 forces one regen. Component reference drops "do not re-implement it".
-  - `dynamicSystemPromptSuffix` deleted; `claudeCli.testHelpers.ts` holds the fake binary + `runClaudeCliTurns`.
-- **Tests (each proved failing before its fix, by disabling it in place):** `cli-receives-mode-and-policy.test.ts` (18 of 18), `studio-agent-subagent-contract.test.ts` (2 of 7, now on the CLI-received text), `claudeCliSystemPrompt.test.ts` fingerprint respawn (1), `projectGuide.test.ts` facts-only (4).
-- **Decisions:**
-  - Always a file, never argv: every real prefix is 34–36 KB, past Windows' 32,767-char command line. The CLI refuses `--append-system-prompt` with `-file`, so the dynamic suffix rides in the same file.
-  - The version is a content hash, not a hand-bumped constant.
-  - A failed prompt-file write is fail-soft (logged; the turn runs without Studio guidance), like the MCP config file.
-- **Landmines:**
-  - The CLI now pays for ~9 K more system tokens per session (cached after the first turn per (mode, policy)).
-  - Guide text dropped with no prompt equivalent: "keep the screen a static composition". Deliberate; P4-D owns the prompt rewrite.
-  - Flag verified against CLI 2.1.226 only by parse behaviour, not a paid turn.
-- **Next:** owner review; P4-D rewrites the prompt knowing it now reaches both paths.
-
-### server-28 — P1-H: user projects survive a container recreate
-- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` (trunk `5d454bf2` merged in) · **PR:** #228 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
-- **Stage:** verifying. The security review came back CHANGES-REQUIRED (F1 to F11); every finding is fixed in this round. Needs re-review by security-guard.
-- **Goal:** ROADMAP P1-H. Put the workspace root and Studio's private data on persistent storage in every shipped image, Compose stack and template; give live installs a safe one-time move; gate it.
-- **Done:**
-  - Image: `STUDIO_WORKSPACE_DIR=/app/studio-workspace` and `STUDIO_DATA_DIR=/app/.data`. Only `uploads`, `data`, `studio-workspace`, `.data` and `.tmp` are `bun`-owned; Studio's code stays root-owned (F3).
-  - Compose adds the `workspace` and `private` volumes. Render, Railway, `docker run` and the bundle use `/app/storage/studio-workspace` and `/app/storage/.data` (F2).
-  - `server/runtimeDirs.ts`: one parser for both settings (blank, padded or relative throws; F8), and `resolveStudioDataRoot`, now the default under the four `.data` stores.
-  - `workspaceRootGuard.ts` (F1): boot REFUSES a workspace root that is, contains, or sits inside the DB dir, uploads, `STATIC_DIR`, Studio's code, or a private-data root, compared on real paths. `server/index.ts` exits before the DB opens.
-  - `prepareWorkspaceRoot` takes injectable inputs and is tested (F5), and warns for the data root too.
-  - `isRealpathStrictlyInsideAllowingMissing`: the one write-target rule, shared by `gitClone.ts` and the archive funnel's clear (F4).
-  - `lost+found` is never a project (F9). `trustGate.ts` notes that a misread now FAILS OPEN (F10). `.dockerignore` excludes `studio-workspace` and `.data` (F11).
-  - `defaultGithubImportDir` follows `projectsRootDir()`.
-  - Docs: the "dedicated directory" rule, a restore that verifies the archive before deleting (F6), and a migration that stops the app, copies into a fresh directory, compares counts, and creates the container without starting it (F7).
-- **Tests (each proved failing before its fix):** `workspaceRootGuard.test.ts` (14 of 21), `archiveIngest.test.ts` containment (5), `workspace-volume-persistence.test.ts` (16 on the original files, 14 more on the round-1 files), `studioGithubImport` (2), the `lost+found` listing test (1). `workspacePersistence.test.ts` (21) covers new code.
-- **Decisions:** the guard is fatal, but the persistence check only warns. Sitting INSIDE the cwd or the DB dir is allowed (the image default and the e2e `.tmp` layout). No Dockerfile `VOLUME`.
-- **Landmines:**
-  - **A live install loses its projects and secrets on the FIRST recreate with the new files unless the operator copies them out first.** The release notes must lead with this.
-  - Setting `STUDIO_WORKSPACE_DIR=/app/storage` now stops the server at boot on purpose.
-- **Next:** merged into the trunk after the security review (all 11 findings fixed, `review-228`). Owner: run a real `docker compose up` once before a release.
-
-### server-29 — P1-D: notice edits made outside Studio (watcher + re-locate)
-- **Agent:** server-engineer · **Branch:** `fix/notice-edits-made-outside-studio` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open)
-- **Goal:** ROADMAP P1-D. Closes ERR-19 and WB-1's re-locate + watcher half.
-- **Scope:** new `server/handlers/{sourceLineMap,studioEditRelocate}.ts`, `server/handlers/studio/{projectWatch,sourceTextHistory}.ts`, `server/ai/mcp/outsideEditReload.ts`; edits to `studioEditIdentity.ts`, `studioWriteback.ts`, `projectWriteLock.ts`, `pageParseCache.ts`, the editor bridge, `liveReloadPush.ts`, `agent/studioLiveReload.ts`, `@core/page-tree` (`withSourceLocation`). No route added.
-- **Done:**
-  - `projectWatch.ts`: one watcher per open project, retained by the editor-bridge stream (15 s linger). Events are hints only; a `size:mtime` snapshot diff is the truth. `origin` is `studio` when the file's mtime falls inside a project write-lock hold (new session log in `projectWriteLock.ts`).
-  - Outside changes to board inputs are pushed as `studio_live_reload { diskChanged: { files } }` to every tab on the project. The tab flushes pending edits, then runs `resyncBoardAfterWrite(files)`.
-  - `/save` and `studio_apply_edits`: a fingerprint mismatch is re-found through a line diff against remembered texts. Exactly one verified position means the edit is re-addressed and written, listed in `retargeted`, with `shifted: true`. Anything else is the old `element-moved`.
-- **Decisions:**
-  - No wire change for the base text. The expected fingerprint picks which remembered text the board read.
-  - The line map uses both extreme optimal alignments (Myers forwards and reversed). A line that some reading deletes is never re-found.
-  - Outcomes are reported under the id the caller SENT.
-- **Landmines:**
-  - Bun 1.3 `fs.watch` on Windows drops most of a burst and names directories, not files. Never trust an event's path.
-  - Writers that bypass the project write lock (`translationWrite`, `assetLanding`, `i18nScaffold`, `pageDelete`, …) read as `outside`, so they cost one redundant re-read.
-  - No tab open means no watcher. History is per-process, so after a restart the first stale edit refuses as before.
-- **Next:** P6-C subscribes `subscribeProjectChanges` for `/load` invalidation; it must use ALL origins, not just `outside`. FC-1: `.studio/canvas/` is already watched.
-- **Verification:** 4 new server test files plus 1 client test file, and 1 e2e spec, run in Chromium and passing. Relocate, watcher-push and e2e were each proven to fail with the fix disabled in place. Build and lint are clean. The chunked suite shows only pre-existing failures: bundle freshness, optimistic broadcast, bridge measurement, headless capture, dev server and WebSocket.
-
-### store-17 — P1-F: undo tells the truth (ERR-1, ERR-3, ERR-2 stop-gap, ERR-28, ERR-6)
-- **Agent:** store-engineer (+ panel-designer for `ScrubInput`) · **Branch:** `fix/undo-tells-the-truth` · **PR:** #230 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open)
-- **Goal:** ⌘Z never undoes the undo, never jams, never lies about disk.
-- **Done:**
-  - ERR-1: `ScrubInput` commits on blur/Enter only when `typed`; a parked caret follows its `value`.
-  - ERR-3: `reissueStructuralMove` re-issues on the page owning the element (`_nodeIdToPageIds`) and activates it silently; `reissueStructuralSourceEdits` checks ids against the whole board.
-  - ERR-2 stop-gap / ERR-28: an impossible structural step is SKIPPED (`skipStructuralStep`): undo drops it with one warning toast and carries on below; redo drops the redo chain. The `stale-undo` reason and the undo/redo `RefusalDialog` titles are deleted.
-  - ERR-6: `structuralCommitRollback.ts` — move/delete hold their inverse patches; a refused or unreachable write replays them (unless a re-read replaced the page: `pageReadEpoch.ts`) and removes the entry. An undo/redo re-issue: refused → skipped, unreachable → put back. `structuralWriteRetry.ts` retries a no-answer write 1/2/4 s with ONE idempotency key (`apiRequest`'s new `idempotencyKey`). One toast per refused batch.
-- **Slices / state:** site slice only. New `HistoryEntry.pendingCommit` (`{id, step}`), transient, no selector reads it. No new selector.
-- **Mutations:** none new. `moveNodes`/`deleteNode(s)` keep their entries and coalesce keys (`null`, never coalesce); rollback removes the entry; `pageReadEpoch` is bumped by `loadSite`/`createSite`/`clearSite`/`patchPages`.
-- **Landmines:**
-  - `trackStructuralTreeCommit` must run BEFORE `tagStructuralGesture` (a delete's tag clears the patches).
-  - A bridge (live) frame's optimistic hide/move is not reverted on rollback — no runtime message exists (Found, not fixed).
-- **Verification:** 17 new/changed unit tests, each proven failing with its fix disabled in place, plus `tests/e2e/undo-tells-the-truth.e2e.ts` (ran, passes; fails with the fix off). Build + lint clean. Chunked suite: only the 16 pre-existing failures.
-- **Next:** owner dogfood (checklist in the PR body); P3-F replaces the delete skip with a real restore.
-
----
 
 ## Blocked
 
@@ -284,16 +153,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `mcp-27` — P4-B: the static prefix, mode and policy blocks reach the Claude CLI via `--append-system-prompt-file`; the warm-session fingerprint hashes the prompt; the generated `CLAUDE.md` is facts only — #231 — 2026-09-23
+- `store-17` — P1-F: ScrubInput commits only when typed; undo resolves the owning page; a stale step is skipped, not jammed; refused moves/deletes roll back, network failures retry then roll back — #230 — 2026-09-23
+- `server-29` — P1-D: a project watcher reloads the board on outside edits; an edit whose element moved is re-located by line diff + fingerprint, written only on exactly one match — #229 — 2026-09-23
+- `server-28` — P1-H: `studio-workspace/` and `.data` on persistent volumes in every image/compose/template; boot refuses a root that overlaps data, uploads or code; security review fixed — #228 — 2026-09-23
+- `mcp-26` — P4-A: tokens come from the CSS the canvas loads; `requiresWrite` + `sideEffects` (reads run in parallel, never deduped); no phantom tool names; schema errors say the expected shape — #227 — 2026-09-23
+- `canvas-22` — P1-E3: SVG `style` becomes attributes + an object, Illustrator `<style>` classes are applied or refused, ids are suffixed per insert — #226 — 2026-09-23
 - `asset-06` — P1-E2: one server rule for image URLs (percent-encoded), content dedupe, `wx` writes, keyed replay for asset-drop; security review fixed — #223 — 2026-09-23
 - `parser-16` — P1-E1: detach fails closed — symbol-based substitution, spread/rest, aliasing, a free-variable gate; every refusal leaves files byte-identical — #224 — 2026-09-23
 - `store-16` — P1-B: selection, hover, inline edit, entered instances and the drag follow their element across a reparse; a full reload is awaitable and sequenced — #222 — 2026-09-23
 - `parser-p1a` — P1-A: element identity guard; a stale line:col write is refused as `element-moved` and silently re-planned — #221 — 2026-09-23
-- `parser-15` — P1-C: the parse cache tracks evaluator reads, batch edits merge, a broken tsconfig or page degrades instead of failing a load — #220 — 2026-09-23
-- `sec-23` — P1-G: one write predicate; no Studio writer lands in `.studio`, `.git`, `node_modules`, build output or `.claude` — #219 — 2026-09-23
-- `speed-00` … `speed-06` — the speed plan's wave 1: optimistic style in live frames, 250 ms autosave, coalesced hover, one cold-selection overlay, refusal inside keydown, drag into live frames with a drop line — #205–#208, #210, #212–#214 — 2026-09-21
-- `live-17` … `live-20` — live frames: component-instance selection, inline text editing, middle-mouse pan, the prototype link handle — #209, #211–#216 — 2026-09-21
-- `live-10` … `live-16` — live frames on a local install: vite-only dev server, HMR subprotocol, bridge selection and pan, optimistic delete, dev servers that survive an API restart — #197, #202–#204 — 2026-09-20/21
-- `sec-19`, `sec-20`, `sec-21` — every project starts at `run-project`, and its two security reviews — #197, #198 — 2026-09-20
 
 ---
 
