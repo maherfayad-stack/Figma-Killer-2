@@ -31,7 +31,7 @@
  * closed mid-flight, browser navigated away) is caught and logged here, never
  * propagated into the calling tool's `AiToolOutput`.
  */
-import { editorBridgeScope, getEditorBridgeForUser } from '../../editorBridge'
+import { editorBridgeScope, getEditorBridgeForUser, getEditorBridgesForScope } from '../../editorBridge'
 
 /** Never advertised, never discoverable — see this module's doc. */
 export const STUDIO_LIVE_RELOAD_TOOL_NAME = 'studio_live_reload'
@@ -52,6 +52,30 @@ export interface StudioReloadPush {
    * thread the reviewer already has open on screen.
    */
   commentsChanged?: boolean
+  /**
+   * P1-D — files that changed on disk WITHOUT Studio writing them (VS Code,
+   * `git pull`, the agent's own Edit tool), workspace-relative. The browser
+   * re-reads them through the same resync its own writes use
+   * (`studioBoardResync.ts`), which decides how narrow that can be. An EMPTY
+   * list means "something changed and the watcher cannot say what" — the
+   * board re-reads everything. Sent only by {@link pushStudioDiskChange}.
+   */
+  diskChanged?: { files: readonly string[] }
+}
+
+/** The wire shape of a push — what `agent/studioLiveReload.ts`'s `StudioLiveReloadInputSchema` validates. */
+function pushInput(push: StudioReloadPush): Record<string, unknown> | null {
+  const pageIds = push.pageIds ?? []
+  const boardsChanged = push.boardsChanged ?? false
+  const commentsChanged = push.commentsChanged ?? false
+  if (pageIds.length === 0 && !boardsChanged && !commentsChanged && !push.diskChanged) return null
+  return {
+    dir: push.dir,
+    pageIds: [...pageIds],
+    boardsChanged,
+    commentsChanged,
+    ...(push.diskChanged ? { diskChanged: { files: [...push.diskChanged.files] } } : {}),
+  }
 }
 
 /**
@@ -71,35 +95,48 @@ export interface StudioReloadPush {
  * rather than failing the caller's own tool.
  */
 export async function awaitStudioLiveReload(userId: string, push: StudioReloadPush): Promise<void> {
-  const pageIds = push.pageIds ?? []
-  const boardsChanged = push.boardsChanged ?? false
-  const commentsChanged = push.commentsChanged ?? false
-  if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
+  const input = pushInput(push)
+  if (!input) return
   const bridge = getEditorBridgeForUser(userId, editorBridgeScope(push.dir))
   if (!bridge) return
   try {
-    await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })
+    await bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, input)
   } catch (err) {
     console.error('[studio:mcp] live-reload push failed — the capture may show stale content:', err)
   }
 }
 
 export function pushStudioLiveReload(userId: string, push: StudioReloadPush): void {
-  const pageIds = push.pageIds ?? []
-  const boardsChanged = push.boardsChanged ?? false
-  const commentsChanged = push.commentsChanged ?? false
-  if (pageIds.length === 0 && !boardsChanged && !commentsChanged) return
+  const input = pushInput(push)
+  if (!input) return
   // No bridge for THIS project — either no board open at all (normal for a
   // headless MCP connector, never an error) or the user's open tab is on a
   // different project, which must not be nudged about a write it did not make.
   const bridge = getEditorBridgeForUser(userId, editorBridgeScope(push.dir))
   if (!bridge) return
   bridge
-    .callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, { dir: push.dir, pageIds: [...pageIds], boardsChanged, commentsChanged })
+    .callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, input)
     .catch((err: unknown) => {
       console.error(
         '[studio:mcp] live-reload push failed — canvas stays stale until the next manual reload:',
         err,
       )
     })
+}
+
+/**
+ * P1-D — tell EVERY tab that has `dir` open that `files` changed on disk
+ * without Studio writing them (`outsideEditReload.ts`, fed by the project
+ * watcher). Every user's tab, not one user's: nobody's action caused this, and
+ * every board showing the project is now stale. Same fire-and-forget contract
+ * as {@link pushStudioLiveReload}; no open tab is a no-op.
+ */
+export function pushStudioDiskChange(dir: string, files: readonly string[]): void {
+  const input = pushInput({ dir, diskChanged: { files } })
+  if (!input) return
+  for (const bridge of getEditorBridgesForScope(editorBridgeScope(dir))) {
+    bridge.callBrowser(STUDIO_LIVE_RELOAD_TOOL_NAME, input).catch((err: unknown) => {
+      console.error('[studio:mcp] disk-change push failed — that tab stays stale until its next reload:', err)
+    })
+  }
 }

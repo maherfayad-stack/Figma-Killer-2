@@ -111,6 +111,24 @@ export function decodeSourceNodeId(nodeId: string): SourceNodeLocation | null {
 }
 
 /**
+ * `nodeId` with the location it writes to — the LAST segment, see
+ * {@link decodeSourceNodeId} — moved to `line:col` of the same file. A
+ * composite id keeps its call-site prefix: only where the markup is has moved.
+ * `null` for an id with no writable location.
+ *
+ * P1-D: an edit re-found after its file changed on disk is re-addressed with
+ * this, so every codemod downstream reads the new position through the one
+ * grammar.
+ */
+export function withSourceLocation(nodeId: string, line: number, col: number): string | null {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const location = decodeSourceNodeId(segments[segments.length - 1]!)
+  if (!location) return null
+  segments[segments.length - 1] = buildSourceNodeId(location.rel, line, col)
+  return segments.join(INLINE_ID_SEPARATOR)
+}
+
+/**
  * True when an edit to this node has one source location to land on.
  *
  * `false` for a `.map` iteration (`…:70:21#2`) — the suffix is deliberately

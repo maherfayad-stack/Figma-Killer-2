@@ -181,6 +181,14 @@ the user's current board. No open workspace (the common case for a headless
 connector) makes this a pure no-op: the disk write already succeeded either
 way, and a stale canvas is the honest, expected outcome until the next reload.
 
+The same push carries one more kind of news (P1-D): `diskChanged: { files }`,
+sent by `server/ai/mcp/outsideEditReload.ts` to EVERY tab that has the project
+open when a file changes on disk without Studio writing it (VS Code, `git
+pull`, an external agent's own Edit tool). `server/handlers/studio/projectWatch.ts`
+does the watching; the browser saves anything pending and then re-reads the
+named files through `resyncBoardAfterWrite`. An empty `files` list means the
+watch failed and the board re-reads everything.
+
 **Asset tools, headless:** `studio_fetch_remote_asset({ dir?, url, targetDir? })` — `execution: 'server'`, requires `studio.write`. Fetches an `http(s)` URL server-side and lands the response as a new image file, the way an asset an external MCP tool already returned as a URL (a connected Figma MCP server's export/download tool, most concretely — see `docs/features/agent.md`'s "Figma asset workflow") reaches the repo WITHOUT its bytes ever transiting the calling model, unlike the browser-relayed `studio_upload_asset` (§ below), whose `imageBase64` input requires the caller to already hold the bytes. Untrusted-URL-safe by construction: `http:`/`https:` scheme only, no redirect ever followed, the response capped at 25 MB by streamed byte count, and the result written through the same magic-number-sniffed, SVG-sanitized, containment-checked pipeline (`server/handlers/studio/assetLanding.ts`) `studio_upload_asset` uses — one write path, two callers.
 
 **9.4 — `studio_fidelity_report(dir, pageId?)`** — the flagship tool. Per page:
