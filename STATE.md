@@ -163,7 +163,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
 
 ### canvas-23 — P2-B: selection and keyboard hands (IX-2, IX-3, IX-4, IX-11, IX-15, ERR-11, ERR-21)
-- **Agent:** canvas-engineer · **Branch:** `feat/figma-selection-and-keyboard` off `91df2c59` (trunk `db824fb3` merged in) · **PR:** see the PR list, draft, base `feat/canvas-excellence`; long form in its body · **Updated:** 2026-09-24
+- **Agent:** canvas-engineer · **Branch:** `feat/figma-selection-and-keyboard` off `91df2c59` (trunk `db824fb3` merged in) · **PR:** #238 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Done:** ⇧-click toggles on the canvas, range stays in Layers (`canvasClickSelectionMode`). Tab / ⇧Tab cycle siblings, canvas-scoped (`isCanvasKeyboardSurface`). ⌘A: siblings, then climb, then all frames. V = move tool. Zoom, ⌘0/⇧0, ⇧1/⇧2 and Space are one `global`-rung scope (`hooks/useCanvasViewportKeys.ts`); the canvas div has no `onKeyDown`. Losing focus releases held keys. `isTextInputTarget` = text-entry and not read-only. `keybindings.ts` has the OD-3 conflict register; the viewport keys moved to `keybindingViewport.ts`. `board.selectAllFrames` is renamed `canvas.selectAll`.
 - **Also fixed (P2-G's finding):** a click inside nested instances selects the OUTERMOST one, and a double-click opens one level (`resolveInstanceEntry`). Live frames skipped the instance boundary entirely until now.
