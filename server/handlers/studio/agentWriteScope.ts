@@ -32,11 +32,10 @@
  *
  * None of the three is something an agent authoring a screen ever has a
  * reason to write, and every one of them is a way to acquire a permission
- * nobody granted. `EXCLUDED_WORKSPACE_DIR_NAMES` already names `.studio`,
- * `.git`, `node_modules` and the build-output directories as off-limits
- * everywhere else in Studio (the asset reader, the git path resolver, the
- * import extractor); this applies the same list to the one surface that did
- * not have it, plus `.claude`.
+ * nobody granted. `UNWRITABLE_WORKSPACE_DIR_NAMES` (`@core/page-parser`) names
+ * all of them — the walk exclusions plus `.claude` — and is the one list every
+ * Studio writer consults (P1-G: the writeback, CSS and asset writers use the
+ * same predicate); this applies it to the native-write surface.
  *
  * ## What this is, and is not
  *
@@ -52,55 +51,20 @@
  * property being defended is narrower and is the one A10 relies on: *the
  * agent* cannot manufacture its own consent.
  */
-import { basename, dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { realpathSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-
-/**
- * Directory names a native agent write may never touch, at any depth.
- *
- * `EXCLUDED_WORKSPACE_DIR_NAMES` (`.studio`, `.git`, `node_modules`, `dist`,
- * `.next`, `.turbo`) plus `.claude`. Reusing that set rather than hand-listing
- * three names is deliberate: it is already the answer to "which directories in
- * a user's project are not the user's source", and a future addition to it
- * should reach this gate without anyone remembering to come here.
- */
-export const AGENT_UNWRITABLE_DIR_NAMES: ReadonlySet<string> = new Set<string>([
-  ...EXCLUDED_WORKSPACE_DIR_NAMES,
-  '.claude',
-])
-
-/**
- * `path`, with every symlink in its EXISTING prefix resolved and the
- * not-yet-existing tail re-appended.
- *
- * `realpathSync` throws on a path whose leaf does not exist yet, which is the
- * common case for a `Write` — so walking up to the deepest ancestor that does
- * exist is the only way to resolve a link at all. A repository arriving from
- * GitHub can carry a symlink (git stores them), so a purely textual check is
- * bypassable: `src/cfg -> ../.studio` makes `src/cfg/meta.json` look like
- * source and land in the control plane.
- */
-function realResolve(path: string): string {
-  let current = resolve(path)
-  const tail: string[] = []
-  for (;;) {
-    try {
-      return [realpathSync(current), ...tail].join(sep)
-    } catch {
-      const parent = dirname(current)
-      // Reached the filesystem root without finding anything real — nothing
-      // to resolve, so the textual form is already the answer.
-      if (parent === current) return resolve(path)
-      tail.unshift(basename(current))
-      current = parent
-    }
-  }
-}
+import { isAbsolute, relative, resolve } from 'node:path'
+import { realpathAllowingMissing, unwritableWorkspaceSegment } from '@core/page-parser'
 
 /**
  * The forbidden segment in `candidate`, if it has one — measured RELATIVE to
  * `base`, never over the absolute path.
+ *
+ * Which names are forbidden is not decided here: it is
+ * `UNWRITABLE_WORKSPACE_DIR_NAMES` (`@core/page-parser`'s shared write scope
+ * — the walk exclusions `.studio`, `.git`, `node_modules`, build output, plus
+ * `.claude`), the same predicate every Studio writer consults, compared the
+ * way the filesystem resolves a name (case-folded, trailing dots and NTFS
+ * stream suffixes dropped). A future exclusion reaches this gate without
+ * anyone remembering to come here.
  *
  * Scanning the absolute path would be stricter and wrong: Studio's own
  * checkout lives under directories with these exact names (this repo's agent
@@ -116,12 +80,7 @@ function realResolve(path: string): string {
 function forbiddenSegment(base: string, candidate: string): string | null {
   const rel = relative(base, candidate)
   if (rel === '' || rel.startsWith('..') || isAbsolute(rel)) return null
-  for (const segment of rel.split(/[\\/]+/)) {
-    // Lowercased: the filesystem is case-insensitive on Windows and macOS, so
-    // `.STUDIO` reaches `.studio`.
-    if (AGENT_UNWRITABLE_DIR_NAMES.has(segment.toLowerCase())) return segment
-  }
-  return null
+  return unwritableWorkspaceSegment(rel)
 }
 
 /**
@@ -131,13 +90,23 @@ function forbiddenSegment(base: string, candidate: string): string | null {
  * against the matching form of `cwd`): a link pointing INTO the control plane
  * is caught by the second, and a control-plane directory that is itself a link
  * pointing out — so its real path no longer carries the name — is caught by
- * the first. Either hit refuses.
+ * the first. Either hit refuses. A path through a DANGLING link has no real
+ * path to judge, and a write would follow the link wherever it points — so it
+ * is refused too.
  */
 export function agentWriteRefusalReason(filePath: string, cwd: string): string | null {
   const textual = isAbsolute(filePath) ? resolve(filePath) : resolve(cwd, filePath)
+  const realCwd = realpathAllowingMissing(cwd)
+  const realTarget = realpathAllowingMissing(textual)
+  if (realCwd === null || realTarget === null) {
+    return (
+      `Refused: "${filePath}" runs through a link Studio cannot resolve, so where the write would land is unknown. `
+      + 'Write the project\'s own source through a path that exists.'
+    )
+  }
   const pairs: ReadonlyArray<readonly [string, string]> = [
     [resolve(cwd), textual],
-    [realResolve(cwd), realResolve(textual)],
+    [realCwd, realTarget],
   ]
 
   for (const [base, candidate] of pairs) {
