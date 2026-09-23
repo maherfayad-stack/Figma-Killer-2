@@ -110,6 +110,7 @@ const EXPECTED_SECTION_IDS = [
   'layer',
   'align',
   'measures',
+  'component',
   'layout',
   'fill',
   'selectionColors',
@@ -117,7 +118,6 @@ const EXPECTED_SECTION_IDS = [
   'effects',
   'text',
   'export',
-  'component',
   'transform',
   'animations',
   'interaction',
@@ -198,7 +198,8 @@ const FROZEN_INSPECTOR_TOKENS: ReadonlyArray<readonly [string, string]> = [
   ['--inspector-field-gap', '6px'],
   ['--inspector-group-gap', '8px'],
   ['--inspector-caption-gap', '3px'],
-  ['--inspector-label-w', '68px'],
+  // P2-G / UX-10 — 68px ellipsised any prop name over ~10 characters.
+  ['--inspector-label-w', '96px'],
   ['--inspector-rail-w', '32px'],
   ['--inspector-field-radius', '8px'],
   ['--inspector-space-4xs', '2px'],
@@ -356,11 +357,11 @@ describe('primitives carry the inspector skin', () => {
 //     section... onto the same four rows: family; weight+size; line-height+
 //     letter-spacing; text-align + vertical-align + a settings gear"):
 //     4 rows, never collapses (a text layer always has a font to show).
-//   - component (headered "Component", `appliesTo: studio.instance` only —
-//     does NOT mount for the F2/F3 fixtures below; included here for
-//     manifest completeness, not exercised by the e2e spec): 1 row (the
-//     header/name row) for a component with zero declared props — a real
-//     floor, not its typical size (each declared prop adds one more row).
+//   - component (one title row naming the instance since P2-G, "Button ·
+//     Local"; `appliesTo` one `studio.instance` only — does NOT mount for the
+//     F1-F4 fixtures below, and is measured as the e2e spec's F5): 1 row —
+//     the "takes no props" line — for a component with zero declared props, a
+//     real floor, not its typical size (each declared prop adds one row).
 //   - customProperties (headered "Custom properties", always resident, per
 //     its own doc: "still render the section so the 'Add property'
 //     affordance is discoverable; just no rows"): 1 row — the "Add property"
@@ -616,5 +617,55 @@ describe('P2-F — the ClassPicker fade only shows once scrolled (UX-6)', () => 
     const css = readSource(`${PANEL_DIR}/PropertiesPanel.module.css`)
     expect(ruleBody(css, '.headerClassPicker::after')).toContain('opacity: 0')
     expect(ruleBody(css, ".headerClassPicker:has(~ [data-scrolled='true'])::after")).toContain('opacity: 1')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2-G — the Component section, pinned as structure (UX-4, UX-7, UX-10,
+// UX-14). The measured half is F5 in `tests/e2e/inspector-height.e2e.ts`.
+// ---------------------------------------------------------------------------
+
+describe('P2-G — the Component section', () => {
+  it('sits directly under Measures, before every other section (UX-7)', () => {
+    const ids = INSPECTOR_SECTIONS.map((s) => s.id)
+    expect(ids.indexOf('component')).toBe(ids.indexOf('measures') + 1)
+    const component = INSPECTOR_SECTIONS.find((s) => s.id === 'component')!
+    expect(component.order).toBe(3)
+  })
+
+  it('is the one section that writes a call site, so no style lock hides it', () => {
+    const callSite = INSPECTOR_SECTIONS.filter((s) => s.writes === 'call-site').map((s) => s.id)
+    expect(callSite).toEqual(['component'])
+    expect(readSource(`${PANEL_DIR}/StyleSurface.tsx`)).toContain('designCallSiteSections(model)')
+  })
+
+  it('draws one title row — the shared static header — and no banded strips (UX-4)', () => {
+    const tsx = readSource(`${SECTIONS_DIR}/ComponentSection.tsx`)
+    expect(tsx).toContain('<SectionStaticHeader')
+    expect(tsx).not.toContain('<Section ')
+    const css = readSource(`${SECTIONS_DIR}/ComponentSection.module.css`)
+    expect(css).not.toContain('.header {')
+    expect(css).not.toContain('.actionsRow')
+    expect(css).not.toContain('var(--bg-surface-3)')
+    expect(css).not.toContain('1px solid var(--border)')
+    expect(ruleBody(css, '.section')).toContain('border-top: 1px solid var(--inspector-divider)')
+  })
+
+  it('does not mount for a multi-selection (UX-14)', () => {
+    const component = INSPECTOR_SECTIONS.find((s) => s.id === 'component')!
+    type Selection = Parameters<typeof component.appliesTo>[0]
+    const instance = { moduleId: 'studio.instance' }
+    expect(component.appliesTo({ isMultiSelect: false, selectedNode: instance } as unknown as Selection)).toBe(true)
+    expect(component.appliesTo({ isMultiSelect: true, selectedNode: instance } as unknown as Selection)).toBe(false)
+  })
+
+  it('the prop label column fits a real prop name, and the row gaps are frozen inside the panel (UX-10)', () => {
+    expect(readSource('admin/pages/site/panels/PropertiesPanel/PropertiesPanel.module.css')).toContain(
+      '--control-label-w: var(--inspector-label-w)',
+    )
+    const controlRow = readSource('ui/components/ControlRow/ControlRow.module.css')
+    expect(ruleBody(controlRow, "[data-field-skin='inspector'] .controlWrapper")).toContain(
+      'gap: var(--inspector-space-2xs)',
+    )
   })
 })
