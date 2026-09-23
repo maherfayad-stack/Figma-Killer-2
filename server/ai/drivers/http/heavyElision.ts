@@ -4,7 +4,7 @@
  * "The history is append-only"). Split out of `toolLoop.ts` at the 700-line
  * ceiling.
  */
-import type { ProviderAdapter, TurnToolResult } from './toolLoop'
+import type { ProviderAdapter, TurnToolResult } from './toolLoopTypes'
 
 /**
  * Tools whose results carry heavy, snapshot-in-time payloads (a full page's

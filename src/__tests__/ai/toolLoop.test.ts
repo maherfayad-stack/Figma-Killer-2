@@ -5,9 +5,8 @@ import {
   MAX_TOOL_ROUNDS,
   PROVIDER_RETRY_IMAGE_OMITTED,
   messageCacheBreakpoints,
-  type ProviderAdapter,
-  type TurnToolResult,
 } from '../../../server/ai/drivers/http/toolLoop'
+import type { ProviderAdapter, TurnToolResult } from '../../../server/ai/drivers/http/toolLoopTypes'
 import { projectHeavyElision } from '../../../server/ai/drivers/http/heavyElision'
 import type { AiStreamRequest } from '../../../server/ai/drivers/types'
 import type { AiBrowserBridge, AiStreamEvent, AiTool, AiToolOutput, ToolSideEffects } from '../../../server/ai/runtime/types'

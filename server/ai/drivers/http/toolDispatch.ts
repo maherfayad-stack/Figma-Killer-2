@@ -8,7 +8,7 @@ import type { AiTool, AiToolOutput } from '../../runtime/types'
 import type { AiStreamRequest } from '../types'
 import { executeAiTool } from './execTool'
 import { duplicateCallOutput, priorWriteOutcome, recordWriteOutcome, type TurnWriteLedger } from './toolLoopBounds'
-import type { TurnToolCall } from './toolLoop'
+import type { TurnToolCall } from './toolLoopTypes'
 
 // ---------------------------------------------------------------------------
 // Tool dispatch — concurrent observers, serialised writes

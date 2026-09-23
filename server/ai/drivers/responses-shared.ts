@@ -32,7 +32,7 @@ import {
   type TurnToolResult,
   type TurnTranslator,
   type TurnUsage,
-} from './http/toolLoop'
+} from './http/toolLoopTypes'
 import type { SseFrame } from './http/sse'
 import { toolArgumentsParse } from './http/toolArgs'
 import { openAiReasoningEffort } from './openAiReasoning'

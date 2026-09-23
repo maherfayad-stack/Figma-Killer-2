@@ -32,7 +32,8 @@ import type {
   AiResolvedCredential,
   AiStreamRequest,
 } from './types'
-import { runToolLoop, type ProviderAdapter, type TurnResult, type TurnToolCall, type TurnToolResult, type TurnTranslator, type TurnUsage } from './http/toolLoop'
+import { runToolLoop } from './http/toolLoop'
+import type { ProviderAdapter, TurnResult, TurnToolCall, TurnToolResult, TurnTranslator, TurnUsage } from './http/toolLoopTypes'
 import type { SseFrame } from './http/sse'
 import { parseToolArguments, toolArgumentsParse } from './http/toolArgs'
 import { anthropicModelProfile, anthropicReasoningFields } from './anthropicModelProfile'

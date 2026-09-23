@@ -22,7 +22,7 @@ import {
   type TurnToolResult,
   type TurnTranslator,
   type TurnUsage,
-} from './toolLoop'
+} from './toolLoopTypes'
 import type { SseFrame } from './sse'
 import { parseToolArguments, toolArgumentsParse } from './toolArgs'
 import { openAiReasoningEffort } from '../openAiReasoning'
