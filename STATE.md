@@ -87,7 +87,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - Nothing is blocked. Owner questions that gate future work are in `ROADMAP.md` §13 → "Open questions for the owner".
 
 ### panel-43 — P2-F: design pane spacing (UX-1, UX-2, UX-3, UX-5, UX-6)
-- **Agent:** panel-designer · **Branch:** `feat/design-pane-breathing-room` off `3b5ead5e` · **PR:** draft, base `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Agent:** panel-designer · **Branch:** `feat/design-pane-breathing-room` off `3b5ead5e` · **PR:** #234 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Goal:** the owner's ask, "add spacing to segregate a bit, specially in between props and the element below", paid for in height (OD-4).
 - **Done:**
