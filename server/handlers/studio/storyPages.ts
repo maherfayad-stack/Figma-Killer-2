@@ -149,11 +149,14 @@ export function buildStoryRouteEntries(
     if (cached) {
       built = { expanded: cached.expanded, componentSources: cached.componentSources }
     } else {
+      // WB-2 — every file a value was read out of, recorded with the rest.
+      const readFiles = new Set<string>()
       const evalOptions: StaticEvalOptions = {
         preferredKey,
         pageBudget: createPageEvalBudget(),
         workspaceRoot: dir,
         cssModuleClassMaps,
+        readFiles,
       }
       const fresh =
         story.body.kind === 'jsx'
@@ -167,7 +170,7 @@ export function buildStoryRouteEntries(
         setCachedRouteParse(
           cacheKey,
           configHash,
-          [story.absFile, ...fresh.dependencyFiles],
+          [story.absFile, ...fresh.dependencyFiles, ...readFiles],
           { expanded: fresh.expanded, componentSources: fresh.componentSources },
         )
       }

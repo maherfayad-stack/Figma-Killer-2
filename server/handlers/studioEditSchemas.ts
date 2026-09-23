@@ -394,6 +394,14 @@ export interface StudioEditRefusal {
     | 'insert-slot'
     | 'promote-component'
     | 'add-slot-prop'
+    // WB-24 — the value kinds that never refuse on their own still refuse
+    // `syntax-error` when the file they would write does not parse
+    // (`studioSyntaxGuard.ts`), so every kind can appear here.
+    | 'prop'
+    | 'text'
+    | 'literal'
+    | 'tag'
+    | 'asset'
   reason: string
   message: string
 }

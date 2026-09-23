@@ -23,6 +23,7 @@ import { realpathSync } from 'node:fs'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
+import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import type { StudioEdit } from './studioEditSchemas'
@@ -201,13 +202,21 @@ export function isWritableSourceRel(rel: string): boolean {
  *
  * An asset edit's target is an IMPORT DECLARATION, which any number of JSX
  * usages in the same file can read (`<img src={hero}/>` appearing twice) —
- * unlike a plain prop/style/tag/literal edit, whose `nodeId` names the ONE
- * element (or ONE dictionary entry) being changed, there is no cheap way to
+ * unlike a plain prop/style/tag edit, whose `nodeId` names the ONE element
+ * being changed, there is no cheap way to
  * tell from the id alone whether another node depends on the same import.
  * Treated as shared unconditionally: same "fail toward the reload" policy as
  * route chrome below — the cost of a false positive is one redundant reload,
  * the cost of a false negative is a board showing an image that no longer
  * matches source.
+ *
+ * WB-2 — a `literal` edit is shared too. Its target is a dictionary entry
+ * or a module-scope const (`textOrigin`), and a dictionary key is shared BY
+ * DESIGN: every other node — on this page or any other — that resolves to the
+ * same literal still shows the old copy until something re-reads it. The
+ * resync that follows is narrow: `reloadScope.ts` asks which routes recorded
+ * the origin file among their dependencies (the evaluator reports every file
+ * it reads a value out of — `pageParseCache.ts`), and reloads exactly those.
  *
  * WS-4.4/4.5 — `detach`/`swap` are ALSO treated as shared unconditionally:
  * both always rewrite JSX structure (adding/removing imports, replacing an
@@ -230,7 +239,7 @@ export function isWritableSourceRel(rel: string): boolean {
  * anything despite this.
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
-  if (kind === 'asset' || kind === 'detach' || kind === 'swap') return true
+  if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap') return true
   if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind))) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
@@ -265,7 +274,7 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
 }
 
 /**
- * Collapses edits that resolve to the SAME source location, keeping the last.
+ * Collapses edits that resolve to the SAME source location into one.
  *
  * Two board nodes can share one writeback target: every instance of an inlined
  * component maps back to the same lines in that component's file (measured on
@@ -273,6 +282,13 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * Without this, editing two instances in a single batch would apply both writes
  * to the same position — the second reading a file the first already changed,
  * for a silent last-write-wins with a stale intermediate.
+ *
+ * WB-7 — collapsing is not always "keep the last". A `style` or `class` edit
+ * carries a SET of changes, and two instances' sets are both wanted, so they
+ * are MERGED; only a genuine conflict (one property, one token, one prop value)
+ * is last-wins. The node ids that collapsed ride along on the surviving edit as
+ * `absorbedNodeIds`, so its outcome is reported for every one of them. See
+ * `studioEditMerge.ts`.
  *
  * `dir` is here so the key is the CANONICAL `rel` (`studioEditLocation`):
  * before `sec-18` this keyed on the raw string, so `pages/Home.tsx:10:5` and
@@ -324,8 +340,8 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
   edits: readonly T[],
-): T[] {
-  const byTarget = new Map<string, T>()
+): DedupedStudioEdit<T>[] {
+  const byTarget = new Map<string, DedupedStudioEdit<T>>()
   const passthrough: T[] = []
   for (const edit of edits) {
     const loc = studioEditLocation(dir, edit.nodeId)
@@ -351,7 +367,9 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       continue
     }
     const prop = 'prop' in edit ? String((edit as { prop?: unknown }).prop) : ''
-    byTarget.set(`${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}`, edit)
+    const key = `${loc.rel}:${loc.line}:${loc.col}|${edit.kind}|${prop}`
+    const earlier = byTarget.get(key)
+    byTarget.set(key, earlier ? collapseSameTargetEdits(earlier, edit) : edit)
   }
   return [...byTarget.values(), ...passthrough]
 }

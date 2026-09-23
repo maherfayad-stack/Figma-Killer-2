@@ -76,6 +76,8 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
+import { createSyntaxGuard } from './studioSyntaxGuard'
+import { expandMergedOutcomes } from './studioEditMerge'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   isRefusingEditKind,
@@ -511,7 +513,15 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
   // that produced it.
   const removed: (DeletedJsxText & { nodeId: string })[] = []
+  // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
+  const syntaxRefusal = createSyntaxGuard(dir)
   for (const edit of ordered) {
+    const brokenTarget = syntaxRefusal(edit)
+    if (brokenTarget) {
+      refusals.push(brokenTarget)
+      skipped += 1
+      continue
+    }
     try {
       const outcome = applyStudioEdit(dir, edit)
       if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
@@ -543,6 +553,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
       skipped += 1
     }
   }
+  // WB-7 — an edit several nodes collapsed into reports its outcome for each of them.
+  skipped += expandMergedOutcomes(ordered, refusals, unexplainedSkips)
 
   // Only a binding that was live BEFORE and is dead AFTER — an import the user
   // had already left unused is their line, not something this batch created.

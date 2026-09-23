@@ -17,19 +17,32 @@
  *
  * Per-file validity, not per-project: `setCachedRouteParse` records the mtime
  * of the route's own file AND every file the caller says this parse actually
- * depended on (its resolved LOCAL component sources, an App Router route's
- * layout chain). `getCachedRouteParse` is a hit only when every one of those
+ * depended on. `getCachedRouteParse` is a hit only when every one of those
  * recorded mtimes still matches — so editing `Hero.tsx` invalidates every
  * page that imports it directly, and editing an unrelated page's own file
  * invalidates only that one page.
  *
- * Dependency tracking is TRANSITIVE, not just the direct call sites
- * `resolveComponentSources` finds on the route's own file:
- * `inlineLocalComponents`' `dependencyFiles` out-param (see its own doc)
- * surfaces every local file it read while expanding a chain of local
- * components importing further local components, at every nesting level —
- * so a change three components deep in a nested composition invalidates the
- * exact routes that read it, on the next `getCachedRouteParse` call for them.
+ * The callers build that set from two out-params, one per layer of the parse:
+ *
+ * - **Structure** — `inlineLocalComponents`' `dependencyFiles`: every local
+ *   component file it expanded, at every nesting level (a change three
+ *   components deep invalidates the routes that read it), plus an App Router
+ *   route's layout chain.
+ * - **Values** (WB-2) — `StaticEvalOptions.readFiles`: every file the §7
+ *   evaluator read a value out of — a cross-file `const`, an i18n dictionary,
+ *   a Tier B provider, a `?raw` icon or image import, a CSS-in-JS
+ *   interpolation's theme token. Before this, a page reading
+ *   `{COPY.title}` from `src/copy.ts` cached text read out of a file nobody
+ *   watched: a resolved-text edit rewrote `src/copy.ts`, and every later load
+ *   served the old copy from here (`@core/page-parser`'s `evalReadFiles.ts`).
+ *
+ * What the set still does NOT cover, knowingly: a file whose mere EXISTENCE
+ * changes an answer without its text being read — a second
+ * `<Ctx.Provider>` added to an unrelated file (Tier B then becomes
+ * ambiguous), a barrel `index.ts` re-pointed at a different component, a
+ * missing image or `?raw` file that later appears. Those take a change to a
+ * file already in the set, or a server restart, to show.
+ *
  * This module only ever RECORDS the set the caller hands it — it takes no
  * part in discovering it, which is what keeps this cache correct as the
  * parser's own definition of "depends on" evolves.
@@ -112,7 +125,8 @@ export function clearPageParseCache(): void {
  * Track C5 (reload surgery) — the dependency data behind a TARGETED reload:
  * for every cached route of `dir`, the exact set of ABSOLUTE files that
  * route's own parse depended on (its own file, its resolved local-component
- * imports, and — for App Router — its layout chain). `reloadScope.ts` inverts
+ * imports, every file a value was read out of, and — for App Router — its
+ * layout chain). `reloadScope.ts` inverts
  * this map to answer the only question a narrow reload needs: *given the
  * file(s) a write just touched, which routes' parsed content is now stale?*
  *

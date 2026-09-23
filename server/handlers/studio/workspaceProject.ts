@@ -37,7 +37,15 @@
  *    next sync starts. Loads are the only callers and a single client already
  *    issues them one at a time; the queue is what keeps an MCP tool's
  *    concurrent load honest.
- * 3. **Not a lock against writes.** A codemod that lands while `fn` runs is
+ * 3. **Rebuilt when `tsconfig.json` moves.** The tsconfig is read once, in
+ *    `createWorkspaceProject`, and decides path-alias resolution for every
+ *    file — a sync cannot patch that in. So a moved `size:mtimeMs` on it
+ *    (edited, created, deleted) rebuilds the whole `Project`. That is also
+ *    how a tsconfig that stopped parsing (WB-23) becomes a
+ *    `tsconfig-unreadable` warning mid-session, and how fixing it brings the
+ *    aliases back without a restart. The warnings the current `Project` was
+ *    built with are handed to `fn` beside it.
+ * 4. **Not a lock against writes.** A codemod that lands while `fn` runs is
  *    picked up by the NEXT call's sync — the same staleness window a fresh
  *    `Project` had, since neither watches the disk. Writes go through their
  *    own `projectWriteLock.ts`.
@@ -47,19 +55,52 @@
  * `Project`; a `bun --watch` restart drops everything.
  */
 import { statSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, resolve, sep } from 'node:path'
 import type { Project } from 'ts-morph'
-import { createWorkspaceProject, listWorkspaceSourceFiles, resetParserCaches } from '@core/page-parser'
+import {
+  createWorkspaceProject,
+  listWorkspaceSourceFiles,
+  resetParserCaches,
+  type WorkspaceProjectWarning,
+} from '@core/page-parser'
 
 interface WorkspaceProjectEntry {
   project: Project
-  /** Absolute file path → the `size:mtimeMs` it had when the `Project` last read it. */
+  /** What `createWorkspaceProject` had to give up building `project` — a `tsconfig-unreadable`, today. */
+  warnings: readonly WorkspaceProjectWarning[]
+  /** `tsconfig.json`'s `size:mtimeMs` (`null` when absent) when `project` was built — see the module doc's rule 3. */
+  tsconfigStamp: string | null
+  /**
+   * The `Project`'s own spelling of each workspace file → the `size:mtimeMs`
+   * it had when the `Project` last read it. Keyed by `projectPath`, never by a
+   * `join()`ed path: on Windows the two differ in separator, and a key the
+   * `Project` cannot recognise made every in-memory file look like a stamped
+   * workspace file's stranger — or, worse, a stamped file look foreign.
+   */
   stamps: Map<string, string>
   /** The tail of the per-directory queue — every `withWorkspaceProject` call chains behind it. */
   queue: Promise<unknown>
 }
 
 const entries = new Map<string, WorkspaceProjectEntry>()
+
+/**
+ * The path as ts-morph spells it: forward slashes on every platform
+ * (`C:/Users/…` on Windows). `SourceFile.getFilePath()` returns this form, so
+ * it is the only key both halves of `syncWithDisk` can compare on.
+ */
+function projectPath(absFile: string): string {
+  return absFile.split(sep).join('/')
+}
+
+/**
+ * `tsconfig.json`'s `size:mtimeMs`, or `null` when there is none. Exported for
+ * the parse cache's config hash: the tsconfig decides alias resolution, so a
+ * route parsed under one tsconfig is not a valid answer under another.
+ */
+export function workspaceTsconfigStamp(dir: string): string | null {
+  return fileStamp(join(dir, 'tsconfig.json'))
+}
 
 function fileStamp(absFile: string): string | null {
   try {
@@ -75,17 +116,30 @@ function stampAll(dir: string): Map<string, string> {
   for (const relPath of listWorkspaceSourceFiles(dir)) {
     const abs = join(dir, ...relPath.split('/'))
     const stamp = fileStamp(abs)
-    if (stamp !== null) stamps.set(abs, stamp)
+    if (stamp !== null) stamps.set(projectPath(abs), stamp)
   }
   return stamps
 }
 
-function createEntry(dir: string): WorkspaceProjectEntry {
+/** A freshly built `Project` and everything recorded about it — see `createEntry`/`rebuildEntry`. */
+function buildProject(dir: string): Omit<WorkspaceProjectEntry, 'queue'> {
   // Stamp BEFORE the build reads the files: a write that lands during the
   // build then shows as a moved stamp on the next sync instead of being
   // recorded as the text the build never saw.
   const stamps = stampAll(dir)
-  return { project: createWorkspaceProject(dir), stamps, queue: Promise.resolve() }
+  const tsconfigStamp = workspaceTsconfigStamp(dir)
+  const warnings: WorkspaceProjectWarning[] = []
+  return { project: createWorkspaceProject(dir, warnings), warnings, tsconfigStamp, stamps }
+}
+
+function createEntry(dir: string): WorkspaceProjectEntry {
+  return { ...buildProject(dir), queue: Promise.resolve() }
+}
+
+/** Rule 3: `tsconfig.json` moved, so every file's resolution may have — start over. */
+function rebuildEntry(entry: WorkspaceProjectEntry, dir: string): void {
+  Object.assign(entry, buildProject(dir))
+  resetParserCaches()
 }
 
 /** Brings `entry.project` in step with the disk. Returns whether anything changed. */
@@ -116,7 +170,7 @@ function syncWithDisk(entry: WorkspaceProjectEntry, dir: string): boolean {
   // in through module resolution live outside the workspace (`node_modules`,
   // a lib `.d.ts`) and are left alone — evicting them would only force the
   // program to resolve them again.
-  const root = `${resolve(dir)}${join('/')}`
+  const root = `${projectPath(resolve(dir))}/`
   for (const sourceFile of project.getSourceFiles()) {
     const filePath = sourceFile.getFilePath()
     if (stamps.has(filePath)) continue
@@ -133,21 +187,25 @@ function syncWithDisk(entry: WorkspaceProjectEntry, dir: string): boolean {
  * Runs `fn` with `dir`'s kept `Project`, synced to the disk and exclusive to
  * `fn` until it settles. See the module doc for the contract.
  */
-export function withWorkspaceProject<T>(dir: string, fn: (project: Project) => Promise<T>): Promise<T> {
+export function withWorkspaceProject<T>(
+  dir: string,
+  fn: (project: Project, warnings: readonly WorkspaceProjectWarning[]) => Promise<T>,
+): Promise<T> {
   const key = resolve(dir)
   let entry = entries.get(key)
   if (!entry) {
     entry = createEntry(key)
     entries.set(key, entry)
     // Freshly built: already in step with the disk, nothing to sync.
-    const run = entry.queue.then(() => fn(entry!.project))
+    const run = entry.queue.then(() => fn(entry!.project, entry!.warnings))
     entry.queue = run.catch(() => undefined)
     return run
   }
   const kept = entry
   const run = kept.queue.then(() => {
-    syncWithDisk(kept, key)
-    return fn(kept.project)
+    if (workspaceTsconfigStamp(key) !== kept.tsconfigStamp) rebuildEntry(kept, key)
+    else syncWithDisk(kept, key)
+    return fn(kept.project, kept.warnings)
   })
   kept.queue = run.catch(() => undefined)
   return run
