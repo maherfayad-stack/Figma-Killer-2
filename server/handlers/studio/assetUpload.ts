@@ -1,12 +1,13 @@
 /**
  * assetUpload — `POST /admin/api/studio/asset-upload`, the write-side sibling
  * of `studioAsset.ts`'s read-only asset endpoint (WS-8.3). Lands one image
- * file into the workspace so it can back either:
+ * file into a caller-chosen directory so it can back a `kind: 'asset'` studio
+ * edit (`studioWriteback.ts`), which repoints an EXISTING `import heroImg
+ * from '...'` at the new file, or an MCP agent's own insert.
  *
- *   - a `kind: 'asset'` studio edit (`studioWriteback.ts`), which repoints an
- *     EXISTING `import heroImg from '...'` at the new file, or
- *   - a literal `src="..."` prop, written through the ordinary `kind: 'prop'`
- *     edit the client already has.
+ * A literal `src="..."` or CSS `url()` does NOT land here any more (IMG-1):
+ * it goes through `asset-drop`, which picks the one directory a literal URL
+ * can honestly point into (`public/`) and returns that URL.
  *
  * Exported as its own sub-router (`tryServeStudioAssetUpload`) rather than
  * added inline to `studio.ts` — see that file's module doc and
@@ -20,10 +21,17 @@
  *     import already points at when replacing that import's target.
  *   - `file`      — the uploaded image.
  *
- * Response: `{ ok: true, relPath }` — the new file's workspace-relative POSIX
- * path, exactly the shape `kind: 'asset'`'s `assetPath` field expects and
- * `resolveContainedAssetPath` (`studioWriteback.ts`) re-validates before it is
- * ever used to rewrite an import.
+ * Response: `{ ok: true, relPath, src, width, height, deduped }`. `relPath`
+ * is the file's workspace-relative POSIX path, exactly the shape `kind:
+ * 'asset'`'s `assetPath` field expects and `resolveContainedAssetPath`
+ * (`studioWriteback.ts`) re-validates before it is ever used to rewrite an
+ * import. `src` is the site-root URL from `assetSiteUrl.ts` when the file
+ * landed under the app's `public/` (so a production build serves it), else
+ * `null`: a file in `src/assets` has no literal URL a build honours, only an
+ * import. A caller that needs a literal lands through `asset-drop` instead.
+ * `width`/`height` are the intrinsic size (`null` when unknown), and
+ * `deduped` is true when identical bytes already sat in the target directory
+ * and that file was reused.
  *
  * SECURITY — this is a write path into the user's repo, so every input is
  * adversarial, not just the happy path:
@@ -70,6 +78,7 @@ import { badRequest, jsonResponse } from '../../http'
 import { ArchiveIngestError, readFormDataWithLimit } from './archiveIngest'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { landAssetBytes } from './assetLanding'
+import { assetSiteUrlResolver } from './assetSiteUrl'
 
 /** Per-file cap for an asset upload — tighter than the general archive-import cap; a single image has no business exceeding this. */
 export const MAX_ASSET_UPLOAD_BYTES = 25 * 1024 * 1024 // 25 MB
@@ -134,7 +143,15 @@ export async function tryServeStudioAssetUpload(
     const landed = landAssetBytes(dir, parsedFields.value.targetDir, bytes, file.name)
     if (!landed.ok) return badRequest(landed.error)
 
-    return jsonResponse({ ok: true, relPath: landed.relPath })
+    const url = assetSiteUrlResolver(dir)(landed.relPath)
+    return jsonResponse({
+      ok: true,
+      relPath: landed.relPath,
+      src: url?.buildSafe ? url.src : null,
+      width: landed.width,
+      height: landed.height,
+      deduped: landed.deduped,
+    })
   } catch (err) {
     rethrowProjectDirRefusal(err)
     console.error('[studio]', err)

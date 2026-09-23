@@ -11,12 +11,22 @@
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { compiledCheck } from '@core/utils/typeboxCompiler'
-import { getStudioWorkspaceDir } from './studioWorkspaceDir'
+import { studioWriteDir } from './studioWorkspaceDir'
 
 const AssetUploadResponseSchema = Type.Object({
   ok: Type.Boolean(),
   /** Workspace-relative POSIX path of the written file — feeds `kind: 'asset'`'s `assetPath`. */
   relPath: Type.String(),
+  /**
+   * The site-root URL when the file landed under the app's `public/`, else
+   * `null` (a file in `src/assets` is reachable only through an import). The
+   * server's `assetSiteUrl.ts` decides; this client never derives a URL.
+   */
+  src: Type.Union([Type.String(), Type.Null()]),
+  width: Type.Union([Type.Number(), Type.Null()]),
+  height: Type.Union([Type.Number(), Type.Null()]),
+  /** True when identical bytes already sat in the target directory and that file was reused. */
+  deduped: Type.Boolean(),
 })
 export type AssetUploadResponse = Static<typeof AssetUploadResponseSchema>
 
@@ -72,8 +82,12 @@ export function uploadStudioAsset(file: File, options: UploadStudioAssetOptions 
     }
 
     const body = new FormData()
-    const overrideDir = getStudioWorkspaceDir()
-    if (overrideDir) body.set('dir', overrideDir)
+    // `studioWriteDir()`, the same helper every other Studio write uses: the
+    // explicit selection, else the dir the last load actually read. The bare
+    // localStorage override skipped the second half, so a session with no
+    // explicit selection could land the file in a different project.
+    const dir = studioWriteDir()
+    if (dir) body.set('dir', dir)
     if (options.targetDir) body.set('targetDir', options.targetDir)
     body.set('file', file)
     xhr.send(body)

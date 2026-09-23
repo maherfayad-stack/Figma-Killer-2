@@ -712,17 +712,20 @@ The delete is the one in this feature, and its guard is stated where it happens:
 
 ---
 
-## Landing an image the user dropped on the canvas
+## Landing an image that a literal URL will reference
 
 `POST /admin/api/studio/asset-drop` (`server/handlers/studio/assetDrop.ts`) —
-D2 G15's write. It is the second of two routes that put an image byte buffer
-into a project, and the difference between them is worth stating precisely
-because it is NOT a security difference:
+D2 G15's write, and since IMG-1 the route for **every** image referenced by a
+literal: a file dropped on a frame, the inspector's "Replace image" on an
+`<img>` whose `src` is a string, and the Fill section's image upload. It is the
+second of two routes that put an image byte buffer into a project, and the
+difference between them is worth stating precisely because it is NOT a
+security difference:
 
 | | `asset-upload` (WS-8.3) | `asset-drop` (D2 G15) |
 |---|---|---|
 | Who says where the file goes | the caller, via `targetDir` | the SERVER, always `public/` |
-| What reads it afterwards | an `import heroImg from '…'` the caller is about to repoint | a literal `<img src="/photo.png">` Studio is about to write |
+| What reads it afterwards | an `import heroImg from '…'` the caller is about to repoint | a literal `<img src="/photo.png">` or `url('/photo.png')` Studio is about to write |
 | Traversal surface | a client string, guarded by `resolveAssetWriteDir` | none — the directory is a constant |
 
 Everything else is one shared pipeline and is not duplicated: the body is
@@ -730,9 +733,15 @@ capped by **streamed byte count** (`readFormDataWithLimit`, so a spoofed
 `content-length` cannot bypass it), the **bytes** decide the format and the
 written extension (`sniffImageExtension` — never the filename or the declared
 MIME), SVG is sanitised before it touches disk, the filename is derived rather
-than trusted, a collision gets a numeric suffix rather than clobbering, and
-containment is checked on the **real** path of the nearest existing ancestor.
-All of it lives in `assetLanding.ts`.
+than trusted, a collision gets a numeric suffix rather than clobbering (the
+name is claimed with an exclusive `wx` create, after an `lstat` that treats a
+symlink, dangling or not, as taken), identical bytes already in the target
+directory are reused instead of copied (`deduped: true`; same directory, same
+extension, same size, then a chunked byte comparison that exits at the first
+difference, capped at 16 candidates and 64 MB read per landing), and
+containment is checked on the
+**real** path of the nearest existing ancestor. All of it lives in
+`assetLanding.ts`; the intrinsic size comes from `imageDimensions.ts`.
 
 **Why `public/` is the only answer.** It is the one directory every framework
 the probe recognises (Vite, CRA, both Next routers, Remix, Astro) serves
@@ -746,10 +755,32 @@ created only for a project whose framework declares the convention; for
 `framework: 'unknown'` the route answers **409** with the remedy
 ("create a public/ folder") rather than guessing.
 
-Response: `{ ok: true, relPath, src }` — `relPath` is workspace-relative
-(`public/photo.png`, or `apps/web/public/photo.png` in a monorepo) and `src` is
-the literal the `<img>` gets (`/photo.png` in both cases: the app root is where
-the app lives on disk and the browser never sees it).
+Response: `{ ok: true, mode: 'public', relPath, src, width, height, deduped }`
+— `relPath` is workspace-relative (`public/photo.png`, or
+`apps/web/public/photo.png` in a monorepo) and `src` is the literal the `<img>`
+gets (`/photo.png` in both cases: the app root is where the app lives on disk
+and the browser never sees it). `width`/`height` are the intrinsic size read
+from the header bytes (PNG, JPEG with EXIF orientation, GIF, WebP, SVG), or
+`null`. `mode` is the discriminant IMG-10's import convention will join with a
+`mode: 'import'` member that has no `src`.
+
+**One rule turns a file into a URL** (`assetSiteUrl.ts`): relative to the app
+root, `public/x` is `/x` and build-safe; any other file under the app root is
+`/<path>` and dev-only; a file outside the app root has no URL. `asset-drop`,
+`asset-upload` (whose `src` is `null` unless the file landed under `public/`)
+and `GET /admin/api/studio/project-assets` (each entry is
+`{ relPath, src, buildSafe }`) all return its answer, and the browser writes
+that string verbatim. The client derives nothing. Every segment of that URL is
+percent-encoded, `!'()*` included, and a path with an empty segment gets no
+URL: a file name from an imported repo is untrusted, and the URL lands inside
+a JSX string and a CSS `url('…')`, so `a'), url(evil.png), url('.png` must not
+close the string, and `/\host` or `//host` must never be produced.
+
+**Replay.** `asset-drop` is in `apiClient.ts`'s `IDEMPOTENT_REPLAY_PATHS`
+and wrapped in `withIdempotentReplay` (`idempotentReplay.ts`): a gateway-down
+retry carries the same `X-Studio-Idempotency-Key` and gets the first response
+back without the route running again. Content dedupe is the second guard: a
+retry whose record is gone still reuses the file.
 
 **Who may ask** (`sec-17`, `sec-14`). One line in `routeCapabilities.ts` —
 `{ path: '/admin/api/studio/asset-drop', read: null, mutate: 'studio.write' }`
@@ -767,9 +798,10 @@ reach the filesystem at all.
 
 `sec-17` found this route unauthenticated and added an inline `originAllowed` +
 `requireCapability` pair, because the base it reviewed had no table to declare
-into; integration replaced that pair with the declaration and moved the
-sub-router back onto the plain `STUDIO_SUB_ROUTERS` list, since it no longer
-needs the `DbClient`. `asset-upload` and `/save` are declarations in the same
+into; integration replaced that pair with the declaration. The sub-router
+sits on `STUDIO_SESSION_SUB_ROUTERS`, because its replay record is bound to
+the user the gate authenticated (every `withIdempotentReplay` record stores
+the user id, method and path, and a mismatch is a miss). `asset-upload` and `/save` are declarations in the same
 table now, so the asymmetry `sec-17` recorded is gone.
 
 ---

@@ -228,9 +228,9 @@ test.describe('dragging an image file onto a design frame', () => {
       .toContain('<img')
 
     const after = readPage()
-    // The `src` is a SITE-ROOT literal, not a `public/` path: `droppedAssetSrc`
-    // strips everything up to and including `public/` precisely because that is
-    // the segment no framework serves.
+    // The `src` is a SITE-ROOT literal, not a `public/` path: `assetSiteUrl.ts`
+    // strips the app root's `public/` precisely because that is the segment no
+    // framework serves.
     expect(after, 'the <img src> was written as a project path instead of a site-root literal').toMatch(
       /<img[^>]*src="\/[^"]+\.png"/,
     )

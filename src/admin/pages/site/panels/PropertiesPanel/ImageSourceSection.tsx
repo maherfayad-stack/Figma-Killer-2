@@ -18,10 +18,15 @@
  *      doc comment for why).
  *   2. **Literal, writable** (`isPropWritableToSource` true, no `assetOrigin`).
  *      `src="/img/hero.png"` already had a writeback — `setJsxProp` — it just
- *      had the wrong (CMS media library) picker in front of it. Uploading
- *      here still lands the file on disk, but the new value is a plain string
- *      the user commits through the ordinary prop-change path (`onChange`),
- *      exactly like any other text control.
+ *      had the wrong (CMS media library) picker in front of it. The file
+ *      lands through `asset-drop` (`dropStudioAsset`), the route for every
+ *      image referenced by a literal: it goes into the app's `public/`, and
+ *      the server returns the `src` a production build serves it at. That
+ *      string is committed verbatim through the ordinary prop-change path
+ *      (`onChange`), exactly like any other text control. (IMG-1: this used
+ *      to land in `src/assets/` and write `'/' + relPath`, i.e.
+ *      `src="/src/assets/x.png"`, which works in `vite dev` and 404s in a
+ *      build. The client derives no URL any more.)
  */
 import { useEffect, useRef, useState, type DragEvent } from 'react'
 import type { PageNode } from '@core/page-tree'
@@ -33,6 +38,7 @@ import { getErrorMessage } from '@core/utils/errorMessage'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
+import { dropStudioAsset } from '@site/studio/dropStudioAsset'
 import { saveStudioAssetEdit } from '@site/studio/studioSaveRequests'
 import styles from './ImageSourceSection.module.css'
 
@@ -89,19 +95,19 @@ export function ImageSourceSection({ node, prop, value, onChange }: ImageSourceS
     setUploading(true)
 
     try {
-      // No explicit `targetDir` — the server defaults new uploads to
-      // `src/assets`. (A future asset browser could offer the directory an
-      // existing import already points at; out of scope for this slice.)
-      const uploaded = await uploadStudioAsset(file)
-
       if (assetOrigin) {
+        // No explicit `targetDir` — the server defaults new uploads to
+        // `src/assets`, which an import resolves through the bundler. (Landing
+        // beside the old import's own directory is IMG-3's.)
+        const uploaded = await uploadStudioAsset(file)
         const originNodeId = `${assetOrigin.rel}:${assetOrigin.line}:${assetOrigin.col}`
         await saveStudioAssetEdit(originNodeId, uploaded.relPath)
         // The board reload triggered by `saveStudioAssetEdit` replaces this
         // node's props from freshly parsed source, which supersedes the
         // local object-URL preview — nothing further to do here.
       } else if (writable) {
-        onChange(prop, `/${uploaded.relPath}`)
+        const landed = await dropStudioAsset(file)
+        onChange(prop, landed.src)
       }
     } catch (err) {
       releaseLocalPreview()

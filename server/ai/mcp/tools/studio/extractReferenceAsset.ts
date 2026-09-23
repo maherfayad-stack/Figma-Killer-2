@@ -161,7 +161,8 @@ export const studioExtractReferenceAssetTool: AiTool = {
       relPath: landed.relPath,
       width,
       height,
-      bytesWritten: png.byteLength,
+      deduped: landed.deduped,
+      bytesWritten: landed.deduped ? 0 : png.byteLength,
       reference: { id: reference.id, autoSelected: resolved.implicit },
     })
   },
