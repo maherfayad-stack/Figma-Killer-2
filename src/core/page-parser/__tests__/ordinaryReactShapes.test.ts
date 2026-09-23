@@ -265,6 +265,39 @@ describe('WB-5 — a page renders from a class or through an unknown HOC, or nam
     }
   })
 
+  it('lets the default export decide — another exported function is never rendered in its place', () => {
+    // A Next-style page: a data function exported beside a wrapped default.
+    // Falling back to "the first exported function" rendered the data function
+    // (nothing, and no reason given) instead of the page.
+    write('pages/Shelf.tsx', [
+      "import { withLayout } from '../lib/hoc'",
+      'export async function getServerSideProps() { return { props: {} } }',
+      'export function ShelfTitle() { return <h2>Not the page</h2> }',
+      'function Shelf() {',
+      '  return <h1>Shelf</h1>',
+      '}',
+      'export default withLayout(Shelf)',
+    ])
+    const page = load('pages/Shelf.tsx')
+    expect(texts(page)).toEqual(['Shelf'])
+
+    write('pages/Shelf.tsx', [
+      "import { lazy } from 'react'",
+      'export function ShelfTitle() { return <h2>Not the page</h2> }',
+      "export default lazy(() => import('./Other'))",
+    ])
+    const lazyPage = load('pages/Shelf.tsx')
+    expect(texts(lazyPage)).toEqual([])
+    expect(lazyPage.unreadableExport?.message).toContain('lazy()')
+  })
+
+  it('reads a local component exported as `export { Shelf as default }`', () => {
+    write('pages/Shelf.tsx', ['function Shelf() {', '  return <h1>Shelf</h1>', '}', 'export { Shelf as default }'])
+    const page = load('pages/Shelf.tsx')
+    expect(texts(page)).toEqual(['Shelf'])
+    expect(page.unreadableExport).toBeUndefined()
+  })
+
   it('reads a HOC applied one name away', () => {
     write('pages/Shelf.tsx', [
       "import { withLayout } from '../lib/hoc'",

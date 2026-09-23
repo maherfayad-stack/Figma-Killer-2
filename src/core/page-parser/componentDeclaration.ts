@@ -60,13 +60,15 @@ const MAX_UNWRAP_HOPS = 12
  *   2. `export default Foo` / `export default () => {...}` /
  *      `export default memo(Foo)` (an identifier resolves back to its local
  *      function/const declaration)
- *   3. The first exported function declaration, or `const` whose initializer
- *      is a component (a function/arrow, or one inside `memo`/`forwardRef`),
- *      in source order.
+ *   3. Only when the file has NO default export at all: the first exported
+ *      function declaration, or `const` whose initializer is a component (a
+ *      function/arrow, or one inside `memo`/`forwardRef`), in source order.
  *
- * Returns a declaration for `getFunctionLikeNode` to read; `undefined` when the
- * file has no component in any of those shapes (see `readPageComponent` for
- * the page-only shapes beyond these).
+ * A default export the steps above cannot read (`withLayout(Page)`, a class,
+ * `lazy(…)`) ends the search with `undefined` — it never falls through to some
+ * OTHER exported function. That fallback used to render a Next-style page's
+ * `getServerSideProps` (nothing, with no reason given) in place of
+ * `export default withLayout(Page)`; `readPageComponent` reads those shapes.
  */
 export function findComponentDeclaration(sourceFile: SourceFile): Node | undefined {
   for (const fn of sourceFile.getFunctions()) {
@@ -84,6 +86,7 @@ export function findComponentDeclaration(sourceFile: SourceFile): Node | undefin
       return expr
     }
   }
+  if (hasDefaultExport(sourceFile)) return undefined
 
   for (const statement of sourceFile.getStatements()) {
     if (Node.isFunctionDeclaration(statement) && statement.isExported()) {
@@ -97,6 +100,16 @@ export function findComponentDeclaration(sourceFile: SourceFile): Node | undefin
   }
 
   return undefined
+}
+
+/** Any spelling of a default export: `export default …`, a default class or function, or `export { X as default } [from …]`. */
+function hasDefaultExport(sourceFile: SourceFile): boolean {
+  if (sourceFile.getExportAssignments().some((ea) => !ea.isExportEquals())) return true
+  if (sourceFile.getFunctions().some((fn) => fn.isDefaultExport())) return true
+  if (sourceFile.getClasses().some((cls) => cls.isDefaultExport())) return true
+  return sourceFile
+    .getExportDeclarations()
+    .some((decl) => decl.getNamedExports().some((spec) => (spec.getAliasNode()?.getText() ?? spec.getNameNode().getText()) === 'default'))
 }
 
 /**
@@ -233,6 +246,12 @@ export function readPageComponent(sourceFile: SourceFile): PageComponent {
   )
   if (reexport) {
     const specifier = reexport.getModuleSpecifierValue()
+    // `export { Shelf as default }` — a local name, read like `export default Shelf`.
+    const local = specifier
+      ? undefined
+      : reexport.getNamedExports().find((spec) => spec.getAliasNode()?.getText() === 'default')?.getNameNode()
+    const found = local ? readDefaultExpression(local, [], 0) : undefined
+    if (found) return found
     return {
       kind: 'unreadable',
       at: reexport,
