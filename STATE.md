@@ -103,8 +103,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - F3.4: `devServer.ts` spawns `npm run dev`, which runs a repo-supplied `predev`/`postdev`; switch to `npm run --ignore-scripts dev` (or exec Vite directly) — owner: the Tier-2 dev-server bundle.
   - F5: temp-file + rename for crash-atomic writes (needs EPERM-on-Windows handling and mode preservation).
   - F8: `studio_fetch_remote_asset` host restriction or first-use confirmation — P4-E.
-  - R1 residuals: imports of a NESTED workspace's config, a dev script's custom `--config` path, Tailwind v4 `@plugin`/`@config` in CSS.
-- **Human action needed:** security-guard sign-off; dogfood with an Anthropic API key (script in the PR body).
+  - R1 residuals (security re-review 2 APPROVED with these open, `review-233`): imports of a NESTED app's config (scan `resolveAppRoot` next), depth-3 imports, backtick `import()`, postcss plugin-map keys, tsconfig-`paths` imports, a symlinked config, a dev script's custom `--config`, Tailwind v4 `@plugin`/`@config`. Each needs an import chain already present; none exists in a scaffolded project.
+- **Human action needed:** dogfood with an Anthropic API key (script in the PR body). Security sign-off done.
 
 ---
 
