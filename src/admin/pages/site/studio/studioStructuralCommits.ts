@@ -55,9 +55,19 @@ interface StructuralCommitOptions {
    * `store-14` — this gesture's ⌘Z, as a template the write's own answer fills
    * in (`structuralUndoPlan.ts`). Omitted by `move`/`reparent`, whose undo
    * already rides the tree-mutation stack (`structuralHistory.ts`), and by
-   * `delete`, which has no inverse the protocol can express.
+   * `delete`, which uses `fill` below instead — its own tree mutation already
+   * pushed an entry, and TAGGED it with this same template, before the commit
+   * that reveals the answer even started.
    */
   undo?: { label: string; template: StructuralInverseTemplate }
+  /**
+   * `store-15` — set only by `delete`. Its tree mutation (and history entry)
+   * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
+   * tagged it with the gesture's `label`/`forward`/`inverseTemplate` already
+   * filled in. This asks the resync to fill in just `inverse`, the one field
+   * that answer could not know yet, on that SAME entry.
+   */
+  fill?: boolean
   /**
    * Set when this commit IS an undo or a redo re-issuing a stored entry. The
    * stack bookkeeping happened in `undoRedoActions.ts`; this only asks the
@@ -387,14 +397,15 @@ export async function commitStudioUngroup(
  * which makes a multi-select delete a single honest transaction rather than N
  * racing ones.
  *
- * No `undo` template: undoing a source delete means writing the element's
- * original markup back into the file, and no `StudioEdit` kind carries a
- * subtree's source text. The tree-mutation entry this gesture already pushes
- * says so (`refuseStructuralUndo`).
+ * `fill: true`, never `undo` — see `StructuralCommitOptions.fill`.
+ * `deleteNodesAction.ts` already pushed AND tagged the entry
+ * (`label`/`forward`/`inverseTemplate`, decided from the pre-delete tree —
+ * the only moment the deleted elements' positions are known); this commit's
+ * job is only to reveal what it discarded, `inverse`'s reason to wait.
  */
 export async function commitStudioDelete(nodeIds: readonly string[]): Promise<void> {
   if (nodeIds.length === 0) return
-  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused')
+  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused', { fill: true })
 }
 
 /**
@@ -634,6 +645,8 @@ async function commitStructuralBody(
       const outcome: StructuralWriteOutcome = {
         createdNodeIds: result.createdNodeIds ?? [],
         relocatedNodeIds: result.relocatedNodeIds ?? [],
+        removed: result.removed ?? [],
+        prunedImports: result.prunedImports ?? [],
       }
       setPendingStructuralOutcome({
         selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
@@ -671,9 +684,10 @@ async function commitStructuralBody(
 }
 
 /**
- * What this landed write means for the undo stack: a new entry, a refresh of
- * the one an undo/redo just moved, or nothing at all for the gestures whose
- * undo lives on the tree-mutation stack.
+ * What this landed write means for the undo stack: a new entry, a FILL of the
+ * entry `delete`'s own tree mutation already tagged, a refresh of the one an
+ * undo/redo just moved, or nothing at all for the gestures (`move`/`reparent`)
+ * whose undo lives entirely on the tree-mutation stack.
  */
 function resolvePendingHistory(
   edits: readonly StructuralEditPayload[],
@@ -681,6 +695,7 @@ function resolvePendingHistory(
   outcome: StructuralWriteOutcome,
 ): PendingStructuralHistory | null {
   if (options.reissue) return { kind: 'refresh', direction: options.reissue, outcome }
+  if (options.fill) return { kind: 'fill', outcome }
   if (!options.undo) return null
   return {
     kind: 'push',

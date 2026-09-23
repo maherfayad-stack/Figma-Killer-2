@@ -70,13 +70,21 @@ export type {
 } from './unwrapJsxElement'
 export { deleteJsxElement } from './deleteJsxElement'
 export { createImportPruneSession, isPrunableSourceFile } from './pruneOrphanedImports'
-export type { ImportPruneSession } from './pruneOrphanedImports'
+export type { ImportPruneSession, PrunedImportsResult } from './pruneOrphanedImports'
 export type {
+  DeletedJsxText,
   DeleteJsxElementParams,
   DeleteJsxElementResult,
   DeleteJsxRefusal,
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
+export { reinsertJsxSource } from './reinsertJsxSource'
+export type {
+  ReinsertJsxRefusal,
+  ReinsertJsxRefusalReason,
+  ReinsertJsxSourceParams,
+  ReinsertJsxSourceResult,
+} from './reinsertJsxSource'
 export type { CreatedJsxLocation } from './createdJsxLocation'
 export { insertJsxElement } from './insertJsxElement'
 export type { InsertJsxElementParams, InsertJsxElementResult } from './insertJsxElement'

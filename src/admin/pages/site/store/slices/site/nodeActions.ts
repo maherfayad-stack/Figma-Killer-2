@@ -51,7 +51,7 @@ import { createVisibilityActions } from './visibilityActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
-import { captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
+import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
@@ -311,7 +311,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       if (excludePendingOptimisticTargets([nodeId]).length === 0) return
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
-      const plan = planSourceDelete([readTree()?.nodes[nodeId]])
+      const tree = readTree()
+      const plan = planSourceDelete([tree?.nodes[nodeId]])
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
           nodeId: plan.nodeId,
@@ -324,18 +325,39 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         })
         return
       }
-      const deleted = mutateActiveTree((tree) => {
-        if (!tree.nodes[nodeId]) return false
-        deleteNode(tree, nodeId)
+      // `store-15` — captured against the tree as it is RIGHT NOW, the last
+      // moment before the mutation below removes this node from it.
+      // `planSourceDelete([single node])` only ever pushes one id — see that
+      // function's own loop.
+      const origin = plan.commit && tree ? captureDeleteOrigin(tree, plan.commit[0]!) : null
+      const deleted = mutateActiveTree((draft) => {
+        if (!draft.nodes[nodeId]) return false
+        deleteNode(draft, nodeId)
         return true
       })
       if (deleted && plan.commit) {
         void commitStudioDelete(plan.commit)
         // `live-07` — same-tick paint for a live (bridge) frame; portal
         // frames already got theirs from the tree mutation above.
-        // `planSourceDelete([single node])` only ever pushes one id for a
-        // single-node call — see that function's own loop.
         broadcastOptimisticDelete(plan.commit[0]!)
+        // `store-15` — folded into the `source` family; see
+        // `deleteNodesAction.ts`'s identical tag for why this tags the entry
+        // the mutation above already pushed rather than pushing a second one.
+        tagStructuralGesture(set, {
+          gesture: 'source',
+          source: {
+            label: 'Delete',
+            forward: [{ kind: 'delete', nodeId: plan.commit[0]! }],
+            inverseTemplate: origin
+              ? { kind: 'reinsert-deleted', nodes: [{ nodeId: origin.nodeId, parentNodeId: origin.parentId, index: origin.index }] }
+              : {
+                  kind: 'unsupported',
+                  message:
+                    'This element’s position could not be recorded for undo — its container has no place in the file of its own (it may be the whole of what this page returns). Use your editor’s undo or `git` to bring it back.',
+                },
+            inverse: null,
+          },
+        })
       }
       // Drop the deleted node (and any descendants swept with it) from the
       // canvas selection so no phantom selection ring survives. Pruning by
