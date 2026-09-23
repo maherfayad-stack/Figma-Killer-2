@@ -157,6 +157,19 @@ interface RoutingEvent extends AgentRoutedTurn {
   type: 'routing'
 }
 
+/**
+ * The provider was momentarily unable and the server is re-sending the same
+ * request (AI-8, `server/ai/drivers/http/providerRetry.ts`). A quiet status,
+ * never an error: the turn is still alive.
+ */
+interface RetryingEvent {
+  type: 'retrying'
+  attempt: number
+  maxAttempts: number
+  delayMs: number
+  reason: string
+}
+
 export type ServerStreamEvent =
   | TextEvent
   | BridgeReadyEvent
@@ -167,6 +180,7 @@ export type ServerStreamEvent =
   | ContextEvent
   | ReasoningEvent
   | RoutingEvent
+  | RetryingEvent
   | DoneEvent
   | ErrorEvent
 
@@ -233,6 +247,14 @@ export interface AgentMessage {
    * ordinary state — the strip then counts tool calls instead.
    */
   reportedStep?: { index: number; total: number }
+  /**
+   * AI-8 — set while the server is retrying a request the provider was
+   * momentarily unable to serve; cleared by the next thing the turn produces.
+   * Session-only and display-only, like `reportedStep`: the activity strip's
+   * headline says "retrying" instead of looking stuck, and it is never an
+   * error.
+   */
+  retrying?: { attempt: number; maxAttempts: number }
 }
 
 export interface AgentLayoutRect {

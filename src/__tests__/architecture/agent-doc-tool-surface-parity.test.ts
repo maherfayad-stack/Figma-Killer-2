@@ -19,9 +19,9 @@
 import { describe, expect, it } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { STUDIO_AGENT_TOOL_NAMES } from '../../../server/ai/tools/studio/agentToolNames'
+import { STUDIO_AGENT_TOOL_NAMES, STUDIO_HTTP_AGENT_FILE_TOOL_NAMES } from '../../../server/ai/tools/studio/agentToolNames'
 import { STUDIO_CANVAS_PARITY_MATRIX } from '../../../server/ai/tools/studio/parityMatrix'
-import { studioAgentTools } from '../../../server/ai/tools/studio'
+import { studioAgentTools, studioHttpAgentTools } from '../../../server/ai/tools/studio'
 import { resolveNativeToolAllowlist } from '../../../server/ai/drivers/claudeCliToolSurface'
 
 const AGENT_DOC = readFileSync(join(import.meta.dir, '..', '..', '..', 'docs', 'features', 'agent.md'), 'utf8')
@@ -68,6 +68,23 @@ describe('agent.md states the tool surface the code actually has', () => {
       } else {
         expect(tool.requiresWrite, `${tool.name} is documented as gated but is not requiresWrite`).toBe(true)
         for (const cap of caps) expect(gateCell, `${tool.name}'s Gate column omits ${cap}`).toContain(`\`${cap}\``)
+      }
+      expect(loopCell, `${tool.name}'s Loop column`).toBe(`\`${tool.sideEffects}\``)
+    }
+  })
+
+  it('the HTTP drivers\' file-tool table lists exactly STUDIO_HTTP_AGENT_FILE_TOOL_NAMES, with each tool\'s own metadata (P4-C)', () => {
+    const rows = tableRows(between('<!-- agent-http-file-tools:start -->', '<!-- agent-http-file-tools:end -->'))
+    expect(rows.map((row) => row[0]!.replace(/`/g, ''))).toEqual([...STUDIO_HTTP_AGENT_FILE_TOOL_NAMES])
+    const byName = new Map(studioHttpAgentTools.map((tool) => [tool.name, tool]))
+    for (const [nameCell, whereCell, gateCell, loopCell] of rows) {
+      const tool = byName.get(nameCell!.replace(/`/g, ''))!
+      expect(whereCell, `${tool.name}'s "Where it runs"`).toBe(`\`${tool.execution}\``)
+      if (gateCell === 'read') {
+        expect(tool.requiresWrite ?? false, `${tool.name} is documented as a read but is write-gated`).toBe(false)
+      } else {
+        expect(tool.requiresWrite, `${tool.name} is documented as gated but is not requiresWrite`).toBe(true)
+        for (const cap of tool.requiredCapabilities ?? []) expect(gateCell).toContain(`\`${cap}\``)
       }
       expect(loopCell, `${tool.name}'s Loop column`).toBe(`\`${tool.sideEffects}\``)
     }

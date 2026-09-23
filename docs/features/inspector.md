@@ -910,7 +910,7 @@ selection at the 12px section gap (152px while panel-39 held it at 8px — see �
 
 | order | id | Component | Where it mounts | Claims |
 |---|---|---|---|---|
-| 10 | `component` | `ComponentSection.tsx` | Design, inline — `studio.instance` nodes only | call-site props |
+| 3 | `component` | `ComponentSection.tsx` | Design, inline, directly under Measures — ONE selected `studio.instance` only | call-site props |
 | 11 | `transform` | `TransformSection.tsx` | Design **More**, and Prototype expanded | `transform`, `transformOrigin` |
 | 12 | `animations` | `AnimationsSection.tsx` | Design **More**, and Prototype expanded | `animation*`, `transition` |
 | 13 | `interaction` | `InteractionSection.tsx` | Design **More**, and Prototype expanded | `cursor`, `pointerEvents`, `userSelect`, `scrollBehavior` |
@@ -936,6 +936,24 @@ the manifest on direct user feedback and parked `AttributesSection.tsx` /
 tests. The `htmlAttributes` **prop** is untouched — the publisher,
 `htmlImport`, and every base module's renderer still read it; only its
 retired editor UI is gone.
+
+**The Component section, after P2-G (UX-4, UX-7, UX-14, UX-16).** It is no
+longer at the tail: an instance's props are the thing an instance is selected
+to edit, so the entry is `order: 3`, directly under Measures — Penpot's frame
+order (layer → measures → component → layout) and Figma's. It is drawn as ONE
+title row, `SectionStaticHeader` reading "Button · Local" with Detach and Swap
+as icon buttons in the trailing slot, where it used to stack a "Component"
+section title, a filled band repeating the name, and a bordered actions row.
+Swap opens an `InspectorPopover` instead of pushing the props down. The
+section does not mount for a multi-selection (`showsComponentSection`): the
+anchor's call-site values are not the selection's, and every row, Detach and
+Swap would have written the anchor alone. It is also the one entry with
+`writes: 'call-site'`: `StyleSurface` replaces the style sections with one
+notice when no style target is writable, which is always the case for an
+instance with no class, and before P2-G that notice swallowed the props too.
+`designCallSiteSections` still mounts it above the notice. A Detach refusal
+shows the parser's sentence under the title, and `explainDetachConstraint`
+alone decides whether "duplicate as a new file" is offered.
 
 **Separate entries, not one "Studio extras" component** — Component only applies
 to `studio.instance` nodes (the others apply to any node), and cramming
@@ -1169,6 +1187,12 @@ used to `blur()` instead, which meant the panel's keyboard focus fell out from
 under a user adjusting one value repeatedly.
 
 Blur still commits (clicking away is not a discard) and Escape still reverts.
+`TextControl` — a module's or component's plain text props, and the style rows
+that have no scrub mark — joined this model in P2-G (UX-16): it used to write
+on every keystroke, one call-site source edit per character on a component
+prop, and Escape had nothing to go back to. `textFieldDraft.ts` holds its
+commit rule (`decideTextCommit`: write only what was typed, and only when it
+changes the value).
 Escape's revert needs care: the blur it triggers fires *before* React has
 re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
@@ -1395,20 +1419,21 @@ One fixture is left, and every pixel of its overflow is a value the user's
 own source sets, rendered once, at the 32px row height Penpot measures
 (`04-token-gaps.md`) — plus the section gap the owner asked for (P2-F, below).
 
-**F2 (text), 26px over — 772 against 746** (it was 36 over before P2-F). Its
+**F2 (text), 23px over — 769 against 746** (it was 36 over before P2-F, 26
+after it; P2-G's frozen `ControlRow` gaps took 3px off the Module block). Its
 Design tab carries:
 
 | Block | px | What it is |
 |---|---:|---|
 | Text | 177 | Figma's own four typography rows (family; weight+size; line-height+letter-spacing; align), 4px apart |
 | Measures | 114 | W/H, the CSS position mode, rotation+radius, 4px apart |
-| Module | 95 | a 32px header, the node's own `text` content sized to the text, 8px of padding, a hairline |
+| Module | 92 | a 32px header, the node's own `text` content sized to the text, 8px of padding, a hairline |
 | Fill | 65 | the text colour the class sets |
 | Layer | 32 | opacity, blend, visibility |
 | 5 collapsed one-row sections | 165 | Layout, Stroke, Effects, Export, More |
 | gaps + container padding | 124 | 9 × 12px, plus 2 × 8px |
 
-Nothing there is pre-drawn. Closing the last 26px means collapsing a section
+Nothing there is pre-drawn. Closing the last 23px means collapsing a section
 that has values in it, or giving back segregation the owner asked for.
 
 #### The gate: one budget, one named exception
@@ -1420,10 +1445,10 @@ so reclaiming chrome moves the budget by itself. panel-39's blanket
 outright, so a uniform 210px slack would hide a 200px regression on any of
 them.
 
-What replaces it is `TEXT_LAYER_OVERFLOW_PX` (50 — the measured 26 plus the
-same 24px of machine-to-machine slack panel-41 left; it was 60 against 36),
-applying to **`f2-text`
-and no other fixture**, for the one cause tabulated above. F1, F3 and F4 are
+What replaces it is `TEXT_LAYER_OVERFLOW_PX` (47 — the measured 23 plus the
+same 24px of machine-to-machine slack panel-41 left; it was 50 against 26
+after P2-F, 60 against 36 before), applying to **`f2-text`
+and no other fixture**, for the one cause tabulated above. F1, F3, F4 and F5 are
 asserted strictly (`contentHeight <= clientHeight`). A second exception means
 naming its cause in this section, in the same change.
 
@@ -1471,6 +1496,27 @@ title between them (`docs/audits/2026-09-23-studio-audit/05-design-pane-ux.md`
 | F4 image | 603 | **601** | 746 |
 
 Every fixture came out shorter than it went in: the segregation is paid for.
+
+**P2-G — the Component section (UX-4, UX-7, UX-10, UX-14, UX-16).** The gate
+gained **F5, a local component instance**, because before P2-G there was no
+Component section height to measure: an instance with no writable class drew
+the "no writable style" notice in place of every section, its props included.
+
+| Fixture | P2-F | P2-G | room |
+|---|---:|---:|---:|
+| F1 rectangle | 598 | **598** | 746 |
+| F2 text | 772 | **769** (23 over) | 746 |
+| F3 flex board | 715 | **715** | 746 |
+| F4 image | 601 | **595** | 746 |
+| F5 instance | notice only, no props | **276** — Component section 137 | 746 |
+
+The Component section is one 32px title row plus its prop rows, 4px apart
+(137px for three props, with the hairline). Drawn the old way — a 32px
+"Component" title, a filled name band, a bordered actions row and an 8px
+margin above the rows — the same three props compute to about 213px (33 + 31 + 37 + 8 + 104). F2 and F4
+lost 3px per stacked prop row: inside the panel `ControlRow`'s gaps now read
+the frozen `--inspector-*` scale, not the admin's fluid `--space-*` one
+(UX-10). `TEXT_LAYER_OVERFLOW_PX` ratchets 50 → 47.
 The spacing hierarchy is now three named steps — **4px** within a group
 (`--inspector-space-2xs`), **8px** between groups inside a section
 (`--inspector-space-m`), **12px** between sections

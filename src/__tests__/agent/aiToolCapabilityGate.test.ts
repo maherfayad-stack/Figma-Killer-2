@@ -14,7 +14,7 @@
 import { describe, expect, it } from 'bun:test'
 import { Type } from '@sinclair/typebox'
 import { toolAllowedForCapabilities } from '../../../server/ai/tools/capabilityGate'
-import { selectStudioTools } from '../../../server/ai/tools'
+import { agentFileAccessForProvider, selectStudioTools } from '../../../server/ai/tools'
 import { executeAiTool } from '../../../server/ai/drivers/http/execTool'
 import type { AiBrowserBridge, AiTool } from '../../../server/ai/runtime/types'
 import type { CoreCapability } from '@core/capabilities'
@@ -116,15 +116,14 @@ describe('selectStudioTools capability filtering', () => {
     expect(names.some((n) => n.startsWith('site_'))).toBe(false)
   })
 
-  it('offers only what the filesystem cannot do — the file-shaped tools are not part of the agent surface', () => {
-    // The agent authors files with native Read/Write/Edit/Glob/Grep inside the
-    // project cwd (`claudeCliToolSurface.ts`), so every tool that existed only
-    // to work around not having a filesystem is strictly slower than the
-    // native equivalent. They stay in the MCP registry for external clients
-    // that genuinely cannot reach the project's files.
+  it('on the claude CLI path, offers only what the filesystem cannot do — the file-shaped tools are not part of its surface', () => {
+    // The CLI authors files with native Read/Write/Edit/Glob/Grep inside the
+    // project cwd (`claudeCliToolSurface.ts`), so a Studio file tool would be
+    // a slower second way to do the same thing. The HTTP drivers, which have
+    // no native tools, get them instead — see the P4-C block below.
     const names = selectStudioTools(
       ['ai.chat', 'ai.tools.write', 'studio.write'],
-      { studioProjectOpen: true },
+      { studioProjectOpen: true, fileAccess: 'native' },
     ).map((t) => t.name)
     for (const superseded of [
       'studio_read_file',
@@ -157,6 +156,41 @@ describe('selectStudioTools capability filtering', () => {
     const names = selectStudioTools(['ai.chat'], { studioProjectOpen: true }).map((t) => t.name)
     expect(names).toContain('studio_list_pages')
     expect(names).toContain('studio_list_components')
+  })
+})
+
+describe('the API-key path can build (P4-C, AI-2)', () => {
+  const FILE_READS = ['studio_read_file', 'studio_list_files', 'studio_grep', 'studio_get_node_source']
+  const FILE_WRITES = ['studio_write_file', 'studio_edit_file', 'studio_edit_files']
+
+  it('every provider but the claude CLI gets Studio\'s file tools; the CLI keeps its native ones', () => {
+    expect(agentFileAccessForProvider('claudeCli')).toBe('native')
+    for (const provider of ['anthropic', 'openai', 'openrouter', 'ollama', 'openai-compatible'] as const) {
+      expect(agentFileAccessForProvider(provider)).toBe('studio-tools')
+    }
+  })
+
+  it('an HTTP-driver writer is offered file reads AND writes', () => {
+    const names = selectStudioTools(['ai.chat', 'ai.tools.write', 'studio.write'], { studioProjectOpen: true, fileAccess: 'studio-tools' })
+      .map((t) => t.name)
+    for (const name of [...FILE_READS, ...FILE_WRITES]) expect(names).toContain(name)
+  })
+
+  it('the write tools keep the write gate: without studio.write (or ai.tools.write) only the reads are offered', () => {
+    for (const caps of [['ai.chat'], ['ai.chat', 'ai.tools.write'], ['ai.chat', 'studio.write']] as CoreCapability[][]) {
+      const names = selectStudioTools(caps, { studioProjectOpen: true, fileAccess: 'studio-tools' }).map((t) => t.name)
+      for (const name of FILE_READS) expect(names).toContain(name)
+      for (const name of FILE_WRITES) expect(names).not.toContain(name)
+    }
+  })
+
+  it('the claude CLI surface and the CMS surface are unchanged', () => {
+    const cli = selectStudioTools(['ai.chat', 'ai.tools.write', 'studio.write'], { studioProjectOpen: true, fileAccess: 'native' }).map((t) => t.name)
+    const cms = selectStudioTools(['ai.chat', 'ai.tools.write', 'studio.write'], { studioProjectOpen: false, fileAccess: 'studio-tools' }).map((t) => t.name)
+    for (const name of [...FILE_READS, ...FILE_WRITES]) {
+      expect(cli).not.toContain(name)
+      expect(cms).not.toContain(name)
+    }
   })
 })
 

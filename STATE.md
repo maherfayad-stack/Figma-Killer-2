@@ -78,6 +78,34 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** build + lint clean. Chunked suite: only pre-existing failures (bundle freshness, optimistic broadcast, bridge measurement, WebSocket, headless capture, dev server), plus three 5 s load timeouts that pass alone.
 - **Next:** none for Phase 1. Phase 2 can start.
 
+
+### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** #233 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verifying — review F1–F9 addressed; re-review R1 (F3 bypass through `prototype/studioRuntime.generated.js`) fixed; **needs security-guard sign-off**
+- **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files; the loop retries transient errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
+- **Tools added** (all `execution: server`):
+  - `studio_grep` (read, no caps; registry + HTTP agent) — `{ query (literal), path?, caseSensitive?, limit? }`.
+  - `studio_write_file` / `studio_edit_file` / `studio_edit_files` (HTTP agent ONLY; `ai.tools.write` + `studio.write`; `sideEffects: write`) — `{ path, content, expectedHash? }`, `{ path, oldString, newString, replaceAll?, expectedHash? }`, `{ edits: [≤50] }`. No `dir` field. Missing precondition → `no-open-project`: "No Studio project is open for this turn, so there is nowhere to write. Ask the user to open the project in Studio and send the message again."
+  - `studio_read_file`, `studio_list_files`, `studio_get_node_source` moved to `fileReadTools.ts` and now also on the HTTP agent surface.
+- **Done:**
+  - One containment rule, `server/handlers/studio/agentFileAccess.ts` (real path, case-folded dirs, `agentWriteRefusal` + `isWorkspaceWritablePath` for writes, credential files, NTFS streams, Windows devices, 1024/255-char caps; hard links refused by the writers).
+  - Review F3: `hostExecutedWorkspaceFile` (`@core/page-parser`) inside the ONE agent write gate `agentWriteRefusal` (was `agentWriteRefusalReason`, now `{ code, message }`) → `needs-user` on the CLI hook AND the HTTP tools for build config, `package.json`, env/npm config, `.husky`/`.vscode`/CI/commit-hook runners, `CLAUDE.md`.
+  - Re-review R1: the same gate refuses Studio's preview shell (`prototype/`, `studioShellWorkspaceFile`, `protected-path`; a test derives the list from the shell templates) and the depth-2 relative-import closure of every root host config (`hostConfigImports.ts`, `needs-user`, mtime-cached).
+  - Writes hold `withProjectWriteLock`, check `expectedHash`, `appendTurnWrite`, and `pushStudioDiskChange` once per call. `studioHttpTurn.ts` generates the project guide and resets the turn log for HTTP turns.
+  - `selectStudioTools(..., { fileAccess })` + `agentFileAccessForProvider`; the prompt derives its file paragraph from the tools (`agentFileAccessFor`); the `needs-user` paragraph is on both paths.
+  - Loop: `providerRetry.ts` (AI-8, `retrying` event + panel headline), wind-down + tools-off summary round (AI-10), `anthropicModelProfile.ts` + truncation continuation + effort mapping + `unsupportedParameter` fallback (AI-11). `toolLoop.ts` split: `toolDispatch.ts`, `heavyElision.ts`, `toolLoopTypes.ts`.
+  - Fixed on the way: `studio_get_node_source` read outside the project via `../` in a node id; `studio_read_file` excluded `.git`/`.studio` case-sensitively.
+- **Decisions:** the write tools are NOT in the external MCP catalog (no external connector is ever bound, so they could only refuse). Thinking blocks live only in the turn's in-memory history, never persisted (AI-11's "new AiContentBlock kind" not done — no later turn needs them). Pre-image checkpoints (AI-7) are P4-F's.
+- **Landmines:** any Studio writer that is NOT an agent must not call `agentWriteRefusal` (the prototype shell writes `vite.config.js`). `tool-write-gate-unchanged-by-side-effects.test.ts` now has `WRITE_GATED_ADDED_SINCE`; `no-phantom-tool-names` and the parity matrix gate cover the HTTP surface too. `TurnResult.stop` is gone (`truncated` + `toolCalls.length`).
+- **Verification:** after the review fixes and the trunk merge (`c9ef0b76`): build, lint, tsc clean; every chunk run under the heavy-run lock with `server/handlers` split; only pre-existing failures (PR body). No e2e: a real turn needs a provider key.
+- **Next (open follow-ups, owners named):**
+  - F7: `pruneLegacyGuideArtefacts` deletes 18 fixed `.claude/` names with no ownership/hash check, and the guide generator writes `CLAUDE.md`/`.claude/*` without a real-path check (a `.claude` junction escapes) — pre-existing CLI-path code in `projectGuide*.ts`; owner: server-engineer.
+  - F3.4: `devServer.ts` spawns `npm run dev`, which runs a repo-supplied `predev`/`postdev`; switch to `npm run --ignore-scripts dev` (or exec Vite directly) — owner: the Tier-2 dev-server bundle.
+  - F5: temp-file + rename for crash-atomic writes (needs EPERM-on-Windows handling and mode preservation).
+  - F8: `studio_fetch_remote_asset` host restriction or first-use confirmation — P4-E.
+  - R1 residuals (security re-review 2 APPROVED with these open, `review-233`): imports of a NESTED app's config (scan `resolveAppRoot` next), depth-3 imports, backtick `import()`, postcss plugin-map keys, tsconfig-`paths` imports, a symlinked config, a dev script's custom `--config`, Tailwind v4 `@plugin`/`@config`. Each needs an import chain already present; none exists in a scaffolded project.
+- **Human action needed:** dogfood with an Anthropic API key (script in the PR body). Security sign-off done.
+
 ---
 
 ### perf-11 — P2-A: perf quick wins + benches (PERF-2, 3, 4, 9, 10, 11, 13; budgets 1, 2, 5, 6, 7)
@@ -108,6 +136,31 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The sweep's selectors mirror `NodeRenderer.tsx`. P2-I must update the mirror when it changes them.
   - speed-04 cold click to ring, on `__board-perf-fixture`, was already over budget on trunk. Before: 401–494 ms (mean 432). After: 425–533 ms (mean 485). The ranges overlap under load, so the difference is not attributed. Re-measure on a quiet runner.
 - **Next:** the orchestrator merges after the Phase 1 exit gate. P2-I tightens the sweep and hover budgets.
+
+### panel-44 — P2-G: the Component section (UX-4, UX-7, UX-10, UX-14, UX-16)
+- **Agent:** panel-designer · **Branch:** `feat/component-section-one-title-row` off `91df2c59` · **PR:** #236 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Goal:** an instance's props directly under Measures, under one title row, honest under multi-select; prop names readable; text props that commit instead of writing per keystroke.
+- **Done:**
+  - `ComponentSection`: one `SectionStaticHeader` ("Button · Local", new `meta` slot) with Detach/Swap icon buttons; Swap is an `InspectorPopover`; keyed per instance so a refusal or draft never carries over. Manifest `order: 3`; `appliesTo: showsComponentSection` (no multi-select).
+  - **Found and fixed:** an instance with no writable class showed only "Inline styles come from this component's own source." — `StyleSurface`'s notice replaced every section, the props included. New manifest field `writes: 'call-site'`; `designCallSiteSections` still mounts beside the notice.
+  - Detach's duplicate offer reads `explainDetachConstraint`; the duplicate `EXTRACT_OFFER_REASONS` is deleted.
+  - `--inspector-label-w` 68 → 96px; `ControlRow` gaps use the frozen scale under `[data-field-skin='inspector']`.
+  - `TextControl` draft-then-commit via `textFieldDraft.ts` (blur/Enter commit once, Esc reverts, a parked caret follows the store).
+  - Gates: `measurement.test.ts` (order, `writes`, structure, 96px), `inspector-height.e2e.ts` (F5 instance + a P2-G shape test; F2 allowance 50 → 47), `05-section-heights.json/.md`, `inspector.md`, `design.md`, `ui-primitives.md`.
+- **Measured (1400×900, room 746):** F1 598 → 598 · F2 772 → 769 (23 over) · F3 715 → 715 · F4 601 → 595 · F5 instance: notice only → 276 (Component 137).
+- **Tokens added:** none (`--inspector-label-w` changed value).
+- **Landmines:**
+  - The component catalog loads after the section mounts: until it lands, rows are call-site-only and a union prop is a text box. F5 waits on `instance-call-site-prop-ariaLabel`.
+  - `Section forceOpen` still renders a toggle button that does nothing (every forceOpen section). Not changed here; in the PR's Found, not fixed.
+- **Human action needed:** dogfood on `test4`, `/admin/site`:
+  1. Select a component instance: right under W/H/X/Y is ONE row "<Name> · Local" with two icon buttons, then its props. No "Component" title, no grey band.
+  2. An instance with no class still shows its props, above the "Inline styles come from…" notice.
+  3. Type into a text prop: nothing reaches the canvas or source until Enter or click-away; Esc puts the old text back.
+  4. Detach a component that uses a hook: the refusal sentence appears under the title with "Duplicate as a new file and edit that".
+  5. Swap: a popover with a search field opens from the ⇄ button.
+  6. Shift-select the instance and another layer: the component section disappears.
+  7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
 
 ## Blocked
 
@@ -146,6 +199,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Design pane (P2)**
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry under `## Now`
+- `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry under `## Now`
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`

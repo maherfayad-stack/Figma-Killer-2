@@ -151,6 +151,12 @@ export function Section({
 interface SectionStaticHeaderProps {
   title: string;
   icon?: IconComponent;
+  /**
+   * A quiet qualifier read WITH the title, drawn right after it — "Button ·
+   * Local" (P2-G). Unlike `Section`'s own `meta`, which is a status pushed to
+   * the far end of a disclosure toggle, this one names what the title is.
+   */
+  meta?: React.ReactNode;
   /** Trailing header slot — same contract as `Section`'s own `actions`. */
   actions?: React.ReactNode;
 }
@@ -159,13 +165,13 @@ interface SectionStaticHeaderProps {
  * The section header with nothing to disclose: title, identity mark and the
  * trailing actions slot, at the header's full 32px — no toggle, no chevron.
  *
- * `Section` draws it for Law 1's `empty` state. It is exported for the one
- * block that is always open by construction rather than by state — the
- * Properties panel's Module block (`ModuleBlock.tsx`), which is not a
- * disclosure at all — so that block's title is the SAME recipe as every
- * section title below it instead of a hand-rolled, weaker copy (UX-1).
+ * `Section` draws it for Law 1's `empty` state. It is exported for the
+ * blocks that are always open by construction rather than by state, so their
+ * titles are the SAME recipe as every section title instead of a hand-rolled,
+ * weaker copy: the Properties panel's Module block (`ModuleBlock.tsx`, UX-1)
+ * and the Component section's one title row, "Button · Local" (P2-G, UX-4).
  */
-export function SectionStaticHeader({ title, icon: HeaderIcon, actions }: SectionStaticHeaderProps) {
+export function SectionStaticHeader({ title, icon: HeaderIcon, meta, actions }: SectionStaticHeaderProps) {
   return (
     <div className={styles.sectionHeader}>
       <span className={styles.sectionStaticTitle}>
@@ -178,6 +184,7 @@ export function SectionStaticHeader({ title, icon: HeaderIcon, actions }: Sectio
         )}
         <span className={styles.sectionTitleGroup}>
           <span className={styles.sectionTitle}>{title}</span>
+          {meta && <span className={styles.sectionMeta}>{meta}</span>}
         </span>
       </span>
       {actions && <span className={styles.sectionActions}>{actions}</span>}

@@ -9,12 +9,18 @@
  * different in kind.
  *
  *   - {@link MAX_TOOL_ROUNDS} caps how many provider rounds one turn may
- *     spend. It is a ceiling on COST, and it ends the turn.
+ *     spend. It is a ceiling on COST. It ends the turn WELL (AI-10): the
+ *     model is told {@link WIND_DOWN_ROUNDS_LEFT} rounds ahead, and the cap
+ *     itself is one last request with tools off, for a summary — never an
+ *     error event.
  *   - {@link TurnWriteLedger} plus {@link duplicateCallOutput} stop the
  *     SAME write running twice when nothing else was written in between.
  *     That is a bound on CORRECTNESS — the observed failure was one gesture
  *     the user asked for arriving in the file four times — and it never ends
  *     the turn, it answers the repeat from the first call's own result.
+ *
+ * The truncation vocabulary lives here too: a reply or a tool call the output
+ * limit cut off is continued, never silently dropped (AI-11).
  *
  * Nothing here performs I/O or touches a provider, which is why every piece
  * of it is unit-testable on its own (`src/__tests__/ai/toolLoop.test.ts`).
@@ -194,11 +200,58 @@ function boundedPriorResult(prior: AiToolOutput): { ok: boolean; error?: string;
   return bounded
 }
 
-/** The one sentence a round-capped turn ends on. Names the last tool so the transcript says what it was looping on. */
-export function toolRoundCapMessage(maxRounds: number, lastToolName: string): string {
-  const onTool = lastToolName ? ` The last tool it called was ${lastToolName}.` : ''
+
+// ---------------------------------------------------------------------------
+// Ending well: the wind-down, the summary round, and truncation (AI-10, AI-11)
+// ---------------------------------------------------------------------------
+
+/**
+ * How many rounds before the ceiling the model is told it is running out.
+ *
+ * The ceiling used to arrive unannounced and end the turn with an error, so a
+ * model mid-way through a fix loop was cut off with files half written and no
+ * report. Three rounds is one write, one look and one reply.
+ */
+export const WIND_DOWN_ROUNDS_LEFT = 3
+
+/** Appended to the tool results of the round that leaves {@link WIND_DOWN_ROUNDS_LEFT} rounds. */
+export function windDownNote(roundsLeft: number): string {
   return (
-    `This turn reached its limit of ${maxRounds} tool rounds and was stopped.${onTool} ` +
-    'Anything already written is saved as a draft — send another message to carry on.'
+    `[Studio] ${roundsLeft} tool rounds are left in this turn. Finish what you are doing now: `
+    + 'complete the write in progress, verify it once, and report. Do not start anything new.'
   )
 }
+
+/**
+ * Appended to the tool results of the LAST allowed round. The loop then runs
+ * one more request with tools switched off, so the turn ends on the model's
+ * own account of itself instead of an error.
+ */
+export function roundCapSummaryNote(maxRounds: number): string {
+  return (
+    `[Studio] This turn has used all ${maxRounds} of its tool rounds, and your tools are now switched off. `
+    + 'Reply to the user now, in a few lines: what you did, what you verified and how, and what is left undone. '
+    + 'Anything already written is saved. Do not claim anything you did not check.'
+  )
+}
+
+/**
+ * How many times one turn continues a reply the output limit cut off. Each
+ * continuation is also a round, so the round ceiling bounds it anyway; this
+ * stops a model that answers every "continue" with more than the limit again.
+ */
+export const MAX_TRUNCATION_CONTINUATIONS = 2
+
+/** The user-side note that asks for the rest of a reply the output limit cut off. */
+export const TRUNCATED_REPLY_NOTE =
+  '[Studio] Your last reply was cut off by the output limit. Continue exactly where it stopped, without repeating what you already wrote.'
+
+/**
+ * The result a tool call gets when the output limit cut it off before its
+ * arguments were complete. It never ran — running it on half its arguments
+ * would write half a file — and the model is told how to avoid the limit.
+ */
+export const TRUNCATED_TOOL_CALL_ERROR =
+  'This call was cut off by the output limit before its arguments were complete, so it did NOT run. '
+  + 'Issue it again, smaller: write a large file in parts (create it with the first part, then add the rest with edits), '
+  + 'or split a long list of edits across several calls.'

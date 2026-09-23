@@ -142,6 +142,38 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'The path exists but is a directory or another non-regular file.',
   },
+  'protected-path': {
+    retryable: false,
+    meaning: 'The path is inside the project but is not the user\'s source: a directory Studio owns or that is not source (.studio, .claude, .git, node_modules, build output), a credential file (.env, .npmrc, key material), or a file with other hard-linked names. No agent file tool reads or writes it.',
+  },
+  'needs-user': {
+    retryable: false,
+    meaning: 'The file runs on the user\'s machine outside the page — build-tool config, package.json, env and package-manager config, git hooks, .vscode, CI workflows — or is standing agent instruction (CLAUDE.md). No agent writes it on either path: show the user the exact change and ask them to make or approve it. Screen files (.tsx, .ts, .css, assets) stay writable.',
+  },
+  'not-text': {
+    retryable: false,
+    meaning: 'The file (or the content supplied) is binary or not valid UTF-8, so a text tool cannot hand it back or rewrite it byte-faithfully. Images and fonts go through the asset tools.',
+  },
+  'file-too-large': {
+    retryable: false,
+    meaning: 'The file, or the content supplied for it, is over the file tools\' size cap. Split the file, or edit the part that needs to change.',
+  },
+  'stale-source': {
+    retryable: false,
+    meaning: 'The file on disk is not the version the write was built against: its hash no longer matches the expectedHash given, or an existing file was about to be overwritten with no expectedHash at all. Read it again (studio_read_file returns the hash) and rebuild the change against what is there now.',
+  },
+  'edit-no-match': {
+    retryable: false,
+    meaning: 'The oldString of an edit does not occur in the file. Read the file again and copy the exact text, whitespace and line breaks included.',
+  },
+  'edit-ambiguous': {
+    retryable: false,
+    meaning: 'The oldString of an edit occurs more than once, so which one to change is a guess. Include enough surrounding text to make it unique, or pass replaceAll:true when every occurrence should change.',
+  },
+  'no-open-project': {
+    retryable: false,
+    meaning: 'This tool writes only into the project open for this turn, and none is. The file-authoring tools never take a directory argument.',
+  },
   'stale-anchor': {
     retryable: false,
     meaning: 'A comment thread\'s anchored element has moved or gone, so resolving it would attach the reply to the wrong thing.',

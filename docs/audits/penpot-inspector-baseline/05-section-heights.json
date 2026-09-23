@@ -9,7 +9,7 @@
   },
   "overflowException": {
     "fixture": "f2-text",
-    "allowancePx": 50
+    "allowancePx": 47
   },
   "fixtures": {
     "f1-rectangle": {
@@ -32,13 +32,13 @@
       }
     },
     "f2-text": {
-      "contentHeight": 772,
+      "contentHeight": 769,
       "clientHeight": 746,
-      "scrollHeight": 772,
-      "overflowPx": 26,
+      "scrollHeight": 769,
+      "overflowPx": 23,
       "headroomPx": 0,
       "sections": {
-        "module": 95,
+        "module": 92,
         "layer": 32,
         "align": 0,
         "measures": 114,
@@ -71,13 +71,13 @@
       }
     },
     "f4-image": {
-      "contentHeight": 601,
+      "contentHeight": 595,
       "clientHeight": 746,
       "scrollHeight": 746,
       "overflowPx": 0,
-      "headroomPx": 145,
+      "headroomPx": 151,
       "sections": {
-        "module": 145,
+        "module": 139,
         "layer": 32,
         "align": 0,
         "measures": 114,
@@ -87,6 +87,16 @@
         "effects": 33,
         "export": 33,
         "more": 33
+      }
+    },
+    "f5-instance": {
+      "contentHeight": 276,
+      "clientHeight": 746,
+      "scrollHeight": 746,
+      "overflowPx": 0,
+      "headroomPx": 470,
+      "sections": {
+        "component": 137
       }
     }
   }

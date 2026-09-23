@@ -45,10 +45,17 @@ export {
 } from './workspaceFiles'
 export {
   UNWRITABLE_WORKSPACE_DIR_NAMES,
+  comparableWorkspaceRel,
+  excludedWorkspaceSegment,
+  hostExecutedWorkspaceFile,
+  isHostConfigFileName,
+  isSecretBearingFileName,
   isWorkspaceWritablePath,
   pathEntryExists,
   realWorkspaceRel,
   realpathAllowingMissing,
+  stripTrailingDotsAndSpaces,
+  studioShellWorkspaceFile,
   unwritableWorkspaceSegment,
 } from './workspaceWriteScope'
 export { resetParserCaches } from './parserCaches'

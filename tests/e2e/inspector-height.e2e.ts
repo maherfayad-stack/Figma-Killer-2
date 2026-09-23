@@ -42,17 +42,25 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  *
  * panel-39's blanket `POPULATED_SECTION_OVERFLOW_PX = 210` is gone: three of
  * the four fixtures now fit the room outright, so a 210px slack on all four
- * would hide a 200px regression on any of them. Measured after P2-F (the
- * design pane's spacing), at 1400x900 (`contentHeight`, not `scrollHeight` —
+ * would hide a 200px regression on any of them. Measured after P2-G (the
+ * Component section), at 1400x900 (`contentHeight`, not `scrollHeight` —
  * see the assertion's own comment for why the clamped one cannot show
  * headroom):
  *
- *   | Fixture | content | room | over | was (panel-41) |
+ *   | Fixture | content | room | over | was (P2-F) |
  *   |---|---:|---:|---:|---:|
- *   | F1 rectangle | 598 | 746 | **0** (148 spare) | 608 (138 spare) |
- *   | F2 text | 772 | 746 | **26** | 782 (36 over) |
- *   | F3 flex board | 715 | 746 | **0** (31 spare) | 725 (21 spare) |
- *   | F4 image | 601 | 746 | **0** (145 spare) | 603 (143 spare) |
+ *   | F1 rectangle | 598 | 746 | **0** (148 spare) | 598 |
+ *   | F2 text | 769 | 746 | **23** | 772 (26 over) |
+ *   | F3 flex board | 715 | 746 | **0** (31 spare) | 715 |
+ *   | F4 image | 595 | 746 | **0** (151 spare) | 601 |
+ *   | F5 instance | 276 | 746 | **0** (470 spare) | no props at all |
+ *
+ * P2-G added F5, a local component instance: before it, an instance with no
+ * writable class showed the "no writable style" notice and nothing else, so
+ * its props had no height to measure. Its Component section is now one 32px
+ * title row and its three prop rows (137px with the hairline). F2 and F4 lost
+ * 3px per stacked prop row: `ControlRow`'s gaps read the frozen inspector
+ * scale inside the panel (UX-10) instead of the admin's fluid one.
  *
  * P2-F SPENT height on segregation — a 12px section gap instead of 8
  * (`--inspector-section-gap`, owner decision OD-4), a real 32px header, 8px
@@ -64,10 +72,10 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * The one exception is **F2**, and `TEXT_LAYER_OVERFLOW_PX` states its size.
  * Its cause, with numbers: a text layer's Design tab carries 483px of values
  * the user's source actually sets — Text 177 (Figma's own four typography
- * rows), Measures 114, Fill 65, Layer 32, and a 95px Module block holding
+ * rows), Measures 114, Fill 65, Layer 32, and a 92px Module block holding
  * the node's own `text` content — plus 165px of five one-row collapsed
  * sections (Layout, Stroke, Effects, Export, More), 108px of gaps and 16px of
- * container padding. Nothing there is pre-drawn; closing the last 26px means
+ * container padding. Nothing there is pre-drawn; closing the last 23px means
  * collapsing a section that has values in it, or giving back the section gap
  * the owner asked for. See `docs/features/inspector.md` §6.
  *
@@ -131,9 +139,10 @@ const HEIGHT_BUDGET_VIEWPORT = { width: 1400, height: 900 } as const
 /**
  * The ONE exception to the strict budget, and it belongs to ONE fixture —
  * see this file's header for the per-section numbers behind it. Measured
- * after P2-F the F2 text node is 26px over; this is that number with the
+ * after P2-G the F2 text node is 23px over; this is that number with the
  * same 24px of room panel-41 left for the sub-pixel and font-metric
- * differences between machines (it was 60 against 36).
+ * differences between machines (it was 50 against 26 after P2-F, 60 against
+ * 36 before).
  *
  * It is deliberately far below the 164px the More disclosure is worth
  * (`src/__tests__/inspector/measurement.test.ts` computes that number), the
@@ -141,7 +150,7 @@ const HEIGHT_BUDGET_VIEWPORT = { width: 1400, height: 900 } as const
  * block's Law-3 fold is worth on an image, so un-folding any of them still
  * trips this gate — on F2 as well as on the three strict fixtures.
  */
-const TEXT_LAYER_OVERFLOW_PX = 50
+const TEXT_LAYER_OVERFLOW_PX = 47
 
 /** The fixture `TEXT_LAYER_OVERFLOW_PX` applies to, and the only one. */
 const OVERFLOW_EXCEPTION_FIXTURE_ID = 'f2-text'
@@ -222,6 +231,39 @@ const FIXTURE_CSS = `.page {
   object-fit: cover;
   border-radius: 8px;
 }
+
+.btn {
+  /* F5 — a local component instance (P2-G). Sized so the click lands on the
+     instance's own rendered box. */
+  display: inline-block;
+  margin-top: 40px;
+  padding: 12px 24px;
+  border: 0;
+  border-radius: 8px;
+  background: #3949ab;
+  color: #ffffff;
+  font-size: 16px;
+}
+`
+
+/**
+ * F5 — a LOCAL component the page instantiates (P2-G). Three declared props,
+ * one of them a union (a dropdown), one named long enough (`ariaLabel`) that
+ * the 68px label column used to ellipsise it (UX-10).
+ */
+const FIXTURE_COMPONENT = `interface FixtureButtonProps {
+  label: string
+  variant?: 'primary' | 'ghost'
+  ariaLabel?: string
+}
+
+export function FixtureButton({ label, variant, ariaLabel }: FixtureButtonProps) {
+  return (
+    <button className="btn" data-variant={variant} aria-label={ariaLabel}>
+      {label}
+    </button>
+  )
+}
 `
 
 /** A real, self-contained raster the fixture page can point an <img> at. */
@@ -232,6 +274,7 @@ const FIXTURE_IMAGE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="240" h
 `
 
 const FIXTURE_PAGE = `import './Home.css'
+import { FixtureButton } from '../components/FixtureButton'
 
 export default function Home() {
   return (
@@ -243,6 +286,7 @@ export default function Home() {
         <div className="board-child-b" />
       </div>
       <img className="image-layer" src="./fixture.svg" alt="Fixture" />
+      <FixtureButton label="Get started" variant="primary" />
     </div>
   )
 }
@@ -256,6 +300,8 @@ test.beforeAll(() => {
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.css'), FIXTURE_CSS, 'utf8')
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'Home.tsx'), FIXTURE_PAGE, 'utf8')
   fs.writeFileSync(path.join(fixtureDir, 'pages', 'fixture.svg'), FIXTURE_IMAGE_SVG, 'utf8')
+  fs.mkdirSync(path.join(fixtureDir, 'components'), { recursive: true })
+  fs.writeFileSync(path.join(fixtureDir, 'components', 'FixtureButton.tsx'), FIXTURE_COMPONENT, 'utf8')
 })
 
 test.afterAll(() => {
@@ -348,6 +394,19 @@ async function clickLayer(
 }
 
 /**
+ * Select a layer through its Layers-panel row. A click on a component's
+ * rendered content lands on the element INSIDE the instance (its own
+ * `<button>`), not on the instance; the row names the instance itself and is
+ * the deterministic way to select it. The caller clicks the content first,
+ * which is what reveals the row in a collapsed tree.
+ */
+async function selectLayerRow(page: Page, label: string): Promise<void> {
+  const row = page.getByRole('treeitem', { name: label, exact: true })
+  await expect(row, `no Layers row named ${label}`).toBeVisible({ timeout: 15_000 })
+  await row.click()
+}
+
+/**
  * The ACTIVE Design tab panel — the only surface any assertion in this file
  * is about.
  *
@@ -371,12 +430,24 @@ const designSection = (page: Page, sectionId: string) =>
 
 interface Fixture {
   /** Baseline id — F1..F4, `01-fixtures.md`'s own names. */
-  id: 'f1-rectangle' | 'f2-text' | 'f3-flex-board' | 'f4-image'
+  id: 'f1-rectangle' | 'f2-text' | 'f3-flex-board' | 'f4-image' | 'f5-instance'
   selector: string
   /** Click offset from the layer's top-left, for layers whose centre is covered. */
   offset?: { x: number; y: number }
   /** A section this selection MUST mount, so a mis-click fails loudly. */
   requiredSectionId: string
+  /**
+   * After the canvas click, select the Layers row with this label — the
+   * instance enclosing what was clicked (`selectLayerRow`). Only F5 sets it.
+   */
+  layerRow?: string
+  /**
+   * A test id that appears only once the selection has settled. The Component
+   * section's rows come from the project's component catalog, fetched after
+   * the section mounts: measured before it lands, F5 shows the call site's
+   * two props instead of the three the component declares.
+   */
+  settledTestId?: string
 }
 
 const FIXTURES: ReadonlyArray<Fixture> = [
@@ -384,6 +455,7 @@ const FIXTURES: ReadonlyArray<Fixture> = [
   { id: 'f2-text', selector: '.text-layer', requiredSectionId: 'text' },
   { id: 'f3-flex-board', selector: '.board', offset: { x: 8, y: 8 }, requiredSectionId: 'layout' },
   { id: 'f4-image', selector: '.image-layer', requiredSectionId: 'fill' },
+  { id: 'f5-instance', selector: '.btn', requiredSectionId: 'component', layerRow: 'FixtureButton', settledTestId: 'instance-call-site-prop-ariaLabel' },
 ]
 
 /**
@@ -447,10 +519,17 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
 
     for (const fixture of FIXTURES) {
       await clickLayer(page, canvasRoot, contentFrame.locator(fixture.selector).first(), fixture.offset)
+      if (fixture.layerRow) await selectLayerRow(page, fixture.layerRow)
       await expect(
         designSection(page, fixture.requiredSectionId),
         `selecting ${fixture.selector} did not mount the ${fixture.requiredSectionId} section`,
       ).toBeVisible({ timeout: 15_000 })
+      if (fixture.settledTestId) {
+        await expect(
+          designPanel(page).getByTestId(fixture.settledTestId),
+          `${fixture.id} never settled — ${fixture.settledTestId} did not appear`,
+        ).toBeVisible({ timeout: 15_000 })
+      }
 
       const scroll = panelScroll(page)
       await expect(scroll).toBeVisible({ timeout: 10_000 })
@@ -643,5 +722,49 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
         `${key} did not appear after opening the Module block's fold`,
       ).toHaveCount(1)
     }
+  })
+
+  /**
+   * P2-G — the Component section, in a real browser. The height is F5 above;
+   * this is the shape: an instance's props are reachable at all (before P2-G
+   * the "no writable style" notice replaced every section, the props with
+   * them), the section is one title row naming the instance, the prop label
+   * column fits `ariaLabel`, a typed value that Escape abandons writes
+   * nothing, and a multi-selection hides the section rather than showing one
+   * instance's values.
+   */
+  test('an instance shows its props under one title row, and a multi-selection hides them', async ({ page }) => {
+    await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
+    const canvasRoot = await openStudioBoard(page, fixtureDir)
+    const contentFrame = page.locator('[data-page-id]').first().frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+
+    await clickLayer(page, canvasRoot, contentFrame.locator('.btn').first())
+    await selectLayerRow(page, 'FixtureButton')
+    const component = designSection(page, 'component')
+    await expect(component, 'an instance with no writable class shows no props').toBeVisible({ timeout: 15_000 })
+    await expect(component.getByTestId('instance-call-site-prop-ariaLabel')).toBeVisible({ timeout: 15_000 })
+
+    // One title row: the instance's own name and source, Detach and Swap beside it.
+    await expect(component.getByText('FixtureButton', { exact: true })).toHaveCount(1)
+    await expect(component.getByTestId('instance-source-badge')).toHaveText('Local')
+    await expect(component.getByRole('button', { name: 'Detach instance' })).toBeVisible()
+    await expect(component.getByRole('button', { name: 'Swap instance' })).toBeVisible()
+
+    // UX-10 — the 96px label column holds `ariaLabel` without ellipsis.
+    const label = component.getByTestId('instance-call-site-prop-ariaLabel').locator('label').first()
+    const clipped = await label.evaluate((el) => el.scrollWidth > el.clientWidth)
+    expect(clipped, 'the prop label column still ellipsises "ariaLabel"').toBe(false)
+
+    // UX-16 — Escape abandons a typed value and writes nothing.
+    const field = component.getByTestId('instance-call-site-prop-label').locator('input')
+    await field.click()
+    await field.fill('Typed, then abandoned')
+    await page.keyboard.press('Escape')
+    await expect(field).toHaveValue('Get started')
+    expect(fs.readFileSync(path.join(fixtureDir, 'pages', 'Home.tsx'), 'utf8')).toContain('label="Get started"')
+
+    // UX-14 — a second layer joins the selection: the section goes away.
+    await page.getByRole('treeitem', { name: 'Image', exact: true }).click({ modifiers: ['Shift'] })
+    await expect(component, "a multi-selection still shows one instance's props").toHaveCount(0)
   })
 })

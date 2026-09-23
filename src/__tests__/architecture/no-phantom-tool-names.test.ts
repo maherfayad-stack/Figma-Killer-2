@@ -28,6 +28,10 @@
  *     input-schema field descriptions, every string a module that hosts ONLY
  *     offered tools can return (result hints, refusal remedies), and the
  *     finding text `studio_quality_check` / `studio_fidelity_report` produce.
+ *   - **In-canvas on an HTTP driver** (`studioHttpAgentTools`: the above plus
+ *     the file tools, P4-C): the same checks against that larger surface —
+ *     its prompt names Studio's file tools, and those tools' own text and
+ *     refusal remedies may name each other, but nothing beyond the surface.
  *   - **External MCP** (`mcpToolsForCapabilities`, an unbound client): every
  *     registered tool's description and field descriptions may name only
  *     registered tools.
@@ -39,7 +43,7 @@
 import { describe, expect, it } from 'bun:test'
 import { dirname, join, relative, sep } from 'node:path'
 import { Node, Project } from 'ts-morph'
-import { studioAgentTools } from '../../../server/ai/tools/studio'
+import { studioAgentTools, studioHttpAgentTools } from '../../../server/ai/tools/studio'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
 import { DESIGN_POLICY_BLOCK, MODE_BLOCK } from '../../../server/ai/tools/studio/promptSessionBlocks'
 import { mcpToolsForCapabilities } from '../../../server/ai/mcp/registry'
@@ -60,6 +64,7 @@ const FINDING_TEXT_MODULES = [
 ]
 
 const IN_CANVAS = new Set(studioAgentTools.map((tool) => tool.name))
+const IN_CANVAS_HTTP = new Set(studioHttpAgentTools.map((tool) => tool.name))
 const REGISTRY_TOOLS = mcpToolsForCapabilities([...CORE_CAPABILITIES])
 const REGISTRY = new Set(REGISTRY_TOOLS.map((tool) => tool.name))
 
@@ -106,7 +111,7 @@ function phantomsIn(text: string, offered: ReadonlySet<string>): string[] {
  * held to the in-canvas rule, and a new in-canvas-only module is picked up
  * without an edit here.
  */
-async function inCanvasOnlyModules(): Promise<string[]> {
+async function inCanvasOnlyModules(offered: ReadonlySet<string> = IN_CANVAS): Promise<string[]> {
   const out: string[] = []
   // Direct children only: a tool module lives at the top of the studio tools folder.
   for (const absPath of walkSourceTree(STUDIO_TOOLS_DIR, ['.ts'])) {
@@ -117,7 +122,7 @@ async function inCanvasOnlyModules(): Promise<string[]> {
       .filter((value): value is AiTool =>
         typeof value === 'object' && value !== null && typeof (value as AiTool).name === 'string' && 'inputSchema' in value)
       .map((tool) => tool.name)
-    if (names.length > 0 && names.every((name) => IN_CANVAS.has(name))) out.push(relative(REPO_ROOT, absPath).split(sep).join('/'))
+    if (names.length > 0 && names.every((name) => offered.has(name))) out.push(relative(REPO_ROOT, absPath).split(sep).join('/'))
   }
   return out
 }
@@ -169,6 +174,31 @@ describe('the in-canvas agent is never told about a tool it does not have', () =
     const offenders = FINDING_TEXT_MODULES.flatMap((relPath) =>
       stringLiterals(project, relPath).flatMap(({ line, text }) =>
         phantomsIn(text, IN_CANVAS).map((name) => `${relPath}:${line} names ${name}`)))
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('the HTTP-driver agent is never told about a tool it does not have (P4-C)', () => {
+  it('its whole system prompt, prefix and suffix', () => {
+    const prompt = buildStudioAgentSystemPrompt(null, studioHttpAgentTools).join('\n')
+    expect(phantomsIn(prompt, IN_CANVAS_HTTP)).toEqual([])
+  })
+
+  it('every offered tool\'s description and input-field descriptions', () => {
+    const offenders = studioHttpAgentTools.flatMap((tool) =>
+      phantomsIn(interfaceText(tool), IN_CANVAS_HTTP).map((name) => `${tool.name}'s description names ${name}`))
+    expect(offenders).toEqual([])
+  })
+
+  it('every string a module hosting only its tools can return', async () => {
+    const modules = await inCanvasOnlyModules(IN_CANVAS_HTTP)
+    for (const expected of ['fileReadTools.ts', 'fileWriteTools.ts']) {
+      expect(modules).toContain(`server/ai/mcp/tools/studio/${expected}`)
+    }
+    const project = new Project({ skipAddingFilesFromTsConfig: true })
+    const offenders = modules.flatMap((relPath) =>
+      stringLiterals(project, relPath).flatMap(({ line, text }) =>
+        phantomsIn(text, IN_CANVAS_HTTP).map((name) => `${relPath}:${line} names ${name}`)))
     expect(offenders).toEqual([])
   })
 })

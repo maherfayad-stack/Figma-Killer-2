@@ -149,6 +149,24 @@ export function getToolCallDisplay(actionType: string, params: unknown): ToolCal
     case 'set_active_collection':
       return display('Opening collection', collectionDetail(p), 'open', 'read')
 
+    // ── Studio's file tools — the HTTP drivers' Read/Write/Edit (P4-C) ────
+    // Rendered exactly like the CLI's native file tools below: the user is
+    // watching the same kind of work, whichever driver is doing it.
+    case 'studio_read_file':
+      return display('Reading', fileNameDetail(p.path), 'document', 'read')
+    case 'studio_list_files':
+      return display('Finding files', optionalString(p.path), 'collection', 'read')
+    case 'studio_grep':
+      return display('Searching', optionalString(p.query), 'collection', 'read')
+    case 'studio_get_node_source':
+      return display('Finding the code', optionalString(p.nodeId), 'document', 'read')
+    case 'studio_write_file':
+      return display('Writing', fileNameDetail(p.path), 'add', 'write')
+    case 'studio_edit_file':
+      return display('Editing', fileNameDetail(p.path), 'edit', 'write')
+    case 'studio_edit_files':
+      return display('Editing', editBatchDetail(p.edits), 'edit', 'write')
+
     // ── The `claude` CLI's own built-in tools ────────────────────────────
     // Studio's MCP tools above are the ones Studio implements. These are the
     // ones the CLI runs itself, and until the driver forwarded `tool_use`
@@ -205,6 +223,13 @@ function fileNameDetail(value: unknown): string {
   if (!path) return ''
   const parts = path.split(/[\\/]/)
   return parts[parts.length - 1] ?? path
+}
+
+/** "Home.tsx, Home.module.css" — the distinct files a `studio_edit_files` batch touches. */
+function editBatchDetail(edits: unknown): string {
+  if (!Array.isArray(edits)) return ''
+  const files = [...new Set(edits.map((edit) => fileNameDetail(asRecord(edit).path)).filter((name) => name.length > 0))]
+  return files.length <= 2 ? files.join(', ') : `${files.slice(0, 2).join(', ')} +${files.length - 2}`
 }
 
 /** The command itself, clipped — the detail line is one line, not a terminal. */
