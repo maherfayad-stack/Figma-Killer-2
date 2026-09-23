@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P0 #225, P1-E2 #223 (after a security review caught a CSS-injection path in asset URLs). At most 3 agents run at once, because of the owner's RAM.
-- **Next:** P1-E3, P4-A, P1-D, P1-F; then Phase 2. Urgent: P0 found that the Docker images keep `studio-workspace/` outside every volume (ROADMAP P1-H).
+- **Next:** P1-D and P1-F are running, then the Phase 1 exit gate, then Phase 2. Landed since P0: P1-E3 (#226), P4-A (#227), P1-H (#228, Docker workspace volume).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -59,7 +59,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - `.claude/agents/studio-scribe.md` still routes "intent" to `STUDIO-IMPORT-V2-PLAN.md`: it is this agent's own configuration, so it was left for the owner.
   - `CLAUDE.md` and ten `.claude/agents/*.md` files were edited only where the moves broke a reference; the broader rule-book trim ROADMAP P0-F describes was not done (it needs the owner, not an agent request).
-  - The Docker images and templates keep `studio-workspace/` outside every volume: user projects are lost on container recreate. Documented in `docs/deployment/README.md`; the compose/template fix is not made.
+  - ~~The Docker images and templates kept `studio-workspace/` outside every volume.~~ Fixed by P1-H (#228, `server-28`).
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
