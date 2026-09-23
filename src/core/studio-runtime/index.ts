@@ -214,14 +214,27 @@ export {
   MIN_ELEMENT_SIZE,
   isSizeableDisplay,
   resizeAxes,
-  resizeElementSize,
+  resizeElementBox,
+  resizeModifiersOf,
+  resizeStartStep,
   resizeStylePatch,
   type ResizeHandle,
-  type ElementSize,
-  type ElementSizePatch,
+  type ResizeModifiers,
+  type ResizeBoxStart,
+  type ResizeOffsets,
+  type ResizeStep,
+  type InlineOffsetProperty,
+  type ElementResizePatch,
 } from './elementResizeRules'
 
+export { inlineOffsetProperty, isPositionedFreely, readResizeBoxStart } from './elementResizeMeasure'
+
+export { PRIMARY_BUTTON_MASK, guardDragSession, type DragSessionGuardOptions } from './dragSessionGuard'
+
 export {
+  RESIZE_ACTIVE_ATTR,
+  RESIZE_SIZE_BADGE_ATTR,
+  writeSizeBadge,
   RESIZE_FRAME_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_PREVIEW_ATTR,

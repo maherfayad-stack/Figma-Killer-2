@@ -115,6 +115,34 @@ const FLEX_MAIN_FILL_VALUE = '1 1 0'
 const FLEX_MAIN_HUG_VALUE = '0 0 auto'
 /** "Fill container" on a flex CROSS axis or either grid axis. */
 const STRETCH_VALUE = 'stretch'
+/**
+ * "Fixed" on a flex MAIN axis whose cascade would otherwise override the
+ * width: CSS's own initial `flex` (no grow, the size as the basis). Not a
+ * marker this model reads back as Hug or Fill, so it reads as Fixed.
+ */
+const FLEX_MAIN_FIXED_VALUE = '0 1 auto'
+/** The `flex` longhands a Fixed write replaces with {@link FLEX_MAIN_FIXED_VALUE}. */
+const FLEX_LONGHANDS = ['flexGrow', 'flexShrink', 'flexBasis'] as const
+
+/**
+ * What the element's CASCADE says about its flex sizing — its computed
+ * `flex-grow` / `flex-basis` with this model's own inline markers already
+ * cleared. Only a caller that can read the rendered element knows this (the
+ * canvas resize drag does, `useElementResizeDrag.ts`); it is how a `flex: 1`
+ * that lives in a CLASS, which no inline write can clear, is still overridden
+ * rather than left to swallow the width (IX-6b).
+ */
+export interface SizingFlexCascade {
+  flexGrow: string
+  flexBasis: string
+}
+
+/** True when a flex item's cascade decides its main size itself, so `width` alone would be a dead write. */
+function cascadeOverridesMainSize(cascade: SizingFlexCascade): boolean {
+  const grow = Number.parseFloat(cascade.flexGrow)
+  const basis = normalize(cascade.flexBasis)
+  return (Number.isFinite(grow) && grow > 0) || (basis !== '' && basis !== 'auto')
+}
 
 /**
  * Every `flex` shorthand this model treats as its own "Fill" marker on
@@ -223,6 +251,12 @@ function frozenLength(measuredValue: unknown): string {
  * With an unknown parent, `hug`/`fill` return an EMPTY patch: there is no
  * honest write, and this module does not guess. The UI disables those modes
  * (`sizingUnavailableReason`) so that path is not normally reachable.
+ *
+ * `flexCascade` (optional, `fixed` on a flex main axis only): when the
+ * element's cascade would still grow it or give it a basis once the markers
+ * above are cleared, a width alone changes nothing on screen — so the patch
+ * also writes `flex: 0 1 auto` (and drops any inline `flex-*` longhand that
+ * would fight it). Without it the patch is exactly the stored-only answer.
  */
 export function sizingPatch(
   mode: SizingMode,
@@ -230,6 +264,7 @@ export function sizingPatch(
   parent: SizingParentLayout | null,
   stored: Record<string, unknown>,
   measuredValue: unknown,
+  flexCascade?: SizingFlexCascade,
 ): SizingPatch {
   const role = sizingAxisRole(axis, parent)
   const patch: Partial<Record<keyof CSSPropertyBag, string | undefined>> = {}
@@ -241,6 +276,12 @@ export function sizingPatch(
     }
     if (role === 'flex-main' && normalize(stored.flex) === FLEX_MAIN_HUG_VALUE) {
       patch.flex = undefined
+    }
+    if (role === 'flex-main' && flexCascade && cascadeOverridesMainSize(flexCascade)) {
+      patch.flex = FLEX_MAIN_FIXED_VALUE
+      for (const longhand of FLEX_LONGHANDS) {
+        if (hasStyleValue(stored[longhand])) patch[longhand] = undefined
+      }
     }
     if (role) {
       const self = selfProperty(role, axis)

@@ -206,6 +206,34 @@ export const SELECTION_CHROME_RULES = `
 [data-canvas-resize-handle="w"] { left: 0; }
 [data-canvas-resize-handle="e"] { left: 100%; }
 
+/* IX-18 - the W x H badge, centred under the element, shown only while a
+   resize drag is live (the frame carries data-canvas-resizing for exactly
+   that long). A child of the frame, so it rides the frame's own placement
+   and needs no position write of its own; its text is the measured box,
+   written by whichever host owns the drag. Same pill as the node badge. */
+[data-canvas-size-badge] {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  display: none;
+  margin-top: 6px;
+  transform: translateX(-50%);
+  box-sizing: border-box;
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: var(--canvas-selection-ring-color);
+  color: var(--canvas-node-badge-text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+[data-canvas-resizing] > [data-canvas-size-badge] {
+  display: block;
+}
+
 /* Alt-hover measurement (K5) - the distance segments between the selection
    and the hovered element, their numeric pills, and the hovered element's
    padding bands + content box. Appearance only; every position and size is
