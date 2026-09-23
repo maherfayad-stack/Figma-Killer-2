@@ -114,6 +114,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `withWorkspaceProject` is used by `collectProjectTokenSources`.
 - **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
 
+### mcp-27 — P4-B: Studio's system prompt reaches the Claude CLI (AI-1, AI-3)
+- **Agent:** mcp-tooling · **Branch:** `fix/agent-prompt-reaches-the-cli` (trunk `f0956720` merged in) · **PR:** draft against `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** the default (CLI) agent path gets the same guidance as the HTTP path: static prefix, `MODE_BLOCK`, `DESIGN_POLICY_BLOCK`, subagent contract.
+- **Done:**
+  - `server/ai/drivers/claudeCliSystemPrompt.ts`: splits `req.systemPrompt` at the boundary, sha256 of the static half = prompt version, writes static + dynamic to a private temp file passed as `--append-system-prompt-file`. Cold turn: deleted in `finally`. Warm: deleted on `dispose`.
+  - Warm reuse fingerprint (`claudeCliWarmTurn.ts`) carries the prompt version: a mode, policy or prompt change respawns.
+  - Generated `CLAUDE.md` = project facts only (`projectGuide.ts` `buildGuide`); `GUIDE_DEFINITION_VERSION` 9 forces one regen. Component reference drops "do not re-implement it".
+  - `dynamicSystemPromptSuffix` deleted; `claudeCli.testHelpers.ts` holds the fake binary + `runClaudeCliTurns`.
+- **Tests (each proved failing before its fix, by disabling it in place):** `cli-receives-mode-and-policy.test.ts` (18 of 18), `studio-agent-subagent-contract.test.ts` (2 of 7, now on the CLI-received text), `claudeCliSystemPrompt.test.ts` fingerprint respawn (1), `projectGuide.test.ts` facts-only (4).
+- **Decisions:**
+  - Always a file, never argv: every real prefix is 34–36 KB, past Windows' 32,767-char command line. The CLI refuses `--append-system-prompt` with `-file`, so the dynamic suffix rides in the same file.
+  - The version is a content hash, not a hand-bumped constant.
+  - A failed prompt-file write is fail-soft (logged; the turn runs without Studio guidance), like the MCP config file.
+- **Landmines:**
+  - The CLI now pays for ~9 K more system tokens per session (cached after the first turn per (mode, policy)).
+  - Guide text dropped with no prompt equivalent: "keep the screen a static composition". Deliberate; P4-D owns the prompt rewrite.
+  - Flag verified against CLI 2.1.226 only by parse behaviour, not a paid turn.
+- **Next:** owner review; P4-D rewrites the prompt knowing it now reaches both paths.
+
 ### server-28 — P1-H: user projects survive a container recreate
 - **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` (trunk `5d454bf2` merged in) · **PR:** #228 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying. The security review came back CHANGES-REQUIRED (F1 to F11); every finding is fixed in this round. Needs re-review by security-guard.
