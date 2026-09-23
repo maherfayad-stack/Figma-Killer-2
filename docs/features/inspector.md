@@ -1517,6 +1517,12 @@ margin above the rows — the same three props compute to about 213px (33 + 31 +
 lost 3px per stacked prop row: inside the panel `ControlRow`'s gaps now read
 the frozen `--inspector-*` scale, not the admin's fluid `--space-*` one
 (UX-10). `TEXT_LAYER_OVERFLOW_PX` ratchets 50 → 47.
+
+**P2-H — panel polish.** F1–F4 re-measure unchanged. F5 is **276 → 256**:
+the notice under its Component section drops its fluid `--space-4xl` /
+`--space-5xl` padding for the frozen `--inspector-space-xl` (UX-27). The
+node-level notices above the ClassPicker now sit in a `.nodeNotices` band
+that `:empty` collapses, so a selection with no notice pays 0px for it.
 The spacing hierarchy is now three named steps — **4px** within a group
 (`--inspector-space-2xs`), **8px** between groups inside a section
 (`--inspector-space-m`), **12px** between sections

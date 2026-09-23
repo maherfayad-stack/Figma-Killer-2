@@ -53,7 +53,11 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  *   | F2 text | 769 | 746 | **23** | 772 (26 over) |
  *   | F3 flex board | 715 | 746 | **0** (31 spare) | 715 |
  *   | F4 image | 595 | 746 | **0** (151 spare) | 601 |
- *   | F5 instance | 276 | 746 | **0** (470 spare) | no props at all |
+ *   | F5 instance | 256 | 746 | **0** (490 spare) | no props at all |
+ *
+ * P2-H re-measured all five: F1–F4 unchanged, F5 276 → 256 — the notice
+ * under its Component section traded fluid `--space-4xl`/`-5xl` padding for
+ * the frozen `--inspector-space-xl` (UX-27).
  *
  * P2-G added F5, a local component instance: before it, an instance with no
  * writable class showed the "no writable style" notice and nothing else, so
