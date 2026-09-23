@@ -152,6 +152,7 @@ function makeRequest(serverCalls: unknown[]): AiStreamRequest {
     description: 'echoes its input',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({ v: Type.Optional(Type.Number()) }),
     async handler(input) {
       serverCalls.push(input)

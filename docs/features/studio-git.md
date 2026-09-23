@@ -604,8 +604,9 @@ a commit attaches their git identity to a change in a repository they may push
 to a team. Those are different consents.
 
 Like `studio.run.project`, it is **not** granted to the built-in Admin role: it
-must be granted deliberately, per MCP connector or on a custom role. `mutates:
-true` additionally requires `ai.tools.write`, so both axes must be held.
+must be granted deliberately, per MCP connector or on a custom role.
+`requiresWrite: true` additionally requires `ai.tools.write`, so both axes must
+be held.
 
 The human panel is unaffected — that surface is gated by `site.structure.edit`
 like every other editing panel.

@@ -72,7 +72,7 @@ describe('tool shape', () => {
   it('is a headless, capability-gated mutator with an object input schema', () => {
     expect(tool.name).toBe('studio_import_figma_frame')
     expect(tool.execution).toBe('server')
-    expect(tool.mutates).toBe(true)
+    expect(tool.requiresWrite).toBe(true)
     expect(tool.requiredCapabilities).toEqual(['studio.write'])
     expect(tool.inputSchema.type).toBe('object')
     expect((tool.inputSchema as { additionalProperties?: boolean }).additionalProperties).toBe(false)

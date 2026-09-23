@@ -66,6 +66,7 @@ const listServersTool: AiTool = {
   name: 'mcp_list_project_servers',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'List every MCP server currently connected or connectable for this project\'s chat turns: both project-declared servers (from the repo\'s own .mcp.json) and Studio-registered servers (added directly in Studio, for servers that need a secret .mcp.json cannot safely hold). Each entry reports its name, transport, a one-line summary of its command line or URL, whether a human has approved it (only approved servers are actually merged into a turn), and — for a registered server — which field names it declares as secret (never the secret VALUES, which this tool never sees). Read-only: reachable by any caller, no approval or secret ever surfaced or changed.',
   inputSchema: DirInputSchema,
@@ -107,7 +108,8 @@ const proposeServerTool: AiTool = {
   name: 'mcp_propose_server',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Propose a new MCP server for this project — for example, a design-system or Figma server the user mentioned but that is not already declared in the repo\'s .mcp.json. This registers the NON-secret definition only (transport, command/args/url, non-secret env/headers, and the NAMES of any env var or header whose value is secret) — it is saved as UNAPPROVED and can NEVER be approved, enabled, or given a secret value by this tool or by you. A human must open Settings → AI → MCP Servers, review the exact command line or URL, supply any secret value it needs, and explicitly approve it before it is merged into any chat turn. Do not tell the user the server is "set up" or "ready" — tell them it is proposed and needs their review.',

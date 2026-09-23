@@ -72,7 +72,7 @@ export const StudioComputedStylesInputSchema = Type.Object({
   dir: StudioToolDirField,
   pageId: Type.String({ minLength: 1, description: 'Studio page id (from studio_list_pages) whose rendered frame is read.' }),
   nodeIds: Type.Optional(Type.Array(Type.String({ minLength: 1 }), {
-    description: 'Restrict to these node ids (from studio_screenshot\'s nodeRects or studio_find_nodes). Omit to report every node in the frame that renders text or a visible box.',
+    description: 'Restrict to these node ids (from studio_screenshot\'s nodeRects, a compare region\'s node list, or the live selection). Omit to report every node in the frame that renders text or a visible box.',
   })),
   textOnly: Type.Optional(Type.Boolean({
     description: 'Default true — report only nodes with their own text, which is what a type mismatch lives on. Set false to include layout containers (their padding, radius and background).',

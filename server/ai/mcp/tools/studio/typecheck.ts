@@ -22,8 +22,11 @@
  * `trust-tier-required` code and posture (the agent may ask the user to
  * promote the project; it may never promote it itself — there is no
  * permission-mode notion to bypass this with), and — like `installDepsTool`
- * — is gated by BOTH `mutates: true` (so `ai.tools.write` is required) and
- * `requiredCapabilities: ['studio.write']`. Neither axis is looser than
+ * — is gated by BOTH `requiresWrite: true` (so `ai.tools.write` is required)
+ * and `requiredCapabilities: ['studio.write']`. The gate is about the binary
+ * it runs, not about what it changes: it changes nothing (`--incremental
+ * false`, below), so its `sideEffects` is `'none'` and the tool loop runs a
+ * re-check after a fix instead of answering it with the pre-fix diagnostics. Neither axis is looser than
  * `studio_install_deps`'s; a connector that cannot install dependencies
  * cannot typecheck either.
  *
@@ -129,7 +132,8 @@ const studioTypecheckTool: AiTool = {
   name: 'studio_typecheck',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'none',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Type-check the project with ITS OWN installed tsc (never Studio\'s) — the one verification studio_compare/studio_screenshot cannot give you: whether the code you just wrote actually compiles. Always type-checks the WHOLE project (tsc cannot check a subset without losing project config); pass `paths` to filter which diagnostics come BACK, not what gets checked — the response always names which mode ran (scope: "project" | "filtered") and, when filtered, how many diagnostics exist outside it, so nothing is silently hidden. Returns { ok:true, pass, scope, diagnostics:[{file,line,column,severity,code,message}], diagnosticCount, totalDiagnosticCount, truncated }, or a structured, non-throwing refusal carrying { code, message, remedy, retryable }: trust-tier-required (Tier 0 projects refuse — ask the user to promote, never promote yourself, so retrying unchanged returns the same answer), typescript-not-installed / no-tsconfig with the remedy to ask for, tsc-invocation-error for a broken toolchain, or typecheck-timed-out carrying whatever partial diagnostics tsc had already printed with pass forced false. Requires studio.write. Call this after every .ts/.tsx/.jsx write or edit — a passing studio_compare on code that does not compile is not verification.',

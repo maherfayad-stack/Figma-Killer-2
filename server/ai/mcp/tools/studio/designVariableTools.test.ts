@@ -38,9 +38,9 @@ afterEach(() => {
 
 describe('tool shapes', () => {
   it('ingest and delete are mutating and gated; list/read are not', () => {
-    expect(tool('studio_ingest_design_variables').mutates).toBe(true)
+    expect(tool('studio_ingest_design_variables').requiresWrite).toBe(true)
     expect(tool('studio_ingest_design_variables').requiredCapabilities).toEqual(['studio.write'])
-    expect(tool('studio_delete_design_variable_set').mutates).toBe(true)
+    expect(tool('studio_delete_design_variable_set').requiresWrite).toBe(true)
     expect(tool('studio_delete_design_variable_set').requiredCapabilities).toEqual(['studio.write'])
     expect(tool('studio_list_design_variables').requiredCapabilities ?? []).toEqual([])
     expect(tool('studio_read_design_variable_set').requiredCapabilities ?? []).toEqual([])

@@ -54,7 +54,7 @@ describe('canvas parity matrix', () => {
     }
   })
 
-  it('every registered mutating tool is referenced by at least one parity row, or declares why it is headless-only', () => {
+  it('every registered write tool is referenced by at least one parity row, or declares why it is headless-only', () => {
     // The inverse direction: a write tool that maps to no editor action at
     // all is either undocumented here or shouldn't exist — this catches a
     // tool added later without updating the matrix. The ONLY way out is
@@ -62,7 +62,7 @@ describe('canvas parity matrix', () => {
     // here on purpose (see `parityMatrix.ts`'s module doc).
     const accounted = new Set(referencedToolNames())
     const unaccountedWriteTools = studioAgentTools.filter(
-      (t) => t.mutates && !accounted.has(t.name) && t.headlessOnly === undefined,
+      (t) => t.sideEffects === 'write' && !accounted.has(t.name) && t.headlessOnly === undefined,
     )
     expect(
       unaccountedWriteTools.map((t) => t.name),

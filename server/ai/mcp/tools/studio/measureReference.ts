@@ -76,9 +76,7 @@ import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
-import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
-import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
-import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
+import { collectProjectTokenCss } from '../../../../handlers/studio/projectTokenSources'
 import { measureReference, type MeasureRegionInput } from '../../../../handlers/studio/referenceMeasure'
 import { resolveApplicableDesignVariableSets } from '../../../../handlers/studio/designVariableStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -125,6 +123,7 @@ export const studioMeasureReferenceTool: AiTool = {
   name: 'studio_measure_reference',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Read the design\'s ACTUAL colours and type sizes out of a registered design reference, instead of guessing them from the picture. Give it the screen name and rectangles in the reference image\'s own pixel coordinates; it returns, per region: the background and foreground colours as hex WITH the matching project token when one is within perceptual range, the WCAG contrast between them, the region\'s dominant palette, the measured text lines, a font-size RANGE, and the measured line-height. Every length is converted to CSS px using that screen\'s board frame width, so a 2x or 3x export does not hand you numbers twice the size you should write. The font size is a range on purpose — a flat image cannot say whether the ink measured was cap height or a full ascender-to-descender span, so both bounds are given with their assumption; line-height, measured from the pitch between two lines, is exact. fontSizePx.caveat is always present and always says the same thing: the range assumes a Latin UI sans face, and is a coarse estimate rather than a real measurement for a serif/display face or a non-Latin script (Arabic included) — trust a design connector\'s own token values over this range whenever both exist. Use this BEFORE writing a stylesheet for a screen that has a design: picking a token because its NAME suits the role ("headline" for a screen title) skews consistently large and is the single most common reason a rebuilt screen looks close but wrong. When no token is within range the response says so — that is the case where a raw value is the honest choice. IMPORTANT: if you have already called studio_ingest_design_variables for this design (e.g. after reading a Figma variable table with get_variable_defs), every colour/size result ALSO carries a designVariable field — the design\'s own declared name/value nearest this measurement, plus the project token resolved from THAT declared value. That is a settled fact, not a range or a guess — prefer it over fontSizePx/token whenever both are present. designVariablesIndexed.setCount in the response tells you whether any table applied at all; 0 means measure by pixel alone, same as before this existed.',
   inputSchema: InputSchema,
@@ -165,16 +164,10 @@ export const studioMeasureReferenceTool: AiTool = {
     }
 
     // The same CSS the canvas gets, so a token this reports is a token that
-    // actually cascades — see `projectTokenIndex`'s own doc.
-    let cssSources: string[] = []
-    try {
-      const compiled = await compileProjectStyles(dir, resolveProjectProfile(dir))
-      cssSources = [builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css]
-    } catch (err) {
-      // Token matching degrades to "no tokens"; the raw measurements are still
-      // the point and are still correct.
-      console.error('[studio_measure_reference] could not compile project styles for token matching:', err)
-    }
+    // actually cascades — see `projectTokenSources.ts`. It degrades per
+    // source and never throws: without tokens the raw measurements are still
+    // the point and are still correct.
+    const cssSources = await collectProjectTokenCss(dir)
 
     // The design's OWN declared values (studio_ingest_design_variables), when
     // any apply to this page/reference — project-wide, page-scoped, and

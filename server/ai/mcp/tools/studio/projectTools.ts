@@ -14,7 +14,7 @@
  *
  * Capability posture: every tool here is a READ except `studio_install_deps`
  * and `studio_create_page` (write a job / write a file), which declare
- * `mutates: true` + `requiredCapabilities: ['studio.write']`. The reads have
+ * `requiresWrite: true` + `requiredCapabilities: ['studio.write']`. The reads have
  * no `requiredCapabilities`, which `toolAllowedForCapabilities` treats as
  * "any ai.chat caller" — same posture `get_context`/`site_list_documents`
  * use for read-only orientation tools.
@@ -69,6 +69,7 @@ const listProjectsTool: AiTool = {
   name: 'studio_list_projects',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'List every studio project (an immediate subfolder of studio-workspace/, hand-authored or GitHub-imported). Each entry includes its display name, page count, and — when the project has already been probed — a summary of its framework/style-toolchain profile. Call this first when you do not already know which project dir to target.',
   inputSchema: Type.Object({}, { additionalProperties: false }),
@@ -108,6 +109,7 @@ const projectProfileTool: AiTool = {
   name: 'studio_project_profile',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Return the full ProjectProfile for a studio project: detected framework, route style, pages directory, style toolchain (Tailwind/Sass/CSS Modules/CSS-in-JS), component packages, design systems, path aliases, the dark-mode and locale capabilities, and the probe\'s own warnings (each a { code, message, fix } — the same codes studio_fidelity_report surfaces). profile.colorScheme is how this project expresses dark mode: mechanism (class/media/none), the exact selector to gate a dark rule on, and the source file it was found in — which is often the installed design system\'s own stylesheet, not a file in the project. Uses the cached probe from .studio/meta.json when present, else probes fresh (never writes the cache itself, except to heal a cache an older probe version got wrong). Call this before touching a project you have not seen before — "what am I working with" in one call.',
   inputSchema: DirInputSchema,
@@ -128,7 +130,8 @@ const installDepsTool: AiTool = {
   name: 'studio_install_deps',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Start a "bun install --ignore-scripts" (or the detected package manager) job for a project as a background job — returns a jobId immediately, never blocks on the install itself (30s-3min). Poll status with studio_install_status. Refuses outright at Tier 0 (static) trust — the agent may ASK the user to promote the project first, never promote it itself. Postinstall scripts never run even once promoted (arbitrary code execution is refused separately); packages that need one are reported as a warning in the job log instead. Requires studio.write.',
@@ -172,6 +175,7 @@ const installStatusTool: AiTool = {
   name: 'studio_install_status',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description: 'Poll a studio_install_deps job by jobId: { status: running|done|failed|timeout, log, exitCode }.',
   inputSchema: InstallStatusInputSchema,
   handler: async (input) => {
@@ -192,8 +196,9 @@ const listPagesTool: AiTool = {
   name: 'studio_list_pages',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
-    'List every page (board frame) discovered in a project: id, title, slug/route, and node count. Parses the whole project once (same pipeline the Studio UI uses to load the board) — for a large project prefer this over re-parsing yourself. Use the returned pageId with studio_find_nodes / studio_fidelity_report / studio_set_frames.',
+    'List every page (board frame) discovered in a project: id, title, slug/route, and node count. Parses the whole project once (same pipeline the Studio UI uses to load the board) — for a large project prefer this over re-parsing yourself. Use the returned pageId with studio_fidelity_report, studio_set_frames, and any other tool that takes a pageId.',
   inputSchema: DirInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput } = input as { dir?: string }
@@ -235,6 +240,7 @@ const getNodeSourceTool: AiTool = {
   name: 'studio_get_node_source',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Decode a studio node id to its exact source location: { file, line, col, snippet }. This is the bridge from "the hero section is wrong" to "here is the code" — every visual finding should be paired with this. Returns ok:false with a reason for a synthetic node (no source location) or a `.map`-iteration node id (one piece of source produces N nodes; there is no single line for row 2).',
   inputSchema: GetNodeSourceInputSchema,
@@ -300,6 +306,7 @@ const findNodesTool: AiTool = {
   name: 'studio_find_nodes',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Query nodes across a project\'s pages by moduleId, tag, class name, text, lock state, or codeProps presence. The agent\'s "show me everything that failed to resolve" — pass lockedOnly:true to find every dynamic/unresolved node, or codeValuedOnly:true to find every per-prop value with nowhere writable to land. Results are capped (default 100) and always include enough to call studio_get_node_source next. Each match carries sourceFingerprint when the node has one: pass it back in the expect map of studio_apply_edits ({ [nodeId]: sourceFingerprint }) so an edit made after the file changed refuses element-moved instead of writing to whatever now sits at that line.',
   inputSchema: FindNodesInputSchema,
@@ -403,7 +410,8 @@ const createPageTool: AiTool = {
   name: 'studio_create_page',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Scaffold a new page/screen/popup/bottom sheet (see `kind`): writes a canonical-by-construction .tsx (or .jsx, matching the project\'s own convention) file, auto-places its board frame at the next free grid slot so it is immediately visible, and returns { relPath, pageId, title, rootNodeId }. This is the ONLY way to create a screen — there is no other tool and no raw-file-write path. rootNodeId is read back by actually parsing the file just written (never invented) — pass it to studio_apply_edits\' insert edits as the container to compose structure into. Returns { ok:false, conflict } instead of overwriting when the name is already taken. If the caller has the project open in a browser tab, its canvas is nudged to pick up the new page and its board frame (best-effort — nothing to do if no browser is open). Requires studio.write.',
@@ -487,6 +495,7 @@ const readFileTool: AiTool = {
   name: 'studio_read_file',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     `Read a workspace file by project-relative path, up to ${READ_FILE_MAX_BYTES.toLocaleString('en-US')} bytes. studio_get_node_source reads the few lines around ONE already-known node; this reads a whole file — use it to read a SIBLING screen or a component's own source before composing a new screen, so the result matches the project's existing conventions (imports, component vocabulary, class naming, file layout) instead of guessing. For a .tsx/.jsx path, also returns canonical: { isCanonical, violations, advisories } — the WS-13 canonical-JSX check (isCanonical is violations===0; advisories are informational, never disqualifying) — use this to confirm a screen you just composed is still fully editable. Returns { ok:false, error } for a missing file, a directory, an oversized file, or a path that fails containment (absolute, "..", or a symlink escaping the project) — never a partial read.`,
   inputSchema: ReadFileInputSchema,
@@ -569,6 +578,7 @@ const listFilesTool: AiTool = {
   name: 'studio_list_files',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'List the files in this project, as project-relative POSIX paths. Use this BEFORE studio_read_file whenever you are unsure a path exists — it is the only way to see the real file tree, and guessing paths one studio_read_file at a time is never the answer. Pass path to list one folder ("pages", "styles/imported"), omit it for the whole project. Generated/dependency folders (node_modules, .git, .studio, dist) are never listed. Returns { files, total, truncated }.',
   inputSchema: ListFilesInputSchema,

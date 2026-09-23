@@ -6,9 +6,9 @@
  *
  * Three ways an action can be covered, and the distinction is the point:
  *
- *   - `native` — done with the CLI's own file tools (`Read`/`Write`/`Edit`/
- *     `Glob`/`Grep`), which the driver grants scoped to the project `cwd`
- *     (`claudeCliToolSurface.ts`). Most source editing lives here now. It is
+ *   - `native` — done with the CLI's own tools (`Read`/`Write`/`Edit`/
+ *     `Glob`/`Grep`/`Task`), which the driver grants scoped to the project
+ *     `cwd` (`claudeCliToolSurface.ts`). Most source editing lives here now. It is
  *     a separate status from `tool` rather than folded into it because these
  *     rows carry no Studio-side gate at all — they are bounded by the
  *     subprocess's working directory, not by a capability check — and a
@@ -24,8 +24,9 @@
  *
  * ## The inverse direction, and the one escape from it
  *
- * The gate also runs the table backwards: every registered `mutates: true`
- * tool must be named by some row, because a write tool that maps to no editor
+ * The gate also runs the table backwards: every registered
+ * `sideEffects: 'write'` tool must be named by some row, because a write tool
+ * that maps to no editor
  * action is either undocumented here or should not exist. A tool that
  * genuinely has no canvas counterpart says so on ITSELF —
  * `AiTool.headlessOnly`, a sentence stating why — and the gate reads that
@@ -167,8 +168,11 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     status: { kind: 'withheld', reason: 'No Bash, at any trust tier, in any permission mode — the one tool whose blast radius is not bounded by the project cwd. Dependency installs go through studio_install_deps, which IS trust-tier gated.' },
   },
   {
+    // Granted since `claudeCliToolSurface.ts` put `Task` back in
+    // `WORKSPACE_NATIVE_TOOLS`; this row said "withheld" for a wave after
+    // that, and agent.md repeated it (AI-24).
     action: 'Delegate to a subagent',
-    status: { kind: 'withheld', reason: 'Task is not granted. The CLI silently substitutes its own general-purpose agent for an unknown subagent_type and reports success it cannot back up — observed producing a detailed report of ten files written, none of which existed. With native file tools there is nothing a screen-building subagent adds but latency.' },
+    status: { kind: 'native', how: "Task, with subagent_type 'general-purpose' and nothing else — granted on the claude CLI path whenever a project is open (claudeCliToolSurface.ts). One subagent per page, and that page's .tsx and .module.css are the subagent's alone; every shared file stays the orchestrator's. The HTTP drivers have no delegation tool." },
   },
   {
     action: 'Reach a file outside the open project',

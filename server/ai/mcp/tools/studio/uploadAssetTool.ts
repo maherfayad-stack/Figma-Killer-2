@@ -28,10 +28,11 @@ const uploadAssetTool: AiTool = {
   name: 'studio_upload_asset',
   scope: 'site',
   execution: 'bridge',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Land a new image file into the project — wraps the same POST /admin/api/studio/asset-upload endpoint the canvas\'s own asset picker uses (real bytes sniffed against image magic numbers, containment-checked target directory, collision-safe naming; a declared mimeType that does not match the actual bytes is refused). Returns { relPath } — the new file\'s workspace-relative POSIX path, ready to pass as an insert edit\'s import target or a kind:"asset" edit\'s assetPath. This is the ONLY way to land a genuinely NEW image file; studio_apply_edits\' asset-kind edit only repoints an EXISTING import at a file that is already on disk. It posts as the signed-in user, so it needs the project open in a Studio browser tab — studio_fetch_remote_asset is the headless alternative when the bytes are already at an http(s) URL. Requires studio.write.',
+    'Land a new image file into the project — wraps the same POST /admin/api/studio/asset-upload endpoint the canvas\'s own asset picker uses (real bytes sniffed against image magic numbers, containment-checked target directory, collision-safe naming; a declared mimeType that does not match the actual bytes is refused). Returns { relPath } — the new file\'s workspace-relative POSIX path, ready to import from the file that uses it. This is the way to land a genuinely NEW image file from bytes you hold; repointing an existing import only works for a file that is already on disk. It posts as the signed-in user, so it needs the project open in a Studio browser tab — studio_fetch_remote_asset is the headless alternative when the bytes are already at an http(s) URL. Requires studio.write.',
   inputSchema: StudioUploadAssetInputSchema,
 }
 

@@ -107,8 +107,8 @@ studio_resolve_comment → mark it done
 | Tool | Gate |
 |---|---|
 | `studio_list_comments` | none (matches every other Studio read tool) |
-| `studio_reply_comment` | `mutates` + `studio.write` |
-| `studio_resolve_comment` | `mutates` + `studio.write` **+ the anchor gate** |
+| `studio_reply_comment` | `requiresWrite` + `studio.write` |
+| `studio_resolve_comment` | `requiresWrite` + `studio.write` **+ the anchor gate** |
 
 ### Every id is resolved before the agent sees it
 

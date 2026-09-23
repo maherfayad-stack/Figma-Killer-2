@@ -45,16 +45,22 @@
  *     spend. Reaching it ends the turn with a single `error` event that names
  *     the last tool the model was on, so the transcript says what it was
  *     looping on rather than just stopping.
- *   - A per-turn fingerprint set suppresses a REPEATED MUTATING call. The
- *     second identical `(toolName, canonical args)` pair in one turn is not
- *     executed; it is answered with a structured
- *     `{ code: 'duplicate-call', priorResult }` result carrying the first
- *     call's own outcome, so the model learns the write already happened
- *     instead of being told nothing and trying again.
+ *   - A per-turn write ledger suppresses a REPEATED WRITE. The second
+ *     identical `(toolName, canonical args)` write in one turn, with no other
+ *     write landing in between, is not executed; it is answered with a
+ *     structured `{ code: 'duplicate-call', priorResult }` result carrying the
+ *     first call's own outcome, so the model learns the write already
+ *     happened instead of being told nothing and trying again. A write that
+ *     lands in between advances the ledger's epoch, and the repeat then runs
+ *     — see `TurnWriteLedger` for the four cases.
  *
- * Read-only tools are exempt from the fingerprint rule on purpose: re-reading
- * a document after a write is how the model checks its own work, and that
- * second read is a different question with the same arguments.
+ * Only `sideEffects: 'write'` tools are ledgered. Observers (`'none'`,
+ * `'cache'`) are exempt on purpose: re-reading, re-capturing or re-checking
+ * after a write is how the model checks its own work, and that second look is
+ * a different question with the same arguments. This used to key on the old
+ * `mutates` flag, which was also the capability gate — so every write-GATED
+ * observer (`studio_screenshot`, `studio_compare`, `studio_typecheck`, …) had
+ * its second look after a fix answered with the stale first result (AI-5).
  */
 
 import type {
@@ -69,16 +75,18 @@ import { parseSseStream, type SseFrame } from './sse'
 import { executeAiTool } from './execTool'
 import { isAbortError, classifyHttpFailure } from './errors'
 import {
-  DUPLICATE_CALL_CODE,
   MAX_TOOL_ROUNDS,
+  createTurnWriteLedger,
   duplicateCallOutput,
-  toolCallFingerprint,
+  priorWriteOutcome,
+  recordWriteOutcome,
   toolRoundCapMessage,
+  type TurnWriteLedger,
 } from './toolLoopBounds'
 
 // Re-exported because this module is the front door callers already use,
 // and the bounds' own doc explains why they live one file over.
-export { DUPLICATE_CALL_CODE, MAX_TOOL_ROUNDS, toolCallFingerprint }
+export { MAX_TOOL_ROUNDS }
 
 export const PROVIDER_RETRY_IMAGE_OMITTED =
   '[Earlier attached images omitted after the provider rejected the full conversation context.]'
@@ -206,11 +214,11 @@ export async function* runToolLoop<TMessage>(
     cacheCreationTokens: cacheCreationTokens || undefined,
   })
 
-  // The two ceilings — see the module doc. `seenMutatingCalls` is per TURN,
-  // not per conversation: a write the user asks for again in their next
-  // message is a new instruction and must run.
+  // The two ceilings — see the module doc. The write ledger is per TURN, not
+  // per conversation: a write the user asks for again in their next message
+  // is a new instruction and must run.
   const maxRounds = req.maxToolRounds ?? MAX_TOOL_ROUNDS
-  const seenMutatingCalls = new Map<string, AiToolOutput>()
+  const writeLedger = createTurnWriteLedger()
   let round = 0
   let lastToolName = ''
 
@@ -313,13 +321,13 @@ export async function* runToolLoop<TMessage>(
       history.push(turn.assistantMessage)
     }
 
-    // Execute every tool the model requested this turn — reads concurrently,
-    // writes one at a time (see `groupToolCalls`) — then append the combined
-    // tool-result turn before re-POSTing.
+    // Execute every tool the model requested this turn — observers
+    // concurrently, writes one at a time (see `groupToolCalls`) — then append
+    // the combined tool-result turn before re-POSTing.
     const results: TurnToolResult[] = []
     for (const group of groupToolCalls(turn.toolCalls, toolsByName)) {
       const settled = await Promise.all(
-        group.map((call) => executeOneCall(call, toolsByName, req, seenMutatingCalls)),
+        group.map((call) => executeOneCall(call, toolsByName, req, writeLedger)),
       )
       if (req.signal.aborted) return
       lastToolName = group[group.length - 1]?.name ?? lastToolName
@@ -404,7 +412,7 @@ function elideHistoricalUserImages(messages: readonly AiMessage[]): AiMessage[] 
 }
 
 // ---------------------------------------------------------------------------
-// Tool dispatch — concurrent reads, serialised writes
+// Tool dispatch — concurrent observers, serialised writes
 // ---------------------------------------------------------------------------
 
 /** One executed call. `output === null` means the transport itself failed. */
@@ -416,37 +424,41 @@ interface ExecutedCall {
 
 /**
  * Split one turn's tool calls into ordered execution GROUPS: consecutive
- * read-only calls form a single group that runs concurrently, and any call
- * that mutates state gets a group of its own.
+ * observer calls (`sideEffects` `'none'` or `'cache'`) form a single group
+ * that runs concurrently, and every `'write'` gets a group of its own.
  *
- * The system prompt asks the model to issue reads as one batch, and running
- * that batch sequentially made the loop's wall time the SUM of every read
- * rather than the slowest one — several seconds per round on a five-screen
- * verification, repeated every round of a fix loop.
+ * The system prompt asks the model to issue its looks as one batch, and
+ * running that batch sequentially made the loop's wall time the SUM of every
+ * observation rather than the slowest one — several seconds per round on a
+ * five-screen verification, repeated every round of a fix loop. A screenshot,
+ * a compare, a measurement and a typecheck are all observers: each captures or
+ * checks what is on disk, and the one resource two captures could contend
+ * for — the headless browser — is already serialised underneath them
+ * (`capture/browserPool.ts`'s `withCapturePage`), as is the live-tab
+ * fallback on the client.
  *
- * The rule is deliberately conservative, and the conservatism is the point:
- * two writes to the same file, or a read the model issued *after* a write in
- * order to observe it, must not be reordered or interleaved. Only
- * `mutates !== true` tools are ever run together, and a name we cannot resolve
- * to a registered tool is treated as a write (it becomes an
- * `Unknown tool: …` result, but it never shares a group).
+ * The write rule is deliberately conservative, and the conservatism is the
+ * point: two writes to the same file, or an observation the model issued
+ * *after* a write in order to see it, must not be reordered or interleaved.
+ * A name we cannot resolve to a registered tool is treated as a write (it
+ * becomes an `Unknown tool: …` result, but it never shares a group).
  */
 function groupToolCalls(
   calls: readonly TurnToolCall[],
   toolsByName: ReadonlyMap<string, AiTool>,
 ): TurnToolCall[][] {
   const groups: TurnToolCall[][] = []
-  let readBatch: TurnToolCall[] | null = null
+  let observerBatch: TurnToolCall[] | null = null
   for (const call of calls) {
     const tool = toolsByName.get(call.name)
-    if (tool !== undefined && tool.mutates !== true) {
-      if (readBatch === null) {
-        readBatch = []
-        groups.push(readBatch)
+    if (tool !== undefined && tool.sideEffects !== 'write') {
+      if (observerBatch === null) {
+        observerBatch = []
+        groups.push(observerBatch)
       }
-      readBatch.push(call)
+      observerBatch.push(call)
     } else {
-      readBatch = null
+      observerBatch = null
       groups.push([call])
     }
   }
@@ -458,32 +470,34 @@ function groupToolCalls(
  * bridge is returned as `{ output: null, error }` so the caller can emit every
  * result of the group in the model's own call order before terminating on it.
  *
- * `seenMutatingCalls` is the turn's write fingerprint set. A mutating call
- * whose fingerprint is already in it is NOT executed — it is answered from the
- * first call's own result. Only `mutates === true` tools are fingerprinted:
- * `groupToolCalls` above already treats that flag as the read/write boundary,
- * and re-reading is a legitimate thing for a model to do twice.
+ * `writeLedger` is the turn's duplicate-write record (`TurnWriteLedger`). A
+ * write whose identical twin was already recorded at the current write epoch
+ * is NOT executed — it is answered from that call's own result. Only
+ * `sideEffects: 'write'` tools consult or advance it: `groupToolCalls` above
+ * uses the same field as its concurrency boundary, and looking twice is a
+ * legitimate thing for a model to do.
  */
 async function executeOneCall(
   call: TurnToolCall,
   toolsByName: ReadonlyMap<string, AiTool>,
   req: AiStreamRequest,
-  seenMutatingCalls: Map<string, AiToolOutput>,
+  writeLedger: TurnWriteLedger,
 ): Promise<ExecutedCall> {
   const tool = toolsByName.get(call.name)
-  const fingerprint = tool?.mutates === true ? toolCallFingerprint(call.name, call.input) : null
-  if (fingerprint !== null) {
-    const prior = seenMutatingCalls.get(fingerprint)
+  const ledgered = tool?.sideEffects === 'write'
+  if (ledgered) {
+    const prior = priorWriteOutcome(writeLedger, call.name, call.input)
     if (prior !== undefined) return { call, output: duplicateCallOutput(call.name, prior), error: '' }
   }
   try {
     const output = tool
       ? await executeAiTool(tool, prepareToolInput(call, req), req.bridge, req.signal, req.toolContextBase)
       : { ok: false, error: `Unknown tool: ${call.name}` }
-    // Recorded on EVERY outcome, including a failure: a write that refused for
+    // Recorded on EVERY outcome, including a refusal: a write that refused for
     // a reason in its own error text refuses identically the second time, and
-    // re-running it is exactly the loop this bound exists to stop.
-    if (fingerprint !== null) seenMutatingCalls.set(fingerprint, output)
+    // re-running it is exactly the loop this bound exists to stop. The ledger
+    // decides whether the outcome also advances the epoch.
+    if (ledgered) recordWriteOutcome(writeLedger, call.name, call.input, output)
     return { call, output, error: '' }
   } catch (err) {
     return { call, output: null, error: err instanceof Error ? err.message : String(err) }

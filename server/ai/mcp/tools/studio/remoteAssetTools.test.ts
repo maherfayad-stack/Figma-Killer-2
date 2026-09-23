@@ -18,7 +18,7 @@ describe('studio_fetch_remote_asset — tool shape', () => {
   it('is a headless, mutating, studio.write-gated tool', () => {
     expect(tool.name).toBe('studio_fetch_remote_asset')
     expect(tool.execution).toBe('server')
-    expect(tool.mutates).toBe(true)
+    expect(tool.requiresWrite).toBe(true)
     expect(tool.requiredCapabilities).toEqual(['studio.write'])
   })
 

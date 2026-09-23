@@ -36,9 +36,9 @@ async function pngBase64(width: number, height: number): Promise<string> {
 
 describe('tool shapes', () => {
   it('register and delete are mutating and gated; list/read/recommend are not', () => {
-    expect(tool('studio_register_design_reference').mutates).toBe(true)
+    expect(tool('studio_register_design_reference').requiresWrite).toBe(true)
     expect(tool('studio_register_design_reference').requiredCapabilities).toEqual(['studio.write'])
-    expect(tool('studio_delete_design_reference').mutates).toBe(true)
+    expect(tool('studio_delete_design_reference').requiresWrite).toBe(true)
     expect(tool('studio_delete_design_reference').requiredCapabilities).toEqual(['studio.write'])
     expect(tool('studio_list_design_references').requiredCapabilities ?? []).toEqual([])
     expect(tool('studio_read_design_reference').requiredCapabilities ?? []).toEqual([])
