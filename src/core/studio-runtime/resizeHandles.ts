@@ -309,6 +309,8 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     }
     endDrag = finish
     frame?.setAttribute(RESIZE_ACTIVE_ATTR, 'true')
+    // Seeded from the start box so the first painted frame already reads right.
+    if (sizeBadge) writeSizeBadge(sizeBadge, start.width + start.insetWidth, start.height + start.insetHeight)
 
     // ERR-12 — registered BEFORE the session's own listeners, so a move with
     // the button already up finishes the drag before it is read as a step.
