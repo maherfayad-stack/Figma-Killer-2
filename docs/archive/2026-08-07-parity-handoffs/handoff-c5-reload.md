@@ -1,4 +1,5 @@
 # server-engineer — Track C5 handoff (reload surgery)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Working tree only — nothing committed/staged, per instructions.
 

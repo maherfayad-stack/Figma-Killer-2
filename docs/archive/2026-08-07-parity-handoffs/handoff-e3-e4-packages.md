@@ -1,4 +1,5 @@
 # E3 + E4 handoff — Dependencies panel install, generic package registration
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Bottom line
 

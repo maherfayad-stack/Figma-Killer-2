@@ -1,4 +1,5 @@
 # MCP Connectors
+> **Purpose:** Studio as an MCP server for external agents: connectors, tokens, the live bridge · **Read when:** touching the MCP endpoint, a connector or a studio_* tool · **Trust:** current · **Owner:** mcp-tooling · **Verified:** not yet
 
 MCP connectors let **external AI clients drive this Studio instance** over the [Model Context Protocol](https://modelcontextprotocol.io). Studio acts as an **MCP server**: a local client (Claude Code, Codex, Cursor) or a remote agent connects, lists the available tools, and operates the CMS — reading the site, editing page structure, and managing content — exactly the way the built-in AI panel does.
 

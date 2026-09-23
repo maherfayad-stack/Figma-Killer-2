@@ -1,4 +1,5 @@
 # A5 — Design-system knowledge — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Scope decision: A5 built in full; A2's "real fix" NOT attempted
 

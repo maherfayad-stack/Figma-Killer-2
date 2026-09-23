@@ -1,4 +1,5 @@
 # E1 — The component catalog — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Scope (files touched)
 

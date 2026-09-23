@@ -1,4 +1,5 @@
 # store-engineer — Phase 0 handoff (items 0.1, 0.2, 0.3)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 All three items landed. Nothing committed/staged — working tree only, per instructions.
 

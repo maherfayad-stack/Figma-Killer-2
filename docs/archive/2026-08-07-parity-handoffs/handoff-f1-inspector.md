@@ -1,4 +1,5 @@
 # Track F1 — Effective value + provenance — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Status: **complete for the scope below**, working tree only (nothing committed/staged).
 

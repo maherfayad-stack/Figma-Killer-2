@@ -1,4 +1,5 @@
 # Studio Prototype Mode — plan
+> **Trust:** historical, dated 2026-09-17. Paths may be wrong. Never act on it.
 
 **Status:** every phase (1a–7) has landed, richer triggers and
 `smart-animate` with `STUDIO-FIGMA-FEEL-PLAN.md`'s P7. What remains is the

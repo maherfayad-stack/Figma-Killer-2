@@ -1,4 +1,5 @@
 # e2e cold-suite triage
+> **Trust:** historical, dated 2026-09-19. Paths may be wrong. Never act on it.
 
 Branch `test/e2e-cold-suite-triage` off `9716abf7` (= `main` `51b19940`).
 

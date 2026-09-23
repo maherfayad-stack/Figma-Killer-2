@@ -1,4 +1,5 @@
 # Site Import
+> **Purpose:** the static-site importer and the CMS bundle import in the same modal · **Read when:** touching SiteImportModal or @core/siteImport · **Trust:** current-cms · **Owner:** parser-surgeon · **Verified:** not yet
 
 `src/admin/modals/SiteImport` is the canonical import surface. It routes static-site bundles (HTML pages, CSS files, images, fonts, JS) through `src/core/siteImport`, and routes CMS-exported site-transfer ZIP bundles through the CMS transfer endpoints for full import/export parity.
 

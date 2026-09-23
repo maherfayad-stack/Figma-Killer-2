@@ -1,4 +1,5 @@
 # Track C3 handoff — whole-`s.site` selectors in canvas injectors
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Scope
 

@@ -1,4 +1,5 @@
 # studio-implementer handoff — real violations surfaced by the repaired gates
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Scope: fix the genuine pre-existing violations in `direct-icon-imports.test.ts`,
 `canvas-aware-selectors.test.ts`, and `ui-primitives-location.test.ts` that the

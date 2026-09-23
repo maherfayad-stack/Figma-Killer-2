@@ -1,4 +1,5 @@
 # Canvas Drag-and-Drop
+> **Purpose:** drag and drop in the editor: mechanisms, drop resolution, the D2 target architecture · **Read when:** touching any drag, drop or insert-at-a-point gesture · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-23
 
 How drag-and-drop works in the visual editor: dropping new modules from the picker / library, moving existing nodes around the page tree, wrap-to-container, multi-select moves, and the drop-zone overlay.
 
@@ -96,11 +97,12 @@ topology below first.
   no `DndContext` (`useCanvasInsertionDrag.ts`), sharing the canvas's drop-zone
   resolver through `canvasInsertionDrop.ts`. Its one live source is the canvas
   notch's Text / Div / Span primitives; the insert dialog that used to drag
-  module cards is deleted, and dragging from the Assets panel is a deliberate
-  follow-up (DS-4b). A media-asset counterpart
+  module cards is deleted; the Assets panel's cards drag through the same hook
+  (`AssetsPanel.tsx`), into static and live frames alike. A media-asset counterpart
   (`useMediaCanvasInsertionDrag.ts`) used to ride the same resolver from the
   Media Explorer panel; that panel was CMS-only chrome and both are gone.
-- The **Media workspace** (folders/assets — not the canvas) is a fourth
+- The **media picker** (`MediaPickerModal`'s folder tree and asset grid —
+  not the canvas) is a fourth
   mechanism: native HTML5 drag-and-drop (`draggable`, `dataTransfer` —
   `useMediaDnd.ts`, `mediaDragDrop.ts`, `mediaDnd.ts`). `dataTransfer` is
   unreadable during `dragover` (HTML spec "protected mode"), so legality
@@ -172,14 +174,14 @@ New-module insertion — raw pointer, no DndContext at all
     canvasInsertionDrop.ts's resolveCanvasPointerInsertionDrop, which shares
     canvasDnd.ts's resolver with the canvas reorder drag above.
 
-Media workspace (folders/assets) — native HTML5 DnD, a FOURTH mechanism
+Media picker (folders/assets in MediaPickerModal) — native HTML5 DnD, a FOURTH mechanism
 ─────────────────────────────────────────────────────────────────────────
   draggable + onDragStart/onDragOver/onDrop, dataTransfer payloads
   (useMediaDnd.ts, mediaDragDrop.ts, mediaDnd.ts). Unrelated to the canvas —
   documented here only so its existence isn't mistaken for a canvas pattern.
 ```
 
-Drag sources (canvas + DOM panel — the Media workspace is a separate topology, above):
+Drag sources (canvas + DOM panel — the media picker is a separate topology, above):
 
 | Source                              | Origin                           | Drop result                                                                |
 |--------------------------------------|-----------------------------------|-----------------------------------------------------------------------------|
@@ -821,7 +823,7 @@ there is no `onDragEnd` to hook into. React to the resolved target in
 `handleWindowPointerUp` (`useCanvasReorderDrag.ts`) or the pointerup handler
 that closes the gesture (`useCanvasInsertionDrag.ts`).
 
-**On the Media workspace** (native HTML5 DnD): react in `onDrop` on the
+**In the media picker** (native HTML5 DnD): react in `onDrop` on the
 target element (`useMediaDnd.ts`'s `handleDrop`), same as any native
 drag-and-drop consumer. Don't try to route it through `@dnd-kit` — it isn't
 present on that surface.
@@ -832,7 +834,7 @@ present on that surface.
 
 | Pattern                                                                                             | Use instead                                                                                                    |
 |--------------------------------------------------------------------------------------------------------|--------------------------------------------------------------------------------------------------------------------|
-| Adding a NEW native HTML5 DnD surface outside the Media workspace                                     | Reuse the canvas pointer-drag pattern (`useCanvasReorderDrag.ts`) or `@dnd-kit/core` (DOM panel / Site Explorer). Native HTML5 DnD is scoped to the Media workspace only — and even there, legality checks during `dragover` must go through `readActiveMediaDragPayload()` (the session mirror), never `dataTransfer.getData()`, which the HTML spec mandates return `""` in "protected mode" |
+| Adding a NEW native HTML5 DnD surface outside the media picker                                        | Reuse the canvas pointer-drag pattern (`useCanvasReorderDrag.ts`) or `@dnd-kit/core` (DOM panel / Site Explorer). Native HTML5 DnD is scoped to the media picker and OS file drops only — and even there, legality checks during `dragover` must go through `readActiveMediaDragPayload()` (the session mirror), never `dataTransfer.getData()`, which the HTML spec mandates return `""` in "protected mode" |
 | `react-dnd`                                                                                             | Not used anywhere in this codebase — don't introduce it                                                            |
 | Adding `@dnd-kit/core` (or native HTML5 `dataTransfer` DnD) to a NEW file  | Both are pinned to an explicit allowlist in `src/__tests__/architecture/single-drag-mechanism.test.ts` — a new surface reaching for either fails that gate. Use the canvas's raw-pointer-event pattern instead |
 | Computing drop targets ad-hoc per surface                                                              | `resolveCanvasDropTarget(...)` / `resolveCanvasInsertionTarget(...)` (canvas) or `resolveDomDropTarget(...)` (DOM panel) — same zone math, same zoom handling |
@@ -860,7 +862,7 @@ present on that surface.
   - `src/admin/pages/site/canvas/canvasPointerRelay.ts` — cross-iframe pointer relay the reorder drag depends on
   - `src/admin/pages/site/panels/DomPanel/DomPanel.tsx` — the DOM panel's own `<DndContext>` (`autoScroll={false}` — see `useDomPanelDnd.ts`'s own auto-scroll)
   - `src/admin/pages/site/panels/DomPanel/useDomPanelDnd.ts` — DOM panel drag-state hook (real `@dnd-kit/core`)
-  - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — Media workspace native HTML5 DnD, incl. the `dragover` protected-mode session mirror
+  - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — the media picker's native HTML5 DnD, incl. the `dragover` protected-mode session mirror
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
   - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)

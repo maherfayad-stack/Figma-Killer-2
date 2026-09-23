@@ -1,4 +1,5 @@
 # PROJECT BRIEF — read this before touching anything
+> **Purpose:** orientation: what Studio is, what works and what does not, the traps, and which agent and docs a task needs · **Read when:** first, before any task · **Trust:** current · **Owner:** studio-scribe · **Verified:** 2026-09-23
 
 **You are working on Studio: a Figma-grade visual design tool whose source of truth is a real React repository on disk.**
 

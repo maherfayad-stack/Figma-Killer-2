@@ -1,4 +1,5 @@
 # Canvas internals
+> **Purpose:** how the canvas works: iframes, injectors, overlays, geometry, events, bridge frames, perf · **Read when:** touching the canvas, a frame, an overlay or pointer handling · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 What you must know before touching the canvas. Full version:
 [`docs/features/canvas-iframe-per-frame.md`](../features/canvas-iframe-per-frame.md).

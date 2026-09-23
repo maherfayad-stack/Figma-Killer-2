@@ -1,4 +1,5 @@
 # User E2E Testing
+> **Purpose:** the Playwright e2e suite: the fourth gate, the disposable stack, authoring rules, coverage · **Read when:** writing or running an e2e spec · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 This folder defines the agent-run browser testing workflow for Studio.
 

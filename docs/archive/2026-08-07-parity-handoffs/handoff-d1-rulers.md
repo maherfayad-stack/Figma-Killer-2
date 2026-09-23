@@ -1,4 +1,5 @@
 # D1 — Rulers and guides — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Update — lint fix pass (post-landing)
 

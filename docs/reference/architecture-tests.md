@@ -1,4 +1,5 @@
 # Architecture Tests
+> **Purpose:** the catalogue of every architecture gate test · **Read when:** a gate fails, or you change a structural rule · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 Catalog of every test in `src/__tests__/architecture/`. These are structural gates — they run as part of `bun test` and fail the build when a rule is broken. When *your* change drifts a structural rule, fix the matching test in the **same** change.
 

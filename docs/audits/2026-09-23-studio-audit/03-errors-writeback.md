@@ -1,4 +1,5 @@
 # Audit 03: parse and writeback errors, refusals, and auto-resolution
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: parser-surgeon (read-only). Date: 2026-09-23. Branch: `fix/studio-load-memo-cold-on-every-load`.
 Area: `src/core/page-parser`, `src/core/ast-codemods`, `src/core/css-codemods`, `src/core/studio-sync`,

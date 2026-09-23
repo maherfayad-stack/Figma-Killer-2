@@ -1,4 +1,5 @@
 # canvas-engineer handoff — clearing the freed-owner gate backlog
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Scope: the 3 items in `handoff-gate-backlog.md` that were blocked on other
 agents' file ownership (`TemplateModeControl.tsx` ×3, `UserStylesheetInjector.tsx`

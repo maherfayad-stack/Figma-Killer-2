@@ -1,4 +1,5 @@
 # test-engineer handoff — Windows path/CRLF architecture-gate fixes
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Shared helper added
 

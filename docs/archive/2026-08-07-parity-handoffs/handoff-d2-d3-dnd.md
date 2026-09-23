@@ -1,4 +1,5 @@
 # D2 (drag and drop) + D3 (de-Studio-ify) — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Agent: canvas-engineer. Repo: `c:\Users\Admin\Documents\GitHub\Figma Killer 2`,
 branch `feat/alm-figma-killer-studio-shell`. Nothing committed, nothing staged,

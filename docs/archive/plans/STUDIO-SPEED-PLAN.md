@@ -1,4 +1,5 @@
 # Studio speed plan — the live canvas must feel instant
+> **Trust:** historical, dated 2026-09-21. Paths may be wrong. Never act on it.
 
 Owner decision, 2026-09-21: speed is non-negotiable. Every item below carries a
 measured "today" number, a hard target, the exact cause with file references, and

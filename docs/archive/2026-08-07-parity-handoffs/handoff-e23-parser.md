@@ -1,4 +1,5 @@
 # E2.3 — Parser, three small changes — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Scope (files touched)
 

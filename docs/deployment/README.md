@@ -1,4 +1,5 @@
 # Deployment
+> **Purpose:** the deployment targets, their variables and what must persist · **Read when:** deploying or operating a Studio server · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 This index maps supported deployment targets to the files, variables, and persistence rules they need.
 
@@ -98,6 +99,8 @@ SQLite is the default for single-site installs. Postgres is for multiple simulta
 - published static artefacts under `published/current`
 
 SQLite installs also need the SQLite database file on persistent storage. On platforms with only one app volume, put both the SQLite file and uploads under the same mounted root.
+
+**The Studio workspace needs persistent storage too, and no shipped template provides it.** Every project a user edits lives under `studio-workspace/` (`<cwd>/studio-workspace`, overridable with `STUDIO_WORKSPACE_DIR`), which in the image is `/app/studio-workspace`, outside every volume the Compose files and templates mount. Set `STUDIO_WORKSPACE_DIR` to a directory on the persistent volume (for example `/app/data/studio-workspace` or `/app/storage/studio-workspace`), or the users' projects are lost when the container is recreated. Backup and restore: [backup-restore.md](backup-restore.md) → "The Studio workspace".
 
 ## Docs Inventory
 

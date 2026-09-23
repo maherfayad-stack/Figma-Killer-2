@@ -1,4 +1,5 @@
 # Track C2 handoff — `BoardFramesLayer` O(frames×pages) subscription
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## The defect (confirmed before fixing)
 

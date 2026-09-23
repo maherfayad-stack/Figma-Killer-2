@@ -1,4 +1,5 @@
 # Track A handoff — agent fidelity loop (A1, A2, A3, A4, A6, A8)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 All six items are complete. Working tree only — nothing committed, nothing staged.
 

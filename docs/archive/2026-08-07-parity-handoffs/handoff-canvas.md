@@ -1,4 +1,5 @@
 # canvas-engineer — Phase 0 handoff (items 0.8, 0.9, 0.10)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 All three items landed. Nothing committed / staged — working tree only, per instructions.
 

@@ -157,7 +157,7 @@ Line 1 is the `# Title`. **Line 2 is the header**: one blockquote line with five
 - **Read when**: the task that should send an agent here.
 - **Trust**: one of the levels below.
 - **Owner**: the specialist in `.claude/agents/` that keeps it current (usually `studio-scribe`).
-- **Verified**: the date someone last checked the doc against the code. Bump it only when you actually checked.
+- **Verified**: the date someone last checked the doc against the code, or `not yet` when nobody has since the headers were added (2026-09-23). Bump it only when you actually checked; a scribe who checks one section writes the date and names the section.
 
 Trust levels:
 

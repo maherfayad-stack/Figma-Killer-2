@@ -1,4 +1,5 @@
 # Studio Live Canvas + Penpot Inspector — plan
+> **Trust:** historical, dated 2026-09-17. Paths may be wrong. Never act on it.
 
 **Status:** L1–L8, R1–R3 and P0–P6 landed on `feat/alm-figma-killer-studio-shell`. L9 is the only unstarted work order. · **Opened:** 2026-09-08 · **Owner:** main session (orchestrator)
 

@@ -1,4 +1,5 @@
 # Conventions quick-reference
+> **Purpose:** every gated rule, compressed, plus the test traps · **Read when:** always, before writing code · **Trust:** rule · **Owner:** studio-scribe · **Verified:** not yet
 
 The rules that have **gate tests**. Breaking one fails `bun test`. Read before
 writing code. Full rationale is in `CLAUDE.md`; this page is the checklist.

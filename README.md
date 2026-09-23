@@ -1,4 +1,5 @@
 # Studio
+> **Purpose:** what Studio is, quick start and commands, for humans · **Read when:** you are a person setting Studio up or looking around · **Trust:** current · **Owner:** studio-scribe · **Verified:** not yet
 
 **A design tool whose source of truth is your React repo.**
 

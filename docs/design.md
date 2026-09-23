@@ -1,4 +1,5 @@
 # Design
+> **Purpose:** the visual design system: principles, tokens, surfaces, primitives and the inspector in design language · **Read when:** changing any admin UI styling · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The visual design system for Studio — principles, tokens, surfaces, components.
 

@@ -1,4 +1,5 @@
 # Path index — where everything lives
+> **Purpose:** where every file lives, marked Studio, shared or dormant CMS · **Read when:** always: "where does X live?" · **Trust:** index · **Owner:** studio-scribe · **Verified:** not yet
 
 Written for agents. Look here **before** grepping the repo.
 

@@ -1,4 +1,5 @@
 # Modules
+> **Purpose:** the module engine, the base and alm.* packs, and the built-in design system manifest · **Read when:** adding or changing a module · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Modules are the building blocks the visual editor places on the canvas — `base.container`, `base.text`, `base.image`, `base.button`, `base.loop`, `base.visual-component-ref`, plugin-shipped modules, etc. Each module is a single `ModuleDefinition` registered in the global `ModuleRegistry`.
 

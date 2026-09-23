@@ -1,4 +1,5 @@
 # Architecture
+> **Purpose:** the system overview: processes, folders, layers, request lifecycle, data model, and the dormant CMS half · **Read when:** orienting in an unfamiliar layer, or deciding where new code belongs · **Trust:** current · **Owner:** studio-architect · **Verified:** not yet
 
 System-level overview of Studio — what runs, what depends on what, and where to look first.
 

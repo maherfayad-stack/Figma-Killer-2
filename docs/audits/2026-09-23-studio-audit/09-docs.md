@@ -1,4 +1,5 @@
 # Audit 09: docs, plans, STATE.md
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: studio-scribe (read-only). Worktree: `fix/studio-load-memo-cold-on-every-load` @ `560ddb0e`, 16 commits ahead of `origin/main` (`51b19940`, PR #191, the three Figma-feel waves).
 Nothing in the repo was modified.

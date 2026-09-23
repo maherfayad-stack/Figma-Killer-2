@@ -1,4 +1,5 @@
 # Studio pipeline — parse, resolve, render, write back
+> **Purpose:** the repo-to-board pipeline: parse, evaluate, inline, lock, write back · **Read when:** touching parsing, evaluation, node ids or codemods · **Trust:** current · **Owner:** parser-surgeon · **Verified:** not yet
 
 The load → edit → write loop, compressed for agents. The full, authoritative
 version is [`docs/features/studio-import.md`](../features/studio-import.md)

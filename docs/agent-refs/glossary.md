@@ -1,4 +1,5 @@
 # Glossary
+> **Purpose:** the project vocabulary, one entry per term · **Read when:** you meet a term you do not recognise · **Trust:** current · **Owner:** studio-scribe · **Verified:** not yet
 
 Terms that mean something specific here. Alphabetical.
 

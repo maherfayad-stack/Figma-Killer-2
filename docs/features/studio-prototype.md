@@ -1,4 +1,5 @@
 # Studio prototype mode
+> **Purpose:** prototype mode: authored links and the flow map read from the project's own navigation code · **Read when:** touching prototype links, flows or playback · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-23
 
 Flows on the Studio board: the ones the user draws, and — the part that matters —
 the ones their code already performs.

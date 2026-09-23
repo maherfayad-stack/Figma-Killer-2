@@ -1,6 +1,5 @@
 # ROADMAP: the canvas excellence program
-
-> **Purpose:** the single living plan for Studio: what to build next, in what order, by whom · **Read when:** before designing any change, to find its work order · **Trust:** live (written 2026-09-23 at `560ddb0e`) · **Owner:** studio-architect keeps it current; studio-scribe folds finished bundles out
+> **Purpose:** the single living plan for Studio: what to build next, in what order, by whom, and the questions still open for the owner · **Read when:** before designing any change, to find its bundle · **Trust:** live (written 2026-09-23 at `560ddb0e`) · **Owner:** studio-architect keeps it current; studio-scribe folds finished bundles out · **Verified:** 2026-09-23
 
 The owner asked for eight things on 2026-09-23. The canvas should:
 - not lag;

@@ -1,4 +1,5 @@
 # STUDIO — next workstreams
+> **Trust:** historical, dated 2026-09-17. Paths may be wrong. Never act on it.
 
 **Status:** in progress (2026-08-01).
 **Companion:** `STUDIO-IMPORT-V2-PLAN.md` — these are new workstreams beyond it.

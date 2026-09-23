@@ -1,4 +1,5 @@
 # Track B1 — `insertRule` and the source-synthesis half — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Status: **complete**, working tree only (nothing committed/staged).
 

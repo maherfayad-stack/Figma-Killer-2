@@ -1,4 +1,5 @@
 # Canvas rulers and guides (D1)
+> **Purpose:** canvas rulers, persisted guides and the useCanvas() transform API · **Read when:** touching rulers, guides or canvas transforms · **Trust:** current · **Owner:** canvas-engineer · **Verified:** not yet
 
 Top/left rulers and persisted, draggable ruler guides for the design canvas —
 Figma-parity tracking item D1. Two independent halves: rulers (chrome, never

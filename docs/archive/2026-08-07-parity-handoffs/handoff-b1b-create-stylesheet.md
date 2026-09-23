@@ -1,4 +1,5 @@
 # Track B1's deferred branch — creating a co-located stylesheet — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Status: **complete**, working tree only (nothing committed/staged). Builds on
 the prior agent's `handoff-b1-css-engine.md`; reuses its published contracts

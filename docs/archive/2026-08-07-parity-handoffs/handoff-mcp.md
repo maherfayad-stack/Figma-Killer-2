@@ -1,4 +1,5 @@
 # mcp-tooling — Phase 0 handoff (0.11, 0.12, 0.13)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Branch: `feat/alm-figma-killer-studio-shell`. Nothing committed/staged — all changes left in the
 working tree per instructions.

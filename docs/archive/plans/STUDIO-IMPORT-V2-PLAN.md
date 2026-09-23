@@ -1,4 +1,5 @@
 # Studio Import V2 — "any React repo, edited like Figma"
+> **Trust:** historical, dated 2026-09-17. Paths may be wrong. Never act on it.
 
 Plan for taking Studio from *"an eSIM-shaped Vite repo parses into a board"* to
 *"paste a GitHub URL or drop a zip, and the whole app is a Figma-grade design

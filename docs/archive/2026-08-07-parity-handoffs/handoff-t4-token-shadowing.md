@@ -1,4 +1,5 @@
 # T4 — framework no longer shadows the project's own tokens + reachability gate promoted
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Stage: **done**, both tasks in scope. `canvas-engineer` pass (canvas +
 `src/core/framework/**` emission change + `src/__tests__/architecture/**`).

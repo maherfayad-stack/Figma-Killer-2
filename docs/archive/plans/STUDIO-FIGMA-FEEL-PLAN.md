@@ -1,4 +1,5 @@
 # Studio — "Feels like Figma, never shows me an error" plan
+> **Trust:** historical, dated 2026-09-20. Paths may be wrong. Never act on it.
 
 **Status:** proposed, nothing started · **Opened:** 2026-09-17 · **Owner:** main session (orchestrator)
 **Base branch:** `feat/alm-figma-killer-studio-shell` (integration branch; PRs open as drafts against it, then one PR to `main`)

@@ -1,4 +1,5 @@
 # Studio → Figma parity: the remediation plan
+> **Trust:** historical, dated 2026-09-17. Paths may be wrong. Never act on it.
 
 Derived from a 12-agent, whole-repo audit (2026-08-06). Every finding below
 carries `file:line` evidence gathered by reading the actual code, not the docs.

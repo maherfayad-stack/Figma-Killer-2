@@ -1,4 +1,5 @@
 # Phase 0 handoff — panel-designer (items 0.4, 0.5, 0.6, 0.7)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 All four items landed. Nothing committed/staged/pushed — everything is in the
 working tree, as instructed. Ran targeted `bun test` per item plus the four

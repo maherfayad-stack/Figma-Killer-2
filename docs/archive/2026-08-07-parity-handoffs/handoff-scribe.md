@@ -1,4 +1,5 @@
 # studio-scribe handoff — PROJECT-BRIEF.md corrections (Phase 0, exit criterion 3)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 **File touched:** `C:\Users\Admin\Documents\GitHub\Figma Killer 2\PROJECT-BRIEF.md` only.
 Nothing staged, nothing committed. `docs/reference/canvas-dnd.md` and `STATE.md`

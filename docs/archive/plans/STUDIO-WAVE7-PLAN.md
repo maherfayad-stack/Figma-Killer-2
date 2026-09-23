@@ -1,4 +1,5 @@
 # Waves 7–10 — launcher & onboarding, the Figma-exact inspector, agent fidelity & speed, per-user sessions
+> **Trust:** historical, dated 2026-09-18. Paths may be wrong. Never act on it.
 
 Written 2026-09-06 from three dedicated audits of the post-wave-6 tree (main at
 `db25597`). This file is the work-order document for the next wave train, in the

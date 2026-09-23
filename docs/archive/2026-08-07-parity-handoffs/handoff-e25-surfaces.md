@@ -1,4 +1,5 @@
 # E2.5 — Surfaces (panel-designer) — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Bottom line
 

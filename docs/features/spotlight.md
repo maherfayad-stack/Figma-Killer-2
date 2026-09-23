@@ -1,4 +1,5 @@
 # Spotlight (Cmd+K Palette)
+> **Purpose:** the ⌘K command palette · **Read when:** adding a command or a palette provider · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The Spotlight command palette — Cmd+K from anywhere in the admin opens a fuzzy-matched action / search interface. It owns the editor's keyboard surface: every Spotlight-registered command works exactly the same way as a built-in command.
 

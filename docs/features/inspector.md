@@ -1,4 +1,5 @@
 # Inspector progressive disclosure
+> **Purpose:** the properties panel's density contract: laws, goals G1–G12, the field model, the height gate · **Read when:** touching the inspector, or reading a "Law n" / "§4 Gn" code comment · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The properties panel's density contract: five laws, ten goals (G1–G10), the
 field model every numeric control shares, and the list of Figma controls Studio

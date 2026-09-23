@@ -1,4 +1,5 @@
 # studio-scribe — B2 className-writeback follow-ups — handoff
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 ## Task 1 — `server/ai/mcp/tools/studio/editTools.ts`
 

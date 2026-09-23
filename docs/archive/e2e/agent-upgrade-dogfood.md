@@ -1,4 +1,5 @@
 # Agent upgrade — dogfood plan (2026-08-03)
+> **Trust:** historical, dated 2026-09-06. Paths may be wrong. Never act on it.
 
 Test plan for the five-workstream agent upgrade landed on
 `feat/alm-figma-killer-studio-shell`. Engineering detail, reasoning, and known

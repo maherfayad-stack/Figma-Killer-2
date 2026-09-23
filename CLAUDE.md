@@ -1,4 +1,5 @@
 # Studio
+> **Purpose:** the rule book: every constraint a change must satisfy, each with its gate · **Read when:** always, before any change · **Trust:** rule · **Owner:** studio-scribe · **Verified:** not yet
 
 This file is the **agent rule book** — the constraints every change must satisfy.
 

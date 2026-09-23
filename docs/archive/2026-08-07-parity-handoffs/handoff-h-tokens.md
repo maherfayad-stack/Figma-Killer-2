@@ -1,4 +1,5 @@
 # Track H — One token model (scanner + model half)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Stage: **done** (this pass's scope). Sidecar migration and full write-path
 (T7) explicitly deferred — see "What remains" below.

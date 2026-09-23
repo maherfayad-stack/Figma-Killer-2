@@ -1,4 +1,5 @@
 # store-engineer — resume handoff (0.6/0.7 flake fix, C1, C4)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Continuation of `handoff-store.md` (0.1/0.2/0.3, already delivered). This
 covers the work the coordinator flagged as open after the session-limit

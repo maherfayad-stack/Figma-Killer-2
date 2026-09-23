@@ -1,4 +1,5 @@
 # Module Engine
+> **Purpose:** adding a first-party module · **Read when:** defining a new module · **Trust:** current · **Owner:** store-engineer · **Verified:** not yet
 
 Cookbook for adding a new first-party module — the building block used on the visual canvas. For the broader concept of what a module is and how the registry works, see [docs/features/modules.md](../features/modules.md). This page answers "how do I implement one?"
 

@@ -1,4 +1,5 @@
 # Audit 07: image drag and drop onto the canvas, and "detach component"
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: studio-architect (read-only). Repo HEAD: `560ddb0e` on `fix/studio-load-memo-cold-on-every-load`.
 Penpot reference: `../penpot`, at `frontend/src/app/main/ui/workspace/viewport/actions.cljs:524` (`on-drop`),

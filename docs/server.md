@@ -1,4 +1,5 @@
 # Server
+> **Purpose:** the server in depth: boot, router, handlers, auth, database, publishing, plugin runtime, the single-operator posture · **Read when:** adding or changing an HTTP route or server subsystem · **Trust:** current · **Owner:** server-engineer · **Verified:** not yet
 
 Deep dive on the server-side of Studio — the Bun process, the router, the handlers, the auth model, the DB adapter, and how a request becomes a response.
 

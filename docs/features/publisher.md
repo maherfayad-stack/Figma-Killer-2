@@ -1,4 +1,5 @@
 # Publisher
+> **Purpose:** the page-tree-to-HTML/CSS renderer (load-bearing) and the CMS publishing pipeline around it · **Read when:** touching src/core/publisher/ or server/publish/ · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 The publisher — the page-tree-to-HTML/CSS renderer. Takes a `Page` (a `NodeTree<PageNode>`) plus a `SiteDocument` and emits a clean, standalone HTML document. Production publishes link up to four hashed CSS bundles (`reset`, `framework`, `style`, `userStyles`); inline preview/test renders can still emit one `<style>` block.
 

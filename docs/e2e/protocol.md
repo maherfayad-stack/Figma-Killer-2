@@ -1,4 +1,5 @@
 # Studio User E2E Protocol
+> **Purpose:** how an agent runs a user-facing browser audit · **Read when:** running a manual browser audit · **Trust:** current · **Owner:** test-engineer · **Verified:** not yet
 
 ## Purpose
 

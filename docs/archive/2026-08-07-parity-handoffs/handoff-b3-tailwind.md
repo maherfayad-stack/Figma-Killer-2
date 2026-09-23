@@ -1,4 +1,5 @@
 # Track B3 — Tailwind read path: the `@layer` defect (standing-09)
+> **Trust:** historical, dated 2026-08-07. Paths may be wrong. Never act on it.
 
 Stage: **done**
 
