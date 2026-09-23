@@ -142,6 +142,10 @@ describe('what an insert seeds', () => {
       for (const prop of spec.props) {
         if (prop.example === undefined || prop.name === 'dir') continue
         if (typeof prop.example === 'boolean' || /^error/i.test(prop.name)) continue
+        // A gated example is written only for a variant it applies to —
+        // `almInsertDefaultsApplicability.test.ts` pins that half of the rule.
+        const gate = prop.appliesWhen
+        if (gate && !gate.values.includes(String(mod.defaults[gate.prop]))) continue
         if (mod.defaults[prop.name] === undefined) unseeded.push(`${spec.name}.${prop.name}`)
       }
     }
