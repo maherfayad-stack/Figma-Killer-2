@@ -266,7 +266,7 @@ export function GitPanel({ variant = 'docked' }: GitPanelProps) {
           <Section
             title="Changes"
             defaultOpen
-            meta={entries.length > 0 ? `${entries.length}` : undefined}
+            status={entries.length > 0 ? `${entries.length}` : undefined}
             actions={
               entries.length > 0 ? (
                 <Button

@@ -28,6 +28,13 @@
  * drops the toggle, the chevron and the body, leaving a static header whose
  * only control is whatever `actions` supplies. Callers pass the fact
  * ("nothing is applied"), not the presentation.
+ *
+ * `forceOpen` is the same argument from the other side: a section that is
+ * open by construction has nothing to toggle either. It used to keep the
+ * toggle `<button>` and make its click a no-op — a tab stop, a hover state
+ * and an `aria-expanded="true"` announcing a disclosure that could never
+ * close, on every populated Fill, Stroke, Effects, Text and Export header
+ * (P2-H). It now draws the static header over its body.
  */
 
 import { useState } from "react";
@@ -45,7 +52,16 @@ interface SectionProps {
   indicator?: boolean;
   indicatorTestId?: string;
   icon?: IconComponent;
-  meta?: React.ReactNode;
+  /**
+   * A short status drawn at the far end of the header — "1 ready", "2 set",
+   * "Conflict". It describes the section's STATE, so it sits apart from the
+   * title instead of qualifying it (compare `SectionStaticHeader`'s `meta`).
+   */
+  status?: React.ReactNode;
+  /**
+   * Open by construction: the body always shows, and the header is static —
+   * no toggle, no chevron (see the file header).
+   */
   forceOpen?: boolean;
   /**
    * Trailing header slot — icon buttons flush right of the title (Figma's
@@ -75,14 +91,13 @@ export function Section({
   indicator = false,
   indicatorTestId,
   icon: SectionIcon,
-  meta,
+  status,
   forceOpen = false,
   actions,
   empty = false,
   flush = false,
 }: SectionProps) {
   const [open, setOpen] = useState(defaultOpen);
-  const expanded = !empty && (forceOpen || open);
 
   if (empty) {
     return (
@@ -92,15 +107,30 @@ export function Section({
     );
   }
 
+  if (forceOpen) {
+    return (
+      <div className={cn(styles.section, flush && styles.sectionFlush, styles.sectionOpen)}>
+        <SectionStaticHeader
+          title={title}
+          icon={SectionIcon}
+          indicator={indicator}
+          indicatorTestId={indicatorTestId}
+          status={status}
+          actions={actions}
+        />
+        <div className={styles.sectionContent}>{children}</div>
+      </div>
+    );
+  }
+
   return (
-    <div className={cn(styles.section, flush && styles.sectionFlush, expanded && styles.sectionOpen)}>
+    <div className={cn(styles.section, flush && styles.sectionFlush, open && styles.sectionOpen)}>
       <div className={styles.sectionHeader}>
         <button
-          onClick={() => {
-            if (!forceOpen) setOpen((o) => !o);
-          }}
+          type="button"
+          onClick={() => setOpen((o) => !o)}
           className={styles.sectionToggle}
-          aria-expanded={expanded}
+          aria-expanded={open}
         >
           {/*
             * The section's identity mark and its disclosure chevron share one
@@ -110,25 +140,21 @@ export function Section({
             * box costs nothing and reads correctly: the icon says what the
             * section is, and pointing at it shows you it opens.
             */}
-          {(SectionIcon || !forceOpen) && (
-            <span className={styles.sectionMarker} aria-hidden="true">
-              {SectionIcon && (
-                <span className={styles.sectionMarkerIcon}>
-                  <SectionIcon size={13} />
-                </span>
+          <span className={styles.sectionMarker} aria-hidden="true">
+            {SectionIcon && (
+              <span className={styles.sectionMarkerIcon}>
+                <SectionIcon size={13} />
+              </span>
+            )}
+            <span
+              className={cn(
+                styles.sectionMarkerChevron,
+                open && styles.sectionMarkerChevronOpen,
               )}
-              {!forceOpen && (
-                <span
-                  className={cn(
-                    styles.sectionMarkerChevron,
-                    expanded && styles.sectionMarkerChevronOpen,
-                  )}
-                >
-                  <ChevronRightIcon size={12} />
-                </span>
-              )}
+            >
+              <ChevronRightIcon size={12} />
             </span>
-          )}
+          </span>
           <span className={styles.sectionTitleGroup}>
             <span className={styles.sectionTitle}>{title}</span>
             {indicator && (
@@ -139,11 +165,11 @@ export function Section({
               />
             )}
           </span>
-          {meta && <span className={styles.sectionMeta}>{meta}</span>}
+          {status && <span className={styles.sectionStatus}>{status}</span>}
         </button>
         {actions && <span className={styles.sectionActions}>{actions}</span>}
       </div>
-      {expanded && <div className={styles.sectionContent}>{children}</div>}
+      {open && <div className={styles.sectionContent}>{children}</div>}
     </div>
   );
 }
@@ -153,10 +179,15 @@ interface SectionStaticHeaderProps {
   icon?: IconComponent;
   /**
    * A quiet qualifier read WITH the title, drawn right after it — "Button ·
-   * Local" (P2-G). Unlike `Section`'s own `meta`, which is a status pushed to
-   * the far end of a disclosure toggle, this one names what the title is.
+   * Local" (P2-G). Unlike `status`, which is pushed to the far end of the
+   * header, this one names what the title is.
    */
   meta?: React.ReactNode;
+  /** Same contract as `Section`'s own `indicator` / `indicatorTestId`. */
+  indicator?: boolean;
+  indicatorTestId?: string;
+  /** Same contract as `Section`'s own `status`. */
+  status?: React.ReactNode;
   /** Trailing header slot — same contract as `Section`'s own `actions`. */
   actions?: React.ReactNode;
 }
@@ -165,13 +196,22 @@ interface SectionStaticHeaderProps {
  * The section header with nothing to disclose: title, identity mark and the
  * trailing actions slot, at the header's full 32px — no toggle, no chevron.
  *
- * `Section` draws it for Law 1's `empty` state. It is exported for the
- * blocks that are always open by construction rather than by state, so their
- * titles are the SAME recipe as every section title instead of a hand-rolled,
- * weaker copy: the Properties panel's Module block (`ModuleBlock.tsx`, UX-1)
- * and the Component section's one title row, "Button · Local" (P2-G, UX-4).
+ * `Section` draws it for Law 1's `empty` state and for `forceOpen`. It is
+ * exported for the blocks that are always open by construction rather than
+ * by state, so their titles are the SAME recipe as every section title
+ * instead of a hand-rolled, weaker copy: the Properties panel's Module block
+ * (`ModuleBlock.tsx`, UX-1) and the Component section's one title row,
+ * "Button · Local" (P2-G, UX-4).
  */
-export function SectionStaticHeader({ title, icon: HeaderIcon, meta, actions }: SectionStaticHeaderProps) {
+export function SectionStaticHeader({
+  title,
+  icon: HeaderIcon,
+  meta,
+  indicator = false,
+  indicatorTestId,
+  status,
+  actions,
+}: SectionStaticHeaderProps) {
   return (
     <div className={styles.sectionHeader}>
       <span className={styles.sectionStaticTitle}>
@@ -185,7 +225,15 @@ export function SectionStaticHeader({ title, icon: HeaderIcon, meta, actions }: 
         <span className={styles.sectionTitleGroup}>
           <span className={styles.sectionTitle}>{title}</span>
           {meta && <span className={styles.sectionMeta}>{meta}</span>}
+          {indicator && (
+            <span
+              className={styles.sectionIndicatorDot}
+              data-testid={indicatorTestId}
+              aria-hidden="true"
+            />
+          )}
         </span>
+        {status && <span className={styles.sectionStatus}>{status}</span>}
       </span>
       {actions && <span className={styles.sectionActions}>{actions}</span>}
     </div>
