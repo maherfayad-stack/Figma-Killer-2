@@ -64,11 +64,23 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** none yet · **Updated:** 2026-09-23
-- **Stage:** implementing
-- **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files through Studio tools with one containment rule; the loop retries transient provider errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
-- **Scope:** `server/ai/drivers/{anthropic,responses-shared}.ts`, `server/ai/drivers/http/*`, `server/ai/mcp/tools/studio/{fileTools,projectTools}.ts`, `server/ai/tools/**`, `server/ai/handlers/chat.ts`, `server/handlers/studio/agentFileAccess.ts`, `src/core/ai/toolRefusal.ts`, `docs/features/agent.md`.
-- **Next step:** implement, then gates.
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** see the PR against `feat/canvas-excellence` (draft) · **Updated:** 2026-09-23
+- **Stage:** verifying — **needs security-guard review before merge** (threat list in the PR body)
+- **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files; the loop retries transient errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
+- **Tools added** (all `execution: server`):
+  - `studio_grep` (read, no caps; registry + HTTP agent) — `{ query (literal), path?, caseSensitive?, limit? }`.
+  - `studio_write_file` / `studio_edit_file` / `studio_edit_files` (HTTP agent ONLY; `ai.tools.write` + `studio.write`; `sideEffects: write`) — `{ path, content, expectedHash? }`, `{ path, oldString, newString, replaceAll?, expectedHash? }`, `{ edits: [≤50] }`. No `dir` field. Missing precondition → `no-open-project`: "No Studio project is open for this turn, so there is nowhere to write. Ask the user to open the project in Studio and send the message again."
+  - `studio_read_file`, `studio_list_files`, `studio_get_node_source` moved to `fileReadTools.ts` and now also on the HTTP agent surface.
+- **Done:**
+  - One containment rule, `server/handlers/studio/agentFileAccess.ts` (real path, case-folded dirs, `agentWriteRefusalReason` + `isWorkspaceWritablePath` for writes, credential files, NTFS streams, Windows devices; hard links refused by the writers).
+  - Writes hold `withProjectWriteLock`, check `expectedHash`, `appendTurnWrite`, and `pushStudioDiskChange` once per call. `studioHttpTurn.ts` generates the project guide and resets the turn log for HTTP turns.
+  - `selectStudioTools(..., { fileAccess })` + `agentFileAccessForProvider`; the prompt derives its file paragraph from the tools (`agentFileAccessFor`). CLI prompt byte-identical.
+  - Loop: `providerRetry.ts` (AI-8, `retrying` event + panel headline), wind-down + tools-off summary round (AI-10), `anthropicModelProfile.ts` + truncation continuation + effort mapping + `unsupportedParameter` fallback (AI-11). `toolLoop.ts` split: `toolDispatch.ts`, `heavyElision.ts`, `toolLoopTypes.ts`.
+  - Fixed on the way: `studio_get_node_source` read outside the project via `../` in a node id; `studio_read_file` excluded `.git`/`.studio` case-sensitively.
+- **Decisions:** the write tools are NOT in the external MCP catalog (no external connector is ever bound, so they could only refuse). Thinking blocks live only in the turn's in-memory history, never persisted (AI-11's "new AiContentBlock kind" not done — no later turn needs them). Pre-image checkpoints (AI-7) are P4-F's.
+- **Landmines:** `tool-write-gate-unchanged-by-side-effects.test.ts` now has `WRITE_GATED_ADDED_SINCE`; `no-phantom-tool-names` and the parity matrix gate cover the HTTP surface too. `TurnResult.stop` is gone (`truncated` + `toolCalls.length`).
+- **Verification:** build, lint, tsc clean; every chunk run; only pre-existing failures (PR body). No e2e: a real turn needs a provider key.
+- **Human action needed:** security-guard review; dogfood with an Anthropic API key (script in the PR body).
 
 ## Blocked
 
