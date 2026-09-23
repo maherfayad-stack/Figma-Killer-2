@@ -23,8 +23,10 @@ import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
-import { reissueStructuralMove } from './structuralHistory'
+import { pushToast } from '@ui/components/Toast'
+import { reissueStructuralMove, type StructuralStepOutcome } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
+import { mintPendingCommitId, trackStructuralStackCommit } from './structuralCommitRollback'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import type { HistoryEntry, SiteSlice, SiteSliceHelpers, StructuralHistory } from './types'
 
@@ -35,27 +37,31 @@ type UndoRedoActions = Pick<SiteSlice, 'undo' | 'redo'>
  * never by replaying its patches. See `structuralHistory.ts` for why: the
  * user's `.tsx` is the document, and `saveSite` diffs values, not structure.
  *
- * Returns whether this function handled the entry. `false` means "not
- * structural — take the patch path".
+ * Always handles the entry (there is no patch path to fall back to).
  *
  * The stack bookkeeping is done by hand because the re-issued gesture is an
  * ordinary mutation: it pushes its own history entry and clears the redo
  * stack. Both are corrected here, so one Ctrl+Z consumes exactly one entry and
- * a pending redo chain survives.
+ * a pending redo chain survives. The entry is stamped with the re-issued
+ * write's `pendingCommit`, so a write that does not land can put it back or
+ * drop it (ERR-6, `structuralCommitRollback.ts`).
+ *
+ * A step that can never happen as recorded is SKIPPED, never left on top
+ * (ERR-2's stop-gap, ERR-28): see {@link skipStructuralStep}.
  */
 function runStructuralStep(
   { get, set }: Pick<SiteSliceHelpers, 'get' | 'set'>,
   entry: HistoryEntry,
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
-): boolean {
+): void {
   // ERR-4 — a structural undo/redo is a WRITE (a move re-issued through
   // `moveNodes`, or a source gesture's inverse posted), so it queues behind a
   // structural write still in flight like every other structural writer. The
   // whole step is parked, not just its write: when it runs it reads the top
   // of the stack as the in-flight write's resync (and its history remap) left
   // it, so ⌘Z pressed during a drag's commit undoes that drag.
-  if (deferWhileStructuralCommitInFlight(() => get()[direction]())) return true
+  if (deferWhileStructuralCommitInFlight(() => get()[direction]())) return
   const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
   const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
   // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale
@@ -69,27 +75,69 @@ function runStructuralStep(
   // `store-14`/`store-15` — a SOURCE gesture (duplicate/wrap/group/ungroup/
   // paste/transplant/image-drop, and `delete`) has no gesture to re-issue
   // through a store action: its inverse is a WRITE, posted through the same
-  // `/save` route the gesture used. Most of the family mutated no tree at
-  // gesture time and pushes no entry of its own on redo either (the commit
-  // carries `reissue`, which `recordStructuralSourceWrite` reads as "refresh,
-  // do not push"); `delete` is the one member that DID mutate the tree
-  // (`deleteNodesAction.ts`'s optimistic removal) and already has an entry —
-  // reissuing it here still only posts the write, so the stack bookkeeping
-  // below is what moves the entry either way.
-  const performed =
+  // `/save` route the gesture used. A move re-issues `moveNodes`, whose own
+  // entry (and rollback) the bookkeeping below folds into this one.
+  const outcome: StructuralStepOutcome =
     structural.gesture === 'source'
-      ? reissueStructuralSourceEdits(get, set, structural, direction)
+      ? reissueStructuralSourceEdits(get, structural, direction, trackStructuralStackCommit({ get, set }, mintPendingCommitId()))
       : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
-  if (!performed) return true
+  if (outcome.kind === 'skipped') {
+    skipStructuralStep({ get, set }, entry, direction, outcome.notice)
+    return
+  }
 
+  const { pendingCommitId } = outcome
   set((state) => {
     state[from] = fromBefore.slice(0, -1)
-    state[to] = [...toBefore, entry]
+    state[to] = [...toBefore, pendingCommitId === null ? entry : { ...entry, pendingCommit: { id: pendingCommitId, step: direction } }]
     state._historyCoalesceKey = null
     state.canUndo = state._historyPast.length > 0
     state.canRedo = state._historyFuture.length > 0
   })
-  return true
+}
+
+/**
+ * ERR-2 (stop-gap) / ERR-28 — a structural step that can never happen as
+ * recorded: an inverse the editor cannot express, an element the board no
+ * longer has, a file an agent or editor changed underneath the entry, or a
+ * move the gate refuses.
+ *
+ * It used to stay where it was, behind a modal: every later ⌘Z hit the same
+ * refusal, so nothing before it could be undone from the keyboard. Figma's
+ * answer, and now this one: drop the step and keep going. One ⌘Z still does
+ * one visible thing — an UNDO carries on to the step below in the same
+ * keystroke. A REDO drops the whole redo chain instead: every step after this
+ * one was recorded on top of it, so replaying them without it would be
+ * replaying a history that did not happen.
+ *
+ * One quiet notice says what was skipped — never a dialog. `notice` is `null`
+ * when the refusal was already presented (the move gate's own toast or
+ * dialog), and then this adds nothing.
+ */
+function skipStructuralStep(
+  { get, set }: Pick<SiteSliceHelpers, 'get' | 'set'>,
+  entry: HistoryEntry,
+  direction: 'undo' | 'redo',
+  notice: string | null,
+): void {
+  const label = entry.structural?.gesture === 'source' ? entry.structural.source.label : 'Move'
+  set((state) => {
+    if (direction === 'undo') state._historyPast = state._historyPast.slice(0, -1)
+    else state._historyFuture = []
+    state._historyCoalesceKey = null
+    state.canUndo = state._historyPast.length > 0
+    state.canRedo = state._historyFuture.length > 0
+  })
+  if (notice !== null) {
+    pushToast({
+      kind: 'warning',
+      title: `Skipped “${label}” — it can’t be ${direction === 'undo' ? 'undone' : 'redone'}`,
+      body: notice,
+      location: 'site-editor',
+      dedupeKey: `structural-${direction}-skipped`,
+    })
+  }
+  if (direction === 'undo') get().undo()
 }
 
 /**
@@ -129,7 +177,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       const entry = _historyPast[_historyPast.length - 1]!
       if (isBoardOnlyEntry(entry)) return runBoardStep({ set }, entry, 'undo')
       if (!site) return
-      if (entry.structural && runStructuralStep({ get, set }, entry, entry.structural, 'undo')) return
+      if (entry.structural) return runStructuralStep({ get, set }, entry, entry.structural, 'undo')
       const restored = apply(site, entry.inverse)
       const packageJson = clonePackageJson(restored.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(restored.runtime)
@@ -175,7 +223,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
       const entry = _historyFuture[_historyFuture.length - 1]!
       if (isBoardOnlyEntry(entry)) return runBoardStep({ set }, entry, 'redo')
       if (!site) return
-      if (entry.structural && runStructuralStep({ get, set }, entry, entry.structural, 'redo')) return
+      if (entry.structural) return runStructuralStep({ get, set }, entry, entry.structural, 'redo')
       const restored = apply(site, entry.forward)
       const packageJson = clonePackageJson(restored.packageJson)
       const siteRuntime = cloneSiteRuntimeConfig(restored.runtime)

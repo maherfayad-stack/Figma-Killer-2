@@ -53,6 +53,7 @@ import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
+import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { indexStyleRulesByName, linkImportedClassNames, mergeImportedStyleRules } from './importLinking'
@@ -335,13 +336,17 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // `planSourceDelete([single node])` only ever pushes one id — see that
       // function's own loop.
       const origin = plan.commit && tree ? captureDeleteOrigin(tree, plan.commit[0]!) : null
+      const topBefore = get()._historyPast.at(-1)
       const deleted = mutateActiveTree((draft) => {
         if (!draft.nodes[nodeId]) return false
         deleteNode(draft, nodeId)
         return true
       })
       if (deleted && plan.commit) {
-        void commitStudioDelete(plan.commit)
+        // ERR-6 — taken before the tag below clears the entry's patches: they
+        // are what puts the element back if the write does not land.
+        const rollback = trackStructuralTreeCommit(helpers, topBefore)
+        void commitStudioDelete(plan.commit, rollback ?? undefined)
         // `live-07` — same-tick paint for a live (bridge) frame; portal
         // frames already got theirs from the tree mutation above.
         broadcastOptimisticDelete(plan.commit[0]!)
@@ -509,6 +514,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // undo has to be able to re-issue.
       const primaryId = nodeIds[0]!
       const origin = tree ? captureMoveOrigin(tree, primaryId) : null
+      const topBefore = get()._historyPast.at(-1)
       const moved = mutateActiveTree((draft) => {
         moveNodes(draft, nodeIds, newParentId, newIndex)
         return true
@@ -519,6 +525,12 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // effect) — do not duplicate this into either of them.
       if (moved) broadcastOptimisticMove(primaryId, newParentId, newIndex)
       const commit = plan?.commit
+      // ERR-6 — a write is about to be posted; if it does not land, the move
+      // is taken back through this entry's own inverse patches.
+      const rollback =
+        moved && (commit?.destinationParentNodeId || commit?.anchorNodeId)
+          ? (trackStructuralTreeCommit(helpers, topBefore) ?? undefined)
+          : undefined
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo
       // stays correct there and must not be routed through a re-issue.
@@ -537,9 +549,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           parentNodeId: commit.destinationParentNodeId,
           anchorNodeId: commit.anchorNodeId,
           position: commit.position,
+          rollback,
         })
       } else if (commit?.anchorNodeId) {
-        void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position)
+        void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position, rollback)
       }
     },
 
