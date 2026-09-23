@@ -170,7 +170,7 @@ Semantic state (meaning layer):
   --warning-30
   --success, --success-bright,
   --success-text, --success-text-muted, --success-10
-  --info-text
+  --info-text, --info-10
   --accent-1-10 through --accent-10-10
 
 Canvas (selection / hover affordances):
@@ -208,10 +208,12 @@ Charts:
 | `--text-bright`      | `#f4f4f5` | Titles, headings, KPIs         |
 | `--text`             | `#ededed` | Primary body text              |
 | `--text-muted`   | `#a1a1aa` | Labels, secondary UI           |
-| `--text-subtle`       | `#787878` | Muted / placeholder            |
-| `--text-disabled`      | `#52525b` | Disabled / very subtle         |
+| `--text-subtle`       | `#787878` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
+| `--text-disabled`      | `#52525b` | Disabled controls and placeholders only — never text the user must read |
 
 These five are the entire text palette. Add a new tone only by adding a new token.
+
+`--text-disabled` is about 2.7:1 on `--bg-body`: fine for a control you cannot use, below WCAG AA for anything you are meant to read. A caption, a unit, a prop description, an empty-state sentence or a row count is informative and uses `--text-subtle` (4.8:1 dark, 4.9:1 light on `--bg-body`). The light theme's `--text-subtle` is `#5b6270` rather than Tailwind's gray-500 for exactly this reason: gray-500 measured 3.9:1 on the light `--bg-body` the docked sidebars sit on (P2-H, UX-15). `measurement.test.ts` gates both the ratio and the inspector's own modules.
 
 ### Typography tokens — fluid size scale
 
@@ -234,10 +236,10 @@ These are admin tokens. The published-site Framework engine also emits short spa
 | `--panel-radius`     | 12px  | Floating overlay panels (Spotlight, modals, popovers)        |
 | `--card-radius`      | 16px  | Borderless tile cards (Widget, dashboard cells, module inserter tiles) |
 | `--input-radius`     | 1em   | Pill-shaped inputs, classes / property chips                 |
-| `--inspector-field-radius` | 5px | Fields inside the properties panel — see "The inspector" below |
+| `--inspector-field-radius` | 8px | Fields inside the properties panel — see "The inspector" below |
 | `--tooltip-radius`   | 6px   | Tooltips                                                     |
 
-Do not introduce ad-hoc radius values. Tile-card surfaces use `--card-radius`.
+Do not introduce ad-hoc radius values. Tile-card surfaces use `--card-radius`. A dot or a circular icon button is `50%`; a pill is `--input-radius`. The inspector's CSS modules are gated on this (`measurement.test.ts`, "draws every corner from the radius scale").
 
 ### Scrollbar chrome
 
@@ -410,7 +412,7 @@ meaning comes from a glyph inside it.
 | `--inspector-label-w` | 96px | The remaining text-label column — module and component prop names |
 | `--inspector-rail-w` | 32px | The category rail's grid column |
 | `--inspector-field-radius` | 8px | Field corner |
-| `--inspector-field-bg` / `-hover` | overlay 5% / 10% | Field fill |
+| `--inspector-field-bg` / `-hover` | `#212426` / `#2a2e31` (light: `#f3f4f6` / `--bg-surface`) | Field fill. Hover moves AWAY from the panel behind it — lighter in both themes; the old `--overlay-10` hover painted darker than rest over the black docked panel (UX-11) |
 | `--inspector-divider` | overlay 10% | The hairline between sections |
 
 **Inspector spacing is frozen, not fluid.** The admin's `--space-*` scale is
@@ -787,9 +789,11 @@ If you find yourself reaching for `!important`, the cascade is wrong — fix the
 
 The achromatic focus ring is `--focus-ring` (1px white at 20% alpha). Inputs use a stronger composite focus glow via `--shadow-input-focus`. Never remove focus indicators without replacing them with a visible alternative.
 
+Two replacements are deliberate. A Layers/Selectors tree row sets `outline: none` and draws `inset 0 0 0 1px var(--overlay-50)` on `:focus-visible` only — a mouse click focuses the row too, and must not ring the selection it just made. A `Section` toggle draws a 1px `--overlay-50` outline inset by its own width, the same tone a focused inspector field draws as its border. Tree rows state their three states by tone: hover `--overlay-10`, selected `--overlay-20` (kept under the pointer), focus the ring.
+
 ### Color contrast
 
-The text tokens (`--text-bright` → `--text-disabled`) pass WCAG AA against `--bg-body`. The semantic state tokens have a `*-text` variant (e.g. `--danger-text`, `--success-text`) chosen for use **on a tinted background** — use those instead of pairing a raw `--danger` with `--bg-body`.
+The informative text tokens (`--text-bright` → `--text-subtle`) pass WCAG AA against `--bg-body` in both themes. `--text-disabled` does not, by design — see "Text tokens" above. The semantic state tokens have a `*-text` variant (e.g. `--danger-text`, `--success-text`) chosen for use **on a tinted background** — use those instead of pairing a raw `--danger` with `--bg-body`.
 
 ### No native browser dialogs
 

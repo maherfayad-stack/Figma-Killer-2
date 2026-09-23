@@ -107,7 +107,7 @@
 .removeBtn.removeBtn {
     width: var(--class-remove-button-size);
     height: var(--class-remove-button-size);
-    border-radius: 10px;
+    border-radius: 50%;
     background: transparent;
     color: var(--text-muted);
     background: var(--bg-body);

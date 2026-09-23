@@ -135,7 +135,7 @@
 /* slot type caption — no interactive value control */
 .slotCaption {
   font-size: var(--text-xs);
-  color: var(--text-disabled);
+  color: var(--text-subtle);
   font-style: italic;
   display: block;
 }

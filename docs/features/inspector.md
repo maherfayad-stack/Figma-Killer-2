@@ -2177,6 +2177,18 @@ landed — `panel-38`).
 `PanelBoundary`, `InspectorShell` wraps all three tabs, the component never opts
 out of `silentToast`, and every `INSPECTOR_SECTIONS` entry carries a `label`.
 
+`measurement.test.ts`'s P2-H block gates the panel's finish, over every CSS
+module under `PropertiesPanel/`, `property-controls/`, `inspector/sections/`
+and `Section/`: no fluid `--space-*` step at all (only `--space-px`), no
+literal px `border-radius` (a token, `0` or `50%`), no `--text-disabled` on
+text outside a disabled/placeholder rule, `--text-subtle` at 4.5:1 on the
+docked panel in both themes, and a field hover that sits further from the
+panel than the resting field. The node-level notices (shared component, slot
+fill, source constraint, branch choice) mount in one `.nodeNotices` band on
+the 12px gutter, which `:empty` collapses to nothing. The computed half —
+real hover, real `:focus-visible`, real rects — is
+`tests/e2e/inspector-panel-polish.e2e.ts`.
+
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3
 (shadow-layer modelling); `test-engineer` owns the §6 measurement gate.

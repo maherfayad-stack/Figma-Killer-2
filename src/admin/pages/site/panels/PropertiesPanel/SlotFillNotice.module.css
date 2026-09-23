@@ -8,7 +8,7 @@
   align-items: flex-start;
   padding: var(--inspector-space-xs) var(--inspector-space-s);
   border-radius: var(--radius);
-  background: color-mix(in srgb, var(--info-text) 12%, transparent);
+  background: var(--info-10);
   color: var(--info-text);
 }
 
