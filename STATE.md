@@ -63,6 +63,13 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### mcp-28 — P4-C: the API-key path can build (AI-2, AI-8, AI-10, AI-11)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-api-path-can-build` off `53c2746f` · **PR:** none yet · **Updated:** 2026-09-23
+- **Stage:** implementing
+- **Goal:** an HTTP-driver (API-key) turn can read, grep, write and edit project files through Studio tools with one containment rule; the loop retries transient provider errors, winds down before the round cap and ends on a summary, sets `max_tokens` per model, continues a truncated reply, and maps `effort` to thinking/reasoning.
+- **Scope:** `server/ai/drivers/{anthropic,responses-shared}.ts`, `server/ai/drivers/http/*`, `server/ai/mcp/tools/studio/{fileTools,projectTools}.ts`, `server/ai/tools/**`, `server/ai/handlers/chat.ts`, `server/handlers/studio/agentFileAccess.ts`, `src/core/ai/toolRefusal.ts`, `docs/features/agent.md`.
+- **Next step:** implement, then gates.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
