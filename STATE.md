@@ -173,7 +173,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** owner dogfood (checklist in the PR body); P3-F replaces the delete skip with a real restore.
 
 ### test-06 — Phase 1 exit gate: outside-edit e2e + regression audit (WB-1/2/7/23, ERR-1/3/4/5)
-- **Agent:** test-engineer · **Branch:** `test/phase-1-exit-gate` · **PR:** draft, base `feat/canvas-excellence` (the audit table is in its body) · **Updated:** 2026-09-23
+- **Agent:** test-engineer · **Branch:** `test/phase-1-exit-gate` · **PR:** #232 (draft, base `feat/canvas-excellence`; the audit table is in its body) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open)
 - **Goal:** `ROADMAP.md` §5 exit gate: a regression test that fails before its fix for every reproduced P1 finding, and an e2e that edits a page outside Studio mid-session, then edits and deletes on the canvas, and checks the file bytes.
 - **Done:**
