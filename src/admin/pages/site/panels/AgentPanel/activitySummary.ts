@@ -96,6 +96,12 @@ export function summarizeAgentActivity(message: AgentMessage | null): ActivitySu
  * trailing reasoning means it is still thinking.
  */
 function headlineFor(message: AgentMessage, steps: ActivityStep[]): string {
+  // A provider hiccup being retried is the one thing more current than a
+  // running tool: nothing else moves until it clears. Worded as progress, not
+  // as a failure — it usually clears in a second.
+  if (message.retrying) {
+    return `The AI provider is busy — trying again (${message.retrying.attempt} of ${message.retrying.maxAttempts})`
+  }
   const running = steps.findLast((step) => step.status === 'pending')
   if (running) {
     return running.detail ? `${running.title} — ${running.detail}` : running.title

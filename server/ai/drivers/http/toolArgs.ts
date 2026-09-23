@@ -18,10 +18,21 @@
  * outcomes per provider. This is the one source of truth.
  */
 export function parseToolArguments(json: string): unknown {
-  if (!json.trim()) return {}
+  const parsed = toolArgumentsParse(json)
+  return parsed.ok ? parsed.value : {}
+}
+
+/**
+ * The same parse, telling a clean result from a failure — for the one caller
+ * that must know the difference: a tool call whose argument string does not
+ * parse after an output-limit stop was cut off mid-argument, and must not run
+ * on `{}` (AI-11, `toolLoop.ts`). An empty string is `{}` here too, as above.
+ */
+export function toolArgumentsParse(json: string): { ok: true; value: unknown } | { ok: false } {
+  if (!json.trim()) return { ok: true, value: {} }
   try {
-    return JSON.parse(json)
+    return { ok: true, value: JSON.parse(json) }
   } catch {
-    return {}
+    return { ok: false }
   }
 }

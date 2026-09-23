@@ -135,12 +135,16 @@ export interface AiStreamRequest {
    */
   readonly workspaceDir?: string
   /**
-   * WS-12 §5 session controls — `claudeCli` only, every other driver ignores
-   * both. Map 1:1 onto the CLI's own confirmed `--effort`/`--permission-mode`
-   * flags. `permissionMode === 'bypassPermissions'` IS forwarded — but only
-   * when the caller explicitly set this field to that value; `claudeCli.ts`'s
-   * own default never resolves to it. See that file's `resolvePermissionMode`
-   * doc comment for the full D5 §11.5 guard-rail reasoning.
+   * WS-12 §5 session controls. `effort` maps onto the CLI's own `--effort`
+   * flag, and — since P4-C (AI-11) — onto each HTTP provider's reasoning
+   * control: Anthropic extended thinking (`anthropicModelProfile.ts`), OpenAI-
+   * shaped `reasoning.effort` / `reasoning_effort` (`openAiReasoning.ts`).
+   * Undefined sends no reasoning parameter at all. `permissionMode` is
+   * `claudeCli`-only. `permissionMode === 'bypassPermissions'` IS forwarded —
+   * but only when the caller explicitly set this field to that value;
+   * `claudeCli.ts`'s own default never resolves to it. See that file's
+   * `resolvePermissionMode` doc comment for the full D5 §11.5 guard-rail
+   * reasoning.
    */
   readonly effort?: 'low' | 'medium' | 'high' | 'xhigh' | 'max'
   readonly permissionMode?: 'default' | 'acceptEdits' | 'plan' | 'bypassPermissions'

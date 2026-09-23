@@ -34,7 +34,8 @@ import {
   type TurnUsage,
 } from './http/toolLoop'
 import type { SseFrame } from './http/sse'
-import { parseToolArguments } from './http/toolArgs'
+import { toolArgumentsParse } from './http/toolArgs'
+import { openAiReasoningEffort } from './openAiReasoning'
 import { nanoid } from 'nanoid'
 
 // ---------------------------------------------------------------------------
@@ -241,10 +242,19 @@ const ResponsesEventSchema = Type.Object(
       ),
     ),
     response: Type.Optional(
-      Type.Object({ usage: Type.Optional(ResponsesUsageSchema) }, { additionalProperties: true }),
+      Type.Object(
+        {
+          usage: Type.Optional(ResponsesUsageSchema),
+          incomplete_details: Type.Optional(
+            Type.Union([Type.Object({ reason: Type.Optional(Type.String()) }, { additionalProperties: true }), Type.Null()]),
+          ),
+        },
+        { additionalProperties: true },
+      ),
     ),
-    // `error` events carry a top-level message.
+    // `error` events carry a top-level message, and usually a code.
     message: Type.Optional(Type.String()),
+    code: Type.Optional(Type.Union([Type.String(), Type.Null()])),
   },
   { additionalProperties: true },
 )
@@ -260,11 +270,16 @@ interface PendingCall {
   readonly arguments: string
 }
 
+/** Stream error codes that mean "momentarily unable", not "this request is wrong". */
+const TRANSIENT_ERROR_PATTERN = /overload|server_error|rate_limit|timeout|unavailable/i
+
 export class ResponsesTurnTranslator implements TurnTranslator<ResponsesTurn> {
   private text = ''
   private readonly calls: PendingCall[] = []
   private readonly toolCalls: TurnToolCall[] = []
   private usage: TurnUsage | null = null
+  private truncated = false
+  private transientFailure = false
 
   translate(frame: SseFrame): AiStreamEvent[] {
     let event: Static<typeof ResponsesEventSchema>
@@ -292,12 +307,19 @@ export class ResponsesTurnTranslator implements TurnTranslator<ResponsesTurn> {
         const name = item.name ?? 'tool'
         const args = typeof item.arguments === 'string' ? item.arguments : ''
         this.calls.push({ call_id: callId, name, arguments: args })
-        const input = parseToolArguments(args)
-        this.toolCalls.push({ id: callId, name, input })
+        const parsed = toolArgumentsParse(args)
+        const input = parsed.ok ? parsed.value : {}
+        this.toolCalls.push({ id: callId, name, input, ...(parsed.ok ? {} : { incomplete: true }) })
         return [{ type: 'toolCall', toolCallId: callId, toolName: name, input, status: 'pending' }]
       }
 
+      case 'response.incomplete':
       case 'response.completed': {
+        // `incomplete` with max_output_tokens is the output limit cutting the
+        // response off — continued by the loop, never read as a normal stop.
+        if (event.type === 'response.incomplete' && event.response?.incomplete_details?.reason === 'max_output_tokens') {
+          this.truncated = true
+        }
         const usage = event.response?.usage
         this.usage = {
           promptTokens: usage?.input_tokens ?? 0,
@@ -321,6 +343,7 @@ export class ResponsesTurnTranslator implements TurnTranslator<ResponsesTurn> {
         ]
 
       case 'error':
+        this.transientFailure = TRANSIENT_ERROR_PATTERN.test(`${event.code ?? ''} ${event.message ?? ''}`)
         return [
           {
             type: 'error',
@@ -342,12 +365,18 @@ export class ResponsesTurnTranslator implements TurnTranslator<ResponsesTurn> {
       items.push({ type: 'function_call', call_id: call.call_id, name: call.name, arguments: call.arguments })
     }
     return {
-      // The loop continues while the turn produced function_call items.
-      stop: this.toolCalls.length === 0,
-      toolCalls: this.toolCalls,
+      // An argument string that does not parse is a cut-off one only when the
+      // output limit stopped the response; otherwise it runs and is refused by
+      // the schema as before.
+      toolCalls: this.truncated ? this.toolCalls : this.toolCalls.map(({ incomplete: _incomplete, ...call }) => call),
+      truncated: this.truncated,
       assistantMessage: items.length > 0 ? items : null,
       usage: this.usage,
     }
+  }
+
+  isTransientFailure(): boolean {
+    return this.transientFailure
   }
 }
 
@@ -378,7 +407,7 @@ export function createResponsesAdapter(
       return mapResponsesHistory(req.messages)
     },
 
-    buildRequestBody(messages, req) {
+    buildRequestBody(messages, req, _cacheBreakpoints, options) {
       const body: Record<string, unknown> = {
         model: req.modelId,
         instructions: joinInstructions(req.systemPrompt),
@@ -386,16 +415,29 @@ export function createResponsesAdapter(
         stream: true,
         prompt_cache_key: promptCacheKey(req),
       }
-      if (req.tools.length > 0) body.tools = buildResponsesTools(req.tools)
+      // `effort` → `reasoning.effort` (AI-11). A non-reasoning model refuses
+      // it with a 400, and the loop re-sends the round without it.
+      if (options.reasoning && req.effort) body.reasoning = { effort: openAiReasoningEffort(req.effort) }
+      if (req.tools.length > 0) {
+        body.tools = buildResponsesTools(req.tools)
+        if (options.toolChoice === 'none') body.tool_choice = 'none'
+      }
       return body
     },
 
-    buildToolResultMessage(results: TurnToolResult[]): ResponsesTurn {
-      return results.map((r) => ({
-        type: 'function_call_output' as const,
-        call_id: r.id,
-        output: toolOutputToString(r.output),
-      }))
+    buildToolResultMessage(results: TurnToolResult[], notes: readonly string[]): ResponsesTurn {
+      return [
+        ...results.map((r) => ({
+          type: 'function_call_output' as const,
+          call_id: r.id,
+          output: toolOutputToString(r.output),
+        })),
+        ...notes.map((text): ResponsesInputItem => ({ type: 'message', role: 'user', content: [{ type: 'input_text', text }] })),
+      ]
+    },
+
+    buildUserNoteMessage(text: string): ResponsesTurn {
+      return [{ type: 'message', role: 'user', content: [{ type: 'input_text', text }] }]
     },
 
     createTurnTranslator() {
