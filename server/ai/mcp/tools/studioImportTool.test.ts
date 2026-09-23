@@ -36,7 +36,7 @@ describe('studio_import_project — capability gating', () => {
     )
     expect(tool).toBeDefined()
     expect(tool?.execution).toBe('server')
-    expect(tool?.mutates).toBe(true)
+    expect(tool?.requiresWrite).toBe(true)
   })
 
   it('is hidden from a read-only connector (ai.tools.write missing)', () => {

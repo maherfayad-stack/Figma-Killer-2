@@ -137,7 +137,7 @@ Use this project's design system. Not "prefer" — use it.
 
 Every colour, type size, spacing value and radius is a var(--token) this project declares. A raw hex, a raw px, or a value sitting off the project's own scale is an ERROR here, not a note: studio_quality_check reports raw-hex-color, raw-px-length, off-scale-spacing and off-scale-type-size at error severity under this policy, and the Stop gate reads the same severities.
 
-Every element that the design system has a component for is that component — imported from the project's own package (alm.* / design-system/ and whatever else studio_project_profile lists), never hand-rolled. studio_design_system_guide and the generated decision table in this project's CLAUDE.md are the menu. design-system-unused and design-system-coverage-low are errors too: a substantial screen that took two components out of forty-two has not used the design system, it has imported it.
+Every element that the design system has a component for is that component — imported from the project's own package (alm.* / design-system/ and whatever else studio_project_profile lists), never hand-rolled. studio_list_components and studio_find_component are the menu — the same catalog the decision table in this project's CLAUDE.md is generated from. design-system-unused and design-system-coverage-low are errors too: a substantial screen that took two components out of forty-two has not used the design system, it has imported it.
 
 Where the system genuinely has no component and no token for something, that is a real answer — use the smallest plain element and the nearest token, and SAY in your reply which gap you hit. What is not an answer is quietly writing the raw value and moving on.`,
 

@@ -73,7 +73,7 @@ describe('mcp server', () => {
     const { tools } = await client.listTools()
     const names = tools.map((t) => t.name)
     expect(names).toContain('site_read_styles') // headless design-system read
-    // Write tools are gated out (MCP Tool exposes no `mutates` flag, so assert by name).
+    // Write tools are gated out (MCP Tool exposes no `requiresWrite` flag, so assert by name).
     expect(names).not.toContain('site_insert_html')
     expect(names).not.toContain('site_delete_node')
     expect(names).not.toContain('site_apply_css')

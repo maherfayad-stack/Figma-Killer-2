@@ -47,7 +47,7 @@ export interface SelectStudioToolsContext {
  *
  * Filtering (see `toolAllowedForCapabilities`, the single gate):
  *   - a caller without `ai.tools.write` does not see tools tagged
- *     `mutates: true`;
+ *     `requiresWrite: true`;
  *   - a tool with `requiredCapabilities` (ANY-OF) is only offered to
  *     callers holding at least one of them — the agent inherits the
  *     caller's capabilities by construction instead of `ai.chat` acting

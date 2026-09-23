@@ -5,7 +5,7 @@
  *
  * Three layers under test:
  *   1. `toolAllowedForCapabilities` — the single gate helper (both axes:
- *      `mutates` ⇒ `ai.tools.write`, plus ANY-OF `requiredCapabilities`).
+ *      `requiresWrite` ⇒ `ai.tools.write`, plus ANY-OF `requiredCapabilities`).
  *   2. `selectStudioTools` — selection-time filtering (load-bearing gate:
  *      the tool loop only executes offered tools).
  *   3. `executeAiTool` — pre-dispatch re-check (defence in depth).
@@ -25,6 +25,7 @@ function tool(partial: Partial<AiTool>): AiTool {
     description: 'x',
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({}),
     ...partial,
   }
@@ -48,17 +49,17 @@ describe('toolAllowedForCapabilities', () => {
   })
 
   it('blocks a mutating tool when the caller lacks ai.tools.write', () => {
-    const t = tool({ mutates: true })
+    const t = tool({ requiresWrite: true })
     expect(toolAllowedForCapabilities(t, NONE)).toBe(false)
   })
 
   it('allows a mutating tool when the caller has ai.tools.write and any requiredCapabilities', () => {
-    const t = tool({ mutates: true, requiredCapabilities: ['content.manage'] })
+    const t = tool({ requiresWrite: true, requiredCapabilities: ['content.manage'] })
     expect(toolAllowedForCapabilities(t, ['ai.tools.write', 'content.manage'])).toBe(true)
   })
 
   it('blocks a mutating tool with ai.tools.write but missing requiredCapabilities', () => {
-    const t = tool({ mutates: true, requiredCapabilities: ['content.manage'] })
+    const t = tool({ requiresWrite: true, requiredCapabilities: ['content.manage'] })
     expect(toolAllowedForCapabilities(t, ['ai.tools.write'])).toBe(false)
   })
 })
@@ -92,11 +93,11 @@ describe('selectStudioTools capability filtering', () => {
 
   it('still filters write tools by ai.tools.write (existing behaviour preserved)', () => {
     const withoutWrite = selectStudioTools(['ai.chat', 'site.read', 'site.structure.edit'])
-    expect(withoutWrite.every((t) => !t.mutates)).toBe(true)
+    expect(withoutWrite.every((t) => !t.requiresWrite)).toBe(true)
     const withWrite = selectStudioTools([
       'ai.chat', 'ai.tools.write', 'site.read', 'site.structure.edit',
     ])
-    expect(withWrite.some((t) => t.mutates)).toBe(true)
+    expect(withWrite.some((t) => t.requiresWrite)).toBe(true)
   })
 
   // WS-12 §3 — a turn against an open Studio project gets the real Studio
@@ -144,7 +145,7 @@ describe('selectStudioTools capability filtering', () => {
 
     // ai.tools.write alone is not enough — every Studio write tool also
     // declares requiredCapabilities: ['studio.write'] (ANY-OF), a SEPARATE
-    // axis from the mutates flag.
+    // axis from the requiresWrite flag.
     const withOnlyToolsWrite = selectStudioTools(['ai.chat', 'ai.tools.write'], { studioProjectOpen: true })
     expect(withOnlyToolsWrite.some((t) => t.name === 'studio_screenshot')).toBe(false)
 

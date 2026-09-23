@@ -16,7 +16,7 @@ import { studioFrameAxesMcpTools } from './frameAxesTools'
 import { studioComputedStylesMcpTools } from './computedStyles'
 import { studioMeasureElementMcpTools } from './measureElement'
 import { studioPackageDocMcpTools } from './packageDocTools'
-import { studioFrameworkTokenMcpTools } from './frameworkTokenTools'
+import { studioProjectTokenMcpTools } from './projectTokenTools'
 import { studioComponentCatalogMcpTools } from './componentCatalogTools'
 import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
@@ -53,7 +53,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioFrameAxesMcpTools,
   ...studioComputedStylesMcpTools,
   ...studioPackageDocMcpTools,
-  ...studioFrameworkTokenMcpTools,
+  ...studioProjectTokenMcpTools,
   ...studioComponentCatalogMcpTools,
   ...studioFigmaBindingMcpTools,
   ...studioRemoteAssetMcpTools,

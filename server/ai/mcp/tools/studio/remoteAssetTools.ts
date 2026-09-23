@@ -22,7 +22,8 @@ const fetchRemoteAssetTool: AiTool = {
   name: 'studio_fetch_remote_asset',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Fetch an http(s) URL SERVER-SIDE and land the response as a new image file in the project — the way to bring in an asset another tool (e.g. a connected Figma MCP server\'s export/download tool) already returned as a URL, WITHOUT round-tripping its bytes through your own context the way studio_upload_asset\'s imageBase64 input requires. The URL is fetched here; no redirect is ever followed; the response is capped at 25 MB by streamed byte count; the actual bytes are sniffed against real image magic numbers to decide the written extension (a declared/URL-suggested extension is never trusted); an SVG response is sanitized before it touches disk. Returns { relPath } — the new file\'s workspace-relative POSIX path, ready to pass as an insert edit\'s import target or a kind:"asset" edit\'s assetPath, same shape studio_upload_asset returns. Fails with a plain error (never a partial write) for a non-http(s) URL, an unreachable host, a redirect response, a non-2xx status, an oversized body, or content that does not sniff as a recognized image format. Requires studio.write.',

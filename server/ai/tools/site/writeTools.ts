@@ -52,7 +52,7 @@ import {
   RenderSnapshotInputSchema,
 } from '@core/ai'
 import type { CoreCapability } from '@core/capabilities'
-import type { AiTool } from '../types'
+import type { SiteToolDefinition } from '../types'
 
 // ---------------------------------------------------------------------------
 // Capability requirements (ANY-OF) — mirror the editor's change-class model
@@ -79,7 +79,7 @@ const SITE_STYLE_CAPS: readonly CoreCapability[] = ['site.style.edit']
 // HTML-native write tools
 // ---------------------------------------------------------------------------
 
-const insertHtmlTool: AiTool = {
+const insertHtmlTool: SiteToolDefinition = {
   name: 'site_insert_html',
   scope: 'site',
   execution: 'bridge',
@@ -89,7 +89,7 @@ const insertHtmlTool: AiTool = {
   inputSchema: InsertHtmlInputSchema,
 }
 
-const getNodeHtmlTool: AiTool = {
+const getNodeHtmlTool: SiteToolDefinition = {
   name: 'site_get_node_html',
   scope: 'site',
   execution: 'bridge',
@@ -98,7 +98,7 @@ const getNodeHtmlTool: AiTool = {
   inputSchema: GetNodeHtmlInputSchema,
 }
 
-const readDocumentTool: AiTool = {
+const readDocumentTool: SiteToolDefinition = {
   name: 'site_read_document',
   scope: 'site',
   execution: 'bridge',
@@ -108,7 +108,7 @@ const readDocumentTool: AiTool = {
   inputSchema: ReadDocumentInputSchema,
 }
 
-const openDocumentTool: AiTool = {
+const openDocumentTool: SiteToolDefinition = {
   name: 'site_open_document',
   scope: 'site',
   execution: 'bridge',
@@ -118,7 +118,7 @@ const openDocumentTool: AiTool = {
   inputSchema: OpenDocumentInputSchema,
 }
 
-const replaceNodeHtmlTool: AiTool = {
+const replaceNodeHtmlTool: SiteToolDefinition = {
   name: 'site_replace_node_html',
   scope: 'site',
   execution: 'bridge',
@@ -132,7 +132,7 @@ const replaceNodeHtmlTool: AiTool = {
 // Node-level write tools
 // ---------------------------------------------------------------------------
 
-const deleteNodeTool: AiTool = {
+const deleteNodeTool: SiteToolDefinition = {
   name: 'site_delete_node',
   scope: 'site',
   execution: 'bridge',
@@ -142,7 +142,7 @@ const deleteNodeTool: AiTool = {
   inputSchema: DeleteNodeInputSchema,
 }
 
-const updateNodePropsTool: AiTool = {
+const updateNodePropsTool: SiteToolDefinition = {
   name: 'site_update_node_props',
   scope: 'site',
   execution: 'bridge',
@@ -152,7 +152,7 @@ const updateNodePropsTool: AiTool = {
   inputSchema: UpdateNodePropsInputSchema,
 }
 
-const moveNodeTool: AiTool = {
+const moveNodeTool: SiteToolDefinition = {
   name: 'site_move_node',
   scope: 'site',
   execution: 'bridge',
@@ -162,7 +162,7 @@ const moveNodeTool: AiTool = {
   inputSchema: MoveNodeInputSchema,
 }
 
-const renameNodeTool: AiTool = {
+const renameNodeTool: SiteToolDefinition = {
   name: 'site_rename_node',
   scope: 'site',
   execution: 'bridge',
@@ -172,7 +172,7 @@ const renameNodeTool: AiTool = {
   inputSchema: RenameNodeInputSchema,
 }
 
-const duplicateNodeTool: AiTool = {
+const duplicateNodeTool: SiteToolDefinition = {
   name: 'site_duplicate_node',
   scope: 'site',
   execution: 'bridge',
@@ -186,7 +186,7 @@ const duplicateNodeTool: AiTool = {
 // CSS + class-assignment write tools
 // ---------------------------------------------------------------------------
 
-const applyCssTool: AiTool = {
+const applyCssTool: SiteToolDefinition = {
   name: 'site_apply_css',
   scope: 'site',
   execution: 'bridge',
@@ -196,7 +196,7 @@ const applyCssTool: AiTool = {
   inputSchema: ApplyCssInputSchema,
 }
 
-const assignClassTool: AiTool = {
+const assignClassTool: SiteToolDefinition = {
   name: 'site_assign_class',
   scope: 'site',
   execution: 'bridge',
@@ -206,7 +206,7 @@ const assignClassTool: AiTool = {
   inputSchema: AssignClassInputSchema,
 }
 
-const removeClassTool: AiTool = {
+const removeClassTool: SiteToolDefinition = {
   name: 'site_remove_class',
   scope: 'site',
   execution: 'bridge',
@@ -220,7 +220,7 @@ const removeClassTool: AiTool = {
 // Code asset tools — scripts and user stylesheets in site.files + site.runtime
 // ---------------------------------------------------------------------------
 
-const listCodeAssetsTool: AiTool = {
+const listCodeAssetsTool: SiteToolDefinition = {
   name: 'site_list_code_assets',
   scope: 'site',
   execution: 'bridge',
@@ -230,7 +230,7 @@ const listCodeAssetsTool: AiTool = {
   inputSchema: ListCodeAssetsInputSchema,
 }
 
-const readCodeAssetTool: AiTool = {
+const readCodeAssetTool: SiteToolDefinition = {
   name: 'site_read_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -240,7 +240,7 @@ const readCodeAssetTool: AiTool = {
   inputSchema: ReadCodeAssetInputSchema,
 }
 
-const writeCodeAssetTool: AiTool = {
+const writeCodeAssetTool: SiteToolDefinition = {
   name: 'site_write_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -250,7 +250,7 @@ const writeCodeAssetTool: AiTool = {
   inputSchema: WriteCodeAssetInputSchema,
 }
 
-const patchCodeAssetTool: AiTool = {
+const patchCodeAssetTool: SiteToolDefinition = {
   name: 'site_patch_code_asset',
   scope: 'site',
   execution: 'bridge',
@@ -260,7 +260,7 @@ const patchCodeAssetTool: AiTool = {
   inputSchema: PatchCodeAssetInputSchema,
 }
 
-const inspectCodeRuntimeTool: AiTool = {
+const inspectCodeRuntimeTool: SiteToolDefinition = {
   name: 'site_inspect_code_runtime',
   scope: 'site',
   execution: 'bridge',
@@ -274,7 +274,7 @@ const inspectCodeRuntimeTool: AiTool = {
 // Page-level write tools
 // ---------------------------------------------------------------------------
 
-const addPageTool: AiTool = {
+const addPageTool: SiteToolDefinition = {
   name: 'site_add_page',
   scope: 'site',
   execution: 'bridge',
@@ -284,7 +284,7 @@ const addPageTool: AiTool = {
   inputSchema: AddPageInputSchema,
 }
 
-const deletePageTool: AiTool = {
+const deletePageTool: SiteToolDefinition = {
   name: 'site_delete_page',
   scope: 'site',
   execution: 'bridge',
@@ -294,7 +294,7 @@ const deletePageTool: AiTool = {
   inputSchema: DeletePageInputSchema,
 }
 
-const renamePageTool: AiTool = {
+const renamePageTool: SiteToolDefinition = {
   name: 'site_rename_page',
   scope: 'site',
   execution: 'bridge',
@@ -304,7 +304,7 @@ const renamePageTool: AiTool = {
   inputSchema: RenamePageInputSchema,
 }
 
-const duplicatePageTool: AiTool = {
+const duplicatePageTool: SiteToolDefinition = {
   name: 'site_duplicate_page',
   scope: 'site',
   execution: 'bridge',
@@ -324,7 +324,7 @@ const duplicatePageTool: AiTool = {
 // in `@core/page-tree`.
 // ---------------------------------------------------------------------------
 
-const setPageTemplateTool: AiTool = {
+const setPageTemplateTool: SiteToolDefinition = {
   name: 'site_set_page_template',
   scope: 'site',
   execution: 'bridge',
@@ -334,7 +334,7 @@ const setPageTemplateTool: AiTool = {
   inputSchema: SetPageTemplateInputSchema,
 }
 
-const clearPageTemplateTool: AiTool = {
+const clearPageTemplateTool: SiteToolDefinition = {
   name: 'site_clear_page_template',
   scope: 'site',
   execution: 'bridge',
@@ -352,7 +352,7 @@ const clearPageTemplateTool: AiTool = {
 // per-step values).
 // ---------------------------------------------------------------------------
 
-const setColorTokensTool: AiTool = {
+const setColorTokensTool: SiteToolDefinition = {
   name: 'site_set_color_tokens',
   scope: 'site',
   execution: 'bridge',
@@ -362,7 +362,7 @@ const setColorTokensTool: AiTool = {
   inputSchema: SetColorTokensInputSchema,
 }
 
-const setFontTokensTool: AiTool = {
+const setFontTokensTool: SiteToolDefinition = {
   name: 'site_set_font_tokens',
   scope: 'site',
   execution: 'bridge',
@@ -372,7 +372,7 @@ const setFontTokensTool: AiTool = {
   inputSchema: SetFontTokensInputSchema,
 }
 
-const setTypeScaleTool: AiTool = {
+const setTypeScaleTool: SiteToolDefinition = {
   name: 'site_set_type_scale',
   scope: 'site',
   execution: 'bridge',
@@ -382,7 +382,7 @@ const setTypeScaleTool: AiTool = {
   inputSchema: SetTypeScaleInputSchema,
 }
 
-const setSpacingScaleTool: AiTool = {
+const setSpacingScaleTool: SiteToolDefinition = {
   name: 'site_set_spacing_scale',
   scope: 'site',
   execution: 'bridge',
@@ -396,7 +396,7 @@ const setSpacingScaleTool: AiTool = {
 // site_render_snapshot — browser-bridged, returns a special payload
 // ---------------------------------------------------------------------------
 
-const renderSnapshotTool: AiTool = {
+const renderSnapshotTool: SiteToolDefinition = {
   name: 'site_render_snapshot',
   scope: 'site',
   execution: 'bridge',
@@ -409,7 +409,7 @@ const renderSnapshotTool: AiTool = {
 // All write tools — convenient barrel for the registry
 // ---------------------------------------------------------------------------
 
-export const siteWriteTools: AiTool[] = [
+export const siteWriteTools: SiteToolDefinition[] = [
   insertHtmlTool,
   getNodeHtmlTool,
   readDocumentTool,

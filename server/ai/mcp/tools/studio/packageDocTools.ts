@@ -183,6 +183,7 @@ const packageDocTool: AiTool = {
   name: 'studio_read_package_doc',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Read a design system\'s own markdown documentation (CLAUDE.md, design.md, README.md) BY SECTION — an installed dependency\'s, or Studio\'s built-in design system (package:"alm", whose docs ship with Studio; no install needed). These files routinely exceed the plain-Read size limit — a design system\'s reference can be 100 KB+, so reading it whole always fails; this is how to actually get at it. Call with outline:true first to see every heading and its size, then call again with section:"<heading>" for just the part you need. Resolves the package from the project upward, so a hoisted node_modules works. Markdown files in the package root only; the whole file is never returned. Returns { ok:false, error } when the package or doc is not installed.',
   inputSchema: PackageDocInputSchema,

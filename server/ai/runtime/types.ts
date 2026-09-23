@@ -97,6 +97,35 @@ export type AiMessage =
 export type ToolExecution = 'server' | 'server-with-bridge-fallback' | 'bridge'
 
 /**
+ * What a tool call CHANGES — read by the tool loop (`drivers/http/toolLoop.ts`)
+ * to decide concurrency and duplicate suppression, and by nothing else. It is
+ * deliberately NOT the capability gate: that is {@link AiTool.requiresWrite},
+ * and the two used to be one `mutates` flag, which is how the agent's own
+ * eyes got treated as writes (AI-5, `docs/audits/2026-09-23-studio-audit/
+ * 06-assistant.md`).
+ *
+ *  - `none`: changes nothing that outlives the call. A pure read, or an
+ *    observation whose only side is transient and restored in a `finally`
+ *    (a live-tab capture that borrows the viewport and hands it back).
+ *  - `cache`: changes only Studio's OWN derived state, and converges — the
+ *    same call with the same inputs lands the same state again. A board frame
+ *    placed for a page file that has none (`syncBoardFramesFromDisk`), a
+ *    compare verdict cache entry, a verification record, a warm dev server.
+ *    Nothing a user authored, nothing a re-run could get wrong.
+ *  - `write`: changes something the user owns or will see as content — a
+ *    source file, a `.studio/` document the user edits too (board layout,
+ *    comments, references, variable tables), git, the database, an external
+ *    system.
+ *
+ * The loop runs consecutive `none`/`cache` calls concurrently and never
+ * suppresses a repeat of one — the second screenshot after a fix is a
+ * different question with the same arguments. A `write` runs alone, and an
+ * identical `write` is suppressed only while no OTHER write has landed in
+ * between (the per-turn write epoch — see `toolLoopBounds.ts`).
+ */
+export type ToolSideEffects = 'none' | 'cache' | 'write'
+
+/**
  * One tool, defined once. Drivers translate `inputSchema` (TypeBox) into
  * their SDK's native tool format (Anthropic input_schema, OpenAI parameters
  * JSON Schema, Ollama JSON Schema).
@@ -117,23 +146,33 @@ export interface AiTool {
   readonly execution: ToolExecution
   readonly inputSchema: TSchema
   /**
-   * Does this tool mutate state? Read tools (snapshot, search, list) are
-   * pure reads against the db / store; write tools (insertHtml,
-   * replaceNodeHtml, deleteNode, …) cause user-visible state change.
+   * The CAPABILITY gate: does calling this tool require `ai.tools.write`?
    *
-   * The chat handler uses this to filter the registered toolset: a caller
-   * with `ai.chat` but no `ai.tools.write` only sees `mutates !== true`
-   * tools registered with the driver, so the model has no way to issue
-   * a write call. Default is `false` (read-only) to keep existing tool
-   * definitions valid without per-tool edits — `selectStudioTools`
-   * stamps `mutates: true` onto the write subset at assembly time.
+   * A caller with `ai.chat` but no `ai.tools.write` is never offered a
+   * `requiresWrite` tool (`toolAllowedForCapabilities`, the single gate the
+   * chat handler, the MCP registry, and `executeAiTool`'s re-check all use),
+   * so the model has no way to issue the call. Absent means `false`.
+   *
+   * Set by the STRONGEST thing the tool can do, not by its common case — which
+   * is why it is a separate field from {@link sideEffects}. `studio_screenshot`
+   * changes no user content (`sideEffects: 'cache'`) but its live fallback
+   * borrows the user's open tab, so it stays write-gated; `studio_typecheck`
+   * changes nothing at all (`'none'`) but runs a binary the project's own
+   * `node_modules` supplied, so it takes the same gate as installing one.
    */
-  readonly mutates?: boolean
+  readonly requiresWrite?: boolean
   /**
-   * Why this mutating tool has NO canvas-parity path — one sentence, stated
-   * on the tool rather than in a test's allowlist.
+   * The LOOP's field: what a call changes, and therefore whether the HTTP
+   * tool loop may run it beside others and whether an identical repeat is
+   * suppressed. Required, so a new tool cannot inherit a default it never
+   * thought about. See {@link ToolSideEffects}.
+   */
+  readonly sideEffects: ToolSideEffects
+  /**
+   * Why this `sideEffects: 'write'` tool has NO canvas-parity path — one
+   * sentence, stated on the tool rather than in a test's allowlist.
    *
-   * `STUDIO_CANVAS_PARITY_MATRIX` requires every `mutates: true` tool to map
+   * `STUDIO_CANVAS_PARITY_MATRIX` requires every `write` tool to map
    * to a real editor action. A tool whose only artefact is Studio's own agent
    * bookkeeping has no such action, and the honest answer is to say so HERE,
    * where the next person to read the tool sees it, instead of adding its

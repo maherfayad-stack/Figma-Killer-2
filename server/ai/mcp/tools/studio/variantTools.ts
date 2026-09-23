@@ -36,10 +36,8 @@
 import { Type } from '@core/utils/typeboxHelpers'
 import { toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { resolveProjectProfile } from '../../../../handlers/studio/projectProbe'
-import { compileProjectStyles } from '../../../../handlers/studio/styleCompile'
 import { buildProjectTokenIndex, type ProjectTokenIndex } from '../../../../handlers/studio/projectTokenIndex'
-import { builtinDesignSystemTokenCss } from '../../../../handlers/studio/tokenExtractPackageCss'
+import { collectProjectTokenCss } from '../../../../handlers/studio/projectTokenSources'
 import { generateVariantSeeds, MAX_VARIANTS_PER_SET } from '../../../../handlers/studio/variantSeeds'
 import { resolveProjectDesignPolicy } from '../../../../handlers/studio/projectDesignPolicy'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
@@ -89,7 +87,8 @@ const planVariantsTool: AiTool = {
   name: 'studio_plan_variants',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   headlessOnly:
     'Nothing in the editor plans variants. The only thing this writes is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER agent turn can edit variant B\'s recorded density instead of re-rolling the set. The editor\'s own equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all, so there is no canvas action for this to be parity WITH.',
   requiredCapabilities: ['studio.write'],
@@ -118,14 +117,8 @@ const planVariantsTool: AiTool = {
     // OWN token space; without the token index there is nothing to vary over,
     // so this degrades to an empty index rather than inventing a palette. The
     // directives then say, per axis, that no token was found.
-    let tokens: ProjectTokenIndex = buildProjectTokenIndex()
-    try {
-      const profile = resolveProjectProfile(dir)
-      const compiled = await compileProjectStyles(dir, profile)
-      tokens = buildProjectTokenIndex(builtinDesignSystemTokenCss(dir), compiled.styles.vendorCss, compiled.styles.css)
-    } catch (err) {
-      console.error('[studio_plan_variants] could not resolve the project profile / compile project styles:', err)
-    }
+    // `collectProjectTokenCss` never throws; it degrades per source.
+    const tokens: ProjectTokenIndex = buildProjectTokenIndex(...(await collectProjectTokenCss(dir)))
 
     const seed = rngSeed ?? Math.floor(Math.random() * 0x7fffffff)
     // A12 — the same policy the prompt block was built from, resolved through
@@ -169,6 +162,7 @@ const listVariantSetsTool: AiTool = {
   name: 'studio_list_variant_sets',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Read back the variant style seeds recorded for this project by studio_plan_variants. This is what makes "make B but tighter" an EDIT: the set records exactly which accent, corner family, type contrast and density each variant was built to, so you change the one axis the user named and leave the rest of what they liked alone — instead of re-rolling and losing it. Pass setId for one set in full, or omit it for the most recent sets (newest first). Returns { sets[] }, each { id, createdAt, baseName, brief, rngSeed, variants[] }.',
   inputSchema: ListInputSchema,
