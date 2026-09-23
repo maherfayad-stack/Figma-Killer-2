@@ -133,7 +133,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - **A live install loses its projects and secrets on the FIRST recreate with the new files unless the operator copies them out first.** The release notes must lead with this.
   - Setting `STUDIO_WORKSPACE_DIR=/app/storage` now stops the server at boot on purpose.
-- **Next:** security-guard re-review; owner merges.
+- **Next:** merged into the trunk after the security review (all 11 findings fixed, `review-228`). Owner: run a real `docker compose up` once before a release.
 
 ### server-29 — P1-D: notice edits made outside Studio (watcher + re-locate)
 - **Agent:** server-engineer · **Branch:** `fix/notice-edits-made-outside-studio` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
