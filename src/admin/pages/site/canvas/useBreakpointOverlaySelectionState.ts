@@ -21,6 +21,40 @@ const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
 const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
 
+/**
+ * PERF-13 — the ids of `ids` this frame's page can render. A selection or
+ * hover made WITHOUT a frame (a Layers-panel row: `selectedNodeFrameId` /
+ * `hoveredFrameId` null) used to arm the rings, the in-place inspector
+ * wrapper and a measure scheduler in EVERY mounted board frame, each of which
+ * then queried its document for a node it does not contain, on every pass.
+ * `_nodeIdToPageIds` (WS-5.2) answers "which pages contain this id" in O(1).
+ *
+ * `framePageId === null` is the CMS/VC canvas, which mirrors one selection
+ * across every breakpoint frame of ONE document on purpose — unscoped. An id
+ * the index does not know (a Visual Component's own tree) is kept, so the
+ * scoping can only ever remove chrome from a frame that provably cannot show
+ * it. Returns `ids` itself when nothing is removed.
+ */
+export function idsRenderedByFramePage(
+  nodeIdToPageIds: ReadonlyMap<string, readonly string[]>,
+  ids: readonly string[],
+  framePageId: string | null,
+): readonly string[] {
+  if (framePageId === null || ids.length === 0) return ids
+  const rendered = ids.filter((id) => framePageCanRender(nodeIdToPageIds, id, framePageId))
+  if (rendered.length === ids.length) return ids
+  return rendered.length === 0 ? EMPTY_SELECTED_NODE_IDS : rendered
+}
+
+/** One id's answer to {@link idsRenderedByFramePage} — no allocation, for the per-store-change hover read. */
+function framePageCanRender(
+  nodeIdToPageIds: ReadonlyMap<string, readonly string[]>,
+  id: string,
+  framePageId: string | null,
+): boolean {
+  return framePageId === null || (nodeIdToPageIds.get(id)?.includes(framePageId) ?? true)
+}
+
 export interface BreakpointOverlaySelectionState {
   selectedNodeIds: readonly string[]
   hoveredNodeId: string | null
@@ -44,12 +78,15 @@ export function useBreakpointOverlaySelectionState(
   // the same page shares every node id (trap #2), so without this an
   // rtl/dark variant would show the SAME selection ring as its light/ltr
   // sibling. `null` origin (every CMS/VC selection) keeps the existing
-  // "every frame mirrors the selection" behaviour — see the module doc.
-  const selectedNodeIds = useEditorStore(useShallow((s) =>
-    s.selectedNodeFrameId === null || s.selectedNodeFrameId === frameId
-      ? s.selectedNodeIds
-      : EMPTY_SELECTED_NODE_IDS,
-  ))
+  // "every frame mirrors the selection" behaviour — see the module doc —
+  // narrowed to the frames whose page contains the node (PERF-13).
+  const framePageId = use(CanvasPageContext)
+  const selectedNodeIds = useEditorStore(useShallow((s) => {
+    if (s.selectedNodeFrameId !== null) {
+      return s.selectedNodeFrameId === frameId ? s.selectedNodeIds : EMPTY_SELECTED_NODE_IDS
+    }
+    return idsRenderedByFramePage(s._nodeIdToPageIds, s.selectedNodeIds, framePageId)
+  }))
   // `hoveredBreakpointId === null` means "global hover" — i.e. the hover did
   // not originate from a specific breakpoint frame on the canvas (e.g. it was
   // triggered by hovering a row in the DOM panel). In that case every frame
@@ -60,7 +97,9 @@ export function useBreakpointOverlaySelectionState(
   const hoveredNodeId = useEditorStore((s) =>
     s.hoveredNodeId &&
     (s.hoveredBreakpointId === null || s.hoveredBreakpointId === breakpointId) &&
-    (s.hoveredFrameId === null || s.hoveredFrameId === frameId)
+    (s.hoveredFrameId === null
+      ? framePageCanRender(s._nodeIdToPageIds, s.hoveredNodeId, framePageId)
+      : s.hoveredFrameId === frameId)
       ? s.hoveredNodeId
       : null,
   )
@@ -80,7 +119,6 @@ export function useBreakpointOverlaySelectionState(
   })
   // THIS frame's page (board: one page per frame) — O(1) node-map reads for the
   // in-iframe badge label (WS-5.1) and the zero-DOM fragment-node rect fallback.
-  const framePageId = use(CanvasPageContext)
   const framePage = useEditorStore((s) => selectCanvasPageFor(s, framePageId))
   const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
 

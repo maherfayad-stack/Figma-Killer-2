@@ -218,11 +218,16 @@ export function hideSurplusRings(container: HTMLDivElement, keep: number): void 
  * is measured in, because the root cannot scroll (`overflow: clip`). Fixed path
  * (fallback, `canvasRect === null`): toolbar lives in document.body
  * (position: fixed) and the same values are viewport (client) coordinates.
+ *
+ * `knownWidth` is the toolbar's width when the caller already has it — the
+ * pan/zoom follow path (`selectionChromeViewportFollow.ts`) repositions on
+ * every transform write and must not force a layout read to clamp.
  */
 export function positionToolbar(
   toolbar: HTMLDivElement | null,
   union: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
+  knownWidth?: number,
 ): void {
   if (!toolbar) return
   if (!union) {
@@ -242,7 +247,7 @@ export function positionToolbar(
   if (canvasRect && toolbar.style.display === 'none') toolbar.style.display = ''
   let x = union.x
   if (canvasRect) {
-    const maxX = Math.max(GUTTER, canvasRect.width - toolbar.offsetWidth - GUTTER)
+    const maxX = Math.max(GUTTER, canvasRect.width - (knownWidth ?? toolbar.offsetWidth) - GUTTER)
     x = Math.min(Math.max(x, GUTTER), maxX)
   }
 
@@ -283,11 +288,14 @@ export function positionToolbar(
  * against the canvas edge, hundreds of pixels from the element it edits, with
  * no visible relationship to it. Intersecting first keeps the panel beside the
  * part of the element the user can actually see.
+ *
+ * `knownWidth`: see `positionToolbar`.
  */
 export function positionInspector(
   inspector: HTMLDivElement | null,
   rect: CanvasOverlayRect | null,
   canvasRect: DOMRect | null,
+  knownWidth?: number,
 ): void {
   if (!inspector) return
   if (!rect) {
@@ -305,7 +313,7 @@ export function positionInspector(
   let anchorBottom = rect.y + rect.height
   if (canvasRect) {
     const visible = intersectWithView(rect, canvasRect)
-    const maxX = Math.max(GUTTER, canvasRect.width - inspector.offsetWidth - GUTTER)
+    const maxX = Math.max(GUTTER, canvasRect.width - (knownWidth ?? inspector.offsetWidth) - GUTTER)
     x = Math.min(Math.max(visible.x, GUTTER), maxX)
     anchorBottom = visible.y + visible.height
   }

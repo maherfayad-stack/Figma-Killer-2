@@ -77,8 +77,6 @@ export interface ResizeHandlesController {
   setTarget(target: ResizeTargetRef | null, proportional: boolean): void
   /** Re-reads the target's box — the caller's ring reposition pass calls this. */
   reposition(): void
-  /** The element currently under a live or held preview, or `null` — the caller's layout observer ignores its attribute writes. */
-  previewElement(): Element | null
   /** Drops the held preview; the source now carries the size, or the target moved on. */
   clearPreview(): void
   dispose(): void
@@ -261,7 +259,6 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
   return {
     setTarget,
     reposition,
-    previewElement: () => previewed,
     clearPreview,
     dispose() {
       endDrag?.(false)

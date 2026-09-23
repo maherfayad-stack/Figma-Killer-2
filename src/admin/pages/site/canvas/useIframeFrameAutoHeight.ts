@@ -1,12 +1,13 @@
 import { useEffect, type RefObject } from 'react'
-import { collectScrollDeficits, resolveFrameFitHeight } from '@core/studio-runtime'
+import {
+  collectScrollDeficits,
+  createFrameFitMutationScheduler,
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  resolveFrameFitHeight,
+} from '@core/studio-runtime'
 import { isCanvasGestureActive, onCanvasGestureSettle } from './canvasGesture'
 import { resolveCanvasFrameHeight } from './iframeFrameHeight'
 import { CANVAS_VIEWPORT_HEIGHT } from './resolveViewportUnits'
-import {
-  createFrameFitMutationScheduler,
-  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
-} from './frameFitMutationScheduler'
 import {
   getIframeObserverConstructors,
   getIframeObserverDocument,
@@ -172,9 +173,14 @@ export function useIframeFrameAutoHeight({
     // a user edit to get here. Coalesced through `frameFitMutationScheduler`
     // so inline-text-edit keystrokes (one `characterData` mutation each)
     // don't each pay the O(all elements) `collectScrollDeficits` scan this
-    // triggers — see that module's doc for the full defect and fix shape.
+    // triggers, and so the editor's own selection chrome (a hover ring
+    // mounting under `<body>`, PERF-2) never triggers it at all — see that
+    // module's doc for both rules.
     const scheduler = createFrameFitMutationScheduler({
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      // A portal frame's DOM changes structurally only when the user does
+      // something, and a delete should shrink the frame right away.
+      structuralDebounceMs: 0,
       onSettle: () => {
         selfResizes = 0
         pinnedHeight = CANVAS_VIEWPORT_HEIGHT

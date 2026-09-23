@@ -22,7 +22,7 @@ import styles from './BreakpointSelectionOverlay.module.css'
 
 interface CanvasSelectionChromeProps {
   selectedNodeIds: readonly string[]
-  showHover: boolean
+  /** The node the hover ring tracks, or `null` — the ring stays mounted either way (PERF-2). */
   hoverRingNodeId: string | null
   showSelectorHighlight: boolean
   usingIframeOverlay: boolean
@@ -44,7 +44,6 @@ interface CanvasSelectionChromeProps {
 
 export function CanvasSelectionChrome({
   selectedNodeIds,
-  showHover,
   hoverRingNodeId,
   showSelectorHighlight,
   usingIframeOverlay,
@@ -108,15 +107,19 @@ export function CanvasSelectionChrome({
           data-canvas-overlay-node-id={id}
         />
       ))}
-      {showHover && hoverRingNodeId && (
-        <div
-          ref={hoverRef}
-          className={legacyRingClassName('hover')}
-          data-canvas-ring-mode={legacyRingMode}
-          data-canvas-hover-ring="true"
-          data-canvas-overlay-node-id={hoverRingNodeId}
-        />
-      )}
+      {/* ALWAYS mounted (PERF-2): a hover starting or ending is a style
+          write on this element (the overlay hides it with
+          `hideOverlayElement`), never a `childList` mutation under the
+          frame's observed `<body>`. Hover is continuous in normal use, and
+          every mount used to re-run the frame's two full-document layout
+          passes. */}
+      <div
+        ref={hoverRef}
+        className={legacyRingClassName('hover')}
+        data-canvas-ring-mode={legacyRingMode}
+        data-canvas-hover-ring="true"
+        data-canvas-overlay-node-id={hoverRingNodeId ?? undefined}
+      />
       {/* The one interactive thing in this click-through overlay — see
           `CanvasResizeHandles`. */}
       {resizeNodeId && (
