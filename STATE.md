@@ -46,11 +46,21 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
 ### docs-15 — P0: consolidate the docs (ROADMAP P0-A … P0-H)
-- **Agent:** studio-scribe · **Branch:** `docs/p0-consolidate-docs` off `386e1d00` · **Updated:** 2026-09-23
-- **Stage:** in progress. P0-A (conventions), P0-B (plans archived and harvested) and P0-C (this file) are committed; P0-D … P0-H follow on the same branch, one commit each.
-- **Goal:** one living plan (`ROADMAP.md`), one decisions file, a `STATE.md` under 400 lines with nothing lost, and no reference to a dead doc path.
-- **Done:** `STATE.md` went from 20,036 lines to this file. All 214 entries are verbatim in `docs/state-archive/2026-09.md`; `docs/state-archive/INDEX.md` lists all 214 (205 unique ids) plus the 153 entries in `2026-Q3.md`. A line-multiset check found no line of the old file missing from the archive and the dogfood backlog.
-- **Next:** P0-D protocol, P0-E references, P0-F entry docs, P0-G headers, P0-H gate.
+- **Agent:** studio-scribe · **Branch:** `docs/p0-consolidate-docs` off `386e1d00` · **PR:** draft against `feat/canvas-excellence` (link in the PR list) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open; owner review needed, see Human action)
+- **Goal:** one living plan, one decisions file, a `STATE.md` under 400 lines with nothing lost, a header on every doc, and no reference to a dead doc path.
+- **Done:** eight commits, one per bundle, plus a merge of the trunk (P1-A/B/C/G) before the last one.
+  - A: `docs/CONVENTIONS.md` (header line, trust levels, plan and archive doc types).
+  - B: seven code-cited plans + `STUDIO-SPEED-PLAN.md` → `docs/archive/plans/` (names unchanged); three uncited plans deleted after harvest; new `docs/decisions.md`, `docs/features/{trust-tiers,live-canvas,design-system}.md`, `docs/archive/README.md`; D2 target in `canvas-dnd.md`; CMS traps in `architecture.md`; ROADMAP §13 filled.
+  - C: this file 20,036 → about 165 lines; `docs/state-archive/2026-09.md` (214 entries verbatim, plus the P1-A/B/C/G entries `store-16`, `parser-p1a`, `parser-15`, `sec-23` folded in from PR bodies #219–#222), `INDEX.md` (218 + 153 lines, count parity), `docs/e2e/dogfood-backlog.md`.
+  - D: `handoff-protocol.md`. E: 52 `inspector-disclosure.md` refs, 3 gate messages, 11 agent files, dead paths. F: CLAUDE.md, BRIEF, `docs/README.md` (the doc map), README, AGENTS. G: 65 headers + 73 historical headers; C15, C16, C22. H: `doc-headers.test.ts`.
+- **Decisions:** archived plans keep their filenames so ~200 code-comment citations still resolve; `Verified: not yet` marks every doc nobody has checked since headers were added (honest, not a date); ROADMAP §2 now indexes the decisions and `docs/decisions.md` holds their text.
+- **Landmines:**
+  - `.claude/agents/studio-scribe.md` still routes "intent" to `STUDIO-IMPORT-V2-PLAN.md`: it is this agent's own configuration, so it was left for the owner.
+  - `CLAUDE.md` and ten `.claude/agents/*.md` files were edited only where the moves broke a reference; the broader rule-book trim ROADMAP P0-F describes was not done (it needs the owner, not an agent request).
+  - The Docker images and templates keep `studio-workspace/` outside every volume: user projects are lost on container recreate. Documented in `docs/deployment/README.md`; the compose/template fix is not made.
+- **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
+- **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ---
 
@@ -65,6 +75,10 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 ## Pending dogfood
 
 *One line per item: id · route · what to look at. The script is in the entry (`docs/state-archive/2026-09.md`, grep the id) unless it says otherwise. Older scripts: [`docs/e2e/dogfood-backlog.md`](docs/e2e/dogfood-backlog.md). Delete a line once the script has been run.*
+
+**Element identity (P1)**
+- `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
+- `parser-p1a` (optional) · a page open on the board · edit the file in VS Code, then edit and delete on the canvas: only the intended element changes. Spec: `tests/e2e/element-identity-guard.e2e.ts`
 
 **Live frames (Tier 2)**
 - `live-10` · `/admin/site` on `test4` · the three frames swap from the static render to the real app; toggle RTL; edit a label and watch HMR carry it in
@@ -140,16 +154,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `store-16` — P1-B: selection, hover, inline edit, entered instances and the drag follow their element across a reparse; a full reload is awaitable and sequenced — #222 — 2026-09-23
+- `parser-p1a` — P1-A: element identity guard; a stale line:col write is refused as `element-moved` and silently re-planned — #221 — 2026-09-23
+- `parser-15` — P1-C: the parse cache tracks evaluator reads, batch edits merge, a broken tsconfig or page degrades instead of failing a load — #220 — 2026-09-23
+- `sec-23` — P1-G: one write predicate; no Studio writer lands in `.studio`, `.git`, `node_modules`, build output or `.claude` — #219 — 2026-09-23
 - `speed-00` … `speed-06` — the speed plan's wave 1: optimistic style in live frames, 250 ms autosave, coalesced hover, one cold-selection overlay, refusal inside keydown, drag into live frames with a drop line — #205–#208, #210, #212–#214 — 2026-09-21
 - `live-17` … `live-20` — live frames: component-instance selection, inline text editing, middle-mouse pan, the prototype link handle — #209, #211–#216 — 2026-09-21
 - `live-10` … `live-16` — live frames on a local install: vite-only dev server, HMR subprotocol, bridge selection and pan, optimistic delete, dev servers that survive an API restart — #197, #202–#204 — 2026-09-20/21
 - `sec-19`, `sec-20`, `sec-21` — every project starts at `run-project`, and its two security reviews — #197, #198 — 2026-09-20
 - `store-15`, `sec-22` — ⌘Z after a source delete puts the element back, byte for byte — #201 — 2026-09-20
 - `server-27`, `panel-42` — writeback to a not-yet-created file; an Assets insert writes a gated prop only where it applies — #199, #200 — 2026-09-20
-- `perf-10` (×2) — insert/duplicate/wrap/group paint before the write lands; the post-write resync fell from 2 s to ~100 ms — #195, #196 — 2026-09-19/20
-- `parser-14`, `resil-01` — the parse cache tracks deep local imports; the gateway retry, made server-provably safe — the perf line, #193 — 2026-09-19
-- `e2e-1` — the cold e2e suite triaged: every failure mapped to a cause — #192 — 2026-09-19
-- `meta-17` — Figma-feel wave 3 integrated; that plan is closed — 2026-09-18
 
 ---
 

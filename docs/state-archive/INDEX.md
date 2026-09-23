@@ -5,8 +5,12 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 214 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 218 entries, archived 2026-09-23, newest first
 
+- 2026-09-23 · `store-16` · P1-B: held ids follow the element across a reparse; full reload awaitable (PR #222) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `parser-p1a` · Element identity guard (WB-1 guard, ERR-4, WB-11) (PR #221) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `parser-15` · P1-C: cache and batch correctness (PR #220) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `sec-23` · P1-G: one write predicate; no Studio writer lands in `.studio`/`.git`/`node_modules`/build output/`.claude` (PR #219) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `meta-18` · the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence` · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `meta-19` · integration head: every open draft line merged into chore/integrate-open-drafts · [`2026-09.md`](2026-09.md)
 - 2026-09-21 · `live-20` · the prototype `+` link handle (and the toolbar's "pick target") never appeared on a Tier 2 live frame; the endpoint measurement now goes through the frame adapter · [`2026-09.md`](2026-09.md)
