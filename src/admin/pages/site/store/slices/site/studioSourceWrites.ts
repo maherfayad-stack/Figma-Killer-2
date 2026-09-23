@@ -23,8 +23,8 @@
  * Either way the caller must not mint anything.
  *
  * `store-13` — the new element is nonetheless SELECTED once it arrives. The
- * save route reports the ids it created and `commitStructural` leaves them in
- * `pendingStructuralOutcome.ts` for the resync to claim, so "no id to return
+ * save route reports the ids it created and `commitStructural` hands them to
+ * the resync that reads the write back (`pendingStructuralOutcome.ts`), so "no id to return
  * here" no longer means "the gesture's result is never pointed at".
  *
  * The wrapper/element spelling comes from the MODULE REGISTRY

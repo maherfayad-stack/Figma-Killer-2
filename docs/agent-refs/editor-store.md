@@ -179,11 +179,12 @@ element's own tag-name `line:col` (`createdJsxLocation.ts`, verified against the
 re-parsed file — an unconfirmable position reports `null`, never a guess),
 `applyStudioEditBatch` turns them into `StudioEditBatchResult.createdNodeIds`
 (the plain `rel:line:col` ids the parser will mint for the same elements), and
-`commitStructural` parks them in `pendingStructuralOutcome.ts`.
-`usePersistence.ts` claims them on BOTH re-read paths — the narrow `patchPages`
-and the full `loadSite` — and selects them, checking every id against the O(1)
-`_nodeIdToPageIds` index first. A write whose elements did not all come back
-selects nothing rather than part of itself.
+`commitStructural` hands them to the resync that reads the write back
+(`pendingStructuralOutcome.ts`). `siteReloadApply.ts` applies them on BOTH
+re-read paths — the narrow `patchPages` and the full `loadSite` — and selects
+them, checking every id against the O(1) `_nodeIdToPageIds` index first. A
+write whose elements did not all come back selects nothing rather than part of
+itself.
 
 **And what it MOVED (`store-14`).** `StudioEditBatchResult` gains
 `relocatedNodeIds`, the counterpart `store-13` left open. `moveJsxElement` and
@@ -196,10 +197,15 @@ selection. **One wire fix went with it:** `POST /admin/api/studio/save` had neve
 actually forwarded `createdNodeIds`, so `store-13`'s selection worked in its unit
 test and nowhere else.
 
-*Two details worth knowing.* The handoff is a one-slot, expiring BOX rather
-than a callback because `studioStructuralCommits.ts` sits inside the store's own
-build graph, where importing `useEditorStore` closes the cycle `adminEvents.ts`
-exists to break. And the batch pins each created element to its distance from
+*Two details worth knowing.* The outcome is not a callback because
+`studioStructuralCommits.ts` sits inside the store's own build graph, where
+importing `useEditorStore` closes the cycle `adminEvents.ts` exists to break.
+Since ERR-10 it is not a global box either: it rides the exact re-read its write
+triggers — `CmsSitePagesPatchDetail.structuralOutcome` on the narrow path,
+`requestCmsSiteReload({ structuralOutcome })` on the full one — so an unrelated
+re-read landing first (an agent's live-reload patch) cannot claim it against a
+tree that does not contain the write yet, and a later commit cannot overwrite it
+before its own reload lands. And the batch pins each created element to its distance from
 the END of its file, not to an absolute line: a batch applies bottom-to-top, so
 a later edit sits above an element an earlier one created and pushes it down —
 recording the line is stale for every created element but the last, which a
@@ -244,6 +250,44 @@ double-clicked real copy and nothing happened.
 contains its id. Resetting to home is right when opening a different project and
 wrong when re-syncing the open one.
 
+**Held ids follow the ELEMENT across a reparse, on both reload paths (ERR-5).**
+An insert or delete shifts every `relFile:line:col` id below it (see
+`server/ai/tools/studio/staleness.ts`'s "shifted" contract). The old rule — an
+id survives iff it still resolves — was right when a shift vacated an address
+and silently wrong when it PERMUTED one: an agent inserts a banner on line 4,
+the selected "Body" moves to line 5, `a.tsx:4:5` still resolves, and the ring,
+the inspector and the next Delete all land on the banner. `loadSite` did not
+touch held ids at all. Now `loadSite` and `patchPages` both build a follower
+(`site/reparseNodeFollow.ts`) and map `selectedNodeIds`/`selectedNodeId`,
+`hoveredNodeId`, `activeInlineEdit.nodeId` and `enteredInstanceIds` through it
+(`followCanvasStateThroughReparse`, `lifecycleActions.ts`). The follower aligns
+each touched page's old tree against its new one by CONTENT — a deep subtree
+fingerprint, then the node's own module/tag/label/text, then position only when
+every unmatched pair agrees on module and tag — and falls back to
+`buildReparseNodeIdRemap`'s strict walk only when the node at the new address
+still has the same module/tag/label/text. An id with no honest counterpart is
+DROPPED — including one of a run of identical siblings, which the tree alone
+cannot tell apart — never re-pointed. A reload that changed the page SET (a
+project switch, a page create/delete) keeps an id only at the same address with
+the same fingerprint. Cost: O(nodes) of the pages holding a followed id, lazy,
+never the whole site. The live drag session is outside the store, so both paths
+also `publishReparseFollow(follow)` after writing the store;
+`useCanvasReorderDrag` re-addresses its session from it
+(`followDragSessionThroughReparse`) or ends the gesture when the dragged element
+is gone (ERR-23).
+
+**A full reload is awaitable and ordered (ERR-10).** `requestCmsSiteReload()`
+returns a promise that settles once a mounted editor has loaded a document
+fetched AFTER the request and applied its `structuralOutcome` — so
+`resyncBoardAfterWrite`'s full-reload fallback holds `structuralCommitQueue.ts`
+until the board has caught up, and a parked gesture re-plans against post-write
+ids. `usePersistence`'s `reload()` takes a monotonic token when it starts and
+drops its response if a newer reload started since; the newer one covers every
+request the older one did (`latestCmsSiteReloadRequest` /
+`claimCmsSiteReloadRequests` in `adminEvents.ts`). With no editor mounted a
+request resolves at once, and unmounting the last editor settles whatever is
+still waiting, so a structural commit can never hang on a board that is gone.
+
 **`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
 `site.pages` — the targeted-reload path for **every** write, the agent's and
 the user's alike. Three callers reach it: the MCP live-reload push, a
@@ -263,12 +307,7 @@ any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
 never pushes undo history, because this content came FROM disk — recording it
 as a "change" would queue an autosave that writes what was just read straight
 back out (the write → reload → re-dirty → autosave → write loop
-`fsCodemodAdapter.test.ts`'s header names). A selected/edited node id survives
-the patch iff it still resolves through `_nodeIdToPageIds` afterward — an
-insert/delete shifts every `relFile:line:col` id below it (see
-`server/ai/tools/studio/staleness.ts`'s "shifted" contract), so a shifted id
-simply isn't a key in the fresh page anymore and the selection drops cleanly.
-A page that had local (unsaved) edits and also got overwritten toasts
+`fsCodemodAdapter.test.ts`'s header names). A page that had local (unsaved) edits and also got overwritten toasts
 `'Local edits overwritten'` — the "merge: reload only touched pages" policy's
 one explicit data-loss case.
 

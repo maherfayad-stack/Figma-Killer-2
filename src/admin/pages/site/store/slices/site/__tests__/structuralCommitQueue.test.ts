@@ -31,7 +31,6 @@ import {
   isStructuralCommitInFlight,
   resetStructuralCommitQueue,
 } from '../../../../studio/structuralCommitQueue'
-import { clearPendingStructuralOutcome } from '../../../../studio/pendingStructuralOutcome'
 import { setStudioLoadedDir } from '../../../../studio/studioWorkspaceDir'
 import { createStudioSourceWrites } from '../studioSourceWrites'
 import type { SiteSliceHelpers } from '../types'
@@ -49,7 +48,6 @@ describe('structural commits queue instead of refusing (store-14)', () => {
     // between files on their own: an unsettled burst in one spec would poison
     // every structural action in the next.
     resetStructuralCommitQueue()
-    clearPendingStructuralOutcome()
     originalFetch = globalThis.fetch
     calls = []
     toasts = []
@@ -63,7 +61,6 @@ describe('structural commits queue instead of refusing (store-14)', () => {
     unregisterSave?.()
     unsubscribeToasts?.()
     resetStructuralCommitQueue()
-    clearPendingStructuralOutcome()
   })
 
   /**

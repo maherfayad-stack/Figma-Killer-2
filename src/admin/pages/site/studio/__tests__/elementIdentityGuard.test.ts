@@ -15,19 +15,18 @@
  *
  * Every test drives the real store with a stubbed network: `/save`, a narrow
  * `/reload-scope`, and a `/load` whose page is the file as re-read. The patch
- * listener mirrors `usePersistence`'s: hand the pages to the store, record
- * who each position names now, claim the structural outcome.
+ * listener IS `usePersistence`'s (`applySitePagesPatch`): hand the pages to the
+ * store, record who each position names now, apply the structural outcome.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import '@modules/base'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
-import { applyStructuralWriteOutcome } from '@site/hooks/usePersistence'
+import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
-import { clearPendingStructuralOutcome } from '../pendingStructuralOutcome'
 import { deferredStructuralGestureCount, isStructuralCommitInFlight, resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { noteBoardRead, resetSourceIdentities } from '../sourceIdentity'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
@@ -70,7 +69,6 @@ describe('the element identity guard, on the board', () => {
 
   beforeEach(() => {
     __resetToastBusForTests()
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     resetSourceIdentities()
     originalFetch = globalThis.fetch
@@ -87,17 +85,9 @@ describe('the element identity guard, on the board', () => {
     useEditorStore.getState().setActivePage(PAGE_ID)
     noteBoardRead(site.pages, 'reset')
 
-    patchListener = (evt: Event) => {
-      const detail = (evt as CustomEvent<CmsSitePagesPatchDetail>).detail
-      useEditorStore.getState().patchPages({
-        pages: detail.pages,
-        removedPageIds: detail.removedPageIds,
-        styleRules: detail.styleRules,
-        conditions: detail.conditions,
-      })
-      noteBoardRead(detail.pages, 'merge')
-      applyStructuralWriteOutcome()
-    }
+    // The real listener body (`siteReloadApply.ts`): hand the pages to the store,
+    // record who each position names now, apply the outcome that rode this re-read.
+    patchListener = (evt: Event) => applySitePagesPatch((evt as CustomEvent<CmsSitePagesPatchDetail>).detail)
     window.addEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
   })
 
@@ -107,7 +97,6 @@ describe('the element identity guard, on the board', () => {
     unsubscribeToasts?.()
     if (patchListener) window.removeEventListener(CMS_SITE_PAGES_PATCH_EVENT, patchListener)
     setStudioLoadedDir(null)
-    clearPendingStructuralOutcome()
     resetStructuralCommitQueue()
     resetSourceIdentities()
     useEditorStore.getState().clearSite()

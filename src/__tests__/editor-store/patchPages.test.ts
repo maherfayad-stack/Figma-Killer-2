@@ -8,8 +8,8 @@
  *   - append a brand-new page id (`studio_create_page`)
  *   - drop a page named in `removedPageIds`, its board frame, and any
  *     dangling `selectedFrameIds`/`activePageId` reference
- *   - selection survives when the selected node id still resolves after the
- *     patch, and is dropped cleanly (no dangling id) when it does not
+ *   - selection FOLLOWS its element to the id the reparse gave it (ERR-5),
+ *     and is dropped cleanly (no dangling id) when no element honestly is it
  *   - a page with local (unsaved) edits that gets overwritten surfaces a
  *     toast — the "merge" policy's explicit data-loss case
  *   - THE GATE: patching never marks the store dirty — the write -> reload ->
@@ -228,12 +228,13 @@ describe('patchPages — selection', () => {
     expect(useEditorStore.getState().selectedNodeIds).toEqual(['hero'])
   })
 
-  it('drops the selection cleanly (no dangling id) when an insert/delete shifted the node id', () => {
+  it('follows the selected element to its new id when an insert/delete shifted it (ERR-5)', () => {
     useEditorStore.getState().loadSite(twoPageSite())
     useEditorStore.getState().selectNode('hero')
 
     // Re-parsed page no longer has `hero` — an edit above it shifted every
-    // `relFile:line:col` id below (the `shifted` contract, staleness.ts).
+    // `relFile:line:col` id below (the `shifted` contract, staleness.ts). The
+    // element itself is unchanged, so the selection goes with it.
     const freshHome = makePage({
       id: 'home',
       slug: 'index',
@@ -242,6 +243,50 @@ describe('patchPages — selection', () => {
       nodes: {
         root: makeNode({ id: 'root', moduleId: 'base.body', children: ['hero-shifted'] }),
         'hero-shifted': makeNode({ id: 'hero-shifted', moduleId: 'base.text', props: { text: 'Hi' } }),
+      },
+    })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState().selectedNodeId).toBe('hero-shifted')
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['hero-shifted'])
+  })
+
+  it('drops the selection cleanly (no dangling id) when the selected element is gone', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().selectNode('hero')
+
+    // The re-parse has no text element at all any more — nothing on the page
+    // can honestly be said to be what was selected.
+    const freshHome = makePage({
+      id: 'home',
+      slug: 'index',
+      title: 'Home',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: [] }),
+      },
+    })
+    useEditorStore.getState().patchPages({ pages: [freshHome] })
+
+    expect(useEditorStore.getState().selectedNodeId).toBeNull()
+    expect(useEditorStore.getState().selectedNodeIds).toEqual([])
+  })
+
+  it('drops rather than guesses when an identical copy makes the element ambiguous', () => {
+    useEditorStore.getState().loadSite(twoPageSite())
+    useEditorStore.getState().selectNode('hero')
+
+    // An identical sibling appeared beside it and both ids shifted: either
+    // could be the original, so neither is selected — never the wrong one.
+    const freshHome = makePage({
+      id: 'home',
+      slug: 'index',
+      title: 'Home',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['hero-a', 'hero-b'] }),
+        'hero-a': makeNode({ id: 'hero-a', moduleId: 'base.text', props: { text: 'Hi' } }),
+        'hero-b': makeNode({ id: 'hero-b', moduleId: 'base.text', props: { text: 'Hi' } }),
       },
     })
     useEditorStore.getState().patchPages({ pages: [freshHome] })
