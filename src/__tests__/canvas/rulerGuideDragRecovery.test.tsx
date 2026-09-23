@@ -50,7 +50,7 @@ afterEach(() => {
 describe('moving a guide', () => {
   function seedGuide(moves: Array<[string, number]>) {
     const guideBoard = createBoard('board-1', 'Board 1')
-    guideBoard.guides = [{ id: 'g1', axis: 'x', position: 100 }]
+    guideBoard.guides = [{ id: 'g1', axis: 'x', position: 40 }]
     const file: BoardsFile = { version: 1, boards: [guideBoard] }
     useEditorStore.getState().loadBoards(file)
     useEditorStore.setState({
@@ -107,7 +107,7 @@ describe('moving a guide', () => {
     window.dispatchEvent(new Event('blur'))
     await new Promise((resolve) => setTimeout(resolve, 5))
     expect(moves).toEqual([])
-    expect(line.style.getPropertyValue('--guide-position')).toBe('100px')
+    expect(line.style.getPropertyValue('--guide-position')).toBe('40px')
     hasFocus.mockRestore()
   })
 })
