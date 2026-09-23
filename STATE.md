@@ -32,7 +32,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
-- **Progress:** merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P0 #225. P1-E2 #223 is fixing its security review before merge. At most 3 agents run at once, because of the owner's RAM.
+- **Progress:** merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P0 #225, P1-E2 #223 (after a security review caught a CSS-injection path in asset URLs). At most 3 agents run at once, because of the owner's RAM.
 - **Next:** P1-E3, P4-A, P1-D, P1-F; then Phase 2. Urgent: P0 found that the Docker images keep `studio-workspace/` outside every volume (ROADMAP P1-H).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
@@ -155,6 +155,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `asset-06` — P1-E2: one server rule for image URLs (percent-encoded), content dedupe, `wx` writes, keyed replay for asset-drop; security review fixed — #223 — 2026-09-23
 - `parser-16` — P1-E1: detach fails closed — symbol-based substitution, spread/rest, aliasing, a free-variable gate; every refusal leaves files byte-identical — #224 — 2026-09-23
 - `store-16` — P1-B: selection, hover, inline edit, entered instances and the drag follow their element across a reparse; a full reload is awaitable and sequenced — #222 — 2026-09-23
 - `parser-p1a` — P1-A: element identity guard; a stale line:col write is refused as `element-moved` and silently re-planned — #221 — 2026-09-23
@@ -164,7 +165,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `live-17` … `live-20` — live frames: component-instance selection, inline text editing, middle-mouse pan, the prototype link handle — #209, #211–#216 — 2026-09-21
 - `live-10` … `live-16` — live frames on a local install: vite-only dev server, HMR subprotocol, bridge selection and pan, optimistic delete, dev servers that survive an API restart — #197, #202–#204 — 2026-09-20/21
 - `sec-19`, `sec-20`, `sec-21` — every project starts at `run-project`, and its two security reviews — #197, #198 — 2026-09-20
-- `store-15`, `sec-22` — ⌘Z after a source delete puts the element back, byte for byte — #201 — 2026-09-20
 
 ---
 
