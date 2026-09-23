@@ -894,38 +894,32 @@ previews WHILE the pointer is down for the canvas and DOM-panel surfaces (see
 gate is unchanged and remains authoritative); `Alt+↑`/`Alt+↓` keyboard
 reorder (see "Keyboard reorder (G12, partial)" above).
 
-**Known remaining gaps, not yet fixed** (see `STUDIO-FIGMA-PARITY-PLAN.md`
-Track D2 / `docs/audits/2026-08-06/07-drag-and-drop.md` for the full audit):
+## The D2 target architecture, and how much of it exists
 
-- **A canvas drag can never leave the frame it started in** (silent no-op if
-  released over a different frame) — `useCanvasReorderDrag.ts` still measures
-  candidates once, from one iframe, at `pointerdown`. This needs the
-  board-wide `frameCandidateIndex` the target architecture describes below;
-  not built this pass.
-- **You still cannot drag an element on the canvas by pressing it** — the
-  only trigger remains the selection toolbar's hand-grab button
-  (`SelectionToolbar.tsx`). `NodeRenderer.tsx` still has no drag-arming
-  pointer hook of its own.
-- **Insertion drags (module picker, media→canvas) still re-measure the whole
-  frame on every `pointermove`** — no RAF coalescing, no candidate caching.
-- **Insertion drags can still resolve against the wrong page** when the
-  pointer is over a non-active board frame (`canvasInsertionDrop.ts` picks
-  the viewport geometrically but resolves against `selectActiveCanvasPage`).
-- **Board furniture** (frames/notes/docs) still writes the store twice per
-  `pointermove`, has no multi-frame drag, no Escape-to-cancel, and variants
-  don't snap to each other (`boardSnapping.ts` keys peers by `pageId`).
-- **No file drop** onto the canvas or the Studio importer.
-- **No `KeyboardSensor`** on either `@dnd-kit/core` `<DndContext>` — a
-  `@dnd-kit`-driven drag itself still has no keyboard path (only the new
-  `Alt+↑`/`Alt+↓` plain-reorder command does).
-- **The target `dragSession` singleton + board-wide `frameCandidateIndex` +
-  one source-aware `resolveDrop` do not exist yet.** Three incompatible
-  mechanisms (raw pointer, `@dnd-kit/core`, native HTML5 `dataTransfer`)
-  still coexist — see the topology at the top of this doc. `@dnd-kit/core`
-  is NOT removed; `src/__tests__/architecture/single-drag-mechanism.test.ts`
-  contains it (and native HTML5 DnD) to an explicit allowlist so the
-  fragmentation cannot silently spread further while the real unification
-  is pending.
+The drag-and-drop audit of 2026-08-06 (`docs/audits/2026-08-06/07-drag-and-drop.md`) found sixteen drag surfaces, four incompatible mechanisms, six drop resolvers and three index-normalisation implementations. The target it set, which `src/__tests__/architecture/single-drag-mechanism.test.ts` points to when it fails:
+
+- **One drag session** per gesture, replacing the `data-studio-canvas-dragging` global attribute and the inline pointer loops. Pointer moves write a ref; one `requestAnimationFrame` resolves and paints; React state is committed **once**, on `pointerup`. The pattern to copy is `src/admin/shared/FloatingWindow/useDraggablePanel.ts`, which writes CSS custom properties during the move.
+- **A candidate index measured once per drag**, board-wide, so a drop can land in another frame and no `pointermove` forces layout.
+- **One source-aware drop resolution** that calls `previewStructuralMove`, so a refusal shows **while the pointer is still down**.
+- **Three thin adapters** over that core: canvas, tree row, board furniture.
+- **`@dnd-kit/core` removed.** It cannot cross the iframe boundary, which is why the canvas drag was hand-rolled beside it; under the no-old-and-new rule, one mechanism survives.
+
+What exists today:
+
+| Target piece | State | Where |
+|---|---|---|
+| Canvas reorder as one session, zero React commits and zero forced layout per move, Escape cancels, Shift locks the axis | built | `useCanvasReorderDrag.ts`, `canvasDragSession.ts`, `canvasDragPainter.ts` ("The drag session (S2)" above) |
+| Pressing an element body starts the same session as the hand-grab | built | `useCanvasBodyDragTrigger.ts` ("Body drag" below) |
+| A drag that crosses into another frame moves the markup between files | built | "The reflow preview (K6)" and the cross-frame transplant (`transplantJsxElement.ts`) |
+| Insertion drags measure each frame's candidates once per drag, resolve per animation frame, against the frame under the pointer (static or live) | built | `useCanvasInsertionDrag.ts`, `canvasInsertionDragSnapshot.ts` |
+| Refusal preview while the pointer is down (G5) | built | "Source-writeback refusal preview (G5)" above |
+| Board furniture: Escape abandons a frame drag | built | `BoardFramesLayer/useBoardFrameMoveDrag.ts` |
+| File dropped from the operating system onto the canvas | built | "The file-drag preview (G15)" above |
+| A tree-row adapter on the same session core | **not built**: the DOM panel's layer tree still runs its own `@dnd-kit/core` drag (`useDomPanelDnd.ts`) | |
+| `@dnd-kit/core` removed | **not built**: `AdminCanvasEditorBody.tsx` and the DOM panel still import it; `single-drag-mechanism.test.ts` pins every user to an allowlist | |
+| No `KeyboardSensor` on the `@dnd-kit` context | **gap**: a `@dnd-kit` drag has no keyboard path; `Alt+↑`/`Alt+↓` reorder is the keyboard alternative | `keybindings.ts` |
+
+Native HTML5 drag-and-drop stays where it is the only API that works: a file or folder dragged in from the operating system (`DataTransfer.files`, `webkitGetAsEntry()`), and the media picker's folder tree. Each such file is on the gate's allowlist with its reason.
 
 ---
 

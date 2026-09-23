@@ -448,6 +448,17 @@ Three defences, in order of where they act:
 
 ---
 
+## The dormant CMS half: four traps
+
+This repository began as a fork of a self-hosted CMS. The standalone Content, Data, Media and Users workspaces are gone from routing (`src/admin/router.tsx`), but much of what remains is load-bearing for Studio under CMS-shaped names. Four traps catch anyone who tries to remove "the CMS half". Which parts could still be removed, and the product decision that blocks the rest, are in [`ROADMAP.md`](../ROADMAP.md) §13.
+
+1. **`src/core/publisher/` is load-bearing; `server/publish/**` is the CMS publisher.** Two directories share the name and have opposite verdicts. `src/core/publisher/` is the single class-CSS emission engine for publish and canvas: `src/core/ai/readSurface.ts` imports `renderNode`, the canvas's `ClassStyleInjector` imports `collectBackgroundImagePaths`, and base image and video modules import from it. Never delete it. `server/publish/**` publishes CMS sites; it is still reachable from the external MCP surface (`server/ai/mcp/tools/publishTool.ts` imports `publishDraftSite`).
+2. **Bundled is not the same as executed.** `src/core/persistence/cms.ts` is imported (so it is bundled): `usePersistence` takes `cmsAdapter` as its default parameter, while Studio's `AdminCanvasLayout` passes `fsCodemodAdapter`. A removal scoped by "is it imported?" keeps dead code; one scoped by "does it run?" deletes live code. Verify both.
+3. **The migration floor.** Committed migrations are never deleted or rewritten, and the runner replays history on every boot, so `data_tables`, `data_rows`, `media_assets`, `installed_plugins` and the other CMS tables exist on every install whether or not any code reads them. Removing CMS code shrinks the codebase, not the schema.
+4. **Studio is not database-free.** Its own state lives in `ai_conversations`, `ai_messages`, `ai_provider_credentials`, `ai_defaults`, `ai_model_pricing` and `ai_mcp_connectors`, plus the shared `users`, `sessions` and `roles`. `server/auth/` gates every Studio route, the MCP endpoint and every AI handler; Studio has no login of its own.
+
+---
+
 ## Related
 
 - `CLAUDE.md` — the agent rule book (start there before changing code)
