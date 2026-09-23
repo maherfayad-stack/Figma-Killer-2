@@ -63,6 +63,14 @@ export interface CaptureFramesRequest {
   dpr?: number
   purpose?: CapturePurpose
   axes?: Partial<PreviewAxes>
+  /**
+   * Render every frame at this CSS width instead of its board width (AI-16).
+   * HEADLESS ONLY: the live tab can photograph a frame only at the width the
+   * board gives it, and changing that would mutate the user's board — so a
+   * request with a width override never falls back to the bridge, and a
+   * `source: 'live'` one is refused. It never substitutes another width.
+   */
+  frameWidth?: number
   source?: CaptureSource
   /**
    * W9-5 lever 2 — set by a caller that wants DISK truth
@@ -112,7 +120,8 @@ export async function captureFrames(
   request: CaptureFramesRequest,
   overrides: CaptureFramesOverrides = {},
 ): Promise<CaptureFramesOutcome> {
-  const source = request.source ?? 'auto'
+  // A width override has no honest live-tab path (see `frameWidth`).
+  const source = request.frameWidth !== undefined && request.source !== 'live' ? 'headless' : (request.source ?? 'auto')
   // Scoped to the project being captured (W10): a live capture must come from
   // the tab showing THIS project, never from whichever tab registered last.
   const awaitBridge = overrides.awaitBridge
@@ -120,6 +129,12 @@ export async function captureFrames(
       awaitEditorBridgeForUser(userId, editorBridgeScope(request.dir), signal))
 
   // The caller explicitly wants the live tab (selection, unsaved edits).
+  if (source === 'live' && request.frameWidth !== undefined) {
+    return {
+      source: 'none',
+      output: aiToolError('A capture at another width runs headlessly only: the live editor tab can show a frame only at the width the board gives it, and resizing the board to take the picture would change the board the user is working on. Drop `source: "live"`.'),
+    }
+  }
   if (source === 'live') {
     const bridge = await awaitBridge(request.userId, request.signal)
     if (!bridge) {
@@ -153,6 +168,7 @@ export async function captureFrames(
           ...(request.dpr === undefined ? {} : { dpr: request.dpr }),
           ...(request.purpose === undefined ? {} : { purpose: request.purpose }),
           ...(request.axes === undefined ? {} : { axes: request.axes }),
+          ...(request.frameWidth === undefined ? {} : { frameWidth: request.frameWidth }),
         },
         overrides,
       )
@@ -167,7 +183,9 @@ export async function captureFrames(
       source: 'none',
       headlessFailure,
       output: aiToolError(
-        `Headless capture failed and \`source: "headless"\` ruled out the live editor tab. ${headlessFailure?.error ?? 'No reason was reported.'}`,
+        request.frameWidth !== undefined
+          ? `capture-unavailable: the ${request.frameWidth}px capture needs the headless browser, and it could not run: ${headlessFailure?.error ?? 'no reason was reported'}. The live editor tab cannot stand in — it shows each frame only at its board width, and no other width was substituted. Capture without widths to see the board width through the live tab, and say the other widths are unverified.`
+          : `Headless capture failed and \`source: "headless"\` ruled out the live editor tab. ${headlessFailure?.error ?? 'No reason was reported.'}`,
       ),
     }
   }

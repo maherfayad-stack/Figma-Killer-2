@@ -109,7 +109,10 @@ export async function buildCapturePayload(
     selectedPages.push(page)
     frames.push({
       pageId,
-      width: geometry?.width ?? FRAME_WIDTH,
+      // A width override renders the page at another breakpoint without
+      // touching the board (`CaptureGrant.frameWidth`); the frame keeps its
+      // own height, which scroll-unroll grows to the content either way.
+      width: grant.frameWidth ?? geometry?.width ?? FRAME_WIDTH,
       height: geometry?.height ?? FRAME_HEIGHT,
     })
   }
