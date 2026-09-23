@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### perf-11 — P2-A: perf quick wins + benches (PERF-2, 3, 4, 9, 10, 11, 13; budgets 1, 2, 5, 6, 7)
-- **Agent:** perf-hunter · **Branch:** `perf/canvas-quick-wins-and-benches` off `53c2746f` · **PR:** draft, base `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Agent:** perf-hunter · **Branch:** `perf/canvas-quick-wins-and-benches` off `53c2746f` · **PR:** #235 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verification complete. Before/after table and every run: the PR body.
 - **Benches (committed first, measured before any fix):**
   - Budget 1: the canvas subscriber sweep (`scripts/bench/lib/canvasSubscriberSweep.ts`, 40 pages × 300 nodes × 12 frames, 39,600 subscribers) is a GATE in `bench:editor-store`. A breach fails the bench through the new `BenchResult.budgetFailures`, after the rows are written.
@@ -89,6 +89,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - Hover frame time is still PERF-1: frames over 20 ms stayed at 48/~195. Only P2-I moves it, so the 225 ms worst-frame budgets are ratchets.
   - `runtimeBridgeBundle.ts` was produced by applying the source diff to the committed artifact, because a sync on this CRLF/Bun-1.3.6 tree emits different helpers. Re-run `studio-runtime:sync` on an LF tree before relying on the freshness gate.
   - The sweep's selectors mirror `NodeRenderer.tsx`. P2-I must update the mirror when it changes them.
+  - speed-04 cold click to ring, on `__board-perf-fixture`, was already over budget on trunk. Before: 401–494 ms (mean 432). After: 425–533 ms (mean 485). The ranges overlap under load, so the difference is not attributed. Re-measure on a quiet runner.
 - **Next:** the orchestrator merges after the Phase 1 exit gate. P2-I tightens the sweep and hover budgets.
 
 ## Blocked
