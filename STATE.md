@@ -86,11 +86,37 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 - Nothing is blocked. Owner questions that gate future work are in `ROADMAP.md` §13 → "Open questions for the owner".
 
+### panel-43 — P2-F: design pane spacing (UX-1, UX-2, UX-3, UX-5, UX-6)
+- **Agent:** panel-designer · **Branch:** `feat/design-pane-breathing-room` off `3b5ead5e` · **PR:** draft, base `feat/canvas-excellence` · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Goal:** the owner's ask, "add spacing to segregate a bit, specially in between props and the element below", paid for in height (OD-4).
+- **Done:**
+  - Props block: `SectionStaticHeader` title (new export of `@ui/components/Section`, same 32px recipe as every section), 4px rows, 8px bottom padding, a hairline under it (`ModuleBlock.tsx/.module.css`).
+  - New token `--inspector-section-gap: 12px` in `globals.css`; `.surfaceContent` uses it. The false "8px is Penpot's gap" comments are rewritten (Penpot = 8 gap + 8 margin = 16).
+  - 4px within a group: Text (`StackedPropertyGrid rhythm="within-group"`), Measures, ComponentSection `.propsList`.
+  - Shadow + Blur → one `effects` entry: `EffectsSection.tsx` + `EffectEditorPopover.tsx` (+ `.module.css`); the four old files are deleted. The manifest has 15 entries.
+  - ClassPicker fade: `StyleSurface` sets `data-scrolled`; the `::after` is `opacity: 0` unless `.headerClassPicker:has(~ [data-scrolled='true'])`.
+  - Gates: `measurement.test.ts` (15 entries, gap read from the token, P2-F structure pins), `inspector-height.e2e.ts` (F2 allowance 60 → 50), `inspector-panel-measurement.e2e.ts` (row deltas 48/74/77), `05-section-heights.json/.md`, `docs/features/inspector.md` §6 and G8, `ui-primitives.md`.
+- **Measured (1400×900, room 746):** F1 608 → 598 · F2 782 → 772 (26 over) · F3 725 → 715 · F4 603 → 601.
+- **Tokens added:** `--inspector-section-gap`.
+- **Landmines:**
+  - Both inspector e2e specs failed on the trunk before this change: the fixture now mounts a live frame as well (two canvas iframes). Both now wait for one iframe. Windows `EPERM` on fixture cleanup is caught and logged.
+  - Parallel e2e runs collide on ports 5174/3002: use `E2E_VITE_PORT=5274 E2E_CMS_PORT=3102`.
+- **Human action needed:** dogfood on `test4`, `/admin/site`:
+  1. Select a text element: the props block has a bold 32px title, 4px between prop rows, 8px of air, then a hairline, then a wider gap before the opacity row.
+  2. The sections below read as blocks: 12px between sections, 4px between Text's rows and between W/H, X/Y and rotation.
+  3. Effects: one header with one `+`, listing Drop shadow, Inner shadow, Text shadow | Layer blur, Background blur. Add a shadow and a blur: both rows appear in one list. Alt+↓ on a shadow never moves it onto the blur.
+  4. At rest, the Module title under the ClassPicker is not dimmed. Scroll the Design tab: the fade appears. Scroll back to the top: it goes away.
+  5. Shift-select two layers with different shadows: Effects shows one "Mixed" row, and Drop/Inner shadow are disabled with a tooltip.
+
 ---
 
 ## Pending dogfood
 
 *One line per item: id · route · what to look at. The script is in the entry (`docs/state-archive/2026-09.md`, grep the id) unless it says otherwise. Older scripts: [`docs/e2e/dogfood-backlog.md`](docs/e2e/dogfood-backlog.md). Delete a line once the script has been run.*
+
+**Design pane (P2)**
+- `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry under `## Now`
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
