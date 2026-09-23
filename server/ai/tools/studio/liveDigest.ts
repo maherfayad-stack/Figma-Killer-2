@@ -2,8 +2,8 @@
  * The Studio-project prompt's LIVE digest (WS-12 §2.1/§2.2) — turns the
  * browser's lean `StudioAgentSnapshot` (board/selection/axes ids only) into
  * the rich, bounded facts the dynamic suffix reports: board frame titles,
- * the active page's file + root, the selected node's editable-vs-locked
- * facts, a fidelity digest, install status, a capability digest (see
+ * the active page's file + root, every selected node's source location,
+ * excerpt, drawn box and editable-vs-locked facts, a fidelity digest, install status, a capability digest (see
  * `StudioCapabilityDigest` below), and the staleness warning.
  *
  * **Cost discipline (trap #11 — never walk every page's nodes):**
@@ -46,11 +46,13 @@ import type { StudioAgentSnapshot } from './snapshot'
 import { computePageWriteVerification, type PageWriteVerificationEntry } from '../../../handlers/studio/pageWriteVerification'
 import { studioAgentUserKey } from '../../../handlers/studio/agentUserScope'
 import { resolveProjectFidelityMode } from '../../../handlers/studio/projectFidelityMode'
+import { buildSelectionDigest, type SelectionDigest } from './selectionDigest'
 
 export interface StudioLiveDigest {
   readonly board: { readonly activeBoardId: string | null; readonly frames: ReadonlyArray<{ pageId: string; title: string; x: number; y: number; width?: number; height?: number }> }
   readonly activePage: { readonly id: string; readonly file: string | null; readonly rootNodeId: string } | null
-  readonly selection: { readonly nodeId: string; readonly tag: string | null; readonly moduleId: string; readonly writableProps: string[]; readonly lockedReason: string | null } | null
+  /** Every selected node — source `file:line`, an excerpt and the drawn box, multi-select aware (AI-9; `selectionDigest.ts`). */
+  readonly selection: SelectionDigest
   readonly fidelity: { readonly locked: number; readonly codeValued: number } | null
   readonly install: { readonly hasPackageJson: boolean; readonly hasNodeModules: boolean; readonly dependencyCount: number }
   readonly axes: StudioAgentSnapshot['axes']
@@ -411,21 +413,7 @@ export async function buildStudioLiveDigest(
   const activePage = snapshot.activePageId ? (pageById.get(snapshot.activePageId) ?? null) : null
   const activePageFile = activePage ? resolvePageSourceFile(activePage) : null
 
-  let selection: StudioLiveDigest['selection'] = null
-  if (activePage && snapshot.selectedNodeId) {
-    const node = activePage.nodes[snapshot.selectedNodeId]
-    if (node) {
-      const propsKeys = node.props ? Object.keys(node.props) : []
-      const codeProps = new Set(node.codeProps ?? [])
-      selection = {
-        nodeId: snapshot.selectedNodeId,
-        tag: typeof node.props?.tag === 'string' ? node.props.tag : null,
-        moduleId: node.moduleId,
-        writableProps: propsKeys.filter((k) => !codeProps.has(k)),
-        lockedReason: node.lockReason ?? null,
-      }
-    }
-  }
+  const selection = buildSelectionDigest(dir, activePage, snapshot.selection)
 
   let fidelity: StudioLiveDigest['fidelity'] = null
   if (activePage) {

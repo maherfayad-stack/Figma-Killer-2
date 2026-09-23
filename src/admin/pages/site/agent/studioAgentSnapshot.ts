@@ -34,20 +34,46 @@ const StudioBoardFrameLiveSchema = Type.Object({
   height: Type.Optional(Type.Number()),
 })
 
+/** A node's rendered box inside its frame, in CSS px — the same space `studio_screenshot`'s `nodeRects` use. */
+const FrameLocalBoxSchema = Type.Object({
+  x: Type.Number(),
+  y: Type.Number(),
+  width: Type.Number(),
+  height: Type.Number(),
+})
+
+/**
+ * One selected node (AI-9). `box` is what only the browser knows: where the
+ * node is actually drawn. Absent when no canvas frame the admin document can
+ * read renders it (a live frame is cross-origin), in which case the digest
+ * says the box is unmeasured rather than inventing one.
+ */
+const SelectedNodeLiveSchema = Type.Object({
+  nodeId: Type.String(),
+  box: Type.Optional(FrameLocalBoxSchema),
+})
+
+/** How many selected nodes one snapshot carries. The digest itself details fewer; this bounds the wire. */
+export const MAX_SNAPSHOT_SELECTION = 50
+
 export const StudioAgentSnapshotSchema = Type.Object({
   activeBoardId: Type.Union([Type.String(), Type.Null()]),
   /** Every frame on the ACTIVE board only — never every board, never node data. Bounded by frame count, not node count. */
   frames: Type.Array(StudioBoardFrameLiveSchema),
   activePageId: Type.Union([Type.String(), Type.Null()]),
-  selectedNodeId: Type.Union([Type.String(), Type.Null()]),
+  /** Every selected node, in selection order — the store's `selectedNodeIds`, so the LAST entry is the primary selection (`selectedNodeId`). Empty when nothing is selected. */
+  selection: Type.Array(SelectedNodeLiveSchema, { maxItems: MAX_SNAPSHOT_SELECTION }),
   axes: PreviewAxesSchema,
 })
 
 export type StudioAgentSnapshot = Static<typeof StudioAgentSnapshotSchema>
 
+/** Measures where each node id is drawn, frame-local. Injected so this module stays importable by the server, which never touches the canvas. */
+export type SelectionBoxMeasurer = (nodeIds: readonly string[]) => ReadonlyMap<string, Static<typeof FrameLocalBoxSchema>>
+
 /**
  * Reads the store fields this snapshot needs (`boards`, `activeBoardId`,
- * `activePageId`, `selectedNodeId`, `previewAxes`) plus `useAdminUi`'s
+ * `activePageId`, `selectedNodeIds`, `previewAxes`) plus `useAdminUi`'s
  * `studioProject`. Returns `undefined` when no Studio project is open —
  * `agentSliceConfig.site.ts` then falls back to the CMS snapshot builder.
  *
@@ -55,7 +81,10 @@ export type StudioAgentSnapshot = Static<typeof StudioAgentSnapshotSchema>
  * from the board/canvas/store workstream fails loudly at `tsc`, not silently
  * at runtime — the safer failure mode for a security-relevant snapshot.
  */
-export function buildStudioAgentSnapshot(get: () => EditorStore): StudioAgentSnapshot | undefined {
+export function buildStudioAgentSnapshot(
+  get: () => EditorStore,
+  measureBoxes: SelectionBoxMeasurer = () => new Map(),
+): StudioAgentSnapshot | undefined {
   if (!useAdminUi.getState().studioProject) return undefined
   const state = get()
 
@@ -68,11 +97,21 @@ export function buildStudioAgentSnapshot(get: () => EditorStore): StudioAgentSna
     ...(f.height !== undefined ? { height: f.height } : {}),
   }))
 
+  const selectedIds = (state.selectedNodeIds.length > 0
+    ? state.selectedNodeIds
+    : state.selectedNodeId ? [state.selectedNodeId] : []
+  ).slice(-MAX_SNAPSHOT_SELECTION)
+  const boxes = selectedIds.length > 0 ? measureBoxes(selectedIds) : new Map()
+  const selection = selectedIds.map((nodeId) => {
+    const box = boxes.get(nodeId)
+    return box ? { nodeId, box } : { nodeId }
+  })
+
   return {
     activeBoardId: state.activeBoardId,
     frames,
     activePageId: state.activePageId,
-    selectedNodeId: state.selectedNodeId,
+    selection,
     axes: state.previewAxes,
   }
 }

@@ -29,6 +29,7 @@
 import type { AgentSliceConfig } from './agentSliceTypes'
 import { buildCurrentPageContext } from './pageContext'
 import { buildStudioAgentSnapshot } from './studioAgentSnapshot'
+import { measureSelectionBoxes } from './selectionBoxes'
 import { executeAgentTool } from './executor'
 import { getAgentStoreApi } from './storeRef'
 import type { EditorStore } from '@site/store/types'
@@ -36,7 +37,7 @@ import type { EditorStore } from '@site/store/types'
 export const siteAgentSliceConfig: AgentSliceConfig = {
   buildSnapshot: () => {
     const get = () => getAgentStoreApi<EditorStore>().getState()
-    return buildStudioAgentSnapshot(get) ?? buildCurrentPageContext(get)
+    return buildStudioAgentSnapshot(get, measureSelectionBoxes) ?? buildCurrentPageContext(get)
   },
   dispatchTool: executeAgentTool,
   // Keep the site-editor wording — the AgentPanel recognises this string

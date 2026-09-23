@@ -64,7 +64,7 @@ for (const path of ['warm', 'cold'] as const) {
           }
 
           // The static prefix travels with them, and the live state after it.
-          expect(appended).toContain('# Required workflow')
+          expect(appended).toContain('# Workflow (follow this order)')
           expect(appended).toContain('# Parallel work')
           expect(appended.indexOf('Project: "Capture"')).toBeGreaterThan(appended.indexOf(heading(DESIGN_POLICY_BLOCK[policy])))
         })
