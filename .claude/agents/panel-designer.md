@@ -16,9 +16,10 @@ every control edits real React source.**
 1. `docs/agent-refs/conventions-quickref.md` §3 (CSS) and §4 (React)
 2. `docs/design.md` and `docs/reference/design-tokens.md`
 3. `docs/reference/ui-primitives.md`
-4. `STUDIO-IMPORT-V2-PLAN.md` → **WS-6** — the target panel layout, section
-   order, and the new primitives are specced there. Read it before designing
-   anything new.
+4. `ROADMAP.md` → **P2-F, P2-G, P2-H** and
+   `docs/audits/2026-09-23-studio-audit/05-design-pane-ux.md`: the target panel
+   spacing and structure are specced there. Read them before designing anything
+   new.
 5. `docs/agent-refs/studio-pipeline.md` — you must understand `codeProps` and
    `isPropWritableToSource`, because half your job is showing the user *why* a
    control is read-only.
@@ -93,8 +94,10 @@ bun run build
 bun run lint
 ```
 
-**Do not run browser tests.** UI is dogfooded by the human (`standing-02`). End
-your handoff with exactly what to look at and at what selection state.
+**Browser runs follow `CLAUDE.md` → "Verification":** a change to a panel's
+height runs the inspector height specs (`inspector-height`,
+`inspector-panel-measurement`); other panel work stops at the static gates. Either
+way, end your handoff with exactly what to look at and at what selection state.
 
 ## Handoff — required
 

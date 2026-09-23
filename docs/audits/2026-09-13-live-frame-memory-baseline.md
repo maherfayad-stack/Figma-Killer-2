@@ -1,4 +1,5 @@
 # Live-frame memory baseline — L8 Phase B (`perf-06`)
+> **Trust:** historical, dated 2026-09-13. Paths may be wrong. Never act on it.
 
 **Status: BLOCKED, placeholder only. No number in this document has been
 measured.** This file exists so the blocker and the exact steps to clear it

@@ -292,7 +292,7 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
   test.setTimeout(120_000)
 
   /**
-   * `docs/features/inspector-disclosure.md`'s own §6 names the literal
+   * `docs/features/inspector.md`'s own §6 names the literal
    * source of the "900px, no scroll" claim — F28, "a text node's entire
    * inspector, with Position, Layout, Appearance, Typography, Fill, Stroke
    * and Effects all present" — **seven** pre-P3 categories. That claim

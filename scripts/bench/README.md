@@ -1,4 +1,5 @@
 # Benchmark suite
+> **Purpose:** the benchmark harness: what each bench measures and its budgets · **Read when:** measuring or gating performance · **Trust:** current · **Owner:** perf-hunter · **Verified:** not yet
 
 A reusable performance suite for the studio. Spans both ends of the stack: bundle composition, publisher render speed, the full publish pipeline + public serving, the editor store under class/tree stress, HTTP latency + throughput, SQLite performance, plugin sandbox cost, repo footprint, and code-health snapshot.
 

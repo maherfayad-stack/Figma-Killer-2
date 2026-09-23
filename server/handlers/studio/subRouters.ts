@@ -63,7 +63,6 @@ export const STUDIO_SUB_ROUTERS = [
   tryServeStudioInstall,
   tryServeStudioIngest,
   tryServeStudioAssetUpload,
-  tryServeStudioAssetDrop,
   tryServeStudioReferenceUpload,
   tryServeStudioComponentBundle,
   tryServeStudioTrustTier,
@@ -105,4 +104,5 @@ export const STUDIO_SESSION_SUB_ROUTERS = [
   tryServeStudioProjectRoutes,
   tryServeStudioShares,
   tryServeStudioNodeExport,
+  tryServeStudioAssetDrop,
 ] as const

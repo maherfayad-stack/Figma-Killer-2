@@ -19,7 +19,8 @@ what's at stake.
    and *why*. It is the reference implementation.
 3. `server/handlers/studioAsset.ts` — the read-path guards
 4. `server/handlers/studioWriteback.ts` — `studioEditLocation`'s containment check
-5. `STUDIO-IMPORT-V2-PLAN.md` → §0 (the trust tiers) and WS-1.4
+5. `docs/features/trust-tiers.md` (the trust tiers, their gates and the
+   `run-project` default) and `docs/features/live-canvas.md` (the live origin)
 
 ## The checklist — run it on every relevant change
 

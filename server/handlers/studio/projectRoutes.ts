@@ -439,7 +439,7 @@ export async function tryServeStudioProjectRoutes(
   // Idempotency-key-guarded: see `./idempotentReplay.ts` — a retry of a lost
   // response after a `bun --watch` restart must never scaffold a second page.
   if (pathname === '/admin/api/studio/page' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, runtime.user.id, async () => {
       try {
         const body = await readValidatedBody(req, CreatePageBodySchema)
         if (!body) return badRequest('invalid page body')
@@ -463,7 +463,7 @@ export async function tryServeStudioProjectRoutes(
   // response must not make a retry throw a SECOND page's frames away if the
   // first delete already landed.
   if (pathname === '/admin/api/studio/page' && req.method === 'DELETE') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, runtime.user.id, async () => {
       try {
         const body = await readValidatedBody(req, DeletePageBodySchema)
         if (!body) return badRequest('invalid delete page body')

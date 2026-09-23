@@ -1,4 +1,5 @@
 # Inspector progressive disclosure
+> **Purpose:** the properties panel's density contract: laws, goals G1–G12, the field model, the height gate · **Read when:** touching the inspector, or reading a "Law n" / "§4 Gn" code comment · **Trust:** current · **Owner:** panel-designer · **Verified:** not yet
 
 The properties panel's density contract: five laws, ten goals (G1–G10), the
 field model every numeric control shares, and the list of Figma controls Studio
@@ -15,36 +16,17 @@ the measurement gate, `§7` the do-not-copy list, `§8` the resolved decisions.
 existed and is deliberately never reused; `§5` was empty until W8-1 wrote the
 field model into it, which added a section without renumbering one.)
 
-> **History.** This content was the delivery plan `STUDIO-INSPECTOR-DISCLOSURE-PLAN.md`,
-> retired once its work orders shipped. The plan's own progress bookkeeping is
-> gone (git remembers it); the design rules, which the code still cites, live
-> here. Per-track status for the wider parity effort is
-> [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-> the single status ledger. The narrative summary of these laws, in design
-> language, is [`docs/design.md`](../design.md) → "The inspector".
->
-> **Track P shipped.** `STUDIO-LIVE-CANVAS-PLAN.md` Track P (Penpot-exact
-> inspector) rebuilt this panel on top of everything below, structure first:
-> P1 wrapped the panel in a new Design / Prototype / Inspect shell
-> (`src/admin/pages/site/inspector/`), collapsed the old independent
-> Element/Class blocks into one `StyleSectionsEditor` call driven by
-> `resolveWriteTarget.ts` ("the write target is a rule, not a mode"), and
-> deleted the sticky search bar + `StyleCategoryRail` from the single-node
-> surface (`StyleSurface.tsx`) — `SelectorInspector.tsx`'s separate
-> global/ambient-selector surface keeps both, since a bare CSS selector has
-> no element-vs-class ambiguity to resolve. Every law and primitive below is
-> unchanged in shape; P3 completed (`STATE.md` `panel-25` — 11 of 11
-> sections migrated, Studio extras/item 11 the last), every category
-> `StyleSectionsEditor.tsx` used to render (now deleted) re-skinned to the
-> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`) as its
-> own `INSPECTOR_SECTIONS` manifest entry; P4 (`panel-23`) rewired
-> computed-value reads onto `SelectionModel`; P5 (`panel-26`) sourced those
-> values through the live DOM at Tier 2. **P6 (`STATE.md` `panel-27`) is
-> this file's own retirement** — the file you are reading is the renamed
-> `inspector-disclosure.md`, and §6 below is now the real, running gate
-> instead of the "Not implemented" placeholder it used to be. This page
-> remains the authoritative reference for the vocabulary the source cites;
-> only its filename and §6 changed.
+> **How the panel is built.** The inspector is the Penpot-exact panel of
+> Track P: a Design / Prototype / Inspect shell (`src/admin/pages/site/inspector/`),
+> one `INSPECTOR_SECTIONS` manifest entry per section, each re-skinned to the
+> measured Penpot baseline (`docs/audits/penpot-inspector-baseline/`); the write
+> target is resolved by `resolveWriteTarget.ts` ("the write target is a rule, not
+> a mode"), and computed values are read through `SelectionModel` (from the live
+> DOM at Tier 2). `SelectorInspector.tsx`, the separate surface for a bare CSS
+> selector, keeps its search bar and category rail. Every law and primitive below
+> applies to all of it. The same rules in design language are in
+> [`docs/design.md`](../design.md) → "The inspector"; why the panel was rebuilt this
+> way is LIVE §7.3 in [`docs/decisions.md`](../decisions.md).
 
 ---
 
@@ -52,9 +34,8 @@ field model into it, which added a section without renumbering one.)
 
 G1–G12 shipped: G9 completed in W8-1, G11 (Export) added in W8-4, G12
 (Studio extras) added when P3 completed (`STATE.md` `panel-25`, item 11).
-One piece did not, and is tracked as an
-open workstream in
-[`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md):
+One piece did not, and is an open row in
+[`ROADMAP.md`](../../ROADMAP.md) §13:
 
 | Open | What is missing |
 |---|---|
@@ -575,34 +556,40 @@ element with no image is the exact defect this page exists to prevent.
      `GET /admin/api/studio/project-assets` (`server/handlers/studio/projectAssets.ts`),
      a `readdir` filtered to image extensions. `node_modules`, `.git`, `dist`,
      `.studio` and Studio's own `prototype/` scaffold are never offered.
-  2. **Upload** — lands a file into the project through the existing
-     `POST /admin/api/studio/asset-upload` pipeline (magic-number sniffing,
-     symlink-aware containment on the real path, collision-safe naming, SVG
-     sanitisation). No CMS media library is involved: Studio's assets live on
-     disk, in the user's repo.
+  2. **Upload** — lands a file through `POST /admin/api/studio/asset-drop`
+     (`dropStudioAsset`), the route for every image a literal URL will
+     reference: into the app's own `public/` (under the app root, so a
+     monorepo's `apps/web/public/`, not the project's), through the shared
+     pipeline (magic-number sniffing, symlink-aware containment on the real
+     path, collision-safe naming, SVG sanitisation, content dedupe). No CMS
+     media library is involved: Studio's assets live on disk, in the user's repo.
   3. **URL** — written verbatim, for a CDN image.
 
   Nothing is written until a source is chosen — the button never inserts a
   speculative `url('')` into the user's source.
 
-  **Which URL gets written is the load-bearing decision** (`imageFillValue.ts`).
-  It is never Studio's own `/admin/api/studio/asset?dir=…` endpoint — that is an
-  admin-origin URL, meaningless in the user's repo, and pasting it into their
-  stylesheet would be exactly the lying edit this product refuses. It is the URL
-  *their* build resolves. Only one form is unconditionally correct for a CSS
-  `background-image` across Vite, Next and CRA: a file under the public root
-  (`public/`, or the `static/` spelling), referenced root-relatively — copied
-  verbatim to the site root by all three, so it works in dev and in a production
-  build, from an inline `style` attribute and from a CSS file alike. That is why
-  **uploads target `public/`**.
+  **Which URL gets written is the load-bearing decision, and the server makes
+  it** (`server/handlers/studio/assetSiteUrl.ts`, IMG-1). It is never Studio's
+  own `/admin/api/studio/asset?dir=…` endpoint — that is an admin-origin URL,
+  meaningless in the user's repo, and pasting it into their stylesheet would be
+  exactly the lying edit this product refuses. It is the URL *their* site
+  serves the file at. The upload's response carries it as `src`, and every
+  entry of `project-assets` carries `{ relPath, src, buildSafe }`; the picker
+  writes `src` verbatim and derives nothing. The rule: relative to the app
+  root, a file under `public/` is served verbatim from the site root by every
+  recognised framework, so `url('/hero.png')` works in dev and in a production
+  build, from an inline `style` attribute and from a CSS file alike.
 
-  A file elsewhere (`src/assets/hero.png`, reached through an `import` in the
-  user's code) still gets a root-relative URL, because it is the only thing that
-  can work at all and it *does* work on their dev server — but the picker labels
-  that tile **"dev only"** and says why in its tooltip, rather than quietly
-  shipping a background that 404s after `npm run build`. The admin previews it
-  through the authenticated read endpoint; the reverse mapping URL → file is
-  resolved against the KNOWN asset list, never guessed from the path.
+  A file elsewhere under the app root (`src/assets/hero.png`, reached through
+  an `import` in the user's code) still gets a root-relative URL, because it is
+  the only thing that can work at all and it *does* work on their dev server,
+  but `buildSafe: false`: the picker labels that tile **"dev only"** and says
+  why in its tooltip, rather than quietly shipping a background that 404s after
+  `npm run build`. A file outside the app root has no URL (`src: null`); its
+  tile is disabled and says nothing serves it. The admin previews a tile
+  through the authenticated read endpoint; the reverse mapping URL → file
+  (`imageFillPreviewSrc`) matches the written URL against each listed file's
+  server `src`, never re-deriving a path from the URL.
 
   An image layer's popover then carries the two Figma controls, both pure sugar
   over satellites the rows underneath still show:
@@ -2119,7 +2106,5 @@ Ownership, when routing work: `panel-designer` owns the sections and primitives;
   language, plus panel geometry, skins, provenance and placeholders
 - [`docs/reference/ui-primitives.md`](../reference/ui-primitives.md) — the
   primitives these goals are built on
-- [`STUDIO-FIGMA-PARITY-PLAN.md`](../../STUDIO-FIGMA-PARITY-PLAN.md) **§0a** —
-  the single per-track status ledger
-- [`STUDIO-NEXT-WORKSTREAMS.md`](../../STUDIO-NEXT-WORKSTREAMS.md) — where G6.4
-  and the §6 gate are tracked
+- [`ROADMAP.md`](../../ROADMAP.md) §13 — where G6.4 (selection colours) is
+  tracked

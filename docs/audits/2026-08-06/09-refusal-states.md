@@ -1,4 +1,5 @@
 # Audit: refusal states (panel-designer)
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 ## Refusal taxonomy (complete)
 

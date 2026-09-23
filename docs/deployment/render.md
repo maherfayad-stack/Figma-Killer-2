@@ -1,4 +1,5 @@
 # Render Deployment
+> **Purpose:** the Render Blueprint configuration · **Read when:** deploying on Render · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This guide defines the Render Blueprint configuration for Studio.
 

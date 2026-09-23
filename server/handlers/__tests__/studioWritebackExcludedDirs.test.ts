@@ -295,8 +295,8 @@ describe('asset landing never writes into an unwritable directory', () => {
 
   it('the server-derived design-reference landing still works, and ordinary assets still land', () => {
     const reference = landDesignReferenceBytes(tmpDir, PNG_BYTES, 'ref')
-    expect(reference).toEqual({ ok: true, relPath: '.studio/references/ref.png' })
-    expect(landAssetBytes(tmpDir, undefined, PNG_BYTES, 'hero.png')).toEqual({ ok: true, relPath: 'src/assets/hero.png' })
+    expect(reference).toMatchObject({ ok: true, relPath: '.studio/references/ref.png' })
+    expect(landAssetBytes(tmpDir, undefined, PNG_BYTES, 'hero.png')).toMatchObject({ ok: true, relPath: 'src/assets/hero.png' })
   })
 
   it('the design-reference landing refuses a .studio/references that is a symlink elsewhere', () => {

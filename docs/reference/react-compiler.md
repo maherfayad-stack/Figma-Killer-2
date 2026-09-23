@@ -1,4 +1,5 @@
 # React Compiler and memoization
+> **Purpose:** the React Compiler memoization rule and its three exceptions · **Read when:** tempted to write useMemo, useCallback or memo · **Trust:** rule · **Owner:** panel-designer · **Verified:** not yet
 
 The **React Compiler is enabled** for the whole app (`babel({ presets: [reactCompilerPreset()] })` in `vite.config.ts`). It auto-memoizes every component and hook at build time, so hand-written memoization is **noise** — it adds clutter without improving performance.
 

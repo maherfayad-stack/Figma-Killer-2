@@ -1,4 +1,5 @@
 # Railway Deployment
+> **Purpose:** the Railway image-source configuration · **Read when:** deploying on Railway · **Trust:** current-cms · **Owner:** server-engineer · **Verified:** not yet
 
 This guide defines the Railway image-source configuration for Studio.
 

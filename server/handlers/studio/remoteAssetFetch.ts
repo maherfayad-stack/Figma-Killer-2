@@ -138,7 +138,7 @@ export interface FetchRemoteAssetDeps {
 }
 
 export type FetchRemoteAssetResult =
-  | { ok: true; relPath: string; bytesWritten: number }
+  | { ok: true; relPath: string; deduped: boolean; bytesWritten: number }
   | { ok: false; error: string }
 
 /** `http:`/`https:` only. Returns `null` for anything else, including an unparseable string — never guesses at intent. */
@@ -366,5 +366,10 @@ export async function fetchRemoteAsset(
 
   const landed: LandAssetResult = landAssetBytes(dir, targetDir, fetched.bytes, fetched.filenameHint)
   if (!landed.ok) return { ok: false, error: landed.error }
-  return { ok: true, relPath: landed.relPath, bytesWritten: fetched.bytes.length }
+  return {
+    ok: true,
+    relPath: landed.relPath,
+    deduped: landed.deduped,
+    bytesWritten: landed.deduped ? 0 : fetched.bytes.length,
+  }
 }

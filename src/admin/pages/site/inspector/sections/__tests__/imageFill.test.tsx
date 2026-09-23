@@ -1,5 +1,5 @@
 /**
- * Image fill, end to end through the panel (docs/features/inspector-disclosure.md §4 G6.5).
+ * Image fill, end to end through the panel (docs/features/inspector.md §4 G6.5).
  *
  * The one thing worth asserting at this level: picking a project image writes
  * a `background-image` layer whose URL is the one the USER'S build resolves —
@@ -16,11 +16,17 @@
  * tests that need it.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
 
-const ASSETS = ['public/hero.png', 'src/assets/EN-2.png']
+// The shape `project-assets` answers with: each file carries the URL the
+// SERVER computed (`assetSiteUrl.ts`). The picker writes `src` verbatim.
+const ASSETS = [
+  { relPath: 'public/hero.png', src: '/hero.png', buildSafe: true },
+  { relPath: 'src/assets/EN-2.png', src: '/src/assets/EN-2.png', buildSafe: false },
+  { relPath: 'docs/diagram.png', src: null, buildSafe: false },
+]
 
 // `mock.module` is process-wide and PERMANENT — `mock.restore()` does not undo
 // it, and `bun test --parallel=4` gives each worker a process, not a file, so
@@ -124,6 +130,44 @@ describe('Fill — add an image fill', () => {
     selectNode({ inlineStyles: { backgroundImage: 'var(--layers)' } })
     render(<FillSection />)
     expect(screen.getByRole('button', { name: 'Add image fill' }).getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('does not offer a file nothing serves: it has no URL to write', () => {
+    selectNode()
+    render(<FillSection />)
+    fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
+
+    const unserved = screen.getByRole('button', { name: /diagram\.png/ })
+    expect(unserved.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(unserved)
+    expect(currentNode()?.inlineStyles?.backgroundImage).toBeUndefined()
+  })
+
+  it('an uploaded image fill lands through asset-drop and writes the src the server returned', async () => {
+    const savedFetch = globalThis.fetch
+    const seen: string[] = []
+    globalThis.fetch = (async (input: RequestInfo | URL) => {
+      seen.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
+      return new Response(
+        JSON.stringify({ ok: true, mode: 'public', relPath: 'apps/web/public/new.png', src: '/new.png', width: 1, height: 1, deduped: false }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      )
+    }) as typeof fetch
+    try {
+      selectNode()
+      const { container } = render(<FillSection />)
+      fireEvent.click(screen.getByRole('button', { name: 'Add image fill' }))
+      fireEvent.click(screen.getByRole('button', { name: 'Upload' }))
+
+      const input = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement
+      const file = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'new.png', { type: 'image/png' })
+      fireEvent.change(input, { target: { files: [file] } })
+
+      await waitFor(() => expect(currentNode()?.inlineStyles?.backgroundImage).toBe("url('/new.png')"))
+      expect(seen.map((url) => url.split('?')[0])).toEqual(['/admin/api/studio/asset-drop'])
+    } finally {
+      globalThis.fetch = savedFetch
+    }
   })
 
   it('warns on an asset outside the public root instead of silently writing a dev-only URL', () => {

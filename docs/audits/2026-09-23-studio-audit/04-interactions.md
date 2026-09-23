@@ -1,4 +1,5 @@
 # Audit 04 — Canvas interaction model vs Penpot/Figma
+> **Trust:** historical, dated 2026-09-23. Paths and line numbers were true at `560ddb0e`; re-read the code before acting on a finding. The plan built from it is `ROADMAP.md`.
 
 Auditor: canvas-engineer (read-only). Date 2026-09-23. Branch `fix/studio-load-memo-cold-on-every-load`.
 Penpot ground truth: `C:\Users\Admin\Documents\GitHub\penpot` (paths below are relative to

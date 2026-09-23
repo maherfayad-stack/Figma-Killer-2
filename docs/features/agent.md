@@ -1,4 +1,5 @@
 # AI Agent
+> **Purpose:** the in-canvas AI agent: providers, the tool loop, the Studio tool family, refusals · **Read when:** touching the agent, its prompt or its tools · **Trust:** current · **Owner:** mcp-tooling · **Verified:** not yet
 
 The AI Agent is a model-powered assistant integrated into the Site editor — Studio's one and only agent surface (WS-12 §8.1 D3). The Agent Panel owns conversation state, provider selection, streaming, history, and the browser bridge.
 

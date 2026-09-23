@@ -1,4 +1,5 @@
 # Canvas performance audit — perf-hunter
+> **Trust:** historical, dated 2026-08-06. Paths may be wrong. Never act on it.
 
 Read-only audit. No production code changed. Scope: `src/admin/pages/site/canvas/**`,
 `src/admin/pages/site/store/slices/{canvasSlice,selectionSlice,boardSlice}.ts`,

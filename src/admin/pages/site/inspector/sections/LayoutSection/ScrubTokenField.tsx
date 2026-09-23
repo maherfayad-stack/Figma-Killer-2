@@ -1,6 +1,6 @@
 /**
  * ScrubTokenField — `TokenAwareInput` wearing the scrub gesture
- * (G4.9, docs/features/inspector-disclosure.md §5).
+ * (G4.9, docs/features/inspector.md §5).
  *
  * `TokenAwareInput` has token autocomplete but no scrub gesture; `ScrubInput`
  * has the scrub gesture but no token autocomplete. A component that RENDERS

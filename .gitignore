@@ -144,7 +144,7 @@ docs/superpowers/
 **/.studio/variables/
 
 # --- studio-workspace/ -- USER DATA, not this repository's source -----------
-# STUDIO-FIGMA-FEEL-PLAN.md §6 decision 4. Every `studio-workspace/<project>/`
+# docs/decisions.md, FEEL §6.4. Every `studio-workspace/<project>/`
 # is a user's own React repository checked out inside this one, so the default
 # is IGNORED: a dogfooding session, a GitHub import, or a bench fixture
 # (`__bench-synth/` and `__bench-live-synth/`, whose one-by-one rules this
