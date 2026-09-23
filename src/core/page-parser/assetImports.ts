@@ -216,11 +216,13 @@ export function resolveRawTextImport(
   sourceFile: SourceFile,
   localName: string,
   workspaceRoot: string | undefined,
-): string | undefined {
+): { text: string; file: string } | undefined {
   const file = resolveImportedFile(sourceFile, localName, workspaceRoot, RAW_TEXT_SPECIFIER_RE, true)
   if (!file || file.bytes > MAX_RAW_TEXT_BYTES) return undefined
   try {
-    return readFileSync(file.real, 'utf8').trim()
+    // `file` — the real path read, so the evaluator can report it as a
+    // dependency of whatever page this text lands on (WB-2).
+    return { text: readFileSync(file.real, 'utf8').trim(), file: file.real }
   } catch {
     return undefined
   }
@@ -254,10 +256,10 @@ export function resolveImageAssetImport(
   sourceFile: SourceFile,
   localName: string,
   workspaceRoot: string | undefined,
-): { path: string; origin?: ImportSpecifierLocation } | undefined {
+): { path: string; origin?: ImportSpecifierLocation; file: string } | undefined {
   const file = resolveImportedFile(sourceFile, localName, workspaceRoot, IMAGE_SPECIFIER_RE, false)
   if (!file) return undefined
-  return { path: `${STUDIO_ASSET_SENTINEL}${file.rel}`, origin: file.specifierLocation }
+  return { path: `${STUDIO_ASSET_SENTINEL}${file.rel}`, origin: file.specifierLocation, file: file.real }
 }
 
 /**

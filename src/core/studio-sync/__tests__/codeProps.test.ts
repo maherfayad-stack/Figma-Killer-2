@@ -200,3 +200,50 @@ describe('a synthesized tag', () => {
     for (const row of rows) expect(isPropWritableToSource(row, 'tag')).toBe(false)
   })
 })
+
+describe('text the evaluator tried and could not resolve (WB-29)', () => {
+  /** Same as `load`, with the real mapping's `<a>` → `base.link`, whose text prop is `text` whether or not a value resolved. */
+  function loadLinks(source: string): PageNode[] {
+    fs.mkdirSync(path.join(dir, 'pages'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'pages', 'Screen.jsx'), source, 'utf8')
+    const parsed = parsePageFile(
+      path.join(dir, 'pages', 'Screen.jsx'),
+      dir,
+      new Project({ useInMemoryFileSystem: false }),
+      { workspaceRoot: dir },
+    )
+    const page = parsedPageToSitePage(parsed, {
+      pageId: 'screen',
+      slug: 'screen',
+      title: 'Screen',
+      resolveModuleId: (node) => (node.name === 'a' ? 'base.link' : 'base.container'),
+      resolveTextProp: (moduleId) => (moduleId === 'base.link' ? 'text' : null),
+    })
+    return Object.values(page.nodes)
+  }
+
+  it('names the text prop in codeProps, so no surface offers an empty field that would bake over the binding', () => {
+    const [link] = loadLinks(`
+      export default function Screen({ user }) {
+        return <nav><a href="/me">{user.name}</a></nav>
+      }
+    `).filter((node) => node.moduleId === 'base.link')
+
+    expect(link!.props.text).toBeUndefined()
+    expect(link!.codeProps).toContain('text')
+    expect(isPropWritableToSource(link!, 'text')).toBe(false)
+    // The value gap is one prop, not the node: its literal sibling stays writable.
+    expect(isPropWritableToSource(link!, 'href')).toBe(true)
+  })
+
+  it('leaves genuinely literal text writable', () => {
+    const [link] = loadLinks(`
+      export default function Screen() {
+        return <nav><a href="/me">Profile</a></nav>
+      }
+    `).filter((node) => node.moduleId === 'base.link')
+
+    expect(link!.props.text).toBe('Profile')
+    expect(isPropWritableToSource(link!, 'text')).toBe(true)
+  })
+})
