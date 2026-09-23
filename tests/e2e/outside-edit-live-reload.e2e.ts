@@ -8,6 +8,7 @@ import {
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
+  sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 
@@ -49,20 +50,6 @@ let fixture: FixtureProject
 const pagePath = () => path.join(fixture.dir, 'pages', 'Home.tsx')
 const readPage = () => fs.readFileSync(pagePath(), 'utf8')
 
-/** `rel:line:col` of the Nth `<tag` in `source`, col 1-based just after `<` — the id the parser mints. */
-function nodeId(source: string, tag: string, occurrence: number): string {
-  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
-  let match: RegExpExecArray | null
-  let count = 0
-  while ((match = re.exec(source)) !== null) {
-    count += 1
-    if (count !== occurrence) continue
-    const lines = source.slice(0, match.index + 1).split('\n')
-    return `pages/Home.tsx:${lines.length}:${lines[lines.length - 1]!.length + 1}`
-  }
-  throw new Error(`fixture has no <${tag} #${occurrence}`)
-}
-
 test.beforeAll(() => {
   fixture = createAuthoredFixtureProject('__e2e-outside-edit-live-reload', {
     'pages/Home.tsx': FIXTURE_PAGE,
@@ -96,7 +83,7 @@ test.describe('P1-D — an edit made outside Studio reaches the canvas by itself
     await expect(content.locator('p', { hasText: 'Zero' }), 'the canvas never noticed the outside edit').toBeVisible({
       timeout: 20_000,
     })
-    const three = content.locator(`[data-node-id="${nodeId(AFTER_OUTSIDE_EDIT, 'p', 4)}"]`).first()
+    const three = content.locator(`[data-node-id="${sourceNodeId(AFTER_OUTSIDE_EDIT, 'pages/Home.tsx', 'p', 4)}"]`).first()
     await expect(three).toHaveText('Three', { timeout: 20_000 })
 
     await panIntoView(page, canvasRoot, three, 80)

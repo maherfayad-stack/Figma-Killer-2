@@ -8,6 +8,7 @@ import {
   openFixtureBoard,
   panIntoView,
   removeFixtureProject,
+  sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 
@@ -49,20 +50,6 @@ let fixture: FixtureProject
 const pagePath = () => path.join(fixture.dir, 'pages', 'Home.tsx')
 const readPage = () => fs.readFileSync(pagePath(), 'utf8')
 
-/** `rel:line:col` of the Nth `<tag` in `source`, col 1-based just after `<` — the id the parser mints. */
-function nodeId(source: string, tag: string, occurrence: number): string {
-  const re = new RegExp(`<${tag}(?=[\\s/>])`, 'g')
-  let match: RegExpExecArray | null
-  let count = 0
-  while ((match = re.exec(source)) !== null) {
-    count += 1
-    if (count !== occurrence) continue
-    const lines = source.slice(0, match.index + 1).split('\n')
-    return `pages/Home.tsx:${lines.length}:${lines[lines.length - 1]!.length + 1}`
-  }
-  throw new Error(`fixture has no <${tag} #${occurrence}`)
-}
-
 test.beforeAll(() => {
   fixture = createAuthoredFixtureProject('__e2e-element-identity-guard', {
     'pages/Home.tsx': FIXTURE_PAGE,
@@ -86,7 +73,7 @@ test.describe('P1-A — an outside edit never redirects a canvas gesture', () =>
     await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
     const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
 
-    const three = content.locator(`[data-node-id="${nodeId(FIXTURE_PAGE, 'li', 3)}"]`).first()
+    const three = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, 'pages/Home.tsx', 'li', 3)}"]`).first()
     await panIntoView(page, canvasRoot, three, 80)
     await clickInFrame(page, three)
 
