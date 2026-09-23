@@ -95,8 +95,15 @@ export function sha256(text: string): string {
  * section, no `design-system-components.md`, and no `studio_list_components`
  * mention must regenerate once to pick any of that up — the exact class of
  * bug `7`'s own note warns about, content-only and easy to miss.
+ *
+ * `9` — P4-B (audit 06, AI-1): `CLAUDE.md` carries project facts only. Its
+ * policy ("Use `<ds>` — always", "no third option", "never hardcode", the
+ * workflow and definition of done) moved to the system prompt, which now
+ * reaches the CLI. Content-only again: without this bump every existing
+ * project keeps serving the old guide, whose "always use the design system"
+ * contradicts a FREE design policy on the very turn the prompt states it.
  */
-export const GUIDE_DEFINITION_VERSION = 8
+export const GUIDE_DEFINITION_VERSION = 9
 
 export interface ManifestFileEntry {
   /** Content hash of what Studio itself last wrote (or last observed) here. */

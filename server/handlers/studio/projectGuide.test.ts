@@ -22,6 +22,33 @@ function read(root: string, relPath: string): string {
   return readFileSync(join(root, ...relPath.split('/')), 'utf8')
 }
 
+/**
+ * The policy the generated `CLAUDE.md` used to state. Every entry is a line
+ * that shipped, and most contradict at least one design policy or fidelity
+ * mode the user can pick (audit 06, AI-1).
+ */
+const POLICY_STATEMENTS = [
+  '— always',
+  'There is no third',
+  'no third option',
+  'Never hardcode',
+  'Never introduce a second styling system',
+  'Never draw an icon yourself',
+  'Never hand-roll',
+  'Do not ask before building',
+  'Never report a screen as done',
+  'Reply in one or two sentences',
+  '## Building a screen',
+  '## Writing the component',
+  '## Verifying',
+  '## Assets you do not have',
+  '## What you cannot do here',
+]
+
+function assertFactsOnly(guide: string): void {
+  for (const statement of POLICY_STATEMENTS) expect(guide).not.toContain(statement)
+}
+
 describe('generateStudioProjectGuide', () => {
   let dir: string
 
@@ -174,30 +201,21 @@ describe('generateStudioProjectGuide', () => {
     })
   })
 
-  it('names this project\'s real conventions, not generic advice', () => {
+  it('names the real conventions of this project', () => {
     generateStudioProjectGuide(dir)
     const guide = read(dir, 'CLAUDE.md')
     expect(guide).toContain('pages/')
     expect(guide).toContain('.tsx')
-    // The behaviours the guide exists to change.
-    expect(guide).toContain('studio_screenshot')
-    expect(guide).toContain('Do not ask before building')
+    expect(guide).toContain('CSS Modules')
   })
 
-  it('makes a measured pass the definition of done when a design must be matched', () => {
-    // Looking is not enough: a screen with overlapping text and speck-sized
-    // icons was screenshotted, looked at, and reported as done.
+  it('states facts only — policy belongs to the system prompt, and would contradict it here', () => {
+    // AI-1: this file used to tell the agent "Use <ds> — always … There is no
+    // third option" on the same turn the prompt said the design policy was
+    // FREE. The workflow, the definition of done and every rule now arrive
+    // with the system prompt, which reaches the CLI.
     generateStudioProjectGuide(dir)
-    const guide = read(dir, 'CLAUDE.md')
-    expect(guide).toContain('studio_compare')
-    expect(guide).toContain('`pass: true`')
-  })
-
-  it('tells the agent to name an asset it cannot obtain rather than draw one', () => {
-    generateStudioProjectGuide(dir)
-    const guide = read(dir, 'CLAUDE.md')
-    expect(guide).toContain('cannot invent an icon')
-    expect(guide).toContain('placeholder')
+    assertFactsOnly(read(dir, 'CLAUDE.md'))
   })
 
   it('generates no subagent definitions — the roster is gone, not renamed', () => {
@@ -481,10 +499,12 @@ describe('buildDesignSystemGuide', () => {
     expect(renderIconReference(buildDesignSystemGuide(pkgDir, '@scope/ds')!)).toBeUndefined()
   })
 
-  it('renders a reference that tells the agent to import rather than re-implement', () => {
+  it('renders a reference that names each component as a real export, and leaves policy to the prompt', () => {
     const rendered = renderComponentReference(buildDesignSystemGuide(pkgDir, '@scope/ds')!)
     expect(rendered).toContain('### Button')
-    expect(rendered).toContain('do not re-implement it')
+    expect(rendered).toContain("real named export of `@scope/ds`")
+    // "Import it — do not re-implement it" contradicted a FREE design policy.
+    expect(rendered).not.toContain('do not re-implement')
   })
 })
 
@@ -539,7 +559,8 @@ describe('generateStudioProjectGuide — design-system knowledge for a non-ALM p
     expect(result.written).toContain('.claude/design-system-components.md')
 
     const guide = read(dir, 'CLAUDE.md')
-    expect(guide).toContain('## Use `js-ui-kit` — always')
+    expect(guide).toContain('## The design system: `js-ui-kit`')
+    assertFactsOnly(guide)
     // No decision map exists for a bare `.d.ts` — the catalog fallback must
     // degrade to a plain name list, never invent an intent-level mapping.
     expect(guide).toContain('### What exists')
@@ -589,7 +610,8 @@ describe('generateStudioProjectGuide — design-system knowledge for a non-ALM p
     expect(result.written).toContain('.claude/design-system-components.md')
 
     const guide = read(dir, 'CLAUDE.md')
-    expect(guide).toContain('## Use `js-ui-kit-untyped` — always')
+    expect(guide).toContain('## The design system: `js-ui-kit-untyped`')
+    assertFactsOnly(guide)
 
     const components = read(dir, '.claude/design-system-components.md')
     expect(components).toContain('### Card')

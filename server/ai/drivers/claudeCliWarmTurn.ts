@@ -23,6 +23,7 @@ import { revokeClaudeCliSessionConnector } from '../mcp/sessionConnector'
 import { bindConnectorRegistries, mintConnectorOrNull, type MintConnector, type RevokeConnector } from './claudeCliConnector'
 import { buildClaudeCliArgv, buildMcpConfig } from './claudeCliArgv'
 import { cleanupMcpConfigFile, tryWriteMcpConfigFile } from './claudeCliMcpConfigFile'
+import { cleanupSystemPromptFile, tryWriteSystemPromptFile, type ClaudeCliSystemPrompt } from './claudeCliSystemPrompt'
 import { translateClaudeCliStream } from './claudeCliEvents'
 import { TOTAL_TURN_CAP_MS } from './claudeCliSpawn'
 import { ClaudeCliWarmSession, ClaudeCliWarmSessionDeadError } from './claudeCliWarmSession'
@@ -48,7 +49,9 @@ export interface WarmTurnSeams {
 }
 
 export interface WarmTurnContext {
-  readonly argvOptions: Omit<Parameters<typeof buildClaudeCliArgv>[0], 'mcpConfigPath' | 'inputFormat'>
+  readonly argvOptions: Omit<Parameters<typeof buildClaudeCliArgv>[0], 'mcpConfigPath' | 'appendSystemPromptFile' | 'inputFormat'>
+  /** Studio's system prompt for this turn (`claudeCliSystemPrompt.ts`), or `null` when none is sent. */
+  readonly systemPrompt: ClaudeCliSystemPrompt | null
   readonly cwd: string
   readonly env: Record<string, string>
   readonly prompt: string
@@ -98,10 +101,10 @@ export async function* runWarmTurn(
 
   let discarded = false
   try {
-    // On the turn that SPAWNED the session the suffix already went out as
-    // `--append-system-prompt`; consuming it here is what records that, so the
-    // next turn only resends it if it has actually changed.
-    const changedState = lease.takeSystemState(ctx.argvOptions.systemPromptSuffix)
+    // On the turn that SPAWNED the session the suffix already went out in the
+    // `--append-system-prompt-file` text; consuming it here is what records
+    // that, so the next turn only resends it if it has actually changed.
+    const changedState = lease.takeSystemState(ctx.systemPrompt?.dynamicSuffix ?? null)
     const prompt =
       changedState && !lease.spawnedNow
         ? `${STUDIO_STATE_PREAMBLE}\n${changedState}\n\n${ctx.prompt}`
@@ -139,6 +142,13 @@ const STUDIO_STATE_PREAMBLE = 'Updated Studio board state for this turn:'
  * bytes: the file also carries a freshly-minted bearer token, which differs on
  * every mint and would make every session look incompatible with itself.
  *
+ * `systemPrompt.version` is the static system prompt's content hash
+ * (`claudeCliSystemPrompt.ts`). The prompt is fixed at spawn, and it is where
+ * the fidelity mode and the design policy live, so a mode change, a policy
+ * change, or a changed prompt must respawn rather than run the turn on the
+ * guidance the process was born with (AI-1). The dynamic suffix is NOT in it:
+ * it changes every turn and has its own carry, `takeSystemState`.
+ *
  * `userId` leads it (W10). The pool key already carries the user, so this is
  * belt and braces — but the fingerprint is the thing that answers "may this
  * process honestly serve this turn", and a process started with another
@@ -154,6 +164,7 @@ function warmSessionFingerprint(userId: string, ctx: WarmTurnContext): string {
     ctx.argvOptions.permissionMode,
     ctx.argvOptions.nativeTools,
     ctx.argvOptions.sessionId,
+    ctx.systemPrompt?.version ?? null,
     ctx.cwd,
     ctx.env.CLAUDE_CONFIG_DIR ?? '',
     ctx.projectServers,
@@ -181,6 +192,8 @@ async function createWarmSession(
   const mcpConfigFile = connector
     ? await tryWriteMcpConfigFile(buildMcpConfig(connector, options.serverPort, ctx.projectServers, ctx.registeredServers))
     : null
+  // Session-scoped, like the MCP config file: the process was started from it.
+  const systemPromptFile = ctx.systemPrompt ? tryWriteSystemPromptFile(ctx.systemPrompt) : null
 
   let session: ClaudeCliWarmSession
   try {
@@ -188,6 +201,7 @@ async function createWarmSession(
       argv: buildClaudeCliArgv({
         ...ctx.argvOptions,
         mcpConfigPath: mcpConfigFile?.path ?? null,
+        appendSystemPromptFile: systemPromptFile?.path ?? null,
         inputFormat: 'stream-json',
       }),
       cwd: ctx.cwd,
@@ -198,6 +212,7 @@ async function createWarmSession(
     // Nothing is running, so nothing the pool would ever call `dispose` on —
     // clean up here and let the caller fall back.
     if (mcpConfigFile) cleanupMcpConfigFile(mcpConfigFile.dir)
+    if (systemPromptFile) cleanupSystemPromptFile(systemPromptFile.dir)
     if (connector) await revokeWarmConnector(req, options, connector)
     throw err
   }
@@ -208,6 +223,7 @@ async function createWarmSession(
     dispose: async () => {
       session.dispose()
       if (mcpConfigFile) cleanupMcpConfigFile(mcpConfigFile.dir)
+      if (systemPromptFile) cleanupSystemPromptFile(systemPromptFile.dir)
       // The token's life is the SESSION's, not a turn's — the CLI authenticates
       // its MCP clients once, at startup, so revoking sooner would leave a
       // running session silently toolless. See `claudeCliConnector.ts`.

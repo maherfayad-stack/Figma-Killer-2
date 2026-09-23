@@ -22,13 +22,30 @@
  * Two halves, gated together, because either alone is the original bug:
  * a prompt that advertises a capability the session withheld, or a session
  * that grants delegation with no contract for using it safely.
+ *
+ * ## Asserted on what the CLI RECEIVES (audit 06, AI-3)
+ *
+ * `Task` exists only on the CLI path, so the contract only matters there. This
+ * gate used to check the string `buildStudioAgentSystemPrompt` returned, which
+ * the CLI driver never forwarded — it passed while the one agent holding `Task`
+ * never saw a word of the contract. It now reads the prompt text off a real
+ * `streamClaudeCli` spawn (the `--append-system-prompt-file` the fake binary
+ * was handed), so a driver that stops forwarding it fails here.
  */
-import { describe, expect, it } from 'bun:test'
+import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
 import { studioAgentTools } from '../../../server/ai/tools/studio'
 import { resolveNativeToolAllowlist } from '../../../server/ai/drivers/claudeCliToolSurface'
+import { runClaudeCliTurns } from '../../../server/ai/drivers/claudeCli.testHelpers'
 
-const staticPrefix = () => buildStudioAgentSystemPrompt(null, studioAgentTools)[0]!
+let cliPrompt = ''
+beforeAll(async () => {
+  const { turns } = await runClaudeCliTurns([buildStudioAgentSystemPrompt(null, studioAgentTools)], { warm: true })
+  cliPrompt = turns[0]!.appendedSystemPrompt ?? ''
+})
+
+/** The system-prompt text the CLI agent — the only one holding `Task` — was actually given. */
+const staticPrefix = () => cliPrompt
 
 describe('the Studio agent subagent contract', () => {
   it('never grants Bash — the one tool the project cwd does not bound', () => {

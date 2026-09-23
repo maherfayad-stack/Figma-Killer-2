@@ -12,7 +12,9 @@
  * A pooled process is reused only for the same (USER, conversation) AND the
  * same `fingerprint` — the caller's summary of everything baked into argv at
  * spawn time and unchangeable afterwards: user, model, effort, permission
- * mode, cwd, config dir, native tool allowlist, and the MCP config's hash.
+ * mode, cwd, config dir, native tool allowlist, the MCP config's hash, and the
+ * static system prompt's version — which is what carries the fidelity mode and
+ * the design policy (`claudeCliWarmTurn.ts`'s `warmSessionFingerprint`).
  *
  * The user is in BOTH halves of that key on purpose. A conversation id is
  * per-user already, so keying by it alone was not a leak — but a `claude`
@@ -118,8 +120,8 @@ export interface WarmSessionLease {
    * The dynamic system-prompt suffix to include in THIS turn's message, or
    * `null` when the session has already been told it.
    *
-   * A cold turn passes the suffix as `--append-system-prompt`, which a warm
-   * process cannot be given after the fact — so a warm turn carries it inside
+   * A process receives the suffix once, in its `--append-system-prompt-file`
+   * text at spawn, and a warm process cannot be given it again after the fact — so a warm turn carries it inside
    * the user message instead. Sending it on every turn would put a fresh copy
    * of the board digest into the conversation's permanent history each time,
    * so it is sent only when it actually differs from what this session was
