@@ -46,7 +46,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
 ### docs-15 — P0: consolidate the docs (ROADMAP P0-A … P0-H)
-- **Agent:** studio-scribe · **Branch:** `docs/p0-consolidate-docs` off `386e1d00` · **PR:** draft against `feat/canvas-excellence` (link in the PR list) · **Updated:** 2026-09-23
+- **Agent:** studio-scribe · **Branch:** `docs/p0-consolidate-docs` off `386e1d00` · **PR:** #225 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open; owner review needed, see Human action)
 - **Goal:** one living plan, one decisions file, a `STATE.md` under 400 lines with nothing lost, a header on every doc, and no reference to a dead doc path.
 - **Done:** eight commits, one per bundle, plus a merge of the trunk (P1-A/B/C/G) before the last one.
