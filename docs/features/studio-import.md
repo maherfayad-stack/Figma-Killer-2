@@ -718,7 +718,7 @@ A prop is code-valued when §7's evaluator resolved it (`title={c.sheetTitle}` �
 
 Through `lock-01`, `codeProps` named a prop whenever §7's evaluator **resolved** it, or when it held a structured/JSX value with no scalar form. Everything §7 tried and could NOT resolve — a bare identifier bound to hook state, a member/element-access chain, a template literal with an unresolvable interpolation (`className` included), a ternary/`&&`/`||`/`??` whose condition isn't statically decidable, a call outside Tier C's whitelist, a JSX-valued prop on a plain HTML element — carried no value AND no `codeProps` entry. Same for the equivalent shapes in `style={{…}}` and a node's own sole-text-child expression.
 
-That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProps` entry as "writable", and `setJsxProp` (the codemod behind an ordinary prop edit) has **no guard** against replacing a non-literal attribute's initializer — it just calls `existingAttribute.setInitializer(...)` unconditionally. So a prop the parser silently dropped looked, to the panel, exactly like an ordinary empty field: type into it, save, and the edit would bake a literal straight over an expression the user never even saw, deleting the binding. This is the identical destructive-write hole `lock-01`'s function-prop precedent (`onClose={fn}` -> `codeProps`, no value) had already closed for ONE shape; board-27b generalizes it to every shape `extractProps`/`extractInlineStyles` fall through on.
+That silence was not neutral. `isPropWritableToSource` reads an ABSENT `codeProps` entry as "writable", and `setJsxProp` (the codemod behind an ordinary prop edit) had **no guard** against replacing a non-literal attribute's initializer — it called `existingAttribute.setInitializer(...)` unconditionally. (Since WB-11 it refuses `binding-overwrite` itself — see [The element identity guard](#the-element-identity-guard-p1-a); the trace below is still what keeps the panel honest.) So a prop the parser silently dropped looked, to the panel, exactly like an ordinary empty field: type into it, save, and the edit would bake a literal straight over an expression the user never even saw, deleting the binding. This is the identical destructive-write hole `lock-01`'s function-prop precedent (`onClose={fn}` -> `codeProps`, no value) had already closed for ONE shape; board-27b generalizes it to every shape `extractProps`/`extractInlineStyles` fall through on.
 
 | Layer | What changed |
 |---|---|
@@ -802,6 +802,24 @@ Syntactic only: a type error or an unresolved import is the user's business and 
 ### A `tsconfig.json` that does not parse costs its aliases, never the board (WB-23)
 
 ts-morph reads the tsconfig in `createWorkspaceProject`'s constructor and throws on one it cannot parse (`'}' expected.`), which made `/load` answer 500 and the board not open. The project is now built without it — path aliases stop resolving, nothing else changes — and the load reports `{ code: 'tsconfig-unreadable', file: 'tsconfig.json', message }` in `warnings`. Every caller of `createWorkspaceProject` (the catalog, the MCP tools, the codemods that build their own project) inherits the fallback. `withWorkspaceProject` rebuilds the kept `Project` when `tsconfig.json`'s `size:mtimeMs` moves, and its stamp is part of the parse cache's config hash, so fixing the file brings the aliases back without a restart.
+
+### The element identity guard (P1-A)
+
+A node id is a POSITION. When a file changes under the board — the agent's own Edit tool, VS Code, `git pull`, a structural write still in flight — the same `line:col` names a different element, and a prop, text or delete edit used to land on that neighbour and report `written: 1` (audit WB-1; ERR-4 is the in-flight case). Measured: a prop and a text edit aimed at `<li title="b">Two</li>` rewrote the previous sibling; a delete aimed at "One" removed "Zero".
+
+So every element and every literal origin the parser reads carries a fingerprint of what it read there — `<tag>#<hash>` over the opening tag plus the element's own direct text, or `literal#<hash>` over a literal token (`sourceFingerprint.ts` in `@core/page-parser`; the wire shape is in `@core/page-tree`). Every write sends the fingerprints of the ids it names as `expect`, and `findMovedEdits` (`server/handlers/studioEditIdentity.ts`) refuses `element-moved` — before a single byte of the batch is written — when the element at that position is not the one expected. The board recovers from that refusal silently: re-read the file, re-find the element by the same fingerprint (exactly one match, or nothing), re-post once. Only an element that cannot be found again is reported, as one warning.
+
+Three decisions worth knowing before touching it:
+
+| Decision | Why |
+|---|---|
+| Opening tag **plus direct text**, not the opening tag alone and not the subtree | `<li>One</li>` and `<li>Two</li>` share an opening tag, and a shifted line usually lands exactly on such a sibling. The subtree would change every ancestor's identity on every descendant edit, so the board could not keep its record current from the save response alone |
+| Whitespace-insensitive | A CRLF checkout, a re-indent, or a formatter breaking a long tag must not read as a different element — the guard would refuse honest writes |
+| A value write REPORTS the new identity (`fingerprints` on the `/save` response) | A prop/class/style/tag/text write changes the very bytes hashed, without moving anything, and the board does not re-read a file for a write that shifted nothing. Without the report, Studio's own previous write would make the next edit to the same element refuse |
+
+`setJsxProp` also refuses by itself now (WB-11): an attribute whose initializer is not a string, number or boolean literal refuses `binding-overwrite` instead of baking a literal over the binding — the client's `codeProps` guard was the only protection, and an agent's `studio_apply_edits` never passes through it.
+
+Not guarded yet: `css` edits (a file and a selector, no position) and `styled` edits (their template location is not on a node). The client half — the identity table, the recovery, and the structural queue's re-finding of ids — is in `docs/agent-refs/studio-pipeline.md` → "Element identity".
 
 ### A save only reloads when a write actually landed
 

@@ -398,6 +398,21 @@ stale ids. Five presses are five writes, one collapsed toast, the last copy
 selected, five undo steps. The queue holds 20; overflowing it is reported, not
 dropped.
 
+**Every structural writer is in that queue, and its ids are re-found, not
+re-read (P1-A, ERR-4).** `moveNodes`, `deleteNode`, `deleteNodes` and a
+structural ⌘Z/⌘⇧Z step (`undoRedoActions.ts`'s `runStructuralStep` parks the
+whole step, so it reads the stack as the in-flight write's resync left it)
+queue like the rest — they used to post at once, and a Delete pressed while a
+drag's move was on the wire deleted whatever the move put at the old line.
+Re-running a thunk with its ORIGINAL ids was not enough either: the commit
+ahead renumbered the file. `deferWhileStructuralCommitInFlight(gesture,
+nodeIds)` captures who each id names when the gesture is made
+(`sourceIdentity.ts`) and hands the thunk a `relocate(id)` that re-finds each
+element by that identity in the re-read board; one that cannot be found exactly
+once drops the gesture with one warning. A new structural writer passes its ids
+or it is back to guessing. Full contract: `studio-pipeline.md` → "Element
+identity".
+
 **A reparse renumbers `rel:line:col` ids; the stack is re-addressed, not
 wiped.** `buildReparseNodeIdRemap` (`historyNodeIdRemap.ts`) walks the
 pre-reload tree against the reparse in parallel and rewrites every patch path

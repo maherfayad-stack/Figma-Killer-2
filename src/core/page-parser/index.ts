@@ -66,6 +66,7 @@ export {
 } from './componentSources'
 export type { ComponentSource, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
+export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
 export {
   findNamedComponentDeclaration,
   inlineLocalComponents,

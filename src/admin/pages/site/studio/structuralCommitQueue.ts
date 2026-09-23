@@ -35,6 +35,19 @@
  * no longer exists therefore refuses by name rather than writing somewhere
  * else.
  *
+ * ## …and the ids it names are re-found, not re-read (P1-A, ERR-4)
+ *
+ * Re-planning against the fresh tree is only honest if the ids handed to the
+ * re-plan still name what the user acted on. They do not, in general: the
+ * commit ahead renumbered the file, so a Delete pressed on `a.tsx:5:5` while a
+ * move was in flight would re-run as "delete whatever is at 5:5 now" — the
+ * element that just MOVED there (the audit reproduced exactly that). So the
+ * queue captures each id's identity when the gesture is made
+ * (`sourceIdentity.ts`), and hands the thunk a `relocate` that re-finds each
+ * one by that identity in the re-read board. When any cannot be found exactly
+ * once, the gesture does not run, and says so once — a guess is how the wrong
+ * element got written.
+ *
  * ## The ceiling
  *
  * A held ⌘D auto-repeats about thirty times a second and each commit is a POST
@@ -45,6 +58,7 @@
  * (Z1 collapses repeats onto it) saying the burst outran the writer.
  */
 import { pushToast } from '@ui/components/Toast'
+import { captureIdentities, relocateCapturedIds } from './sourceIdentity'
 
 /**
  * How many gestures may wait behind the one on the wire.
@@ -67,6 +81,9 @@ export const MAX_DEFERRED_STRUCTURAL_GESTURES = 20
 let structuralCommitInFlight = false
 const inFlightListeners = new Set<() => void>()
 const deferred: (() => void)[] = []
+
+/** A parked gesture's view of its own ids after the commit ahead of it re-read the board: where each element it named is NOW. */
+export type RelocateNodeId = (nodeId: string) => string
 
 export function isStructuralCommitInFlight(): boolean {
   return structuralCommitInFlight
@@ -120,7 +137,11 @@ export function endStructuralCommit(): void {
  * that the plan is built when the gesture RUNS, against the tree the previous
  * commit's resync left behind.
  */
-export function deferWhileStructuralCommitInFlight(gesture: () => void): boolean {
+export function deferWhileStructuralCommitInFlight(
+  gesture: (relocate: RelocateNodeId) => void,
+  /** Every node id the gesture will act on — captured now, re-found when it runs. See this module's doc. */
+  nodeIds: readonly string[] = [],
+): boolean {
   if (!structuralCommitInFlight) return false
   if (deferred.length >= MAX_DEFERRED_STRUCTURAL_GESTURES) {
     pushToast({
@@ -131,7 +152,20 @@ export function deferWhileStructuralCommitInFlight(gesture: () => void): boolean
     })
     return true
   }
-  deferred.push(gesture)
+  const identities = captureIdentities(nodeIds)
+  deferred.push(() => {
+    const relocated = relocateCapturedIds(identities, nodeIds)
+    if (!relocated) {
+      pushToast({
+        kind: 'warning',
+        title: 'Not done — the file changed',
+        body: 'An element this change was aimed at moved or changed while Studio was writing your previous change, and it could not be found again with certainty, so nothing was written. Try it again on the board as it is now.',
+        location: 'site-editor',
+      })
+      return
+    }
+    gesture((nodeId) => relocated.get(nodeId) ?? nodeId)
+  })
   return true
 }
 

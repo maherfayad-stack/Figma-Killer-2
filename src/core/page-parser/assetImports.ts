@@ -19,6 +19,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import * as path from 'node:path'
 import type { Node, SourceFile } from 'ts-morph'
+import { literalFingerprint } from './sourceFingerprint'
 
 /** Vite's `?raw` text-inlining suffix, e.g. `'./check-line.svg?raw'`. */
 const RAW_TEXT_SPECIFIER_RE = /\.(svg|txt|html?|md|csv)\?raw$/i
@@ -101,6 +102,8 @@ export interface ImportSpecifierLocation {
   line: number
   /** 1-based column of the module-specifier string literal token. */
   col: number
+  /** P1-A — the specifier literal's identity as read, same as `ValueOrigin.fingerprint`. */
+  fingerprint: string
 }
 
 /** A file an import names, once it is known to exist inside the workspace. */
@@ -129,7 +132,7 @@ function importSpecifierLocation(
   const rel = path.relative(resolvedRoot, path.resolve(sourceFile.getFilePath()))
   if (rel.length === 0 || rel.startsWith('..') || path.isAbsolute(rel)) return undefined
   const { line, column } = sourceFile.getLineAndColumnAtPos(specifierNode.getStart())
-  return { rel: rel.split(path.sep).join('/'), line, col: column }
+  return { rel: rel.split(path.sep).join('/'), line, col: column, fingerprint: literalFingerprint(specifierNode) }
 }
 
 /**

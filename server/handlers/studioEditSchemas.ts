@@ -359,60 +359,38 @@ export interface StudioEditApplyOutcome {
 }
 
 /**
- * One `detach`/`swap`/`move`/`delete`/`css`/slot edit that refused rather
- * than writing — surfaced to the client so it can show the SPECIFIC reason
- * (a toast with an offer, per WS-4.4's plan; `StyleTargetChip`'s per-tier
- * message for `css`; the AST-only structural reasons for `move`/`delete`)
- * instead of a generic "skipped" count.
+ * One edit that refused rather than writing — surfaced to the client so it can
+ * show the SPECIFIC reason (a toast with an offer, per WS-4.4's plan;
+ * `StyleTargetChip`'s per-tier message for `css`; the AST-only structural
+ * reasons for `move`/`delete`) instead of a generic "skipped" count.
+ *
+ * `kind` is any edit kind. Most refusals come from the kinds
+ * `isRefusingEditKind` names (a codemod that declines on purpose), but P1-A's
+ * `element-moved` can refuse ANY kind that names a node — it is decided before
+ * the codemod runs, from the identity the client expected at that position
+ * (`studioEditIdentity.ts`).
  */
 export interface StudioEditRefusal {
   nodeId: string
-  kind:
-    | 'detach'
-    | 'swap'
-    | 'move'
-    | 'delete'
-    // `store-15` — ⌘Z's own write. Refuses for reasons only the AST can see,
-    // same channel as every other structural kind.
-    | 'reinsert-source'
-    | 'insert'
-    | 'duplicate'
-    | 'wrap'
-    | 'reparent'
-    // D2 G3 — the cross-file move. Refuses for two reasons only the AST can
-    // see (`captured-scope`, `binding-conflict`) on top of everything a
-    // same-file reparent can.
-    | 'transplant'
-    // K3 — ⌘G on a run of siblings, and ⌘⇧G. Both refuse for reasons only the
-    // AST can see (`not-contiguous`, `mixed-indentation`, `has-behaviour`).
-    | 'group'
-    | 'ungroup'
-    | 'css'
-    | 'class'
-    | 'style'
-    | 'styled'
-    | 'insert-slot'
-    | 'promote-component'
-    | 'add-slot-prop'
-    // WB-24 — the value kinds that never refuse on their own still refuse
-    // `syntax-error` when the file they would write does not parse
-    // (`studioSyntaxGuard.ts`), so every kind can appear here.
-    | 'prop'
-    | 'text'
-    | 'literal'
-    | 'tag'
-    | 'asset'
+  kind: StudioEdit['kind']
   reason: string
   message: string
 }
 
-/** The edit kinds whose refusal is a NAMED, expected outcome rather than a codemod exception. */
-export function isRefusingEditKind(kind: StudioEdit['kind']): kind is StudioEditRefusal['kind'] {
+/**
+ * The edit kinds whose codemod can REFUSE by name (throwing
+ * `StudioEditRefusalError`) rather than fail unexpectedly: `detach`/`swap`/
+ * `css`/`class`/`style`/`styled`, every structural and slot kind (reasons only
+ * the AST can see), and `prop` (WB-11's `binding-overwrite` — `setJsxProp`
+ * will not bake a literal over an expression).
+ */
+export function isRefusingEditKind(kind: StudioEdit['kind']): boolean {
   // `style` joined the list in `style-03`: `JsxStyleTargetError` is a named
   // decision (a spread, a non-object initializer, a shorthand key), not an
   // unexpected failure. It used to fall into the generic catch and reach the
   // user as an unexplained skip with the PROP-binding sentence attached.
   return (
+    kind === 'prop' ||
     kind === 'detach' ||
     kind === 'swap' ||
     kind === 'css' ||
@@ -550,6 +528,17 @@ export interface StudioEditBatchResult {
    * that produced it. Empty when the batch deleted nothing.
    */
   removed: (DeletedJsxText & { nodeId: string })[]
+  /**
+   * P1-A — every VALUE edit that landed (`prop`/`text`/`style`/`class`/`tag`/
+   * `literal`/`asset`), with its target's identity as it stands after the
+   * write, keyed by the edit's own `nodeId`. A value write changes the very
+   * bytes the fingerprint covers without moving the target, and the board does
+   * not re-read a file for a write that shifted nothing, so this is how the
+   * client's recorded identity stays current — without it, Studio's own
+   * previous write would make the next edit to the same element refuse
+   * `element-moved`. See `studioEditIdentity.ts`.
+   */
+  fingerprints: { nodeId: string; fingerprint: string }[]
   /**
    * `store-15` — every import binding the batch's prune pass removed as a
    * side effect of a `delete`, grouped per FILE (workspace-relative), with

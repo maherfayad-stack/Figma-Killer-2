@@ -41,7 +41,7 @@ import {
   commitStudioUngroup,
   commitStudioWrap,
 } from '@site/studio/studioStructuralCommits'
-import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
+import { deferWhileStructuralCommitInFlight, type RelocateNodeId } from '@site/studio/structuralCommitQueue'
 import {
   STRUCTURAL_REFUSAL_TITLE,
   planSourceDuplicate,
@@ -143,9 +143,9 @@ export function createStudioSourceWrites(
     // parked as a thunk and re-planned against the tree that commit's resync
     // leaves behind; see `structuralCommitQueue.ts`.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeInsertToSource(moduleId, defaults, parentId, index, inlineStyles)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeInsertToSource(moduleId, defaults, relocate(parentId), index, inlineStyles)
+      }, [parentId])
     ) {
       return true
     }
@@ -268,7 +268,16 @@ export function createStudioSourceWrites(
     // than refused, and re-plans against the resynced tree when it runs — five
     // ⌘D presses are five copies, not one. K2's Alt+drag rides the identical
     // queue, for the identical reason.
-    if (deferWhileStructuralCommitInFlight(() => { writeDuplicateToSource(nodeIds, destination) })) return true
+    const relocateDestination = (relocate: RelocateNodeId) =>
+      destination ? { ...destination, parentId: relocate(destination.parentId) } : undefined
+    if (
+      deferWhileStructuralCommitInFlight(
+        (relocate) => { writeDuplicateToSource(nodeIds.map(relocate), relocateDestination(relocate)) },
+        destination ? [...nodeIds, destination.parentId] : nodeIds,
+      )
+    ) {
+      return true
+    }
     const tree = readTree()
     if (!tree) return false
 
@@ -333,9 +342,9 @@ export function createStudioSourceWrites(
   const writeWrapToSource = (nodeIds: readonly string[], containerModuleId: string, defaults: Record<string, unknown>): boolean => {
     // `store-14` — same queue as `writeDuplicateToSource`.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeWrapToSource(nodeIds, containerModuleId, defaults)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeWrapToSource(nodeIds.map(relocate), containerModuleId, defaults)
+      }, nodeIds)
     ) {
       return true
     }
@@ -408,9 +417,9 @@ export function createStudioSourceWrites(
     // not plan a second group against the still-unshifted original, but it
     // must not be thrown away either.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writeGroupToSource(nodeIds, containerModuleId, defaults)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writeGroupToSource(nodeIds.map(relocate), containerModuleId, defaults)
+      }, nodeIds)
     ) {
       return true
     }
@@ -475,7 +484,7 @@ export function createStudioSourceWrites(
    */
   const writeUngroupToSource = (nodeId: string): boolean => {
     // `store-14` — same queue as the other source writers.
-    if (deferWhileStructuralCommitInFlight(() => { writeUngroupToSource(nodeId) })) return true
+    if (deferWhileStructuralCommitInFlight((relocate) => { writeUngroupToSource(relocate(nodeId)) }, [nodeId])) return true
     const tree = readTree()
     if (!tree) return false
     const plan = planSourceUngroup(tree, nodeId)
@@ -537,9 +546,9 @@ export function createStudioSourceWrites(
     // in flight would plan against the same unshifted source. Queued, not
     // refused: ⌘V held down pastes N times.
     if (
-      deferWhileStructuralCommitInFlight(() => {
-        writePasteToSource(clipboardRootIds, parentId, index)
-      })
+      deferWhileStructuralCommitInFlight((relocate) => {
+        writePasteToSource(clipboardRootIds, relocate(parentId), index)
+      }, [parentId])
     ) {
       return true
     }
