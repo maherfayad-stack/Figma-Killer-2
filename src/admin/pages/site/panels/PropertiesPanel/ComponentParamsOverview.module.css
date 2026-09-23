@@ -117,7 +117,7 @@
 
 .defaultSummary {
   font-size: var(--text-2xs);
-  color: var(--text-disabled);
+  color: var(--text-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;

@@ -202,35 +202,42 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
   return (
     <MultiSelectTargetProvider>
     <div className={styles.nodeArea}>
-      {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
-        <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
-      ) : null}
-      {/* E2.5 — the selected node IS the content filling another component's
-          slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
-          which slot/instance it belongs to; renders nothing for every other
-          node (the common case). */}
-      {singleNodeChrome && selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
-      {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
-          structural lock, and where a resolved text's own literal lives. Every
-          other per-field fact (`CodeValueControl`'s per-prop hint,
-          `propLockReason`'s per-prop source — R2) lives next to the control
-          it's about instead of repeating itself in a node-level paragraph. */}
-      {singleNodeChrome && (
-        <SourceConstraintNotice
-          lockReason={selectedNode.lockReason}
-          textOrigin={selectedNode.textOrigin}
-          sharedWith={sharedTextOriginCount}
-          hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
-          constraint={structuralConstraint}
-          nodeId={selectedNodeId ?? undefined}
-        />
-      )}
-      {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
-          its structure), but the fact that OTHER branches exist and weren't
-          shown is still worth surfacing. */}
-      {singleNodeChrome && selectedNode.branchAlternatives?.length ? (
-        <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
-      ) : null}
+      {/* The node-level notices share ONE inset band (UX-25): mounted
+          straight into `.nodeArea` they ran edge to edge while the
+          ClassPicker under them sat on the panel gutter. The band collapses
+          when every notice renders nothing — the common case — so a plain
+          selection pays no height for it. */}
+      <div className={styles.nodeNotices} data-testid="properties-node-notices">
+        {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
+          <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
+        ) : null}
+        {/* E2.5 — the selected node IS the content filling another component's
+            slot (a `header={<Icon/>}` fill, or a fragment-slot child). States
+            which slot/instance it belongs to; renders nothing for every other
+            node (the common case). */}
+        {singleNodeChrome && selectedNodeId ? <SlotFillNotice nodeId={selectedNodeId} /> : null}
+        {/* Track F2 / R7 — the ONLY two whole-node facts left here: a
+            structural lock, and where a resolved text's own literal lives. Every
+            other per-field fact (`CodeValueControl`'s per-prop hint,
+            `propLockReason`'s per-prop source — R2) lives next to the control
+            it's about instead of repeating itself in a node-level paragraph. */}
+        {singleNodeChrome && (
+          <SourceConstraintNotice
+            lockReason={selectedNode.lockReason}
+            textOrigin={selectedNode.textOrigin}
+            sharedWith={sharedTextOriginCount}
+            hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+            constraint={structuralConstraint}
+            nodeId={selectedNodeId ?? undefined}
+          />
+        )}
+        {/* parser-06 — the chosen branch is NOT locked (the parser is certain of
+            its structure), but the fact that OTHER branches exist and weren't
+            shown is still worth surfacing. */}
+        {singleNodeChrome && selectedNode.branchAlternatives?.length ? (
+          <BranchChoiceNotice alternatives={selectedNode.branchAlternatives} />
+        ) : null}
+      </div>
       {/* ClassPicker — always visible to style-edit-capable callers. Hidden
           for content-only Clients, and for a multi-selection (it writes ONE
           node's `classIds`). */}

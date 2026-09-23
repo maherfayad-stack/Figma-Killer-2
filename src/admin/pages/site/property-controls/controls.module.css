@@ -55,7 +55,7 @@
 
 .svgPreview[data-empty='true'] {
   background: var(--bg-surface-2);
-  color: var(--text-disabled);
+  color: var(--text-subtle);
 }
 
 /* Constrain whatever SVG is dropped in so it fits the tile, and give it a
@@ -74,7 +74,9 @@
 
 .svgPreviewInner :global(svg) {
   width: auto;
-  height: var(--space-11xl);
+  /* Two inspector rows tall: a fixed mark in a frozen panel, not a fluid
+     gutter (UX-27). */
+  height: calc(var(--inspector-row-h) * 2);
   max-width: 100%;
   fill: currentColor;
 }
@@ -106,6 +108,9 @@
 }
 
 .colorField {
+    /* The swatch trigger's box — `Button size="micro"` is 18px square. */
+    --color-swatch-size: 18px;
+
     position: relative;
     width: 100%;
     min-width: 0;
@@ -120,9 +125,9 @@
     position: absolute;
     z-index: 1;
     top: 50%;
-    left: 5px;
+    left: var(--inspector-space-xs);
     transform: translateY(-50%);
-    border-radius: 8px;
+    border-radius: var(--inspector-field-radius);
 }
 
 .colorText {
@@ -131,8 +136,10 @@
     min-width: 0;
 }
 
+/* The text clears the swatch: its inset, its box, and the same inset again
+   before the first character. */
 .colorField .colorTextWithPreview {
-    padding-left: var(--space-6xl);
+    padding-left: calc(var(--inspector-space-xs) * 2 + var(--color-swatch-size));
 }
 
 /* WCAG contrast badge (T9) — only rendered when a caller supplies
@@ -166,7 +173,7 @@
     display: grid;
     gap: var(--inspector-space-4xs);
     border: 1px solid var(--border-muted);
-    border-radius: 8px;
+    border-radius: var(--inspector-field-radius);
     background: var(--bg-surface-2);
     box-shadow: 0 12px 28px
         color-mix(in srgb, var(--bg-body) 42%, transparent);
@@ -188,7 +195,7 @@
     align-items: center;
     gap: var(--inspector-space-s);
     border: 0;
-    border-radius: 6px;
+    border-radius: var(--radius);
     background: transparent;
     color: var(--text-muted);
     cursor: pointer;
@@ -208,7 +215,7 @@
     --color-token-option-value: var(--bg-body);
     width: 18px;
     height: 18px;
-    border-radius: 7px;
+    border-radius: var(--radius);
     background:
         linear-gradient(
             45deg,
@@ -305,7 +312,7 @@
     border: 1px solid var(--border);
     border-radius: var(--radius);
     background: var(--bg-surface);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     font-size: var(--text-xs);
 }
 
@@ -324,7 +331,7 @@
     padding: 0 var(--inspector-space-m);
     border-radius: var(--input-radius);
     background: var(--bg-surface);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     font-size: var(--text-xs);
 }
 
@@ -464,7 +471,7 @@
     margin: var(--inspector-space-2xs) 0 0;
     padding: var(--inspector-space-s);
     font-size: var(--text-2xs);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     text-align: center;
     line-height: 1.5;
 }
@@ -473,7 +480,7 @@
 .slotPickerCount {
     margin: 0;
     font-size: var(--text-2xs);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
     line-height: 1.4;
 }
 
@@ -530,5 +537,5 @@
 .slotPickerGroup {
     flex: 0 0 auto;
     font-size: var(--text-3xs);
-    color: var(--text-disabled);
+    color: var(--text-subtle);
 }

@@ -241,24 +241,17 @@ describe('inspector geometry is frozen', () => {
    * `admin/pages/site/inspector/sections/**\/*.module.css` — the real gap
    * this pass's recon found: none of the 16 new sections' own CSS modules
    * were covered by this check before.
+   *
+   * P2-H (UX-27) widened it from the eight small steps to EVERY fluid step:
+   * `--space-2xl` … `--space-11xl` grow just the same, and six of them had
+   * slipped in precisely because only the small ones were checked. The one
+   * exception is `--space-px`, which is a literal 1px hairline, not a step.
    */
   it('inspector CSS modules use the frozen scale, not the fluid --space-* one', () => {
-    const FLUID_SMALL_STEPS = ['4xs', '3xs', '2xs', 'xs', 's', 'm', 'l', 'xl']
     const offenders: string[] = []
-    const roots = [
-      join(SRC_ROOT, 'admin/pages/site/panels/PropertiesPanel'),
-      join(SRC_ROOT, 'admin/pages/site/property-controls'),
-      join(SRC_ROOT, 'admin/pages/site/inspector/sections'),
-      join(SRC_ROOT, 'ui/components/Section'),
-    ]
-    for (const root of roots) {
-      for (const file of new Bun.Glob('**/*.module.css').scanSync({ cwd: root })) {
-        const source = readFileSync(join(root, file), 'utf8')
-        for (const step of FLUID_SMALL_STEPS) {
-          if (source.includes(`var(--space-${step})`)) {
-            offenders.push(`${file} -> var(--space-${step})`)
-          }
-        }
+    for (const { file, source } of inspectorCssModules()) {
+      for (const match of source.matchAll(/var\(--space-([a-z0-9]+)\)/g)) {
+        if (match[1] !== 'px') offenders.push(`${file} -> ${match[0]}`)
       }
     }
     expect(offenders).toEqual([])
@@ -576,6 +569,24 @@ function ruleBody(css: string, selector: string): string {
 const PANEL_DIR = 'admin/pages/site/panels/PropertiesPanel'
 const SECTIONS_DIR = 'admin/pages/site/inspector/sections'
 
+/** Every CSS module the frozen-inspector rules apply to, comments stripped. */
+function inspectorCssModules(): Array<{ file: string; source: string }> {
+  const roots = [
+    'admin/pages/site/panels/PropertiesPanel',
+    'admin/pages/site/property-controls',
+    'admin/pages/site/inspector/sections',
+    'ui/components/Section',
+  ]
+  const modules: Array<{ file: string; source: string }> = []
+  for (const root of roots) {
+    for (const file of new Bun.Glob('**/*.module.css').scanSync({ cwd: join(SRC_ROOT, root) })) {
+      const source = readFileSync(join(SRC_ROOT, root, file), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')
+      modules.push({ file: `${root}/${file}`, source })
+    }
+  }
+  return modules
+}
+
 describe('P2-F — the props block has a real boundary (UX-1)', () => {
   it('titles the Module block with the shared section header recipe, not a hand-rolled label', () => {
     const tsx = readSource(`${PANEL_DIR}/ModuleBlock.tsx`)
@@ -667,5 +678,164 @@ describe('P2-G — the Component section', () => {
     expect(ruleBody(controlRow, "[data-field-skin='inspector'] .controlWrapper")).toContain(
       'gap: var(--inspector-space-2xs)',
     )
+  })
+})
+
+// ---------------------------------------------------------------------------
+// P2-H — panel polish (UX-11, UX-12, UX-13, UX-15, UX-25). Colour and corner
+// rules happy-dom cannot see; the computed half (a hovered field, a focused
+// Layers row, an inset notice) is `tests/e2e/inspector-panel-polish.e2e.ts`.
+// ---------------------------------------------------------------------------
+
+/** The declarations of `:root { … }` (dark) and the light-theme block. */
+function themeBlocks(): { dark: string; light: string } {
+  const darkStart = GLOBALS_CSS.indexOf(':root {')
+  const lightStart = GLOBALS_CSS.indexOf(":root[data-editor-theme='light'],")
+  expect(darkStart).toBeGreaterThanOrEqual(0)
+  expect(lightStart).toBeGreaterThan(darkStart)
+  return {
+    dark: GLOBALS_CSS.slice(darkStart, GLOBALS_CSS.indexOf('\n}', darkStart)),
+    light: GLOBALS_CSS.slice(lightStart, GLOBALS_CSS.indexOf('\n}', lightStart)),
+  }
+}
+
+type Rgba = readonly [number, number, number, number]
+
+/**
+ * A token's colour in one theme: a hex literal, an `rgba()`, or a `var()`
+ * to another token (the light block falls back to `:root` for anything it
+ * does not redefine — exactly the cascade the browser applies).
+ */
+function tokenColour(token: string, theme: 'dark' | 'light'): Rgba {
+  const blocks = themeBlocks()
+  const read = (block: string) => new RegExp(`${token}:\\s*([^;]+);`).exec(block)?.[1].trim()
+  const raw = (theme === 'light' ? read(blocks.light) : undefined) ?? read(blocks.dark)
+  expect(raw, `${token} is not declared`).toBeDefined()
+  const value = raw!
+  const alias = /^var\((--[a-z0-9-]+)\)$/.exec(value)
+  if (alias) return tokenColour(alias[1], theme)
+  const hex = /^#([0-9a-f]{6})$/i.exec(value)
+  if (hex) {
+    const n = Number.parseInt(hex[1], 16)
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255, 1]
+  }
+  const rgba = /^rgba?\(([^)]+)\)$/.exec(value)
+  if (rgba) {
+    const [r, g, b, a = '1'] = rgba[1].split(',').map((part) => part.trim())
+    return [Number(r), Number(g), Number(b), Number(a)]
+  }
+  throw new Error(`${token}: cannot resolve ${value}`)
+}
+
+/** WCAG relative luminance of `colour` painted over the opaque `under`. */
+function luminanceOver(colour: Rgba, under: Rgba): number {
+  const [r, g, b] = [0, 1, 2].map((i) => colour[i] * colour[3] + under[i] * (1 - colour[3]))
+  const lin = (c: number) => {
+    const s = c / 255
+    return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+  }
+  return 0.2126 * lin(r) + 0.7152 * lin(g) + 0.0722 * lin(b)
+}
+
+describe('P2-H — field hover lifts away from the panel (UX-11)', () => {
+  for (const theme of ['dark', 'light'] as const) {
+    it(`a hovered field sits further from the docked panel than a resting one (${theme})`, () => {
+      // The docked panel paints `--bg-body`, and a field REPLACES its fill on
+      // hover (`Input.module.css`). The hover fill used to be `--overlay-10`,
+      // which over black is darker than the resting #212426: hover receded.
+      const panel = tokenColour('--bg-body', theme)
+      const lumPanel = luminanceOver(panel, panel)
+      const rest = luminanceOver(tokenColour('--inspector-field-bg', theme), panel)
+      const hover = luminanceOver(tokenColour('--inspector-field-bg-hover', theme), panel)
+      expect(Math.abs(hover - lumPanel)).toBeGreaterThan(Math.abs(rest - lumPanel))
+    })
+  }
+})
+
+describe('P2-H — informative text meets WCAG AA (UX-15)', () => {
+  const contrast = (a: number, b: number) => (Math.max(a, b) + 0.05) / (Math.min(a, b) + 0.05)
+
+  for (const theme of ['dark', 'light'] as const) {
+    it(`--text-subtle reads at 4.5:1 on the docked panel (${theme})`, () => {
+      const panel = tokenColour('--bg-body', theme)
+      const text = luminanceOver(tokenColour('--text-subtle', theme), panel)
+      expect(contrast(text, luminanceOver(panel, panel))).toBeGreaterThanOrEqual(4.5)
+    })
+  }
+
+  it('no inspector module paints text in --text-disabled outside a disabled or placeholder rule', () => {
+    // `--text-disabled` is ~2.7:1 on the panel: right for a control you
+    // cannot use, wrong for a caption, a unit, an empty state or a count.
+    const offenders: string[] = []
+    const modules = [
+      ...inspectorCssModules(),
+      {
+        file: 'ui/components/ControlRow/ControlRow.module.css',
+        source: readSource('ui/components/ControlRow/ControlRow.module.css').replace(/\/\*[\s\S]*?\*\//g, ''),
+      },
+    ]
+    for (const { file, source } of modules) {
+      for (const [, selector, body] of source.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (!/(?:^|[\s;])color:\s*var\(--text-disabled\)/.test(body)) continue
+        if (/disabled|placeholder/i.test(selector)) continue
+        offenders.push(`${file} -> ${selector.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('P2-H — inspector corners and tokens (UX-12, UX-13)', () => {
+  it('draws every corner from the radius scale — no literal px radius', () => {
+    const offenders: string[] = []
+    for (const { file, source } of inspectorCssModules()) {
+      for (const match of source.matchAll(/border(?:-[a-z]+)*-radius:\s*([^;]+);/g)) {
+        const value = match[1].trim()
+        if (value === '0' || value === '50%' || /^(?:var\(--[a-z0-9-]+\)\s*)+$/.test(value)) continue
+        offenders.push(`${file} -> ${match[0]}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('declares no inspector token nothing reads', () => {
+    // Penpot's accents and its muted section-label colour were carried over
+    // from the token-gap audit and never applied: Studio's section titles
+    // follow Figma (bright, bold), not Penpot (muted, uppercase).
+    for (const dead of ['--inspector-accent-dark', '--inspector-accent-light', '--inspector-section-label-color']) {
+      expect(GLOBALS_CSS).not.toContain(dead)
+    }
+  })
+
+  it('keeps the info tone as one tint token, defined for both themes', () => {
+    const { dark, light } = themeBlocks()
+    expect(dark).toMatch(/--info-10:\s*rgba\(/)
+    expect(light).toMatch(/--info-10:\s*rgba\(/)
+    for (const notice of ['SharedComponentNotice.module.css', 'SlotFillNotice.module.css']) {
+      const css = readSource(`${PANEL_DIR}/${notice}`)
+      expect(css).toContain('var(--info-10)')
+      expect(css).not.toContain('var(--info-text) 12%')
+    }
+  })
+})
+
+describe('P2-H — node notices sit on the panel gutter (UX-25)', () => {
+  it('mounts every node-level notice inside one inset band', () => {
+    const tsx = readSource(`${PANEL_DIR}/PropertiesPanelBody.tsx`)
+    const band = tsx.indexOf('className={styles.nodeNotices}')
+    const picker = tsx.indexOf('className={styles.headerClassPicker}')
+    expect(band).toBeGreaterThan(0)
+    for (const notice of ['<SharedComponentNotice', '<SlotFillNotice', '<SourceConstraintNotice', '<BranchChoiceNotice']) {
+      const at = tsx.indexOf(notice)
+      expect(at, `${notice} is outside the notice band`).toBeGreaterThan(band)
+      expect(at, `${notice} is outside the notice band`).toBeLessThan(picker)
+    }
+  })
+
+  it('insets the band to the ClassPicker gutter, and costs nothing when empty', () => {
+    const css = readSource(`${PANEL_DIR}/PropertiesPanel.module.css`)
+    expect(ruleBody(css, '.nodeNotices')).toContain('padding: var(--inspector-space-m) var(--inspector-pad-x) 0')
+    expect(ruleBody(css, '.nodeNotices:empty')).toContain('display: none')
+    expect(ruleBody(css, '.headerClassPicker')).toContain('var(--inspector-pad-x)')
   })
 })

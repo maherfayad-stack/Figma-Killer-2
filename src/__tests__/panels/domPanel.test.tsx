@@ -12,7 +12,8 @@
  *   7. Tree container has role="tree" when page is loaded
  *   9. Tree node rows have tabIndex=0 and role="treeitem" (Guideline #234)
  *  10. Tree node rows use shared 28px compact TreeRow height
- *  11. Tree node focus ring: boxShadow changes on focus/blur
+ *  11. Tree node focus ring: CSS-only `:focus-visible` now (P2-H) — pinned in
+ *      `src/admin/pages/site/ui/Tree/__tests__/treeRowStates.test.ts`
  *  12. stopPropagation on panel click (Guideline #192)
  *
  * Uses @testing-library/react for all tests — requires the happy-dom GlobalWindow

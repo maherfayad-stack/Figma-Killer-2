@@ -207,19 +207,10 @@ describe('SelectorHeader delete action', () => {
 // exercised exactly that chrome (a searchbox with the accessible name
 // "Search class style properties to add…", and rail buttons like "Show
 // typography styles") — both are gone from `StyleSurface.tsx` by design, so
-// there is nothing left here to assert. The one still-relevant fact (no
-// bespoke autocomplete CSS survives) stays as a static gate.
+// there is nothing left here to assert. `StyleRuleComposer.module.css`, the
+// file the old static gate read, was imported by nothing and is deleted
+// (P2-H), which retires that gate with it.
 describe('StyleRuleComposer inline style filtering', () => {
-  it('does not keep bespoke autocomplete result styles in StyleRuleComposer.module.css', () => {
-    const css = readFileSync(join(PP_DIR, 'StyleRuleComposer.module.css'), 'utf-8')
-
-    expect(css).not.toMatch(/\.searchResults\b/)
-    expect(css).not.toMatch(/\.searchGroup\b/)
-    expect(css).not.toMatch(/\.searchGroupHeader\b/)
-    expect(css).not.toMatch(/\.searchGroupItems\b/)
-    expect(css).not.toMatch(/\.searchResultsEmpty\b/)
-  })
-
   it('does not render a search bar or a category rail anymore (Track P / P1)', () => {
     const { nodeId } = loadSiteWithClasses(1)
     selectNode(nodeId)
@@ -1133,7 +1124,6 @@ describe('PP-16 — No inline styles / no Tailwind / no !important in new files'
     { file: 'classPickerUiState.ts', dir: PP_DIR },
     { file: 'useClassPickerDerivedState.ts', dir: PP_DIR },
     { file: 'StyleRuleComposer.tsx', dir: PP_DIR },
-    { file: 'StyleRuleComposer.module.css', dir: PP_DIR },
     { file: 'ClassPropertyRow.tsx', dir: PP_DIR },
     { file: 'ClassPropertyRow.module.css', dir: PP_DIR },
     { file: 'cssControlTypes.ts', dir: PP_DIR },

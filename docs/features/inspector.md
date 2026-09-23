@@ -1517,6 +1517,12 @@ margin above the rows — the same three props compute to about 213px (33 + 31 +
 lost 3px per stacked prop row: inside the panel `ControlRow`'s gaps now read
 the frozen `--inspector-*` scale, not the admin's fluid `--space-*` one
 (UX-10). `TEXT_LAYER_OVERFLOW_PX` ratchets 50 → 47.
+
+**P2-H — panel polish.** F1–F4 re-measure unchanged. F5 is **276 → 256**:
+the notice under its Component section drops its fluid `--space-4xl` /
+`--space-5xl` padding for the frozen `--inspector-space-xl` (UX-27). The
+node-level notices above the ClassPicker now sit in a `.nodeNotices` band
+that `:empty` collapses, so a selection with no notice pays 0px for it.
 The spacing hierarchy is now three named steps — **4px** within a group
 (`--inspector-space-2xs`), **8px** between groups inside a section
 (`--inspector-space-m`), **12px** between sections
@@ -2176,6 +2182,18 @@ landed — `panel-38`).
 `error-boundary-coverage` gained a `panel-40` block: every panel seam mounts a
 `PanelBoundary`, `InspectorShell` wraps all three tabs, the component never opts
 out of `silentToast`, and every `INSPECTOR_SECTIONS` entry carries a `label`.
+
+`measurement.test.ts`'s P2-H block gates the panel's finish, over every CSS
+module under `PropertiesPanel/`, `property-controls/`, `inspector/sections/`
+and `Section/`: no fluid `--space-*` step at all (only `--space-px`), no
+literal px `border-radius` (a token, `0` or `50%`), no `--text-disabled` on
+text outside a disabled/placeholder rule, `--text-subtle` at 4.5:1 on the
+docked panel in both themes, and a field hover that sits further from the
+panel than the resting field. The node-level notices (shared component, slot
+fill, source constraint, branch choice) mount in one `.nodeNotices` band on
+the 12px gutter, which `:empty` collapses to nothing. The computed half —
+real hover, real `:focus-visible`, real rects — is
+`tests/e2e/inspector-panel-polish.e2e.ts`.
 
 Ownership, when routing work: `panel-designer` owns the sections and primitives;
 `store-engineer` owns the multi-select surface (§9) and is needed for G8.3

@@ -183,6 +183,29 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** owner dogfood (below and in the PR). Live frames still lack the flex companions (resolver needs stored styles across the wire).
 - **Dogfood (`test4`, static tier, `/admin/site`, 100%, one frame):** (1) select a padded card, drag its E edge 40px: the box grows 40px (not 40 + padding), W×H pill under it while dragging, card still selected after; (2) a `flex: 1` row child: drag E, it stays where released; (3) ⇧ mid-drag without moving locks the ratio, ⌥ grows from the centre; (4) an absolute element's W handle: the right edge stays put; (5) drag a ruler guide over a frame and release there: the guide stops; Alt-Tab mid-drag: it snaps back.
 
+### panel-45 — P2-H: panel polish (UX-11, 12, 13, 15, 20, 21, 24, 25, 26, 27)
+- **Agent:** panel-designer · **Branch:** `feat/inspector-panel-polish` off `db824fb3` · **PR:** #239 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Goal:** the finish on the Design pane and Layers: hover that lifts, readable captions, visible keyboard focus, a selection that reads as one, no blank first open.
+- **Done:**
+  - Field hover `#2a2e31` dark / `--bg-surface` light (was `--overlay-10`, darker than rest over the black panel). Light `--text-subtle` `#6b7280` → `#5b6270` (3.9 → 4.9:1 on `--bg-body`); 15 informative `--text-disabled` uses → `--text-subtle`.
+  - Tree rows: `:focus-visible` inset ring, selected `--overlay-20` (kept under hover), dead `--tree-row-*` vars and the `focused` prop/state removed.
+  - `Section forceOpen` draws `SectionStaticHeader` (no dead toggle); Section's far-end `meta` renamed `status`; toggle focus ring `--overlay-50`.
+  - Layers (`SkeletonTree`) and Agent (`AgentPanelSkeleton`) Suspense fallbacks.
+  - Node notices in one `.nodeNotices` band on the 12px gutter (`:empty` costs 0); new `--info-10`.
+  - 18 literal radii → tokens; 6 fluid `--space-*` → frozen; dead `--inspector-accent-*`, `--inspector-section-label-color` and the orphan `StyleRuleComposer.module.css` deleted.
+- **Measured (1400×900, room 746):** F1 598 · F2 769 · F3 715 · F4 595 (all unchanged) · F5 276 → 256 (its notice's fluid padding frozen). `inspector-height`, `inspector-panel-measurement` and the new `inspector-panel-polish` e2e all green (ports 50874/30802).
+- **Tokens:** added `--info-10` (both themes); changed `--inspector-field-bg-hover` (+ light), light `--text-subtle`; removed three `--inspector-*`.
+- **Tests:** `measurement.test.ts` P2-H block, `treeRowStates.test.ts`, `section.test.tsx`, `lazyPanelSkeletons.test.tsx` — each failed with the fix disabled (HEAD sources restored in place, then put back). New `tests/e2e/inspector-panel-polish.e2e.ts`.
+- **Landmines:** `ControlRow`'s caption colour change reaches the data admin too (same token, intended). The dark `--text-subtle` is still 3.9:1 on the FLOATING panel (`--bg-surface`); docked is AA.
+- **Human action needed:** dogfood on `test4`, `/admin/site`, in BOTH themes (Settings → Preferences → Theme):
+  1. Hover a W/H field: it gets lighter, never darker.
+  2. Click a Layers row: no ring. Tab / Shift+Tab onto a row: a thin ring. The selected row is clearly darker/lighter than a hovered one, and stays so under the pointer.
+  3. Select a text element: Fill/Text/Effects headers are plain titles — no hover state, not a tab stop. Tab onto the collapsed Layout header: a thin ring, not the browser's.
+  4. Select a `.map` row: the notice card sits 12px in from both panel edges.
+  5. Hard-reload, open Layers and the Agent tab at once: grey placeholder rows, not an empty column.
+  6. Units, prop descriptions and "no props" read clearly in the light theme.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -221,6 +244,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 **Design pane (P2)**
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry under `## Now`
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry under `## Now`
+- `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry under `## Now`
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
