@@ -109,6 +109,31 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - speed-04 cold click to ring, on `__board-perf-fixture`, was already over budget on trunk. Before: 401–494 ms (mean 432). After: 425–533 ms (mean 485). The ranges overlap under load, so the difference is not attributed. Re-measure on a quiet runner.
 - **Next:** the orchestrator merges after the Phase 1 exit gate. P2-I tightens the sweep and hover budgets.
 
+### panel-44 — P2-G: the Component section (UX-4, UX-7, UX-10, UX-14, UX-16)
+- **Agent:** panel-designer · **Branch:** `feat/component-section-one-title-row` off `91df2c59` · **PR:** draft, base `feat/canvas-excellence` (long form in the PR body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Goal:** an instance's props directly under Measures, under one title row, honest under multi-select; prop names readable; text props that commit instead of writing per keystroke.
+- **Done:**
+  - `ComponentSection`: one `SectionStaticHeader` ("Button · Local", new `meta` slot) with Detach/Swap icon buttons; Swap is an `InspectorPopover`; keyed per instance so a refusal or draft never carries over. Manifest `order: 3`; `appliesTo: showsComponentSection` (no multi-select).
+  - **Found and fixed:** an instance with no writable class showed only "Inline styles come from this component's own source." — `StyleSurface`'s notice replaced every section, the props included. New manifest field `writes: 'call-site'`; `designCallSiteSections` still mounts beside the notice.
+  - Detach's duplicate offer reads `explainDetachConstraint`; the duplicate `EXTRACT_OFFER_REASONS` is deleted.
+  - `--inspector-label-w` 68 → 96px; `ControlRow` gaps use the frozen scale under `[data-field-skin='inspector']`.
+  - `TextControl` draft-then-commit via `textFieldDraft.ts` (blur/Enter commit once, Esc reverts, a parked caret follows the store).
+  - Gates: `measurement.test.ts` (order, `writes`, structure, 96px), `inspector-height.e2e.ts` (F5 instance + a P2-G shape test; F2 allowance 50 → 47), `05-section-heights.json/.md`, `inspector.md`, `design.md`, `ui-primitives.md`.
+- **Measured (1400×900, room 746):** F1 598 → 598 · F2 772 → 769 (23 over) · F3 715 → 715 · F4 601 → 595 · F5 instance: notice only → 276 (Component 137).
+- **Tokens added:** none (`--inspector-label-w` changed value).
+- **Landmines:**
+  - The component catalog loads after the section mounts: until it lands, rows are call-site-only and a union prop is a text box. F5 waits on `instance-call-site-prop-ariaLabel`.
+  - `Section forceOpen` still renders a toggle button that does nothing (every forceOpen section). Not changed here; in the PR's Found, not fixed.
+- **Human action needed:** dogfood on `test4`, `/admin/site`:
+  1. Select a component instance: right under W/H/X/Y is ONE row "<Name> · Local" with two icon buttons, then its props. No "Component" title, no grey band.
+  2. An instance with no class still shows its props, above the "Inline styles come from…" notice.
+  3. Type into a text prop: nothing reaches the canvas or source until Enter or click-away; Esc puts the old text back.
+  4. Detach a component that uses a hook: the refusal sentence appears under the title with "Duplicate as a new file and edit that".
+  5. Swap: a popover with a search field opens from the ⇄ button.
+  6. Shift-select the instance and another layer: the component section disappears.
+  7. A prop like `ariaLabel` or `fetchPriority` reads in full in the label column.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -146,6 +171,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Design pane (P2)**
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry under `## Now`
+- `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry under `## Now`
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
