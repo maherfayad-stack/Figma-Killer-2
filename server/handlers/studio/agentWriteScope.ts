@@ -52,7 +52,13 @@
  * agent* cannot manufacture its own consent.
  */
 import { isAbsolute, relative, resolve, sep } from 'node:path'
-import { hostExecutedWorkspaceFile, realpathAllowingMissing, unwritableWorkspaceSegment } from '@core/page-parser'
+import {
+  hostExecutedWorkspaceFile,
+  realpathAllowingMissing,
+  studioShellWorkspaceFile,
+  unwritableWorkspaceSegment,
+} from '@core/page-parser'
+import { hostConfigImportedBy } from './hostConfigImports'
 
 /**
  * The forbidden segment in `candidate`, if it has one — measured RELATIVE to
@@ -151,7 +157,21 @@ export function agentWriteRefusal(filePath: string, cwd: string): AgentWriteRefu
   }
   for (const [base, candidate] of pairs) {
     const rel = relativeInside(base, candidate)
-    const why = rel === null ? null : hostExecutedWorkspaceFile(rel)
+    if (rel === null || !studioShellWorkspaceFile(rel)) continue
+    return {
+      code: 'protected-path',
+      message:
+        `Refused: "${filePath}" is part of Studio's preview shell (prototype/), which Studio generates and rewrites on every open — `
+        + 'and vite.config.js loads it in Node, so a change there would run on the user\'s machine. '
+        + 'Write the project\'s own source instead.',
+    }
+  }
+  for (const [base, candidate] of pairs) {
+    const rel = relativeInside(base, candidate)
+    if (rel === null) continue
+    const byName = hostExecutedWorkspaceFile(rel)
+    const importer = byName === null ? hostConfigImportedBy(base, rel) : null
+    const why = byName ?? (importer === null ? null : `imported by ${importer}, so it runs in Node whenever that config is loaded`)
     if (why === null) continue
     return {
       code: 'needs-user',

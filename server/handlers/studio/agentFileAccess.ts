@@ -198,9 +198,7 @@ export function resolveAgentFilePath(
   if (intent === 'write') {
     const refusal = agentWriteRefusal(lexicalRel, root)
     if (refusal?.code === 'needs-user') return needsUser(refusal.message)
-    if (refusal !== null) {
-      return protectedPath(rawPath, 'is inside a directory Studio owns (.studio, .claude, .git, node_modules or build output), which no agent write may touch')
-    }
+    if (refusal !== null) return { ok: false, code: 'protected-path', message: refusal.message, remedy: PROTECTED_REMEDY }
   }
   const real = lexicalDenial(realRel, intent)
   if (real !== null) return protectedPath(rawPath, `resolves to "${realRel}", which ${real}`)

@@ -10,11 +10,12 @@
  * is built on.
  */
 import { describe, expect, it, afterEach } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UNWRITABLE_WORKSPACE_DIR_NAMES } from '@core/page-parser'
 import { agentWriteRefusal } from './agentWriteScope'
+import { ensurePrototypeShell } from './prototypeShell'
 
 const created: string[] = []
 
@@ -170,6 +171,12 @@ describe('agentWriteRefusal — files that run on the host need the user (securi
     ['bun config', 'bunfig.toml'],
     ['the root CLAUDE.md', 'CLAUDE.md'],
     ['a nested CLAUDE.md', 'pages/CLAUDE.md'],
+    ['a lint-staged config', '.lintstagedrc.json'],
+    ['a lefthook config', 'lefthook.yml'],
+    ['a pre-commit config', '.pre-commit-config.yaml'],
+    ['a GitLab CI definition', '.gitlab-ci.yml'],
+    ['a CircleCI definition', '.circleci/config.yml'],
+    ['a Babel JSON config', 'babel.config.json'],
   ]
   for (const [label, rel] of CLASSES) {
     it(`${label} (${rel}) refuses needs-user and says to ask the user`, () => {
@@ -189,5 +196,56 @@ describe('agentWriteRefusal — files that run on the host need the user (securi
   it('a segment that merely starts with two dots is inside the project (F9)', () => {
     const dir = tmpProject()
     expect(agentWriteRefusal(join(dir, '..foo', '.claude', 'x.json'), dir)?.code).toBe('protected-path')
+  })
+})
+
+describe('agentWriteRefusal — the re-review bypass (R1): what a host config LOADS runs on the host too', () => {
+  it('every file Studio\'s preview-shell templates emit is refused — derived from the templates, so a new one cannot slip through', () => {
+    const dir = tmpProject()
+    const result = ensurePrototypeShell(dir)
+    const emitted = [...new Set([...result.created, ...result.regenerated])]
+    // Vacuity guard: the scaffold writes the Vite config, the runtime plugin
+    // it imports, and the shell app.
+    expect(emitted).toContain('vite.config.js')
+    expect(emitted).toContain('prototype/studioRuntime.generated.js')
+    expect(emitted.length).toBeGreaterThan(8)
+    for (const rel of emitted) {
+      const refusal = agentWriteRefusal(join(dir, ...rel.split('/')), dir)
+      if (rel === 'index.html') {
+        // The one exception: only the browser runs it, and its module script
+        // points into prototype/, which is refused.
+        expect(refusal, rel).toBeNull()
+      } else if (rel === 'vite.config.js' || rel === 'package.json') {
+        expect(refusal?.code, rel).toBe('needs-user')
+      } else {
+        expect(refusal?.code, rel).toBe('protected-path')
+      }
+    }
+  })
+
+  it('a local module a root config imports (depth 1 and 2, with or without an extension) needs the user', () => {
+    const dir = tmpProject()
+    writeFileSync(join(dir, 'vite.config.ts'), "import { plugins } from './vite/plugins'\nexport default { plugins: plugins() }\n")
+    mkdirSync(join(dir, 'vite'), { recursive: true })
+    writeFileSync(join(dir, 'vite', 'plugins.ts'), "import { helper } from './helper.js'\nexport const plugins = () => [helper()]\n")
+    writeFileSync(join(dir, 'vite', 'helper.ts'), 'export const helper = () => ({})\n')
+    expect(agentWriteRefusal(join(dir, 'vite', 'plugins.ts'), dir)?.code).toBe('needs-user')
+    expect(agentWriteRefusal(join(dir, 'vite', 'plugins.ts'), dir)?.message).toContain('imported by vite.config.ts')
+    expect(agentWriteRefusal(join(dir, 'vite', 'helper.ts'), dir)?.code).toBe('needs-user')
+    expect(agentWriteRefusal(join(dir, 'VITE', 'Plugins.TS'), dir)?.code).toBe('needs-user')
+    // A screen next to it is untouched.
+    expect(agentWriteRefusal(join(dir, 'vite', 'notes.ts'), dir)).toBeNull()
+    expect(agentWriteRefusal(join(dir, 'pages', 'Home.tsx'), dir)).toBeNull()
+  })
+
+  it('a config that starts importing a new module protects it at once (the cache follows the config)', () => {
+    const dir = tmpProject()
+    writeFileSync(join(dir, 'postcss.config.cjs'), 'module.exports = {}\n')
+    expect(agentWriteRefusal(join(dir, 'plugins', 'extra.cjs'), dir)).toBeNull()
+    writeFileSync(join(dir, 'postcss.config.cjs'), "module.exports = { plugins: [require('./plugins/extra.cjs')] }\n")
+    // mtime granularity: make the change unmistakable.
+    const later = new Date(Date.now() + 5_000)
+    utimesSync(join(dir, 'postcss.config.cjs'), later, later)
+    expect(agentWriteRefusal(join(dir, 'plugins', 'extra.cjs'), dir)?.code).toBe('needs-user')
   })
 })

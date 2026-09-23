@@ -260,3 +260,26 @@ describe('denyControlPlaneWrite.ts (spawned) — the CLI path asks for host-exec
     }
   }, SPAWN_TIMEOUT_MS)
 })
+
+describe('denyControlPlaneWrite.ts (spawned) — the re-review bypass (R1)', () => {
+  it('blocks the shell runtime vite.config.js imports and a module the project config imports', async () => {
+    const projectDir = await freshDir()
+    try {
+      fs.writeFileSync(path.join(projectDir, 'vite.config.ts'), "import { p } from './vite/plugins'\nexport default {}\n")
+      fs.mkdirSync(path.join(projectDir, 'vite'))
+      fs.writeFileSync(path.join(projectDir, 'vite', 'plugins.ts'), 'export const p = 1\n')
+      for (const [rel, code] of [['prototype/studioRuntime.generated.js', 'preview shell'], ['vite/plugins.ts', 'imported by vite.config.ts']] as const) {
+        const result = await run(DENY_SCRIPT, {
+          hook_event_name: 'PreToolUse',
+          tool_name: 'Edit',
+          tool_input: { file_path: path.join(projectDir, ...rel.split('/')), old_string: 'a', new_string: 'b' },
+          cwd: projectDir,
+        })
+        expect(result.exitCode, rel).toBe(2)
+        expect(result.stderr, rel).toContain(code)
+      }
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true })
+    }
+  }, SPAWN_TIMEOUT_MS)
+})

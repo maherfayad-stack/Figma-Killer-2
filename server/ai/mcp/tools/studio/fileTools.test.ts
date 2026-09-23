@@ -427,6 +427,10 @@ describe('F3 — files that run on the host need the user (needs-user), on the H
     'bunfig.toml',
     'CLAUDE.md',
     'pages/CLAUDE.md',
+    '.lintstagedrc.json',
+    'lefthook.yml',
+    '.gitlab-ci.yml',
+    '.circleci/config.yml',
   ]
 
   it('studio_write_file refuses each class with needs-user and writes nothing', async () => {
@@ -475,5 +479,23 @@ describe('F4 and F8', () => {
       write(rel, 'SECRET=hunter2')
       expect((await call('studio_read_file', { path: rel })).code, rel).toBe('protected-path')
     }
+  })
+})
+
+describe('R1 — what a host config loads is refused on the HTTP path too', () => {
+  it('Studio\'s preview shell is protected-path, and the module a project config imports needs the user', async () => {
+    write('prototype/studioRuntime.generated.js', 'export const studioRuntimeIdPlugin = () => ({})\n')
+    const shell = await call('studio_read_file', { path: 'prototype/studioRuntime.generated.js' })
+    const shellEdit = await call('studio_edit_file', { path: 'prototype/studioRuntime.generated.js', oldString: 'export', newString: 'import("node:child_process"); export', expectedHash: shell.hash })
+    expect(shellEdit.code).toBe('protected-path')
+    expect((await call('studio_write_file', { path: 'prototype/new.js', content: 'x' })).code).toBe('protected-path')
+
+    write('vite.config.ts', "import { plugins } from './vite/plugins'\nexport default {}\n")
+    write('vite/plugins.ts', 'export const plugins = () => []\n')
+    const plugin = await call('studio_read_file', { path: 'vite/plugins.ts' })
+    const pluginEdit = await call('studio_edit_file', { path: 'vite/plugins.ts', oldString: 'export', newString: 'x; export', expectedHash: plugin.hash })
+    expect(pluginEdit.code).toBe('needs-user')
+    expect(pluginEdit.error).toContain('imported by vite.config.ts')
+    expect(fs.readFileSync(path.join(dir, 'vite', 'plugins.ts'), 'utf8')).toBe('export const plugins = () => []\n')
   })
 })

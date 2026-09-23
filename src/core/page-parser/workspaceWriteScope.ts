@@ -43,7 +43,7 @@
  */
 import { lstatSync, realpathSync } from 'node:fs'
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, PROTOTYPE_SHELL_DIR } from './workspaceFiles'
 
 /**
  * Directory names no Studio write may land in, at any depth: the walk
@@ -193,6 +193,11 @@ export function hostExecutedWorkspaceFile(rel: string): string | null {
     if (segment === '.vscode') return 'editor configuration (.vscode/), whose tasks and launch configs run commands'
     if (segment === '.github' && segments[index + 1] === 'workflows') return 'a CI workflow (.github/workflows/), which runs on push'
     if (segment === '.devcontainer') return 'a dev-container definition (.devcontainer/), which runs commands when the container builds'
+    if (segment === '.circleci') return 'a CI definition (.circleci/), which runs on push'
+  }
+  if (name === '.gitlab-ci.yml') return 'a CI definition, which runs on push'
+  if (name.startsWith('.lintstagedrc') || name === 'lefthook.yml' || name === 'lefthook.yaml' || name === '.lefthook.yml' || name === '.pre-commit-config.yaml') {
+    return 'a commit-hook configuration, whose commands run on the next commit'
   }
   if (name === 'package.json') return 'the package manifest, whose scripts run on install and on every dev-server start (dependencies go through studio_install_deps)'
   if (name === 'claude.md' || name === 'claude.local.md') return 'standing instructions for every later agent turn'
@@ -200,8 +205,41 @@ export function hostExecutedWorkspaceFile(rel: string): string | null {
     return 'package-manager, git or tool configuration the host reads and acts on'
   }
   if (name === '.env' || name.startsWith('.env.') || name === '.envrc') return 'environment configuration the host loads'
-  if (HOST_CONFIG_FILE.test(name) || HOST_RC_FILE.test(name)) return 'build-tool configuration, which runs in Node the moment the dev server or a build loads it'
+  if (isHostConfigFileName(name) || name === 'babel.config.json') return 'build-tool configuration, which runs in Node the moment the dev server or a build loads it'
   return null
+}
+
+/**
+ * Whether a file NAME is a build-tool config a tool imports and runs in Node
+ * (`vite.config.ts`, `postcss.config.cjs`, `.babelrc.js`). Exported for the
+ * import-closure half of the agent write gate
+ * (`server/handlers/studio/hostConfigImports.ts`), which scans exactly these
+ * files for the local modules they load.
+ */
+export function isHostConfigFileName(name: string): boolean {
+  const comparable = comparableSegment(name)
+  return HOST_CONFIG_FILE.test(comparable) || HOST_RC_FILE.test(comparable)
+}
+
+/**
+ * Whether `rel` is inside Studio's generated preview shell (`prototype/`,
+ * `PROTOTYPE_SHELL_DIR`) — every file the shell templates emit except the two
+ * root bootstrap files (`vite.config.js`, a host config and `needs-user`;
+ * `index.html`, which only the browser runs). Studio writes and rewrites
+ * these on every open, and the scaffolded `vite.config.js` imports one of
+ * them (`prototype/studioRuntime.generated.js`), so an agent write there
+ * runs in Node when Vite restarts. No agent writes them: `protected-path`.
+ * `prototypeShell.test.ts` holds every template path to this predicate, so a
+ * new shell file cannot land outside it unnoticed.
+ */
+export function studioShellWorkspaceFile(rel: string): boolean {
+  const first = rel.split(/[\\/]+/).find((segment) => segment.length > 0)
+  return first !== undefined && comparableSegment(first) === PROTOTYPE_SHELL_DIR
+}
+
+/** A project-relative path in the form the filesystem compares it: separators unified, each segment case-folded with trailing dots and stream suffixes dropped. */
+export function comparableWorkspaceRel(rel: string): string {
+  return rel.split(/[\\/]+/).filter((segment) => segment.length > 0).map(comparableSegment).join('/')
 }
 
 /** `vite.config.ts`, `vite.prod.config.mjs`, `tailwind.config.cjs`, `eslint.config.js` — anything named as a tool config that a tool imports and runs. */
