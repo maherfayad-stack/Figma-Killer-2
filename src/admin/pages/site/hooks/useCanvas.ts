@@ -183,15 +183,6 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
       el.removeAttribute('data-animating')
     }
 
-    // S4 — publish "the viewport is moving" to the consumers that cannot poll
-    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
-    // debounced store commit: today the selection overlay's measurement pump,
-    // which is otherwise event-driven and idle. This is the ONE funnel every
-    // transform write goes through, gesture and animated alike. An animated
-    // write keeps painting for `ANIMATED_TRANSFORM_MS` after this call returns,
-    // so it holds the flag for that long instead of the default idle window.
-    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
-
     // setProperty avoids the same property-assignment lint trip as above.
     el.style.setProperty('transform', `translate(${t.panX}px, ${t.panY}px) scale(${t.zoom})`)
 
@@ -204,6 +195,17 @@ export function useCanvas({ canvasRootRef, transformLayerRef, enabled }: UseCanv
     // pinch and then snap. The default lives in `CanvasTransformLayer.module.css`,
     // not in a `var()` fallback (CLAUDE.md's no-fallback rule).
     el.style.setProperty('--canvas-zoom', String(t.zoom))
+
+    // S4 — publish "the viewport is moving" to the consumers that cannot poll
+    // `transformRef` (it never changes identity) and cannot wait for the 100 ms
+    // debounced store commit: the selection overlay's measurement pump, the
+    // rulers, and the toolbar/inspector that follow the board (PERF-3/PERF-4).
+    // This is the ONE funnel every transform write goes through, gesture and
+    // animated alike, and it runs AFTER the write so a per-write listener sees
+    // the transform it is following. An animated write keeps painting for
+    // `ANIMATED_TRANSFORM_MS` after this call returns, so it holds the flag
+    // for that long instead of the default idle window.
+    markCanvasViewportActivity(animated ? ANIMATED_TRANSFORM_MS : 0)
 
     // WS-5.4 — promote to a GPU-composited layer for the duration of the
     // gesture, then release. `el.style.willChange` reads back the resolved

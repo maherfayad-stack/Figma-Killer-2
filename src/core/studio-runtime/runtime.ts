@@ -71,7 +71,7 @@ import {
   revertOptimisticDom,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
-import { applyOptimisticStyle, clearOptimisticStyle, OPTIMISTIC_STYLE_ATTR, revertAllOptimisticStyle } from './optimisticStyle'
+import { applyOptimisticStyle, clearOptimisticStyle, revertAllOptimisticStyle } from './optimisticStyle'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
@@ -79,6 +79,12 @@ import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
 import { findNthNodeById } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
+import {
+  createFrameFitMutationScheduler,
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+} from './frameFitMutationScheduler'
+import { isSelectionChromeMutation } from './selectionChromeMutation'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
 const RUNTIME_SCROLL_UNROLL_STYLE_ID = 'studio-runtime-scroll-unroll'
@@ -429,36 +435,30 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
 
   // ---- resize / layout-driven ring repositioning ----------------------------
   view.addEventListener('resize', scheduleReposition)
+  // A genuine content mutation may mean the page got shorter, so the fit pin
+  // is re-derived from scratch instead of only ever growing — through the
+  // SAME scheduler the portal frame uses (`frameFitMutationScheduler.ts`,
+  // PERF-9). It ignores this runtime's own writes by construction: the pin
+  // write on `body.style`, the resize preview's stamp and `speed-01`'s
+  // optimistic style stamp are all ATTRIBUTE records, which never reset a
+  // fit, and the ring overlay is selection chrome. What is left — nodes
+  // added or removed — settles after a trailing debounce, because a live app
+  // may add and remove nodes every frame on its own (a carousel, an
+  // `AnimatePresence`) and each reset is a full-document forced layout.
+  const frameFitScheduler = createFrameFitMutationScheduler({
+    onSettle: resetFrameFit,
+    textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+    structuralDebounceMs: LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  })
   let layoutObserver: MutationObserver | null = null
   if (doc.body) {
     const MutationObserverCtor = view.MutationObserver ?? MutationObserver
     try {
       layoutObserver = new MutationObserverCtor((records) => {
-        scheduleReposition()
-        // A genuine DOM mutation may mean the page got shorter — re-derive
-        // the fit pin from scratch instead of only ever growing it. See the
-        // "frame:resize" section's module comment below for the known
-        // simplification (undebounced) vs. portal mode's own scheduler.
-        //
-        // MUST ignore a record that is ONLY this adapter's own chrome: (1)
-        // `doc.body`'s own `style` attribute (`resetFrameFit`/
-        // `reportFrameHeight`'s pin write — without this, the pin write
-        // re-triggers `resetFrameFit`, which pins again, forever), or (2)
-        // anything inside the selection/hover ring overlay root (repositioning
-        // a ring on every select/hover would otherwise spuriously reset the
-        // fit pin, since ring elements live inside `doc.body`'s observed
-        // subtree too). Any OTHER mutation — real content added/removed
-        // anywhere, or a non-chrome attribute change — still resets normally.
-        const isIgnorable = (record: MutationRecord): boolean => {
-          if (record.target === doc.body && record.type === 'attributes' && record.attributeName === 'style') return true
-          // (3) the resize preview's own stamp on the element it sizes — a
-          // drag in flight, not new content.
-          if (record.target === resize.previewElement() && record.type === 'attributes') return true
-          if (record.type === 'attributes' && record.attributeName === OPTIMISTIC_STYLE_ATTR) return true // (4) `speed-01`'s style stamp, any element
-          return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
-        }
-        if (records.every(isIgnorable)) return
-        resetFrameFit()
+        // The rings' own repositioning writes are chrome; repositioning for
+        // them would schedule another frame for nothing.
+        if (!records.every(isSelectionChromeMutation)) scheduleReposition()
+        frameFitScheduler.handle(records)
       })
       layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
     } catch (_err) {
@@ -488,20 +488,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // ring repositioning and height reporting are independent concerns that
   // shouldn't drop each other's frame.
   //
-  // KNOWN SIMPLIFICATION vs. portal mode, flagged rather than silently
-  // claimed as full parity: portal mode resets the pin to the viewport
-  // height (allowing it to SHRINK) only on a genuine content mutation,
-  // debounced through `frameFitMutationScheduler.ts` so a burst of
-  // inline-text-edit keystrokes doesn't each pay the O(all elements)
-  // `collectScrollDeficits` scan. This reuses the SAME `layoutObserver`
-  // MutationObserver already installed for ring repositioning as the reset
-  // trigger, undebounced — correct in direction (an edit that removes
-  // content can shrink the frame again) but not yet perf-hardened against a
-  // rapid-fire real-content-edit burst the way portal mode is. Untestable
-  // against a real cross-origin ResizeObserver feedback loop until L1-L4 are
-  // real running services (see this file's own PR description) — a
-  // dedicated `frameFitMutationScheduler`-equivalent port is a reasonable
-  // Batch 5 follow-up if that turns out to matter in practice.
+  // The pin is reset (allowing the frame to SHRINK) only on a genuine
+  // content mutation, through `frameFitScheduler` above — the same
+  // classify-and-debounce module portal mode uses (PERF-9).
   let pinnedHeight = DEFAULT_FRAME_FIT_HEIGHT
   let frameFitPassesUsed = 0
   let lastReportedHeight: number | null = null
@@ -659,6 +648,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       textEdit.dispose()
       disposeErrorTaps()
       layoutObserver?.disconnect()
+      frameFitScheduler.dispose()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)
       frameResizeObserver?.disconnect()
       if (resizeRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(resizeRaf)

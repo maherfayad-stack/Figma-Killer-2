@@ -80,6 +80,35 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ---
 
+### perf-11 — P2-A: perf quick wins + benches (PERF-2, 3, 4, 9, 10, 11, 13; budgets 1, 2, 5, 6, 7)
+- **Agent:** perf-hunter · **Branch:** `perf/canvas-quick-wins-and-benches` off `53c2746f` · **PR:** #235 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verification complete. Before/after table and every run: the PR body.
+- **Benches (committed first, measured before any fix):**
+  - Budget 1: the canvas subscriber sweep (`scripts/bench/lib/canvasSubscriberSweep.ts`, 40 pages × 300 nodes × 12 frames, 39,600 subscribers) is a GATE in `bench:editor-store`. A breach fails the bench through the new `BenchResult.budgetFailures`, after the rows are written.
+  - Budget 2: a generated 40-frame × 310-element Tier-0 corpus, `tests/e2e/helpers/largeBoardCorpus.ts`.
+  - Budgets 5, 6, 7: `tests/e2e/canvas-feel-budgets.e2e.ts` (canvas hover sweep, Layers hover sweep, pan with a selection, idle rAF). It is added to CI's `e2e-budgets` job.
+- **Done:**
+  - `isSelectionChromeMutation` (`@core/studio-runtime`) filters chrome in all four frame observers. The hover ring stays mounted and is hidden by a style write.
+  - `frameFitMutationScheduler` moved to core and is now the live runtime's too: attribute-only batches never reset a fit, and a live frame's structural changes debounce for 250 ms.
+  - The toolbar and inspector follow every transform write from a board-space anchor (`selectionChromeViewportFollow.ts`), and a pan over in-frame rings arms no loop.
+  - The rulers paint on change only.
+  - `PortalFrameAdapter`'s ring observer is lazy.
+  - The annotation `setSelection` no-op guard. `hoverNode`'s guard was already in (`speed-03`) and is now pinned.
+  - A frame-less selection or hover is scoped to the frames whose page holds the node (`idsRenderedByFramePage`).
+- **Numbers (before → after):**
+  - pan toolbar drift: 288 px → 0.0 px.
+  - idle rAF calls per second: ~122 → 0.
+  - hover chrome tree mutations: canvas 4 → 0, Layers 14 → 0.
+  - marquee no-op `set()`: ~22 ms → 1.6 µs.
+  - hover worst frame: 148–198 ms → 124–150 ms. Mean frame: 22–25 ms → 19 ms.
+- **Tests:** eight regression tests. Each was shown to fail with its fix disabled in place.
+- **Landmines:**
+  - Hover frame time is still PERF-1: frames over 20 ms stayed at 48/~195. Only P2-I moves it, so the 225 ms worst-frame budgets are ratchets.
+  - `runtimeBridgeBundle.ts` was produced by applying the source diff to the committed artifact, because a sync on this CRLF/Bun-1.3.6 tree emits different helpers. Re-run `studio-runtime:sync` on an LF tree before relying on the freshness gate.
+  - The sweep's selectors mirror `NodeRenderer.tsx`. P2-I must update the mirror when it changes them.
+  - speed-04 cold click to ring, on `__board-perf-fixture`, was already over budget on trunk. Before: 401–494 ms (mean 432). After: 425–533 ms (mean 485). The ranges overlap under load, so the difference is not attributed. Re-measure on a quiet runner.
+- **Next:** the orchestrator merges after the Phase 1 exit gate. P2-I tightens the sweep and hover budgets.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

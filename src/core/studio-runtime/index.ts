@@ -188,6 +188,16 @@ export {
   buildSelectionChromeStylesheet,
 } from './selectionChromeCss'
 
+export { isSelectionChromeMutation, isSelectionChromeNode } from './selectionChromeMutation'
+
+export {
+  FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  createFrameFitMutationScheduler,
+  type FrameFitMutationScheduler,
+  type FrameFitMutationSchedulerOptions,
+} from './frameFitMutationScheduler'
+
 export {
   MAX_FRAME_FIT_HEIGHT,
   MAX_FRAME_FIT_PASSES,

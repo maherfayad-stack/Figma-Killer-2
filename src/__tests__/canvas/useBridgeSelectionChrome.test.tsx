@@ -30,6 +30,9 @@ function makeFakeAdapter() {
   return { adapter, calls }
 }
 
+/** Module-level so its identity is stable across renders, as the real follower's is. */
+const noopRecordAnchor = () => {}
+
 function Harness({ adapter, selected, hover = null, showToolbar = true }: { adapter: FrameDocumentAdapter | null; selected: readonly string[]; hover?: string | null; showToolbar?: boolean }) {
   const toolbarRef = useRef<HTMLDivElement | null>(null)
   const inspectorRef = useRef<HTMLDivElement | null>(null)
@@ -45,6 +48,7 @@ function Harness({ adapter, selected, hover = null, showToolbar = true }: { adap
     toolbarRef,
     inspectorRef,
     committedTransform: [1, 0, 0],
+    recordAnchor: noopRecordAnchor,
   })
   return <div ref={toolbarRef} />
 }

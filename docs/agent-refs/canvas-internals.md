@@ -1175,7 +1175,7 @@ frame and no event can fire per frame:
 |---|---|
 | element resize drag | `canvasGesture.ts` → `onCanvasGestureChange` (new: the begin edge, not only `onCanvasGestureSettle`) |
 | reorder drag, animation replay | render state the component already holds (`reorderDrag.dragging`, `animationScrubStore`'s `'playing'`), passed in as `continuous` |
-| pan / zoom | `canvasViewportActivity.ts` → `onCanvasViewportActivityChange`, marked from `useCanvas`'s `applyTransformToDOM` |
+| pan / zoom — **only for rings painted in the PARENT document** (`ringsFollowViewport: false`: the startup window before the in-frame overlay root exists, a live frame's fallback) | `canvasViewportActivity.ts` → `onCanvasViewportActivityChange`, marked from `useCanvas`'s `applyTransformToDOM` |
 | a bridge frame's DOM swap | the adapter's `hmr:before` → `hmr:after`, capped at 2 s |
 
 Everything else schedules **one** coalesced pass: a `ResizeObserver` on the
@@ -1194,9 +1194,11 @@ Three things are easy to get wrong here:
   and why it is a *separate* flag from `canvasGesture.ts`: a pan mutates
   nothing and must not freeze the auto-height refit the way a page-mutating
   gesture does.
-- **The mutation observer must skip `overlayRoot`.** The overlay writes inline
-  styles onto its own rings inside the observed document; counting those as
-  "the page changed" makes every pass schedule another one.
+- **The mutation observer must skip the selection chrome.** The overlay writes
+  inline styles onto its own rings inside the observed document; counting those
+  as "the page changed" makes every pass schedule another one. It uses the ONE
+  shared predicate, `isSelectionChromeMutation` — see "Selection chrome is not
+  page content" below.
 - **`BreakpointSelectionOverlay` is a SIBLING of the frame surface**, not a
   descendant, so it cannot read `CanvasFrameAdapterContext`. It resolves the
   adapter from the registry by iframe element and re-resolves on
@@ -1206,6 +1208,61 @@ Gates: `overlayMeasureScheduler.test.ts` (fake rAF — idle board with a
 selection runs 0 passes) and `overlayRafDiscipline.test.ts` (source shape: the
 component keeps exactly one `requestAnimationFrame` call, the one-shot
 portal-root read).
+
+### Selection chrome is not page content, and a pan measures nothing (P2-A)
+
+Four things in this area were fixed together by P2-A (audit `01-perf.md`
+PERF-2/3/4/9/10/11/13); each has a regression test that failed before it, and
+`tests/e2e/canvas-feel-budgets.e2e.ts` measures them on a generated 40-frame ×
+~300-element board (`tests/e2e/helpers/largeBoardCorpus.ts`).
+
+- **`isSelectionChromeMutation(record)`** (`@core/studio-runtime`,
+  `selectionChromeMutation.ts`) is the ONE answer to "is this DOM mutation the
+  editor's own rings/badge/handles/measure layer, or the page?". Used by all
+  four frame observers: the portal auto-height refit
+  (`frameFitMutationScheduler`), the scroll-unroll pass (`startScrollUnroll`),
+  `overlayMeasureScheduler`, and the live runtime's layout observer. Before,
+  only the last two filtered chrome, so a hover ring mounting under `<body>`
+  re-ran the frame's two full-document forced layouts. A new observer on a
+  frame document must use it too.
+- **The hover ring stays mounted.** `CanvasSelectionChrome` renders it whenever
+  rings are shown; `BreakpointSelectionOverlay` hides it with a style write
+  (`hideOverlayElement`, in a layout effect) when hover ends. Hover start/end
+  is an attribute change, never a `childList` one. Selection rings are still
+  keyed per id (a selection change is rare next to hover); the predicate
+  covers them.
+- **`frameFitMutationScheduler` lives in `@core/studio-runtime`** and is the
+  live runtime's too (PERF-9): attribute-only batches never reset a fit (a
+  JS-animated app writes `style` every frame), text debounces, and structure
+  settles immediately in a portal frame but after a 250 ms trailing debounce
+  in a live one.
+- **The toolbar and in-place inspector follow a pan/zoom arithmetically**
+  (PERF-3, `selectionChromeViewportFollow.ts`). Each measured anchor pass
+  records the rects plus the transform they were measured under; every
+  transform write (`onCanvasViewportTransform`, a second signal on
+  `canvasViewportActivity.ts`, fired synchronously from `applyTransformToDOM`
+  AFTER the DOM write) re-projects them through `rulerGeometry.ts`'s
+  `.canvas`-relative formula. No layout read — the clamp widths are read once,
+  at record time. Rings inside a frame move with its transform for free, so
+  `overlayMeasureScheduler` arms NO loop for a pan over an in-frame overlay
+  (`ringsFollowViewport`), only one settle pass when it ends. Bridge frames get
+  the same follower through `useBridgeSelectionChrome`'s `recordAnchor`.
+  Known limit: during a discrete zoom's CSS transition (`data-animating`,
+  `ANIMATED_TRANSFORM_MS`) the chrome jumps to the final position while the
+  frames glide; the settle pass reconciles.
+- **The rulers do not loop** (PERF-4). They repaint on every transform write,
+  a `ResizeObserver` on their length source, an origin change and a window
+  resize. An idle board with a selection now runs **0** `requestAnimationFrame`
+  calls per second (was ~121 — the two ruler loops).
+- **`PortalFrameAdapter` arms its ring-tracking observer lazily** (PERF-10), on
+  the first `select`/`hover` — which portal mode never calls, because its
+  rings are the overlay's own portal.
+- **A frame-less selection or hover is scoped to the frames whose page holds
+  the node** (PERF-13, `idsRenderedByFramePage` in
+  `useBreakpointOverlaySelectionState.ts`, via `_nodeIdToPageIds`). A
+  Layers-panel row used to arm rings, an inspector wrapper and a measure
+  scheduler in every mounted frame. The CMS/VC canvas (no page context) and
+  ids the index does not know are left unscoped.
 
 **Frame-invariant work belongs in a cross-frame memo, not in the injector.**
 Every mounted iframe runs its injectors in the same commit over the same store

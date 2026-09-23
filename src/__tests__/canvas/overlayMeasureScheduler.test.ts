@@ -66,7 +66,7 @@ function installFakeRaf(): FakeRaf {
 let raf: FakeRaf | null = null
 let scheduler: OverlayMeasureScheduler | null = null
 
-function createScheduler(options: { continuous?: boolean } = {}) {
+function createScheduler(options: { continuous?: boolean; ringsFollowViewport?: boolean } = {}) {
   let measures = 0
   let anchorInvalidations = 0
   scheduler = createOverlayMeasureScheduler({
@@ -74,7 +74,7 @@ function createScheduler(options: { continuous?: boolean } = {}) {
     // to nothing here, which is exactly the shape this suite wants — it is
     // asserting the rAF discipline, not the observers.
     iframeElement: null,
-    overlayRoot: null,
+    ringsFollowViewport: options.ringsFollowViewport ?? false,
     measure: () => {
       measures++
     },
@@ -169,7 +169,7 @@ describe('overlay measure scheduler — rAF discipline', () => {
     expect(s.measures()).toBe(6)
   })
 
-  it('arms on a pan/zoom transform write and stands down when the viewport goes idle', async () => {
+  it('parent-document rings: arms on a pan/zoom transform write and stands down when the viewport goes idle', async () => {
     raf = installFakeRaf()
     const s = createScheduler()
     raf.flush(3)
@@ -186,6 +186,26 @@ describe('overlay measure scheduler — rAF discipline', () => {
     const afterSettle = s.measures()
     raf.flush(5)
     expect(s.measures()).toBe(afterSettle)
+  })
+
+  it('in-frame rings (PERF-3): a pan arms NO per-frame pass, then settles once when the viewport goes idle', async () => {
+    raf = installFakeRaf()
+    const s = createScheduler({ ringsFollowViewport: true })
+    raf.flush(3)
+    const settled = s.measures()
+
+    // Rings inside the frame move with its CSS transform; the toolbar and
+    // inspector follow each transform write arithmetically. Re-measuring the
+    // rings every frame of the pan was the wasted work the audit named.
+    for (let write = 0; write < 5; write += 1) {
+      markCanvasViewportActivity()
+      raf.flush(1)
+    }
+    expect(s.measures()).toBe(settled)
+
+    await Bun.sleep(CANVAS_VIEWPORT_IDLE_MS + 60)
+    raf.flush(3)
+    expect(s.measures()).toBe(settled + 1)
   })
 
   it('invalidates the parent-document anchor on a window resize, and measures once', () => {

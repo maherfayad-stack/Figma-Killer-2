@@ -199,7 +199,12 @@ async function main(): Promise<void> {
       const result = await bench.run(ctx)
       result.durationMs = performance.now() - start
       results.push(result)
-      log.ok(`done in ${(result.durationMs / 1000).toFixed(1)}s`)
+      if (result.budgetFailures && result.budgetFailures.length > 0) {
+        for (const breach of result.budgetFailures) log.fail(`${bench.name} over budget — ${breach}`)
+        failed.push(bench.name)
+      } else {
+        log.ok(`done in ${(result.durationMs / 1000).toFixed(1)}s`)
+      }
     } catch (err) {
       log.fail(`${bench.name} failed: ${(err as Error).message}`)
       failed.push(bench.name)

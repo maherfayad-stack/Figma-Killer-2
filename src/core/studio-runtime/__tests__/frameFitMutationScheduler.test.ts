@@ -9,14 +9,73 @@ import { describe, expect, it } from 'bun:test'
 import {
   createFrameFitMutationScheduler,
   FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+  LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+  type FrameFitMutationSchedulerOptions,
 } from '../frameFitMutationScheduler'
+import { SELECTION_OVERLAY_ROOT_ID } from '../selectionChromeCss'
+
+/**
+ * Records shaped like the real thing: a target node and added/removed node
+ * lists, because the scheduler now asks WHAT was mutated (selection chrome
+ * or page content), not only which kind of record it is.
+ */
+function pageContent(): HTMLElement {
+  const main = document.createElement('main')
+  document.body.appendChild(main)
+  return main
+}
+
+function record(init: Partial<MutationRecord> & Pick<MutationRecord, 'type' | 'target'>): MutationRecord {
+  return {
+    addedNodes: [] as unknown as NodeList,
+    removedNodes: [] as unknown as NodeList,
+    attributeName: null,
+    ...init,
+  } as MutationRecord
+}
 
 function characterDataRecord(): MutationRecord {
-  return { type: 'characterData' } as MutationRecord
+  const text = document.createTextNode('typed')
+  pageContent().appendChild(text)
+  return record({ type: 'characterData', target: text })
 }
 
 function childListRecord(): MutationRecord {
-  return { type: 'childList' } as MutationRecord
+  const added = document.createElement('section')
+  return record({ type: 'childList', target: pageContent(), addedNodes: [added] as unknown as NodeList })
+}
+
+/** The in-frame overlay root, as `CanvasSelectionOverlayInjector` / the live runtime create it. */
+function overlayRoot(): HTMLElement {
+  let root = document.getElementById(SELECTION_OVERLAY_ROOT_ID)
+  if (!root) {
+    root = document.createElement('div')
+    root.id = SELECTION_OVERLAY_ROOT_ID
+    document.body.appendChild(root)
+  }
+  return root
+}
+
+/** A hover ring mounting in the overlay root — what every hover crossing used to produce. */
+function hoverRingMountRecord(): MutationRecord {
+  const ring = document.createElement('div')
+  ring.setAttribute('data-canvas-hover-ring', 'true')
+  return record({ type: 'childList', target: overlayRoot(), addedNodes: [ring] as unknown as NodeList })
+}
+
+/** Portal-frame options: text debounced, structure immediate. */
+function portalOptions(
+  timer: ReturnType<typeof createManualTimer>,
+  onSettle: () => void,
+  debounceMs = FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+): FrameFitMutationSchedulerOptions {
+  return {
+    onSettle,
+    textDebounceMs: debounceMs,
+    structuralDebounceMs: 0,
+    setTimeoutFn: timer.setTimeoutFn,
+    clearTimeoutFn: timer.clearTimeoutFn,
+  }
 }
 
 /** A controllable fake timer: `setTimeoutFn`/`clearTimeoutFn` never fire on
@@ -58,7 +117,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settleCount += 1
       },
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -90,7 +150,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settleCount += 1
       },
-      debounceMs: 200,
+      textDebounceMs: 200,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -114,7 +175,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settleCount += 1
       },
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -130,7 +192,8 @@ describe('createFrameFitMutationScheduler', () => {
     const settleOrder: string[] = []
     const scheduler = createFrameFitMutationScheduler({
       onSettle: () => settleOrder.push('settle'),
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -159,7 +222,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settleCount += 1
       },
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -177,7 +241,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settleCount += 1
       },
-      debounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      textDebounceMs: FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS,
+      structuralDebounceMs: 0,
       setTimeoutFn: timer.setTimeoutFn,
       clearTimeoutFn: timer.clearTimeoutFn,
     })
@@ -198,7 +263,8 @@ describe('createFrameFitMutationScheduler', () => {
       onSettle: () => {
         settled = true
       },
-      debounceMs: 5,
+      textDebounceMs: 5,
+      structuralDebounceMs: 0,
     })
 
     scheduler.handle([characterDataRecord()])
@@ -207,5 +273,85 @@ describe('createFrameFitMutationScheduler', () => {
     await new Promise((resolve) => setTimeout(resolve, 30))
 
     expect(settled).toBe(true)
+  })
+})
+
+describe('createFrameFitMutationScheduler — what is never content (PERF-2, PERF-9)', () => {
+  it('a hover ring mounting in the overlay root neither settles nor schedules a settle (PERF-2)', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
+
+    scheduler.handle([hoverRingMountRecord()])
+
+    expect(settleCount).toBe(0)
+    expect(timer.pendingCount()).toBe(0)
+  })
+
+  it('the overlay root itself being appended to <body> is chrome too', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
+    const root = document.createElement('div')
+    root.id = SELECTION_OVERLAY_ROOT_ID
+
+    scheduler.handle([record({ type: 'childList', target: document.body, addedNodes: [root] as unknown as NodeList })])
+
+    expect(settleCount).toBe(0)
+  })
+
+  it('a chrome-only batch does not cancel a pending text-edit settle', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
+
+    scheduler.handle([characterDataRecord()])
+    scheduler.handle([hoverRingMountRecord()])
+    expect(timer.pendingCount()).toBe(1)
+    timer.flush()
+
+    expect(settleCount).toBe(1)
+  })
+
+  it('a batch mixing chrome with real content is still content', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler(portalOptions(timer, () => (settleCount += 1)))
+
+    scheduler.handle([hoverRingMountRecord(), childListRecord()])
+
+    expect(settleCount).toBe(1)
+  })
+
+  it('an attribute-only batch never resets the fit — a JS-animated app writes style every frame (PERF-9)', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler({
+      ...portalOptions(timer, () => (settleCount += 1)),
+      structuralDebounceMs: LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+    })
+
+    for (let frame = 0; frame < 60; frame += 1) {
+      scheduler.handle([record({ type: 'attributes', target: pageContent(), attributeName: 'style' })])
+    }
+
+    expect(settleCount).toBe(0)
+    expect(timer.pendingCount()).toBe(0)
+  })
+
+  it('a live frame debounces structural churn into one trailing settle (PERF-9)', () => {
+    const timer = createManualTimer()
+    let settleCount = 0
+    const scheduler = createFrameFitMutationScheduler({
+      ...portalOptions(timer, () => (settleCount += 1)),
+      structuralDebounceMs: LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS,
+    })
+
+    for (let frame = 0; frame < 30; frame += 1) scheduler.handle([childListRecord()])
+
+    expect(settleCount).toBe(0)
+    expect(timer.pendingDelays()).toEqual([LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS])
+    timer.flush()
+    expect(settleCount).toBe(1)
   })
 })

@@ -52,8 +52,9 @@
  * Writing {@link OPTIMISTIC_STYLE_ATTR} onto an element is a DOM mutation
  * `runtime.ts`'s `layoutObserver` (watching `doc.body` for real content
  * changes, to know when to re-derive the frame's fit height) would otherwise
- * see — `runtime.ts`'s `isIgnorable` check excludes this attribute by name,
- * the same way it already excludes `resizeHandles.ts`'s own preview stamp.
+ * see — except that it is an ATTRIBUTE record, and `frameFitMutationScheduler`
+ * never resets a fit for an attribute-only batch (PERF-9), the same reason
+ * `resizeHandles.ts`'s own preview stamp is never mistaken for content.
  *
  * ## Reverted before React reconciles, cleared again after
  *
