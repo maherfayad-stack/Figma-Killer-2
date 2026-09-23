@@ -469,7 +469,44 @@ Unlike the old replace-in-place design, a call site's own literal props (`<Icon 
 
 ### Detach and swap (WS-4.4/4.5)
 
-`src/core/ast-codemods/detachComponent.ts` inlines a LOCAL instance's own JSX at its call site, substituting the callee's params with the call site's own argument **expressions** (never evaluated values — `title={plan.name}` stays a binding), reconciling every import the pasted JSX now needs, and removing the component's import if this was its last usage. It **refuses**, with a specific reason, rather than guessing: a hook call anywhere in the body (`uses-hooks`), a `.map` over one of the component's own props (`maps-over-props`), an undestructured `props` parameter (`unsupported-params`), a package (not local) component (`package-component`), or an unresolvable declaration (`unresolvable`). A component with more than one JSX-bearing `return` (parser-06 already selects one) is **not** refused — detach inlines the branch actually shown and reports it via `branchNote`.
+`src/core/ast-codemods/detachComponent.ts` inlines a LOCAL instance's own JSX at its call site, substituting the callee's params with the call site's own argument **expressions** (never evaluated values — `title={plan.name}` stays a binding), reconciling every import the pasted JSX now needs, and removing the component's import if this was its last usage. Owner decision OD-9: the result still renders, the component's props no longer apply, and the user can edit anything freely. A component with more than one JSX-bearing `return` (parser-06 already selects one) is **not** refused — detach inlines the branch actually shown and reports it via `branchNote`.
+
+**It fails closed (DET-1/DET-2, audit 07 §B.1).** Until this pass the header said "fails closed" and the code did not: it substituted a param only when it was the whole `{param}`, so `className={cn(styles.card, className)}`, `{featured && …}`, `` `/p/${id}` ``, `{ width: size }` and `{title.toUpperCase()}` were pasted with a bare `className`/`featured`/`id`/`size`/`title` left in the page — a `ReferenceError`, or worse, a silent rebind to the page component's own binding of the same name. It also trusted any page import that merely shared a NAME, so Card's `styles` (Card.module.css) became the page's `styles` (Home.module.css). Every identifier is now resolved with the TypeScript checker **in the component's file** — which declaration it names, not what it is spelled — and then placed so it names the same thing in the page:
+
+| The JSX reads | Becomes |
+|---|---|
+| a destructured param, in **any** expression position (call argument, `&&` operand, template span, object value, method receiver, shorthand `{ size }`) | the call site's own expression, parenthesized only where the grammar would re-associate it (`{(a + b) * 2}`) |
+| a param the call site **omitted** | its destructured default, or `undefined` — that is exactly what an omitted prop is. An attribute whose whole value becomes `undefined` is dropped; a child `{hint}` disappears |
+| a param with a default, and a call-site value that may be `undefined` | `item.tone === undefined ? 'neutral' : item.tone` — the rule destructuring itself applies |
+| a substituted string | JSX text in a child slot (`<h2>Confirm</h2>`, not `{"Confirm"}`), an attribute string in an attribute (`className="neutral"`, not `className={'neutral'}`) — only when that spelling means exactly the same string (no `{}<>`, no edge whitespace or newline; no `"` or `&` in an attribute) |
+| a param read through a call-site spread `<Card {...plan}/>` (DET-2) | `plan.title`, unless an explicit attribute AFTER the spread sets it (that attribute wins) |
+| the component's `...rest`, spread onto an element (DET-2) | the call site's leftover attributes, verbatim, at that position — a leftover that repeats one of the element's own attributes replaces the earlier one, exactly as the spread did; `rest.x` reads the call site's `x` |
+| a body `const` read once, outside any callback, computed from params and module scope | its initializer, inlined |
+| a module-scope name of the component's file | imported into the page: an equivalent existing import is reused (same module, same export — however it is spelled), else the name is imported as-is when free, else **aliased** (`import cardStyles from '…/Card.module.css'`, `import { Icon as CardIcon }`), renamed exactly because the rename is keyed on the symbol |
+| a global | left as is — and must not be shadowed where the markup lands |
+| `children`, in a child slot | the call site's children, verbatim (the whitespace JSX itself ignores — a run containing a newline at either edge — is trimmed) |
+
+Side-effect imports of the component's file (`import './Card.css'`) are mirrored into the page, because a free-variable walk cannot see them and the detached markup's classes need that sheet. The call site's `key` is carried onto the inlined root (`<Fragment key>` for a fragment root or a non-JSX root, importing `Fragment` from `react`); `ref` is an ordinary prop (React 19's rule).
+
+The refusals, each leaving **both files byte-identical** (the plan is computed and checked before the first byte changes; nothing is saved on any refusal):
+
+| Reason | When | Offers "Duplicate as a new file" |
+|---|---|---|
+| `package-component` | the callee is an installed package or the project's own `design-system/` folder | no (WS-4.4 eject is open) |
+| `unresolvable` / `not-a-component` / `no-renderable-jsx` | as their names say | no |
+| `uses-hooks` | any hook in the body (DET-3 will move context readers) | yes |
+| `maps-over-props` | the JSX `.map`s over one of its own props | yes |
+| `unsupported-params` | an undestructured `props`; a nested destructure the JSX reads; a param used in a type position, or as a tag name the call-site value cannot spell (`as="section"` → `<section>` works; `as={cond ? A : B}` does not); a call-site string carrying an HTML entity that must move into a JS expression; `children` used as a value when several children are passed | yes |
+| `spread-ambiguous` | an explicit attribute BEFORE a spread the param could come from; two spreads; a spread of a non-identifier (`{...getPlan()}`); a call-site spread (or call-site children) into a component that forwards `...rest` | yes |
+| `body-local` | a body value the JSX reads that is not a single-use `const` of params and module scope: read twice, read inside a callback (inlining would recompute it per call), computed from another body value, destructured, a body `function`, or used as a JSX tag | yes |
+| `unbound-reference` | a module-scope helper the component's file declares but does **not** export (the old codemod imported it anyway — an import of a name that module does not have), a name from the scope around the component, or anything the post-build gate cannot account for | yes |
+| `name-collision` | a global the page shadows at the call site; a same-file component whose module-scope name a local shadows at the call site; a call-site value that one of the component's own inner bindings would capture (`title={item.name}` substituted inside the component's own `ROWS.map((item) => …)`) | yes |
+
+**The post-build gate.** After the plan is written into the page in memory, `subtreeFreeVariables.ts` re-reads the inserted markup and checks every free name against what the plan promised — a call-site name must bind exactly as it did at the call site, an imported one at module scope, a global not at all — and `introducesSyntaxErrors` (`reinsertJsxSource.ts`) compares syntactic diagnostics against the original. Anything unaccounted for refuses (`unbound-reference` / `name-collision`) and restores the page's text; a syntax regression is an invariant violation and throws, also without writing. That walk now reads EVERY identifier in the subtree — a `{...rest}` spread attribute and a non-JSX root's condition used to be invisible to it, which extract and move shared.
+
+The codemod is four modules by responsibility: `detachComponent.ts` (the entry, the refusal vocabulary, the gate, the write), `detachSource.ts` (reading the signature, the call site, and the spelling rules for a value), `detachPlanner.ts` (rewriting the JSX by symbol) and `detachNames.ts` (module-scope names, imports and aliases, and the ledger the gate checks).
+
+`src/core/ast-codemods/importReconcile.ts` is where the identity rule lives for every JSX-moving codemod: `importModuleKey` (resolved file, or a relative specifier's absolute target, or a bare specifier), `planImportBinding` (pure — reuse, keep, or alias) and `applyImportBinding` (merges a named import into an existing declaration of the same module). `addReconciledImports` is built on them and returns the rename map.
 
 `src/core/ast-codemods/extractComponentCopy.ts` is the refusal escape hatch: duplicate the component under the next free numeric suffix (`Card` → `Card2`), rename the copy's own export, and repoint just the one call site — no inlining, so none of detach's refusal conditions apply.
 
@@ -477,7 +514,7 @@ Unlike the old replace-in-place design, a call site's own literal props (`<Icon 
 
 All three share `resolveComponentCallSite.ts`'s "what does this JSX tag identifier actually refer to" resolution — the same local/package classification, barrel/rename-aware lookup, and declaration walk `inlineLocalComponents.ts` uses for the identical question.
 
-Measured against the real eSIM corpus (139 `studio.instance` nodes on the board): 59 detach cleanly; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4).
+Measured against the real eSIM corpus (139 `studio.instance` nodes on the board) **before DET-1**: 59 "detached cleanly"; 42 refuse `uses-hooks` (`StatusBar`'s `useState`, and `useLanguage()` — the i18n hook — used throughout); 38 have no single writable call-site location at all (they sit inside a `.map()` row — the pre-existing, unrelated "no writable source location" rule, unchanged by WS-4). Some of those 59 were the silent-rebind and unbound-name writes described above, so that number is an upper bound; re-measuring the corpus is part of DET-3.
 
 ### Imports are followed through barrels
 
@@ -1674,6 +1711,9 @@ here once it is genuinely detectable.
 | Store gate, panel gate, and the writability predicate agreeing | `src/__tests__/studio/resolvedTextEditing.test.ts` |
 | Store refuses a code-valued prop/style, admits a structurally-locked literal one | `src/__tests__/editor-store/lockedNodeGuards.test.ts` |
 | Element rename, and its refusals (component reference, non-tag name) | `src/core/ast-codemods/__tests__/setJsxTagName.test.ts` |
+| Detach: symbol-based substitution everywhere, `undefined` for omitted props, literal collapsing, aliasing, body locals, spread/rest, `key` — and every refusal leaving the workspace byte-identical | `src/core/ast-codemods/__tests__/detachComponent.test.ts` |
+| Import identity: reuse vs alias vs add, side-effect mirroring, mixed-import removal | `src/core/ast-codemods/__tests__/importReconcile.test.ts` |
+| The shared free-variable walk (spread attributes, non-JSX roots, member tags, loop bindings) | `src/core/ast-codemods/__tests__/subtreeFreeVariables.test.ts` |
 | Stylesheet collection, ordering, escape rejection | `src/core/studio-sync/__tests__/collectPageStylesheets.test.ts` |
 | CSS round-trip, id stability, classIds | `server/handlers/__tests__/studioCss.test.ts` |
 | Asset route guards | `server/handlers/__tests__/studioAsset.test.ts` |
