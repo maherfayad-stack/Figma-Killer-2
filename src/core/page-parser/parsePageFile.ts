@@ -24,7 +24,7 @@ import {
   type JsxSelfClosingElement,
   type SourceFile,
 } from 'ts-morph'
-import type { BranchAlternative, FunctionLike, NodeLoc, ParsedNode, ParsedPage } from './types'
+import type { BranchAlternative, ComponentBody, NodeLoc, ParsedNode, ParsedPage } from './types'
 import { createEvalScope, type StaticEvalOptions } from './staticEval'
 import { withResolution, shortenResolutionMap } from './nodeResolution'
 import {
@@ -51,14 +51,8 @@ import { serializeInlineSvg } from './inlineSvg'
 import { extractRawSvgMarkup } from './iconPropValues'
 import { captureSlotProps } from './slotCapture'
 import { jsxElementFingerprint } from './sourceFingerprint'
-
-// Re-exported so every existing `from './parsePageFile'` import (`index.ts`,
-// `inlineLocalComponents.ts`, `nextAppLayout.ts`, `componentSubstitution.ts`)
-// keeps working unchanged — the branch-SELECTION decision moved to its own
-// module (`./branchSelection`, parser-06) purely for the module-size budget;
-// this file still owns finding a component's declaration and walking its JSX.
-export { getReturnedJsxRoots }
-export type { ReturnedJsx }
+import { readPageComponent } from './componentDeclaration'
+import { isReactFragmentTag } from './reactImports'
 
 type JsxOpeningLike = JsxElement | JsxSelfClosingElement
 
@@ -96,18 +90,51 @@ export function parsePageFile(
     const sourceFile = project.getSourceFile(file) ?? project.addSourceFileAtPath(file)
     const relFile = path.relative(appDir, path.resolve(file)).split(path.sep).join('/')
 
-    const componentDecl = findComponentDeclaration(sourceFile)
-    const fn = componentDecl ? getFunctionLikeNode(componentDecl) : undefined
-    const roots = fn ? getReturnedJsxRoots(fn) : []
+    // P3-B (WB-5) — a function component, one inside `memo`/`forwardRef`, a
+    // class's `render()`, or an unknown HOC's wrapped component. Anything else
+    // is recorded as unreadable, with its shape named, so the frame says why
+    // it is blank instead of claiming the page is empty.
+    const component = readPageComponent(sourceFile)
+    if (component.kind === 'unreadable') {
+      const { line, column } = sourceFile.getLineAndColumnAtPos(component.at.getStart())
+      return {
+        rootIds: [],
+        nodes: {},
+        unreadableExport: { line, col: column, message: `The default export of ${relFile} is ${component.shape}.` },
+      }
+    }
 
+    const roots = getReturnedJsxRoots(component.body)
     if (roots.length === 0) return { rootIds: [], nodes: {} }
 
-    return parseJsxTree(roots, sourceFile, relFile, fn, evalOptions)
+    const parsed = parseJsxTree(roots, sourceFile, relFile, component.body, evalOptions)
+    return component.wrappedBy.length > 0 ? withWrapperNote(parsed, component.wrappedBy, relFile) : parsed
   } catch {
     // Never throw on ordinary pages — anything unexpected just yields an
     // empty (unparsed) page rather than a crash for the caller.
     return { rootIds: [], nodes: {} }
   }
+}
+
+/**
+ * WB-5 — a page whose default export is `withLayout(Inner)` renders `Inner`,
+ * and says that `withLayout`'s own contribution is not shown. The note goes on
+ * the page's root nodes, where a branch note would (`parseJsxTree`), without
+ * clobbering a resolution already recorded there; it never locks anything —
+ * `Inner`'s markup is written exactly where the canvas says it is.
+ */
+function withWrapperNote(parsed: ParsedPage, wrappedBy: readonly string[], relFile: string): ParsedPage {
+  const names = wrappedBy.length === 1 ? wrappedBy[0]! : `${wrappedBy.slice(0, -1).join(', ')} and ${wrappedBy[wrappedBy.length - 1]!}`
+  const resolution = {
+    source: relFile,
+    note: `this page is wrapped by ${names} — whatever ${wrappedBy.length === 1 ? 'it adds' : 'they add'} around it is not shown`,
+  }
+  const nodes = { ...parsed.nodes }
+  for (const id of parsed.rootIds) {
+    const node = nodes[id]
+    if (node && !node.resolution) nodes[id] = { ...node, resolution }
+  }
+  return { ...parsed, nodes }
 }
 
 /**
@@ -139,7 +166,7 @@ export function parseJsxTree(
   roots: readonly ReturnedJsx[],
   sourceFile: SourceFile,
   relFile: string,
-  componentFn?: FunctionLike,
+  componentFn?: ComponentBody,
   evalOptions?: StaticEvalOptions,
 ): ParsedPage {
   // W4-4 Phase A — the `styled.…`/`css` bindings this file can see: its own
@@ -204,74 +231,13 @@ export function parseJsxTree(
 }
 
 // ---------------------------------------------------------------------------
-// Component discovery: find the page's exported React component and the
-// JSX it returns.
-// ---------------------------------------------------------------------------
-
-/**
- * Finds the declaration of the page's exported React component:
- *   1. `export default function Foo() {...}`
- *   2. `export default Foo` / `export default () => {...}` (resolves the
- *      identifier back to its local function/const declaration)
- *   3. The first exported function declaration or `const` with a
- *      function/arrow initializer, in source order.
- */
-export function findComponentDeclaration(sourceFile: SourceFile): Node | undefined {
-  for (const fn of sourceFile.getFunctions()) {
-    if (fn.isDefaultExport()) return fn
-  }
-
-  const exportAssignment = sourceFile.getExportAssignments().find((ea) => !ea.isExportEquals())
-  if (exportAssignment) {
-    const expr = exportAssignment.getExpression()
-    if (Node.isIdentifier(expr)) {
-      const declarations = expr.getSymbol()?.getDeclarations() ?? []
-      const match = declarations.find((d) => Node.isVariableDeclaration(d) || Node.isFunctionDeclaration(d))
-      if (match) return match
-    } else if (Node.isArrowFunction(expr) || Node.isFunctionExpression(expr)) {
-      return expr
-    }
-  }
-
-  for (const statement of sourceFile.getStatements()) {
-    if (Node.isFunctionDeclaration(statement) && statement.isExported()) {
-      return statement
-    }
-    if (Node.isVariableStatement(statement) && statement.isExported()) {
-      for (const decl of statement.getDeclarations()) {
-        const init = decl.getInitializer()
-        if (init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
-          return decl
-        }
-      }
-    }
-  }
-
-  return undefined
-}
-
-/** Unwraps a `VariableDeclaration` down to its function/arrow initializer. */
-export function getFunctionLikeNode(decl: Node): FunctionLike | undefined {
-  if (Node.isFunctionDeclaration(decl) || Node.isArrowFunction(decl) || Node.isFunctionExpression(decl)) {
-    return decl
-  }
-  if (Node.isVariableDeclaration(decl)) {
-    const init = decl.getInitializer()
-    if (init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
-      return init
-    }
-  }
-  return undefined
-}
-
-// ---------------------------------------------------------------------------
 // JSX tree walk
 //
 // `ReturnedJsx`/`getReturnedJsxRoots` (which `return` renders) and
 // `selectJsxBranch`/`isLockingExpression` (which side of a ternary/`&&`
-// renders) live in `./branchSelection` — imported above, `getReturnedJsxRoots`
-// re-exported above too. This section owns the actual WALK: turning the
-// chosen JSX into `ParsedNode`s.
+// renders) live in `./branchSelection`, and finding the component whose JSX
+// this is lives in `./componentDeclaration`. This section owns the actual
+// WALK: turning the chosen JSX into `ParsedNode`s.
 // ---------------------------------------------------------------------------
 
 function collectRootIds(root: ReturnedJsx, ctx: ParseContext): string[] {
@@ -282,7 +248,7 @@ function collectRootIds(root: ReturnedJsx, ctx: ParseContext): string[] {
   // remaining question is whether the return's own expression is itself
   // genuinely dynamic (a call, `||`) — same as any other JSX-bearing `{...}`.
   if (Node.isJsxElement(rootExpr) || Node.isJsxSelfClosingElement(rootExpr)) {
-    return [processElement(rootExpr, ctx, false, undefined)]
+    return processJsxElement(rootExpr, ctx, false, undefined)
   }
   if (Node.isJsxFragment(rootExpr)) {
     return processChildren(rootExpr.getJsxChildren(), ctx, false, undefined)
@@ -308,7 +274,7 @@ function collectJsx(
   reason: string | undefined,
 ): string[] {
   if (Node.isJsxElement(expr) || Node.isJsxSelfClosingElement(expr)) {
-    return [processElement(expr, ctx, locked, reason)]
+    return processJsxElement(expr, ctx, locked, reason)
   }
   if (Node.isJsxFragment(expr)) {
     return processChildren(expr.getJsxChildren(), ctx, locked, reason)
@@ -351,6 +317,27 @@ function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
  */
 function codePropNames(propNames: string[], styleNames: string[]): string[] {
   return [...propNames, ...styleNames.map((key) => `style:${key}`)]
+}
+
+/**
+ * WB-26 — the one entry point for a JSX element the walk meets. React's own
+ * `<Fragment>` / `<React.Fragment>` renders no element, exactly like `<>…</>`:
+ * its children are its parent's, and it is not a node (a `key` on it is
+ * React's bookkeeping, not an attribute of anything the canvas draws). Mapping
+ * it to a component instead made it a `pkg.react.*` package placeholder with
+ * the whole subtree inside it. Recognised only when the name is imported from
+ * `'react'` (`./reactImports`) — a user's own `Fragment` is their component.
+ */
+function processJsxElement(
+  element: JsxOpeningLike,
+  ctx: ParseContext,
+  inheritedLocked: boolean,
+  inheritedReason: string | undefined,
+): string[] {
+  if (isReactFragmentTag(Node.isJsxElement(element) ? element.getOpeningElement().getTagNameNode() : element.getTagNameNode())) {
+    return Node.isJsxElement(element) ? processChildren(element.getJsxChildren(), ctx, inheritedLocked, inheritedReason) : []
+  }
+  return [processElement(element, ctx, inheritedLocked, inheritedReason)]
 }
 
 /** Creates the `ParsedNode` for one JSXElement/JSXSelfClosingElement. */
@@ -574,7 +561,7 @@ function processChildren(
     if (Node.isJsxText(child)) continue
 
     if (Node.isJsxElement(child) || Node.isJsxSelfClosingElement(child)) {
-      ids.push(processElement(child, ctx, inheritedLocked, inheritedReason))
+      ids.push(...processJsxElement(child, ctx, inheritedLocked, inheritedReason))
       continue
     }
 
@@ -651,7 +638,7 @@ function walkExpressionForJsx(
     return
   }
   if (Node.isJsxElement(node) || Node.isJsxSelfClosingElement(node)) {
-    ids.push(processElement(node, ctx, locked, reason))
+    ids.push(...processJsxElement(node, ctx, locked, reason))
     return
   }
 

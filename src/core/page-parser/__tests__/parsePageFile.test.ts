@@ -517,12 +517,22 @@ describe('parsePageFile', () => {
     expect(img.props.src).toBeUndefined()
   })
 
-  it('returns an empty page for a file with no component/JSX', () => {
+  it('returns an empty page for a file with no component/JSX — and says why (P3-B, WB-5)', () => {
     const file = writeFixture('no-component.tsx', 'export const x = 1\n')
 
     const page = parsePageFile(file, tmpDir)
 
-    expect(page).toEqual({ rootIds: [], nodes: {} })
+    // No nodes, as before; the frame is told the file has no component rather
+    // than being left to claim "this page is empty".
+    expect(page).toEqual({
+      rootIds: [],
+      nodes: {},
+      unreadableExport: {
+        line: 1,
+        col: 1,
+        message: 'The default export of no-component.tsx is missing — the file exports no React component Studio can read.',
+      },
+    })
   })
 
   it('CROSS-CHECK: locations from parsePageFile are valid setJsxProp targets', () => {
