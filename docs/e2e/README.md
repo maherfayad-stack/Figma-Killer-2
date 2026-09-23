@@ -340,7 +340,7 @@ Every run appends what it measured to `.tmp/agent-turn-measurement.json` — wal
 ms, tool rounds, writeback POSTs, telemetry lines, failed tool labels and the
 changed-file set. That file is how `AGENT_TURN_WALL_MS` gets re-calibrated:
 three runs, budget is 1.5x the worst.
-| §6 decision 2 (`sec-10`, `sec-12`) | The ONE place the trust tier moves without a human clicking anything: a Vite project with a lockfile promotes itself to `run-project` on first open, says so, and **Undo takes it back without clearing the once-only latch** — so a project whose owner said no is never auto-promoted again. Case 8 of the phase-0 spec, on `studio-workspace/__vite-live-fixture` | `studio-feel-phase0.e2e.ts` |
+| Default trust tier (`sec-10`, `sec-12`) | Every project starts at `run-project` (Tier 2) with no click and no notice (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20, superseding the earlier §6 decision 2 one-time auto-promotion). **"Back to static" is a real, permanent demotion that survives a reload** — a demotion that only edits a file while the dev server keeps running is cosmetic. Case 8 of the phase-0 spec, on `studio-workspace/__vite-live-fixture` | `studio-feel-phase0.e2e.ts` |
 | `sec-17` landmine 6 | The frame drag relay's **FILE** branch, which no suite could reach: happy-dom implements neither `DragEvent` nor `DataTransfer`, so `src/__tests__/canvas/canvasFrameDragRelay.test.ts` can only assert the cancel. A real `DataTransfer` built in the frame's own realm must put the PNG in `public/` and an `<img>` in the `.tsx`; a `text/uri-list` drop must leave the frame exactly where it was | `frame-file-drop.e2e.ts` |
 
 #### The expected-failure convention

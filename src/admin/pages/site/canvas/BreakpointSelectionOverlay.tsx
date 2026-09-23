@@ -66,13 +66,11 @@
 
 import { use, useEffect, useEffectEvent, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
-import { styleRuleSelector } from '@core/page-tree'
-import type { VisualComponent } from '@core/visualComponents'
+import { useEditorStore } from '@site/store/store'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { useShallow } from 'zustand/react/shallow'
 import { cn } from '@ui/cn'
-import { CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
+import { CanvasFrameAdapterContext, CanvasPageContext, CanvasViewportActionsContext } from './CanvasContexts'
 import { SelectionToolbar } from './SelectionToolbar'
 import { useCanvasReorderDrag } from './useCanvasReorderDrag'
 import { useCanvasTreeLadderOverlay } from './CanvasTreeLadderOverlay'
@@ -82,7 +80,8 @@ import { useCanvasAnimationScrub } from './animationScrubStore'
 import { createOverlayMeasureScheduler, type OverlayMeasureScheduler } from './overlayMeasureScheduler'
 import { InPlaceInspector } from './InPlaceInspector'
 import { CanvasDropIndicators } from './CanvasDropIndicators'
-import { registerCanvasDropSurface, unregisterCanvasDropSurface } from './canvasDropSurfaceRegistry'
+import { useCanvasDropSurfaceRegistration } from './useCanvasDropSurfaceRegistration'
+import { isBridgeChromeAdapter, useBridgeSelectionChrome } from './useBridgeSelectionChrome'
 import { MeasureLayer } from './MeasureLayer'
 import {
   createCanvasOverlayMeasureSession,
@@ -107,8 +106,8 @@ import {
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
 import { CanvasSelectionChrome } from './CanvasSelectionChrome'
+import { useBreakpointOverlaySelectionState } from './useBreakpointOverlaySelectionState'
 
-const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
 const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
 
@@ -162,54 +161,23 @@ export function BreakpointSelectionOverlay({
   overlayRoot,
   frameId = null,
 }: BreakpointSelectionOverlayProps) {
-  // Multi-select: render one ring per selected node. `useShallow` keeps the
-  // subscription stable when the array reference changes but its contents
-  // are equal (matters because selectedNodeIds is a new array every set call).
-  //
-  // WS-10 Phase 2 — frame-scoped when the selection originated from a board
-  // frame (`selectedNodeFrameId` set): a "duplicate as variant" sibling of
-  // the same page shares every node id (trap #2), so without this an
-  // rtl/dark variant would show the SAME selection ring as its light/ltr
-  // sibling. `null` origin (every CMS/VC selection) keeps the existing
-  // "every frame mirrors the selection" behaviour — see the module doc.
-  const selectedNodeIds = useEditorStore(useShallow((s) =>
-    s.selectedNodeFrameId === null || s.selectedNodeFrameId === frameId
-      ? s.selectedNodeIds
-      : EMPTY_SELECTED_NODE_IDS,
-  ))
-  // `hoveredBreakpointId === null` means "global hover" — i.e. the hover did
-  // not originate from a specific breakpoint frame on the canvas (e.g. it was
-  // triggered by hovering a row in the DOM panel). In that case every frame
-  // mirrors the hover so the user sees the highlight wherever they're looking.
-  // When the hover originated from the canvas itself, scope it to the owning
-  // frame so adjacent breakpoint previews don't all light up at once.
-  // `hoveredFrameId` is the SAME idea one dimension over — see its own doc.
-  const hoveredNodeId = useEditorStore((s) =>
-    s.hoveredNodeId &&
-    (s.hoveredBreakpointId === null || s.hoveredBreakpointId === breakpointId) &&
-    (s.hoveredFrameId === null || s.hoveredFrameId === frameId)
-      ? s.hoveredNodeId
-      : null,
-  )
-  const hoveredBreakpointOrigin = useEditorStore((s) => s.hoveredBreakpointId)
-  const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
-
-  // Selector-affinity highlight: the CSS selector of the rule currently hovered
-  // in the Selectors panel, or null. Resolved to its selector string here so the
-  // RAF tick can `querySelectorAll` it inside the iframe and ring every match.
-  // Like the DOM-panel hover, this is a global highlight — every breakpoint
-  // frame mirrors it, so the user sees the affinity wherever they're looking.
-  const highlightedSelector = useEditorStore((s) => {
-    const classId = s.highlightedSelectorClassId
-    if (!classId) return null
-    const rule = s.site?.styleRules[classId]
-    return rule ? styleRuleSelector(rule) : null
-  })
-  // THIS frame's page (board: one page per frame) — O(1) node-map reads for the
-  // in-iframe badge label (WS-5.1) and the zero-DOM fragment-node rect fallback.
+  // Store reads this component needs (selection/hover, scoped the WS-10 way;
+  // the selector-affinity highlight; this frame's own page; the VC list the
+  // node badge resolves labels against) — pulled into their own hook,
+  // `module-size-budgets` (`speed-04`, STATE.md). See that hook's own doc.
+  const {
+    selectedNodeIds,
+    hoveredNodeId,
+    hoveredBreakpointOrigin,
+    activeBreakpointId,
+    highlightedSelector,
+    framePage,
+    visualComponents,
+  } = useBreakpointOverlaySelectionState(breakpointId, frameId)
+  // THIS frame's page id, straight from context (not `framePage?.id` — the
+  // drag/drop wiring below needs the CONTEXT's id even in the split second
+  // `framePage` hasn't resolved yet, same as before this hook existed).
   const framePageId = use(CanvasPageContext)
-  const framePage = useEditorStore((s) => selectCanvasPageFor(s, framePageId))
-  const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
   // One ref per selected node, keyed by id. Stable across renders while the
   // id stays in the selection — when an id is removed, its ring entry is
   // dropped from the map; when added, a fresh ref is allocated.
@@ -248,6 +216,18 @@ export function BreakpointSelectionOverlay({
   // component; read here so the tick can hand it the elements it just resolved.
   const schedulerRef = useRef<OverlayMeasureScheduler | null>(null)
   const viewportActions = use(CanvasViewportActionsContext)
+  // `live-13` — the frame's adapter, provided by `BreakpointFrame` around this
+  // overlay. Read from context rather than taken as a prop on purpose: a
+  // `BridgeFrameAdapter` holds the iframe's cross-origin `contentWindow`,
+  // and React's dev-mode render logging walks a component's changed props —
+  // a prop-carried adapter had it reading `location` on that window. For a
+  // Tier 2 bridge frame (no `overlayRoot`, no reachable document) the rings,
+  // resize handles and the toolbar/inspector anchor are driven through it
+  // instead of measured here — see `useBridgeSelectionChrome`; the tick
+  // below must neither measure that chrome (it cannot) nor hide what the
+  // bridge hook placed.
+  const adapter = use(CanvasFrameAdapterContext)
+  const bridgeChrome = isBridgeChromeAdapter(adapter)
 
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
@@ -344,33 +324,14 @@ export function BreakpointSelectionOverlay({
   })
 
   // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
-  //
-  // Registration is the viewport test: this overlay only exists for a frame
-  // that is mounted, which `frameVirtualization.ts` (plus the mount pool)
-  // already decided. There is deliberately no second on-screen check here, and
-  // no store selector enumerating frames — a drag reads this list on every
-  // animation frame, and a `useEditorStore` selector that scanned the board
-  // would re-run on every unrelated store change.
-  //
-  // Gated on `canEditStructureHere` so a read-only session, or a frame whose
-  // breakpoint is not the active one, is never offered as a drop target. The
-  // refs are read through a closure rather than captured, because
-  // `dropLayerRef` is populated by React AFTER this effect runs on the first
-  // commit and `iframeElement` is replaced wholesale on a frame reload.
-  useEffect(() => {
-    if (!canEditStructureHere || !framePageId) return
-    const viewport = viewportRef.current
-    if (!viewport) return
-    const key = {}
-    registerCanvasDropSurface(key, {
-      frameId,
-      pageId: framePageId,
-      viewport,
-      iframe: iframeElement,
-      dropLayer: () => reorderDrag.dropLayerRef.current,
-    })
-    return () => unregisterCanvasDropSurface(key)
-  }, [canEditStructureHere, framePageId, frameId, iframeElement, viewportRef, reorderDrag.dropLayerRef])
+  useCanvasDropSurfaceRegistration({
+    enabled: canEditStructureHere,
+    frameId,
+    pageId: framePageId,
+    viewportRef,
+    iframeElement,
+    dropLayerRef: reorderDrag.dropLayerRef,
+  })
 
   // One measurement pass. Reads the freshest selection / hover / toolbar inputs
   // from the latest render closure via useEffectEvent, so the scheduler effect
@@ -402,6 +363,10 @@ export function BreakpointSelectionOverlay({
     const elementCache = nodeElementCacheRef.current!
 
     if (!iframe || !iframeDoc) {
+      // A bridge frame never has a reachable document: its rings are the
+      // runtime's, and `useBridgeSelectionChrome` owns the toolbar/inspector
+      // anchor — hiding them here would undo its placement every tick.
+      if (bridgeChrome) return
       // Nothing measurable (iframe not mounted yet / reloading). Rings/hover/
       // selector-highlight/badge now live INSIDE the iframe document, so when
       // it's gone there is nothing there to hide — only the parent-doc
@@ -514,6 +479,29 @@ export function BreakpointSelectionOverlay({
     }
     if (!anchorDirtyRef.current) return
 
+    // `speed-04` (STATE.md) — this frame's own ring placements (just
+    // measured above, cheaply) already say whether it renders ANY of the
+    // selected nodes at all: `rect` is non-null only when
+    // `elementCache.resolve` found the element inside THIS iframe's
+    // document. When none did, the session below would only ever measure
+    // `null` for every id — empty union, no inspector rect, both hidden —
+    // exactly what the early return two lines down already produces for
+    // free. Skipping the session is behavior-preserving (same output, two
+    // fewer forced `getBoundingClientRect()` reads), and it is the case
+    // that matters: a board frame's own selection is already scoped away
+    // to `EMPTY_SELECTED_NODE_IDS` for every OTHER frame in the pool
+    // (`selectedNodeFrameId`, above), but the CMS/Visual-Component canvas
+    // mirrors one selection across every real breakpoint frame on purpose
+    // — only the frame that actually renders the node should pay for the
+    // anchor measure.
+    const ownsAnySelectedNode = ringPlacements.some((placement) => placement.rect !== null)
+    if (!ownsAnySelectedNode) {
+      hideOverlayElement(toolbarRef.current)
+      hideOverlayElement(inspectorRef.current)
+      anchorDirtyRef.current = false
+      return
+    }
+
     // Reuse the session already created for the fallback ring path (live
     // mode, or the brief design-mode startup window) instead of a second one.
     const session = fallbackSession ?? createCanvasOverlayMeasureSession(iframe, canvasRoot)
@@ -621,6 +609,11 @@ export function BreakpointSelectionOverlay({
   const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
     ? (selectedNodeIds[0] ?? null)
     : null
+  // `live-13` — the same rings, hover, handles and anchor for a bridge frame, through its adapter.
+  useBridgeSelectionChrome(bridgeChrome ? adapter : null, {
+    iframeElement, canvasRoot: portalCanvasRoot, selectedNodeIds: showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS,
+    hoverNodeId: showHover ? hoverRingNodeId : null, showToolbar, inspectorNodeId, toolbarRef, inspectorRef, committedTransform,
+  })
   // This component owns `resizeFrameRef`, so this component writes it —
   // the chrome below is handed a setter, never the ref.
   const setResizeFrameElement = (element: HTMLDivElement | null) => {

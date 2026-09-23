@@ -90,7 +90,12 @@ them drifts:
 | `src/modules/alm/manifest.generated.json` | The component manifest (`buildDesignSystemManifest`). |
 
 The manifest carries two kinds of truth. **Prop truth** (names, kinds, enum
-values, documented examples) drives the Properties panel's generated inspector.
+values, documented examples) drives the Properties panel's generated inspector
+and what an insert writes (`buildDefaults`, `src/modules/alm/inspectorSchema.ts`):
+every documented example except booleans and `error*` props, and — the same
+`appliesWhen` gate the panel hides rows by — a gated example only when the
+seeded value of its controlling prop satisfies the gate, so a primary `Button`
+never arrives carrying `cardLast4`.
 **Findability truth** drives the palette and its search, and is new:
 
 - `description` — the first sentence of the component's `design.md` section

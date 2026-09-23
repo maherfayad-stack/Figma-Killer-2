@@ -83,12 +83,12 @@ export const LiveOriginErrorSchema = Type.Object({
 })
 export type LiveOriginError = Static<typeof LiveOriginErrorSchema>
 
-function liveOriginErrorResponse(status: number, body: LiveOriginError, publicOrigins: readonly string[]): Response {
+function liveOriginErrorResponse(status: number, body: LiveOriginError, frameAncestors: readonly string[]): Response {
   const res = new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   })
-  return liveOriginSecurityHeaders(res, publicOrigins)
+  return liveOriginSecurityHeaders(res, frameAncestors)
 }
 
 /**
@@ -179,6 +179,19 @@ export function resolveUpstreamUrl(baseUrl: string, pathname: string, search: st
  * - `Connection`, `Keep-Alive`, `Upgrade`, `Transfer-Encoding` are hop-by-hop
  *   headers that must not be forwarded verbatim through a second hop.
  */
+/**
+ * The subprotocols a `Sec-WebSocket-Protocol` header offers, in order, each
+ * trimmed, empties dropped — `[]` for a missing header. Exported for the
+ * relay's tests; the header grammar is a plain comma list (RFC 6455 §4.1).
+ */
+export function parseWebSocketProtocols(header: string | null): string[] {
+  if (!header) return []
+  return header
+    .split(',')
+    .map((token) => token.trim())
+    .filter((token) => token.length > 0)
+}
+
 export function stripHopByHopAndCookies(headers: Headers, upstreamHost: string): Headers {
   const out = new Headers(headers)
   out.delete('cookie')
@@ -202,11 +215,12 @@ export function stripSetCookie(headers: Headers): Headers {
   return out
 }
 
-let warnedMissingPublicOrigin = false
-
 /**
  * Apply this listener's response headers: CSP `frame-ancestors` restricted to
- * the configured public origin(s), and `X-Content-Type-Options: nosniff`.
+ * `frameAncestors` — `ServerConfig.liveFrameAncestors`, the same origins the
+ * admin's CSRF check accepts as the editor (public, dev, and the admin
+ * server's own) — and `X-Content-Type-Options: nosniff`. An empty list means
+ * nobody may frame this listener, which is what a caller that passes one gets.
  *
  * `X-Frame-Options` is deliberately NOT set here — it has no multi-origin
  * allowlist form, so setting `DENY`/`SAMEORIGIN` would either block the one
@@ -214,25 +228,28 @@ let warnedMissingPublicOrigin = false
  * CSP `frame-ancestors`, which supersedes XFO) do nothing but look like a
  * stricter policy than the one actually in force.
  */
-export function liveOriginSecurityHeaders(res: Response, publicOrigins: readonly string[]): Response {
+export function liveOriginSecurityHeaders(res: Response, frameAncestors: readonly string[]): Response {
   const headers = new Headers(res.headers)
   headers.set('x-content-type-options', 'nosniff')
-
-  if (publicOrigins.length === 0) {
-    if (!warnedMissingPublicOrigin) {
-      warnedMissingPublicOrigin = true
-      console.warn('[liveOrigin] PUBLIC_ORIGIN not configured — live frames cannot be embedded')
-    }
-    headers.set('content-security-policy', "frame-ancestors 'none'")
-  } else {
-    headers.set('content-security-policy', `frame-ancestors ${publicOrigins.join(' ')}; frame-src 'none'`)
-  }
-
+  headers.set(
+    'content-security-policy',
+    frameAncestors.length === 0 ? "frame-ancestors 'none'" : `frame-ancestors ${frameAncestors.join(' ')}; frame-src 'none'`,
+  )
   return new Response(res.body, { status: res.status, statusText: res.statusText, headers })
 }
 
 interface LiveOriginSocketData {
   upstreamWsUrl: string
+  /**
+   * The subprotocols the browser offered (`Sec-WebSocket-Protocol`), in order.
+   * Vite's HMR listener upgrades ONLY a socket that offers `vite-hmr` (or
+   * `vite-ping` for its reconnect probe) and silently leaves any other upgrade
+   * hanging — so a relay that opens its upstream leg without them never gets
+   * an answer, times out, and the browser's Vite client falls into "server
+   * connection lost, polling for restart… reload" for every live frame on the
+   * board (`live-11`). Forwarded verbatim to the outbound `WebSocket`.
+   */
+  protocols: string[]
   upstream?: WebSocket
   /**
    * Messages the browser sent before the outbound `WebSocket` to the
@@ -298,7 +315,7 @@ export function enqueuePendingMessage(
 
 /** Minimal shape `handleLiveOriginFetch` needs from `Bun.Server` — just enough to upgrade a socket, and a test seam. */
 export interface LiveOriginUpgradeServer {
-  upgrade(req: Request, options: { data: LiveOriginSocketData }): boolean
+  upgrade(req: Request, options: { data: LiveOriginSocketData; headers?: Record<string, string> }): boolean
 }
 
 /**
@@ -315,19 +332,19 @@ export interface LiveOriginUpgradeServer {
 export async function handleLiveOriginFetch(
   req: Request,
   server: LiveOriginUpgradeServer,
-  publicOrigins: readonly string[],
+  frameAncestors: readonly string[],
   fetchImpl: typeof fetch = globalThis.fetch.bind(globalThis),
 ): Promise<Response | undefined> {
   const url = new URL(req.url)
   const parsed = parseLivePath(url.pathname)
   if (!parsed) {
-    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, publicOrigins)
+    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, frameAncestors)
   }
   const { projectKey } = parsed
   const dir = resolveProjectDirForKey(projectKey)
 
   if (!dir) {
-    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, publicOrigins)
+    return liveOriginErrorResponse(404, { error: 'Unknown project', code: 'unknown-project' }, frameAncestors)
   }
 
   const status = getDevServerStatus(dir)
@@ -340,12 +357,23 @@ export async function handleLiveOriginFetch(
       return liveOriginErrorResponse(
         503,
         { error: 'Dev server is not ready', code: 'not-ready', phase: status.phase },
-        publicOrigins,
+        frameAncestors,
       )
     }
     const upstream = resolveUpstreamUrl(upstreamUrl, url.pathname, url.search)
     upstream.protocol = upstream.protocol === 'https:' ? 'wss:' : 'ws:'
-    const ok = server.upgrade(req, { data: { upstreamWsUrl: upstream.toString() } })
+    const protocols = parseWebSocketProtocols(req.headers.get('sec-websocket-protocol'))
+    // The browser's socket is accepted BEFORE the upstream leg has negotiated
+    // anything, so the subprotocol it is told about is the first one it
+    // offered. A client that offers one and hears none back fails the
+    // handshake itself (Chrome: "Sent non-empty 'Sec-WebSocket-Protocol'
+    // header but no response was received"), which is the same reload loop
+    // from the other side. Vite offers exactly one, so first-offered is the
+    // one the upstream will accept too.
+    const ok = server.upgrade(req, {
+      data: { upstreamWsUrl: upstream.toString(), protocols },
+      headers: protocols.length > 0 ? { 'sec-websocket-protocol': protocols[0] } : undefined,
+    })
     return ok ? undefined : new Response('Upgrade failed', { status: 400 })
   }
 
@@ -354,7 +382,7 @@ export async function handleLiveOriginFetch(
     return liveOriginErrorResponse(
       503,
       { error: 'Dev server is not ready', code: 'not-ready', phase: status.phase },
-      publicOrigins,
+      frameAncestors,
     )
   }
 
@@ -371,7 +399,7 @@ export async function handleLiveOriginFetch(
     status: upstreamRes.status,
     headers: stripSetCookie(upstreamRes.headers),
   })
-  return liveOriginSecurityHeaders(res, publicOrigins)
+  return liveOriginSecurityHeaders(res, frameAncestors)
 }
 
 /**
@@ -396,18 +424,25 @@ export function getLiveOriginRuntimeOrigin(): string | null {
  * by `live-origin-isolation.test.ts`).
  */
 export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOriginSocketData> {
-  const publicOrigins = config.publicOrigins
+  const frameAncestors = config.liveFrameAncestors
 
   const server = Bun.serve<LiveOriginSocketData>({
     port: config.livePort,
+    // Bun's default request idle timeout is 10 s. A proxied request that
+    // streams longer than that — Vite holding a module request while it
+    // re-optimizes dependencies — was cut off mid-body, and the frame got
+    // half a module ("request timed out after 10 seconds" in the log). The
+    // admin listener already runs with no idle timeout; the two must match,
+    // or a frame breaks where the editor would not (`live-16`).
+    idleTimeout: 0,
 
     fetch(req, server) {
-      return handleLiveOriginFetch(req, server, publicOrigins)
+      return handleLiveOriginFetch(req, server, frameAncestors)
     },
 
     websocket: {
       open(ws) {
-        const upstream = new WebSocket(ws.data.upstreamWsUrl)
+        const upstream = new WebSocket(ws.data.upstreamWsUrl, ws.data.protocols)
         ws.data.upstream = upstream
         ws.data.pending = []
         ws.data.pendingBytes = 0
@@ -533,7 +568,7 @@ export function startLiveOriginServer(config: ServerConfig): Bun.Server<LiveOrig
           status: 500,
           headers: { 'content-type': 'application/json' },
         }),
-        publicOrigins,
+        frameAncestors,
       )
     },
   })

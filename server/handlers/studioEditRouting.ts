@@ -20,7 +20,7 @@
  * working and the writeback path still has one front door.
  */
 import { realpathSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { INLINE_ID_SEPARATOR } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { isSlotEditKind } from './studioSlotWriteback'
@@ -126,12 +126,34 @@ export function canonicalSourceRel(dir: string, rel: string): string | null {
   return isWritableSourceRel(canonical) ? canonical : null
 }
 
-/** The real path, or the plainly-resolved one when the entry does not exist yet. */
+/**
+ * The real path of `path` — resolved through the DEEPEST ancestor that exists
+ * when `path` itself does not yet.
+ *
+ * Resolving only the whole path, and falling back to the plain `resolve()`
+ * when it is missing, made a not-yet-created file the one case where a
+ * symlinked project root put `dir` and `join(dir, rel)` on different sides
+ * of the link: `realpathSync.native(dir)` came back as `/private/var/…` while
+ * the missing file stayed `/var/…`, so `relative()` climbed out through `..`
+ * and the guard refused a file the codemod was about to create in the right
+ * place. macOS `os.tmpdir()` is exactly such a link, which is why every test
+ * fixture under it hit this; a project checked out through a symlink hits it
+ * on the first new-file write.
+ */
 function realpathOr(path: string): string {
-  try {
-    return realpathSync.native(path)
-  } catch {
-    return resolve(path)
+  const missing: string[] = []
+  let current = resolve(path)
+  for (;;) {
+    try {
+      return join(realpathSync.native(current), ...missing.reverse())
+    } catch {
+      const parent = dirname(current)
+      // The filesystem root always exists; reaching it without a hit means
+      // the path is unreadable rather than missing — return it resolved.
+      if (parent === current) return resolve(path)
+      missing.push(basename(current))
+      current = parent
+    }
   }
 }
 
@@ -293,6 +315,11 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
  * element in a batch (a cross-frame drag resolves one target, and the second
  * would be planned against a tree the first already changed). Collapsing it
  * would silently drop a copy while `written` reported the truth.
+ *
+ * `reinsert-source` (`store-15`) joins `insert` for the identical reason: its
+ * `nodeId` is the PARENT being restored INTO, not a span it overwrites, and a
+ * multi-node delete's ⌘Z posts one `reinsert-source` per restored sibling
+ * against that same parent — two wanted elements, not a duplicate write.
  */
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
@@ -317,6 +344,7 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'wrap' ||
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
+      edit.kind === 'reinsert-source' ||
       edit.kind === 'styled'
     ) {
       passthrough.push(edit)

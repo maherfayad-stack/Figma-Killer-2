@@ -26,10 +26,10 @@
  * either one restores one of the two failures above.
  *
  * **What the second half is worth** (`sec-12`, and read this before leaning on
- * it): it proves the project's tier, which under §6 decision 2 of
- * STUDIO-FIGMA-FEEL-PLAN.md a Vite project with a lockfile acquires on first
- * OPEN — so it is not per-call human consent. It is only a gate at all
- * because the agent cannot write `.studio/` itself
+ * it): it proves the project's tier, and every project starts at `run-project`
+ * by default (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20) — so it is
+ * not per-call human consent, it is the product default. It is only a gate at
+ * all because the agent cannot write `.studio/` itself
  * (`server/handlers/studio/agentWriteScope.ts`); without that refusal the
  * caller could set the field this gate reads.
  */

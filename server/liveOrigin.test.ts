@@ -302,15 +302,15 @@ describe('handleLiveOriginFetch', () => {
     expect(new URL(recorded[0].url).host).toBe(new URL(UPSTREAM_ORIGIN).host)
   })
 
-  it('sets a CSP frame-ancestors header scoped to the configured public origin, and no X-Frame-Options', async () => {
+  it('sets a CSP frame-ancestors header listing exactly the framing origins it was given, and no X-Frame-Options', async () => {
     registerProject('acme-app', 'ready')
     const req = stubRequest('http://live.local/p/acme-app/')
-    const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN], fakeUpstreamFetch([]))
-    expect(res?.headers.get('content-security-policy')).toBe(`frame-ancestors ${PUBLIC_ORIGIN}; frame-src 'none'`)
+    const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [PUBLIC_ORIGIN, 'http://127.0.0.1:3001'], fakeUpstreamFetch([]))
+    expect(res?.headers.get('content-security-policy')).toBe(`frame-ancestors ${PUBLIC_ORIGIN} http://127.0.0.1:3001; frame-src 'none'`)
     expect(res?.headers.get('x-frame-options')).toBeNull()
   })
 
-  it('falls back to frame-ancestors none when no public origin is configured', async () => {
+  it('an empty framing-origin list answers frame-ancestors none — nobody may embed it', async () => {
     registerProject('acme-app', 'ready')
     const req = stubRequest('http://live.local/p/acme-app/')
     const res = await handleLiveOriginFetch(req, { upgrade: () => false }, [], fakeUpstreamFetch([]))
@@ -365,6 +365,54 @@ describe('handleLiveOriginFetch', () => {
     expect(capturedUpstreamWsUrl).toBe('ws://127.0.0.1:5173/p/ws-app/vite-hmr')
   })
 
+  // `live-11` — Vite's HMR listener upgrades ONLY a socket offering `vite-hmr`
+  // (or `vite-ping`) and leaves any other upgrade hanging. The relay used to
+  // drop the browser's `Sec-WebSocket-Protocol` on both legs: the upstream
+  // never answered, the connect watchdog closed the browser's socket, and
+  // Vite's client reloaded every live frame on the board in a loop.
+  it('carries the browser\'s subprotocols to the upstream leg and echoes the first back on the upgrade', async () => {
+    registerProject('ws-app', 'ready')
+    let captured: { protocols: string[]; headers?: Record<string, string> } | undefined
+    const req = stubRequest('http://live.local/p/ws-app/', {
+      upgrade: 'websocket',
+      connection: 'Upgrade',
+      'sec-websocket-protocol': 'vite-hmr, vite-ping',
+    })
+    const res = await handleLiveOriginFetch(
+      req,
+      {
+        upgrade: (_req, options) => {
+          captured = { protocols: options.data.protocols, headers: options.headers }
+          return true
+        },
+      },
+      [PUBLIC_ORIGIN],
+      fakeUpstreamFetch([]),
+    )
+    expect(res).toBeUndefined()
+    expect(captured?.protocols).toEqual(['vite-hmr', 'vite-ping'])
+    expect(captured?.headers).toEqual({ 'sec-websocket-protocol': 'vite-hmr' })
+  })
+
+  it('offers no subprotocol upstream, and echoes none, when the browser offered none', async () => {
+    registerProject('ws-app', 'ready')
+    let captured: { protocols: string[]; headers?: Record<string, string> } | undefined
+    const req = stubRequest('http://live.local/p/ws-app/', { upgrade: 'websocket', connection: 'Upgrade' })
+    await handleLiveOriginFetch(
+      req,
+      {
+        upgrade: (_req, options) => {
+          captured = { protocols: options.data.protocols, headers: options.headers }
+          return true
+        },
+      },
+      [PUBLIC_ORIGIN],
+      fakeUpstreamFetch([]),
+    )
+    expect(captured?.protocols).toEqual([])
+    expect(captured?.headers).toBeUndefined()
+  })
+
   it('never derives an attacker-chosen WebSocket host from a network-path reference in the URL', async () => {
     registerProject('ws-app', 'ready')
     let capturedUpstreamWsUrl: string | undefined
@@ -397,7 +445,14 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
       hostname: '127.0.0.1',
       fetch(req, server) {
         if (req.headers.get('upgrade')?.toLowerCase() === 'websocket') {
-          return server.upgrade(req) ? undefined : new Response('Upgrade failed', { status: 400 })
+          // Vite's own rule (`hmrServerWsListener`): only a socket offering
+          // `vite-hmr` is upgraded. Answering 400 instead of Vite's silent
+          // hang keeps the failing case fast — the relay's upstream leg
+          // errors at once rather than after its connect watchdog.
+          const offered = req.headers.get('sec-websocket-protocol')
+          if (offered !== 'vite-hmr') return new Response('no vite-hmr subprotocol offered', { status: 400 })
+          const ok = server.upgrade(req, { headers: { 'sec-websocket-protocol': 'vite-hmr' } })
+          return ok ? undefined : new Response('Upgrade failed', { status: 400 })
         }
         return new Response('not a websocket request', { status: 400 })
       },
@@ -413,6 +468,7 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
       ...config,
       livePort: 0,
       publicOrigins: [PUBLIC_ORIGIN],
+      liveFrameAncestors: [PUBLIC_ORIGIN],
     })
   })
 
@@ -421,15 +477,19 @@ describe('liveOrigin — real WebSocket bridge (genuine socket required)', () =>
     fakeUpstream.stop(true)
   })
 
-  it('relays a message round-trip through the fake upstream echo handler', async () => {
+  it('relays a vite-hmr socket end to end: the upstream sees the subprotocol, the browser hears it back, messages round-trip', async () => {
     registerProject('ws-app', 'ready', `http://127.0.0.1:${fakeUpstream.port}`)
-    const ws = new WebSocket(`ws://127.0.0.1:${liveServer.port}/p/ws-app/`)
+    const ws = new WebSocket(`ws://127.0.0.1:${liveServer.port}/p/ws-app/`, 'vite-hmr')
     await new Promise<void>((resolve, reject) => {
       ws.addEventListener('open', () => resolve())
       ws.addEventListener('error', () => reject(new Error('ws open failed')))
     })
-    const roundTrip = new Promise<string>((resolve) => {
+    expect(ws.protocol).toBe('vite-hmr')
+    const roundTrip = new Promise<string>((resolve, reject) => {
       ws.addEventListener('message', (event) => resolve(event.data as string))
+      // Without the fix the upstream refuses the protocol-less leg, the relay
+      // closes the browser's socket with 1011, and no message ever comes back.
+      ws.addEventListener('close', (event) => reject(new Error(`relay closed the socket: ${event.code}`)))
     })
     ws.send('ping')
     expect(await roundTrip).toBe('ping')

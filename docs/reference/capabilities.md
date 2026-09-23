@@ -140,12 +140,12 @@ Studio is a filesystem workspace (a project on disk), not a DB-backed site docum
 `checkTrustTier(dir, 'run-project')` proves the **project** is at Tier 2. Read
 that literally, because two things it is often taken to mean are not implied:
 
-- **It is not per-invocation human consent.** Under §6 decision 2 of
-  `STUDIO-FIGMA-FEEL-PLAN.md`, a Vite project with a lockfile is promoted to
-  Tier 2 on **first open**, with a notice and an undo rather than a prompt. For
-  those projects the tier records the project's shape, not a decision anyone
-  made about this call. Anything that genuinely needs the user in the loop has
-  to ask at the point of use.
+- **It is not per-invocation human consent.** Every project starts at Tier 2
+  by default (`DEFAULT_TRUST_TIER` — owner decision, 2026-09-20; before that,
+  §6 decision 2 of `STUDIO-FIGMA-FEEL-PLAN.md` promoted only a Vite project
+  with a lockfile on first open, with a notice and an undo). The tier records
+  the product default, not a decision anyone made about this call. Anything
+  that genuinely needs the user in the loop has to ask at the point of use.
 - **It does prove no agent promoted itself.** `.studio/` is Studio's consent
   record and lives inside the directory the CLI driver's native `Write`/`Edit`
   can reach, so the tier would otherwise be a file the caller it gates can
@@ -188,23 +188,24 @@ workspace's own style toolchain (Sass/PostCSS/Tailwind) in a subprocess —
 
 That is deliberate, and the reasoning is a CAPABILITY boundary — not, as an
 earlier draft of this section claimed, a human consent. Be precise about which,
-because `sec-12` and `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 already forbid
-the looser reading:
+because `sec-12` already forbids the looser reading, and the 2026-09-20
+default-tier change makes it more true, not less:
 
-- **What is actually guaranteed: a `studio.run.project` holder opened this
-  project at least once.** Nothing compiles at Tier 0, and the only way off
-  Tier 0 is `POST /trust-tier`, which requires `studio.run.project` — a
-  capability Owner and Admin hold and Client does not. On a project no
-  privileged user has ever opened, a Client's `GET /load` compiles nothing at
-  all. That is the whole of the boundary.
-- **What is NOT guaranteed: that a human answered a question.** For a Vite
-  project with a lockfile the editor fires that POST itself on first open and
-  shows a notice with an Undo (`LiveAutoPromoteNotice.tsx`). **Tier 2 for a
-  Vite project is a product default, not a consent boundary** — the brief says
-  so in as many words. So "the user consented to this compile" would be false
-  for exactly the projects most likely to reach it, and nothing downstream may
-  be built on it. Anything that genuinely needs a human to have agreed must
-  ask at the point of use.
+- **What is actually guaranteed: `studio.run.project` is the ONLY capability
+  that can ever move a project OFF Tier 0.** `POST /trust-tier` requires it —
+  Owner and Admin hold it, Client does not. That still bounds who can ever
+  UN-demote a project a human explicitly set to `static`.
+- **What is NOT guaranteed: that a human answered a question, or even that a
+  privileged user ever opened the project.** Every project starts at
+  `run-project` (`DEFAULT_TRUST_TIER`) by default — nobody has to run the
+  POST above for a fresh project to compile. A Client's very first
+  `GET /load` on a project nobody with `studio.run.project` has ever touched
+  still compiles at Tier 1, because Tier 2 already clears that gate
+  (`trust !== 'static'`). **Tier 2 is a product default, not a consent
+  boundary** — the brief says so in as many words. So "the user consented to
+  this compile" would be false for every project, not a narrow subset of
+  them, and nothing downstream may be built on it. Anything that genuinely
+  needs a human to have agreed must ask at the point of use.
 - **Gating the read on `studio.run.project` would break the feature, not the
   attack.** At Tier 1 the compiled CSS *is* the document's appearance. A
   reviewer who may see the document but triggers no compile sees an unstyled

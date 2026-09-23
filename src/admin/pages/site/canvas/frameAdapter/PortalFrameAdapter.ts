@@ -17,6 +17,7 @@
 import { getColorSchemeCapability } from '@site/studio/previewAxesCapability'
 import type { PreviewAxes } from '@core/studio-board'
 import {
+  collectDropCandidates,
   OVERLAY_ID_ATTR,
   SELECTION_CHROME_RULES,
   SELECTION_OVERLAY_ROOT_ID,
@@ -31,6 +32,7 @@ import {
 import { applyPreviewAxesToFrameDocument } from '../previewAxesFrameEffect'
 import { escapeCssAttributeValue } from '../escapeCssAttributeValue'
 import type {
+  DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
   NodeMeasurement,
@@ -149,6 +151,13 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       const el = findByNodeId(this.doc, nodeId)
       if (el) el.textContent = text
     },
+    // `speed-01` — a documented no-op. The store write this call previews/
+    // commits already re-renders the portal tree through React on the SAME
+    // tick; a second DOM write here would be a redundant paint racing the
+    // first, exactly the reasoning `optimisticStructuralBroadcast.ts` gives
+    // for skipping portal adapters on insert/delete/move.
+    style: () => {},
+    clearStyle: () => {},
   }
 
   constructor(doc: Document) {
@@ -303,10 +312,41 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     })
   }
 
+  /**
+   * `speed-06` — reuses the SAME `collectDropCandidates` the in-frame bridge
+   * runtime answers `dropCandidates` with (`@core/studio-runtime`): a portal
+   * document's `data-node-id` values are already canonical tree node ids, so
+   * there is no stamp/occurrence translation to do here — `occurrenceIndex`
+   * and `childRects` are simply dropped, unused by this side of the bridge.
+   */
+  async measureDropCandidates(): Promise<DropCandidateGeometry[]> {
+    return collectDropCandidates(this.doc).map(({ nodeId, rect, axis, reversed }) => ({ nodeId, rect, axis, reversed }))
+  }
+
   setAxes(axes: PreviewAxes): void {
     if (!this.doc.documentElement) return
     applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability())
   }
+
+  /**
+   * A portal frame's resize handles are the parent's own React elements,
+   * portaled into this document's overlay root (`CanvasResizeHandles`) and
+   * dragged from the parent (`useElementResizeDrag`) — a same-origin document
+   * allows it, and that path commits synchronously in the same tick. The
+   * in-frame handles this call drives exist for the cross-origin bridge; a
+   * second set here would be two sets of handles on one element.
+   */
+  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+
+  /**
+   * `live-18` — a documented no-op. Nothing in portal mode ever emits
+   * `text:editStart` (the DOM never posts it — this is a same-origin,
+   * cross-window-free document): `NodeRenderer` starts, live-commits, and
+   * ends its own inline-edit session directly against the store, with no
+   * adapter round trip at all. This method exists only so `BridgeFrameAdapter`
+   * and `PortalFrameAdapter` satisfy the same `FrameDocumentAdapter` shape.
+   */
+  startTextEdit(_nodeId: string, _allowed: boolean, _text?: string): void {}
 
   setInteractionMode(mode: 'design' | 'live'): void {
     if (mode === this.interactionMode) return
@@ -328,9 +368,11 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     this.animationController ??= startAnimationFreeze(this.doc, RUNTIME_ANIMATION_STYLE_ID)
   }
 
+  // `text:editStart`/`text:commit`/`text:cancel` are never emitted here (see
+  // `startTextEdit`'s doc) — the default `bus.on` registration below is a
+  // valid, harmless subscription to an event portal mode never fires.
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
     if (event === 'pointer') return this.onPointer(handler as (msg: Extract<FrameRuntimeEvent, { type: 'pointer' }>) => void)
-    if (event === 'text:edit') return this.onTextEdit(handler as (msg: Extract<FrameRuntimeEvent, { type: 'text:edit' }>) => void)
     return this.bus.on(event, handler)
   }
 
@@ -346,7 +388,13 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
         rect,
         clientX: ev.clientX,
         clientY: ev.clientY,
+        screenX: ev.screenX,
+        screenY: ev.screenY,
         modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
+        button: ev.button,
+        buttons: ev.buttons,
+        pointerId: 'pointerId' in ev ? ev.pointerId : 0,
+        pointerType: 'pointerType' in ev ? ev.pointerType : '',
       })
     }
     const onDown = (ev: PointerEvent) => forward('down', ev)
@@ -363,20 +411,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       this.doc.removeEventListener('pointerup', onUp, true)
       this.doc.removeEventListener('click', onClick, true)
     }
-    this.domUnsubscribes.push(unsubscribe)
-    return unsubscribe
-  }
-
-  private onTextEdit(handler: (msg: Extract<FrameRuntimeEvent, { type: 'text:edit' }>) => void): Unsubscribe {
-    const onInput = (ev: Event): void => {
-      const target = ev.target instanceof Element ? ev.target : null
-      if (!target?.hasAttribute('contenteditable')) return
-      const nodeId = target.getAttribute(NODE_ID_ATTR)
-      if (!nodeId) return
-      handler({ type: 'text:edit', nodeId, text: target.textContent ?? '' })
-    }
-    this.doc.addEventListener('input', onInput, true)
-    const unsubscribe = () => this.doc.removeEventListener('input', onInput, true)
     this.domUnsubscribes.push(unsubscribe)
     return unsubscribe
   }

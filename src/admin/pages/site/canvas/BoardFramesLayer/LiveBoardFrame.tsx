@@ -43,6 +43,7 @@ import { FramePosterPlaceholder } from './FramePosterPlaceholder'
 import { getFramePoster } from './frameSnapshotCache'
 import { useAdapterReady } from './useAdapterReady'
 import { useBridgeFrameDiagnostics } from '../useBridgeFrameDiagnostics'
+import { useBridgeFrameInteraction } from './useBridgeFrameInteraction'
 
 interface LiveBoardFrameProps {
   page: Page
@@ -79,6 +80,9 @@ export function LiveBoardFrame({
   // badge subscribes to; the same call also makes the findings visible to
   // `studio_page_diagnostics`, which reads this iframe's `contentWindow`.
   useBridgeFrameDiagnostics(adapter, frameId)
+  // `live-12` — clicks and wheel forwarded out of the cross-origin frame
+  // reach selection and zoom; without this they reached nothing.
+  useBridgeFrameInteraction(adapter, { breakpointId: breakpoint.id, frameId, isActive, onActivate })
 
   // `server/liveOrigin.ts` (L2) routes on the `/p/<projectKey>` path
   // segment — `useLiveOrigin` only knows the bare server-topology origin
@@ -89,15 +93,17 @@ export function LiveBoardFrame({
   // reproduced client-side — see that field's own doc).
   const liveOrigin = bareLiveOrigin && projectKey ? `${bareLiveOrigin}/p/${projectKey}` : null
 
-  // A dev server that has already given up will never emit `ready` — no
-  // point handing the bridge iframe a `liveFrame` and letting it spin
-  // against a dead upstream (a real network attempt through the live-origin
-  // proxy, not a free no-op). Every OTHER phase — including `'stopped'`, the
-  // honest state for the brief window before `useDevServerPrewarm`'s fire-
-  // and-forget `startDevServer` call resolves — still attempts it: this
-  // frame is meant to boot CONCURRENTLY with showing the fallback, not wait
-  // for a confirmed-booting signal first.
-  const attemptLive = liveOrigin !== null && readiness.phase !== 'failed'
+  // Only once the dev server is READY. The live-origin proxy answers 503
+  // for every other phase, and an iframe that loaded that 503 stays on it:
+  // nothing here re-points it when the phase moves, because `liveFrame`'s
+  // identity (below) must not change on every poll. So a frame handed a
+  // `liveFrame` while the server was still `booting` — which is every frame
+  // on a board that just opened, since `useDevServerPrewarm` starts the boot
+  // as the canvas mounts — sat on an error document for good, and the
+  // fallback never handed off. The boot itself is still concurrent with the
+  // fallback (prewarm owns it, not this frame); this only delays the one
+  // network attempt until it can succeed.
+  const attemptLive = liveOrigin !== null && readiness.phase === 'ready'
 
   // React Compiler exception #1 (CLAUDE.md) — this value feeds
   // `IframeFrameSurface`'s bridge-adapter-construction effect, which keys on
@@ -152,6 +158,12 @@ export function LiveBoardFrame({
           documentMode="bridge"
           liveFrame={liveFrame}
           onAdapterChange={setAdapter}
+          // `speed-04` (STATE.md) — the bridge overlay has nothing to do
+          // until this frame is ready (see `overlayEnabled`'s own doc on
+          // `BreakpointFrame`): the Tier-0 fallback above is the ONLY active
+          // selection chrome for this board frame while `!ready`, and it
+          // unmounts the instant this flips, so the two are never both live.
+          overlayEnabled={ready}
         />
       </div>
     </>

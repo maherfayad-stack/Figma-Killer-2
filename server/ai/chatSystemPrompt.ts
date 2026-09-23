@@ -26,7 +26,7 @@ import type { DesignPolicy } from '../handlers/studio/designPolicy'
 import { buildStudioLiveDigest } from './tools/studio/liveDigest'
 import { StudioAgentSnapshotSchema } from './tools/studio/snapshot'
 import { resolveProjectProfile } from '../handlers/studio/projectProbe'
-import { readStudioMeta } from '../handlers/studio/studioMeta'
+import { DEFAULT_TRUST_TIER, readStudioMeta } from '../handlers/studio/studioMeta'
 import { projectDisplayName } from '../handlers/studioProjects'
 import type { AiTool } from './tools/types'
 
@@ -107,7 +107,7 @@ export async function buildStudioProjectSystemPrompt(
 ): Promise<string[]> {
   let ctx: ReturnType<typeof studioPromptContextFromProfile>
   try {
-    const trust = readStudioMeta(dir).trust ?? 'static'
+    const trust = readStudioMeta(dir).trust ?? DEFAULT_TRUST_TIER
     const profile = resolveProjectProfile(dir)
     const name = projectDisplayName(dir)
     ctx = studioPromptContextFromProfile(dir, name, trust, profile)

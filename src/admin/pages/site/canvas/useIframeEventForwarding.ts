@@ -59,22 +59,20 @@
  *
  * Portal mode only (`live-05`, STATE.md, Batch 3) — reads the frame's native
  * `Document` through `PortalFrameAdapter`'s escape hatch (`getPortalWindow`).
- * Bridge mode is a documented, real gap, not a silent one: the pointer half
- * has a genuine analog in `runtime.ts`'s outbound `pointer` message, but
- * there is no wire message for keyboard forwarding at all today, and the
- * space-held / cross-frame-drag flags this file reads/writes on the PARENT
- * `<html>` dataset have no bridge-mode equivalent either — building either
- * would mean designing and security-reviewing new `messages.ts` traffic
- * (mirroring the `occurrenceIndex`/`frame:resize` additions already flagged
- * for a second `security-guard` look), which is real, separate work, not a
- * mechanical prop-to-adapter swap. A Tier 2 design-board frame therefore
- * does not yet pan/keyboard-forward through this hook; flag this to whoever
- * wires up `documentMode==='bridge'` for real.
+ * A bridge frame's wheel and pan presses take the wire instead: the runtime
+ * forwards them as `wheel`/`pointer` messages and
+ * `useBridgeFrameInteraction` (`live-12`/`live-13`) replays them on the
+ * iframe element, the same target this hook dispatches to. Two gaps remain
+ * there, real and documented rather than silent: no wire message forwards
+ * the KEYBOARD (a design-mode bridge frame never takes focus, so Space and
+ * the shortcuts land on the parent document anyway), and the cross-frame
+ * drag relay has no bridge-mode equivalent.
  */
 
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { installFrameDragRelay } from './canvasFrameDragRelay'
+import { readCanvasPointerRelay } from './canvasPointerRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -294,11 +292,8 @@ export function useIframeEventForwarding(
       iframe.dispatchEvent(forwarded)
     }
     const isCanvasDragActive = (): { pointerId: number } | null => {
-      const html = iframe.ownerDocument?.documentElement
-      if (!html) return null
-      if (html.dataset.studioCanvasDragging !== '1') return null
-      const id = Number(html.dataset.studioCanvasDraggingPointerId ?? NaN)
-      return Number.isFinite(id) ? { pointerId: id } : { pointerId: 0 }
+      const ownerDoc = iframe.ownerDocument
+      return ownerDoc ? readCanvasPointerRelay(ownerDoc) : null
     }
     // True while a pan gesture started inside this iframe is still in
     // flight (space+left-click hold). We start a pan on pointerdown when

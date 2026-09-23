@@ -99,9 +99,10 @@
  * subprocess once the project is off Tier 0 — see
  * `docs/reference/capabilities.md`'s "Two reads that spawn" for why the
  * boundary there is a CAPABILITY (a `studio.run.project` holder put this
- * project on that tier) and deliberately not a human consent: a Vite project
- * auto-promotes, so claiming consent would be false for exactly the projects
- * most likely to reach it.
+ * project on that tier) and deliberately not a human consent: every project
+ * starts at `run-project` by default (`DEFAULT_TRUST_TIER` — owner decision,
+ * 2026-09-20), so claiming consent would be false for every project, not a
+ * narrow subset of them.
  */
 import type { CoreCapability } from '../../auth/capabilities'
 

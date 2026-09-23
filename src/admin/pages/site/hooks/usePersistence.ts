@@ -16,7 +16,8 @@
  *     — the Site editor shell does this for Studio mode, which has no exposed
  *     autosave-delay setting and instead uses a fixed, snappier cadence
  *     (`STUDIO_AUTOSAVE_DELAY_MS` in `studio/fsCodemodAdapter.ts`) so source
- *     writeback feels immediate. See `resolveAutoSaveDelayMs` below.
+ *     writeback feels immediate. See `resolveAutoSaveDelayMs` in
+ *     `autosaveSchedule.ts`.
  *  3. MANUAL SAVE    — returned as a stable callback for toolbar Save and used
  *     by Cmd+S / Ctrl+S. Resets the unsaved-changes flag.
  *  4. RETRY LADDER   — a failed save restores its dirty snapshot (nothing is
@@ -25,6 +26,15 @@
  *     so the toolbar chip can say "Saving…" rather than "Unsaved" while the
  *     ladder runs. No toast at any point — see `SAVE_RETRY_BACKOFF_MS` and
  *     `toolbar/SaveStatusChip.tsx`.
+ *  5. FLUSH          — `flushAutosave()` (`autosaveSchedule.ts`, `speed-02`'s
+ *     module-size-budget split) asks for the SAME immediate save
+ *     `EDITOR_SAVE_REQUEST_EVENT` already triggers (`"Save as layout"`, deep
+ *     links), gated on `hasUnsavedChanges` so a stray call with nothing
+ *     dirty is a no-op rather than an empty request. Wired into the
+ *     properties panel's blur / Enter / scrub-release moments — see
+ *     `PropertiesPanel.tsx` — so a field the user visibly finished editing
+ *     writes to disk without waiting out even the short trailing debounce
+ *     below.
  *
  * Constraint #230: raw adapter data is validated via `validateSite` before
  * being passed to `store.loadSite()`.
@@ -59,14 +69,16 @@ import type { IPersistenceAdapter } from '@core/persistence/types'
 import { cmsAdapter } from '@core/persistence/cms'
 import { SiteValidationError } from '@core/persistence/validate'
 import {
-  readAutoSaveDelayMs,
   readAutoSavePreference,
   readEditorSelectPreference,
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { getErrorMessage } from '@core/utils/errorMessage'
+import { pushToast } from '@ui/components/Toast'
 import { takePendingStructuralOutcome } from '@site/studio/pendingStructuralOutcome'
 import { registerEditorSave } from './editorSaveRef'
+import { nextAutoSaveDelayMs, resolveAutoSaveDelayMs } from './autosaveSchedule'
 
 /**
  * Re-exported for back-compat. The canonical declaration lives in
@@ -188,45 +200,6 @@ export function applyStructuralWriteOutcome(): void {
   if (!selectNodeIds.every((id) => state._nodeIdToPageIds.has(id))) return
   if (selectNodeIds.length === 1) state.selectNode(selectNodeIds[0]!)
   else state.selectMany([...selectNodeIds])
-}
-
-/**
- * Resolve the auto-save idle delay: an explicit `overrideMs` (Studio's fixed,
- * snappy cadence) wins; otherwise fall back to the user's CMS preference.
- * Pulled out as a pure function so the precedence rule is unit-testable
- * without mounting the hook or waiting on real timers.
- */
-export function resolveAutoSaveDelayMs(overrideMs?: number): number {
-  return overrideMs ?? readAutoSaveDelayMs()
-}
-
-/**
- * How long a continuous edit burst may keep deferring the autosave, as a
- * multiple of the idle delay.
- *
- * A pure trailing debounce never fires while the user keeps typing, which for
- * Studio means the `.tsx` on disk can lag the canvas indefinitely — the exact
- * failure mode the fixed, snappy `STUDIO_AUTOSAVE_DELAY_MS` exists to avoid.
- * The cap converts "never" into "at worst every 4 × the idle delay" (8 s in
- * Studio, the user's own configured multiple in the CMS), which is still a
- * long burst but is bounded. 4 was chosen so that a save mid-burst is rare
- * enough not to feel like the editor is writing over your typing, and near
- * enough that no realistic burst outruns it.
- */
-export const AUTOSAVE_MAX_DEFERRAL_MULTIPLE = 4
-
-/**
- * The delay the NEXT autosave tick should use: the full idle delay, unless
- * the burst has already deferred long enough to exhaust its budget, in which
- * case whatever is left of it (never negative — an exhausted budget fires on
- * the next tick).
- *
- * Pure so the cap is unit-testable without mounting the hook or waiting on
- * real timers, exactly like `resolveAutoSaveDelayMs` above.
- */
-export function nextAutoSaveDelayMs(idleDelayMs: number, deferredForMs: number): number {
-  const remainingBudget = idleDelayMs * AUTOSAVE_MAX_DEFERRAL_MULTIPLE - deferredForMs
-  return Math.max(0, Math.min(idleDelayMs, remainingBudget))
 }
 
 export function usePersistence(
@@ -495,7 +468,16 @@ export function usePersistence(
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
-        console.error('[persistence] Reload after pack install failed:', err)
+        // The write already landed on disk — this is the board failing to
+        // catch up with it. Silent, it reads as "nothing happened" and the
+        // only recovery the user can find is a page refresh; say so instead.
+        console.error('[persistence] Reload after a source write failed:', err)
+        pushToast({
+          kind: 'error',
+          title: 'The board could not reload your project',
+          body: `Your change was written to disk, but the canvas could not re-read it. Refresh to catch up. ${getErrorMessage(err, 'Unknown reload error')}`,
+        })
+        setSaveStatus({ state: 'error', message: 'Reload failed' })
       }
     }
 

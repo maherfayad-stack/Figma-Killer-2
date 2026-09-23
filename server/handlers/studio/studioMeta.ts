@@ -18,7 +18,7 @@
  * `parseJsonWithFallback` rather than throwing: a corrupted or hand-mangled
  * sidecar must not brick the project, it should just fall back to defaults
  * everywhere (folder name as display name, `<dir>/pages`, no locale
- * preference, Tier 0 trust).
+ * preference, `DEFAULT_TRUST_TIER` trust).
  *
  * `pagesDir` gets one more guard AFTER schema validation:
  * `isSafePagesDirOverride` rejects `..` traversal and absolute paths. This is
@@ -48,7 +48,17 @@ import { DESIGN_POLICIES, type DesignPolicy } from './designPolicy'
 
 /**
  * The three trust tiers §0 of the V2 plan declares per project. Default:
- * `'static'` (Tier 0 — nothing runs) for every fresh import.
+ * `'run-project'` (Tier 2) for every project — owner decision, 2026-09-20,
+ * superseding the earlier "Tier 0, never auto-promoted" default (see
+ * `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2's superseded note). The parse
+ * itself never executes anything at any tier; the tier only decides whether
+ * Studio may run the workspace's OWN code (its style toolchain, its package
+ * components, its dev server) on top of the parse. Nothing promotes
+ * automatically any more because nothing needs to — a project the owner
+ * wants sandboxed is lowered explicitly via the Live pill's "Back to static",
+ * and every Tier-2 entry point still checks both gates (the connector
+ * capability AND `trust === 'run-project'` exactly) through `trustGate.ts`,
+ * so a project explicitly set to `static` is refused exactly as before.
  *
  * Exported so the routes that read/write this field (`trustTier.ts`,
  * `styleCompileConsent.ts`) validate against the SAME schema this file
@@ -63,7 +73,7 @@ export const TrustTierSchema = Type.Union([
   Type.Literal('run-project'),
 ])
 export type TrustTier = Static<typeof TrustTierSchema>
-export const DEFAULT_TRUST_TIER: TrustTier = 'static'
+export const DEFAULT_TRUST_TIER: TrustTier = 'run-project'
 
 const FrameDefaultsSchema = Type.Object({
   width: Type.Optional(Type.Number({ minimum: 1 })),
@@ -294,31 +304,6 @@ export const StudioMetaSchema = Type.Object({
    * question is about THIS repository, so the answer belongs beside it.
    */
   styleCompilePromptDismissed: Type.Optional(Type.Boolean()),
-  /**
-   * P8 / §6 decision 2 — Studio promoted this project to Tier 2
-   * (`run-project`) BY ITSELF, on first open, because it is a Vite project
-   * with a lockfile. The owner overrode the "promotion is always an explicit
-   * click" rule for exactly that case on 2026-09-17; see `CLAUDE.md`'s
-   * invariant 1 and `PROJECT-BRIEF.md` §2.
-   *
-   * Two fields rather than one, and both load-bearing:
-   *
-   *   - `trustAutoPromoted` records that the promotion's ORIGIN was Studio,
-   *     not a person. `trust` alone cannot answer "who decided this", and an
-   *     audit of a machine that runs a user's code has to be able to.
-   *   - `trustAutoPromotedAt` is the ONCE latch. Auto-promotion is offered
-   *     exactly once per project, ever: the notice's "Undo" writes `trust`
-   *     back to `static` and deliberately leaves BOTH of these in place, so
-   *     the next open sees a project that has already had its one automatic
-   *     promotion and leaves it alone. Clearing them on undo would re-promote
-   *     on the next load and make the undo a no-op with extra steps.
-   *
-   * Never written for an explicit user click — that stays a bare `trust`
-   * write, which is how the two origins stay distinguishable on disk.
-   */
-  trustAutoPromoted: Type.Optional(Type.Boolean()),
-  /** Epoch ms of the one automatic promotion. Presence is the latch — see {@link StudioMetaSchema}'s `trustAutoPromoted`. */
-  trustAutoPromotedAt: Type.Optional(Type.Number()),
   /**
    * Cached `ProjectProfile` probe result. A cache that no longer matches the
    * schema (an older profile shape, a hand-mangled file) fails validation and
@@ -569,10 +554,32 @@ export function mergeStudioMeta(dir: string, patch: Partial<StudioMeta>): Studio
 }
 
 /**
- * Stamps `lastOpenedAt` with the current time. Called from
- * `GET /admin/api/studio/load` — the request that means "the editor is showing
- * this project" — so the fact is recorded by the thing that happened, not by
- * the UI that wants to read it later.
+ * How stale a recorded `lastOpenedAt` may be before the next load refreshes it.
+ *
+ * `GET /admin/api/studio/load` is NOT only "the user opened this project": the
+ * board calls the same route to re-sync after every structural edit, and the
+ * agent's tools call it too. Writing a fresh timestamp on each of those did two
+ * things nobody asked for. It rewrote a file inside the USER'S repository on
+ * every duplicate — `github-sync.e2e.ts` cases 2b and 6b are exactly that,
+ * "opening a cloned project wrote to files the user never touched", which then
+ * makes Studio refuse the next pull over changes the user did not make. And it
+ * changed `.studio/meta.json`'s mtime on every load, which is what
+ * `studioLoadMemo`'s fingerprint was keyed on, so the load memo could never hit
+ * and each gesture paid a full cold project load.
+ *
+ * An hour is coarse on purpose. The field's only consumer asks whether the
+ * project has EVER been opened (`onboardingFacts.ts`), so precision buys
+ * nothing, and every write inside this window is a write into someone's git
+ * working tree.
+ */
+const PROJECT_OPENED_REFRESH_MS = 60 * 60 * 1000
+
+/**
+ * Stamps `lastOpenedAt` with the current time, unless a recent enough stamp is
+ * already there — see `PROJECT_OPENED_REFRESH_MS` for why "recent enough"
+ * exists at all. Called from `GET /admin/api/studio/load`, so the fact is
+ * recorded by the thing that happened, not by the UI that wants to read it
+ * later.
  *
  * Best-effort by design: a project directory that has become unwritable is a
  * problem for a SAVE, and taking the board's load down over a timestamp would
@@ -580,7 +587,12 @@ export function mergeStudioMeta(dir: string, patch: Partial<StudioMeta>): Studio
  */
 export function recordProjectOpened(dir: string): void {
   try {
-    mergeStudioMeta(dir, { lastOpenedAt: Date.now() })
+    const recorded = readStudioMeta(dir).lastOpenedAt
+    const now = Date.now()
+    // `recorded > now` catches a clock that moved backwards (or a meta file
+    // copied from another machine): refresh rather than trust a future stamp.
+    if (recorded !== undefined && recorded <= now && now - recorded < PROJECT_OPENED_REFRESH_MS) return
+    mergeStudioMeta(dir, { lastOpenedAt: now })
   } catch (err) {
     console.error('[studio:studioMeta] could not record lastOpenedAt', err)
   }

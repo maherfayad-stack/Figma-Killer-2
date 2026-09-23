@@ -1,19 +1,21 @@
 /**
- * Auto-save cadence precedence — `resolveAutoSaveDelayMs` (usePersistence.ts).
+ * Auto-save cadence precedence — `resolveAutoSaveDelayMs` (`autosaveSchedule.ts`,
+ * split out of `usePersistence.ts` by `speed-02`'s module-size-budget fix).
  *
  * Phase 5B: Studio source writeback should feel snappy without inheriting the
  * CMS's slower, user-configurable idle-commit delay (default 30s). Rather
  * than forking usePersistence for Studio, the Site editor shell passes an
- * explicit `autoSaveDelayMs` override (`STUDIO_AUTOSAVE_DELAY_MS`, 2s) that
- * wins over the preference. This pins the precedence rule as a pure,
- * timer-free unit test — no React mount, no waiting on real timeouts.
+ * explicit `autoSaveDelayMs` override (`STUDIO_AUTOSAVE_DELAY_MS`, 250ms as
+ * of `speed-02`) that wins over the preference. This pins the precedence
+ * rule as a pure, timer-free unit test — no React mount, no waiting on real
+ * timeouts.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
   AUTOSAVE_MAX_DEFERRAL_MULTIPLE,
   nextAutoSaveDelayMs,
   resolveAutoSaveDelayMs,
-} from '@site/hooks/usePersistence'
+} from '@site/hooks/autosaveSchedule'
 import { STUDIO_AUTOSAVE_DELAY_MS } from '@site/studio/fsCodemodAdapter'
 import { EDITOR_PREFS_KEY, setEditorSelectPreference } from '@site/preferences/editorPreferences'
 
@@ -36,9 +38,9 @@ describe('resolveAutoSaveDelayMs', () => {
     expect(resolveAutoSaveDelayMs(STUDIO_AUTOSAVE_DELAY_MS)).toBe(STUDIO_AUTOSAVE_DELAY_MS)
   })
 
-  it('the Studio cadence sits inside the ~1.5-3s "snappy" target band, below the CMS default', () => {
-    expect(STUDIO_AUTOSAVE_DELAY_MS).toBeGreaterThanOrEqual(1_500)
-    expect(STUDIO_AUTOSAVE_DELAY_MS).toBeLessThanOrEqual(3_000)
+  it('the Studio cadence sits inside `speed-02`\'s ~200-300ms "instant" target band, below the CMS default', () => {
+    expect(STUDIO_AUTOSAVE_DELAY_MS).toBeGreaterThanOrEqual(200)
+    expect(STUDIO_AUTOSAVE_DELAY_MS).toBeLessThanOrEqual(300)
     expect(STUDIO_AUTOSAVE_DELAY_MS).toBeLessThan(30_000)
   })
 })
@@ -78,5 +80,10 @@ describe('nextAutoSaveDelayMs', () => {
     const worstCaseMs = STUDIO_AUTOSAVE_DELAY_MS * AUTOSAVE_MAX_DEFERRAL_MULTIPLE
     expect(worstCaseMs).toBeGreaterThan(STUDIO_AUTOSAVE_DELAY_MS)
     expect(worstCaseMs).toBeLessThanOrEqual(15_000)
+  })
+
+  it('`speed-02`: a continuous Studio burst is forced to save at least once a second', () => {
+    const worstCaseMs = STUDIO_AUTOSAVE_DELAY_MS * AUTOSAVE_MAX_DEFERRAL_MULTIPLE
+    expect(worstCaseMs).toBe(1_000)
   })
 })

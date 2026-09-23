@@ -159,8 +159,11 @@ measured to be true. An authored link is the opposite: the user placed it
 deliberately, on a specific element, one at a time, and the `+` handle that
 creates it has to sit beside that element or the gesture means nothing. So
 `BoardPrototypeLayer` measures only the handful of elements links actually start
-from, on a `ResizeObserver` over their frames' documents — never on pan or zoom,
-which cannot move a board-space endpoint.
+from, through each frame's `FrameDocumentAdapter.measure` — the one measurement
+that works for a same-origin portal frame and a cross-origin Tier 2 live frame
+alike — and only when a frame reports a reflow (`ready`, `frame:resize`,
+`hmr:after`), the set of mounted frames changes, or the page tree changes; never
+on pan or zoom, which cannot move a board-space endpoint.
 
 - **Nothing is ever inserted into a user iframe.** Selection rings are portaled
   into each iframe to dodge coordinate conversion; a connector cannot be,

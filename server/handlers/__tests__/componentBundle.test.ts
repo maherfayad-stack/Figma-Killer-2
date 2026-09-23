@@ -235,9 +235,9 @@ describe('tryServeStudioComponentBundle', () => {
     expect(body.components).toEqual([])
   })
 
-  it('refuses at Tier 0 (static, the default) without ever spawning the bundler', async () => {
+  it('refuses at Tier 0 (static)', async () => {
     forceComponentPackageDemand(['acme-ui'])
-    // Trust is left at the default — never explicitly promoted.
+    mergeStudioMeta(wsDir, { trust: 'static' })
 
     const { req, url, pathname } = makeRequest('/admin/api/studio/component-bundle', postBody({ dir: wsDir }))
     const res = await tryServeStudioComponentBundle(req, url, pathname)

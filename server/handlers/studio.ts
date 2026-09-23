@@ -298,6 +298,7 @@ import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
+import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
 import { gateStudioRequest, type StudioSessionRuntime } from './studio/routeGate'
@@ -381,16 +382,18 @@ export async function tryServeStudio(
       const missingPageIds = missingStudioLoadPageIds(pages, pageIdsParam)
       // WS-3.3 — the client needs the CURRENT trust tier to decide whether an
       // unregistered `pkg.*` node should fetch a component bundle (Tier ≥ 1)
-      // or render the "promote to render" placeholder (Tier 0, the default
-      // for every fresh import — `meta-03` decision 1). Read fresh, same
-      // posture as every other read path here (never auto-promoted).
+      // or render the "promote to render" placeholder (Tier 0, reachable now
+      // only by an explicit demotion — every project starts at `run-project`,
+      // `DEFAULT_TRUST_TIER`, owner decision 2026-09-20). Read fresh, same
+      // posture as every other read path here (nothing writes this field as
+      // a side effect of loading a page).
       const meta = readStudioMeta(dir)
       const trust = meta.trust ?? DEFAULT_TRUST_TIER
       const paletteHiddenModuleIds = meta.paletteHiddenModuleIds ?? []
       // L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` live-origin
       // routing key (`server/liveOrigin.ts`), `null` below Tier 2 (no live
-      // origin to scope a URL against). Same "never auto-promoted, read
-      // fresh" posture as `trust` above.
+      // origin to scope a URL against). Same "read fresh, never written as a
+      // side effect" posture as `trust` above.
       const projectKey = trust === 'run-project' ? registeredMcpServerProjectKey(dir) : null
 
       // WS-5.5 — `?stream=1` (the canvas's own loader, `fsCodemodAdapter.ts`)
@@ -447,7 +450,11 @@ export async function tryServeStudio(
     }
   }
 
+  // Idempotency-key-guarded: see `studio/idempotentReplay.ts` — a retry of a
+  // lost response after a `bun --watch` restart must never re-run a
+  // `duplicate`/`insert`/`wrap`/`group` edit a second time.
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
+    return withIdempotentReplay(req, async () => {
     try {
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
@@ -469,6 +476,8 @@ export async function tryServeStudio(
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
+        removed,
+        prunedImports,
       } = await applyStudioEditBatchLocked(dir, edits)
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
@@ -508,10 +517,22 @@ export async function tryServeStudio(
         // path to strip.
         createdNodeIds,
         relocatedNodeIds,
+        // `store-15` — what a `delete` took out: the element's own bytes and
+        // the imports its prune pass retired, which are the ONLY material ⌘Z
+        // has to put it back with. The same lesson as the two fields above:
+        // the batch computed them, and a route that lists its fields by hand
+        // forwarded neither, so every undo of a delete resolved to "Studio
+        // could not work out how to take this back" while the code that could
+        // sat one layer down. `studioSaveRoute.test.ts` holds this now.
+        // `removed` is keyed by the edit's own workspace-relative node id and
+        // `prunedImports.file` is already workspace-relative — nothing to strip.
+        removed,
+        prunedImports,
       })
     } catch (err) {
       return studioRouteFailure(err)
     }
+    })
   }
 
   // Board spatial metadata (frames + sticky notes) — editor-owned, lives in
@@ -527,7 +548,13 @@ export async function tryServeStudio(
     }
   }
 
+  // Idempotency-key-guarded — see `studio/idempotentReplay.ts`. A full-state
+  // overwrite like this one is already naturally repeatable (the same body
+  // writes the same bytes), but the guard costs nothing and keeps this route
+  // consistent with `/save` and `/page` rather than reasoning about safety
+  // route-by-route.
   if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
+    return withIdempotentReplay(req, async () => {
     try {
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')
@@ -541,6 +568,7 @@ export async function tryServeStudio(
     } catch (err) {
       return studioRouteFailure(err)
     }
+    })
   }
 
   // WS-7.2 — per-project default frame width/height, persisted in

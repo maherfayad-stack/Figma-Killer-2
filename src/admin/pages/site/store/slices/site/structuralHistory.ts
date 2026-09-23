@@ -18,8 +18,17 @@
  * `reissueStructuralMove` performs it through the same `moveNodes` action a
  * drag uses — so an undo rides every refusal gate, resolves its own anchor
  * against the tree as it is NOW, and writes to source exactly once.
+ *
+ * `captureDeleteOrigin` (`store-15`) is the same idea for a DELETE: the tree
+ * is still what it was, one moment before `deleteNode`/`deleteNodes` removes
+ * the element, so this is the last chance to record where it sat. Unlike a
+ * move, a delete's undo does not re-issue through a store action — it is
+ * folded into the `source` gesture family (`tagStructuralGesture(set,
+ * {gesture:'source', …})`, built in `deleteNodesAction.ts`/`nodeActions.ts`
+ * from what this function returns) and writes a `reinsert-source` edit once
+ * the delete's own commit reports the bytes it discarded.
  */
-import type { NodeTree, PageNode } from '@core/page-tree'
+import { hasWritableSourceLocation, type NodeTree, type PageNode } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { resolveActiveTreeTarget } from './helpers'
 import type { SiteSliceHelpers, StructuralHistory, StructuralHistoryMove } from './types'
@@ -43,6 +52,23 @@ export function tagStructuralGesture(
     const top = state._historyPast[state._historyPast.length - 1]
     if (!top) return
     top.structural = structural
+    // `store-15` — a `source` gesture's undo is a WRITE (or nothing), never a
+    // patch replay: `structuralSourceHistory.ts`'s own contract for the rest
+    // of the family is "the entry carries empty inverse/forward patch lists".
+    // `delete` is the one caller of this function that tags a `source`
+    // gesture onto an entry that did NOT start that way — its patches are the
+    // real tree mutation `mutateActiveTree` already committed, and they name
+    // the exact node id this gesture just made permanently gone. Left
+    // standing, `historyPreservation.ts`'s reload-safety check reads them as
+    // a still-live reference and wipes the WHOLE stack on the very next
+    // reparse — including this gesture's own resync, before its `fill` even
+    // lands. Clearing them here is safe for every OTHER `source` gesture too:
+    // `recordStructuralSourceWrite`'s `push` already builds them empty, so
+    // this is a no-op for any entry that reaches this function through them.
+    if (structural.gesture === 'source') {
+      top.inverse = []
+      top.forward = []
+    }
     state._historyCoalesceKey = null
   })
 }
@@ -102,25 +128,49 @@ export function reissueStructuralMove(
 }
 
 /**
- * A structural gesture whose inverse the writeback protocol cannot express.
+ * `store-15` — where `nodeId` sits right now, in the terms a `reinsert-source`
+ * edit needs: the parent to write into, and the child position among the
+ * parent's PLAIN JSX element siblings only — `reinsertJsxSource`'s own
+ * `elementChildren` count, which never sees a `.map` row or a conditional
+ * branch's element (those sit inside an expression the parent's direct JSX
+ * children list does not contain). Call this BEFORE the delete: it is the
+ * last moment the pre-delete tree still has the node to ask about.
  *
- * Undoing a source DELETE means writing the element's original markup back
- * into the file, and no `StudioEdit` kind carries a subtree's source text
- * (`insert` names a component plus literal props). Replaying the inverse patch
- * would re-add nodes the `.tsx` does not contain — a canvas that disagrees
- * with the file it mirrors, which is the one thing this editor refuses to do.
- * So it says so, and leaves the stack where it is.
+ * `null` — no origin an undo could use — for three cases, none of them
+ * partial:
+ *  - the node has no parent (should not happen; a delete never targets the
+ *    tree root);
+ *  - the parent has no writable source position at all — the synthetic page
+ *    root, whose only "position" is the page's own return statement.
+ *    Deleting the page's sole returned element is already refused there by
+ *    `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a question the
+ *    tree cannot), so a delete that reaches here with such a parent is one
+ *    the write is about to refuse anyway — recording no origin for it is
+ *    honest, not a gap;
+ *  - the node itself does not turn up among its own parent's plain-element
+ *    siblings, which cannot happen for a node `refuseStructuralEdit` already
+ *    let through as `kind: 'delete'` — checked anyway, because a wrong index
+ *    would restore the wrong thing.
  */
-export function refuseStructuralUndo(gesture: 'delete'): void {
-  pushToast({
-    kind: 'warning',
-    title: 'Undo can’t restore this yet',
-    body:
-      gesture === 'delete'
-        ? 'The element was removed from your project source. Use your editor’s undo or `git` to bring it back.'
-        : 'This change was written to your project source and cannot be reversed from the canvas.',
-    location: 'site-editor',
-    durationMs: null,
-    dedupeKey: `structural-undo-unsupported:${gesture}`,
-  })
+export interface StructuralHistoryDeleteOrigin {
+  nodeId: string
+  parentId: string
+  index: number
+}
+
+export function captureDeleteOrigin(
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+): StructuralHistoryDeleteOrigin | null {
+  const parentId = tree.nodes[nodeId]?.parentId
+  if (parentId === undefined || parentId === null) return null
+  if (!hasWritableSourceLocation(parentId)) return null
+  const siblings = (tree.nodes[parentId]?.children ?? []).filter((id) => isPlainJsxSibling(tree.nodes[id]))
+  const index = siblings.indexOf(nodeId)
+  return index < 0 ? null : { nodeId, parentId, index }
+}
+
+/** A parent's own direct JSX element/self-closing child — never a `.map` row, a conditional branch, or anything else `lockReason` marks as structurally decided elsewhere. */
+function isPlainJsxSibling(node: PageNode | undefined): boolean {
+  return node !== undefined && hasWritableSourceLocation(node.id) && !node.lockReason
 }

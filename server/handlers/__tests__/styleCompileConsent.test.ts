@@ -76,7 +76,7 @@ describe('tryServeStudioStyleCompileConsent', () => {
 
     const body = await getStatus(wsDir)
     expect(body.toolchains).toEqual([])
-    expect(body.trust).toBe('static')
+    expect(body.trust).toBe('run-project')
     expect(body.dismissed).toBe(false)
   })
 
@@ -84,6 +84,7 @@ describe('tryServeStudioStyleCompileConsent', () => {
     writeFile(wsDir, 'package.json', JSON.stringify({ dependencies: { tailwindcss: '^3.4.0' } }))
     writeFile(wsDir, 'tailwind.config.js', 'module.exports = {}\n')
     writeFile(wsDir, 'postcss.config.js', 'module.exports = {}\n')
+    writeFile(wsDir, '.studio/meta.json', JSON.stringify({ trust: 'static' }))
 
     const body = await getStatus(wsDir)
     expect(body.trust).toBe('static')
@@ -124,7 +125,7 @@ describe('tryServeStudioStyleCompileConsent', () => {
 
     const body = await getStatus(wsDir)
     expect(body.dismissed).toBe(true)
-    expect(body.trust).toBe('static')
+    expect(body.trust).toBe('run-project')
   })
 
   it('GET rejects a dir outside studio-workspace/', async () => {

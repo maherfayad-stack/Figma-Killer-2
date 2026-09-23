@@ -27,9 +27,11 @@
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
+import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import { setPendingStructuralOutcome, type PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
+  dissolveWrapperTemplate,
   resolveStructuralInverse,
   type StructuralEditPayload,
   type StructuralInverseTemplate,
@@ -54,9 +56,19 @@ interface StructuralCommitOptions {
    * `store-14` — this gesture's ⌘Z, as a template the write's own answer fills
    * in (`structuralUndoPlan.ts`). Omitted by `move`/`reparent`, whose undo
    * already rides the tree-mutation stack (`structuralHistory.ts`), and by
-   * `delete`, which has no inverse the protocol can express.
+   * `delete`, which uses `fill` below instead — its own tree mutation already
+   * pushed an entry, and TAGGED it with this same template, before the commit
+   * that reveals the answer even started.
    */
   undo?: { label: string; template: StructuralInverseTemplate }
+  /**
+   * `store-15` — set only by `delete`. Its tree mutation (and history entry)
+   * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
+   * tagged it with the gesture's `label`/`forward`/`inverseTemplate` already
+   * filled in. This asks the resync to fill in just `inverse`, the one field
+   * that answer could not know yet, on that SAME entry.
+   */
+  fill?: boolean
   /**
    * Set when this commit IS an undo or a redo re-issuing a stored entry. The
    * stack bookkeeping happened in `undoRedoActions.ts`; this only asks the
@@ -64,6 +76,7 @@ interface StructuralCommitOptions {
    * reported.
    */
   reissue?: 'undo' | 'redo'
+  optimistic?: OptimisticPreviewHandle // `perf-10` — local preview, settled/rolled back in `commitStructuralBody`.
 }
 
 /**
@@ -232,6 +245,7 @@ export async function commitStudioDuplicate(
     anchorNodeId: string | null
     position: 'before' | 'after'
   },
+  optimistic?: OptimisticPreviewHandle, // `perf-10` — see `StructuralCommitOptions.optimistic`.
 ): Promise<void> {
   if (nodeIds.length === 0) return
   await commitStructural(
@@ -254,6 +268,7 @@ export async function commitStudioDuplicate(
         body: 'Written to your project source.',
       },
       undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
+      ...(optimistic ? { optimistic } : {}),
     },
   )
 }
@@ -273,6 +288,7 @@ export async function commitStudioWrap(wrap: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -288,6 +304,7 @@ export async function commitStudioWrap(wrap: {
     {
       success: { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
       undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
+      ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
   )
 }
@@ -314,6 +331,7 @@ export async function commitStudioGroup(group: {
   name: string
   importSpecifier?: string
   designSystemImport?: true
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   const [nodeId, ...siblingNodeIds] = group.nodeIds
   if (nodeId === undefined || siblingNodeIds.length === 0) return
@@ -332,6 +350,7 @@ export async function commitStudioGroup(group: {
     {
       success: { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
       undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
+      ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
   )
 }
@@ -379,14 +398,15 @@ export async function commitStudioUngroup(
  * which makes a multi-select delete a single honest transaction rather than N
  * racing ones.
  *
- * No `undo` template: undoing a source delete means writing the element's
- * original markup back into the file, and no `StudioEdit` kind carries a
- * subtree's source text. The tree-mutation entry this gesture already pushes
- * says so (`refuseStructuralUndo`).
+ * `fill: true`, never `undo` — see `StructuralCommitOptions.fill`.
+ * `deleteNodesAction.ts` already pushed AND tagged the entry
+ * (`label`/`forward`/`inverseTemplate`, decided from the pre-delete tree —
+ * the only moment the deleted elements' positions are known); this commit's
+ * job is only to reveal what it discarded, `inverse`'s reason to wait.
  */
 export async function commitStudioDelete(nodeIds: readonly string[]): Promise<void> {
   if (nodeIds.length === 0) return
-  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused')
+  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'delete', nodeId })), 'Delete refused', { fill: true })
 }
 
 /**
@@ -423,6 +443,7 @@ export async function commitStudioInsert(insert: {
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
+  optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
     [
@@ -444,37 +465,9 @@ export async function commitStudioInsert(insert: {
     {
       success: { title: `Added ${insert.name}`, body: 'Written to your project source.' },
       undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )
-}
-
-/**
- * `store-14` — how a ⌘G / wrap says what its own ⌘Z is.
- *
- * The inverse of "put a container around this" is "dissolve that container" —
- * the same `ungroup` write ⌘⇧G performs, which restores the children at their
- * own indentation and takes the wrapper's import with it.
- *
- * That only holds for an INTRINSIC wrapper. `unwrapJsxElement` refuses a
- * COMPONENT tag by name (`has-behaviour`): its own file decides what it
- * renders, so removing the call site is not "ungroup", it is deleting a
- * component usage. A group into a design-system container therefore has no
- * inverse this protocol can write, and says so at ⌘Z rather than posting a
- * write the server would refuse with a sentence about behaviour the user never
- * mentioned.
- */
-function dissolveWrapperTemplate(wrapper: {
-  name: string
-  importSpecifier?: string
-  designSystemImport?: true
-}): StructuralInverseTemplate {
-  if (wrapper.importSpecifier === undefined && wrapper.designSystemImport === undefined) {
-    return { kind: 'ungroup-created' }
-  }
-  return {
-    kind: 'unsupported',
-    message: `That group was written as a <${wrapper.name}> component, and Studio only dissolves plain containers — taking it back out would mean deleting a component call site, which is a different change from the one you made. Remove it in code, or use your editor’s undo.`,
-  }
 }
 
 /**
@@ -597,6 +590,7 @@ async function commitStructuralBody(
     // letting the change quietly reappear after the reload with no explanation.
     const unexplained = result.skipped - (result.refusals ?? []).length
     const willReload = result.written > 0
+    settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback') // `perf-10`
     if (unexplained > 0) {
       pushToast({
         kind: 'error',
@@ -623,6 +617,8 @@ async function commitStructuralBody(
       const outcome: StructuralWriteOutcome = {
         createdNodeIds: result.createdNodeIds ?? [],
         relocatedNodeIds: result.relocatedNodeIds ?? [],
+        removed: result.removed ?? [],
+        prunedImports: result.prunedImports ?? [],
       }
       setPendingStructuralOutcome({
         selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
@@ -649,6 +645,7 @@ async function commitStructuralBody(
     // failed request is "disk is unchanged," which means no reload either
     // (see this function's doc for why an unconditional reload here was the
     // bug, not the fix).
+    settleOrRollbackOptimistic(options.optimistic, 'rollback') // `perf-10` — idempotent against the line above.
     console.error('[studioSaveRequests] structural edit failed:', err)
     pushToast({
       kind: 'error',
@@ -659,9 +656,10 @@ async function commitStructuralBody(
 }
 
 /**
- * What this landed write means for the undo stack: a new entry, a refresh of
- * the one an undo/redo just moved, or nothing at all for the gestures whose
- * undo lives on the tree-mutation stack.
+ * What this landed write means for the undo stack: a new entry, a FILL of the
+ * entry `delete`'s own tree mutation already tagged, a refresh of the one an
+ * undo/redo just moved, or nothing at all for the gestures (`move`/`reparent`)
+ * whose undo lives entirely on the tree-mutation stack.
  */
 function resolvePendingHistory(
   edits: readonly StructuralEditPayload[],
@@ -669,6 +667,7 @@ function resolvePendingHistory(
   outcome: StructuralWriteOutcome,
 ): PendingStructuralHistory | null {
   if (options.reissue) return { kind: 'refresh', direction: options.reissue, outcome }
+  if (options.fill) return { kind: 'fill', outcome }
   if (!options.undo) return null
   return {
     kind: 'push',
@@ -683,3 +682,4 @@ function resolvePendingHistory(
     },
   }
 }
+

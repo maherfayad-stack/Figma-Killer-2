@@ -17,8 +17,21 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
            signature of every source-relevant file (plus `.studio/meta.json`,
            which `listWorkspaceFiles` excludes). A hit skips steps 1-9
            entirely: ~26 ms → ~2.5 ms on a 36-page project, which is what an
-           agent turn's 4+ redundant loads used to cost. Narrowed loads
-           (`options.pageIds`) are served from it but never stored.
+           agent turn's 4+ redundant loads used to cost. A narrowed load
+           (`options.pageIds`) runs the same full compute, stores it, and
+           filters `pages` on the way out.
+        0b. kept ts-morph Project per dir          studio/workspaceProject.ts
+           `withWorkspaceProject(dir, fn)` — ONE `createWorkspaceProject`
+           per project directory for the life of the process, synced to the
+           disk before every use (a moved `size:mtimeMs` re-reads that file,
+           new files are added, deleted and in-memory files removed) and
+           serialized per dir so a sync never forgets nodes under a parse in
+           flight. Any change also calls `resetParserCaches()` (the four
+           cross-file memos in `@core/page-parser`). This is what took the
+           resync after a structural write from 1.5–2 s to ~50–100 ms on a
+           real project: rebuilding the Project re-parsed and re-bound every
+           file for one changed line. Rebuilding it per call again is the
+           regression to refuse.
         1. discoverPageFiles(pagesDir)           studioProjects.ts
         1b. discoverStories + buildStoryRouteEntries
                                                  studio/story{Discovery,Pages}.ts

@@ -23,24 +23,22 @@
  * page that imports it directly, and editing an unrelated page's own file
  * invalidates only that one page.
  *
- * KNOWN LIMITATION: dependency tracking is ONE LEVEL deep — the local
- * component sources `resolveComponentSources` finds directly on the route's
- * own file, not the transitive closure through a chain of local components
- * importing further local components (`inlineLocalComponents` resolves those
- * internally but doesn't surface the file list back to this caller). A
- * change three components deep in a nested composition can go unnoticed
- * until the page whose cache entry it should have invalidated is itself
- * touched, or the process restarts. Acceptable for the common case (a page
- * imports a handful of section components directly); a full transitive
- * dependency graph is a larger undertaking left for a follow-up if this
- * proves to matter in practice.
+ * Dependency tracking is TRANSITIVE, not just the direct call sites
+ * `resolveComponentSources` finds on the route's own file:
+ * `inlineLocalComponents`' `dependencyFiles` out-param (see its own doc)
+ * surfaces every local file it read while expanding a chain of local
+ * components importing further local components, at every nesting level —
+ * so a change three components deep in a nested composition invalidates the
+ * exact routes that read it, on the next `getCachedRouteParse` call for them.
+ * This module only ever RECORDS the set the caller hands it — it takes no
+ * part in discovering it, which is what keeps this cache correct as the
+ * parser's own definition of "depends on" evolves.
  *
  * In-memory, process-scoped — cleared on server restart, never persisted to
  * disk. No eviction policy: a dev server's lifetime and project count don't
  * warrant one yet.
  */
 import { statSync } from 'node:fs'
-import { join } from 'node:path'
 import type { ComponentSource, ParsedPage } from '@core/page-parser'
 
 export interface CachedRouteParse {
@@ -103,22 +101,6 @@ export function setCachedRouteParse(
     if (mtime !== null) depMtimes[absFile] = mtime
   }
   cache.set(cacheKey, { configHash, depMtimes, result })
-}
-
-/**
- * Absolute file paths of every `kind: 'local'` entry in `sources`,
- * deduplicated — the dependency half every route producer records alongside
- * the route's own file (see the "one level deep" limitation above). Lives here
- * rather than beside one producer because all three of them
- * (`parseStandardRouteEntry`, `parseAppRouterRouteEntry`,
- * `buildStoryRouteEntries`) must derive the same set the same way.
- */
-export function localSourceAbsFiles(sources: Record<string, ComponentSource>, dir: string): string[] {
-  const files = new Set<string>()
-  for (const source of Object.values(sources)) {
-    if (source.kind === 'local') files.add(join(dir, ...source.file.split('/')))
-  }
-  return [...files]
 }
 
 /** Test-only: drop every cached entry so a test doesn't leak state into the next one. */

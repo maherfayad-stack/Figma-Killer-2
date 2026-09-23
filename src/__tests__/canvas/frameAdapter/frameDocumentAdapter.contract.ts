@@ -78,6 +78,19 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // `speed-06`
+    it('measureDropCandidates returns a promise resolving to an array', async () => {
+      const { adapter, cleanup } = makeHarness()
+      try {
+        const result = adapter.measureDropCandidates()
+        expect(result).toBeInstanceOf(Promise)
+        const candidates = await result
+        expect(Array.isArray(candidates)).toBe(true)
+      } finally {
+        cleanup()
+      }
+    })
+
     it('setAxes does not throw for both directions and both color schemes', () => {
       const { adapter, cleanup } = makeHarness()
       try {
@@ -99,6 +112,17 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       }
     })
 
+    // `live-18`
+    it('startTextEdit does not throw for an allowed or a refused reply', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.startTextEdit(existingRef.nodeId, true, 'seed text')).not.toThrow()
+        expect(() => adapter.startTextEdit(existingRef.nodeId, false)).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
     it('optimistic.* do not throw for a well-formed call', () => {
       const { adapter, existingRef, cleanup } = makeHarness()
       try {
@@ -110,6 +134,18 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
         // the real "move within a valid, distinct parent" case instead.
         expect(() => adapter.optimistic.move('contract-new', existingRef.nodeId, 0)).not.toThrow()
         expect(() => adapter.optimistic.delete('contract-new')).not.toThrow()
+      } finally {
+        cleanup()
+      }
+    })
+
+    // `speed-01`
+    it('optimistic.style/clearStyle do not throw for an inline call, a class-target call, or a clear', () => {
+      const { adapter, existingRef, cleanup } = makeHarness()
+      try {
+        expect(() => adapter.optimistic.style(existingRef.nodeId, { color: 'red' })).not.toThrow()
+        expect(() => adapter.optimistic.style(existingRef.nodeId, { color: 'blue' }, 'card')).not.toThrow()
+        expect(() => adapter.optimistic.clearStyle(existingRef.nodeId)).not.toThrow()
       } finally {
         cleanup()
       }

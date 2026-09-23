@@ -65,7 +65,7 @@ export function usePrototypeLinkPick(localRects: ReadonlyMap<string, BoardRect>)
     const key = `${pending.pageId}::${pending.nodeId}`
     if (convertedRef.current === key) return
     // Not measured yet — the frame may still be mounting. Leave the request
-    // standing; the observer's next pass re-runs this.
+    // standing; the next measurement pass re-runs this.
     if (!local || !sourceFrame) return
 
     const anchor = handlePoint(toBoardRect(frameBoardRect(sourceFrame), local))

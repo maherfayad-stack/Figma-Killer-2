@@ -65,7 +65,7 @@ function setUpCanvas(nodeId: string) {
   // invisible to it even with `data-breakpoint-id` set.
   const adapter = new PortalFrameAdapter(frameDoc)
   adapters.push(adapter)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, 'desktop')
 
   return { layer, frame, node }
 }

@@ -93,6 +93,26 @@ describe('studioEditLocation — writable-path guard', () => {
   ])('refuses %s — a writeback belongs on app source only', (_label, nodeId) => {
     expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
   })
+
+  // A project reached through a symlink (macOS' `/var` → `/private/var` is one,
+  // and every fixture under `os.tmpdir()` sits behind it) resolved `dir` to
+  // the real path but left a file that does not exist yet at its plain path,
+  // so `relative()` climbed out through `..` and the guard refused the first
+  // write that would have CREATED a file. The canonical path must come from
+  // the deepest ancestor that exists, whether the file itself does or not.
+  it('accepts a not-yet-created file when the project root is reached through a symlink', () => {
+    const link = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-link-')), 'project')
+    fs.symlinkSync(tmpDir, link)
+    try {
+      expect(canonicalSourceRel(link, 'src/new/Screen.tsx')).toBe('src/new/Screen.tsx')
+      expect(studioEditLocation(link, 'src/new/Screen.tsx:1:1')).toEqual({ rel: 'src/new/Screen.tsx', line: 1, col: 1 })
+      // The existing-file case still canonicalises through the same link.
+      write('src/Home.tsx', 'export const Home = () => <div>hi</div>\n')
+      expect(canonicalSourceRel(link, 'src/Home.tsx')).toBe('src/Home.tsx')
+    } finally {
+      fs.rmSync(path.dirname(link), { recursive: true, force: true })
+    }
+  })
 })
 
 /**

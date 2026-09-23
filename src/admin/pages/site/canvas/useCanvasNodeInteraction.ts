@@ -52,8 +52,22 @@ export interface CanvasNodeInteractionOptions {
   openContextMenu: (position: { x: number; y: number; nodeId: string }) => void
 }
 
+/** The modifier keys a click carried — all a selection needs to know about the event that made it. */
+export interface ClickModifiers {
+  shiftKey: boolean
+  metaKey: boolean
+  ctrlKey: boolean
+}
+
 export interface CanvasNodeInteraction {
   onNodeClick: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
+  /**
+   * `live-12` — the same selection `onNodeClick` makes, for a click that
+   * happened INSIDE a cross-origin bridge frame and arrived as a `pointer`
+   * message rather than a DOM event: there is no event to stop, only the
+   * modifiers it carried.
+   */
+  onFrameNodeClick: (nodeId: string, modifiers: ClickModifiers, breakpointId?: string, frameId?: string | null) => void
   onNodeHover: (nodeId: string | null, breakpointId?: string, frameId?: string | null) => void
   onNodeContextMenu: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
   onNodeDoubleClick: (nodeId: string, e: ReactMouseEvent, breakpointId?: string, frameId?: string | null) => void
@@ -168,6 +182,10 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     // alive there and this must not undo it. The design canvas still owns its
     // clicks outright.
     if (!options.isLive) e.stopPropagation()
+    onFrameNodeClick(nodeId, e, breakpointId, frameId)
+  }
+
+  const onFrameNodeClick = (nodeId: string, e: ClickModifiers, breakpointId?: string, frameId?: string | null) => {
     // An ARMED player owns every click in the live frame. Falling through to
     // selection when no link is found would make the same gesture mean two
     // different things depending on where it landed, which is the exact
@@ -275,5 +293,5 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     startInlineEdit(nodeId, breakpointId ?? options.activeBreakpointId, frameId ?? null)
   }
 
-  return { onNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp }
+  return { onNodeClick, onFrameNodeClick, onNodeHover, onNodeContextMenu, onNodeDoubleClick, onNodePointerDown, onNodePointerUp }
 }

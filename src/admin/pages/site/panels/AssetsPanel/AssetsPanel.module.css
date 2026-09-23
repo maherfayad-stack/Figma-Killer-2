@@ -114,3 +114,16 @@
     font-size: var(--text-2xs);
     color: var(--text-subtle);
 }
+
+/* `speed-06` — the drag ghost's own tiny preview box, inside `CanvasInsertionDragOverlay`'s `.ghost` row. Same idea as the card's own `.preview`, shrunk to fit a cursor-following label. */
+.dragGhostPreview {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
+    overflow: hidden;
+    border-radius: var(--radius-sm);
+    background: var(--bg-surface-2);
+    color: var(--text-muted);
+}

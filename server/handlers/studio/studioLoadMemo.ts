@@ -44,17 +44,18 @@
  * result measured ~1.8 ms — an order of magnitude under the ~26 ms it saves —
  * so the memo always clones both in and out.
  *
- * ## Only FULL loads are stored
+ * ## Every load stores the FULL result
  *
- * A narrowed load (`options.pageIds`, the canvas's targeted reload) skips the
- * per-page convert for every other route, so its result is not a project-wide
- * truth and must never be stored. It can still be SERVED from a stored full
- * result by filtering `pages` — which is exactly what a narrowed load returns.
+ * A narrowed load (`options.pageIds`, the canvas's targeted reload) runs the
+ * same compute and converts every route — narrowing happens on the way out,
+ * by filtering `pages`. So the result it computed IS the project-wide truth,
+ * it is stored like any other, and the full load that follows a canvas
+ * resync is a memo hit rather than a second parse.
  *
  * In-memory, process-scoped, one entry per `dir` — same posture as
- * `pageParseCache.ts`.
+ * `pageParseCache.ts` and the kept ts-morph `Project` in `workspaceProject.ts`.
  */
-import { statSync } from 'node:fs'
+import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { listWorkspaceFiles } from '@core/page-parser'
 import type { StudioLoadResult } from './studioLoadContract'
@@ -62,8 +63,37 @@ import type { StudioLoadResult } from './studioLoadContract'
 /** Extensions whose content can change what `loadStudioPages` returns. */
 const FINGERPRINTED_EXTENSIONS = /\.(tsx?|jsx?|mjs|cjs|css|scss|sass|less|json)$/i
 
-/** Inside `EXCLUDED_WORKSPACE_DIR_NAMES`, so `listWorkspaceFiles` never reports it — but it decides pagesDir, locale, framework, trust and stories. */
-const EXTRA_FINGERPRINTED_FILES = ['.studio/meta.json'] as const
+/**
+ * `.studio/meta.json` fields that change WITHOUT changing a load result, and
+ * must therefore be excluded from the fingerprint.
+ *
+ * `lastOpenedAt` is the whole reason this list exists. `GET /admin/api/studio/
+ * load` stamps it through `recordProjectOpened` on its way in — and the board
+ * calls that same route to re-sync after EVERY structural edit. Fingerprinting
+ * the file by mtime therefore guaranteed a different fingerprint on every
+ * single load, so the memo below could never hit once, and every duplicate,
+ * insert, wrap and group paid a full cold `computeStudioPages` (~600 ms on a
+ * two-page project, measured) for work the previous gesture had already done.
+ * The memo was correct; it was being invalidated by its own reader.
+ *
+ * `trustAutoPromotedAt` is here for the same reason and not because it has
+ * ever been observed to bite: it is a timestamp beside a boolean latch, and
+ * `trustAutoPromoted` — the field that actually decides anything — is NOT
+ * excluded, so the promotion itself still invalidates.
+ *
+ * The list is an EXCLUDE list, not an include list, deliberately: a new
+ * parse-relevant field added to `StudioMeta` is covered automatically, and
+ * only a field someone consciously names here can ever be ignored. Under-
+ * invalidating serves stale source; over-invalidating only costs time.
+ */
+const NON_PARSE_META_FIELDS = new Set(['lastOpenedAt', 'trustAutoPromotedAt'])
+
+/**
+ * Inside `EXCLUDED_WORKSPACE_DIR_NAMES`, so `listWorkspaceFiles` never reports
+ * it — but it decides pagesDir, locale, framework, trust and stories, so it is
+ * fingerprinted by CONTENT (minus the fields above) rather than by mtime.
+ */
+const META_RELATIVE_PATH = '.studio/meta.json'
 
 function fileStamp(absFile: string): string {
   try {
@@ -71,6 +101,37 @@ function fileStamp(absFile: string): string {
     return `${stat.size}:${stat.mtimeMs}`
   } catch {
     return 'missing'
+  }
+}
+
+/**
+ * `.studio/meta.json`'s contribution: its parsed content with the fields above
+ * removed, re-serialised with sorted keys so a rewrite that only reorders them
+ * is not mistaken for a change.
+ *
+ * Reading and parsing rather than stat-ing is affordable precisely because it
+ * is ONE small file — and it is the only way to tell "the trust tier moved"
+ * apart from "the board re-synced". Unreadable or malformed falls back to the
+ * raw bytes, which is the conservative answer: a file this function cannot
+ * understand must still invalidate when it changes.
+ */
+function metaStamp(dir: string): string {
+  const absFile = join(dir, ...META_RELATIVE_PATH.split('/'))
+  let raw: string
+  try {
+    raw = readFileSync(absFile, 'utf8')
+  } catch {
+    return 'missing'
+  }
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object' || Array.isArray(parsed)) return raw
+    const stable = Object.entries(parsed as Record<string, unknown>)
+      .filter(([key]) => !NON_PARSE_META_FIELDS.has(key))
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+    return JSON.stringify(stable)
+  } catch {
+    return raw
   }
 }
 
@@ -85,9 +146,7 @@ export function workspaceLoadFingerprint(dir: string): string {
     if (!FINGERPRINTED_EXTENSIONS.test(relPath)) continue
     parts.push(`${relPath}:${fileStamp(join(dir, ...relPath.split('/')))}`)
   }
-  for (const relPath of EXTRA_FINGERPRINTED_FILES) {
-    parts.push(`${relPath}:${fileStamp(join(dir, ...relPath.split('/')))}`)
-  }
+  parts.push(`${META_RELATIVE_PATH}:${metaStamp(dir)}`)
   const payload = parts.join('\n')
   let hash = 0
   for (let i = 0; i < payload.length; i++) hash = (hash * 31 + payload.charCodeAt(i)) | 0

@@ -32,7 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { RuntimeErrorKind } from '@core/studio-runtime'
+import type { ElementSizePatch, RuntimeErrorKind } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -54,6 +54,24 @@ export interface NodeMeasurement {
 }
 
 /**
+ * `speed-06` — one node's drop-target geometry, as returned by
+ * {@link FrameDocumentAdapter.measureDropCandidates}. `rect` is BODY-RELATIVE
+ * — the same coordinate space `measure`/`resize:commit` already speak — not
+ * the "frame-space" (viewport-local, unscaled) units `CanvasDropCandidate`
+ * (`canvasDnd.ts`) uses; the caller (`canvasInsertionDragSnapshot.ts`)
+ * converts through `bodyRelativeRectToFrameSpace` once it also has the
+ * surface's `viewport`/`iframe`, which this interface deliberately knows
+ * nothing about.
+ */
+export interface DropCandidateGeometry {
+  nodeId: string
+  rect: NodeRect
+  axis: 'vertical' | 'horizontal'
+  /** See `CanvasDropCandidate.reversed`'s doc (`canvasDnd.ts`). */
+  reversed: boolean
+}
+
+/**
  * The four structural DOM mutations today's reorder-drag code already
  * performs immediately (same tick) for the paint-on-drop feel, ahead of the
  * HMR/writeback reconciliation that follows within milliseconds. Portal mode:
@@ -65,6 +83,24 @@ export interface OptimisticDomOps {
   delete(nodeId: string): void
   move(nodeId: string, parentNodeId: string, index: number): void
   text(nodeId: string, text: string): void
+  /**
+   * `speed-01` — a properties-panel style commit or scrub preview, applied
+   * as a stylesheet rule scoped to `nodeId`'s own element (never `nodeId`'s
+   * inline `style`, which the eventual React re-render also writes — see
+   * `@core/studio-runtime`'s `optimisticStyle.ts` for why an inline preview
+   * can never be cleared safely). `patch` keys are CSS property names
+   * (camelCase or kebab-case). `className`, present for a CLASS-target write,
+   * is carried through to the wire but is INFORMATIONAL only — a bridge frame
+   * cannot build a `.<className>` selector against it, because that name is
+   * Studio's own parse of the class, not the (independently hashed) name
+   * Vite's CSS-modules plugin gave it in the live frame's DOM; see
+   * `optimisticStyle.ts`'s module doc, "ALWAYS element-scoped". Only the
+   * edited node's own element previews instantly; other elements sharing the
+   * class catch up on the next HMR update.
+   */
+  style(nodeId: string, patch: Record<string, string>, className?: string): void
+  /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */
+  clearStyle(nodeId: string): void
 }
 
 export type FrameRuntimeEvent =
@@ -79,9 +115,48 @@ export type FrameRuntimeEvent =
       rect: NodeRect | null
       clientX: number
       clientY: number
+      /**
+       * `live-19` — `MouseEvent.screenX/Y`: identical in the frame and the
+       * parent regardless of any CSS transform on the iframe, and immune to
+       * the compositor lag between a pan's DOM write landing and the
+       * out-of-process iframe's last-committed layout catching up. A pan
+       * replay must drive its delta from THESE, never from `clientX/clientY`
+       * re-projected through the iframe's current rect — see
+       * `useBridgeFrameInteraction.ts`'s module doc.
+       */
+      screenX: number
+      screenY: number
+      modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+      /** `live-13` — `PointerEvent.button`/`buttons`/`pointerId`/`pointerType`, so a consumer can tell a pan press from a selection and replay one gesture coherently. */
+      button: number
+      buttons: number
+      pointerId: number
+      pointerType: string
+    }
+  /**
+   * `live-13` — a finished drag on the frame's own resize handles changed the
+   * node's size; `patch` is the inline-style write the consumer commits
+   * through the store (only the dimensions the drag changed, as `px`
+   * strings). Bridge mode only in practice: a portal frame's handles are the
+   * parent's own React elements (`CanvasResizeHandles`) and commit directly.
+   */
+  | { type: 'resize:commit'; nodeId: string; patch: ElementSizePatch }
+  /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
+  | {
+      type: 'wheel'
+      deltaX: number
+      deltaY: number
+      deltaMode: number
+      clientX: number
+      clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
     }
-  | { type: 'text:edit'; nodeId: string; text: string }
+  /** `live-18` — a double-click on a text-bearing node inside the frame; the parent decides allowed/refused via `startTextEdit`. */
+  | { type: 'text:editStart'; nodeId: string }
+  /** `live-18` — Enter (no Shift) or blur ended the session with this final text. */
+  | { type: 'text:commit'; nodeId: string; text: string }
+  /** `live-18` — Escape, or an HMR update landing mid-edit, ended the session with no write. */
+  | { type: 'text:cancel'; nodeId: string }
   /**
    * Z5 — the frame's own runtime reported a failure (an uncaught exception, an
    * unhandled rejection, a `console.error`, a resource that would not load, or
@@ -111,6 +186,14 @@ export interface FrameDocumentAdapter {
   hover(ref: NodeRef | null): void
   /** Rects + a bounded set of computed-style properties. Portal mode resolves synchronously (wrapped in a resolved `Promise` so callers never branch on adapter kind); bridge mode is genuinely async (a real `postMessage` round trip, bounded by a timeout). */
   measure(refs: NodeRef[], properties?: string[]): Promise<NodeMeasurement[]>
+  /**
+   * `speed-06` — every node currently in the frame's document, with its
+   * drop-target geometry, for a per-drag candidate snapshot
+   * (`canvasInsertionDragSnapshot.ts`). Same synchronous-vs-real-round-trip
+   * split as `measure`. Called once per drag and again on that surface's own
+   * refresh triggers — NEVER per pointer move, which is the whole point.
+   */
+  measureDropCandidates(): Promise<DropCandidateGeometry[]>
   /** Applies the board's render-time preview axes to the frame's own document root. */
   setAxes(axes: PreviewAxes): void
   /**
@@ -123,6 +206,24 @@ export interface FrameDocumentAdapter {
    * not share a name. Map `interaction === 'live' ? 'live' : 'design'`.
    */
   setInteractionMode(mode: 'design' | 'live'): void
+  /**
+   * `live-13` — which node carries resize handles (`null` clears them), and
+   * whether `K4`'s scale tool is armed. The caller has already applied the
+   * module policy (`resizeOffer.ts`); the frame applies the geometric one
+   * (an element whose computed display ignores a size gets no handles).
+   * Portal mode draws its handles as the parent's own React elements
+   * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
+   */
+  setResizeTarget(ref: NodeRef | null, options: { proportional: boolean }): void
+  /**
+   * `live-18` — replies to the frame's `text:editStart`: whether `nodeId`
+   * may be edited inline (the same predicate the portal editor's
+   * `startInlineEdit` applies) and, when it may, the node's CURRENT text to
+   * seed the frame's `contentEditable` with. Portal mode's inline editor
+   * owns its whole session directly inside `NodeRenderer`, with no adapter
+   * round trip — a documented no-op there.
+   */
+  startTextEdit(nodeId: string, allowed: boolean, text?: string): void
   optimistic: OptimisticDomOps
   /** Subscribes to a runtime event. Portal mode: real DOM/synthetic events (`ready` fires once, synchronously — a portal frame has no real "boot" moment). Bridge mode: the matching inbound `postMessage` from `runtime.ts`. */
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe

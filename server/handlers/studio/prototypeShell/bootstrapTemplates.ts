@@ -72,10 +72,19 @@ import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'
 // truth in your app's own words, in the frame where it happened — Studio adds
 // a quiet badge beside it rather than replacing it. Do not switch it off to
 // make the canvas look tidier.
+//
+// 'server.host' is pinned to 127.0.0.1 on purpose. Vite's default host,
+// 'localhost', makes Node bind only the FIRST address the name resolves to —
+// ::1 on a modern macOS/Linux — so a port another server already holds on
+// 127.0.0.1 looks free, Vite takes it on IPv6, and Studio's live-origin proxy
+// (which resolves 'localhost' to 127.0.0.1) then talks to the wrong server.
+// Pinning IPv4 makes the port probe, the printed URL and the proxy agree.
+// 'server.open' stays on for your own 'npm run dev' and is off when Studio
+// spawns this process — a canvas opening must not open a browser tab.
 export default defineConfig({
   plugins: [react(), studioRuntimeIdPlugin()],
   base: process.env.${STUDIO_LIVE_BASE_PATH_ENV} || '/',
-  server: { open: true },
+  server: { host: '127.0.0.1', open: !process.env.${STUDIO_LIVE_BASE_PATH_ENV} },
 })
 `
 
@@ -84,7 +93,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App'
 import './shell.css'
 import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'
-import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'
+import { createStudioRuntimeBridge, resolveParentOrigin } from './studioRuntimeBridge.generated.js'
 
 createRoot(document.getElementById('root')).render(
   <StrictMode>
@@ -94,14 +103,20 @@ createRoot(document.getElementById('root')).render(
 
 // Boots the live-canvas runtime bridge only when THIS dev server was
 // spawned under Studio's own supervision (server/handlers/studio/devServer.ts
-// sets STUDIO_PARENT_ORIGIN_ENV on the process only then — never for a
-// plain 'npm run dev', including every copy Studio hands out via
-// 'Download the code') AND this document is actually embedded in a frame.
-// Neither check alone is enough: a supervised dev server opened directly in
-// a normal browser tab must not boot a bridge with nothing to talk to.
-if (STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window) {
+// sets STUDIO_PARENT_ORIGINS on the process only then — never for a plain
+// 'npm run dev', including every copy Studio hands out via 'Download the
+// code'), this document is actually embedded in a frame, AND the document
+// that framed it is one of the origins Studio said may do so. The parent is
+// read off the browser's own record of who framed this document
+// (location.ancestorOrigins, which survives a Vite full reload) or, where a
+// browser lacks that, document.referrer, and checked against that list — the
+// list says who may be a parent, the browser says which one is. A supervised
+// dev server opened directly in a normal browser tab has neither and boots
+// no bridge, because there is nothing to talk to.
+const studioParentOrigin = resolveParentOrigin(STUDIO_RUNTIME_CONFIG.parentOrigins, document.referrer)
+if (studioParentOrigin && window.parent !== window) {
   createStudioRuntimeBridge({
-    parentOrigin: STUDIO_RUNTIME_CONFIG.parentOrigin,
+    parentOrigin: studioParentOrigin,
     hot: import.meta.hot,
   })
 }

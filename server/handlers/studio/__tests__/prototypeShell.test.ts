@@ -252,13 +252,14 @@ describe('ensurePrototypeShell — the studio-runtime id-stamping plugin', () =>
  * project regardless of `main.jsx`'s freeze state.
  */
 describe('ensurePrototypeShell — the studio-runtime bridge boot wiring', () => {
-  it('writes a main.jsx that imports virtual:studio-runtime and the bridge, gated on parentOrigin + window.parent', () => {
+  it('writes a main.jsx that imports virtual:studio-runtime and the bridge, gated on a referrer-resolved parent origin + window.parent', () => {
     ensurePrototypeShell(tmpDir)
 
     const mainJsx = read('prototype/main.jsx')
     expect(mainJsx).toContain("import { STUDIO_RUNTIME_CONFIG } from 'virtual:studio-runtime'")
-    expect(mainJsx).toContain("import { createStudioRuntimeBridge } from './studioRuntimeBridge.generated.js'")
-    expect(mainJsx).toContain('STUDIO_RUNTIME_CONFIG.parentOrigin && window.parent !== window')
+    expect(mainJsx).toContain("import { createStudioRuntimeBridge, resolveParentOrigin } from './studioRuntimeBridge.generated.js'")
+    expect(mainJsx).toContain('resolveParentOrigin(STUDIO_RUNTIME_CONFIG.parentOrigins, document.referrer)')
+    expect(mainJsx).toContain('studioParentOrigin && window.parent !== window')
     expect(mainJsx).toContain('createStudioRuntimeBridge(')
   })
 

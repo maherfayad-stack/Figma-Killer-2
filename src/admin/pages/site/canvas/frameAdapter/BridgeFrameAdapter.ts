@@ -61,6 +61,7 @@ import {
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
 import type {
+  DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
   NodeMeasurement,
@@ -69,7 +70,7 @@ import type {
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
-/** How long a `measure` request waits for `measure:result` before its promise rejects. Not chosen from an existing precedent — no bounded-postMessage-round-trip wait exists elsewhere in this codebase yet — but consistent with this repo's general "never hang a caller forever" posture. */
+/** How long a `measure`/`dropCandidates` request waits for its reply before the promise rejects. Not chosen from an existing precedent — no bounded-postMessage-round-trip wait exists elsewhere in this codebase yet — but consistent with this repo's general "never hang a caller forever" posture. */
 const DEFAULT_MEASURE_TIMEOUT_MS = 2000
 
 /**
@@ -110,7 +111,7 @@ export interface BridgeFrameAdapterOptions {
 
 class MeasureTimeoutError extends Error {
   constructor(requestId: string) {
-    super(`Bridge frame did not answer measure request "${requestId}" within the timeout.`)
+    super(`Bridge frame did not answer request "${requestId}" within the timeout.`)
     this.name = 'MeasureTimeoutError'
   }
 }
@@ -126,8 +127,24 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     string,
     { resolve: (m: NodeMeasurement[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
   >()
+  /** `speed-06` — pending `dropCandidates` requests, same shape as `pendingMeasurements`, kept separate because the two replies carry different payloads. */
+  private readonly pendingDropCandidates = new Map<
+    string,
+    { resolve: (c: DropCandidateGeometry[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
+  >()
   private nextRequestId = 0
   private disposed = false
+  private frameReady = false
+  /**
+   * `live-12` — the mode the parent last declared, re-sent on every `ready`.
+   * A Vite full reload (the runtime's own bundle changing, an edit HMR cannot
+   * hot-swap) replaces the frame's DOCUMENT under the same `WindowProxy`: the
+   * new runtime boots with no mode and posts `ready` again, and a mode sent
+   * only once would have died with the old document — leaving the frame a
+   * visitor's page, its clicks reaching the app instead of the editor.
+   */
+  private interactionMode: 'design' | 'live' | null = null
+  private queuedUntilReady: Parameters<typeof toInboundEnvelope>[0][] = []
   private readonly onMessage = (ev: MessageEvent) => this.handleWindowMessage(ev)
 
   readonly optimistic: OptimisticDomOps = {
@@ -163,6 +180,14 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.text', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, text })
     },
+    style: (nodeId, patch, className) => {
+      const ref = this.toWireRef(nodeId)
+      this.post({ type: 'optimistic.style', ref, patch, ...(className === undefined ? {} : { className }) })
+    },
+    clearStyle: (nodeId) => {
+      const ref = this.toWireRef(nodeId)
+      this.post({ type: 'optimistic.style:clear', ref })
+    },
   }
 
   constructor(options: BridgeFrameAdapterOptions) {
@@ -191,8 +216,37 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     return this.stampIndex.get(stampId)?.[occurrenceIndex] ?? stampId
   }
 
+  /**
+   * `live-12` — the canonical id of the innermost stamped ancestor of a
+   * pointer hit that the page tree actually knows. A click inside a
+   * design-system button is stamped with that package's own internal source
+   * position; walking out to the call site is what makes the click select
+   * the button. Falls back to the innermost id's own (possibly inexact)
+   * translation when nothing in the chain is known, exactly as before.
+   */
+  private nearestKnownNodeId(message: { nodeId: string | null; occurrenceIndex: number; ancestors: readonly { nodeId: string; occurrenceIndex: number }[] }): string | null {
+    for (const ref of message.ancestors) {
+      const known = this.stampIndex.get(ref.nodeId)?.[ref.occurrenceIndex]
+      if (known !== undefined) return known
+    }
+    return message.nodeId === null ? null : this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex)
+  }
+
+  /**
+   * Nothing is posted until the frame has said `ready`. Before that the
+   * iframe is still `about:blank` (the parent's origin) or mid-navigation,
+   * and a `postMessage` targeted at `frameOrigin` lands nowhere and logs a
+   * "target origin does not match" warning for every overlay, mode and axes
+   * call the canvas makes while mounting. Queued and flushed on `ready`
+   * instead — the frame gets every command, in order, the moment it can act
+   * on them.
+   */
   private post(message: Parameters<typeof toInboundEnvelope>[0]): void {
     if (this.disposed) return
+    if (!this.frameReady) {
+      this.queuedUntilReady.push(message)
+      return
+    }
     this.channel.postMessage(toInboundEnvelope(message), this.frameOrigin)
   }
 
@@ -230,12 +284,41 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     })
   }
 
+  /**
+   * `speed-06` — a bounded `dropCandidates`/`dropCandidates:result` round
+   * trip, translating each wire candidate's stamp+occurrence back to a
+   * canonical node id exactly like every other inbound method here.
+   * `childRects` travels on the wire (bounded, `sec-06`) but is dropped here
+   * — unconsumed by today's resolver, see `dropCandidates.ts`'s own doc.
+   */
+  measureDropCandidates(): Promise<DropCandidateGeometry[]> {
+    const requestId = `bridge-drop-candidates-${this.nextRequestId++}`
+    return new Promise<DropCandidateGeometry[]>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDropCandidates.delete(requestId)
+        reject(new MeasureTimeoutError(requestId))
+      }, this.measureTimeoutMs)
+      this.pendingDropCandidates.set(requestId, { resolve, reject, timeout })
+      this.post({ type: 'dropCandidates', requestId })
+    })
+  }
+
   setAxes(axes: PreviewAxes): void {
     this.post({ type: 'setAxes', axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale } })
   }
 
   setInteractionMode(mode: 'design' | 'live'): void {
+    this.interactionMode = mode
     this.post({ type: 'setMode', mode })
+  }
+
+  setResizeTarget(ref: NodeRef | null, { proportional }: { proportional: boolean }): void {
+    this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
+  }
+
+  startTextEdit(nodeId: string, allowed: boolean, text?: string): void {
+    const ref = this.toWireRef(nodeId)
+    this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed, ...(text === undefined ? {} : { text }) })
   }
 
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
@@ -270,7 +353,17 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
 
   private dispatchOutboundMessage(message: OutboundRuntimeMessage): void {
     switch (message.type) {
-      case 'ready':
+      case 'ready': {
+        const wasReady = this.frameReady
+        this.frameReady = true
+        const queued = this.queuedUntilReady
+        this.queuedUntilReady = []
+        for (const pending of queued) this.post(pending)
+        // A SECOND `ready` is a reloaded document — see `interactionMode`.
+        if (wasReady && this.interactionMode !== null) this.post({ type: 'setMode', mode: this.interactionMode })
+        this.emit({ type: 'ready' })
+        return
+      }
       case 'hmr:before':
       case 'hmr:after':
         this.emit({ type: message.type })
@@ -298,18 +391,54 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         this.emit({
           type: 'pointer',
           phase: message.phase,
-          nodeId: message.nodeId === null ? null : this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+          nodeId: this.nearestKnownNodeId(message),
           rect: message.rect,
+          clientX: message.clientX,
+          clientY: message.clientY,
+          screenX: message.screenX,
+          screenY: message.screenY,
+          modifiers: message.modifiers,
+          button: message.button,
+          buttons: message.buttons,
+          pointerId: message.pointerId,
+          pointerType: message.pointerType,
+        })
+        return
+      case 'resize:commit':
+        this.emit({
+          type: 'resize:commit',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+          patch: message.patch,
+        })
+        return
+      case 'wheel':
+        this.emit({
+          type: 'wheel',
+          deltaX: message.deltaX,
+          deltaY: message.deltaY,
+          deltaMode: message.deltaMode,
           clientX: message.clientX,
           clientY: message.clientY,
           modifiers: message.modifiers,
         })
         return
-      case 'text:edit':
+      case 'text:editStart':
         this.emit({
-          type: 'text:edit',
+          type: 'text:editStart',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+        })
+        return
+      case 'text:commit':
+        this.emit({
+          type: 'text:commit',
           nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
           text: message.text,
+        })
+        return
+      case 'text:cancel':
+        this.emit({
+          type: 'text:cancel',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
         })
         return
       case 'measure:result': {
@@ -326,6 +455,21 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         )
         return
       }
+      case 'dropCandidates:result': {
+        const pending = this.pendingDropCandidates.get(message.requestId)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pendingDropCandidates.delete(message.requestId)
+        pending.resolve(
+          message.candidates.map((c) => ({
+            nodeId: this.toCanonicalNodeId(c.nodeId, c.occurrenceIndex),
+            rect: c.rect,
+            axis: c.axis,
+            reversed: c.reversed,
+          })),
+        )
+        return
+      }
     }
   }
 
@@ -337,6 +481,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       reject(new Error('BridgeFrameAdapter disposed while a measure request was in flight.'))
     }
     this.pendingMeasurements.clear()
+    for (const { reject, timeout } of this.pendingDropCandidates.values()) {
+      clearTimeout(timeout)
+      reject(new Error('BridgeFrameAdapter disposed while a dropCandidates request was in flight.'))
+    }
+    this.pendingDropCandidates.clear()
     this.eventHandlers.clear()
   }
 }

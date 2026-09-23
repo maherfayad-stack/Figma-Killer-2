@@ -9,7 +9,29 @@ export interface ServerConfig {
   livePort: number
   /** Public origin of the live listener — what the admin client points an iframe `src` / postMessage target-origin check at. */
   liveOrigin: string
+  /**
+   * Every origin the live listener may be FRAMED by (its CSP
+   * `frame-ancestors`): the configured public origins, the dev origins the
+   * CSRF check already trusts, and the admin server's own local origins.
+   * See {@link resolveLiveFrameAncestors}.
+   */
+  liveFrameAncestors: string[]
 }
+
+/**
+ * Extra origins the Origin check accepts and the live listener may be framed
+ * by — Vite's dev ports (`bun run dev` serves the admin there) plus whatever
+ * `VITE_ALLOWED_ORIGIN` names. Lives here, not in `auth/security.ts`, because
+ * `liveOrigin.ts` needs it too and is structurally barred from importing the
+ * session module (`live-origin-isolation.test.ts`).
+ */
+export const DEV_ORIGIN_ALLOWLIST: string[] = [
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  process.env.VITE_ALLOWED_ORIGIN ?? '',
+].filter(Boolean)
 
 function readCsvList(value: string | undefined): string[] {
   return (value ?? '')
@@ -122,19 +144,36 @@ export function resolveLiveOrigin(env: Record<string, string | undefined>, liveP
   return `http://localhost:${livePort}`
 }
 
+/**
+ * The origins allowed to frame a Tier-2 live frame — exactly the set the
+ * CSRF Origin check (`auth/security.ts`'s `originAllowed`) accepts as "the
+ * editor": the public origins, the dev-server origins, and the admin server
+ * itself on its own port. Before this, an install without `PUBLIC_ORIGIN` —
+ * every local one — answered `frame-ancestors 'none'`, so the board's live
+ * iframes were blocked by the browser on every open and the real app never
+ * rendered; nobody had noticed because no project had been at Tier 2 until
+ * it became the default.
+ */
+export function resolveLiveFrameAncestors(publicOrigins: readonly string[], port: number): string[] {
+  const local = [`http://localhost:${port}`, `http://127.0.0.1:${port}`]
+  return [...new Set(normalizeOrigins([...publicOrigins, ...DEV_ORIGIN_ALLOWLIST, ...local]))]
+}
+
 export function readServerConfig(
   env: Record<string, string | undefined> = process.env,
 ): ServerConfig {
   const port = Number(env.PORT ?? 3001)
   const livePort = resolveLivePort(env, port)
+  const publicOrigins = resolvePublicOrigins(env)
   return {
     port,
     databaseUrl: env.DATABASE_URL ?? 'sqlite:./.tmp/dev.db',
     uploadsDir: env.UPLOADS_DIR ?? './uploads',
     staticDir: env.STATIC_DIR ?? './dist',
     trustedProxyCidrs: readCsvList(env.TRUSTED_PROXY_CIDRS),
-    publicOrigins: resolvePublicOrigins(env),
+    publicOrigins,
     livePort,
     liveOrigin: resolveLiveOrigin(env, livePort),
+    liveFrameAncestors: resolveLiveFrameAncestors(publicOrigins, port),
   }
 }

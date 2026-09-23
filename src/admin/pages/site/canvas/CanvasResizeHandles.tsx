@@ -26,7 +26,7 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { RESIZE_HANDLES } from './rectResize'
+import { RESIZE_HANDLES } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
 import { RESIZE_HANDLE_ATTR, useElementResizeDrag } from './useElementResizeDrag'
 

@@ -25,8 +25,24 @@ import { studioRuntimeIdPlugin } from './prototype/studioRuntime.generated.js'
 // STATE.md — before this comment was written the wrong way). A bare
 // 'npm run dev' never sets this env var, so 'base' defaults to '/' and
 // nothing here changes for that case.
+//
+// Vite's own error overlay is left ENABLED (it is on by default; nothing here
+// sets 'server.hmr.overlay: false'), deliberately. When this app is running
+// inside a Studio live frame, a compile error is your app telling you the
+// truth in your app's own words, in the frame where it happened — Studio adds
+// a quiet badge beside it rather than replacing it. Do not switch it off to
+// make the canvas look tidier.
+//
+// 'server.host' is pinned to 127.0.0.1 on purpose. Vite's default host,
+// 'localhost', makes Node bind only the FIRST address the name resolves to —
+// ::1 on a modern macOS/Linux — so a port another server already holds on
+// 127.0.0.1 looks free, Vite takes it on IPv6, and Studio's live-origin proxy
+// (which resolves 'localhost' to 127.0.0.1) then talks to the wrong server.
+// Pinning IPv4 makes the port probe, the printed URL and the proxy agree.
+// 'server.open' stays on for your own 'npm run dev' and is off when Studio
+// spawns this process — a canvas opening must not open a browser tab.
 export default defineConfig({
   plugins: [react(), studioRuntimeIdPlugin()],
   base: process.env.STUDIO_LIVE_BASE_PATH || '/',
-  server: { open: true },
+  server: { host: '127.0.0.1', open: !process.env.STUDIO_LIVE_BASE_PATH },
 })

@@ -371,6 +371,7 @@ describe('a CRLF CLI transcript is read exactly like its LF twin', () => {
 describe('the trust-tier gate', () => {
   it('refuses to start a deploy at Tier 0 (static)', async () => {
     const dir = makeProjectDir()
+    writeStudioMeta(dir, { trust: 'static' })
     const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
     expect(res?.status).toBe(409)
     const body = (await res!.json()) as { code: string; error: string }
@@ -387,6 +388,7 @@ describe('the trust-tier gate', () => {
 
   it('reports the gate as data, and spawns no CLI below it', async () => {
     const dir = makeProjectDir()
+    writeStudioMeta(dir, { trust: 'static' })
     fs.writeFileSync(path.join(dir, 'vercel.json'), '{}')
     const res = await call(`/admin/api/studio/deploy/status?dir=${encodeURIComponent(dir)}`)
     expect(res?.status).toBe(200)
@@ -433,8 +435,9 @@ describe('the trust-tier gate on a monorepo import (app root !== project dir)', 
     expect(body.code).toBe('trust-tier-required')
   })
 
-  it('and at Tier 0, with no .studio/meta.json at all', async () => {
+  it('and at Tier 0, explicitly demoted', async () => {
     const { dir } = makeMonorepoProjectDir()
+    writeStudioMeta(dir, { trust: 'static' })
     const res = await call('/admin/api/studio/deploy', post({ dir, provider: 'vercel', confirm: true }))
     expect(res?.status).toBe(409)
   })

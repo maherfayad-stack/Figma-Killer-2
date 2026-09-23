@@ -45,7 +45,8 @@
  */
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { realpathSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, STUDIO_ASSET_SENTINEL } from '@core/page-parser'
+import type { Page } from '@core/page-tree'
 import { serveStaticFile } from '../static'
 
 export async function resolveStudioAssetResponse(dir: string, rawPath: string, req: Request): Promise<Response | null> {
@@ -83,4 +84,35 @@ export async function resolveStudioAssetResponse(dir: string, rawPath: string, r
   // a SECOND decode pass (which would corrupt a segment containing a literal
   // `%`, or worse, reinterpret an already-decoded `..`-shaped byte sequence).
   return serveStaticFile(dir, `/${segments.map(encodeURIComponent).join('/')}`, req)
+}
+
+/**
+ * Rewrites every `studio-asset:<workspace-rel>` sentinel prop value (§5.1 —
+ * `parsePageFile`'s image-import resolution) into a URL the browser can
+ * actually fetch: `/admin/api/studio/asset?dir=<encoded>&path=<encoded>`.
+ *
+ * Lives here, beside the endpoint it points at, not in `@core/page-parser` or
+ * `@core/studio-sync/parsedPageToSitePage` (§5.2's other option): turning a
+ * workspace-relative path into a URL is a route-shape decision — the query
+ * param names, the endpoint path itself — that belongs with the endpoint that
+ * owns that shape (`/admin/api/studio/asset`, served by
+ * `resolveStudioAssetResponse` above), not with the pure page-tree converter,
+ * which has no notion of `dir` or HTTP routing at all today. Keeping it here
+ * means a future route change never touches the parser or the converter.
+ * `studioPageLoad.ts` calls it on every page it builds.
+ *
+ * Mutates `page.nodes` in place — the pages array was just built fresh by
+ * `parsedPageToSitePage` for this same request, so there is no shared/cached
+ * object to accidentally corrupt.
+ */
+export function rewriteStudioAssetSentinels(page: Page, dir: string): void {
+  const dirParam = encodeURIComponent(dir)
+  for (const node of Object.values(page.nodes)) {
+    for (const [key, value] of Object.entries(node.props)) {
+      if (typeof value === 'string' && value.startsWith(STUDIO_ASSET_SENTINEL)) {
+        const relPath = value.slice(STUDIO_ASSET_SENTINEL.length)
+        node.props[key] = `/admin/api/studio/asset?dir=${dirParam}&path=${encodeURIComponent(relPath)}`
+      }
+    }
+  }
 }

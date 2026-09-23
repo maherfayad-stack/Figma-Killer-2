@@ -40,7 +40,11 @@ const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'setAxes', axes: { direction: 'ltr', colorScheme: 'light' } },
   { type: 'setAxes', axes: { direction: 'rtl', colorScheme: 'dark', locale: 'ar' } },
   { type: 'setMode', mode: 'design' },
+  { type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false },
+  { type: 'setResizeTarget', ref: null, proportional: true },
   { type: 'setMode', mode: 'live' },
+  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: true, text: 'current text' },
+  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: false },
   {
     type: 'optimistic.insert',
     nodeId: 'n1',
@@ -60,12 +64,34 @@ const inboundSamples: InboundRuntimeMessage[] = [
     index: 1,
   },
   { type: 'optimistic.text', nodeId: 'n1', occurrenceIndex: 0, text: 'updated' },
+  {
+    type: 'optimistic.style',
+    ref: { nodeId: 'n1', occurrenceIndex: 0 },
+    patch: { width: '240px', backgroundColor: 'red' },
+  },
+  {
+    type: 'optimistic.style',
+    ref: { nodeId: 'n1', occurrenceIndex: 0 },
+    patch: { color: 'blue' },
+    className: 'card',
+  },
+  { type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } },
+  { type: 'dropCandidates', requestId: 'r1' },
 ]
 
 const outboundSamples: OutboundRuntimeMessage[] = [
   { type: 'ready' },
   { type: 'hmr:before' },
   { type: 'hmr:after' },
+  {
+    type: 'wheel',
+    deltaX: 0,
+    deltaY: -120,
+    deltaMode: 0,
+    clientX: 12,
+    clientY: 34,
+    modifiers: { shiftKey: false, altKey: false, ctrlKey: true, metaKey: false },
+  },
   {
     type: 'pointer',
     phase: 'down',
@@ -74,7 +100,14 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     rect: { x: 0, y: 0, width: 10, height: 10 },
     clientX: 5,
     clientY: 5,
+    screenX: 105,
+    screenY: 205,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    button: 0,
+    buttons: 1,
+    pointerId: 1,
+    pointerType: 'mouse',
+    ancestors: [],
   },
   {
     type: 'pointer',
@@ -84,9 +117,20 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     rect: null,
     clientX: 0,
     clientY: 0,
+    screenX: 0,
+    screenY: 0,
     modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+    button: 0,
+    buttons: 1,
+    pointerId: 1,
+    pointerType: 'mouse',
+    ancestors: [],
   },
-  { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
+  { type: 'text:editStart', nodeId: 'n1', occurrenceIndex: 0 },
+  { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
+  { type: 'text:cancel', nodeId: 'n1', occurrenceIndex: 0 },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width: '240px' } },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 2, patch: { width: '240px', height: '96px' } },
   {
     type: 'measure:result',
     requestId: 'r1',
@@ -95,6 +139,21 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     ],
   },
   { type: 'frame:resize', height: 1234 },
+  {
+    type: 'dropCandidates:result',
+    requestId: 'r1',
+    candidates: [
+      {
+        nodeId: 'n1',
+        occurrenceIndex: 0,
+        rect: { x: 0, y: 0, width: 10, height: 10 },
+        axis: 'vertical',
+        reversed: false,
+        childRects: [{ x: 0, y: 0, width: 5, height: 5 }],
+      },
+    ],
+  },
+  { type: 'dropCandidates:result', requestId: 'r2', candidates: [] },
 ]
 
 describe('InboundRuntimeMessageSchema', () => {
@@ -211,9 +270,64 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         rect: null,
         clientX: 0,
         clientY: 0,
+        screenX: 0,
+        screenY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+        button: 0,
+        buttons: 1,
+        pointerId: 1,
+        pointerType: 'mouse',
+        ancestors: [],
       }),
     ).toBe(false)
+  })
+
+  // `live-19` — the pan-replay fix's whole premise: `screenX`/`screenY` must
+  // round-trip through the schema like every other numeric pointer field,
+  // and a message missing either is rejected rather than silently defaulted
+  // (a silent default would reintroduce the exact bug the fix closes).
+  it('round-trips screenX/screenY on a pointer message and rejects one missing either field', () => {
+    const base = {
+      type: 'pointer',
+      phase: 'move',
+      nodeId: null,
+      occurrenceIndex: 0,
+      rect: null,
+      clientX: 12,
+      clientY: 34,
+      modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+      button: -1,
+      buttons: 4,
+      pointerId: 1,
+      pointerType: 'mouse',
+      ancestors: [],
+    }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, screenX: -500.5, screenY: 900 })).toBe(true)
+    const { screenX: _screenX, ...missingScreenX } = { ...base, screenX: 0, screenY: 0 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, missingScreenX)).toBe(false)
+    const { screenY: _screenY, ...missingScreenY } = { ...base, screenX: 0, screenY: 0 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, missingScreenY)).toBe(false)
+  })
+
+  // `live-13` — the two resize messages carry only what the store needs: an
+  // integer pixel count per changed axis, and a bounded pointer identity.
+  it('rejects a resize:commit whose patch is not an integer pixel length', () => {
+    for (const width of ['12em', '50%', '1e3px', '-4px', 'calc(1px)', '']) {
+      expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width } })).toBe(false)
+    }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: {} })).toBe(true)
+  })
+
+  it('rejects a pointer message with an unknown pointer type or an out-of-range button', () => {
+    const base = { type: 'pointer', phase: 'down', nodeId: 'n1', occurrenceIndex: 0, rect: null, clientX: 0, clientY: 0, screenX: 0, screenY: 0, modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }, ancestors: [], pointerId: 1 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'mouse' })).toBe(true)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 4, pointerType: 'stylus' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 7, buttons: 4, pointerType: 'mouse' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { ...base, button: 1, buttons: 64, pointerType: 'mouse' })).toBe(false)
+  })
+
+  it('rejects a setResizeTarget without the proportional flag', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'setResizeTarget', ref: null })).toBe(false)
   })
 
   it('rejects a measure:result measurement missing occurrenceIndex', () => {
@@ -224,6 +338,156 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
         measurements: [{ nodeId: 'n1', rect: null, computedStyle: {} }],
       }),
     ).toBe(false)
+  })
+
+  // `live-18` — bounded per `sec-06`'s "same-realm spoofing" posture, same as
+  // `optimistic.style`'s patch values above.
+  it('accepts a text:commit at the 20000-char ceiling and rejects one over it', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'x'.repeat(20_000) }),
+    ).toBe(true)
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'x'.repeat(20_001) }),
+    ).toBe(false)
+  })
+
+  it('accepts a text:edit reply at the same ceiling, rejects a refusal that still carries an over-length text, and rejects a missing allowed flag', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: true, text: 'x'.repeat(20_000) }),
+    ).toBe(true)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: false, text: 'x'.repeat(20_001) }),
+    ).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0 })).toBe(false)
+  })
+
+  it('rejects a text:editStart/text:cancel missing occurrenceIndex', () => {
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'text:editStart', nodeId: 'n1' })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'text:cancel', nodeId: 'n1' })).toBe(false)
+  })
+})
+
+// `speed-01` — the optimistic style patch is bounded at the schema, since a
+// script co-resident with `runtime.ts` in the live frame's document could
+// otherwise forge this message directly (`sec-06`'s "same-realm spoofing").
+describe('optimistic.style — bounds', () => {
+  const baseRef = { nodeId: 'n1', occurrenceIndex: 0 }
+
+  it('accepts a patch at the 64-property ceiling and rejects one over it', () => {
+    const at: Record<string, string> = {}
+    // 64 distinct, letters-only keys: two-letter suffixes cover 0..63.
+    for (let i = 0; i < 64; i++) {
+      const key = `prop${String.fromCharCode(97 + Math.floor(i / 26))}${String.fromCharCode(97 + (i % 26))}`
+      at[key] = 'red'
+    }
+    expect(Object.keys(at)).toHaveLength(64)
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: at })).toBe(true)
+
+    const over = { ...at, oneMore: 'red' }
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: over })).toBe(false)
+  })
+
+  it('rejects a property key with a digit or symbol', () => {
+    for (const key of ['prop1', 'background-color-2', 'font_size', 'width;']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { [key]: 'red' } }),
+      ).toBe(false)
+    }
+  })
+
+  it('accepts kebab-case and camelCase property keys, and a (digit-free) CSS custom property', () => {
+    for (const key of ['background-color', 'backgroundColor', '--token']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { [key]: 'red' } }),
+      ).toBe(true)
+    }
+  })
+
+  it('rejects a value carrying `;`, `}`, `<`, or `!important`', () => {
+    for (const value of ['red; color: blue', 'red } .x { color: blue', '<img onerror=alert(1)>', 'red !important']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: value } }),
+      ).toBe(false)
+    }
+  })
+
+  it('rejects a value over 256 characters', () => {
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: 'x'.repeat(257) } }),
+    ).toBe(false)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style', ref: baseRef, patch: { color: 'x'.repeat(256) } }),
+    ).toBe(true)
+  })
+
+  it('rejects a className carrying whitespace, `{`, `}`, `;`, or `<`', () => {
+    for (const className of ['card foo', 'card{', 'card}', 'card;', 'card<x']) {
+      expect(
+        Value.Check(InboundRuntimeMessageSchema, {
+          type: 'optimistic.style',
+          ref: baseRef,
+          patch: { color: 'red' },
+          className,
+        }),
+      ).toBe(false)
+    }
+  })
+
+  it('accepts optimistic.style:clear with only a ref, and rejects one missing occurrenceIndex', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style:clear', ref: baseRef })).toBe(true)
+    expect(
+      Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.style:clear', ref: { nodeId: 'n1' } }),
+    ).toBe(false)
+  })
+})
+
+// `speed-06` — the reply is bounded at the schema for the same "same-realm
+// spoofing" reason `optimistic.style`'s patch is: a script co-resident with
+// `runtime.ts` could otherwise forge an arbitrarily large reply directly.
+describe('dropCandidates:result — bounds', () => {
+  const candidate = {
+    nodeId: 'n1',
+    occurrenceIndex: 0,
+    rect: { x: 0, y: 0, width: 10, height: 10 },
+    axis: 'vertical' as const,
+    reversed: false,
+    childRects: [] as { x: number; y: number; width: number; height: number }[],
+  }
+
+  it('rejects a candidate list over 2000 entries, accepts one at the ceiling', () => {
+    const atCeiling = Array.from({ length: 2000 }, () => candidate)
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: atCeiling }),
+    ).toBe(true)
+    const overCeiling = [...atCeiling, candidate]
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: overCeiling }),
+    ).toBe(false)
+  })
+
+  it('rejects a childRects array over 200 entries, accepts one at the ceiling', () => {
+    const atCeiling = { ...candidate, childRects: Array.from({ length: 200 }, () => ({ x: 0, y: 0, width: 1, height: 1 })) }
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: [atCeiling] }),
+    ).toBe(true)
+    const overCeiling = { ...candidate, childRects: [...atCeiling.childRects, { x: 0, y: 0, width: 1, height: 1 }] }
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, { type: 'dropCandidates:result', requestId: 'r1', candidates: [overCeiling] }),
+    ).toBe(false)
+  })
+
+  it('rejects an unknown axis value', () => {
+    expect(
+      Value.Check(OutboundRuntimeMessageSchema, {
+        type: 'dropCandidates:result',
+        requestId: 'r1',
+        candidates: [{ ...candidate, axis: 'diagonal' }],
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects a dropCandidates request missing requestId', () => {
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'dropCandidates' })).toBe(false)
   })
 })
 

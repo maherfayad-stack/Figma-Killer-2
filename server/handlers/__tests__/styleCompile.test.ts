@@ -130,6 +130,7 @@ describe('Sass — Tier 1, gated on trust', () => {
   it('refuses to run at Tier 0 (static) — warns instead of compiling', async () => {
     writeSassFixture()
     writeFakeSass()
+    mergeStudioMeta(tmpDir, { trust: 'static' })
     const profile = probeProject(tmpDir)
     expect(profile.styleToolchain.sass).toBe(true)
 
@@ -185,6 +186,7 @@ describe('PostCSS incl. Tailwind v3 — Tier 1, gated on trust', () => {
 
   it('refuses to run at Tier 0 — warns instead of compiling', async () => {
     writeFixture()
+    mergeStudioMeta(tmpDir, { trust: 'static' })
     const profile = probeProject(tmpDir)
 
     const { styles, warnings } = await compileProjectStyles(tmpDir, profile)
@@ -293,11 +295,11 @@ describe('Vendor package CSS (WS-2.3) — Tier 0 safe, never trust-gated', () =>
     expect(warnings.some((w) => w.code.startsWith('vendor-css-'))).toBe(false)
   })
 
-  it('requires no trust promotion — runs at the default Tier 0', async () => {
+  it('requires no trust promotion — runs even explicitly pinned to Tier 0', async () => {
     write('src/App.tsx', "import '@acme/ui/dist/style.css'\n")
     write('node_modules/@acme/ui/dist/style.css', '.btn { color: teal }\n')
+    mergeStudioMeta(tmpDir, { trust: 'static' })
     const profile = probeProject(tmpDir)
-    // No mergeStudioMeta({ trust: ... }) call — stays at the DEFAULT_TRUST_TIER.
 
     const { styles, warnings } = await compileProjectStyles(tmpDir, profile)
     expect(styles.vendorCss).toContain('color: teal')
@@ -413,7 +415,7 @@ describe('sec-01 — Tier 1 compilation runs in a subprocess', () => {
 
   it('never spawns anything at Tier 0 — the trust gate is checked before a subprocess would exist', async () => {
     writeSassFixture()
-    // No mergeStudioMeta({ trust: ... }) — stays at the default Tier 0.
+    mergeStudioMeta(tmpDir, { trust: 'static' })
     const profile = probeProject(tmpDir)
     const { spawn, calls } = makeSpawnSpy(() => makeFakeProcess({ exitCode: 0 }).proc)
 

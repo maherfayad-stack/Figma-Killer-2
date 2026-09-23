@@ -42,9 +42,19 @@ describe('requireTrustTier', () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
-  it('defaults an unset trust field to Tier 0 (static), refusing anything higher', () => {
+  it('defaults an unset trust field to run-project (Tier 2), passing the gate', () => {
     const dir = makeTmpDir()
     // No `.studio/meta.json` written at all — the untouched default.
+
+    const result = requireTrustTier(dir, 'run-project', 'nope')
+
+    expect(result.ok).toBe(true)
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it('still refuses a project explicitly set back to static', () => {
+    const dir = makeTmpDir()
+    writeStudioMeta(dir, { trust: 'static' })
 
     const result = requireTrustTier(dir, 'run-project', 'nope')
 

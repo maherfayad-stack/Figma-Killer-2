@@ -228,13 +228,19 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
           expectedSource: frameWindow,
           nodeIdsInTreeOrder: frame.nodeIdsInTreeOrder,
         })
+        // `live-12` — the runtime gates hover suppression, scroll unroll,
+        // animation freeze, and now pointer ownership and wheel forwarding
+        // on the mode the PARENT declares, and nothing declared one: every
+        // bridge frame ran as if it were a visitor's page. Queued by the
+        // adapter until the frame says `ready`, so ordering is not a concern.
+        next.setInteractionMode(isLive ? 'live' : 'design')
         setAdapter(next)
         // `live-05` (STATE.md, architect's Batch 4 resolution) — every
         // constructed adapter registers itself under its own iframe element
         // so a Class B (cross-frame) caller can enumerate every mounted
         // canvas frame without ever reaching for `document.querySelectorAll
         // ('iframe')` + `contentDocument`. Same lifecycle both branches.
-        registerFrameAdapter(iframe, next)
+        registerFrameAdapter(iframe, next, breakpointId)
         return () => {
           unregisterFrameAdapter(iframe)
           next.dispose()
@@ -247,12 +253,12 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       }
       const next = new PortalFrameAdapter(iframeDoc)
       setAdapter(next)
-      registerFrameAdapter(iframe, next)
+      registerFrameAdapter(iframe, next, breakpointId)
       return () => {
         unregisterFrameAdapter(iframe)
         next.dispose()
       }
-    }, [documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey])
+    }, [isLive, documentMode, iframeDoc, liveFrame?.liveOrigin, liveFrame?.screenKey, breakpointId])
 
     // `live-07` — the other half of the split above: reconciles the
     // canonical<->stamp index IN PLACE via `setNodeIds` (already shipped by

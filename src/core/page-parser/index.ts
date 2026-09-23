@@ -41,13 +41,19 @@ export {
   WORKSPACE_MAX_FILES,
   isPrototypeShellPath,
   listWorkspaceFiles,
+  listWorkspaceSourceFiles,
 } from './workspaceFiles'
+export { resetParserCaches } from './parserCaches'
 export {
   PROJECT_DESIGN_SYSTEM_DIR,
   designSystemImportSpecifier,
   isDesignSystemPath,
 } from './designSystemDir'
-export { createWorkspaceProject, resolveComponentSources, resolveExportedDeclaration } from './componentSources'
+export {
+  createWorkspaceProject,
+  resolveComponentSources,
+  resolveExportedDeclaration,
+} from './componentSources'
 export type { ComponentSource } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export {

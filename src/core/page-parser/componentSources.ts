@@ -35,7 +35,7 @@ import { NewLineKind, Node, Project, type SourceFile } from 'ts-morph'
 import type { ParsedPage } from './types'
 import { isDesignSystemPath } from './designSystemDir'
 import { EolPreservingFileSystem } from './eolFileSystem'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from './workspaceFiles'
+import { listWorkspaceSourceFiles } from './workspaceFiles'
 
 export type ComponentSource =
   | { kind: 'local'; file: string }
@@ -88,11 +88,16 @@ export function createWorkspaceProject(workspaceRoot: string): Project {
     ...(existsSync(tsConfigFilePath) ? { tsConfigFilePath } : {}),
   })
 
-  const root = path.resolve(workspaceRoot).split(path.sep).join('/')
-  project.addSourceFilesAtPaths([
-    `${root}/**/*.{ts,tsx,js,jsx}`,
-    ...[...EXCLUDED_WORKSPACE_DIR_NAMES].map((name) => `!${root}/**/${name}/**`),
-  ])
+  // The explicit list, not a glob: `listWorkspaceSourceFiles` is the ONE
+  // rule for which files are the user's source (the same walk the download
+  // zip and page discovery use, minus Studio's own preview shell), and
+  // `server/handlers/studio/workspaceProject.ts` re-runs it to keep a kept
+  // `Project` in step with the disk — a second selection rule here would be
+  // a second answer to "which files exist".
+  const root = path.resolve(workspaceRoot)
+  for (const relPath of listWorkspaceSourceFiles(root)) {
+    project.addSourceFileAtPath(path.join(root, ...relPath.split('/')))
+  }
   return project
 }
 
@@ -226,11 +231,16 @@ export function resolveExportedDeclaration(
   return resolved
 }
 
-/** Per-`SourceFile` memo for `resolveExportedDeclaration`; auto-GC'd with the Project. */
-const exportedDeclarationCache = new WeakMap<
+/** Per-`SourceFile` memo for `resolveExportedDeclaration`. A barrel's answer depends on the files it re-exports, so a kept `Project` resets this whenever any file changes (`./parserCaches`). */
+let exportedDeclarationCache = new WeakMap<
   SourceFile,
   Map<string, { sourceFile: SourceFile; name: string } | undefined>
 >()
+
+/** Drops every memoized barrel resolution — see `exportedDeclarationCache`. */
+export function forgetExportedDeclarationCache(): void {
+  exportedDeclarationCache = new WeakMap()
+}
 
 /**
  * local = resolves to a real file inside `workspaceRoot`, outside any

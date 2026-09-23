@@ -132,7 +132,7 @@ describe('AlignSection — single-node align row', () => {
     frameDoc.body.appendChild(el)
     const adapter = new PortalFrameAdapter(frameDoc)
     frameAdapters.push(adapter)
-    registerFrameAdapter(frame, adapter)
+    registerFrameAdapter(frame, adapter, 'desktop')
     return el
   }
 
@@ -242,7 +242,7 @@ describe('AlignSection — code-locked properties', () => {
     frameDoc.body.appendChild(el)
     const adapter = new PortalFrameAdapter(frameDoc)
     frameAdapters.push(adapter)
-    registerFrameAdapter(frame, adapter)
+    registerFrameAdapter(frame, adapter, 'desktop')
   }
 
   it('disables only the edges resolving to a code-locked property, on a grid parent (both axes are per-item there)', () => {

@@ -1,5 +1,34 @@
 import { describe, expect, it } from 'bun:test'
-import { normalizeOrigin, readServerConfig, resolveLiveOrigin, resolveLivePort, resolvePublicOrigins } from '../../../server/config'
+import {
+  DEV_ORIGIN_ALLOWLIST,
+  normalizeOrigin,
+  readServerConfig,
+  resolveLiveFrameAncestors,
+  resolveLiveOrigin,
+  resolveLivePort,
+  resolvePublicOrigins,
+} from '../../../server/config'
+
+describe('resolveLiveFrameAncestors', () => {
+  it('lets the admin server itself and the dev origins frame a live frame even with no public origin', () => {
+    const ancestors = resolveLiveFrameAncestors([], 3001)
+    expect(ancestors).toContain('http://localhost:3001')
+    expect(ancestors).toContain('http://127.0.0.1:3001')
+    for (const dev of DEV_ORIGIN_ALLOWLIST) expect(ancestors).toContain(normalizeOrigin(dev))
+    expect(ancestors.length).toBeGreaterThan(0)
+  })
+
+  it('adds the configured public origins, normalized and deduplicated', () => {
+    const ancestors = resolveLiveFrameAncestors(['https://Studio.Example.com/', 'http://localhost:3001'], 3001)
+    expect(ancestors).toContain('https://studio.example.com')
+    expect(ancestors.filter((origin) => origin === 'http://localhost:3001')).toHaveLength(1)
+  })
+
+  it('is what readServerConfig hands the live listener', () => {
+    const config = readServerConfig({ PORT: '4100', PUBLIC_ORIGIN: 'https://studio.example.com' })
+    expect(config.liveFrameAncestors).toEqual(resolveLiveFrameAncestors(['https://studio.example.com'], 4100))
+  })
+})
 
 describe('normalizeOrigin', () => {
   it('lowercases scheme and host and strips the trailing slash', () => {
@@ -101,6 +130,7 @@ describe('readServerConfig', () => {
       publicOrigins: [],
       livePort: 3002,
       liveOrigin: 'http://localhost:3002',
+      liveFrameAncestors: resolveLiveFrameAncestors([], 3001),
     })
   })
 
@@ -125,6 +155,7 @@ describe('readServerConfig', () => {
       publicOrigins: ['https://cms.example.com', 'http://localhost:5173'],
       livePort: 4322,
       liveOrigin: 'http://localhost:4322',
+      liveFrameAncestors: resolveLiveFrameAncestors(['https://cms.example.com', 'http://localhost:5173'], 4321),
     })
   })
 

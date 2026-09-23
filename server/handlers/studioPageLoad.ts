@@ -12,7 +12,7 @@
  * `resolveTextProp` (bound as the two converter callbacks below) map a parsed
  * node to an Studio module id and its inline-text-edit prop — they encode the
  * base-module catalogue's rules, not this pipeline's, so they live in their
- * own module. `rewriteStudioAssetSentinels` turns a resolved local-image import into a
+ * own module. `rewriteStudioAssetSentinels` (`studioAsset.ts`) turns a resolved local-image import into a
  * fetchable `/admin/api/studio/asset` URL. `loadStudioPages` is the per-page
  * parse → inline → convert sequence that ties all of the above together for
  * every discovered page file, sharing one workspace-wide ts-morph `Project`
@@ -60,18 +60,17 @@ import { join, relative, sep } from 'node:path'
 import {
   composeAppRouterRoute,
   createPageEvalBudget,
-  createWorkspaceProject,
   cssInJsStylesheet,
   inlineLocalComponents,
   parsePageFile,
   resolveComponentSources,
-  STUDIO_ASSET_SENTINEL,
   type ComponentSource,
   type CssInJsTemplate,
   type ParsedPage,
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
+import type { Project } from 'ts-morph'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
@@ -80,10 +79,11 @@ import { ensurePrototypeShell } from './studio/prototypeShell'
 import {
   getCachedRouteParse,
   hashWorkspaceConfig,
-  localSourceAbsFiles,
   setCachedRouteParse,
 } from './studio/pageParseCache'
 import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
+import { withWorkspaceProject } from './studio/workspaceProject'
+import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
 // for its result shape — see `studioLoadContract.ts` for why they live apart.
 export type { StudioLoadOptions, StudioLoadResult } from './studio/studioLoadContract'
@@ -107,36 +107,6 @@ import {
   assignPageIds,
   slugFromAppRoute,
 } from './studioPageIds'
-
-/**
- * Rewrites every `studio-asset:<workspace-rel>` sentinel prop value (§5.1 —
- * `parsePageFile`'s image-import resolution) into a URL the browser can
- * actually fetch: `/admin/api/studio/asset?dir=<encoded>&path=<encoded>`.
- *
- * Lives here (the page-load pipeline), not in `@core/page-parser` or
- * `@core/studio-sync/parsedPageToSitePage` (§5.2's other option): turning a
- * workspace-relative path into a URL is a route-shape decision — the query
- * param names, the endpoint path itself — that belongs with the endpoint that
- * owns that shape (`/admin/api/studio/asset`, `server/handlers/studioAsset.ts`),
- * not with the pure page-tree converter, which has no notion of `dir` or HTTP
- * routing at all today. Keeping it here means a future route change never
- * touches the parser or the converter.
- *
- * Mutates `page.nodes` in place — the pages array was just built fresh by
- * `parsedPageToSitePage` for this same request, so there is no shared/cached
- * object to accidentally corrupt.
- */
-function rewriteStudioAssetSentinels(page: Page, dir: string): void {
-  const dirParam = encodeURIComponent(dir)
-  for (const node of Object.values(page.nodes)) {
-    for (const [key, value] of Object.entries(node.props)) {
-      if (typeof value === 'string' && value.startsWith(STUDIO_ASSET_SENTINEL)) {
-        const relPath = value.slice(STUDIO_ASSET_SENTINEL.length)
-        node.props[key] = `/admin/api/studio/asset?dir=${dirParam}&path=${encodeURIComponent(relPath)}`
-      }
-    }
-  }
-}
 
 /**
  * W4-4 Phase A — the `extraCss` blob `loadStudioStyles` parses: the compiled
@@ -176,7 +146,7 @@ function parseStandardRouteEntry(
   pageId: string,
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -207,8 +177,14 @@ function parseStandardRouteEntry(
     // resolved fresh, inside `inlineLocalComponents` itself, against that
     // sub-tree's own file.
     sources = resolveComponentSources(project, file, dir, parsed)
-    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions })
-    setCachedRouteParse(cacheKey, configHash, [file, ...localSourceAbsFiles(sources, dir)], {
+    // `dependencyFiles` collects the TRANSITIVE local-component set —
+    // `inlineLocalComponents` populates it at every nesting level, not just
+    // the direct call sites `sources` classified. See its own doc for why
+    // this closes the "a component three levels deep changed and this route's
+    // cache never noticed" gap `pageParseCache.ts` used to have.
+    const dependencyFiles = new Set<string>()
+    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
+    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles], {
       expanded,
       componentSources: sources,
     })
@@ -227,7 +203,7 @@ function parseStandardRouteEntry(
 function buildStandardPageEntries(
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -255,7 +231,7 @@ function parseAppRouterRouteEntry(
   pageId: string,
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -277,7 +253,11 @@ function parseAppRouterRouteEntry(
 
     const parsed = parsePageFile(file, dir, project, evalOptions)
     const pageSources = resolveComponentSources(project, file, dir, parsed)
-    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions })
+    // See `parseStandardRouteEntry`'s matching comment — this is the page's
+    // own transitive local-component set. The layout chain's own (also
+    // transitive, WS-1.3-composed) set comes back on `composed.dependencyFiles`.
+    const pageDependencyFiles = new Set<string>()
+    const pageExpanded = inlineLocalComponents(parsed, pageSources, project, dir, { evalOptions, dependencyFiles: pageDependencyFiles })
 
     const composed = composeAppRouterRoute({
       page: pageExpanded,
@@ -292,7 +272,7 @@ function parseAppRouterRouteEntry(
     setCachedRouteParse(
       cacheKey,
       configHash,
-      [file, ...layoutAbsFiles, ...localSourceAbsFiles(sources, dir)],
+      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles],
       { expanded, componentSources: sources },
     )
   }
@@ -310,7 +290,7 @@ function parseAppRouterRouteEntry(
 function buildAppRouterPageEntries(
   pagesDir: string,
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
   configHash: string,
@@ -346,7 +326,7 @@ function buildAppRouterPageEntries(
  */
 function discoverProjectStories(
   dir: string,
-  project: ReturnType<typeof createWorkspaceProject>,
+  project: Project,
   pageEntries: readonly RoutePageEntry[],
   enabled: boolean,
 ): DiscoveredStory[] {
@@ -416,7 +396,7 @@ function discoverProjectStories(
  * `profile` yet — keeps `buildStandardPageEntries` exactly as it always was.
  *
  * Every page is parsed against one shared, workspace-wide ts-morph `Project`
- * (`createWorkspaceProject`) so a page's local-component imports resolve to
+ * (`workspaceProject.ts`'s kept `createWorkspaceProject`) so a page's local-component imports resolve to
  * real files elsewhere in the tree; `resolveComponentSources` classifies each
  * `kind: 'component'` node as **local** (import resolves inside the
  * workspace) or **package** (an npm dependency, read-only prop surface). The
@@ -430,7 +410,7 @@ function discoverProjectStories(
  * Read that module for what the fingerprint covers and why a narrowed load is
  * served-but-never-stored.
  */
-async function computeStudioPages(dir: string, options: StudioLoadOptions): Promise<StudioLoadResult> {
+async function computeStudioPages(dir: string): Promise<StudioLoadResult> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
     return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [] }
@@ -439,8 +419,12 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
   // a fresh per-file Project (parsePageFile's own default) can't see
-  // across files at all. See createWorkspaceProject's doc comment.
-  const project = createWorkspaceProject(dir)
+  // across files at all. Kept across loads and synced to the disk by
+  // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
+  return withWorkspaceProject(dir, (project) => computeStudioPagesWith(dir, pagesDir, project))
+}
+
+async function computeStudioPagesWith(dir: string, pagesDir: string, project: Project): Promise<StudioLoadResult> {
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -496,13 +480,11 @@ async function computeStudioPages(dir: string, options: StudioLoadOptions): Prom
   )
   const resolveClassIds = (className: string): string[] => classIdsForClassName(className, classIdsByName)
 
-  // The one narrowable stage — see this function's `options.pageIds` doc.
-  const requestedPageIds = options.pageIds ? new Set(options.pageIds) : null
-  const convertedEntries = requestedPageIds
-    ? routeEntries.filter(({ pageId }) => requestedPageIds.has(pageId))
-    : routeEntries
-
-  const pages = convertedEntries.map(({ expanded, pageId, slug, title }) => {
+  // Every route is converted, even for a narrowed load: the convert is the
+  // cheap stage, and converting all of them is what lets `loadStudioPages`
+  // memoize this result as the project-wide truth and answer the NEXT load
+  // — full or narrowed — without parsing anything.
+  const pages = routeEntries.map(({ expanded, pageId, slug, title }) => {
     const page = parsedPageToSitePage(expanded, {
       pageId,
       slug,
@@ -586,12 +568,15 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   const memoized = getMemoizedStudioLoad(dir, fingerprint)
   if (memoized) return narrowLoadResult(memoized, options.pageIds)
 
-  const result = await computeStudioPages(dir, options)
-  if (!options.pageIds) setMemoizedStudioLoad(dir, fingerprint, result)
-  return result
+  // Always the full result, always memoized — a narrowed load is the SAME
+  // compute with fewer pages returned, so storing it costs nothing extra and
+  // means the full load that follows a canvas resync is a memo hit.
+  const result = await computeStudioPages(dir)
+  setMemoizedStudioLoad(dir, fingerprint, result)
+  return narrowLoadResult(result, options.pageIds)
 }
 
-/** The `options.pageIds` filter, applied to an already-computed FULL result — the same narrowing `computeStudioPages` does at its convert stage. */
+/** The `options.pageIds` filter, applied to a computed FULL result. */
 function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] | undefined): StudioLoadResult {
   if (!pageIds) return result
   const wanted = new Set(pageIds)
@@ -632,8 +617,10 @@ function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] |
 export async function loadStudioPageInLocale(dir: string, pageId: string, locale: string): Promise<Page | null> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return null
+  return withWorkspaceProject(dir, (project) => loadStudioPageInLocaleWith(dir, pagesDir, project, pageId, locale))
+}
 
-  const project = createWorkspaceProject(dir)
+async function loadStudioPageInLocaleWith(dir: string, pagesDir: string, project: Project, pageId: string, locale: string): Promise<Page | null> {
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)

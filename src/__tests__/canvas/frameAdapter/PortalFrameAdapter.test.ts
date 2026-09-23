@@ -137,7 +137,7 @@ describe('PortalFrameAdapter — optimistic DOM ops', () => {
   })
 })
 
-describe('PortalFrameAdapter — on(pointer/text:edit)', () => {
+describe('PortalFrameAdapter — on(pointer)', () => {
   it('forwards a click on a node-id-carrying element as a pointer event', () => {
     const doc = freshDoc()
     doc.body.innerHTML = `<div data-node-id="p1"></div>`

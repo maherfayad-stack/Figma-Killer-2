@@ -63,8 +63,11 @@
  * execute a Bun **macro** at build time, and it resolves whatever the
  * bundled package's OWN code imports from `node_modules` — running a
  * workspace's real code. This route refuses outright at Tier 0
- * (`readStudioMeta(dir).trust !== 'static'`, `meta-03` decision 1: never
- * auto-promote) BEFORE doing anything Tier-1-shaped. The actual `Bun.build`
+ * (`readStudioMeta(dir).trust !== 'static'`) BEFORE doing anything
+ * Tier-1-shaped. Every project starts at Tier 2 (`run-project`,
+ * `DEFAULT_TRUST_TIER` — owner decision, 2026-09-20), which already clears
+ * this gate; the Tier-0 branch is only reachable for a project the owner
+ * explicitly demoted via the Live pill's "Back to static". The actual `Bun.build`
  * call happens in a subprocess (`componentBundleWorker.ts`, spawned via
  * `subprocessRunner.ts`'s `runCappedSubprocess` with
  * `minimalSubprocessEnv()`) — same reasoning, same primitives `sec-01`

@@ -2,12 +2,12 @@
  * `loadStudioPages(dir, { pageIds })` — the narrowed COMPUTE behind a
  * targeted reload (`GET /admin/api/studio/load?pageIds=`).
  *
- * The filter used to live purely in the response shaping: every narrow reload
- * still converted all forty pages and then threw thirty-nine away. It now
- * reaches the compute — but only the one stage it honestly can. These tests
- * pin both halves of that claim:
+ * The filter lives in the response shaping on purpose: the compute converts
+ * every route (the cheap stage) so its result can be memoized as the
+ * project-wide truth (`studioLoadMemo.ts`), and only the requested pages are
+ * returned. These tests pin what a caller may rely on:
  *
- *   1. **What it skips.** Only the requested pages come back.
+ *   1. **What it returns.** Only the requested pages come back.
  *   2. **What it must NOT skip.** The project-wide registries
  *      (`styleRules`, `styleRuleSources`, `conditions`, `authoredCss`,
  *      `componentSources`) stay byte-identical to a full, unfiltered load —
