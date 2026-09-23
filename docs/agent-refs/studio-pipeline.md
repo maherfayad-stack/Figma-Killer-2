@@ -232,8 +232,28 @@ Only a second miss is shown: one `warning`, "Not saved — the file changed".
 
 **What is not guarded yet:** `css` (a file + selector, no position) and
 `styled` (its template location travels in `styledStyleRuleSources`, not on a
-node). P1-D builds re-location on this: a changed file's edits are re-found by
-the same fingerprint comparison, run over the positions a line diff proposes.
+node).
+
+**Re-location (P1-D).** A mismatch is not refused straight away. The server
+keeps the last few texts of every file a parse read or a write batch touched
+(`sourceTextHistory.ts`); `studioEditRelocate.ts` takes the ones in which the
+expected element sits at the id's position, maps the line through a line diff
+to the file now (`sourceLineMap.ts` — the earliest AND latest optimal
+alignments, column carried across a re-indent), and re-reads the fingerprint
+at each proposed position. Exactly one match → the edit is re-addressed there
+(`withSourceLocation`) and runs; the response lists it in `retargeted` and
+sets `shifted`, and every other field still reports under the id the caller
+sent. None or two → `element-moved` exactly as before, and the board's own
+recovery above takes over. No history (a server restart) is the same refusal.
+
+**Noticing outside edits (P1-D, ERR-19).** `projectWatch.ts` watches the open
+project (retained by the editor bridge stream) and tells Studio's own writes
+from everyone else's by whether a file's `mtime` falls inside a project
+write-lock hold. An `outside` change to a board input is pushed down the
+bridge as `studio_live_reload` with `diskChanged: { files }`; the tab saves
+anything pending first (so those edits are re-found server-side), then calls
+`resyncBoardAfterWrite(files)` — the same narrow-or-full re-read Studio's own
+writes use, which P1-B's follower then maps the selection through.
 
 ---
 

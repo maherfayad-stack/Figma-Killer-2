@@ -95,6 +95,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
     - `server`: 21 (headless capture, dev server, WebSocket)
 - **Human action needed:** dogfood `/admin/site` icon-slot upload. The four steps are in the PR body.
 
+### server-28 — P1-D: notice edits made outside Studio (watcher + re-locate)
+- **Agent:** server-engineer · **Branch:** `fix/notice-edits-made-outside-studio` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** ROADMAP P1-D. Closes ERR-19 and WB-1's re-locate + watcher half.
+- **Scope:** new `server/handlers/{sourceLineMap,studioEditRelocate}.ts`, `server/handlers/studio/{projectWatch,sourceTextHistory}.ts`, `server/ai/mcp/outsideEditReload.ts`; edits to `studioEditIdentity.ts`, `studioWriteback.ts`, `projectWriteLock.ts`, `pageParseCache.ts`, the editor bridge, `liveReloadPush.ts`, `agent/studioLiveReload.ts`, `@core/page-tree` (`withSourceLocation`). No route added.
+- **Done:**
+  - `projectWatch.ts`: one watcher per open project, retained by the editor-bridge stream (15 s linger). Events are hints only; a `size:mtime` snapshot diff is the truth. `origin` is `studio` when the file's mtime falls inside a project write-lock hold (new session log in `projectWriteLock.ts`).
+  - Outside changes to board inputs are pushed as `studio_live_reload { diskChanged: { files } }` to every tab on the project. The tab flushes pending edits, then runs `resyncBoardAfterWrite(files)`.
+  - `/save` and `studio_apply_edits`: a fingerprint mismatch is re-found through a line diff against remembered texts. Exactly one verified position means the edit is re-addressed and written, listed in `retargeted`, with `shifted: true`. Anything else is the old `element-moved`.
+- **Decisions:**
+  - No wire change for the base text. The expected fingerprint picks which remembered text the board read.
+  - The line map uses both extreme optimal alignments (Myers forwards and reversed). A line that some reading deletes is never re-found.
+  - Outcomes are reported under the id the caller SENT.
+- **Landmines:**
+  - Bun 1.3 `fs.watch` on Windows drops most of a burst and names directories, not files. Never trust an event's path.
+  - Writers that bypass the project write lock (`translationWrite`, `assetLanding`, `i18nScaffold`, `pageDelete`, …) read as `outside`, so they cost one redundant re-read.
+  - No tab open means no watcher. History is per-process, so after a restart the first stale edit refuses as before.
+- **Next:** P6-C subscribes `subscribeProjectChanges` for `/load` invalidation; it must use ALL origins, not just `outside`. FC-1: `.studio/canvas/` is already watched.
+- **Verification:** 4 new server test files plus 1 client test file, and 1 e2e spec, run in Chromium and passing. Relocate, watcher-push and e2e were each proven to fail with the fix disabled in place. Build and lint are clean. The chunked suite shows only pre-existing failures: bundle freshness, optimistic broadcast, bridge measurement, headless capture, dev server and WebSocket.
+
 ---
 
 ## Blocked

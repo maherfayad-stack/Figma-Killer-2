@@ -540,6 +540,14 @@ export interface StudioEditBatchResult {
    */
   fingerprints: { nodeId: string; fingerprint: string }[]
   /**
+   * P1-D — every node id an edit named that was RE-FOUND elsewhere in its
+   * file, because the file changed on disk since the caller read it: the id
+   * it sent, and the id it was written at. Every other field reports under
+   * the id the caller sent; this is the one place the new address appears.
+   * Non-empty implies `shifted`. See `studioEditRelocate.ts`.
+   */
+  retargeted: { nodeId: string; to: string }[]
+  /**
    * `store-15` — every import binding the batch's prune pass removed as a
    * side effect of a `delete`, grouped per FILE (workspace-relative), with
    * a re-insertable declaration text per binding
