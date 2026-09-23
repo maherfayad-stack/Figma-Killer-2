@@ -230,6 +230,31 @@ first retry automatically.
 - **Isolation.** With `workers: 1` all specs share one database; each spec works
   on its own uniquely-named page/fixture rather than sharing mutable state.
 
+### Authoring rules
+
+Learned from the 2026-09-19 cold-suite triage (`e2e-1`); each one caused real red specs.
+
+1. **Open the board with `openFixtureBoard`, never a spec's own `goto`**
+   (`tests/e2e/helpers/studioFixtureProject.ts`). The canvas has no scroll
+   container, and where a frame lands is decided by a "center on open" pass that
+   races the page documents it centres on. On a cold load the board can settle
+   with no frame in view, and a click at the frame's box centre lands on empty
+   canvas: the failure then reads like a product bug. `openFixtureBoard` presses
+   the product's own **Ctrl+0**; `panIntoView` puts the target under the pointer.
+2. **The single-selection write target is the ClassPicker pill.** Use
+   `class-chip-<name>` (`SelectorPillStack.tsx`) and read writability from the
+   enclosing `write-target-chip-<classId>`'s `data-locked`. `StyleTargetChip`
+   renders only for a multi-selection.
+3. **Size lives in Measures.** `MeasuresSection` renders `SizeSection` and is
+   always mounted; width is `css-size-input-width` (`textbox[name="Width"]`).
+4. **A same-file reparent is a write, not a refusal** (`moveJsxElement.ts`), and
+   a cross-file one goes through `transplantJsxElement.ts`. The refusal that
+   remains is about scope (`freeVariablesOutOfScopeAt`); no e2e covers it yet.
+
+The CMS half of the suite drives UIs PR #18 deleted (an Explorer tab row, a
+name-and-slug page dialog, a toolbar Publish action). Whether to re-point or
+delete those specs is an open row in `ROADMAP.md` §13.
+
 ### Automated coverage map
 
 **This map was written before PR #18 deleted the standalone Content, Data,
