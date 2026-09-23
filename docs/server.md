@@ -736,7 +736,9 @@ than trusted, a collision gets a numeric suffix rather than clobbering (the
 name is claimed with an exclusive `wx` create, after an `lstat` that treats a
 symlink, dangling or not, as taken), identical bytes already in the target
 directory are reused instead of copied (`deduped: true`; same directory, same
-extension, same size, then SHA-256), and containment is checked on the
+extension, same size, then a chunked byte comparison that exits at the first
+difference, capped at 16 candidates and 64 MB read per landing), and
+containment is checked on the
 **real** path of the nearest existing ancestor. All of it lives in
 `assetLanding.ts`; the intrinsic size comes from `imageDimensions.ts`.
 
@@ -767,7 +769,11 @@ root, `public/x` is `/x` and build-safe; any other file under the app root is
 `asset-upload` (whose `src` is `null` unless the file landed under `public/`)
 and `GET /admin/api/studio/project-assets` (each entry is
 `{ relPath, src, buildSafe }`) all return its answer, and the browser writes
-that string verbatim. The client derives nothing.
+that string verbatim. The client derives nothing. Every segment of that URL is
+percent-encoded, `!'()*` included, and a path with an empty segment gets no
+URL: a file name from an imported repo is untrusted, and the URL lands inside
+a JSX string and a CSS `url('…')`, so `a'), url(evil.png), url('.png` must not
+close the string, and `/\host` or `//host` must never be produced.
 
 **Replay.** `asset-drop` is in `apiClient.ts`'s `IDEMPOTENT_REPLAY_PATHS`
 and wrapped in `withIdempotentReplay` (`idempotentReplay.ts`): a gateway-down
@@ -791,9 +797,10 @@ reach the filesystem at all.
 
 `sec-17` found this route unauthenticated and added an inline `originAllowed` +
 `requireCapability` pair, because the base it reviewed had no table to declare
-into; integration replaced that pair with the declaration and moved the
-sub-router back onto the plain `STUDIO_SUB_ROUTERS` list, since it no longer
-needs the `DbClient`. `asset-upload` and `/save` are declarations in the same
+into; integration replaced that pair with the declaration. The sub-router
+sits on `STUDIO_SESSION_SUB_ROUTERS`, because its replay record is bound to
+the user the gate authenticated (every `withIdempotentReplay` record stores
+the user id, method and path, and a mismatch is a miss). `asset-upload` and `/save` are declarations in the same
 table now, so the asymmetry `sec-17` recorded is gone.
 
 ---

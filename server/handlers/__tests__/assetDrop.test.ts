@@ -19,6 +19,8 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
+import type { DbClient } from '../../db/client'
+import type { AuthUser } from '../../repositories/users'
 import { landAssetBytes } from '../studio/assetLanding'
 import { assetSiteUrlResolver } from '../studio/assetSiteUrl'
 import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
@@ -79,14 +81,24 @@ function dropRequest(fields: Record<string, string>, file?: { name: string; byte
  * gate. The `authorization` block at the bottom drives the GATE instead,
  * through `tryServeStudio`.
  */
-const serve = (req: Request) =>
-  tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/asset-drop', { idempotencyRoot: replayRoot })
+/** The session the gate would hand over. The route reads only `user.id` (the replay record's owner). */
+const session = (userId = 'user-1') => ({
+  db: (() => {
+    throw new Error('asset-drop never reaches the database')
+  }) as unknown as DbClient,
+  user: { id: userId } as AuthUser,
+})
+
+const serve = (req: Request, userId?: string) =>
+  tryServeStudioAssetDrop(req, session(userId), new URL(req.url), '/admin/api/studio/asset-drop', {
+    idempotencyRoot: replayRoot,
+  })
 
 describe('tryServeStudioAssetDrop — routing', () => {
   it('returns null for a non-matching path', async () => {
     const req = new Request('http://localhost/admin/api/studio/other', { method: 'POST' })
     expect(
-      await tryServeStudioAssetDrop(req, new URL(req.url), '/admin/api/studio/other'),
+      await tryServeStudioAssetDrop(req, session(), new URL(req.url), '/admin/api/studio/other'),
     ).toBeNull()
   })
 
@@ -452,6 +464,12 @@ describe('tryServeStudioAssetDrop — dedupe and replay', () => {
     expect(await replay!.text()).toBe(firstBody)
     expect(JSON.parse(firstBody)).toMatchObject({ relPath: 'public/hero.png', deduped: false })
     expect(fs.readdirSync(path.join(tmpDir, 'public'))).toEqual(['hero.png'])
+  })
+
+  it('the same key from ANOTHER user is not answered from the record (security review F4)', async () => {
+    await serve(keyedDrop('hero.png', PNG_BYTES))
+    const other = await serve(keyedDrop('other.png', OTHER_PNG_BYTES), 'user-2')
+    expect(await other!.json()).toMatchObject({ relPath: 'public/other.png', deduped: false })
   })
 
   it('a refusal is never recorded, so a corrected retry under the same key still runs', async () => {

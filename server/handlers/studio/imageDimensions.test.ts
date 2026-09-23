@@ -164,6 +164,22 @@ describe('readImageDimensions — malformed input answers null', () => {
     expect(readImageDimensions(broken, 'webp')).toBeNull()
   })
 
+  it('a pathological SVG length answers quickly (security review F3: no quadratic backtracking)', () => {
+    const digits = '1'.repeat(7000)
+    const spaces = ' '.repeat(7000)
+    const started = performance.now()
+    for (let i = 0; i < 20; i += 1) {
+      expect(readImageDimensions(svg(`<svg width="${digits}x" height="1">`), 'svg')).toBeNull()
+      expect(readImageDimensions(svg(`<svg width="1${spaces}x" height="1">`), 'svg')).toBeNull()
+    }
+    // 40 parses of an 8 KB window; the old pattern took ~50 ms EACH at 4000 digits.
+    expect(performance.now() - started).toBeLessThan(250)
+  })
+
+  it('an SVG length with surrounding whitespace and px still reads', () => {
+    expect(readImageDimensions(svg('<svg width=" 12.5px " height="8">'), 'svg')).toEqual({ width: 13, height: 8 })
+  })
+
   it('an SVG with no root element', () => {
     expect(readImageDimensions(new TextEncoder().encode('<html></html>'), 'svg')).toBeNull()
   })

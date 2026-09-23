@@ -160,10 +160,18 @@ function webpDimensions(b: Uint8Array): ImageDimensions | null {
   return null
 }
 
+/** Longer than any honest length (`123456.789e+10px` is 16). */
+const MAX_SVG_LENGTH_CHARS = 32
+
 /** An absolute SVG length — unitless or `px`. Anything relative (`%`, `em`, `vw`) is `null`: it has no intrinsic pixel size. */
 function svgLength(raw: string | undefined): number | null {
   if (raw === undefined) return null
-  const match = /^\s*([+]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?)\s*(px)?\s*$/i.exec(raw)
+  // Security review F3: trimmed and length-capped first, then matched by a
+  // pattern with no ambiguous quantifiers (the old `\d+\.?\d*` and the
+  // adjacent `\s*(px)?\s*` backtracked quadratically on a long attribute).
+  const trimmed = raw.trim()
+  if (trimmed.length > MAX_SVG_LENGTH_CHARS) return null
+  const match = /^\+?((?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)(?:px)?$/i.exec(trimmed)
   if (!match) return null
   const value = Number(match[1])
   return Number.isFinite(value) && value > 0 ? value : null

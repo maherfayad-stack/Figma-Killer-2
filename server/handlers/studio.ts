@@ -455,7 +455,7 @@ export async function tryServeStudio(
   // lost response after a `bun --watch` restart must never re-run a
   // `duplicate`/`insert`/`wrap`/`group` edit a second time.
   if (pathname === '/admin/api/studio/save' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, SaveBodySchema)
       if (!body) return badRequest('invalid save body')
@@ -555,7 +555,7 @@ export async function tryServeStudio(
   // consistent with `/save` and `/page` rather than reasoning about safety
   // route-by-route.
   if (pathname === '/admin/api/studio/boards' && req.method === 'POST') {
-    return withIdempotentReplay(req, async () => {
+    return withIdempotentReplay(req, sessionRuntime.user.id, async () => {
     try {
       const body = await readValidatedBody(req, BoardsPostBodySchema)
       if (!body) return badRequest('invalid boards body')

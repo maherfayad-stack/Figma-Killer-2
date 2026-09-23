@@ -55,8 +55,7 @@
  * targeted string sanitizer is the correct, dependency-free choice here.
  */
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
-import { createHash } from 'node:crypto'
+import { closeSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, writeFileSync } from 'node:fs'
 import { isWorkspaceWritablePath, pathEntryExists, realWorkspaceRel } from '@core/page-parser'
 import { sanitizeSvgBytes } from '../cms/svgSanitize'
 import { readImageDimensions } from './imageDimensions'
@@ -210,21 +209,50 @@ export function sanitizeAssetBaseName(rawName: string): string {
   return truncated.length > 0 ? truncated : 'asset'
 }
 
+/** At most this many same-size candidates are compared per landing (security review F2). */
+export const MAX_DEDUPE_CANDIDATES = 16
+
+/** At most this many bytes are read from disk, across all candidates, per landing (security review F2). */
+export const MAX_DEDUPE_COMPARE_BYTES = 64 * 1024 * 1024
+
+const DEDUPE_CHUNK_BYTES = 64 * 1024
+
 /**
- * SHA-256 of `bytes`, hex. Content identity for {@link findIdenticalAsset}.
+ * Whether the file at `full` holds exactly `bytes`, read in chunks with an
+ * exit at the first differing chunk. Reads at most `budget` bytes; `null`
+ * when the budget ran out before an answer (treated as "not a match").
  */
-function sha256(bytes: Uint8Array): string {
-  return createHash('sha256').update(bytes).digest('hex')
+function fileEquals(full: string, bytes: Uint8Array, budget: number): { equal: boolean | null; read: number } {
+  const fd = openSync(full, 'r')
+  try {
+    const chunk = Buffer.alloc(Math.min(DEDUPE_CHUNK_BYTES, Math.max(bytes.length, 1)))
+    let offset = 0
+    while (offset < bytes.length) {
+      if (offset >= budget) return { equal: null, read: offset }
+      const want = Math.min(chunk.length, bytes.length - offset)
+      const got = readSync(fd, chunk, 0, want, offset)
+      if (got !== want) return { equal: false, read: offset + got }
+      if (!chunk.subarray(0, got).equals(bytes.subarray(offset, offset + got))) return { equal: false, read: offset + got }
+      offset += got
+    }
+    return { equal: true, read: offset }
+  } finally {
+    closeSync(fd)
+  }
 }
 
 /**
  * A file already in `writeDir` whose bytes equal `bytes`, or `null` (IMG-1,
  * audit 07 §A.4).
  *
- * Bounded on purpose: `writeDir`'s own entries only (never recursive), only
- * regular files (a symlink is never followed, so this can never hash a file
- * outside the project), only the sniffed extension, and only a file whose
- * size matches. The SHA-256 is computed for same-size candidates alone.
+ * Bounded on purpose (security review F2): `writeDir`'s own entries only
+ * (never recursive), only regular files (a symlink is never followed, so this
+ * can never read a file outside the project), only the sniffed extension,
+ * only a file whose size matches, at most {@link MAX_DEDUPE_CANDIDATES} of
+ * those, and at most {@link MAX_DEDUPE_COMPARE_BYTES} read in total, each
+ * comparison chunked with an exit at the first difference. Running out of
+ * budget answers "no match", so the landing writes a new file: dedupe is an
+ * optimisation, never a reason to block.
  *
  * Only a name this module could itself have written (`<sanitized base>.<ext>`)
  * is eligible. A repo can arrive from GitHub holding `a"onerror=….png`, and
@@ -247,14 +275,19 @@ function findIdenticalAsset(writeDir: string, ext: string, bytes: Uint8Array): s
     return null
   }
 
-  let incoming: string | null = null
+  let candidates = 0
+  let budget = MAX_DEDUPE_COMPARE_BYTES
   for (const name of names) {
     const full = join(writeDir, name)
     try {
       const stat = lstatSync(full)
       if (!stat.isFile() || stat.size !== bytes.length) continue
-      incoming ??= sha256(bytes)
-      if (sha256(readFileSync(full)) === incoming) return full
+      if (candidates >= MAX_DEDUPE_CANDIDATES) return null
+      candidates += 1
+      const { equal, read } = fileEquals(full, bytes, budget)
+      if (equal === true) return full
+      budget -= read
+      if (equal === null || budget <= 0) return null
     } catch {
       // Removed or unreadable between the listing and the read: not a match.
     }

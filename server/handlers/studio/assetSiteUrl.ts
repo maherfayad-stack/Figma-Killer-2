@@ -28,6 +28,9 @@
  *     `buildSafe: false`, and the UI must say "dev only" next to it;
  *   - a file outside the app root is served by nothing: `null`.
  *
+ * Every segment of the URL is percent-encoded (`siteRootUrl`): the name comes
+ * from the user's repo, and the URL is pasted into their source verbatim.
+ *
  * `static/` (Gatsby, and a Next convention that served at `/static/…`, not at
  * the root) is deliberately not a public root: no framework Studio detects
  * serves it from `/`, so it falls into the dev-only case like any other path.
@@ -60,11 +63,37 @@ export function assetSiteUrlResolver(dir: string): (relPath: string) => AssetSit
 
   return (relPath) => {
     if (relPath.startsWith(publicPrefix) && relPath.length > publicPrefix.length) {
-      return { src: `/${relPath.slice(publicPrefix.length)}`, buildSafe: true }
+      const src = siteRootUrl(relPath.slice(publicPrefix.length))
+      return src === null ? null : { src, buildSafe: true }
     }
     if (relPath.startsWith(appPrefix) && relPath.length > appPrefix.length) {
-      return { src: `/${relPath.slice(appPrefix.length)}`, buildSafe: false }
+      const src = siteRootUrl(relPath.slice(appPrefix.length))
+      return src === null ? null : { src, buildSafe: false }
     }
     return null
   }
+}
+
+/**
+ * `/` + each segment percent-encoded, or `null` when the path has an empty
+ * segment (a leading, trailing or doubled `/`).
+ *
+ * The URL is written VERBATIM into the user's source: into an `<img src="…">`
+ * JSX string and into a CSS `url('…')` (`wrapUrlPayload`). A file name from an
+ * imported repo is untrusted, so any byte that means something in either
+ * syntax must not survive. A name like `a'), url(evil.png), url('.png` would
+ * otherwise close the CSS string and inject declarations, and on Linux/macOS
+ * a file name may also hold `;`, `{`, `}`, `:` and `\`. `encodeURIComponent`
+ * leaves `!'()*` alone, so those are encoded here as well. The result can only
+ * contain `[A-Za-z0-9._~%-]` and `/` separators, and it always starts with a
+ * single `/` followed by a non-empty segment, so it can never be `//host` or
+ * `/\host` (which the WHATWG URL parser reads as protocol-relative).
+ */
+function siteRootUrl(pathUnderRoot: string): string | null {
+  const segments = pathUnderRoot.split('/')
+  if (segments.some((segment) => segment.length === 0)) return null
+  const encoded = segments.map((segment) =>
+    encodeURIComponent(segment).replace(/[!'()*]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`),
+  )
+  return `/${encoded.join('/')}`
 }

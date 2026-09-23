@@ -83,3 +83,48 @@ describe('assetSiteUrlResolver — a monorepo app root', () => {
     expect(assetSiteUrlResolver(tmpDir)('docs/diagram.png')).toBeNull()
   })
 })
+
+/**
+ * Security review F1. The URL is pasted VERBATIM into the user's source: an
+ * `<img src="…">` string and a CSS `url('…')`. File names come from an
+ * imported repo and are untrusted, so every byte that means something in a
+ * URL, a JSX string or a CSS string is percent-encoded, and a path that could
+ * read as protocol-relative is refused.
+ */
+describe('assetSiteUrlResolver — a hostile file name cannot escape the URL', () => {
+  beforeEach(() => write('package.json', JSON.stringify({ name: 'app' })))
+
+  const src = (relPath: string) => assetSiteUrlResolver(tmpDir)(relPath)?.src ?? null
+
+  it('encodes a quote and parentheses, the CSS url() breakout', () => {
+    expect(src("public/a'), url(evil.png), url('.png")).toBe('/a%27%29%2C%20url%28evil.png%29%2C%20url%28%27.png')
+  })
+
+  it('encodes a backslash, so a backslash-host URL can never be produced', () => {
+    expect(src('public/\\evil.com/x.png')).toBe('/%5Cevil.com/x.png')
+  })
+
+  it('encodes #, a space, and the other characters encodeURIComponent leaves alone', () => {
+    expect(src('public/q#x.png')).toBe('/q%23x.png')
+    expect(src('public/sub dir/b c.png')).toBe('/sub%20dir/b%20c.png')
+    expect(src("public/!'()*.png")).toBe('/%21%27%28%29%2A.png')
+    expect(src('src/a;b{c}:d".png')).toBe('/src/a%3Bb%7Bc%7D%3Ad%22.png')
+  })
+
+  it('refuses a path with an empty segment, so //host can never be produced', () => {
+    expect(src('public//evil.com/x.png')).toBeNull()
+    expect(src('//evil.com/x.png')).toBeNull()
+    expect(src('src//x.png')).toBeNull()
+  })
+
+  it('leaves an ordinary name exactly as it was', () => {
+    expect(src('public/img/hero-1_a.b~c.png')).toBe('/img/hero-1_a.b~c.png')
+  })
+
+  it('never emits anything outside [A-Za-z0-9._~%-] and single / separators', () => {
+    for (const hostile of ["public/a'b", 'public/x"y', 'public/<script>', 'public/{x}', 'public/a\nb', 'public/%2e%2e']) {
+      const out = src(hostile)
+      expect(out).toMatch(/^\/[A-Za-z0-9._~%-]+(\/[A-Za-z0-9._~%-]+)*$/)
+    }
+  })
+})

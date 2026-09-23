@@ -110,6 +110,7 @@ import { landAssetBytes } from './assetLanding'
 import { PUBLIC_DIR, assetSiteUrlResolver } from './assetSiteUrl'
 import { resolveAppRoot } from './appRoot'
 import { withIdempotentReplay } from './idempotentReplay'
+import type { StudioSessionRuntime } from './routeGate'
 import { resolveProjectProfile } from './projectProbe'
 import type { ProjectFramework } from './projectProfileSchema'
 
@@ -216,19 +217,21 @@ export interface AssetDropDeps {
   idempotencyRoot?: string
 }
 
-// `_url` is unused (this route branches on `pathname` alone) but kept in the
-// signature so this sub-router matches the uniform shape `tryServeStudio`
-// composes for `STUDIO_SUB_ROUTERS` — the same shape `asset-upload` has. The
-// capability and CSRF checks ran in `gateStudioRequest` before this was called.
+// A `STUDIO_SESSION_SUB_ROUTERS` member: the replay record is bound to the
+// user the gate authenticated (security review F4), so this route needs the
+// session runtime. `_url` is unused (this route branches on `pathname` alone)
+// but kept for the uniform shape. The capability and CSRF checks ran in
+// `gateStudioRequest` before this was called.
 export async function tryServeStudioAssetDrop(
   req: Request,
+  runtime: StudioSessionRuntime,
   _url: URL,
   pathname: string,
   deps: AssetDropDeps = {},
 ): Promise<Response | null> {
   if (pathname !== '/admin/api/studio/asset-drop' || req.method !== 'POST') return null
 
-  return withIdempotentReplay(req, () => landDroppedAsset(req, deps), deps.idempotencyRoot)
+  return withIdempotentReplay(req, runtime.user.id, () => landDroppedAsset(req, deps), deps.idempotencyRoot)
 }
 
 async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Response> {
@@ -287,6 +290,8 @@ async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Resp
     if (err instanceof ArchiveIngestError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    // Generic on purpose (security review F7): `resolveDroppedAssetHome`'s
+    // `mkdirSync` can throw an EACCES whose message is an absolute path.
+    return jsonResponse({ error: 'The image could not be saved to the project.' }, { status: 500 })
   }
 }

@@ -10,7 +10,7 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { landAssetBytes, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
+import { MAX_DEDUPE_CANDIDATES, landAssetBytes, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
 
 let dir: string
 
@@ -102,6 +102,43 @@ describe('landAssetBytes — content dedupe (IMG-1, audit 07 §A.4)', () => {
     const other = landAssetBytes(dir, 'public', OTHER_PNG_BYTES, 'photo.png')
     expect(other).toMatchObject({ relPath: 'public/photo-2.png', deduped: false })
     expect(fs.readFileSync(path.join(dir, 'public/photo-2.png'))).toEqual(Buffer.from(OTHER_PNG_BYTES))
+  })
+
+  it(`compares at most ${MAX_DEDUPE_CANDIDATES} same-size candidates, then writes a new file (security review F2)`, () => {
+    fs.mkdirSync(path.join(dir, 'public'), { recursive: true })
+    // MAX_DEDUPE_CANDIDATES same-size decoys sort before the identical twin.
+    for (let i = 0; i < MAX_DEDUPE_CANDIDATES; i += 1) {
+      const decoy = new Uint8Array(PNG_BYTES)
+      decoy[decoy.length - 1] = 100 + i
+      fs.writeFileSync(path.join(dir, 'public', `a${String(i).padStart(2, '0')}.png`), decoy)
+    }
+    fs.writeFileSync(path.join(dir, 'public', 'zz-twin.png'), PNG_BYTES)
+
+    const landed = landAssetBytes(dir, 'public', PNG_BYTES, 'photo.png')
+    expect(landed).toMatchObject({ relPath: 'public/photo.png', deduped: false })
+  })
+
+  it('still finds the twin when it is within the candidate cap', () => {
+    fs.mkdirSync(path.join(dir, 'public'), { recursive: true })
+    for (let i = 0; i < MAX_DEDUPE_CANDIDATES - 1; i += 1) {
+      const decoy = new Uint8Array(PNG_BYTES)
+      decoy[decoy.length - 1] = 100 + i
+      fs.writeFileSync(path.join(dir, 'public', `a${String(i).padStart(2, '0')}.png`), decoy)
+    }
+    fs.writeFileSync(path.join(dir, 'public', 'zz-twin.png'), PNG_BYTES)
+
+    expect(landAssetBytes(dir, 'public', PNG_BYTES, 'photo.png')).toMatchObject({ relPath: 'public/zz-twin.png', deduped: true })
+  })
+
+  it('compares a multi-chunk file correctly: a difference in the last byte is not a match', () => {
+    const big = new Uint8Array(200 * 1024)
+    big.set(PNG_BYTES.subarray(0, 8), 0)
+    const almost = new Uint8Array(big)
+    almost[almost.length - 1] = 1
+    fs.mkdirSync(path.join(dir, 'public'), { recursive: true })
+    fs.writeFileSync(path.join(dir, 'public', 'almost.png'), almost)
+    expect(landAssetBytes(dir, 'public', big, 'big.png')).toMatchObject({ relPath: 'public/big.png', deduped: false })
+    expect(landAssetBytes(dir, 'public', almost, 'x.png')).toMatchObject({ relPath: 'public/almost.png', deduped: true })
   })
 
   it('never dedupes across directories', () => {
