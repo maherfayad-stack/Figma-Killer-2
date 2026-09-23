@@ -281,6 +281,7 @@ export function TextSection() {
           onPreview={onPreview}
           onClearPreview={onClearPreview}
           provenanceByProperty={provenanceByProperty}
+          rhythm="within-group"
         />
 
         <div className={styles.alignRow}>

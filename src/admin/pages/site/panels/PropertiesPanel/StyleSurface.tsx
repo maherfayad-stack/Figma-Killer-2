@@ -54,7 +54,7 @@
  * why the nearest boundary used to be the whole editor body.
  */
 
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { StyleRule } from '@core/page-tree'
 import { isGeneratedClassLocked, styleRuleDisplayName } from '@core/page-tree'
 import { Button } from '@ui/components/Button'
@@ -99,6 +99,13 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
   const permissions = useEditorPermissions()
   const canEditStyleHere = permissions.canEditStyle
 
+  // UX-6 — whether anything has scrolled up under the chrome above this
+  // container. `PropertiesPanel.module.css` draws the ClassPicker's bottom
+  // fade only while this is set: at rest the fade had nothing to fade and
+  // simply dimmed the first header under it. Local to this element, so a
+  // freshly mounted surface (scrollTop 0) can never inherit a stale `true`.
+  const [scrolled, setScrolled] = useState(false)
+
   const reachableClasses = writableClasses.filter((entry) => entry.lockReason === null)
   const nothingWritable = !inlineWritable && reachableClasses.length === 0
 
@@ -119,7 +126,12 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
     // (`tests/e2e/inspector-panel-measurement.e2e.ts`) needs a stable real-
     // DOM handle on it since CSS Module class names are hashed in a real
     // build.
-    <div className={styles.surface} data-testid="properties-panel-scroll">
+    <div
+      className={styles.surface}
+      data-testid="properties-panel-scroll"
+      data-scrolled={scrolled ? 'true' : undefined}
+      onScroll={(event) => setScrolled(event.currentTarget.scrollTop > 0)}
+    >
       <div className={styles.surfaceContent}>
         {/* A multi-selection's write target is a CHOICE with a blast radius,
             so it gets its own interactive chip + gate here. A SINGLE

@@ -194,7 +194,19 @@ test.beforeAll(() => {
 })
 
 test.afterAll(() => {
-  if (fixtureDir) fs.rmSync(fixtureDir, { recursive: true, force: true })
+  if (!fixtureDir) return
+  try {
+    fs.rmSync(fixtureDir, { recursive: true, force: true })
+  } catch (err) {
+    // On Windows the still-running dev server's watcher holds a handle on
+    // the open project, so the rm answers EPERM until the stack shuts down.
+    // Harmless: `WORKSPACE_ROOT` is this run's throwaway copy, and
+    // `scripts/e2e-dev.ts` wipes it before the next run.
+    console.warn(
+      '[inspector-panel-measurement.e2e] fixture cleanup deferred to the next run:',
+      err instanceof Error ? err.message : err,
+    )
+  }
 })
 
 /** Same shape as `css-writeback.e2e.ts`'s `openStudioBoard`, minus autoSave — nothing here needs to reach disk. */
@@ -213,6 +225,16 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 30_000 })
   await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+  // `speed-04`'s own defect (`studio-feel.e2e.ts` pins the same wait): a live
+  // board frame mounts the portal fallback AND the bridge frame together until
+  // the bridge is ready, so the page container briefly carries TWO
+  // `iframe[title^="Canvas frame"]` — and `frameLocator()` throws a
+  // strict-mode violation on the ambiguity. Settle to one before resolving
+  // into it.
+  await expect(
+    page.locator('[data-page-id]').first().locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    'the first board frame never settled to one canvas iframe',
+  ).toHaveCount(1, { timeout: 30_000 })
   return canvasRoot
 }
 
@@ -505,7 +527,13 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
     // (74->78, 77->81) because those are WITHIN `.measures`'s own between-
     // group step, which this pass tightened from 4px to 8px — a much
     // smaller shift than crossing an actual section boundary.
-    const REAL_MEASURED_DELTAS = [48, 78, 81]
+    //
+    // Re-measured after P2-F (2026-09-23): 48 / 74 / 77. Delta #0 is 48
+    // again, now as the 12px `--inspector-section-gap` (panel-39's 8px had
+    // made it 32 + 8 + 4 = 44, inside this test's 6px tolerance). #1/#2 are back to
+    // 74/77 because Measures' size / position / rotation rows are ONE group
+    // and sit the within-group 4px apart (UX-3, Penpot `menus/measures.scss`).
+    const REAL_MEASURED_DELTAS = [48, 74, 77]
     const measuredDeltas = [offsets[1] - offsets[0], offsets[2] - offsets[1], offsets[3] - offsets[2]]
 
     for (let i = 0; i < measuredDeltas.length; i += 1) {
