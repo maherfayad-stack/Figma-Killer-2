@@ -44,15 +44,16 @@
  * result measured ~1.8 ms — an order of magnitude under the ~26 ms it saves —
  * so the memo always clones both in and out.
  *
- * ## Only FULL loads are stored
+ * ## Every load stores the FULL result
  *
- * A narrowed load (`options.pageIds`, the canvas's targeted reload) skips the
- * per-page convert for every other route, so its result is not a project-wide
- * truth and must never be stored. It can still be SERVED from a stored full
- * result by filtering `pages` — which is exactly what a narrowed load returns.
+ * A narrowed load (`options.pageIds`, the canvas's targeted reload) runs the
+ * same compute and converts every route — narrowing happens on the way out,
+ * by filtering `pages`. So the result it computed IS the project-wide truth,
+ * it is stored like any other, and the full load that follows a canvas
+ * resync is a memo hit rather than a second parse.
  *
  * In-memory, process-scoped, one entry per `dir` — same posture as
- * `pageParseCache.ts`.
+ * `pageParseCache.ts` and the kept ts-morph `Project` in `workspaceProject.ts`.
  */
 import { readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'

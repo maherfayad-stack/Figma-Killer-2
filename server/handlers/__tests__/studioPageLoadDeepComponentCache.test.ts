@@ -27,7 +27,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { clearPageParseCache } from '../studio/pageParseCache'
 import { clearStudioLoadMemo } from '../studio/studioLoadMemo'
-import { clearReadOnlyWorkspaceProject } from '@core/page-parser'
+import { clearWorkspaceProjects } from '../studio/workspaceProject'
 import { projectsRootDir } from '../studioProjects'
 import { loadStudioPages } from '../studioPageLoad'
 
@@ -48,7 +48,7 @@ describe('loadStudioPages — a component TWO hops deep from a page (deep-depend
   beforeEach(() => {
     clearPageParseCache()
     clearStudioLoadMemo()
-    clearReadOnlyWorkspaceProject()
+    clearWorkspaceProjects()
     const root = projectsRootDir()
     fs.mkdirSync(root, { recursive: true })
     wsDir = fs.mkdtempSync(path.join(root, '__deep_dep_cache_test_'))
@@ -83,7 +83,7 @@ describe('loadStudioPages — a component TWO hops deep from a page (deep-depend
     fs.rmSync(wsDir, { recursive: true, force: true })
     clearPageParseCache()
     clearStudioLoadMemo()
-    clearReadOnlyWorkspaceProject()
+    clearWorkspaceProjects()
   })
 
   it('picks up an edit to the deeply-nested (2-hop) component on the very next load', async () => {

@@ -1449,7 +1449,7 @@ own dominant ending on every write**. It is installed on every disk-backed
 | Factory | Where |
 |---|---|
 | `createProject()` | `src/core/ast-codemods/locateJsxElement.ts` — every single-file codemod |
-| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load AND every codemod handed that project |
+| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load (built once per project directory and kept by `server/handlers/studio/workspaceProject.ts`, which re-reads only the files whose `size:mtimeMs` moved) AND every codemod handed that project. Its file list is `listWorkspaceSourceFiles` — the download walk minus Studio's own `prototype/` shell, whose generated runtime bundle is never parsed as source |
 | `parsePageFile`'s default project | `src/core/page-parser/parsePageFile.ts` |
 | the probe projects | `packageManifest.ts`, `figmaCodeConnect.ts`, `prototypeCodeFlow.ts` |
 

@@ -2372,6 +2372,87 @@ None blocking — this design is directly implementable by `panel-designer` (the
 - **Verification:** `bun test src/__tests__/http/apiClient.test.ts` — 29 pass / 0 fail. `bun test server/handlers/studio/idempotentReplay.test.ts` — 9 pass / 0 fail. `bun test src/__tests__/http src/__tests__/persistence src/core/persistence server/handlers/studio/idempotentReplay.test.ts server/handlers/__tests__/studio.test.ts server/handlers/__tests__/studioRouteGate.test.ts server/handlers/studio/__tests__/pageScaffold.test.ts server/handlers/studio/__tests__/prototypeShellBoards.test.ts server/handlers/__tests__/cssInsertIntegration.test.ts src/__tests__/architecture/boundary-validation.test.ts src/__tests__/architecture/module-size-budgets.test.ts` — 611 pass / 0 fail. `bun run build` (`tsc -b && vite build`) — clean. `bun run lint` — clean. Every new test's fail-without-fix confirmed by flipping the fix off in place (see Done so far), never `git stash`.
 - **Human action needed:** dogfood — restart the dev server (`Ctrl+C` then `bun run dev` again) mid a page-creation, a board-edit, and a structural edit (duplicate/insert), and confirm no toast appears, the gesture completes exactly once, and no duplicate node/page lands (full script reproduced in `## Pending dogfood`). Then, separately: this session could not run `bun run test:e2e` or any Playwright script at all — chromium's CDP handshake hangs and times out in this sandboxed worktree even for a trivial `data:` URL smoke test, with no app or stack involved. The full live-gesture inventory this work order calls for needs an environment where that actually works (a human's machine, CI, or a non-sandboxed agent worktree) — confirm which is available before assigning this forward, so the next session doesn't rediscover the same 180s timeout.
 
+### perf-10 — the resync after every structural write took 2 s; it now takes ~100 ms
+- **Agent:** main session (orchestrator), measuring first, then the fix by hand.
+- **Stage:** done — branch `perf/keep-workspace-project-across-loads`, draft PR against `feat/alm-figma-killer-studio-shell`.
+- **Updated:** 2026-09-20.
+- **Goal:** the owner reported every duplicate / insert / component drop taking more than 2 s
+  to show on the canvas, sometimes needing a refresh. Find where the time goes with numbers,
+  not a hypothesis, and remove it.
+- **Measured before (owner's own `test4`, 3 pages, curl against the live server, and the
+  real UI):** `POST /save` 8–27 ms; the `GET /load?pageIds=` resync right after it
+  **1.5–2.0 s**; ⌘D → new layer row **2.19 s**. A CPU profile of five loads put 5.8 s of
+  6.9 s inside the static evaluator, split between `findProviders` (a `forEachDescendant`
+  over EVERY source file — including the 2 MB `prototype/studioRuntime.generated.js`
+  Studio itself writes into the project — wrapping every node in ts-morph objects) and
+  `findImportBinding → getModuleSpecifierSourceFile` (type-checker-backed: the whole
+  TypeScript program bound from scratch). Both were paid in full on every load because
+  `computeStudioPages` built a fresh `createWorkspaceProject(dir)` each call, so every
+  node-keyed memo was empty and every file was re-parsed and re-bound for one changed line.
+- **The fix, four parts:**
+  1. `server/handlers/studio/workspaceProject.ts` (new) — `withWorkspaceProject(dir, fn)`:
+     ONE kept ts-morph `Project` per project directory, synced to disk before each use
+     (`size:mtimeMs` per file; moved → remove + re-add, new → add, gone → remove, and any
+     in-memory file a caller created on it → remove), serialized per dir so a sync can never
+     forget nodes under a parse in flight, and calling `resetParserCaches()` on any change.
+     `computeStudioPages` and `loadStudioPageInLocale` run inside it.
+  2. `src/core/page-parser/parserCaches.ts` (new) — `resetParserCaches()` empties the four
+     cross-file memos (`moduleConstCache`, `providerTraceCache`, `exportedDeclarationCache`,
+     css-in-js `fileCache`), each now a reassignable `let` with a `forget…()` export. A memo
+     keyed on an unchanged file may have been computed by reading the file that moved, so
+     "anything changed → forget everything" is the only honest rule; a load in which nothing
+     changed never reaches the parser anyway (`studioLoadMemo`).
+  3. `listWorkspaceSourceFiles` (`workspaceFiles.ts`) — the ONE file-selection rule for the
+     workspace `Project`: `listWorkspaceFiles` narrowed to `.ts/.tsx/.js/.jsx` minus the
+     `prototype/` shell. `createWorkspaceProject` adds that explicit list instead of a glob,
+     so the shell's generated runtime bundle is never parsed as source again (that alone was
+     ~250 ms and most of the memory).
+  4. `findProviders` skips any file whose text does not contain `.Provider` before walking it.
+  Plus: every load now converts every route and stores the FULL result in the memo
+  (narrowing is response-shaping only), so the full load after a canvas resync is a hit;
+  `usePersistence.ts`'s full-reload listener no longer swallows a failed `loadSite()` — it
+  toasts "The board could not reload your project … Refresh to catch up" and sets the save
+  status to error (the "nothing happens until I refresh" case now says so).
+- **Measured after (same machine, same project):** in-process `loadStudioPages` after one
+  touched file **1.5–2.0 s → 50–97 ms**, cold **2.2 s → 1.4 s**; through the live server
+  save + resync **15 ms + 54–125 ms**; in the real UI ⌘D → new row **2.19 s → 0.42 s**,
+  Assets-panel Button insert → new row **0.37 s**, zero console errors across duplicate,
+  undo, delete, insert.
+- **Scope:** `server/handlers/studio/workspaceProject.ts`, `studioPageLoad.ts`,
+  `studio/studioLoadMemo.ts`, `studio/studioLoadContract.ts`, `src/core/page-parser/
+  {workspaceFiles,componentSources,staticEvalCore,staticEvalCalls,cssInJsExtract,
+  parserCaches,index}.ts`, `src/admin/pages/site/hooks/usePersistence.ts`, tests
+  `server/handlers/__tests__/{workspaceProject,studioPageLoadNarrow}.test.ts`, docs
+  `docs/agent-refs/{studio-pipeline,path-index}.md`, `docs/features/studio-import.md`.
+- **Decisions:** the kept `Project` is a server concern (process lifetime), so it lives next
+  to `pageParseCache.ts`/`studioLoadMemo.ts`, not in `@core/page-parser`; other callers of
+  `createWorkspaceProject` (the components catalog, MCP compare/quality tools, codemods that
+  take a `project` param) keep their throwaway projects — they are not on the gesture path.
+  `getModuleSpecifierSourceFile` was left type-checker-backed: with the program kept,
+  TypeScript's `oldProgram` reuse makes it cheap; replacing it with `ts.resolveModuleName`
+  across its six call sites is the next lever if a large repo still shows it.
+- **Landmines:** (1) never hold a ts-morph node from the kept `Project` across an `await`
+  outside `withWorkspaceProject` — the next caller's sync may remove it. (2) `pageParseCache`'s
+  `expanded` results are plain data and survive; anything new that caches a live node must go
+  through `resetParserCaches`. (3) A `Project` is keyed by `path.resolve(dir)`; `projectWriteLock`
+  keys by realpath — a symlinked workspace dir would get two projects but still one lock.
+  (4) `.studio/meta.json`, `shell.json` and `vite.config.js` under a project get rewritten by
+  `ensurePrototypeShell`/`ensureDesignSystemFiles` on every open — `git status` on
+  `studio-workspace/test4` is dirty after any load; those files are the app's, not a change.
+- **Not fixed, named:** ⌘Z after a source DELETE is refused by design ("Undo can't restore
+  this yet", `refuseStructuralUndo`) — no edit kind carries a subtree's source text back.
+  It reads as an error to the owner; a `reinsert-source` edit (exact removed text + the
+  imports the delete pruned, at the exact position) would close it. The Assets insert writes
+  every default prop, including ones the chosen variant does not use (`cardLast4="1394"` on a
+  `variant="primary"` Button). happy-dom's `AsyncTaskManager` timer burns ~7 % of a core in
+  the server process after the first CSS parse (one `GlobalWindow` per process, never closed).
+- **Verification:** `bun run build` clean. `bun test src/__tests__/page-parser src/core/page-parser
+  server/handlers/__tests__ …` 1746 pass / 6 fail — all six reproduce on a clean worktree of
+  HEAD (`applyStudioEdit` collapse ×2, `studioEditLocation` writable-path ×3, git write-lock
+  409 timing) — pre-existing, untouched. `bunx eslint` on every touched file clean.
+- **Human action needed:** dogfood on your own project — ⌘D, insert from Assets, and watch
+  the "Saving…" chip; it should settle well under half a second.
+
 ### live-10 — live frames render on a local install, and the Tier-2 default only ever runs `vite`
 - **Agent:** main session (orchestrator), driven by dogfood on the owner's own `test4`.
 - **Stage:** done — branch `fix/live-frames-on-local-install`, stacked on
