@@ -63,7 +63,7 @@ import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
 import type { SubprocessSpawnFn } from './subprocessRunner'
-import { isRealpathContainedAllowingMissing } from './workspacePackageResolve'
+import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
 /**
  * A clone has no byte counter Studio can honestly report — git writes its
@@ -164,12 +164,13 @@ async function runCloneJob(
       )
     }
     // Containment BEFORE the clone, on a path that does not exist yet:
-    // `isRealpathContainedAllowingMissing` checks the deepest existing
+    // `isRealpathStrictlyInsideAllowingMissing` checks the deepest existing
     // ancestor's REAL path, which is the workspace root, so a symlinked root
-    // cannot redirect the clone. (`assertWithinWorkspace` answers `false` for
-    // a missing path by construction, which is right for its own callers and
-    // wrong here.)
-    if (!isRealpathContainedAllowingMissing(target, resolve(projectsRootDir()))) {
+    // cannot redirect the clone, and refuses the root itself. The archive
+    // import's target-clearing funnel (`archiveIngest.ts`) uses the same
+    // helper. (`assertWithinWorkspace` answers `false` for a missing path by
+    // construction, which is right for its own callers and wrong here.)
+    if (!isRealpathStrictlyInsideAllowingMissing(target, resolve(projectsRootDir()))) {
       throw new CloneRefusal('That repository cannot be cloned here.')
     }
 

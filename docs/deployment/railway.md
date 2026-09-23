@@ -11,8 +11,8 @@ Railway is the simplest managed target for Studio because it can run the publish
 
 | Template | Database | App volume | `DATABASE_URL` |
 |---|---|---|---|
-| SQLite | SQLite file in the app volume | `/app/storage` | `sqlite:/app/storage/data/cms.db` |
-| Postgres | Railway Postgres service | `/app/storage` for uploads only | `${{Postgres.DATABASE_URL}}` |
+| SQLite | SQLite file in the app volume | `/app/storage` (DB, uploads, workspace, private data) | `sqlite:/app/storage/data/cms.db` |
+| Postgres | Railway Postgres service | `/app/storage` (uploads, workspace, private data) | `${{Postgres.DATABASE_URL}}` |
 
 Both templates use:
 
@@ -20,6 +20,8 @@ Both templates use:
 Image=ghcr.io/corebunch/studio:0.0.11
 PORT=8080
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 STUDIO_SECRET_KEY=${{secret(43, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/")}}=
 PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}
@@ -57,6 +59,8 @@ Recommended service settings:
 
 Railway volumes mount at runtime, not build time. Studio only writes runtime data there, so the published image stays unchanged across installs.
 
+`STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace` and `STUDIO_DATA_DIR=/app/storage/.data` are what keep every user's projects, the MCP server secrets and the Claude CLI logins on the volume. Each is a dedicated subdirectory: never set either to `/app/storage` itself (the server refuses to start). Without them they live in the container's writable layer, and Railway replaces that container on every deploy, image update and variable change. A service created before the templates set them must move its projects and private data once, before its next deploy: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
+
 Railway mounts volumes as `root`. The Studio image normally runs as the non-root `bun` user, so Railway templates must set `RAILWAY_RUN_UID=0`; otherwise SQLite and media directory creation fail with `EACCES` under `/app/storage`.
 
 Railway terminates HTTPS before forwarding requests to the container, so the container sees plain HTTP. Studio derives its CSRF public origin from `PUBLIC_ORIGIN`; the templates set `PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}` so the origin is correct without any proxy trust. The server would auto-detect the same value from `RAILWAY_PUBLIC_DOMAIN` even if `PUBLIC_ORIGIN` were unset, but setting it explicitly is clearer and survives custom-domain edits. If you add a custom domain, append it as a second comma-separated entry, e.g. `PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}},https://www.example.com`.
@@ -81,13 +85,15 @@ Set app variables:
 PORT=8080
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 STUDIO_SECRET_KEY=${{secret(43, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/")}}=
 PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}
 RAILWAY_RUN_UID=0
 ```
 
-The SQLite adapter creates the parent directory for `/app/storage/data/cms.db` on boot. Media writes create subdirectories under `/app/storage/uploads` as needed.
+The SQLite adapter creates the parent directory for `/app/storage/data/cms.db` on boot, and the server creates `/app/storage/studio-workspace` on boot (the private-data stores create their own directories). Media writes create subdirectories under `/app/storage/uploads` as needed.
 
 ## Postgres Template
 
@@ -97,7 +103,7 @@ Template services:
 
 | Service | Source | Persistent data |
 |---|---|---|
-| App | Studio Dockerfile/image | `/app/storage/uploads` on the app volume |
+| App | Studio Dockerfile/image | `/app/storage/uploads`, `/app/storage/studio-workspace` and `/app/storage/.data` on the app volume |
 | Postgres | Railway PostgreSQL template | Postgres service volume |
 
 Attach one volume to the app service:
@@ -112,6 +118,8 @@ Set app variables:
 PORT=8080
 DATABASE_URL=${{Postgres.DATABASE_URL}}
 UPLOADS_DIR=/app/storage/uploads
+STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 STUDIO_SECRET_KEY=${{secret(43, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789+/")}}=
 PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}
@@ -126,8 +134,8 @@ Use `DATABASE_URL`, not `DATABASE_PUBLIC_URL`, for app-to-database traffic insid
 
 Back up both data stores:
 
-- SQLite template: back up the app volume mounted at `/app/storage`; it contains both `data/cms.db` and `uploads/`.
-- Postgres template: back up the Postgres service volume/database and the app volume mounted at `/app/storage`; the app volume contains uploaded media, fonts, plugin packages, and published artefacts.
+- SQLite template: back up the app volume mounted at `/app/storage`; it contains `data/cms.db`, `uploads/`, `studio-workspace/` and `.data/`.
+- Postgres template: back up the Postgres service volume/database and the app volume mounted at `/app/storage`; the app volume contains the Studio workspace, the private data, uploaded media, fonts, plugin packages, and published artefacts.
 
 Railway volume backups apply to mounted volumes. For Postgres, use Railway's database backup/PITR tooling when enabled, or add a `pg_dump` backup service for off-platform dumps.
 
@@ -138,7 +146,7 @@ Enable Railway Image Auto Updates on the app service:
 - Use `ghcr.io/corebunch/studio:latest` when you want the service to redeploy whenever the `latest` tag moves.
 - Use a semver tag like `ghcr.io/corebunch/studio:0.0.11` when you want Railway to stage matching patch or minor updates according to the service's auto-update preference.
 
-Set a maintenance window before enabling automatic updates on sites with attached volumes.
+Set a maintenance window before enabling automatic updates on sites with attached volumes. Confirm `STUDIO_WORKSPACE_DIR` and `STUDIO_DATA_DIR` are set before enabling them: each update replaces the container.
 
 ## Troubleshooting
 
@@ -148,10 +156,12 @@ Set a maintenance window before enabling automatic updates on sites with attache
 | Deploy health check fails | Healthcheck path must be `/health`; the app must listen on `PORT`. |
 | SQLite data disappears after redeploy | `DATABASE_URL` must point under the mounted volume, e.g. `/app/storage/data/cms.db`. |
 | Uploaded files disappear after redeploy | `UPLOADS_DIR` must point under the mounted volume, e.g. `/app/storage/uploads`. |
+| Projects, MCP secrets or the CLI login disappear after redeploy, or the logs show a `[studio:workspace]` warning | `STUDIO_WORKSPACE_DIR` and `STUDIO_DATA_DIR` must point under the mounted volume, e.g. `/app/storage/studio-workspace` and `/app/storage/.data`. Projects already lost with a replaced container cannot be recovered; move the current ones before the next deploy: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume". |
 | App logs show `EACCES: permission denied, mkdir '/app/storage/...'` | Set `RAILWAY_RUN_UID=0`; Railway mounts volumes as `root` and the image otherwise runs as non-root `bun`. |
 | First-run setup or login returns `Forbidden: invalid origin` | Confirm `PUBLIC_ORIGIN` matches the public URL you opened. Templates set `PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}`; if you front the app with a custom domain, append it as a second comma-separated entry. |
 | Postgres app cannot connect | `DATABASE_URL` must reference the Postgres service's internal `DATABASE_URL`, not a copied local URL. |
 | Adding an AI provider credential or enabling TOTP MFA returns 500 | Confirm `STUDIO_SECRET_KEY` exists and has not been rotated. One-click templates generate it automatically; hand-created services can generate it with `bun run scripts/generate-secret-key.ts`. |
+| The app exits at boot with `[studio:workspace] Refusing to start` | `STUDIO_WORKSPACE_DIR` is blank, relative, or overlaps the database, uploads or Studio's code (for example `/app/storage` itself). Point it at `/app/storage/studio-workspace`. |
 | Deployments appear in the Studio GitHub repo | The service is connected to GitHub source. Change the service source to the published Docker image. |
 
 ## Related

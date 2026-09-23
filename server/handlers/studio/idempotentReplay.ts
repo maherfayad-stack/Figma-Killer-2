@@ -74,13 +74,13 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { join, resolve } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 
-const DEFAULT_DATA_ROOT_SEGMENT = ['.data', 'studio-idempotency'] as const
 
 /** Resolve (without creating) the data root — overridable via env, same convention as `resolveMcpServerSecretsRoot`. */
 export function resolveIdempotencyRoot(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_IDEMPOTENCY_DATA_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), ...DEFAULT_DATA_ROOT_SEGMENT)
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'studio-idempotency')
 }
 
 /** How long a record answers a replay for — see the module doc's TTL section. */

@@ -14,12 +14,15 @@
  * `SourceFingerprintExpectations`). This module answers two questions about
  * that, and nothing else:
  *
- *   - {@link findMovedEdits}: BEFORE any byte of the batch is written, which
- *     edits name an id whose position now holds something else? Those refuse
- *     `element-moved` and never reach a codemod. Checked against the files as
- *     they are before the batch, because that is the state the expectations
- *     describe — a batch applies bottom-to-top, and a prop edit and a style
- *     edit on ONE element would otherwise see each other's change as a move.
+ *   - {@link resolveEditIdentities}: BEFORE any byte of the batch is written,
+ *     which edits name an id whose position now holds something else? Each
+ *     such id is re-found in the changed file (P1-D, `studioEditRelocate.ts`)
+ *     and the edit re-addressed to where it is now — or, when there is not
+ *     exactly one place it can be, the edit refuses `element-moved` and never
+ *     reaches a codemod. Checked against the files as they are before the
+ *     batch, because that is the state the expectations describe — a batch
+ *     applies bottom-to-top, and a prop edit and a style edit on ONE element
+ *     would otherwise see each other's change as a move.
  *   - {@link fingerprintAfterWrite}: after a VALUE edit lands, what is the
  *     element's identity now? A prop, style, class, tag or text write changes
  *     the very bytes the fingerprint covers, and the board does not re-read a
@@ -32,16 +35,24 @@
  * a node the parser could not fingerprint (a `.map` row has no writable id at
  * all) is not refused for lacking one.
  *
- * P1-D builds on this: re-locating an edit through a line diff is "find the one
- * position in the current file whose fingerprint equals the expectation" —
- * the same `readSourceFingerprintAt` comparison, run over candidates.
+ * P1-D re-locates on top of this: the same `readSourceFingerprintAt`
+ * comparison, run over the positions a line diff proposes. A re-found edit is
+ * reported back as `retargeted` (original id → id it was written at), and the
+ * batch counts as `shifted`: every id the caller decoded for that file is
+ * stale, which is exactly what `shifted` tells it.
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SourceFile } from 'ts-morph'
 import { createProject, loadSourceFile, readSourceFingerprintAt } from '@core/ast-codemods'
 import { LITERAL_FINGERPRINT_LABEL } from '@core/page-parser'
-import { ELEMENT_MOVED_REASON, sourceFingerprintLabel, type SourceFingerprintExpectations } from '@core/page-tree'
+import {
+  ELEMENT_MOVED_REASON,
+  sourceFingerprintLabel,
+  withSourceLocation,
+  type SourceFingerprintExpectations,
+} from '@core/page-tree'
+import { relocateSourcePosition } from './studioEditRelocate'
 import { studioEditLocation } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
 
@@ -61,42 +72,101 @@ export function editNamedNodeIds(edit: StudioEdit): string[] {
   ]
 }
 
+/** An edit whose target was re-found somewhere else in its changed file: the id it named, and the id it was written at. */
+export interface RetargetedEdit {
+  nodeId: string
+  to: string
+}
+
+export interface ResolvedEditIdentities {
+  /** The edits that may run, in input order — re-found ones re-addressed to where their elements are now. */
+  runnable: StudioEdit[]
+  /** The edits that must not run, each with its `element-moved` refusal. Carries the edit as the caller sent it. */
+  moved: { edit: StudioEdit; refusal: StudioEditRefusal }[]
+  /** One entry per re-addressed node id — see {@link RetargetedEdit}. */
+  retargeted: RetargetedEdit[]
+}
+
+/** `edit` with every node id it names passed through `rename`. */
+function readdressEdit(edit: StudioEdit, rename: (nodeId: string) => string): StudioEdit {
+  if (edit.kind === 'css') return edit
+  const next = { ...edit, nodeId: rename(edit.nodeId) }
+  if ('anchorNodeId' in next && next.anchorNodeId) next.anchorNodeId = rename(next.anchorNodeId)
+  if ('parentNodeId' in next && next.parentNodeId) next.parentNodeId = rename(next.parentNodeId)
+  if ('siblingNodeIds' in next) next.siblingNodeIds = next.siblingNodeIds.map(rename)
+  return next
+}
+
 /**
- * The edits in `edits` that must NOT run, each with its `element-moved`
- * refusal. Reads each named file once, before anything in the batch writes.
+ * Decide, before the batch writes a byte, which edits still name the element
+ * the caller read (run them as sent), which name an element that has moved
+ * within its file (re-address them — P1-D), and which name one that cannot be
+ * found exactly once (refuse `element-moved`). Reads each named file once.
  */
-export function findMovedEdits(
+export function resolveEditIdentities(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations,
-): Map<StudioEdit, StudioEditRefusal> {
-  const moved = new Map<StudioEdit, StudioEditRefusal>()
-  if (Object.keys(expect).length === 0) return moved
+): ResolvedEditIdentities {
+  if (Object.keys(expect).length === 0) return { runnable: [...edits], moved: [], retargeted: [] }
   const project = createProject()
   const files = new Map<string, SourceFile | null>()
   const readFile = (file: string): SourceFile | null => {
     if (!files.has(file)) files.set(file, existsSync(file) ? loadSourceFile(project, file) : null)
     return files.get(file)!
   }
+  // One answer per id for the whole batch: two edits naming one element must
+  // agree on where it is.
+  const found = new Map<string, string | { refusal: string }>()
+  const locate = (nodeId: string, expected: string): string | { refusal: string } => {
+    const known = found.get(nodeId)
+    if (known !== undefined) return known
+    const location = studioEditLocation(dir, nodeId)
+    let answer: string | { refusal: string }
+    if (!location) {
+      answer = nodeId // synthetic, or refused by the path guard — the codemod path answers that
+    } else {
+      const absFile = join(dir, location.rel)
+      const sourceFile = readFile(absFile)
+      const actual = sourceFile ? readSourceFingerprintAt(sourceFile, location.line, location.col) : undefined
+      const relocated =
+        actual === expected || !sourceFile
+          ? null
+          : relocateSourcePosition(absFile, sourceFile, location.line, location.col, expected)
+      const readdressed = relocated ? withSourceLocation(nodeId, relocated.line, relocated.col) : null
+      answer =
+        actual === expected
+          ? nodeId
+          : readdressed ?? { refusal: movedMessage(location.rel, location.line, expected, actual) }
+    }
+    found.set(nodeId, answer)
+    return answer
+  }
+
+  const runnable: StudioEdit[] = []
+  const moved: ResolvedEditIdentities['moved'] = []
+  const renamed = new Map<string, string>()
   for (const edit of edits) {
+    let refusal: string | null = null
+    const renames = new Map<string, string>()
     for (const nodeId of editNamedNodeIds(edit)) {
       const expected = expect[nodeId]
       if (expected === undefined) continue
-      const location = studioEditLocation(dir, nodeId)
-      if (!location) continue // synthetic, or refused by the path guard — the codemod path answers that
-      const sourceFile = readFile(join(dir, location.rel))
-      const actual = sourceFile ? readSourceFingerprintAt(sourceFile, location.line, location.col) : undefined
-      if (actual === expected) continue
-      moved.set(edit, {
-        nodeId: edit.nodeId,
-        kind: edit.kind,
-        reason: ELEMENT_MOVED_REASON,
-        message: movedMessage(location.rel, location.line, expected, actual),
-      })
-      break
+      const answer = locate(nodeId, expected)
+      if (typeof answer !== 'string') {
+        refusal = answer.refusal
+        break
+      }
+      if (answer !== nodeId) renames.set(nodeId, answer)
     }
+    if (refusal !== null) {
+      moved.push({ edit, refusal: { nodeId: edit.nodeId, kind: edit.kind, reason: ELEMENT_MOVED_REASON, message: refusal } })
+      continue
+    }
+    for (const [from, to] of renames) renamed.set(from, to)
+    runnable.push(renames.size > 0 ? readdressEdit(edit, (nodeId) => renames.get(nodeId) ?? nodeId) : edit)
   }
-  return moved
+  return { runnable, moved, retargeted: [...renamed].map(([nodeId, to]) => ({ nodeId, to })) }
 }
 
 /** The edit kinds whose write changes the bytes a fingerprint covers without moving the target — see this module's doc. */

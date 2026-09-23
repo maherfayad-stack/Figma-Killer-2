@@ -53,6 +53,7 @@
  */
 import { statSync } from 'node:fs'
 import type { ComponentSource, ParsedPage } from '@core/page-parser'
+import { rememberSourceTexts } from './sourceTextHistory'
 
 export interface CachedRouteParse {
   expanded: ParsedPage
@@ -114,6 +115,11 @@ export function setCachedRouteParse(
     if (mtime !== null) depMtimes[absFile] = mtime
   }
   cache.set(cacheKey, { configHash, depMtimes, result })
+  // P1-D — these are exactly the files whose positions this parse put into
+  // node ids and literal origins, as the board is about to read them. An edit
+  // that arrives after one of them changed on disk is re-found by diffing
+  // against this text (`sourceTextHistory.ts`).
+  rememberSourceTexts(depFiles)
 }
 
 /** Test-only: drop every cached entry so a test doesn't leak state into the next one. */

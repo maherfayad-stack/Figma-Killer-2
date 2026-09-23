@@ -44,6 +44,7 @@
  */
 import { cpSync, existsSync, readdirSync, statSync } from 'node:fs'
 import { join, resolve } from 'node:path'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 import { PROJECT_DESIGN_SYSTEM_DIR } from './builtinDesignSystem'
 import { ensureDesignSystemFiles } from './designSystemFiles'
 import { mergeShellPackageJson } from './prototypeShell'
@@ -58,7 +59,7 @@ import { mergeStudioMeta } from './studioMeta'
  */
 export function resolveProjectSeedDir(env: Record<string, string | undefined> = process.env): string {
   const configured = env.STUDIO_PROJECT_SEED_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), '.data', 'studio-seed')
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'studio-seed')
 }
 
 export interface ProjectSeedResult {

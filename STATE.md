@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P0 #225, P1-E2 #223 (after a security review caught a CSS-injection path in asset URLs). At most 3 agents run at once, because of the owner's RAM.
-- **Next:** P1-E3, P4-A, P1-D, P1-F; then Phase 2. Urgent: P0 found that the Docker images keep `studio-workspace/` outside every volume (ROADMAP P1-H).
+- **Next:** P1-D and P1-F are running, then the Phase 1 exit gate, then Phase 2. Landed since P0: P1-E3 (#226), P4-A (#227), P1-H (#228, Docker workspace volume).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -59,7 +59,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - `.claude/agents/studio-scribe.md` still routes "intent" to `STUDIO-IMPORT-V2-PLAN.md`: it is this agent's own configuration, so it was left for the owner.
   - `CLAUDE.md` and ten `.claude/agents/*.md` files were edited only where the moves broke a reference; the broader rule-book trim ROADMAP P0-F describes was not done (it needs the owner, not an agent request).
-  - The Docker images and templates keep `studio-workspace/` outside every volume: user projects are lost on container recreate. Documented in `docs/deployment/README.md`; the compose/template fix is not made.
+  - ~~The Docker images and templates kept `studio-workspace/` outside every volume.~~ Fixed by P1-H (#228, `server-28`).
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
@@ -113,6 +113,47 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - Token readers now also see entry stylesheets (`src/index.css`), so quality_check and measure_reference may find more tokens and fonts than before.
   - `withWorkspaceProject` is used by `collectProjectTokenSources`.
 - **Next:** owner review. AI-1/AI-2/AI-3 (P4-B) build on `sideEffects`.
+
+### server-28 — P1-H: user projects survive a container recreate
+- **Agent:** server-engineer · **Branch:** `fix/workspace-survives-container-recreate` (trunk `5d454bf2` merged in) · **PR:** #228 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
+- **Stage:** verifying. The security review came back CHANGES-REQUIRED (F1 to F11); every finding is fixed in this round. Needs re-review by security-guard.
+- **Goal:** ROADMAP P1-H. Put the workspace root and Studio's private data on persistent storage in every shipped image, Compose stack and template; give live installs a safe one-time move; gate it.
+- **Done:**
+  - Image: `STUDIO_WORKSPACE_DIR=/app/studio-workspace` and `STUDIO_DATA_DIR=/app/.data`. Only `uploads`, `data`, `studio-workspace`, `.data` and `.tmp` are `bun`-owned; Studio's code stays root-owned (F3).
+  - Compose adds the `workspace` and `private` volumes. Render, Railway, `docker run` and the bundle use `/app/storage/studio-workspace` and `/app/storage/.data` (F2).
+  - `server/runtimeDirs.ts`: one parser for both settings (blank, padded or relative throws; F8), and `resolveStudioDataRoot`, now the default under the four `.data` stores.
+  - `workspaceRootGuard.ts` (F1): boot REFUSES a workspace root that is, contains, or sits inside the DB dir, uploads, `STATIC_DIR`, Studio's code, or a private-data root, compared on real paths. `server/index.ts` exits before the DB opens.
+  - `prepareWorkspaceRoot` takes injectable inputs and is tested (F5), and warns for the data root too.
+  - `isRealpathStrictlyInsideAllowingMissing`: the one write-target rule, shared by `gitClone.ts` and the archive funnel's clear (F4).
+  - `lost+found` is never a project (F9). `trustGate.ts` notes that a misread now FAILS OPEN (F10). `.dockerignore` excludes `studio-workspace` and `.data` (F11).
+  - `defaultGithubImportDir` follows `projectsRootDir()`.
+  - Docs: the "dedicated directory" rule, a restore that verifies the archive before deleting (F6), and a migration that stops the app, copies into a fresh directory, compares counts, and creates the container without starting it (F7).
+- **Tests (each proved failing before its fix):** `workspaceRootGuard.test.ts` (14 of 21), `archiveIngest.test.ts` containment (5), `workspace-volume-persistence.test.ts` (16 on the original files, 14 more on the round-1 files), `studioGithubImport` (2), the `lost+found` listing test (1). `workspacePersistence.test.ts` (21) covers new code.
+- **Decisions:** the guard is fatal, but the persistence check only warns. Sitting INSIDE the cwd or the DB dir is allowed (the image default and the e2e `.tmp` layout). No Dockerfile `VOLUME`.
+- **Landmines:**
+  - **A live install loses its projects and secrets on the FIRST recreate with the new files unless the operator copies them out first.** The release notes must lead with this.
+  - Setting `STUDIO_WORKSPACE_DIR=/app/storage` now stops the server at boot on purpose.
+- **Next:** merged into the trunk after the security review (all 11 findings fixed, `review-228`). Owner: run a real `docker compose up` once before a release.
+
+### server-29 — P1-D: notice edits made outside Studio (watcher + re-locate)
+- **Agent:** server-engineer · **Branch:** `fix/notice-edits-made-outside-studio` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** ROADMAP P1-D. Closes ERR-19 and WB-1's re-locate + watcher half.
+- **Scope:** new `server/handlers/{sourceLineMap,studioEditRelocate}.ts`, `server/handlers/studio/{projectWatch,sourceTextHistory}.ts`, `server/ai/mcp/outsideEditReload.ts`; edits to `studioEditIdentity.ts`, `studioWriteback.ts`, `projectWriteLock.ts`, `pageParseCache.ts`, the editor bridge, `liveReloadPush.ts`, `agent/studioLiveReload.ts`, `@core/page-tree` (`withSourceLocation`). No route added.
+- **Done:**
+  - `projectWatch.ts`: one watcher per open project, retained by the editor-bridge stream (15 s linger). Events are hints only; a `size:mtime` snapshot diff is the truth. `origin` is `studio` when the file's mtime falls inside a project write-lock hold (new session log in `projectWriteLock.ts`).
+  - Outside changes to board inputs are pushed as `studio_live_reload { diskChanged: { files } }` to every tab on the project. The tab flushes pending edits, then runs `resyncBoardAfterWrite(files)`.
+  - `/save` and `studio_apply_edits`: a fingerprint mismatch is re-found through a line diff against remembered texts. Exactly one verified position means the edit is re-addressed and written, listed in `retargeted`, with `shifted: true`. Anything else is the old `element-moved`.
+- **Decisions:**
+  - No wire change for the base text. The expected fingerprint picks which remembered text the board read.
+  - The line map uses both extreme optimal alignments (Myers forwards and reversed). A line that some reading deletes is never re-found.
+  - Outcomes are reported under the id the caller SENT.
+- **Landmines:**
+  - Bun 1.3 `fs.watch` on Windows drops most of a burst and names directories, not files. Never trust an event's path.
+  - Writers that bypass the project write lock (`translationWrite`, `assetLanding`, `i18nScaffold`, `pageDelete`, …) read as `outside`, so they cost one redundant re-read.
+  - No tab open means no watcher. History is per-process, so after a restart the first stale edit refuses as before.
+- **Next:** P6-C subscribes `subscribeProjectChanges` for `/load` invalidation; it must use ALL origins, not just `outside`. FC-1: `.studio/canvas/` is already watched.
+- **Verification:** 4 new server test files plus 1 client test file, and 1 e2e spec, run in Chromium and passing. Relocate, watcher-push and e2e were each proven to fail with the fix disabled in place. Build and lint are clean. The chunked suite shows only pre-existing failures: bundle freshness, optimistic broadcast, bridge measurement, headless capture, dev server and WebSocket.
 
 ### store-17 — P1-F: undo tells the truth (ERR-1, ERR-3, ERR-2 stop-gap, ERR-28, ERR-6)
 - **Agent:** store-engineer (+ panel-designer for `ScrubInput`) · **Branch:** `fix/undo-tells-the-truth` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23

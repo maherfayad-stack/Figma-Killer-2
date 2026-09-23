@@ -291,9 +291,10 @@ still waiting, so a structural commit can never hang on a board that is gone.
 
 **`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
 `site.pages` — the targeted-reload path for **every** write, the agent's and
-the user's alike. Three callers reach it: the MCP live-reload push, a
+the user's alike. Four callers reach it: the MCP live-reload push, a file
+changed outside Studio (the same push with `diskChanged`, P1-D), a
 structural commit, and `fsCodemodAdapter.saveSite` when the response reports
-`shifted`/`sharedComponents`. All three go through
+`shifted`/`sharedComponents`. All four go through
 `studioBoardResync.ts`'s `resyncBoardAfterWrite`, which asks
 `POST /admin/api/studio/reload-scope` which pages the touched files actually
 feed (`pageParseCache.ts`'s recorded per-route dependency sets, inverted) and
