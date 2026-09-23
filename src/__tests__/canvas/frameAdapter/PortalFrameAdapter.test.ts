@@ -173,3 +173,34 @@ describe('PortalFrameAdapter — dispose', () => {
     expect(doc.getElementById('studio-portal-adapter-animation-freeze')).toBeNull()
   })
 })
+
+describe('PortalFrameAdapter — ring tracking is armed lazily (PERF-10)', () => {
+  it('constructs no MutationObserver until the first select/hover', () => {
+    const doc = freshDoc()
+    doc.body.innerHTML = `<div data-node-id="n1"></div>`
+    const view = doc.defaultView as unknown as { MutationObserver: typeof MutationObserver }
+    const RealMutationObserver = view.MutationObserver
+    let constructed = 0
+    view.MutationObserver = class extends RealMutationObserver {
+      constructor(callback: MutationCallback) {
+        super(callback)
+        constructed += 1
+      }
+    }
+    try {
+      const adapter = new PortalFrameAdapter(doc)
+      adapters.push(adapter)
+      // Portal mode's rings are `BreakpointSelectionOverlay`'s own portal, so
+      // on an ordinary board nothing calls select/hover — and nothing may be
+      // observing every attribute write in the frame on the adapter's behalf.
+      expect(constructed).toBe(0)
+
+      adapter.hover({ nodeId: 'n1' })
+      expect(constructed).toBe(1)
+      adapter.select([{ nodeId: 'n1' }])
+      expect(constructed).toBe(1)
+    } finally {
+      view.MutationObserver = RealMutationObserver
+    }
+  })
+})

@@ -25,6 +25,7 @@ import {
   startAnimationFreeze,
   startHoverSuppression,
   startScrollUnroll,
+  isSelectionChromeMutation,
   type AnimationFreezeController,
   type HoverSuppressionController,
   type ScrollUnrollController,
@@ -127,6 +128,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   private disposed = false
   private repositionRaf: number | null = null
   private layoutObserver: MutationObserver | null = null
+  private ringTrackingArmed = false
 
   readonly optimistic: OptimisticDomOps = {
     insert: (nodeId, parentNodeId, index, tagName, text) => {
@@ -166,25 +168,42 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     queueMicrotask(() => {
       if (!this.disposed) this.bus.emit({ type: 'ready' })
     })
+  }
 
-    // Keeps rings glued to their node across resize/layout changes — mirrors
-    // `runtime.ts`'s own `scheduleReposition`/`layoutObserver` pair.
-    const view = doc.defaultView
+  /**
+   * Keeps this adapter's OWN rings glued to their node across resize/layout
+   * changes — mirrors `runtime.ts`'s `scheduleReposition`/`layoutObserver`
+   * pair. Armed on the first `select`/`hover`, never in the constructor
+   * (PERF-10): portal mode's selection chrome is `BreakpointSelectionOverlay`'s
+   * own portal, so on an ordinary board nothing ever calls those two and this
+   * adapter has no rings to reposition. A subtree `attributes` observer armed
+   * anyway allocated records and scheduled a no-op animation frame for every
+   * attribute write in every frame — a ring style write, every frame of an
+   * element resize.
+   */
+  private armRingTracking(): void {
+    if (this.ringTrackingArmed || this.disposed) return
+    this.ringTrackingArmed = true
+    const view = this.doc.defaultView
     const raf = view?.requestAnimationFrame?.bind(view) ?? requestAnimationFrame
-    const scheduleReposition = () => {
+    const scheduleReposition = (records?: MutationRecord[]) => {
+      // This adapter's own ring writes are chrome; repositioning for them
+      // would schedule another frame for nothing.
+      if (records?.every(isSelectionChromeMutation)) return
       if (this.repositionRaf !== null) return
       this.repositionRaf = raf(() => {
         this.repositionRaf = null
         this.repositionAllRings()
       })
     }
-    view?.addEventListener('resize', scheduleReposition)
-    this.domUnsubscribes.push(() => view?.removeEventListener('resize', scheduleReposition))
-    if (doc.body) {
+    const onResize = () => scheduleReposition()
+    view?.addEventListener('resize', onResize)
+    this.domUnsubscribes.push(() => view?.removeEventListener('resize', onResize))
+    if (this.doc.body) {
       const MutationObserverCtor = view?.MutationObserver ?? MutationObserver
       try {
         this.layoutObserver = new MutationObserverCtor(scheduleReposition)
-        this.layoutObserver.observe(doc.body, { childList: true, subtree: true, attributes: true })
+        this.layoutObserver.observe(this.doc.body, { childList: true, subtree: true, attributes: true })
       } catch (_err) {
         // Some browser realms reject observing a cross-realm node. Rings
         // still reposition on the next explicit select/hover/resize.
@@ -271,6 +290,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   select(refs: NodeRef[]): void {
+    this.armRingTracking()
     const next = new Set(refs.map((ref) => ref.nodeId))
     for (const [nodeId, ring] of this.selectionRings) {
       if (!next.has(nodeId)) {
@@ -289,6 +309,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
   }
 
   hover(ref: NodeRef | null): void {
+    this.armRingTracking()
     this.hoverNodeId = ref?.nodeId ?? null
     if (!ref) {
       if (this.hoverRing) this.hoverRing.style.display = 'none'

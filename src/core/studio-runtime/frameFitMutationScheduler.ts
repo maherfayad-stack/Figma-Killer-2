@@ -1,60 +1,57 @@
 /**
- * frameFitMutationScheduler — coalesces the MutationObserver callback that
- * drives `useIframeFrameAutoHeight`'s "content really changed, re-derive the
- * fit pin from scratch" reset (`resolveFrameFitHeight.ts`).
+ * frameFitMutationScheduler — decides WHEN a frame's fit pin is re-derived
+ * from scratch after its DOM mutated. One implementation for both halves of
+ * the canvas: the portal frame's `useIframeFrameAutoHeight` and the live
+ * runtime's layout observer (`runtime.ts`). It lives in `@core/studio-runtime`
+ * because the runtime ships to a real browser with zero admin imports.
  *
- * The defect this exists to fix
- * ──────────────────────────────
- * Inline text editing (`contentEditable="plaintext-only"`, see
- * `docs/agent-refs/canvas-internals.md` → "Inline text editing") mutates a
- * text node once per keystroke — a `characterData` record. Before this
- * module existed, the observer callback reacted to EVERY one of those
- * synchronously: reset `pinnedHeight` to the `CANVAS_VIEWPORT_HEIGHT` floor,
- * reset the pass budget, write `body.style.height`, and re-measure — which
- * re-runs `collectScrollDeficits`, an O(every element in body) forced-reflow
- * scan (`el.scrollHeight`/`el.clientHeight` on every descendant), up to
- * `MAX_FRAME_FIT_PASSES` times as each growth write retriggers the
- * `ResizeObserver`. That's a full-body forced reflow, several times over, on
- * every character typed.
+ * Re-deriving the fit (`resolveFrameFitHeight.ts`) resets the pin to the
+ * viewport floor and re-runs `collectScrollDeficits` — an O(every element)
+ * forced layout, up to `MAX_FRAME_FIT_PASSES` times. It is the only way a
+ * frame can SHRINK after content is removed, so it must run after a real
+ * content change, and must not run for anything else.
  *
- * Why the fix is NOT "stop observing `characterData`"
- * ─────────────────────────────────────────────────────
- * Unlike `CanvasScrollUnrollInjector`'s tagging pass — which only cares about
- * an element's `position`/explicit-height, never its text content, so it
- * safely omits `characterData` from its own `MutationObserver` config — this
- * reset's whole job is to notice when typed content has grown or shrunk an
- * inner scroll region's deficit. A frame that never re-measured on typed text
- * would stop settling to the right height while the user types, which is a
- * worse bug than the perf cost.
+ * ## What never resets the fit
  *
- * The fix: classify by mutation kind.
- * ─────────────────────────────────────
- *   - STRUCTURAL (any `childList` record — a node inserted or removed) still
- *     settles IMMEDIATELY, exactly as before. This is rare (drag/drop,
- *     delete, undo, a structural codemod write reflected back into the DOM)
- *     and wants instant feedback — a deleted section should shrink the frame
- *     right away, not after a delay.
- *   - TEXT-ONLY (every record is `characterData`) DEBOUNCES the settle to the
- *     next pause in typing. A fast-typing burst collapses into ONE
- *     re-derivation instead of one per character. This only delays WHEN the
- *     pin can shrink back down after content shrinks (deleting a paragraph
- *     doesn't shrink the frame until typing pauses); it never affects the
- *     frame's general "content grew, frame followed" behaviour, which rides
- *     the separate, cheap `ResizeObserver`-driven measurement path in
- *     `useIframeFrameAutoHeight.ts` (two `scrollHeight` property reads, not
- *     an all-elements scan) and is unaffected by this module.
+ *   - **The editor's own selection chrome** (`isSelectionChromeMutation`,
+ *     audit PERF-2). A hover ring appearing is a `childList` record under
+ *     `<body>`; before this filter, every hover crossing re-ran the forced
+ *     layout in every frame that mounted a ring.
+ *   - **Attribute-only batches** (audit PERF-9). A JS-animated app
+ *     (framer-motion, a carousel) writes `style`/`class` every frame; each
+ *     one used to reset the live frame's fit and could make its height
+ *     oscillate. The portal observer never subscribes to attributes at all,
+ *     so this is the same rule on both sides.
+ *   - So the live runtime's OWN writes need no special case: its pin on
+ *     `body.style`, its resize preview stamp and its optimistic style stamp
+ *     are all attribute records.
  *
- * A later structural mutation cancels any pending text-only debounce (and
- * settles immediately instead) — a rapid "type, then delete a sibling block"
- * sequence must not leave a stale debounced settle to fire moments later
- * with the wrong content already gone.
+ * ## What does, and when
+ *
+ *   - **Text-only** (`characterData`) debounces to the next pause
+ *     (`textDebounceMs`). Inline text editing mutates a text node once per
+ *     keystroke; a burst collapses into one re-derivation. It only delays
+ *     when the pin can shrink — growth rides the cheap ResizeObserver path.
+ *   - **Structural** (`childList`) settles after `structuralDebounceMs`:
+ *     `0` (immediate) for a portal frame, whose DOM changes only when the
+ *     user does something (a delete should shrink the frame right away);
+ *     a trailing debounce for a live frame, whose app may add and remove
+ *     nodes every frame on its own. A structural record cancels a pending
+ *     text debounce — "type, then delete a block" must not leave a stale
+ *     settle to fire later.
+ *
+ * A batch with nothing relevant in it is a no-op: it neither settles nor
+ * cancels a pending settle.
  */
+import { isSelectionChromeMutation } from './selectionChromeMutation'
 
 export interface FrameFitMutationSchedulerOptions {
   /** Runs the reset-to-floor + re-measure. Called at most once per settle. */
   onSettle: () => void
   /** How long a text-only mutation burst can stay quiet before settling. */
-  debounceMs: number
+  textDebounceMs: number
+  /** How long a structural burst can stay quiet before settling; `0` settles synchronously. */
+  structuralDebounceMs: number
   /** Injectable for tests; defaults to the real global timer. */
   setTimeoutFn?: typeof setTimeout
   /** Injectable for tests; defaults to the real global timer. */
@@ -73,9 +70,17 @@ export interface FrameFitMutationScheduler {
  * enough that the pause after the user stops is imperceptible. */
 export const FRAME_FIT_TEXT_MUTATION_DEBOUNCE_MS = 200
 
+/**
+ * A live frame's structural debounce. An app that re-renders a list every
+ * animation frame produces a `childList` batch every 16 ms; 250 ms of quiet
+ * is several frames of "the app stopped moving" before the forced layout runs.
+ */
+export const LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS = 250
+
 export function createFrameFitMutationScheduler({
   onSettle,
-  debounceMs,
+  textDebounceMs,
+  structuralDebounceMs,
   setTimeoutFn = setTimeout,
   clearTimeoutFn = clearTimeout,
 }: FrameFitMutationSchedulerOptions): FrameFitMutationScheduler {
@@ -88,18 +93,30 @@ export function createFrameFitMutationScheduler({
     }
   }
 
+  const settleAfter = (delayMs: number) => {
+    clearPending()
+    if (delayMs <= 0) {
+      onSettle()
+      return
+    }
+    timeoutId = setTimeoutFn(() => {
+      timeoutId = null
+      onSettle()
+    }, delayMs)
+  }
+
   return {
     handle(records) {
-      clearPending()
-      const isStructural = records.some((record) => record.type === 'childList')
-      if (isStructural) {
-        onSettle()
-        return
+      let structural = false
+      let text = false
+      for (const record of records) {
+        if (record.type === 'attributes') continue
+        if (isSelectionChromeMutation(record)) continue
+        if (record.type === 'childList') structural = true
+        else text = true
       }
-      timeoutId = setTimeoutFn(() => {
-        timeoutId = null
-        onSettle()
-      }, debounceMs)
+      if (structural) settleAfter(structuralDebounceMs)
+      else if (text) settleAfter(textDebounceMs)
     },
     dispose() {
       clearPending()

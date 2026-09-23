@@ -42,6 +42,7 @@ import {
 import type { FrameDocumentAdapter, NodeRect } from './frameAdapter/FrameDocumentAdapter'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { findNodeById } from './InPlaceInspector/findNodeById'
+import type { RecordSelectionChromeAnchor } from './selectionChromeViewportFollow'
 
 /** The `applyOverlay` id the forwarded ring tokens are mounted under inside the frame. */
 export const SELECTION_CHROME_TOKENS_OVERLAY_ID = 'selection-chrome-tokens'
@@ -58,6 +59,8 @@ export interface BridgeSelectionChromeOptions {
   inspectorRef: RefObject<HTMLDivElement | null>
   /** The store's DEBOUNCED zoom/pan — a change here is the "pan/zoom committed" trigger for re-anchoring. */
   committedTransform: readonly [number, number, number]
+  /** Hands each measured placement to the pan/zoom follower (`selectionChromeViewportFollow.ts`, PERF-3). */
+  recordAnchor: RecordSelectionChromeAnchor
 }
 
 /** True when `adapter` is a bridge to a cross-origin frame — the only kind this hook drives. */
@@ -90,6 +93,7 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
     toolbarRef,
     inspectorRef,
     committedTransform,
+    recordAnchor,
   } = options
   const bridge = isBridgeChromeAdapter(adapter) ? adapter : null
   const resizeCandidate = selectedNodeIds.length === 1 ? (selectedNodeIds[0] ?? null) : null
@@ -127,6 +131,7 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
     if (!needsAnchor || selectedNodeIds.length === 0) {
       hideOverlayElement(toolbarRef.current)
       hideOverlayElement(inspectorRef.current)
+      recordAnchor(null)
       return
     }
     let generation = 0
@@ -149,6 +154,11 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
           publishSelectionAnchor(toolbarRef.current, showToolbar ? toolbarUnion : null)
           positionInspector(inspectorRef.current, inspectorNodeId ? inspectorRect : null, session.canvasRect)
           publishSelectionAnchor(inspectorRef.current, inspectorNodeId ? inspectorRect : null)
+          recordAnchor({
+            toolbar: showToolbar ? toolbarUnion : null,
+            inspector: inspectorNodeId ? inspectorRect : null,
+            canvasRect: session.canvasRect,
+          })
         })
         .catch((err: unknown) => {
           // A frame mid-reload does not answer; the next trigger re-asks.
@@ -165,5 +175,5 @@ export function useBridgeSelectionChrome(adapter: FrameDocumentAdapter | null, o
       for (const unsubscribe of unsubscribes) unsubscribe()
     }
     // `committedTransform` is the pan/zoom-commit trigger, not a value read here.
-  }, [bridge, iframeElement, canvasRoot, selectedNodeIds, showToolbar, inspectorNodeId, committedTransform, toolbarRef, inspectorRef])
+  }, [bridge, iframeElement, canvasRoot, selectedNodeIds, showToolbar, inspectorNodeId, committedTransform, toolbarRef, inspectorRef, recordAnchor])
 }
