@@ -335,11 +335,14 @@ describe('tryServeStudioAssetDrop — the name that reaches the source', () => {
    * entry whose filename contains a `:` — and a guard that is only ever fed
    * names the transport already defanged has not been driven at all.
    */
-  // `dedupe: false` so every hostile name is really WRITTEN: with the same
-  // bytes each time, a deduping landing would hand back the first file and
-  // the naming rule under test would never run again.
+  // Distinct bytes per call so every hostile name is really WRITTEN: with the
+  // same bytes each time, the content dedupe would hand back the first file
+  // and the naming rule under test would never run again.
+  let landings = 0
   const landedSrc = (name: string): string => {
-    const landed = landAssetBytes(tmpDir, 'public', PNG_BYTES, name, { dedupe: false })
+    landings += 1
+    const bytes = new Uint8Array([...PNG_BYTES.subarray(0, 8), 0, 0, landings >> 8, landings & 0xff])
+    const landed = landAssetBytes(tmpDir, 'public', bytes, name)
     if (!landed.ok) throw new Error(`refused: ${landed.error}`)
     const url = assetSiteUrlResolver(tmpDir)(landed.relPath)
     if (url === null) throw new Error(`no URL for ${landed.relPath}`)

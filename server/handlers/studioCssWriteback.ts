@@ -85,7 +85,8 @@
  *      for an exact-selector match (see its doc).
  *   3. `resolveContainedCssPath` / `resolveContainedSourcePagePath` /
  *      `resolveStylesheetCreationPath` — is the target inside this
- *      workspace?
+ *      workspace, on its REAL path, and outside every directory no Studio
+ *      writer may touch (`isWorkspaceWritablePath`, P1-G)?
  *   4. **`create` only.** `ensureStylesheetImport` — does an import for this
  *      exact specifier already exist with the WRONG shape for the
  *      convention this stylesheet needs (a side-effect import where a
@@ -101,10 +102,10 @@
  * (or its own destination resolution) named — so there is no honest sentence
  * to show a user, only an attack to decline.
  */
-import { dirname, isAbsolute, join, resolve, sep } from 'node:path'
-import { existsSync, readFileSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { isAbsolute, join } from 'node:path'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, listWorkspaceFiles } from '@core/page-parser'
+import { isWorkspaceWritablePath, listWorkspaceFiles, unwritableWorkspaceSegment } from '@core/page-parser'
 import { createProject, relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
 import {
   analyzeDeclarationTarget,
@@ -259,12 +260,11 @@ export type CssEditOutcome =
  * Splits a client-supplied, workspace-relative path into safe segments, or
  * `null` if it fails ANY check every write/creation target in this module
  * shares: absolute/UNC/drive-letter forms, `..`/`.`/empty segments on EITHER
- * separator, an `EXCLUDED_WORKSPACE_DIR_NAMES` segment, or the wrong
- * extension. Pure string validation — existence and containment-on-the-
- * real-path are each caller's own next step, because "does it exist" means
- * something different for a target that must already be there (a `.css`
- * file to edit, a `.tsx` page to import into) than for one this module is
- * about to create.
+ * separator, a segment naming a directory no Studio writer may touch
+ * (`unwritableWorkspaceSegment`: `.studio`, `.git`, `node_modules`, build
+ * output, `.claude` — case-folded, the way the filesystem resolves it), or the
+ * wrong extension. Pure string validation — the real-path half is
+ * `isWorkspaceWritablePath`, each resolver's next step.
  */
 function safeRelSegments(fileRel: string, extensionTest: RegExp): string[] | null {
   if (fileRel.length === 0) return null
@@ -276,51 +276,45 @@ function safeRelSegments(fileRel: string, extensionTest: RegExp): string[] | nul
   const segments = fileRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
   if (segments.length === 0) return null
   if (segments.some((segment) => segment === '..' || segment === '.')) return null
-  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
+  if (unwritableWorkspaceSegment(fileRel) !== null) return null
   return segments
 }
 
-/** True containment: `resolved`'s REAL path (symlinks followed) is `realRoot` or beneath it. */
-function isReallyContained(resolved: string, realRoot: string): boolean {
-  let real: string
+/** `statSync` (links followed) says a regular file is there. */
+function isRegularFile(path: string): boolean {
   try {
-    real = realpathSync(resolved)
+    return statSync(path).isFile()
   } catch {
     return false
   }
-  return real === realRoot || real.startsWith(realRoot + sep)
+}
+
+/**
+ * An EXISTING file at a client-supplied `fileRel` that this module may write,
+ * as an absolute path, or `null`. The shape guard above, then the shared
+ * write predicate on the REAL path (`isWorkspaceWritablePath`): a workspace
+ * can arrive from GitHub and git stores symlinks, so `styles/theme.css` where
+ * `styles -> .studio` (or `-> ../../outside`) is refused for where it LANDS,
+ * not for how it is spelled. `null` when the file does not exist — a target
+ * pointing nowhere is worse than refusing the edit.
+ */
+function resolveWritableExistingFile(dir: string, fileRel: string, extensionTest: RegExp): string | null {
+  const segments = safeRelSegments(fileRel, extensionTest)
+  if (!segments) return null
+  const resolved = join(dir, ...segments)
+  if (!isWorkspaceWritablePath(dir, resolved)) return null
+  return isRegularFile(resolved) ? resolved : null
 }
 
 /**
  * Validates that `fileRel` — the project-relative `.css` path `studioCss.ts`'s
  * `StyleRuleSource` mapped a `StyleRule.id` to at load time — is safe to
- * write, and resolves it to an absolute path.
- *
- * Same adversarial posture as `studioWriteback.ts`'s `resolveContainedAssetPath`:
- * reject absolute/UNC/drive-letter forms, `..`/`.`/empty segments on EITHER
- * separator, and any `EXCLUDED_WORKSPACE_DIR_NAMES` segment; require a literal
- * `.css` extension (the codemod parses real CSS syntax, and `studioCss.ts`
- * never maps a `.scss`/`.sass`/`.less` file for exactly this reason — see its
- * doc); then require CONTAINMENT ON THE REAL PATH after resolving symlinks —
- * a workspace can arrive from GitHub, and git stores symlinks, so a textual
- * check alone is bypassable. `null` on any violation, or when the file does
- * not exist — a stylesheet pointing nowhere is worse than refusing the edit.
+ * write, and resolves it to an absolute path. A literal `.css` extension is
+ * required: the codemod parses real CSS syntax, and `studioCss.ts` never maps
+ * a `.scss`/`.sass`/`.less` file for exactly this reason (see its doc).
  */
 function resolveContainedCssPath(dir: string, fileRel: string): string | null {
-  const segments = safeRelSegments(fileRel, /\.css$/i)
-  if (!segments) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  return isReallyContained(resolved, realRoot) ? resolved : null
+  return resolveWritableExistingFile(dir, fileRel, /\.css$/i)
 }
 
 /** A real page-source-file extension — the set `applyStudioEdit` already treats as app source. */
@@ -328,68 +322,32 @@ const SOURCE_FILE_EXT_RE = /\.(tsx|jsx|ts|js)$/i
 
 /**
  * Validates a client-supplied PAGE file path (Track B1's `op: 'create'`
- * branch) the exact same adversarial way `resolveContainedCssPath` validates
- * a `.css` target: reject absolute/UNC/drive forms, `..`/empty segments, an
- * `EXCLUDED_WORKSPACE_DIR_NAMES` segment, require a real source-file
- * extension, then require containment on the REAL path after resolving
- * symlinks. `null` when the file does not exist — there is no page to
+ * branch) — the page this module adds a stylesheet import to, so a write
+ * target in its own right — the same way `resolveContainedCssPath` validates
+ * a `.css` target. `null` when the file does not exist: there is no page to
  * co-locate a new stylesheet with if the page itself cannot be found.
  */
 function resolveContainedSourcePagePath(dir: string, fileRel: string): string | null {
-  const segments = safeRelSegments(fileRel, SOURCE_FILE_EXT_RE)
-  if (!segments) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  return isReallyContained(resolved, realRoot) ? resolved : null
+  return resolveWritableExistingFile(dir, fileRel, SOURCE_FILE_EXT_RE)
 }
 
 /**
- * Validates the STYLESHEET this module is about to CREATE — same
- * segment/extension/containment discipline as `resolveContainedCssPath`, but
- * the file is allowed not to exist yet: only its PARENT directory must exist
- * and resolve within the workspace root (the parent is always the
- * already-validated page's own directory, but this is re-checked
- * independently rather than trusted — "check the write, not the intent",
- * the same posture `resolveContainedCssPath` uses for an existing file).
- * Refuses if the target already exists as something other than a plain file
- * (a directory, a broken symlink) — creating over either would not be an
- * honest "new stylesheet".
+ * Validates the STYLESHEET this module is about to CREATE — same shape guard
+ * and shared real-path predicate as `resolveContainedCssPath`, but the file
+ * is allowed not to exist yet: `isWorkspaceWritablePath` resolves it through
+ * its deepest existing ancestor ("check the write, not the intent" — the
+ * parent is the already-validated page's own directory, but it is re-checked
+ * rather than trusted). Refuses if the target already exists as something
+ * other than a plain file: a directory, or a DANGLING symlink — `writeFileSync`
+ * follows a link, so creating "a new stylesheet" there would create a file
+ * wherever the link points, outside the project included.
  */
 function resolveStylesheetCreationPath(dir: string, fileRel: string): string | null {
   const segments = safeRelSegments(fileRel, /\.css$/i)
   if (!segments) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null
-  }
-  if (!isReallyContained(dirname(resolved), realRoot)) return null
-
-  if (existsSync(resolved)) {
-    let stat
-    try {
-      stat = statSync(resolved)
-    } catch {
-      return null
-    }
-    if (!stat.isFile()) return null
-  }
-
+  const resolved = join(dir, ...segments)
+  if (!isWorkspaceWritablePath(dir, resolved)) return null
+  if (existsSync(resolved) && !isRegularFile(resolved)) return null
   return resolved
 }
 

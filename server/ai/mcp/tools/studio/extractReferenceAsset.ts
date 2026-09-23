@@ -152,7 +152,7 @@ export const studioExtractReferenceAssetTool: AiTool = {
       return toolRefusal('image-decode-failed', `Could not crop the reference: ${err instanceof Error ? err.message : String(err)}`)
     }
 
-    const landed = landAssetBytes(dir, targetDir, png, name, { dedupe: true })
+    const landed = landAssetBytes(dir, targetDir, png, name)
     if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
 
     return aiToolOk({

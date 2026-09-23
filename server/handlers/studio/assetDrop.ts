@@ -258,7 +258,7 @@ async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Resp
     if (!home.ok) return jsonResponse({ error: home.error }, { status: 409 })
 
     const bytes = new Uint8Array(await file.arrayBuffer())
-    const landed = landAssetBytes(dir, home.relToProject, bytes, file.name, { dedupe: true })
+    const landed = landAssetBytes(dir, home.relToProject, bytes, file.name)
     if (!landed.ok) return badRequest(landed.error)
 
     // The home IS `<appRoot>/public`, so the rule must call it build-safe. If

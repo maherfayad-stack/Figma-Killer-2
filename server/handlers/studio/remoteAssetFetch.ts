@@ -364,7 +364,7 @@ export async function fetchRemoteAsset(
   const fetched = await fetchRemoteBytes(rawUrl, deps)
   if (!fetched.ok) return fetched
 
-  const landed: LandAssetResult = landAssetBytes(dir, targetDir, fetched.bytes, fetched.filenameHint, { dedupe: true })
+  const landed: LandAssetResult = landAssetBytes(dir, targetDir, fetched.bytes, fetched.filenameHint)
   if (!landed.ok) return { ok: false, error: landed.error }
   return {
     ok: true,

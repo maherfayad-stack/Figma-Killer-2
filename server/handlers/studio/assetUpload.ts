@@ -140,7 +140,7 @@ export async function tryServeStudioAssetUpload(
     const dir = resolveDir(parsedFields.value.dir)
     const bytes = new Uint8Array(await file.arrayBuffer())
 
-    const landed = landAssetBytes(dir, parsedFields.value.targetDir, bytes, file.name, { dedupe: true })
+    const landed = landAssetBytes(dir, parsedFields.value.targetDir, bytes, file.name)
     if (!landed.ok) return badRequest(landed.error)
 
     const url = assetSiteUrlResolver(dir)(landed.relPath)
