@@ -75,10 +75,10 @@
  * by treating a pending id exactly like a missing node. MOVE is left
  * unguarded, by name: closing it would mean threading this module's
  * pending-id set into `@core/page-tree`'s pure `previewStructuralMove`, and
- * the race it would close — drag the ghost you just made before its own
- * write lands — is the same class `commitStructural`'s own doc already
- * accepts as a named, unfixed limitation for a refused move's optimistic
- * tree mutation.
+ * the race it would close is narrow: drag the ghost you just made before its
+ * own write lands. (A refused move's own tree mutation is taken back since
+ * ERR-6 — `structuralCommitRollback.ts`, the same settle-or-roll-back contract
+ * as this module's handle.)
  */
 import { createNode, insertNode, wrapNode, wrapNodes } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'

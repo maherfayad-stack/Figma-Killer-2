@@ -376,10 +376,26 @@ owns Ctrl/⌘+Z".
 order, so a patch-only undo of a move changes the canvas and leaves the `.tsx`
 saying the opposite. `moveNodes` tags its entry with the pre-move
 `(parentId, index)` (`structuralHistory.ts`) and `undo` re-issues `moveNodes`
-back to it; `deleteNodes` tags its entry `gesture: 'delete'` and `undo`
-REFUSES with a toast, because no writeback kind can put a subtree's source text
-back. Tagging happens only when a source write was actually issued — a CMS or
-Visual Component tree keeps plain patch replay.
+back to it — on the page that OWNS the element, found through
+`_nodeIdToPageIds` and activated silently, not the active page (ERR-3);
+`deleteNodes` tags its entry as a `source` gesture whose undo is a
+`reinsert-source` write (`store-15`). Tagging happens only when a source write
+was actually issued — a CMS or Visual Component tree keeps plain patch replay.
+
+**Undo never jams, and never lies (P1-F).** A structural step that can never
+happen as recorded (an `unsupported` inverse, an element gone from the board, a
+file changed under the entry by an agent or an editor) is SKIPPED: undo drops
+it with one warning toast and carries on to the step below; redo drops the
+redo chain. No modal (ERR-2 stop-gap, ERR-28). And a move or delete whose write
+does not land is taken back: `trackStructuralTreeCommit`
+(`structuralCommitRollback.ts`) holds the mutation's inverse patches and marks
+the entry `pendingCommit`; `commitStructural` settles it when the write lands
+and rolls it back — patches replayed unless a re-read replaced the page since
+(`pageReadEpoch.ts`), entry removed — when it is refused or still unreachable
+after `structuralWriteRetry.ts`'s ladder (ERR-6). An undo/redo's re-issued write
+carries the same handle for its entry: refused → skipped, unreachable → put
+back. Full contract: `editor-history.md` → "A write that does not land is taken
+back".
 
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
 (D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —

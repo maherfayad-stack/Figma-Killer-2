@@ -29,6 +29,7 @@ import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, tagStructuralGesture, type StructuralHistoryDeleteOrigin } from './structuralHistory'
+import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 /**
@@ -142,6 +143,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     // moment before the mutation below removes these nodes from it.
     const inverseTemplate = plan.commit ? deleteInverseTemplate(cur, target, plan.commit) : null
 
+    const topBefore = cur._historyPast.at(-1)
     let deleted: boolean
     if (target.vc) {
       // VC canvas mode has no board frames to span — single tree.
@@ -158,7 +160,10 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
 
     if (!deleted) return
     if (plan.commit && inverseTemplate) {
-      void commitStudioDelete(plan.commit)
+      // ERR-6 — taken before the tag below clears the entry's patches: they
+      // are what puts the elements back if the write does not land.
+      const rollback = trackStructuralTreeCommit(helpers, topBefore)
+      void commitStudioDelete(plan.commit, rollback ?? undefined)
       // `live-07` — same-tick paint for a live (bridge) frame, one call per
       // deleted id (a multi-select delete can span several source-derived
       // nodes, unlike the single-node `deleteNode` action).

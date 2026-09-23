@@ -99,6 +99,7 @@ export type {
   StructuralHistoryMove,
   StructuralHistory,
   StructuralSourceHistory,
+  PendingStructuralCommit,
 } from './historyTypes'
 
 export interface SiteSlice {

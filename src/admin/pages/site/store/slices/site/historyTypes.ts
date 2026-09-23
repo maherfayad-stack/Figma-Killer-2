@@ -47,6 +47,23 @@ export interface HistoryEntry {
    * sticky notes, doc cards, guides, board CRUD). See `BoardHistory`.
    */
   board?: BoardHistory
+  /**
+   * ERR-6 — present only while the structural write this entry stands for is
+   * still on the wire: the gesture's own write (`'gesture'`), or the write an
+   * undo/redo just re-issued for it (`'undo'`/`'redo'`). It is how the write's
+   * answer finds THIS entry again once it arrives, wherever the stack has put
+   * it by then (a reload re-addresses entries by copying them, so identity is
+   * no use). `structuralCommitRollback.ts` sets it, and removes it when the
+   * write lands or is taken back.
+   */
+  pendingCommit?: PendingStructuralCommit
+}
+
+/** See `HistoryEntry.pendingCommit`. */
+export interface PendingStructuralCommit {
+  id: number
+  /** Which write is in flight: the gesture itself, or an undo/redo re-issuing it. Decides where a failed write leaves the entry. */
+  step: 'gesture' | 'undo' | 'redo'
 }
 
 /**

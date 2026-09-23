@@ -299,7 +299,7 @@ describe('undo of a move is the inverse move, written to source', () => {
   })
 })
 
-describe('a source delete with no addressable parent says what it cannot undo, instead of faking it', () => {
+describe('a source delete with no addressable parent is skipped by ⌘Z, never faked and never a jam', () => {
   // `a`/`b` sit directly under the synthetic page root in this fixture — a
   // shape no real component returns (a component returns ONE root element;
   // `<a/><b/>` as two top-level siblings has nowhere to be written), but
@@ -307,7 +307,7 @@ describe('a source delete with no addressable parent says what it cannot undo, i
   // element a page actually returns: there is no source POSITION to reinsert
   // into. `captureDeleteOrigin` reports exactly that — no origin — and the
   // gesture is tagged `unsupported` rather than a made-up one.
-  it('tags the entry unsupported and refuses rather than guessing a position', async () => {
+  it('tags the entry unsupported, and ⌘Z drops it instead of guessing a position or sticking on it', async () => {
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
@@ -325,7 +325,24 @@ describe('a source delete with no addressable parent says what it cannot undo, i
     store().undo()
     // The canvas must NOT resurrect an element the user's source no longer has.
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b])
-    expect(store()._historyPast.length).toBe(pastBefore)
+    // ERR-2 stop-gap — the entry is SKIPPED, not left on top: before this,
+    // every later ⌘Z hit the same refusal and nothing below it was reachable.
+    expect(store()._historyPast.length).toBe(pastBefore - 1)
     expect(store()._historyFuture.length).toBe(0)
+  })
+
+  it('carries on to the step below in the same ⌘Z, so the edits before a delete stay undoable', async () => {
+    const a = at(3), b = at(4)
+    store().loadSite(studioSite([a, b]))
+    store().setActivePage('page-1')
+    store().updateNodeProps(b, { text: 'edited' })
+    store().deleteNodes([a])
+    await settle()
+
+    store().undo()
+    expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([b])
+    expect(store().site!.pages[0]!.nodes[b]!.props.text).toBe(b)
+    expect(store()._historyPast.length).toBe(0)
+    expect(store().canRedo).toBe(true)
   })
 })

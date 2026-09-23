@@ -391,8 +391,9 @@ at all — the synthetic page root, whose only "position" is the page's own
 `return` statement. Deleting the page's sole returned element is already
 refused there by `deleteJsxElement`'s own `no-jsx-parent` (the AST answers a
 question the tree cannot); a delete that reaches this state anyway records an
-`unsupported` inverse template rather than guessing, and ⌘Z on it refuses
-through the same dialog every other `unsupported` `source` template uses.
+`unsupported` inverse template rather than guessing, and ⌘Z skips it the way
+it skips every other `unsupported` `source` template (see "A step that can
+never happen is skipped" below).
 
 Because the inverse addresses elements the write had not made yet (or, for
 `delete`, discarded bytes the write had not yet reported), the gesture records
@@ -403,8 +404,8 @@ template. A template rather than a closure, because a redo has to re-resolve
 it: the gesture has been performed a second time, possibly at a different
 position, and the entry's inverse has to describe THAT one.
 
-**Two refusals are deliberate, and say so at ⌘Z rather than posting a write the
-server would decline:** a group into a COMPONENT container (dissolving it would
+**Two refusals are deliberate, and are skipped at ⌘Z (see "A step that can never
+happen is skipped" below) rather than posting a write the server would decline:** a group into a COMPONENT container (dissolving it would
 delete a call site — `unwrapJsxElement`'s `has-behaviour`), and an ungroup of a
 container carrying a `className`/`style`/`id` (a re-wrap writes a bare tag and
 would drop what it carried). Closing the second needs `props` on the
@@ -413,14 +414,92 @@ would drop what it carried). Closing the second needs `props` on the
 **Why absolute ids are safe here:** undo is strictly LIFO, so undoing the top
 entry restores the file to the state the entry below it was recorded against —
 each inverse is always evaluated against exactly the state it was computed in.
-What can break the chain is a write that is not on the stack, and
-`reissueStructuralSourceEdits` checks every id against the live tree first,
-refusing through `RefusalDialog` and naming the file rather than editing
-whatever now sits at that line.
+What can break the chain is a write that is not on the stack (an agent's
+edit, an external editor), and `reissueStructuralSourceEdits` checks every id
+against the board first — skipping the step, and naming the file, rather than
+editing whatever now sits at that line.
 
 The re-issued gesture is an ordinary mutation: it pushes its own history entry
 and clears the redo stack. `runStructuralStep` undoes both, so one Ctrl+Z
 consumes exactly one entry and a pending redo chain survives.
+
+### Undo finds the page that owns the element (ERR-3)
+
+Pressing on a board frame activates its page, so "drag in frame A, click
+frame B, ⌘Z" is the normal flow. Both halves of structural undo used to ask the
+ACTIVE tree: a move answered "Nothing to undo here" and stayed on top of the
+stack, and a `source` step called every id "missing" and opened a modal blaming
+the file. Now:
+
+- `reissueStructuralMove` finds the page that holds both the element and its
+  destination parent through `_nodeIdToPageIds` (O(1) per id; the first such
+  page wins for shared layout chrome) and activates it silently with
+  `openPageInCanvas` — the way Figma takes you to the page an undo changes —
+  before calling `moveNodes`, which routes through `mutateActiveTree`.
+- `reissueStructuralSourceEdits` checks every id against `_nodeIdToPageIds`,
+  i.e. the whole board, and reads a `transplant-back` parent's children off the
+  page that owns it. Nothing is activated: the write does not need a tree.
+
+### A step that can never happen is skipped (ERR-2 stop-gap, ERR-28)
+
+A structural step can be impossible as recorded: an `unsupported` inverse (the
+two deliberate refusals above, a delete whose parent has no source position),
+an element the board no longer has, a file an agent or an editor changed under
+the entry, or a move the gate refuses. Each used to leave the entry on top of
+the stack — behind a modal `RefusalDialog` for the `source` family — so every
+later ⌘Z hit the same refusal and nothing before it could be undone from the
+keyboard.
+
+`runStructuralStep` now **skips** it (`skipStructuralStep`, `undoRedoActions.ts`):
+
+- **undo** drops the entry and carries on to the step below in the same
+  keystroke, so one ⌘Z still does one visible thing;
+- **redo** drops the whole redo chain, because every later step was recorded
+  on top of the one that cannot be replayed;
+- one warning toast, "Skipped “<label>” — it can’t be undone", says why, deduped
+  per direction. Never a dialog. A move the gate refused has already said why
+  in its own toast or dialog, so the skip adds nothing.
+
+The real fix for delete — a compare-and-swap restore journal — is `P3-F`.
+
+### A write that does not land is taken back (ERR-6)
+
+A move or delete changes the tree before its write is posted; an undo/redo
+moves its entry before its re-issued write is posted. When the write does not
+land, `structuralCommitRollback.ts` takes that back — the same settle-or-roll-back
+contract `structuralOptimism.ts` gives the insert family, handed to
+`commitStructural` as `options.rollback`:
+
+| outcome | tree | stack |
+|---|---|---|
+| landed (`written > 0`) | the resync owns it | `settle()` clears the mark |
+| refused (`written === 0`, or a server-built error) | the gesture's own inverse patches are replayed | a gesture's entry is removed; an undo/redo step is **skipped** (removed) — it would be refused again |
+| unreachable after the retry ladder | same | a gesture's entry is removed; an undo/redo step **goes back** where it was, so ⌘Z can try it again |
+
+- The entry is found again by `HistoryEntry.pendingCommit` (`{ id, step }`),
+  never by identity: a reload in between re-addresses entries by copying them.
+  A re-issued move's own entry is discarded by `runStructuralStep`, which
+  stamps the same id onto the entry it moved.
+- The inverse patches are held by the handle, not the entry — a delete's tag
+  clears the entry's patches (`store-15`), and the handle is taken before it.
+- The tree half is skipped when a re-read replaced one of the gesture's pages
+  since (`pageReadEpoch.ts`, bumped by `loadSite`/`createSite`/`clearSite` and
+  by `patchPages` — for every page when it removes one, since removal shifts
+  the page indexes the patches address). That page already says what disk
+  says; replaying a stale inverse over it would invent a change. Value edits
+  made meanwhile do not count: they never touch the `children`/`parentId` paths
+  a move or delete restores, and every other structural gesture is queued.
+- **Retry first.** `structuralWriteRetry.ts` retries a write that got no answer
+  (`fetch` rejecting, or a 502/503/504 that outlived `@core/http`'s own ladder)
+  on `STRUCTURAL_WRITE_RETRY_BACKOFF_MS` (1 s, 2 s, 4 s), with ONE
+  `X-Studio-Idempotency-Key` across attempts (`apiRequest`'s new
+  `idempotencyKey`), so a replay of a write that landed gets the stored answer
+  instead of moving or deleting twice. A response the server built is never
+  retried.
+- **One toast.** A refused batch says its first reason once ("(N more like
+  this.)"), never one card per edit.
+- An `element-moved` miss (P1-A) re-plans before deciding: the re-plan inherits
+  the rollback, and a re-plan that cannot run rolls back as `refused`.
 
 A structural gesture never coalesces — the tag also clears
 `_historyCoalesceKey`, so a drag can never fold into a typing burst.
@@ -506,6 +585,9 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - `src/admin/pages/site/store/slices/boardHistory.ts` — `commitBoardChange`, `restoreBoardSnapshot`, `boardCoalesceKey`, `retainBoardOnlyEntries`, `dropBoardHistory`
 - `src/admin/pages/site/store/slices/site/undoRedoActions.ts` — `undo`, `redo`, `runStructuralStep`
 - `src/admin/pages/site/store/slices/site/structuralHistory.ts` — `tagStructuralGesture`, `captureMoveOrigin`, `reissueStructuralMove`
+- `src/admin/pages/site/store/slices/site/structuralCommitRollback.ts` — `trackStructuralTreeCommit`, `trackStructuralStackCommit` (ERR-6)
+- `src/admin/pages/site/store/slices/site/pageReadEpoch.ts` — which pages a re-read replaced since a mark (ERR-6)
+- `src/admin/pages/site/studio/structuralWriteRetry.ts` — the unreachable-write retry ladder (ERR-6)
 - `src/admin/pages/site/store/slices/site/historyNodeIdRemap.ts` — `buildReparseNodeIdRemap`, `remapHistoryEntries`
 - `src/admin/pages/site/store/slices/site/historyPreservation.ts` — `historySurvivesReload`
 - `src/admin/pages/site/store/slices/site/types.ts` — `HistoryEntry`, `SiteSliceHelpers`
@@ -518,4 +600,5 @@ The Zustand store is created with `mutative({ enableAutoFreeze: true })`. That k
 - `src/__tests__/editor-store/boardUndo.test.ts` — board undo/redo, one-entry-per-drag, two-domain interleaving, reload boundaries
   - `src/__tests__/editor-store/undo-redo.test.ts`
   - `src/__tests__/editor-store/structuralMoveUndo.test.ts`
+  - `src/__tests__/editor-store/undoTellsTheTruth.test.ts` — cross-frame undo, skip, rollback, retry (P1-F)
   - `src/__tests__/editor-store/structuralReloadHistoryPreservation.test.ts`

@@ -41,6 +41,16 @@
  * text is re-selected so the next keystroke replaces it, and the caret never
  * leaves the field. Blur commits too (so click-away is not a discard) and
  * Escape reverts. Nothing about a commit implies losing focus.
+ *
+ * ONLY WHAT THE USER TYPED IS EVER COMMITTED (ERR-1). Keeping focus after
+ * Enter means the caret usually sits in a field with nothing left to say — a
+ * "parked" caret. While it is parked the field follows the value it is shown
+ * (an undo, an agent edit, a resync, a selection change), exactly as an
+ * unfocused one does, and a blur commits nothing. Without that, a parked field
+ * kept showing its stale text and wrote it back on click-away: ⌘Z after Enter
+ * was undone the moment the user clicked the canvas, and the redo stack went
+ * with it. `typed` is the one bit that tells the two states apart — set by a
+ * keystroke into the text, cleared by every commit, revert and sync.
  */
 import {
   useRef,
@@ -146,6 +156,8 @@ export function ScrubInput({
   const mixed = isMixed(value)
 
   const [isEditing, setIsEditing] = useState(false)
+  /** Whether the text holds something the user typed that has not been committed yet — see the module doc (ERR-1). */
+  const [typed, setTyped] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   /** Set by Escape so the blur it triggers discards instead of committing — see `handleInputBlur`. */
   const revertingRef = useRef(false)
@@ -162,6 +174,7 @@ export function ScrubInput({
     accept: variableKinds,
     onCommit: (next) => {
       setDraft(next)
+      setTyped(false)
       onChange(next)
     },
     fieldLabel: ariaLabel,
@@ -206,10 +219,11 @@ export function ScrubInput({
   // values can never flash the pre-drag number back at the user.
   if (scrub.dragValue !== null && scrub.dragValue !== draft) setDraft(scrub.dragValue)
 
-  // Sync external value → draft when not actively editing/dragging (same
-  // idiom, same pattern as TokenAwareInput).
+  // Sync external value → draft whenever the field holds nothing typed —
+  // unfocused, or focused with a parked caret (ERR-1) — and no drag is live
+  // (same idiom as TokenAwareInput).
   const [lastExternal, setLastExternal] = useState(display)
-  if (!isEditing && !scrub.isDragging && display !== lastExternal) {
+  if (!typed && !scrub.isDragging && display !== lastExternal) {
     setLastExternal(display)
     setDraft(display)
   }
@@ -222,6 +236,7 @@ export function ScrubInput({
    * and only blur ends the editing session.
    */
   function commit(raw: string): string {
+    setTyped(false)
     onClearPreview?.()
     // A bound field shows an EMPTY input (the chip carries the name), so a
     // click-away that typed nothing must not read as "the user cleared this"
@@ -249,14 +264,16 @@ export function ScrubInput({
       setDraft(display)
       return
     }
-    commit(e.target.value)
+    // ERR-1 — a parked caret has nothing to say. Committing `e.target.value`
+    // here is what wrote a stale number over an undo on click-away.
+    if (typed) commit(e.target.value)
   }
 
   function handleKeyDown(e: ReactKeyboardEvent<HTMLInputElement>) {
     if (e.key === 'Enter') {
       e.preventDefault()
       const input = e.currentTarget
-      commit(input.value)
+      if (typed) commit(input.value)
       // Figma: Enter commits without leaving the field, and re-selects so the
       // next keystroke replaces the value. Selection runs after the commit's
       // re-render so it targets the coerced text, not the pre-commit draft.
@@ -267,6 +284,7 @@ export function ScrubInput({
       e.preventDefault()
       revertingRef.current = true
       setDraft(display)
+      setTyped(false)
       setIsEditing(false)
       onClearPreview?.()
       e.currentTarget.blur()
@@ -292,6 +310,8 @@ export function ScrubInput({
       })
       if (next !== null) {
         setDraft(next)
+        // A nudge commits on the spot, so it leaves nothing typed behind.
+        setTyped(false)
         onChange(next)
       }
     }
@@ -333,6 +353,7 @@ export function ScrubInput({
         onChange={(e) => {
           const next = e.target.value
           setDraft(next)
+          setTyped(true)
           if (next.trim() !== '') onPreview?.(next)
         }}
         onBlur={handleInputBlur}

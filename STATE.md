@@ -155,6 +155,23 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** P6-C subscribes `subscribeProjectChanges` for `/load` invalidation; it must use ALL origins, not just `outside`. FC-1: `.studio/canvas/` is already watched.
 - **Verification:** 4 new server test files plus 1 client test file, and 1 e2e spec, run in Chromium and passing. Relocate, watcher-push and e2e were each proven to fail with the fix disabled in place. Build and lint are clean. The chunked suite shows only pre-existing failures: bundle freshness, optimistic broadcast, bridge measurement, headless capture, dev server and WebSocket.
 
+### store-17 — P1-F: undo tells the truth (ERR-1, ERR-3, ERR-2 stop-gap, ERR-28, ERR-6)
+- **Agent:** store-engineer (+ panel-designer for `ScrubInput`) · **Branch:** `fix/undo-tells-the-truth` · **PR:** #230 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** ⌘Z never undoes the undo, never jams, never lies about disk.
+- **Done:**
+  - ERR-1: `ScrubInput` commits on blur/Enter only when `typed`; a parked caret follows its `value`.
+  - ERR-3: `reissueStructuralMove` re-issues on the page owning the element (`_nodeIdToPageIds`) and activates it silently; `reissueStructuralSourceEdits` checks ids against the whole board.
+  - ERR-2 stop-gap / ERR-28: an impossible structural step is SKIPPED (`skipStructuralStep`): undo drops it with one warning toast and carries on below; redo drops the redo chain. The `stale-undo` reason and the undo/redo `RefusalDialog` titles are deleted.
+  - ERR-6: `structuralCommitRollback.ts` — move/delete hold their inverse patches; a refused or unreachable write replays them (unless a re-read replaced the page: `pageReadEpoch.ts`) and removes the entry. An undo/redo re-issue: refused → skipped, unreachable → put back. `structuralWriteRetry.ts` retries a no-answer write 1/2/4 s with ONE idempotency key (`apiRequest`'s new `idempotencyKey`). One toast per refused batch.
+- **Slices / state:** site slice only. New `HistoryEntry.pendingCommit` (`{id, step}`), transient, no selector reads it. No new selector.
+- **Mutations:** none new. `moveNodes`/`deleteNode(s)` keep their entries and coalesce keys (`null`, never coalesce); rollback removes the entry; `pageReadEpoch` is bumped by `loadSite`/`createSite`/`clearSite`/`patchPages`.
+- **Landmines:**
+  - `trackStructuralTreeCommit` must run BEFORE `tagStructuralGesture` (a delete's tag clears the patches).
+  - A bridge (live) frame's optimistic hide/move is not reverted on rollback — no runtime message exists (Found, not fixed).
+- **Verification:** 17 new/changed unit tests, each proven failing with its fix disabled in place, plus `tests/e2e/undo-tells-the-truth.e2e.ts` (ran, passes; fails with the fix off). Build + lint clean. Chunked suite: only the 16 pre-existing failures.
+- **Next:** owner dogfood (checklist in the PR body); P3-F replaces the delete skip with a real restore.
+
 ---
 
 ## Blocked
