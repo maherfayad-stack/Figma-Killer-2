@@ -90,6 +90,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   7. Click the status-bar clock on SMS: SheetHeader is selected ("SheetHeader · Local"). Double-click: IOSStatusBar is selected. Double-click again: the clock is selected.
   8. Pick a value in an inspector dropdown, then press Delete: the selected element is deleted.
 
+### parser-17 — P3-B: ordinary React renders (WB-3, WB-4, WB-26, WB-5)
+- **Agent:** parser-surgeon · **Branch:** `feat/ordinary-react-renders` · **PR:** see the PR body (long form lives there) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** text in container tags, `memo`/`forwardRef`/`React.memo`, `export { default as X }` barrels, `import * as UI`, `React.Fragment`, and class/HOC pages all render — or the frame names the shape. Never a blank frame.
+- **Scope (parser files):** `src/core/page-parser/{componentDeclaration,reactImports}.ts` (new), `parsePageFile.ts`, `inlineLocalComponents.ts`, `componentSources.ts`, `types.ts`, `branchSelection.ts`, `staticEval.ts`, `staticEvalCore.ts`, `componentSubstitution.ts`, `cssInJsExtract.ts`, `nextAppLayout.ts`, `index.ts`; `src/core/ast-codemods/{resolveComponentCallSite,extractComponentCopy,swapComponentInstance}.ts`; `src/core/studio-sync/parsedPageToSitePage.ts`. Also: `server/handlers/studio/{moduleMapping,loadWarnings,studioLoadContract}.ts`, `src/modules/base/{text/*,utils/htmlTag.ts}` (`text/tags.ts` deleted), `src/admin/pages/site/studio/{studioLoadWarningsStore,studioLoadStreamSchema,fsCodemodAdapter,studioLiveReloadFetch}.ts`, `canvas/CanvasEmptyPageHint.tsx` + one prop in `BoardFrameView.tsx`.
+- **Done:**
+  - WB-4: `getFunctionLikeNode` unwraps React's own `memo`/`forwardRef` (import provenance, same-file args only). `resolveExportedDeclaration` returns the declaration NODE; `CallTarget` carries `declaration`, `isDefaultExport`, `via`. Namespace members resolve; `<Card.Header/>` on a default import is declined (it used to render `Card`'s whole JSX — proven).
+  - WB-26: React's `Fragment` flattens like `<>`. WB-3: text-only elements → `base.text` + `customTag` (`isTextHostTag`). WB-5: class `render()` and unknown-HOC pages render (HOC with a note); anything else → `unreadable-page-export` warning → named in the frame.
+- **Decisions (per new resolution):**
+  - memo/forwardRef unwrap — locks: no · codeProps: no · origin: n/a (structure, not a value). Nodes write to the wrapped function's JSX, the one honest target.
+  - HOC page read — locks: no · codeProps: no · origin: none; a `resolution.note` names the wrapper. Page-only: `getFunctionLikeNode` does NOT read through unknown HOCs (detach would drop the HOC silently).
+  - Class `render()` — locks: no · `this.props`/`this.state` text is code-valued via the existing trace, never guessed · origin only where a literal is read, as everywhere.
+  - Custom-tag text node — locks: no · codeProps: unchanged rules · text writes via `setJsxText`, tag via `setJsxTagName`. Cost: `base.text` is a leaf, so nothing drops INTO an imported `<li>`.
+  - Barrel hops go into `dependencyFiles` (ONE name's route, `reexportChainFiles`), so a re-pointed barrel invalidates the route parse.
+- **Landmines (not in studio-import.md before this PR; added there in this PR):** `extractComponentCopy` wrote `import { X2 }` for a DEFAULT-exported component (fixed: `CallTarget.isDefaultExport`). A literal `className` with no rule never reaches the DOM (board-27f), so e2e specs must locate nodes by `data-node-id`, not class. `setJsxText` always writes `{"…"}` (WB-9/10's bundle).
+- **Next:** orchestrator merge; `studio-scribe` has nothing extra to fold (the doc changes ship in this PR).
+- **Verification:** see the PR body. Every CONFIRMED finding's test failed before the fix (pre-fix trunk run, plus in-place disables).
+- **Human action needed:** dogfood `/admin/site` on a repo with `memo`/barrels and a `lazy()` page (script in the PR body).
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
