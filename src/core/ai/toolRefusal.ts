@@ -58,6 +58,10 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'The arguments are self-contradictory or incomplete in a way the schema cannot express (e.g. exactly one of three fields required).',
   },
+  'input-schema-mismatch': {
+    retryable: false,
+    meaning: 'The arguments do not match the tool\'s input schema. The refusal names each failing field\'s path, what was expected there and what arrived, plus a minimal valid call built from the schema (required fields only) whenever one can be built.',
+  },
   'missing-param': {
     retryable: false,
     meaning: 'A parameter this particular verb/mode requires was not supplied.',
@@ -238,7 +242,7 @@ export const TOOL_REFUSAL_CODES = {
   // --- the tool refuses on principle -------------------------------------
   'duplicate-call': {
     retryable: false,
-    meaning: 'This exact mutating call, with these exact arguments, already ran this turn. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it.',
+    meaning: 'This exact write, with these exact arguments, already ran this turn and nothing else has been written since. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. Observers (screenshots, compares, measurements, typechecks) are never answered this way, and a write repeated after a different write landed runs again.',
   },
   'strict-mode-stand-in-refused': {
     retryable: false,

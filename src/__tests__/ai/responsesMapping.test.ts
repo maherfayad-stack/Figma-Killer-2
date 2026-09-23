@@ -205,6 +205,7 @@ describe('runToolLoop via openaiDriver (Responses)', () => {
       description: 'echoes its input',
       scope: 'site',
       execution: 'server',
+      sideEffects: 'none',
       inputSchema: Type.Object({ v: Type.Optional(Type.Number()) }),
       async handler(input) {
         serverCalls.push(input)

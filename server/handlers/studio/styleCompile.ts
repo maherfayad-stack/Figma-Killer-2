@@ -73,6 +73,59 @@ export interface StyleCompileResult {
 
 const EMPTY_STYLES: CompiledStyles = { css: '', moduleClassMaps: {}, vendorCss: '' }
 
+// ---------------------------------------------------------------------------
+// Chunk markers — every chunk of `css` and `vendorCss` is headed by one line
+// saying where it came from. This module writes them and is the one place
+// that reads them back (`splitCompiledStyleChunks`), so the format has a
+// single owner.
+// ---------------------------------------------------------------------------
+
+/** Where one chunk of the concatenated CSS came from. */
+export type StyleChunkKind = 'css module' | 'vendor' | 'compiled'
+
+/** Bumped whenever what a cache entry's CSS looks like changes. `2`: compiled (Sass/PostCSS) chunks gained their marker line. */
+const STYLE_CACHE_FORMAT = 'format:2'
+
+function chunkMarker(kind: StyleChunkKind, label: string): string {
+  return `/* studio: ${kind} ${label} */`
+}
+
+const CHUNK_MARKER_RE = /^\/\* studio: (css module|vendor|compiled) (.+?) \*\/$/
+
+export interface StyleChunk {
+  readonly kind: StyleChunkKind
+  /** The workspace-relative `.module.css` path, the package specifier, or the compiler (`sass`/`postcss`). */
+  readonly label: string
+  /** The chunk's CSS exactly as emitted — line 1 of it is line 1 of the file it came from. */
+  readonly css: string
+}
+
+/**
+ * `CompiledStyles.css` / `.vendorCss` back into the chunks they were joined
+ * from. Text before the first marker (none is ever written; a stale cache
+ * could hold some) is reported as an unlabelled `compiled` chunk rather than
+ * dropped — a token declared there still exists, it just has no honest file.
+ */
+export function splitCompiledStyleChunks(concatenated: string): StyleChunk[] {
+  const chunks: StyleChunk[] = []
+  let current: { kind: StyleChunkKind; label: string; lines: string[] } = { kind: 'compiled', label: '', lines: [] }
+  const flush = (): void => {
+    const css = current.lines.join('\n').replace(/\n+$/, '')
+    if (css.trim().length > 0 || current.label !== '') chunks.push({ kind: current.kind, label: current.label, css })
+  }
+  for (const line of concatenated.split('\n')) {
+    const marker = CHUNK_MARKER_RE.exec(line)
+    if (marker) {
+      flush()
+      current = { kind: marker[1] as StyleChunkKind, label: marker[2]!, lines: [] }
+      continue
+    }
+    current.lines.push(line)
+  }
+  flush()
+  return chunks
+}
+
 const CACHE_DIR_SEGMENTS = ['.studio', 'cache'] as const
 
 // ---------------------------------------------------------------------------
@@ -190,7 +243,7 @@ function compileCssModules(dir: string, warnings: ProbeWarning[]): { css: string
     if (text === undefined) continue
     const { css: rewritten, classMap } = transformCssModuleText(text, relPath)
     moduleClassMaps[relPath] = classMap
-    chunks.push(`/* studio: css module ${relPath} */\n${rewritten}`)
+    chunks.push(`${chunkMarker('css module', relPath)}\n${rewritten}`)
   }
 
   if (sassModuleCount > 0) {
@@ -306,7 +359,7 @@ function collectVendorCss(appRootAbs: string, specifiers: ReadonlySet<string>, w
       unresolved.push(specifier)
       continue
     }
-    chunks.push(`/* studio: vendor ${specifier} */\n${text}`)
+    chunks.push(`${chunkMarker('vendor', specifier)}\n${text}`)
   }
   if (unresolved.length > 0) {
     warnings.push({
@@ -365,6 +418,10 @@ function computeStyleCacheKey(dir: string, profile: ProjectProfile, trust: Trust
   })
 
   const hash = createHash('sha1')
+  // The output FORMAT is part of the key: an entry written before compiled
+  // chunks carried a marker line would otherwise be served forever to a
+  // reader that splits on those markers.
+  hash.update(STYLE_CACHE_FORMAT)
   hash.update(trust)
   hash.update(JSON.stringify(toolchain))
   hash.update(fingerprint.join('\n'))
@@ -478,7 +535,13 @@ export async function compileProjectStyles(
   if (needsTier1 && trust !== 'static' && hasNodeModules) {
     const sassCss = toolchain.sass ? await compileSass(dir, appRootAbs, warnings, overrides) : ''
     const postcssCss = toolchain.tailwind || toolchain.postcssConfigPath ? await compilePostcssPipeline(dir, appRootAbs, profile, warnings, overrides) : ''
-    tier1Css = [sassCss, postcssCss].filter(Boolean).join('\n\n')
+    // Marked like every other chunk this module emits, so a reader of the
+    // concatenation (`splitCompiledStyleChunks`) can tell compiled output
+    // apart from the CSS Modules chunk in front of it.
+    tier1Css = [
+      sassCss ? `${chunkMarker('compiled', 'sass')}\n${sassCss}` : '',
+      postcssCss ? `${chunkMarker('compiled', 'postcss')}\n${postcssCss}` : '',
+    ].filter(Boolean).join('\n\n')
   }
 
   const styles: CompiledStyles = {

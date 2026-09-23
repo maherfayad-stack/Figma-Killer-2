@@ -41,6 +41,7 @@ const computedStylesTool: AiTool = {
   name: 'studio_computed_styles',
   scope: 'shared',
   execution: 'server-with-bridge-fallback',
+  sideEffects: 'none',
   description:
     'Read what a screen\'s CSS ACTUALLY resolved to: per node, the real font-size and line-height in px, the font-weight, the colour and background as rgb, and the font family the text is genuinely SET IN (not the declared stack — a stack whose first family never loaded looks identical to one that did, and that difference makes correct px look like the wrong size). Use it to close a design difference by arithmetic instead of guessing from a screenshot: compare these numbers against the design\'s own values (a Figma connector\'s variable-definitions tool gives exact tokens) and fix whatever disagrees. This is how you catch a component whose size/variant name resolves to a different token than you assumed, and a font-family naming a font the project never loaded — neither of which is visible in a picture, and the second of which no font-size edit can fix. Per NODE, so it covers buttons, inputs, labels and containers identically. Defaults to nodes with their own text (textOnly); pass textOnly:false for container padding/radius/background. It does NOT need a Studio browser tab open and never disturbs one that is — the screen is rendered in a headless browser on the server against what is on disk; the open tab is used only as a fallback when that browser cannot run. `readVia` in the result says which path answered.',
   inputSchema: StudioComputedStylesInputSchema,

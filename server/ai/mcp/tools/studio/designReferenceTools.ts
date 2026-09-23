@@ -72,10 +72,11 @@ const registerDesignReferenceTool: AiTool = {
   name: 'studio_register_design_reference',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'Durably register a design reference (typically a Figma export) for later measurement — the fix for "a design pasted into chat is a transient, lossy attachment with no handle a tool can address later". Stores the ORIGINAL bytes verbatim (never re-encoded, never downsampled) under .studio/references/ and returns { reference } with a durable id, intrinsic width/height, a content hash, and its byte size. Provide EXACTLY ONE of path (a file already on disk inside this project — USE THIS after a Figma MCP asset-download tool, or anything else that writes an export to disk; it is the reliable route when a connector renders an image inline that you can see but cannot re-emit), url (fetched SERVER-SIDE — when a tool returned a publicly fetchable download URL; note a Figma REST api.figma.com URL is NOT fetchable, it needs a token Studio does not have), or imageBase64 (only when you genuinely hold the bytes). Raster only — PNG/JPEG/GIF/WEBP/AVIF; an SVG is refused outright (no fixed intrinsic pixel size to diff against). Registers as role:"spec" — the design the page is supposed to match, which is what makes it outrank every image the user merely attached to chat (those register as "context" automatically). Pass role:"context" when you want an image kept and addressable but NOT treated as the design. Pass pageId to scope this reference to one Studio page (STRONGLY recommended — an unscoped spec is outranked by nothing but still loses to a page-scoped one, studio_list_design_references and studio_recommend_export_dpr both filter/require it, and two unscoped specs make every page ambiguous), plus an optional label and source (e.g. a Figma file/node URL) for anyone reading this back later. Once registered, pair it with studio_recommend_export_dpr and studio_diff_frames\' referenceId input instead of base64-encoding it again on every diff call.',
+    'Durably register a design reference (typically a Figma export) for later measurement — the fix for "a design pasted into chat is a transient, lossy attachment with no handle a tool can address later". Stores the ORIGINAL bytes verbatim (never re-encoded, never downsampled) under .studio/references/ and returns { reference } with a durable id, intrinsic width/height, a content hash, and its byte size. Provide EXACTLY ONE of path (a file already on disk inside this project — USE THIS after a Figma MCP asset-download tool, or anything else that writes an export to disk; it is the reliable route when a connector renders an image inline that you can see but cannot re-emit), url (fetched SERVER-SIDE — when a tool returned a publicly fetchable download URL; note a Figma REST api.figma.com URL is NOT fetchable, it needs a token Studio does not have), or imageBase64 (only when you genuinely hold the bytes). Raster only — PNG/JPEG/GIF/WEBP/AVIF; an SVG is refused outright (no fixed intrinsic pixel size to diff against). Registers as role:"spec" — the design the page is supposed to match, which is what makes it outrank every image the user merely attached to chat (those register as "context" automatically). Pass role:"context" when you want an image kept and addressable but NOT treated as the design. Pass pageId to scope this reference to one Studio page (STRONGLY recommended — an unscoped spec is outranked by nothing but still loses to a page-scoped one, studio_list_design_references filters by it, studio_compare picks the reference up from it, and two unscoped specs make every page ambiguous), plus an optional label and source (e.g. a Figma file/node URL) for anyone reading this back later. Once registered, studio_compare measures the page against it by id — the bytes are never base64-encoded again on a later call.',
   inputSchema: StudioRegisterDesignReferenceInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, url, path: filePath, imageBase64, pageId, label, source, role, mode, passScore, maxRegionCoverage } = input as {
@@ -148,6 +149,7 @@ const listDesignReferencesTool: AiTool = {
   name: 'studio_list_design_references',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'List design references registered for this project (studio_register_design_reference). Pass pageId to restrict to references scoped to one Studio page. Capped (default 50, max 200) with an honest truncated/omittedCount — never a silent drop. Each entry is the full metadata (id, ext, mimeType, width, height, sizeBytes, contentHash, pageId?, label?, source?, role, createdAt) with no image bytes — call studio_read_design_reference with includeImage:true to actually see one. `role` is the field to read when a comparison refused as ambiguous: "spec" is a design to match, "context" is an image that arrived in the conversation (every chat attachment) and is never assumed to be the design.',
   inputSchema: StudioListDesignReferencesInputSchema,
@@ -180,8 +182,9 @@ const readDesignReferenceTool: AiTool = {
   name: 'studio_read_design_reference',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
-    'Read one registered design reference\'s metadata by id, optionally with its actual image bytes. includeImage:false (default) returns only the metadata — cheap, use this before studio_recommend_export_dpr or studio_diff_frames\' referenceId input, which both only need the metadata. includeImage:true also returns the ORIGINAL bytes as an MCP image block, so you can actually look at it — costs real context for a large reference. Returns ok:false with a clear reason for an unknown id, or for a registered id whose file is missing from disk (e.g. pruned outside Studio).',
+    'Read one registered design reference\'s metadata by id, optionally with its actual image bytes. includeImage:false (default) returns only the metadata — cheap, and enough for anything that takes a referenceId. includeImage:true also returns the ORIGINAL bytes as an MCP image block, so you can actually look at it — costs real context for a large reference. Returns ok:false with a clear reason for an unknown id, or for a registered id whose file is missing from disk (e.g. pruned outside Studio).',
   inputSchema: StudioReadDesignReferenceInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, referenceId, includeImage } = input as { dir?: string; referenceId: string; includeImage?: boolean }
@@ -218,7 +221,8 @@ const deleteDesignReferenceTool: AiTool = {
   name: 'studio_delete_design_reference',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Remove a registered design reference by id, deleting both its manifest entry and its on-disk bytes. Idempotent — removing an unknown or already-removed id still returns { ok: true, removed: false }, never an error. Requires studio.write.',
@@ -242,6 +246,7 @@ const recommendExportDprTool: AiTool = {
   name: 'studio_recommend_export_dpr',
   scope: 'shared',
   execution: 'server',
+  sideEffects: 'none',
   description:
     'Compute the studio_export_frames `dpr` that makes its capture of `pageId`\'s board frame land on `referenceId`\'s registered pixel WIDTH — the dpr-matching alternative to letting studio_diff_frames resample the reference (a resampled score is a weaker claim than a dpr-matched one; see studio_diff_frames\' own description). Uses the frame\'s AUTHORED width from .studio/boards.json (before any dpr scaling), not a live capture — height is content-driven (scroll-unroll can make the real capture taller than the frame\'s nominal height) and cannot be predicted from this alone, so only WIDTH is guaranteed exact when you export at the recommended dpr; verify the actual result via studio_export_frames\' own reported width/height afterward. `dprClamped` is true when the ideal ratio falls outside the tool\'s 0.5–3 range; `exactWidthMatchExpected` is false when either that clamp OR the shared vision-safe edge cap will keep the capture narrower than the reference — in either case, expect studio_diff_frames\' referenceId path to resample rather than get an exact dimension match. `heightLikelyClamped` is a SEPARATE, one-sided warning on the other axis: even the frame\'s NOMINAL authored height (a floor — the real captured height with scroll-unrolled content can only be taller) would already exceed the same vision-safe cap at the recommended dpr, so an exact HEIGHT match is not just unverified but essentially impossible — read `heightNote` for the numbers. A tall mobile screen at dpr 2 hits this routinely; this is the single most common reason a "matched width" comparison still comes back `dimensionMatch: "resampled"`.',
   inputSchema: StudioRecommendExportDprInputSchema,

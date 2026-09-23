@@ -39,7 +39,7 @@ describe('mcp_propose_server — hard consent boundary', () => {
 
   it('is declared mutating and gated by studio.write — never reachable without it', () => {
     const propose = tool('mcp_propose_server')
-    expect(propose.mutates).toBe(true)
+    expect(propose.requiresWrite).toBe(true)
     expect(propose.requiredCapabilities).toEqual(['studio.write'])
   })
 

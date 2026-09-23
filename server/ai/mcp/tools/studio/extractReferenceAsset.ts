@@ -86,7 +86,8 @@ export const studioExtractReferenceAssetTool: AiTool = {
   name: 'studio_extract_reference_asset',
   scope: 'shared',
   execution: 'server',
-  mutates: true,
+  sideEffects: 'write',
+  requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
     'Cut a rectangle out of a registered design reference and write it into the project as a real PNG — the way to get a photo, illustration, logo, badge or mockup that exists ONLY inside the design the user gave you. Give it the screen name, a base filename, and the rectangle in the reference image\'s own pixel coordinates; returns { relPath } ready to import, the same shape studio_upload_asset and studio_fetch_remote_asset return. The bytes are read, cropped and written server-side and never pass through you. PREFER a real source when one exists — an icon from the design system\'s own set, an export from a connected Figma MCP server, a URL through studio_fetch_remote_asset — because those give you the original vector at any size, while this gives you the comp\'s raster at whatever resolution it was exported. Use it when none of those are reachable, which is the ordinary case for a design pasted into chat. It is always better than the two things it replaces: a grey placeholder box, and a photograph impersonated with CSS gradients and border-radius. Requires studio.write.',

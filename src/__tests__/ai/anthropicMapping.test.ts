@@ -175,6 +175,7 @@ describe('Anthropic prompt-cache breakpoints', () => {
     description: `${name} description`,
     scope: 'site',
     execution: 'server',
+    sideEffects: 'none',
     inputSchema: Type.Object({}),
   })
 
