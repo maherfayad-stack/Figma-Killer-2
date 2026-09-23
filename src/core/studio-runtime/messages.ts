@@ -52,7 +52,8 @@
  * per-iteration information to mint a unique one with; see
  * `liveNodeResolve.ts`'s module doc for the full picture). Every message
  * below that names a node — inbound (`select`'s `refs`, `hover`, `measure`,
- * the four `optimistic.*`) and outbound (`pointer`, `text:edit`,
+ * the four `optimistic.*`, the `text:edit` reply) and outbound (`pointer`,
+ * `text:editStart`/`text:commit`/`text:cancel`,
  * `measure:result`'s echoed-back measurements) — pairs the stamp id with a
  * 0-based `occurrenceIndex`: "the Nth element sharing this stamp, in
  * document order" (`nodeIdIndexing.ts`'s `findNthNodeById`/
@@ -66,6 +67,11 @@
  * which `runtime.ts` (in-frame) reads and writes directly.
  */
 import { Type, type Static } from '@sinclair/typebox'
+import { DropCandidatesMessageSchema, DropCandidatesResultMessageSchema } from './dropCandidateMessages'
+import { NodeRectSchema } from './messageShapes'
+
+export { DROP_CANDIDATES_MAX, DROP_CANDIDATE_CHILD_RECTS_MAX, DropCandidatesMessageSchema, DropCandidatesResultMessageSchema, type DropCandidateWire } from './dropCandidateMessages'
+export { NodeRectSchema, type NodeRect } from './messageShapes'
 
 /** The `source` every envelope carries, so unrelated `postMessage` traffic is ignored outright. */
 export const RUNTIME_MESSAGE_SOURCE = 'studio-live-runtime'
@@ -81,13 +87,6 @@ const ColorSchemeSchema = Type.Union([Type.Literal('light'), Type.Literal('dark'
 export const RuntimeModeSchema = Type.Union([Type.Literal('design'), Type.Literal('live')])
 export type RuntimeMode = Static<typeof RuntimeModeSchema>
 
-const NodeRectSchema = Type.Object({
-  x: Type.Number(),
-  y: Type.Number(),
-  width: Type.Number(),
-  height: Type.Number(),
-})
-export type NodeRect = Static<typeof NodeRectSchema>
 
 const PointerModifiersSchema = Type.Object({
   shiftKey: Type.Boolean(),
@@ -188,6 +187,27 @@ export const SetModeMessageSchema = Type.Object({
   mode: RuntimeModeSchema,
 })
 
+/** `live-18` — every text-editing message's text ceiling: `sec-06`'s "same-realm spoofing" posture (a script co-resident with `runtime.ts` could otherwise forge an unbounded payload) and a sane cap on a single inline edit either way. */
+export const TEXT_EDIT_MAX_LENGTH = 20_000
+
+/**
+ * `live-18` — the parent's reply to a frame's `text:editStart` request: it
+ * already ran the same predicate `startInlineEdit` applies (module declares
+ * `inlineTextEdit`, no children, source-writable, not dynamically bound) and
+ * decides here whether `nodeId`/`occurrenceIndex` may be edited inline.
+ * `text` — the node's CURRENT canonical value, not necessarily identical to
+ * what the frame's DOM shows — seeds the `contentEditable` and is present
+ * iff `allowed`.
+ */
+export const TextEditReplyMessageSchema = Type.Object({
+  type: Type.Literal('text:edit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  allowed: Type.Boolean(),
+  text: Type.Optional(Type.String({ maxLength: TEXT_EDIT_MAX_LENGTH })),
+})
+export type TextEditReplyMessage = Static<typeof TextEditReplyMessageSchema>
+
 /**
  * `tagName`/`text` only — see "optimistic.insert never carries HTML" above.
  * `parentNodeId`/`index` place it exactly where the eventual writeback will;
@@ -262,11 +282,72 @@ export const OptimisticTextMessageSchema = Type.Object({
   text: Type.String(),
 })
 
+/**
+ * `speed-01` — a properties-panel style commit or scrub preview, applied
+ * in-frame as a stylesheet rule ahead of the file write + HMR round trip
+ * (`optimisticStyle.ts`'s module doc has the full mechanism). Bounded at the
+ * SCHEMA, per `sec-06`'s "same-realm spoofing" posture — a script co-resident
+ * with `runtime.ts` in the live frame's document could otherwise forge this
+ * message directly and inject arbitrary CSS text into the frame's own
+ * stylesheet:
+ *
+ *   - `patch` — at most 64 properties (`maxProperties`, enforced only because
+ *     `additionalProperties: false` is set below — see `OPTIMISTIC_STYLE_KEY_PATTERN`'s
+ *     own doc for why that flag is load-bearing here). Each KEY matches
+ *     `OPTIMISTIC_STYLE_KEY_PATTERN` (bare letters/hyphens only — camelCase or
+ *     kebab-case; `optimisticStyle.ts` converts camel -> kebab before writing
+ *     the rule). Each VALUE is ≤ 256 chars and excludes `;`, `}`, `<` and the
+ *     substring `!important` (a negative lookahead) — the four ways a value
+ *     could otherwise close the declaration/rule early or smuggle markup, or
+ *     fight the rule's OWN `!important` in a way that changes which one wins.
+ *   - `className` — present only for a CLASS-target write (`commitApi.ts`'s
+ *     `writeToTarget`/`previewToTarget`), the bare class name
+ *     `styleRuleSelector`/`selectionModel.ts` already produced (its leading
+ *     `.` stripped). **Informational only** — `optimisticStyle.ts` does NOT
+ *     build a `.<className>` selector from it. Dogfooding against a real
+ *     project showed that selector matches nothing: `className` is the name
+ *     STUDIO'S PARSE gives the class, read out of the CSS-module source, but
+ *     the live frame's DOM carries whatever name VITE'S OWN CSS-modules
+ *     plugin generated at dev-server build time — two independent hashing
+ *     schemes over the same source with no reason to agree, and in practice
+ *     they don't. Still bounded (excludes whitespace/`{`/`}`/`;`/`<`) as
+ *     defense in depth for whatever future consumer reads it off the wire.
+ *
+ * `ref` names the element every optimistic style write actually targets —
+ * inline or class, both are element-scoped (see `optimisticStyle.ts`'s module
+ * doc, "ALWAYS element-scoped"); a class write's other elements catch up on
+ * the next HMR update rather than getting an in-frame preview of their own.
+ */
+const OPTIMISTIC_STYLE_KEY_PATTERN = '^[a-zA-Z-]{1,64}$'
+const OPTIMISTIC_STYLE_VALUE_PATTERN = '^(?!.*!important)[^;}<]{0,256}$'
+const OPTIMISTIC_STYLE_CLASS_NAME_PATTERN = '^[^\\s{};<]{1,128}$'
+
+export const OptimisticStylePatchSchema = Type.Record(
+  Type.String({ pattern: OPTIMISTIC_STYLE_KEY_PATTERN }),
+  Type.String({ pattern: OPTIMISTIC_STYLE_VALUE_PATTERN }),
+  { maxProperties: 64, additionalProperties: false },
+)
+
+export const OptimisticStyleMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.style'),
+  ref: NodeRefSchema,
+  patch: OptimisticStylePatchSchema,
+  className: Type.Optional(Type.String({ pattern: OPTIMISTIC_STYLE_CLASS_NAME_PATTERN })),
+})
+
+/** Drops whatever optimistic style rule is currently keyed on `ref` — the panel stopped scrubbing with no commit, or the field lost focus. A no-op when nothing is active for it. */
+export const OptimisticStyleClearMessageSchema = Type.Object({
+  type: Type.Literal('optimistic.style:clear'),
+  ref: NodeRefSchema,
+})
+
 export const OptimisticMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
   OptimisticTextMessageSchema,
+  OptimisticStyleMessageSchema,
+  OptimisticStyleClearMessageSchema,
 ])
 export type OptimisticMessage = Static<typeof OptimisticMessageSchema>
 
@@ -279,10 +360,14 @@ export const InboundRuntimeMessageSchema = Type.Union([
   SetAxesMessageSchema,
   SetModeMessageSchema,
   SetResizeTargetMessageSchema,
+  TextEditReplyMessageSchema,
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
   OptimisticTextMessageSchema,
+  OptimisticStyleMessageSchema,
+  OptimisticStyleClearMessageSchema,
+  DropCandidatesMessageSchema,
 ])
 export type InboundRuntimeMessage = Static<typeof InboundRuntimeMessageSchema>
 
@@ -337,6 +422,19 @@ export const PointerMessageSchema = Type.Object({
   pointerId: Type.Integer({ minimum: 0, maximum: 2_147_483_647 }),
   pointerType: PointerTypeSchema,
   /**
+   * `live-19` — the pointer's position in SCREEN pixels (`MouseEvent.screenX/Y`),
+   * identical in the child and the parent regardless of any CSS transform on
+   * the iframe and immune to the one-to-two-compositor-frame lag between the
+   * parent's own transform write landing and the OUT-OF-PROCESS iframe's last
+   * committed layout catching up to it (`useBridgeFrameInteraction.ts`'s
+   * module doc has the measured numbers). `clientX/clientY` above are frame-
+   * local and therefore USELESS for a pan replay's delta once the frame
+   * itself is moving in response to that same replay — `screenX/screenY` is
+   * what breaks that feedback loop.
+   */
+  screenX: Type.Number(),
+  screenY: Type.Number(),
+  /**
    * `live-12` — every stamped ancestor of the hit, innermost first (`nodeId`
    * repeated as the first entry), bounded. The runtime stamps by SOURCE
    * position, so a click inside a design-system button lands on that
@@ -388,12 +486,32 @@ export const ResizeCommitMessageSchema = Type.Object({
   }),
 })
 
-/** Routed by the parent to the existing `textOrigin` writeback (L7) — carries the CURRENT text, not a diff. */
-export const TextEditMessageSchema = Type.Object({
-  type: Type.Literal('text:edit'),
+/**
+ * `live-18` — a double-click on a stamped element inside a DESIGN-mode
+ * frame; the runtime asks, the parent decides (via the inbound
+ * {@link TextEditReplyMessageSchema} reply above) whether this node is
+ * text-editable at all — the runtime has no page-tree/module knowledge to
+ * decide that itself.
+ */
+export const TextEditStartMessageSchema = Type.Object({
+  type: Type.Literal('text:editStart'),
   nodeId: Type.String({ minLength: 1 }),
   occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
-  text: Type.String(),
+})
+
+/** `live-18` — Enter (no Shift) or blur ended the session with this final text, bounded per {@link TEXT_EDIT_MAX_LENGTH}. */
+export const TextCommitMessageSchema = Type.Object({
+  type: Type.Literal('text:commit'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
+  text: Type.String({ maxLength: TEXT_EDIT_MAX_LENGTH }),
+})
+
+/** `live-18` — Escape, or an HMR update landing mid-edit, ended the session with no write. */
+export const TextCancelMessageSchema = Type.Object({
+  type: Type.Literal('text:cancel'),
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })
 
 const NodeMeasurementSchema = Type.Object({
@@ -534,10 +652,13 @@ export const OutboundRuntimeMessageSchema = Type.Union([
   PointerMessageSchema,
   WheelMessageSchema,
   ResizeCommitMessageSchema,
-  TextEditMessageSchema,
+  TextEditStartMessageSchema,
+  TextCommitMessageSchema,
+  TextCancelMessageSchema,
   MeasureResultMessageSchema,
   FrameResizeMessageSchema,
   ErrorMessageSchema,
+  DropCandidatesResultMessageSchema,
 ])
 export type OutboundRuntimeMessage = Static<typeof OutboundRuntimeMessageSchema>
 

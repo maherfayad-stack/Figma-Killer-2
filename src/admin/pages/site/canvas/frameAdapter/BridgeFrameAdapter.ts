@@ -61,6 +61,7 @@ import {
 } from '@core/studio-runtime'
 import type { PreviewAxes } from '@core/studio-board'
 import type {
+  DropCandidateGeometry,
   FrameDocumentAdapter,
   FrameRuntimeEvent,
   NodeMeasurement,
@@ -69,7 +70,7 @@ import type {
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
-/** How long a `measure` request waits for `measure:result` before its promise rejects. Not chosen from an existing precedent — no bounded-postMessage-round-trip wait exists elsewhere in this codebase yet — but consistent with this repo's general "never hang a caller forever" posture. */
+/** How long a `measure`/`dropCandidates` request waits for its reply before the promise rejects. Not chosen from an existing precedent — no bounded-postMessage-round-trip wait exists elsewhere in this codebase yet — but consistent with this repo's general "never hang a caller forever" posture. */
 const DEFAULT_MEASURE_TIMEOUT_MS = 2000
 
 /**
@@ -110,7 +111,7 @@ export interface BridgeFrameAdapterOptions {
 
 class MeasureTimeoutError extends Error {
   constructor(requestId: string) {
-    super(`Bridge frame did not answer measure request "${requestId}" within the timeout.`)
+    super(`Bridge frame did not answer request "${requestId}" within the timeout.`)
     this.name = 'MeasureTimeoutError'
   }
 }
@@ -125,6 +126,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
   private readonly pendingMeasurements = new Map<
     string,
     { resolve: (m: NodeMeasurement[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
+  >()
+  /** `speed-06` — pending `dropCandidates` requests, same shape as `pendingMeasurements`, kept separate because the two replies carry different payloads. */
+  private readonly pendingDropCandidates = new Map<
+    string,
+    { resolve: (c: DropCandidateGeometry[]) => void; reject: (err: Error) => void; timeout: ReturnType<typeof setTimeout> }
   >()
   private nextRequestId = 0
   private disposed = false
@@ -173,6 +179,14 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     text: (nodeId, text) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.text', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, text })
+    },
+    style: (nodeId, patch, className) => {
+      const ref = this.toWireRef(nodeId)
+      this.post({ type: 'optimistic.style', ref, patch, ...(className === undefined ? {} : { className }) })
+    },
+    clearStyle: (nodeId) => {
+      const ref = this.toWireRef(nodeId)
+      this.post({ type: 'optimistic.style:clear', ref })
     },
   }
 
@@ -270,6 +284,25 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     })
   }
 
+  /**
+   * `speed-06` — a bounded `dropCandidates`/`dropCandidates:result` round
+   * trip, translating each wire candidate's stamp+occurrence back to a
+   * canonical node id exactly like every other inbound method here.
+   * `childRects` travels on the wire (bounded, `sec-06`) but is dropped here
+   * — unconsumed by today's resolver, see `dropCandidates.ts`'s own doc.
+   */
+  measureDropCandidates(): Promise<DropCandidateGeometry[]> {
+    const requestId = `bridge-drop-candidates-${this.nextRequestId++}`
+    return new Promise<DropCandidateGeometry[]>((resolve, reject) => {
+      const timeout = setTimeout(() => {
+        this.pendingDropCandidates.delete(requestId)
+        reject(new MeasureTimeoutError(requestId))
+      }, this.measureTimeoutMs)
+      this.pendingDropCandidates.set(requestId, { resolve, reject, timeout })
+      this.post({ type: 'dropCandidates', requestId })
+    })
+  }
+
   setAxes(axes: PreviewAxes): void {
     this.post({ type: 'setAxes', axes: { direction: axes.direction, colorScheme: axes.colorScheme, locale: axes.locale } })
   }
@@ -281,6 +314,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
 
   setResizeTarget(ref: NodeRef | null, { proportional }: { proportional: boolean }): void {
     this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
+  }
+
+  startTextEdit(nodeId: string, allowed: boolean, text?: string): void {
+    const ref = this.toWireRef(nodeId)
+    this.post({ type: 'text:edit', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, allowed, ...(text === undefined ? {} : { text }) })
   }
 
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
@@ -357,6 +395,8 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           rect: message.rect,
           clientX: message.clientX,
           clientY: message.clientY,
+          screenX: message.screenX,
+          screenY: message.screenY,
           modifiers: message.modifiers,
           button: message.button,
           buttons: message.buttons,
@@ -382,22 +422,23 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           modifiers: message.modifiers,
         })
         return
-      case 'wheel':
+      case 'text:editStart':
         this.emit({
-          type: 'wheel',
-          deltaX: message.deltaX,
-          deltaY: message.deltaY,
-          deltaMode: message.deltaMode,
-          clientX: message.clientX,
-          clientY: message.clientY,
-          modifiers: message.modifiers,
+          type: 'text:editStart',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
         })
         return
-      case 'text:edit':
+      case 'text:commit':
         this.emit({
-          type: 'text:edit',
+          type: 'text:commit',
           nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
           text: message.text,
+        })
+        return
+      case 'text:cancel':
+        this.emit({
+          type: 'text:cancel',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
         })
         return
       case 'measure:result': {
@@ -414,6 +455,21 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         )
         return
       }
+      case 'dropCandidates:result': {
+        const pending = this.pendingDropCandidates.get(message.requestId)
+        if (!pending) return
+        clearTimeout(pending.timeout)
+        this.pendingDropCandidates.delete(message.requestId)
+        pending.resolve(
+          message.candidates.map((c) => ({
+            nodeId: this.toCanonicalNodeId(c.nodeId, c.occurrenceIndex),
+            rect: c.rect,
+            axis: c.axis,
+            reversed: c.reversed,
+          })),
+        )
+        return
+      }
     }
   }
 
@@ -425,6 +481,11 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
       reject(new Error('BridgeFrameAdapter disposed while a measure request was in flight.'))
     }
     this.pendingMeasurements.clear()
+    for (const { reject, timeout } of this.pendingDropCandidates.values()) {
+      clearTimeout(timeout)
+      reject(new Error('BridgeFrameAdapter disposed while a dropCandidates request was in flight.'))
+    }
+    this.pendingDropCandidates.clear()
     this.eventHandlers.clear()
   }
 }

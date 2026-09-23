@@ -132,7 +132,7 @@ function addRenderedCanvasFrame(html: string) {
   frame.contentDocument.body.innerHTML = html
   const adapter = new PortalFrameAdapter(frame.contentDocument)
   frameAdapters.push(adapter)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, 'bp-desktop')
 }
 
 type CssSupportsGlobal = {

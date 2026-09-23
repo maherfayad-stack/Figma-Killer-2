@@ -1301,9 +1301,79 @@ design mode, and retracts them (`null`) on unmount and in live mode.
 gesture BODIES stay in `useCanvas` because they need `transformRef` above;
 only the measurement is shared (`canvas/canvasViewportCommands.ts`).
 
----
+### Cold selection on a Tier-2 board: one overlay per board frame, not two (`speed-04`)
 
-## Testing the canvas
+Before this fix, `LiveBoardFrame` mounted its Tier-0 fallback `BreakpointFrame`
+**and** its hidden bridge `BreakpointFrame` at the same time (by design — the
+bridge's cold boot runs concurrently with the visible fallback), and **both**
+unconditionally mounted their own `BreakpointSelectionOverlay`. A click on the
+fallback (the only interactive surface before the bridge reports `ready`)
+selected a node in the store; both overlay instances reacted to it — the
+fallback's real, working `tickOnce` AND the bridge overlay's
+`useBridgeSelectionChrome`, which opened a real `postMessage` round trip
+(`select`/`hover`/`setResizeTarget`/`measure`) into a still-loading
+cross-origin document and rendered a **second**, independently-positioned
+toolbar and in-place inspector for the very same selection — not just wasted
+work, a real double-toolbar correctness bug on every Tier-2 board frame's
+first click.
+
+Fix: `BreakpointFrame` grew an `overlayEnabled?: boolean` prop (default
+`true`, every existing caller unaffected). `LiveBoardFrame` passes
+`overlayEnabled={ready}` to its bridge `BreakpointFrame` — the iframe still
+mounts and boots (concurrency untouched), only its OWN
+`BreakpointSelectionOverlay` is deferred until `ready`, which is also the
+exact commit the fallback unmounts in, so the two are never both live. See
+`BreakpointFrame.tsx`'s `overlayEnabled` doc and `liveBoardFrame.test.tsx`'s
+`describe('LiveBoardFrame — selection chrome while not ready (speed-04)')`.
+
+A second, smaller fix rides in `tickOnce`'s anchor branch (`needsAnchor` —
+the toolbar/inspector's expensive parent-doc `createCanvasOverlayMeasureSession`
+path, two forced `getBoundingClientRect()` reads): a frame whose own ring
+placements show it owns NONE of the selected nodes (every `elementCache.resolve`
+came back `null` — not present in this frame's iframe document) now skips
+session creation entirely rather than creating one that would only ever
+measure `null`. For a board frame this mostly restates what `selectedNodeFrameId`
+scoping (WS-10 Phase 2) already gives for free — a non-owning board frame's
+`selectedNodeIds` is already `EMPTY_SELECTED_NODE_IDS`, so its `tickOnce`
+never even runs — but the CMS/Visual-Component canvas mirrors one selection
+across every real breakpoint frame on purpose, and that is exactly the case
+where more than one frame reaches the anchor branch for a selection only one
+of them actually renders. See `breakpointSelectionOverlayAnchorSkip.test.tsx`.
+
+`BreakpointSelectionOverlay.tsx` also shed its top-of-component store reads
+(selection/hover scoping, the selector-affinity highlight, this frame's page,
+the VC list) into `useBreakpointOverlaySelectionState.ts` — a
+`module-size-budgets` extraction (the file was at the 700-line ceiling before
+either fix above), not a behavior change: eight independent `useEditorStore`
+reads with no refs and no effects, the same shape `useCanvasAnimationScrub`
+already uses for a component-local slice of store state.
+
+**What did NOT change, and why.** The plan's own cause list also named
+"cache the iframe and canvas-root rects per pan/zoom commit and per
+`frame:resize` instead of re-measuring per selection." Not implemented:
+`iframe.getBoundingClientRect()` can change for reasons OTHER than a pan/zoom
+commit or a bridge `frame:resize` — an auto-height fallback iframe whose
+content just grew, or the canvas root itself resizing because the very
+selection being anchored opened a side panel — and caching across those
+triggers would silently reintroduce `standing-03`'s exact class of bug (a
+stale term in the anchor math, multiplied by zoom). The two forced reads this
+session pays are cheap (`canvasOverlayMeasurement.test.ts` already proves ONE
+session reads geometry once no matter how many rings it measures); the real
+cost was paying for a session AT ALL on a frame that owns nothing, which the
+skip above already removes. Do not add this cache without a measured number
+showing the remaining per-selection cost is real on a frame that DOES own the
+node — "never skip a measurement that height correctness depends on."
+
+Budget: `tests/e2e/studio-board-perf.e2e.ts`'s `speed-04` describe block —
+click → selection ring, cold, on `__board-perf-fixture` (Tier-2 by default,
+no `node_modules`, so its bridge iframe never reports `ready` inside a test
+run — the fallback stays the only interactive surface for the whole run,
+which is exactly the "just opened" window this budget targets). Calibrated
+under heavy shared-machine contention, not the plan's own 100ms target — see
+that constant's own doc for the real before/after numbers and why the
+recorded budget is looser.
+
+
 
 - Canvas DOM is inside iframes: `document.querySelector('[data-node-id]')`
   returns `null`. Use `src/__tests__/canvas/iframeCanvasQuery.ts`.
@@ -1361,9 +1431,12 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 
 | Runtime message | In-frame source (`gestureForwarding.ts`) | Parent consumer |
 |---|---|---|
-| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
+| `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
 | `resize:commit` (`{ width?, height? }` as integer `px` strings) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
+| `text:editStart` (`live-18`, design mode only) / `text:commit` (final text, bounded to 20 000 chars) / `text:cancel` | `inlineTextEdit.ts` — a double-click on a stamped element opens a session; the runtime owns the whole contentEditable lifecycle itself (seeding, focus, select-all, Escape/Enter, blur) and only the request and the final result cross the wire | `useBridgeFrameInteraction` → `text:editStart` runs the SAME `startInlineEdit` predicate the portal double-click handler applies and replies via `adapter.startTextEdit(nodeId, allowed, text?)`; `text:commit` calls `applyInlineEditValue` + `endInlineEdit`; `text:cancel` calls `cancelInlineEdit` — nothing is written to the store until commit, so cancel (and an HMR update landing mid-edit) is a plain no-op here |
+| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
+| `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 
 And the other direction — what the parent sends a bridge frame that a portal
@@ -1377,6 +1450,33 @@ adapter):
 | `select(refs)` / `hover(ref)` | draws and positions the rings in its own overlay root (the `live-05` design; this is the caller it was waiting for) |
 | `setResizeTarget(ref, { proportional })` | draws the eight handles (`resizeHandles.ts`) on the node's presented element when its computed display takes a size; the parent already applied the module half of `resizeOffer.ts` (`canOfferResizeForModule`) |
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
+| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared) — an inline write stamps the node's element and keys on `[data-studio-optimistic-style]`; a class write (`className` present) keys on `.<className>` and touches no element, reaching every node in the frame carrying that class. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
+| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId`, whichever selector shape it turned out to be — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
+| `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. |
+| `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
+
+**`speed-03` — `move` is coalesced, not forwarded raw.** A native
+`pointermove` fires far faster than the parent can usefully act on it
+(measured ≈120/s while idly hovering a live frame, each one a `postMessage`
+plus an unconditional store write). `gestureForwarding.ts` now buffers `move`
+and posts at most one per animation frame, carrying the LAST event of the
+batch, and skips the post entirely when it would repeat the SAME resolved
+node + rect as the last move actually posted — the idle-hover case
+`hoverNode` (`selectionSlice.ts`) exists to guard against, and now itself
+no-ops (reads `get()` first) when the id/breakpoint/frame triple is unchanged,
+so a coalesced-but-repeated `move` costs nothing even if one still arrives.
+The skip only applies while **no pointer button is held**: a held button is
+an active drag — a pan replay in particular, whose parent-side replay reads
+`clientX`/`clientY` off every `move` — and the resolved node commonly does
+NOT change mid-pan (dragging across one full-bleed background element stays
+on the same node the whole gesture), but the position still has to reach the
+parent every frame. `down`/`up`/`click` stay immediate and always flush a
+pending move first, so the parent never observes a press arrive before the
+move that preceded it (assert ordering here if you touch this — the
+pan-replay `panPointerId` state machine in `useBridgeFrameInteraction`
+depends on seeing `move`s in the order they happened).
 
 Three rules that fell out of wiring this, each pinned by a test:
 
@@ -1393,13 +1493,41 @@ Three rules that fell out of wiring this, each pinned by a test:
   React root never sees them; an `<input>` does not focus) — the same
   `ownsAuthoredEvents` rule `NodeRenderer` applies to a portal frame — except
   inside a `[contenteditable]`, where the caret has to land for the inline edit.
-- **A hit resolves to the innermost stamped ancestor the tree knows.** The Vite
-  plugin stamps host elements by SOURCE position, so a click inside a
-  design-system button lands on that package's own internal element. The
-  runtime sends the whole stamped chain (bounded at 32); the adapter walks it
-  to the first id in `nodeIdsInTreeOrder`. What that selects is the nearest
-  node the page tree has — the container around a package component's call
-  site, when the call site itself is not a stamped host element.
+- **A component call site is stamped too, and its stamp wins over the
+  component's own internal one (`live-17`).** `idStamp.ts` used to stamp only
+  host/intrinsic elements (`<button>`), never a component call site
+  (`<Button/>`) — reasoning that a call site "renders none of its own DOM".
+  False for any component that spreads `...props` onto its own root element,
+  which every design-system component in this repo's corpus does: a click on
+  `<Button label="Label"/>` in the page produced a live `<button>` stamped
+  with `design-system/components/Button.jsx:99:6` — a real position, but one
+  the page tree has NO node for (package/design-system call sites are opaque
+  instances, never inlined — see `componentSources.ts`). The old ancestor
+  walk then landed on the nearest node the tree DID have — the page's own
+  `<main>`, not the button — so the click silently selected the wrong node
+  instead of failing loudly.
+  Fixed by stamping BOTH kinds (`classifyJsxTagKind(name) === 'element' OR
+  'component'`, same id-minting `processElement` already uses for either
+  kind) and making ORDER decide which stamp survives when both land on the
+  same rendered element: a host element's own stamp is `unshift`ed to the
+  FRONT of its attribute list, a call site's stamp is `push`ed onto the END
+  of its own — so a component that forwards `{...props}` (textually later)
+  overrides its own internal stamp with whatever the call site passed in,
+  and a component that does NOT forward props leaves its own internal stamp
+  untouched (the extra attribute on the call site is simply an unused,
+  harmless prop). See `idStamp.ts`'s own "What gets stamped, and where the
+  attribute lands" doc for the full mechanics.
+- **The ancestor walk still exists, for what genuinely has no stamp at all.**
+  The runtime still sends the whole stamped chain (bounded at 32) and
+  `liveNodeResolve.ts`'s `resolveLiveNode` still walks it to the nearest
+  element that carries ANY `data-node-id` — vendor markup, a package
+  component's own un-instrumented internals below Studio's parse boundary,
+  or a genuinely un-stamped runtime-only element. That match comes back
+  `exact: false` so a caller can badge it rather than act on it as a real
+  selection. What changed is which id a design-system/package component's
+  OWN rendered root now carries — its call site's, not its internal one — so
+  the ancestor fallback no longer fires for the common "click a button"
+  case.
 - **The frame finds its parent through `location.ancestorOrigins`, then the
   referrer.** A Vite full reload inside the frame (the runtime bundle
   rewritten on project open, an HMR socket reconnect after an API-server
@@ -1432,7 +1560,182 @@ Three rules that fell out of wiring this, each pinned by a test:
   runtime-owned `<style>` shares nothing with React and is dropped on the
   runtime's `hmr:after`; a refused commit never produces one, so that preview
   lasts until the next target change, where the snap-back is the honest answer.
+- **`speed-01` — a properties-panel style op reuses the exact same
+  stylesheet-not-inline-style posture, and had to teach the frame-fit
+  `layoutObserver` about a NEW attribute it must ignore.** `optimisticStyle.ts`
+  stamps `[data-studio-optimistic-style]` on the edited element for the
+  SAME reason `resizeHandles.ts` stamps `[data-studio-resize-preview]` — the
+  eventual React re-render writes the identical value, so only a stylesheet
+  rule (never `element.style`) can be dropped without either deleting React's
+  write or snapping back mid-round-trip. This is the THIRD attribute the
+  frame-fit mutation observer (`runtime.ts`'s `layoutObserver`, which watches
+  `doc.body` for real content changes to know when to re-derive the fit pin)
+  has to be told to ignore — miss one and every style edit spuriously resets
+  the frame's fit-height pin through the SAME observer callback that reports
+  `frame:resize` to the parent, fighting the "grow to content" requirement
+  `docs/features/canvas-iframe-per-frame.md` describes. `runtime.ts`'s
+  `optimistic.style` handler also calls `scheduleReposition()` explicitly
+  rather than relying solely on the mutation-observer side effect. Any
+  FUTURE runtime-owned attribute needs the same three-way check: (1) does the
+  mutation observer see it and mis-fire a fit-pin reset, (2) does React's own
+  reconciliation ever try to write the same thing (then it must be a
+  stylesheet rule, never inline), (3) does clearing it need an explicit
+  reposition call because no other mutation will trigger one.
+- **A class name is not a portable selector across the parse/DOM boundary.**
+  `optimisticStyle.ts` originally tried a class-target write as
+  `.<className> { … }`, reaching every element carrying the class in one
+  shot — this looked right in every unit test and was WRONG the first time it
+  ran against a real project. Studio's own PARSE names a CSS-module class one
+  way (`SMS_page__5638d`, read out of the source); **Vite's own CSS-modules
+  plugin** names the SAME class a completely different way at dev-server
+  build time (`_page_xxxxx_3`-shaped) — two independent hashing schemes over
+  one source file, with no reason to agree, and in the live frame's DOM they
+  did not. `.SMS_page__5638d` matched nothing; the frame never changed until
+  HMR landed. The fix: a class-target write previews element-scoped, exactly
+  like an inline write — stamping the ONE node the panel is editing, never a
+  class selector. `className` still crosses the wire but is read by nothing
+  on the runtime side; it is informational only. Any FUTURE feature that
+  wants "every element with class X" from inside a bridge frame needs the
+  frame to report ITS OWN class names back over the wire — Studio's parsed
+  name is never usable as a live-DOM selector.
+- **A live board frame IS a breakpoint frame — "non-base context" and "skip
+  the preview" are NOT the same condition.** `commitApi.ts`'s first version
+  gated `broadcastOptimisticStyle` on `activeContextId` being falsy, meaning
+  ANY non-null context — a breakpoint tab as much as a hover/focus condition
+  — turned the broadcast off. That is wrong for a breakpoint context: a
+  panel edit almost always happens WHILE a specific breakpoint's frame is
+  selected, so the inspector's active context is that breakpoint's context
+  for the common case, not an edge one — and the fix silently removed the
+  whole feature from its own main use case (proven live: a Width edit sent
+  no wire message at all). The correct split is by WHICH KIND of context is
+  active, not whether one is active: `selectionModel.ts`'s own derivation —
+  `activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab
+  : null)` — already tells a breakpoint context (`activeTab`, itself equal
+  to `activeBreakpointId` whenever it isn't `'desktop'`) from a state/
+  condition one (`activeConditionId`, validated against `site.conditions`).
+  A breakpoint context previews too, narrowed by `canvasFrameAdapterRegistry
+  .ts`'s per-registration `breakpointId` (`IframeFrameSurface.tsx`'s own
+  prop, in scope at every `registerFrameAdapter` call); only a genuine state/
+  condition context (`onCondition`) skips the broadcast — that ONE case is a
+  bridge frame's document not holding every pointer/focus state at once, not
+  "any context at all". `optimisticStructuralBroadcast.ts`'s
+  `broadcastOptimisticStyle(nodeId, patch, { breakpointId? })` is the layer
+  that does the filtering; `listFrameAdapters()` stays adapter-only (its 8
+  existing callers never need a breakpoint id) while
+  `listFrameAdapterRegistrations()` carries both — one registry, two derived
+  views, so they cannot drift apart.
 
 The Live tab is not this path: `CanvasLiveSurface` is a single portal-mode
 frame with `interaction="live"`, zoom locked at 100 %, and a Play toggle that
 hands every click to the prototype player by design.
+
+### `speed-06` — drag and drop into (and across) live frames
+
+The board notch's `useCanvasInsertionDrag.ts` is the ONE drag-to-canvas
+gesture (pointer events, not HTML5 DnD, so it can cross an iframe boundary —
+see that file's own doc for why). Before `speed-06` it had two independent
+gaps, both invisible until `run-project` became the trust-tier default:
+
+- **Asset-card drag start.** The Assets panel's `AssetCard` was click-to-insert
+  only — no pointer drag at all, in ANY frame mode. It now presses into the
+  SAME `useCanvasInsertionDrag` gesture the notch's primitives use
+  (`AssetsPanel.tsx` owns the one shared hook instance + overlay; the card
+  only gets an `onPointerDown`), with the same payload its click-insert
+  already builds.
+- **A parent-doc drag crossing into a bridge frame did nothing.** The relay
+  flag a drag sets on the parent `<html>` (`markCanvasPointerRelay`,
+  `canvasPointerRelay.ts`) was read only by the PORTAL relay
+  (`useIframeEventForwarding.ts`, forwarding an iframe-internal move back OUT
+  to the parent's `window`). A bridge frame's own runtime ALREADY forwards
+  every pointer event as a `pointer` message regardless of that flag
+  (`gestureForwarding.ts` doesn't know or care about a parent-doc drag), but
+  nothing on the parent replayed those messages onto the iframe element so
+  the drag session's `window` listeners would see them. `useBridgeFrameInteraction`
+  now does, as a third pointer case checked before hover/selection: when
+  `readCanvasPointerRelay(document)`'s pointer id matches the event's, `move`/
+  `up` are replayed on the iframe element (bubbling to `window`, the same
+  mechanism the pan replay already uses) instead of routed to
+  `onNodeHover`/`onNodePointerUp`. `readCanvasPointerRelay` is the ONE reader
+  both relays (portal-outbound, bridge-replay) share — see
+  `canvasPointerRelay.ts`'s own doc. **Known gap, not silently swallowed:**
+  the wire has no `pointercancel` phase (`gestureForwarding.ts` never taps
+  native `pointercancel`), so only `move`/`up` are relayed.
+
+**The bigger fix underneath both: a per-drag candidate SNAPSHOT, not a
+per-move DOM scan, in either mode.** `resolveCanvasPointerInsertionDrop` used
+to call `measureCanvasDropCandidates` — a full `querySelectorAll` plus one
+`getBoundingClientRect`/`getComputedStyle` per candidate — on every raw
+`pointermove`, and had no bridge-mode path at all (`resolvePortalDocument` is
+`null` for a Tier 2 frame, so the scan silently found zero candidates and
+every live-frame drop fell back to "page root"). Two changes:
+
+1. **`FrameDocumentAdapter` gained `measureDropCandidates()`** — same
+   synchronous-DOM-read-wrapped-in-a-resolved-Promise-vs-real-round-trip split
+   `measure()` already has. Bridge mode: the `dropCandidates`/
+   `dropCandidates:result` pair above. Portal mode: `collectDropCandidates`
+   (`@core/studio-runtime`, shared verbatim with the in-frame runtime — one
+   axis rule, `dropAxisRules.ts`, moved out of `canvasDomGeometry.ts` so both
+   sides can read it). Both return BODY-RELATIVE rects (`measure`'s own
+   coordinate space) and no `depth` — depth is a TREE property the caller
+   derives from `buildDepthMap`, which the adapter has no concept of.
+2. **`canvasInsertionDragSnapshot.ts`** (new) is what `useCanvasInsertionDrag`
+   now asks instead of scanning: `beginInsertionDragSnapshotSession()` measures
+   a frame's candidates LAZILY, the first time a drag actually visits it, caches
+   them, and re-measures only on that frame's own `hmr:after`/`frame:resize`
+   (bridge) or a native `scroll` on its document (portal only — a cross-origin
+   scroll has no wire signal yet, a real, documented gap). Converting a
+   body-relative rect into the resolver's own "frame-space" (unscaled,
+   viewport-local) unit system is ONE function,
+   `bodyRelativeRectToFrameSpace` (`canvasDomGeometry.ts`), reused for both
+   modes — the same "don't grow a second copy of ×zoom+offset arithmetic"
+   discipline `canvasOverlayGeometry.ts`'s own `project` already documents.
+   **The no-adapter fallback:** a viewport whose iframe has no registered
+   adapter (a hand-built test fixture; nothing in production leaves this
+   state) falls back to the original synchronous `measureCanvasDropCandidates`
+   scan — not a workaround, the same "nothing to measure" answer that
+   function already gave an iframe with no `resolvePortalDocument`.
+3. **Resolution itself is throttled to at most once per animation frame**,
+   with the LAST pointer position of whatever native moves arrived since the
+   previous tick (`useCanvasInsertionDrag.ts`'s own `pendingPoint`/
+   `pendingFrame` pair) — the ghost still follows every resolved frame's
+   pointer position (no "skip when unchanged" beyond the throttle itself: the
+   ghost's `x`/`y` have to keep moving even when the drop TARGET doesn't, so
+   `setDrag` runs once per throttled tick unconditionally). `pointerup` still
+   resolves SYNCHRONOUSLY, off whatever the snapshot already has — a very fast
+   flick-and-release into a bridge frame whose candidates are still in flight
+   commits to "page root", the same honest answer a pointer outside every
+   frame gets, not a hang.
+
+**Known, deliberately out-of-scope gap:** the ELEMENT REORDER drag
+(`useCanvasReorderDrag.ts`/`canvasDragSession.ts`'s `FrameCandidateIndex`,
+D2 G3's cross-frame board) still calls `measureCanvasDropCandidates` directly
+and is therefore STILL bridge-blind for that gesture — dragging an existing
+element across frames when one of them is a live Tier 2 frame silently finds
+zero candidates there, same failure mode this work order fixed for INSERTION.
+Not touched here: it is a materially larger, higher-risk refactor (an
+already-synchronous rAF loop that would need to become async-tolerant) that
+the work order this section describes explicitly scoped out. Flagged for a
+follow-up, not silently left broken.
+
+**Follow-up fix (same day) — a board can show more than one page's frames.**
+A live dogfood found the drop line always fell back to "page root", never a
+container, into a live frame that was NOT the store's currently active
+document. Root cause, proven by a dedicated round-trip test: resolution
+ALWAYS filtered candidates against `canvasPage` (the single active page),
+even when the hovered frame showed a DIFFERENT page — a board can have many
+simultaneously, and node ids never collide across pages, so every real
+candidate failed `canvasInsertionDragSnapshot.ts`'s `tree.nodes[id]` check
+and resolution fell back to "page root" of the WRONG page.
+`resolveCanvasPointerInsertionDrop` gained an optional
+`resolvePageForViewport(viewport) => Page | null`; when it names a page,
+THAT tree drives candidates, target resolution, and the page-root fallback's
+`rootNodeId` — not `canvasPage`. `useCanvasInsertionDrag.ts` supplies it by
+climbing `viewport.closest('[data-page-id]')` to `BoardFrameView.tsx`'s
+ALREADY-EXISTING stamp on its outer `.frame` wrapper (never a second copy —
+`framePoolMountReason.test.tsx`'s `sample()` reads every `[data-page-id]`
+element back through `readFrameMountReason`, and a mount-reason-less
+duplicate fails its "every frame answers" assertion). A successful drop
+whose resolved page differs from the active one calls
+`openPageInCanvas(resolved.pageId)` BEFORE the insert commits — every insert
+action writes through `mutateActiveTree`, so the active document has to
+already BE the target page or the write lands nowhere.

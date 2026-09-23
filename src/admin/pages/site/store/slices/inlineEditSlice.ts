@@ -59,16 +59,19 @@ interface InlineEditSlice {
   activeInlineEdit: ActiveInlineEdit | null
   /**
    * Start a session for `nodeId` in `breakpointId`'s frame (`frameId` when
-   * it's a board frame). No-ops when the module doesn't declare
-   * `inlineTextEdit`, the node has children (base.link renders children
-   * instead of `text`), the text prop is not writable back to source
-   * (`codeProps` — toasted, since the user double-clicked visible copy), the
-   * prop is dynamically bound, or the stored value isn't a string (corrupt
-   * tree → console.warn). Resolves `localeOverride` ONCE here (not re-derived
-   * per keystroke) by reading `frameId`'s `BoardFrame.axes.locale` against
-   * the board's current `previewAxes.locale` — see this slice's module doc.
+   * it's a board frame). Returns whether it actually started — `false` (a
+   * no-op) when the module doesn't declare `inlineTextEdit`, the node has
+   * children (base.link renders children instead of `text`), the text prop
+   * is not writable back to source (`codeProps` — toasted, since the user
+   * double-clicked visible copy), the prop is dynamically bound, or the
+   * stored value isn't a string (corrupt tree → console.warn). Resolves
+   * `localeOverride` ONCE here (not re-derived per keystroke) by reading
+   * `frameId`'s `BoardFrame.axes.locale` against the board's current
+   * `previewAxes.locale` — see this slice's module doc. `live-18`'s bridge
+   * frame caller needs the return value to answer the frame's
+   * `text:editStart` request; the portal double-click handler ignores it.
    */
-  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null) => void
+  startInlineEdit: (nodeId: string, breakpointId: string, frameId?: string | null) => boolean
   /** Live per-keystroke commit — one coalesced undo entry per session (default tree), or a direct mutation (locale-variant tree). */
   applyInlineEditValue: (value: string) => void
   /** Commit + close. Keystrokes already landed live; this ends session + burst. */
@@ -122,17 +125,17 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     const state = get()
     const localeOverride = resolveLocaleOverride(state, frameId)
     const node = resolveSessionNode(state, nodeId, localeOverride)
-    if (!node) return
+    if (!node) return false
     const def = registry.get(node.moduleId)
     const spec = def?.inlineTextEdit
-    if (!spec) return
+    if (!spec) return false
     // Sandboxed (untrusted plugin) modules render in a ModuleSandboxFrame, which
     // never receives the inlineEdit binding — so there'd be no contentEditable
     // element to focus/commit and the session would be stuck. Mirror
     // NodeRenderer's `shouldRenderSandbox` check and never start for them.
-    if (def?.editorRuntime?.sandbox && !def.trusted) return
+    if (def?.editorRuntime?.sandbox && !def.trusted) return false
     // A node rendering children doesn't render its text prop (base.link).
-    if (node.children.length > 0) return
+    if (node.children.length > 0) return false
     // Source-locked nodes — propagated from the page-parser's resolved-value /
     // `.map` / ternary / spread detection — are not editable inline. Keyed on
     // `lockReason` (not `locked` alone) so the manual DnD-only "layer lock"
@@ -142,9 +145,10 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
     // because it is the only one the user can mistake for a bug: they
     // double-clicked real copy that is plainly right there, and nothing
     // happened. (Double-clicking a container has no inline-edit contract at
-    // all, which needs no announcement.) `startInlineEdit` has exactly one
-    // caller — the canvas double-click handler — so a toast here is always a
-    // response to a real gesture, never programmatic noise.
+    // all, which needs no announcement.) `startInlineEdit` has two callers —
+    // the canvas double-click handler and, `live-18`, the bridge-frame
+    // interaction hook — so a toast here is always a response to a real
+    // gesture, never programmatic noise.
     // Asked of the TEXT PROP, not the node. A node can be structurally locked (a
     // ternary chose it, a `.map` made it) and still hold a perfectly writable
     // literal text child — that is the common case on an imported screen, and
@@ -159,17 +163,17 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
         body: `${capitalise(node.lockReason ?? 'it is computed in code')}. Edit it in the source file — the Properties panel shows where it comes from.`,
         location: 'canvas:inline-edit',
       })
-      return
+      return false
     }
     // A dynamically-bound prop isn't literal-editable — the binding would
     // overwrite every keystroke in the canvas preview.
-    if (node.dynamicBindings?.[spec.prop]) return
+    if (node.dynamicBindings?.[spec.prop]) return false
     const value = node.props[spec.prop]
     if (typeof value !== 'string') {
       console.warn(
         `[canvas] inline edit aborted: prop "${spec.prop}" on node "${nodeId}" is not a string`,
       )
-      return
+      return false
     }
     set((s) => {
       s.activeInlineEdit = {
@@ -186,6 +190,7 @@ export const createInlineEditSlice: EditorStoreSliceCreator<InlineEditSlice> = (
       // the same key (e.g. Properties-panel typing on the same prop).
       s._historyCoalesceKey = null
     })
+    return true
   },
 
   applyInlineEditValue: (value) => {

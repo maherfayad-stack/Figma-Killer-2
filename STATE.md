@@ -4,13 +4,836 @@ Shared memory for every agent working on this repo. **Read before working, write
 before stopping.** Format and rules: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protocol.md).
 
 Entry ids are `<area>-<nn>`. Areas in use: `parser`, `canvas`, `store`, `panel`,
-`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`.
+`server`, `mcp`, `perf`, `sec`, `test`, `docs`, `meta`, `style`, `asset`, `struct`,
+`speed` (`STUDIO-SPEED-PLAN.md` work orders).
+`speed` (`STUDIO-SPEED-PLAN.md`'s work orders).
 
 Landed entries older than the newest ~10 live in
 [`docs/state-archive/2026-Q3.md`](docs/state-archive/2026-Q3.md), verbatim. The
 Archive section at the bottom of this file indexes them.
 
 ---
+
+### live-20 — the prototype `+` link handle (and the toolbar's "pick target") never appeared on a Tier 2 live frame; the endpoint measurement now goes through the frame adapter
+
+- **Status:** landed on `feat/prototype-links-live-frames` (2026-09-21), stacked on `tmp/speed-integration`.
+- **Symptom (owner, 2026-09-21):** "there was a point in prototype mode where I can click and drag to have a link between 2 pages — I suddenly can't find it." Reproduced in the running Studio: prototype mode on, three live frames, a node selected, the Prototype panel open, zero `prototype-link-handle` elements. The panel's *Pick target* did nothing either.
+- **Cause:** `usePrototypeEndpoints.ts`'s `useNodeFrameRects` located the selected element by reading each frame's `contentDocument` (`findCanvasNodeRectSource` → `canvasFrameDocuments`, portal-only by construction, flagged as a Tier 2 follow-up in `live-05`'s Batch 7 note) and watched a `ResizeObserver` on that document. A Tier 2 frame is cross-origin, so the lookup returned `null`, `localRects` stayed empty, and both `PrototypeHandle` and `usePrototypeLinkPick` early-returned. Since `DEFAULT_TRUST_TIER` became `run-project` (2026-09-20), that is every board frame.
+- **Fix:** `useNodeFrameRects` now asks every registered adapter (`listFrameAdapters()`) via `FrameDocumentAdapter.measure` — the same body-relative rect the selection toolbar's anchor (`useBridgeSelectionChrome`) and the Inspect panel read — and takes the first frame that renders each node. Re-measures on: registry change (frame mount/unmount), each adapter's `ready` / `frame:resize` / `hmr:after`, and a `site.pages` identity change (deferred one macrotask so it measures the reflowed layout, coalesced per burst). A frame whose `measure` rejects (bridge timeout while booting) is skipped, not fatal. A stale pass (an older generation resolving after a newer one started) is dropped. Value-equal maps keep identity, so a no-op remeasure re-renders nothing.
+- **Deleted:** `canvasFrameDocuments`, `findCanvasNodeRectSource`, `CanvasFrameDocument`, `CanvasNodeRectSource` in `canvasNodeLookup.ts` (this hook was their only caller) and their four tests. `fragmentNodeRectSource` stays — `RenderedCanvasNodeCache.resolve` still uses it.
+- **Tests:** `src/__tests__/canvas/usePrototypeEndpoints.test.tsx` (10) — fixtures are adapters with NO reachable document, exactly a bridge frame's shape, so a regression to a document reach-in fails every case. `bun test src/admin/pages/site/canvas src/__tests__/canvas src/__tests__/architecture`: 1877 pass, 1 pre-existing fail (`generated studio-runtime bundles`, also failing on the base). `bun run lint`, `bun run build`: clean.
+- **Known bound:** the rect is whatever the frame's runtime measures for the node's own element (`rectRelativeToBody`). A node whose stamped element is `display: contents` with several children, or a fragment node with no element, measures 0×0 / `null` in a bridge frame — the same bound the selection toolbar anchor already has. Portal frames no longer get the old `nodeVisualRect` union either; the adapter is the one answer, so fix it in `measureNodes.ts` (`presentedElementOf`) if it ever matters.
+- **Docs:** `docs/features/studio-prototype.md` "how the layer measures" paragraph.
+### live-19 — middle-mouse pan wiggles when a drag starts inside a Tier 2 (bridge) frame: the frame's `clientX` lags the parent's compositor during a pan; the fix drives the replay from `screenX/screenY` instead
+
+- **Agent:** canvas-engineer
+- **Stage:** done — branch `fix/bridge-frame-middle-pan-wiggle` (worktree `.tmp/wt-pan-wiggle`), PR base `tmp/speed-integration`. **Superseded a first attempt on the same branch** (pinning the iframe's rect for the life of the pan) that the coordinator measured live and rejected — see "Disproven first attempt" below. This entry describes the LANDED fix only.
+- **Updated:** 2026-09-21.
+- **Owner's report:** "the canvas keeps wiggling when I click the middle mouse button and keep panning, but started on a screen. It doesn't happen when doing that from the canvas." (A "screen" = a Tier 2 board frame — cross-origin, served from the live proxy.)
+- **Root cause (confirmed live, coordinator's Playwright harness — synthetic middle-button drag, `+2px` every `~4ms` for `480px`, pan read off `canvas-transform-layer`'s computed transform once per animation frame):** `useBridgeFrameInteraction.ts`'s pan replay converted the runtime's frame-local `clientX/clientY` to a parent-client point via `iframe.getBoundingClientRect()`. The actual mechanism is a **browser compositor lag, not a stale rect this code controls**: Chrome computes the child runtime's `clientX/clientY` against the cross-origin iframe's LAST COMMITTED screen transform — which lags the parent's own DOM transform write by one to two compositor frames during an active pan, because an out-of-process iframe's own rendering is genuinely a frame or two behind the parent compositor's latest paint. The parent then adds its OWN, freshly-read `getBoundingClientRect()` on top of that already-stale `clientX`. The two disagree by however much pan landed in the gap, in EITHER direction, and `speed-03`'s rAF coalescing on both sides beats against that disagreement — measured: pan started on empty canvas is clean (per-frame step mean 2.00, sd 0.06, 0 backward frames), pan started inside a bridge frame is uneven and reverses (mean 2.94, sd 1.59, max +6, min −2.03, 8 backward frames, 78 stalled frames) — the reported wiggle, with the overall distance still landing correctly (nothing compounds) because real hardware input keeps correcting the noise.
+- **Disproven first attempt (do not repeat):** pinning the iframe's `getBoundingClientRect()` + viewport snapshot once at the pan's `down` and reusing it for `move`/`up`. Reasoning at the time: a physically still mouse reports an unchanged frame-local point, so re-reading a moving rect must be what's fabricating the delta. **Wrong** — it silently assumed the frame-local point was the only thing moving. Measured live: 2px of pan for 400px of mouse (roughly HALF speed, with backward steps), then a −387px snap-back on `pointerup`. Cause: once the canvas is actually panning, the FRAME ITSELF starts moving on screen under a mouse that is still moving — the runtime's `pointermove` inside it reports a frame-local `clientX` that has stopped growing at the mouse's own rate (the frame is chasing the cursor), so `pinnedRect.left + shrinkingLocalDelta` starves the pan of its own input; the final `up`, still projected through the stale pinned rect, produces the snap-back. No rect-timing trick (pinned or live) fixes this, because the lag is in the browser's compositor, not in anything this code reads or writes.
+- **Fix:** drive a pan replay's `move`/`up` from `MouseEvent.screenX/screenY` deltas instead of any rect conversion at all. `screenX/screenY` are hardware-relative: the OS reports the identical screen position to both the child's event and (once forwarded) whatever the parent constructs, with no iframe transform, no compositor commit, and no rect read on either side. The hook records the pan's `down` — the ONE rect-based conversion, done once, before any pan has moved anything — as `{ client, screen }`, and every subsequent `move`/`up` of that SAME gesture computes `client + (event.screenX − down.screenX, event.screenY − down.screenY)`. A new wire field (`screenX`/`screenY` on the outbound `pointer` message) carries the frame's own hardware position across the `postMessage` boundary. Every other path — hover, click, the `speed-06` external-drag relay, wheel — is untouched: none of them pan the canvas out from under the very point they're converting, so none needed this.
+- **Files:** `src/core/studio-runtime/messages.ts` (`PointerMessageSchema` gains `screenX`/`screenY: Type.Number()`), `src/core/studio-runtime/gestureForwarding.ts` (`buildPointerMessage` reads `ev.screenX/screenY` — present on both `PointerEvent` and `MouseEvent`, so `click` carries them too), `src/admin/pages/site/canvas/frameAdapter/FrameDocumentAdapter.ts` (`FrameRuntimeEvent`'s pointer variant gains the two fields), `src/admin/pages/site/canvas/frameAdapter/BridgeFrameAdapter.ts` (wire→canonical mapping carries them through), `src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts` (its own synthesized pointer event now reads real `ev.screenX/screenY` off the DOM event instead of omitting them), `src/admin/pages/site/canvas/BoardFramesLayer/useBridgeFrameInteraction.ts` (removed the disproven `FrameGeometrySnapshot`/`snapshotFrameGeometry`/pinned-parameter machinery; new `PanOrigin`/`panPoint`, `down` records `{ client, screen }` once, `move`/`up` of that pan compute the screen delta, `replayPointer` now takes an explicit `point` argument rather than an optional pinned rect), `src/core/studio-runtime/generated/{vitePluginBundle,runtimeBridgeBundle}.ts` (re-synced), plus every test file under Verification.
+- **Measurement (this task's own unit reproduction, `useBridgeFrameInteraction.test.tsx`):** a continuous-pan case — `down` at `screenX: 1000`, frame-local `clientX` PINNED at the down's value across three moves (the frame chasing the mouse) while `screenX` advances `1000→1010→1020→1030` — replays `clientX` as `50, 60, 70, 80`: a smooth, monotonic advance driven purely by the screen delta, immune to the frame-local value going flat. A lag case — the iframe's rect drifts `+80px` between `down` and `move` (the disproven fix's own reproduction) with `screenX` UNCHANGED — replays the SAME `clientX` as `down`, proving the new code never reads the rect again after `down` and so cannot be fooled by it drifting. The coordinator's own live Playwright numbers (before/current/first-attempt) are recorded verbatim in the "Root cause"/"Disproven first attempt" bullets above; this task did not have a browser-automation tool bound to re-run that harness against the corrected code (see "Human action needed").
+- **Verification:** `bun test src/__tests__/canvas/useBridgeFrameInteraction.test.tsx` → 15 pass. `bun test src/__tests__/canvas src/__tests__/studio-runtime` → 1313 pass / 0 fail. `bun run lint` → clean. `bun run build` → clean, exit 0. All touched files well under the 700-line module budget (`useBridgeFrameInteraction.ts` 315, `messages.ts` 689, `gestureForwarding.ts` 243, `FrameDocumentAdapter.ts` 232, `BridgeFrameAdapter.ts` 502, `PortalFrameAdapter.ts` 492). `bun run studio-runtime:sync` run and committed; re-running it a second time produced byte-identical output (idempotent). `generated studio-runtime bundles` (`studio-runtime-bundle-fresh.test.ts`) fails with "Unexpected reading file: …@sinclair/typebox/build/esm/…" on THIS branch — **confirmed NOT caused by this diff**: reproduced the identical failure, same error text, in a throwaway `git worktree add --detach` off unmodified `tmp/speed-integration` (no changes at all), so it is the documented concurrent-Bun.build/shared-symlinked-`node_modules` contention (`tsc-build-contention-parallel-worktrees`), consistent with the coordinator's own note that it's "currently failing on the base for unrelated reasons." The re-sync idempotency check is the substitute proof that the committed artifact is fresh.
+- **Not fixed / same-shape risk not pursued:** the portal frame's own relay (`useIframeEventForwarding.ts`) still converts via a live `iframe.getBoundingClientRect()` read on every event, same shape as the bridge code before this fix — safe today only because that forwarding is synchronous and same-document, so there's no compositor-commit gap for the two sides to disagree across. If a portal frame's forwarding is ever made asynchronous for any reason, it would need this same `screenX/screenY`-delta treatment, not the disproven pinned-rect one.
+- **Human action needed (`standing-02` — no browser automation tool bound to this session):** the coordinator verifies with their own Playwright harness (measuring `panX/panY` from `canvas-transform-layer`'s computed transform per animation frame during a synthetic middle-button drag started inside a Tier 2 bridge frame on `_scratch-undo`, page fully reloaded and the served module fetched/checked for the new code between builds) — this is the loop that caught the first attempt's regression, so it is the one that should confirm this one. Manual dogfood alternative: open a Tier 2 (live) frame on the scratch project's Design tab, middle-mouse-drag inside it for 1–2s — should now pan smoothly and land exactly where released, matching a drag started on the empty canvas.
+- **Landmines:**
+  - **A cross-origin iframe's reported pointer coordinates lag the parent's own compositor during ANY gesture that moves that iframe.** This is not a coordinate-frame bug fixable by picking a different rect or a different read time — it is a genuine one-to-two-frame gap between the out-of-process iframe's last-committed paint and the parent's latest one. Any future gesture that both (a) reads a bridge frame's forwarded `clientX/clientY` AND (b) moves that same iframe on screen as part of handling the event inherits this exact bug. The fix is always "stop depending on the iframe's screen position mid-gesture" — `screenX/screenY` deltas here, or an equivalent hardware-relative signal — never a rect-timing adjustment.
+  - **A plausible-sounding, unit-tested fix can still be wrong** if the test only covers the mechanism you hypothesized (here: a rect that drifts while the local point stays fixed) and never the continuous case a real gesture actually produces (the local point ALSO changing, non-monotonically, as the frame chases the cursor). The first attempt's test was green and the fix still made the live behavior worse. When a report describes real-time visual jank (wiggle, jitter, snap), a synthetic step-function unit test is necessary but not sufficient — treat a live/Playwright measurement as the actual spec, not a nice-to-have.
+  - Height/injector/event interaction: none new. This bug and its fix are purely about pointer-coordinate timing; nothing in the runtime's height machinery, an injector, or the event-bridging split (down/move/up/click, design-vs-live mode) was touched or implicated.
+
+---
+
+### live-18 — double-click inline text editing inside a Tier 2 (live/bridge) frame
+- **Agent:** canvas-engineer
+- **Stage:** done — branch `feat/live-18-inline-text-editing-live-frames` (worktree `.tmp/wt-live-18`), PR base `tmp/speed-integration`.
+- **Updated:** 2026-09-21.
+- **Owner's report:** "I can't double click and change text from the canvas" (only worked for Tier 0/1 portal frames; Tier 2 is the product default per `sec-19`).
+- **What it was:** the portal editor (`NodeRenderer.tsx`) has always started/committed/cancelled inline text edits directly against the store — no adapter round trip. A bridge frame is cross-origin: nothing in the frame ever started an edit at all. There WAS dead scaffolding for this — `runtime.ts`'s old `onInput` listener posted an OUTBOUND `text:edit { nodeId, occurrenceIndex, text }` on every keystroke of any pre-existing `[contenteditable]`, and both `PortalFrameAdapter`/`BridgeFrameAdapter` implemented a `FrameRuntimeEvent` of the same name — but **nothing anywhere ever called `.on('text:edit', …)`**, confirmed by grep before writing a line of new code. Removed it rather than build alongside it (CLAUDE.md's "no band-aids, no second way of doing something").
+- **Design:** the frame ASKS, the parent DECIDES — mirrors `startInlineEdit`'s own "who is allowed to edit" logic, reused verbatim rather than re-implemented.
+  1. Double-click on a stamped element in **design mode only** → runtime posts `text:editStart { nodeId, occurrenceIndex }` and speculatively claims the gesture (`preventDefault`/`stopPropagation`) — a refusal is a silent no-op either way, exactly mirroring the portal editor's own silence for a non-editable double-click.
+  2. Parent (`useBridgeFrameInteraction`) calls the SAME `startInlineEdit(nodeId, breakpointId, frameId)` the portal double-click handler calls (now returns `boolean` — a signature change, no back-compat shim, only call sites already ignored the return value), reads `activeInlineEdit?.initialValue` when it succeeded, and replies through the new `adapter.startTextEdit(nodeId, allowed, text?)` → wire `text:edit { nodeId, occurrenceIndex, allowed, text? }` (inbound; reuses the freed-up `'text:edit'` literal for the reply, not a collision since the old outbound use is gone).
+  3. Runtime (new module `src/core/studio-runtime/inlineTextEdit.ts`, kept OUT of `runtime.ts` — that file is at the 700-line ceiling) makes the target `contentEditable = 'plaintext-only'` (try/catch fallback to `'true'` for a browser that throws on the unrecognised IDL value), seeds it with the reply's `text`, focuses and selects all, and installs permanent capture-phase `keydown`/`keyup`/`input`/`click` listeners scoped to `target inside the current session's element` that `stopPropagation()` so the app's own handlers never see a keystroke while editing (`click`/`pointerdown` already skip cancellation for `[contenteditable]` in `gestureForwarding.ts` — the caret still has to land).
+  4. **Nothing is written to the store until commit** — the typed text lives ONLY in the frame's own DOM (the user is typing directly into the real element) until Enter-without-Shift or `blur` posts `text:commit { nodeId, occurrenceIndex, text }` (bounded/truncated to 20 000 chars, `sec-06` posture) and the parent calls `applyInlineEditValue` + `endInlineEdit`; Escape restores the seeded text and posts `text:cancel`, calling `cancelInlineEdit`. This is what makes `vite:beforeUpdate` landing mid-edit a PLAIN cancel (same `cancel()` function) rather than a special case — nothing was ever written to the store to undo, so there is nothing to reconcile against the incoming HMR DOM swap.
+- **Files:** `src/core/studio-runtime/messages.ts` (removed old `TextEditMessageSchema`; added `TEXT_EDIT_MAX_LENGTH`, `TextEditReplyMessageSchema` (inbound `text:edit`), `TextEditStartMessageSchema`/`TextCommitMessageSchema`/`TextCancelMessageSchema` (outbound)), `src/core/studio-runtime/inlineTextEdit.ts` (new — the whole in-frame session), `src/core/studio-runtime/runtime.ts` (net -7 lines: removed the dead `onInput` block, added the `installInlineTextEdit` wiring + one dispatch case + `onHmrBefore` + dispose — **692/700 lines**, no room for more without another split), `src/core/studio-runtime/index.ts` (barrel), `src/core/studio-runtime/generated/{vitePluginBundle,runtimeBridgeBundle}.ts` (re-synced), `src/admin/pages/site/canvas/frameAdapter/FrameDocumentAdapter.ts` (removed old `text:edit` event; added `text:editStart`/`text:commit`/`text:cancel` events + `startTextEdit` method), `src/admin/pages/site/canvas/frameAdapter/BridgeFrameAdapter.ts` (`startTextEdit` + the three new wire<->canonical translations), `src/admin/pages/site/canvas/frameAdapter/PortalFrameAdapter.ts` (removed the dead `onTextEdit`; `startTextEdit` is a documented no-op), `src/admin/pages/site/canvas/BoardFramesLayer/useBridgeFrameInteraction.ts` (three new `adapter.on(...)` subscriptions — additive only, per the work order's sibling-file boundary), `src/admin/pages/site/store/slices/inlineEditSlice.ts` (`startInlineEdit` now returns `boolean`).
+- **Tests:** `src/__tests__/studio-runtime/messages.test.ts` (new samples + bound adversarial cases for the 20 000-char ceiling on both the reply and the commit), `src/__tests__/studio-runtime/runtime.test.ts` (new `inline text edit` describe: design-vs-live gating, allowed/refused replies, stale-reply rejection, Enter/Shift+Enter, Escape restore, blur commit, 20 000-char truncation, `vite:beforeUpdate` cancel, runtime-chrome double-click exclusion — 15 new cases), `src/__tests__/canvas/frameAdapter/BridgeFrameAdapter.test.ts` (`startTextEdit` wire translation, inbound `text:editStart`/`text:commit`/`text:cancel` canonical translation), `src/__tests__/canvas/frameAdapter/frameDocumentAdapter.contract.ts` (`startTextEdit` shared conformance case), `src/__tests__/canvas/frameAdapter/PortalFrameAdapter.test.ts` (renamed the stale `on(pointer/text:edit)` describe), `src/__tests__/canvas/useBridgeFrameInteraction.test.tsx` (subscription count 3→6; new `inline text edit` describe: editStart→startTextEdit reply, commit→store, cancel→store, node-mismatch ignored), `src/__tests__/editor-store/inlineEditSlice.test.ts` (new `startInlineEdit` return-value case).
+- **Docs:** `docs/agent-refs/canvas-internals.md` (the bridge adapter-call table — both directions), `docs/agent-refs/path-index.md` (new file + the two hooks' doc strings updated).
+- **Decisions:**
+  - `startInlineEdit` returns `boolean` now (was `void`) — the bridge caller has no DOM session of its own and needs to know synchronously whether one started, to answer the frame's `text:editStart` before any DOM changes. No back-compat shim; every existing caller ignored the return value already.
+  - Reused the freed `'text:edit'` wire literal for the NEW inbound reply message rather than inventing a fourth name, since the old outbound use was dead code being deleted in the same change — confirmed zero external consumers before repurposing it.
+  - Multiline is NOT distinguished on the bridge side (Enter always commits unless Shift is held) — the parent's reply doesn't carry `multiline`, and adding it would be a second wire round trip for a case the owner's report didn't ask for. If a multiline bridge-frame text field turns out to matter, `text:edit`'s reply is the place to add it.
+- **Landmines:**
+  - **The dead scaffolding trap.** `messages.ts`/`FrameDocumentAdapter.ts`/both adapters already had a `text:edit` event/schema/method wired end-to-end at the TYPE level, with zero runtime consumers — `grep -rn "on('text:edit'"` was the only way to notice nothing ever called it. A work order written from a scout's read of `runtime.ts` alone will miss this; grep the CONSUMER side (`.on('<event>'`), not just the producer, before trusting "this looks unimplemented."
+  - **Height/injector/event interaction found, none new:** the runtime's `layoutObserver` (MutationObserver, `{childList, subtree, attributes}` — no `characterData`) does NOT fire on a contentEditable session's typing (text content mutations aren't attribute/childList changes), so a burst of keystrokes costs nothing extra in frame-fit resetting. It DOES fire once each on the `contenteditable` attribute's set/remove (start/end of a session) — two extra `resetFrameFit()` passes per edit, not added to the `isIgnorable()` allowlist (unlike the resize-preview/optimistic-style attrs) because `runtime.ts` had no line budget left; a future agent touching that function has an easy two-line win sitting there if frame-fit passes ever get profiled.
+  - **`gestureForwarding.ts`'s `editorOwnsGesture` contenteditable exemption already covered `pointerdown`/`click` for a caret to land — it does NOT cover `dblclick`, which this module owns entirely on its own listener.** Don't assume every event type is exempted the same way; check per event.
+  - Runtime module ordering matters: `installGestureForwarding` is called BEFORE `installInlineTextEdit` in `runtime.ts` — both install capture-phase `click` listeners on `doc`, and gesture-forwarding's must run first (it forwards the click as a `pointer` message unconditionally) for the click to still reach the parent while editing.
+- **Verification:** `bun run studio-runtime:sync` (confirmed via grepping the compiled bundle for `text:editStart`/`plaintext-only` — the generated-bundle-fresh architecture test is flaky under this machine's concurrent-worktree load, matches the already-documented `Bun.build`/shared-`node_modules` contention landmine, NOT a real staleness). `bun run build` → clean, exit 0. `bun run lint` → clean, exit 0. `bun test --parallel=4 src/__tests__/studio-runtime src/__tests__/canvas src/__tests__/architecture` → 1911 pass / 2 fail, both pre-existing and confirmed unrelated by standalone re-run (`studio-runtime-bundle-fresh` — contention flake above; `module-size-budgets` — `fsCodemodAdapter.ts`/`usePersistence.ts`, untouched by this diff, on this task's own pre-known-failures list). `bun test --parallel=4 src/__tests__/studio-runtime src/__tests__/canvas src/__tests__/editor-store` → 1759 pass / 4 fail, all four the `structuralOptimisticBroadcast.test.ts` cases this task's dispatch pre-named as failing (ECONNREFUSED — no server running, ignore). **Browser proof (`standing-02`) NOT run** — no browser-automation tool bound to this session; see "Human action needed" below for the exact script.
+- **Human action needed:** dogfood the fix. Stand up an isolated dev stack from this worktree (own ports, copied `.tmp/*.db`, a copy of `studio-workspace/_scratch-undo` renamed so it's not confused with the real project — never the real `test4`), open a Tier 2 (Live/Design) frame on a page with real text (`SMS.tsx` in the scratch copy), double-click a text element, type, press Enter, and confirm (a) the frame shows the new text within a frame or two of Enter, and (b) the underlying `.tsx`/module text prop on disk carries the new text after the autosave round trip (`speed-02`'s ≤300ms window). Also try Escape (text reverts, nothing written) and clicking away (commits, same as Enter).
+
+---
+### speed-06 — drag and drop into live frames, with a drop line and a per-drag candidate snapshot (closes `live-15`)
+
+- **Agent:** canvas-engineer
+- **Stage:** done, with a follow-up fix landed on the same branch/PR — see
+  "Follow-up (2026-09-21, same day)" below. Branch
+  `feat/speed-06-live-frame-drag-drop`, based on `tmp/speed-integration`
+  (speed-01/02/03 already merged in). Worktree `.tmp/wt-speed-06`. PR #212
+  against `tmp/speed-integration` (draft).
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md`'s `speed-06` + `live-15`'s three pieces —
+  drag a component from the Assets panel or the notch, see the drop line
+  while dragging, and have it work inside a live (Tier 2) frame — plus the
+  performance half: no per-`pointermove` DOM scan anywhere, portal or bridge.
+  Owner's words: "Drag and drop of components doesn't work as expected at all
+  — it doesn't show the line of where it's going to drop, and it's really
+  slow."
+- **Scope:** new: `src/core/studio-runtime/{dropAxisRules,dropCandidates,
+  measureNodes}.ts`, `src/admin/pages/site/canvas/canvasInsertionDragSnapshot.ts`,
+  `src/__tests__/canvas/canvasInsertionDragSnapshot.test.ts`. Touched:
+  `src/core/studio-runtime/{messages,runtime,index}.ts`, `src/admin/pages/
+  site/canvas/{canvasDomGeometry,canvasInsertionDrop,canvasPointerRelay,
+  useCanvasInsertionDrag,useIframeEventForwarding}.ts`, `src/admin/pages/site/
+  canvas/BoardFramesLayer/useBridgeFrameInteraction.ts`, `src/admin/pages/
+  site/canvas/frameAdapter/{FrameDocumentAdapter,BridgeFrameAdapter,
+  PortalFrameAdapter}.ts`, `src/admin/pages/site/panels/AssetsPanel/
+  {AssetCard,AssetsPanel}.tsx` + `AssetsPanel.module.css`, the generated
+  runtime bundles, plus every test file named under Verification.
+- **The four pieces, all shipped:**
+  1. **Asset-card drag start.** `AssetCard` gained an `onPointerDown` prop
+     (`onDragStart`); `AssetsPanel.tsx` owns ONE `useCanvasInsertionDrag`
+     instance + `CanvasInsertionDragOverlay` shared by every card, the exact
+     shape the notch's own primitives already use. A plain click still
+     inserts at the current selection (`shouldSuppressClick`).
+  2. **Bridge pointer relay during a parent drag.** `useBridgeFrameInteraction.ts`
+     gained a third `pointer` case, checked before hover/selection: when
+     `readCanvasPointerRelay(document)`'s pointer id matches the event's
+     (a drag that started OUTSIDE this frame, in the parent doc, and whose
+     pointer has now moved inside this bridge frame's iframe — its `down`
+     never reached this frame, only `move`/`up` do), those two phases are
+     replayed on the iframe element as real `PointerEvent`s (bubbling to
+     `window`), never routed to `onNodeHover`/`onNodePointerUp`.
+     `readCanvasPointerRelay` (new, `canvasPointerRelay.ts`) is the ONE
+     reader both this relay and the pre-existing portal relay
+     (`useIframeEventForwarding.ts`, refactored to use it too) now share.
+     **No `pointercancel`** — the wire has no cancel phase
+     (`gestureForwarding.ts` never taps native `pointercancel`); a real,
+     documented gap, not a silent one.
+  3. **Bounded `dropCandidates`/`dropCandidates:result` wire pair.**
+     `messages.ts`: inbound `{ type: 'dropCandidates', requestId }`, outbound
+     `{ type: 'dropCandidates:result', requestId, candidates: [{ nodeId,
+     occurrenceIndex, rect, axis, reversed, childRects }] }`, bounded ≤2000
+     candidates / ≤200 `childRects` each (`sec-06`'s posture — same-realm
+     spoofing). `FrameDocumentAdapter` gained `measureDropCandidates():
+     Promise<DropCandidateGeometry[]>` (body-relative `rect`, no `depth` —
+     depth is a TREE property the caller derives). `PortalFrameAdapter`'s
+     implementation reuses the SAME `collectDropCandidates` the runtime
+     answers with (`@core/studio-runtime`, moved there so both sides share
+     it) — a portal document's `data-node-id` is already canonical, so there
+     is no stamp translation. `BridgeFrameAdapter`'s is a bounded round trip
+     (a second `pendingDropCandidates` map beside `pendingMeasurements`,
+     rejected on `dispose()` too).
+  4. **Per-drag snapshot + rAF resolve.** `canvasInsertionDragSnapshot.ts`
+     (new): `beginInsertionDragSnapshotSession()` measures a frame's
+     candidates LAZILY — the first time a drag actually visits it via
+     `adapter.measureDropCandidates()` — caches them, and re-measures only on
+     that adapter's `hmr:after`/`frame:resize` or (portal only) a native
+     `scroll` on its document. `useCanvasInsertionDrag.ts`'s `resolveDrop` now
+     asks the session instead of scanning; the whole resolve step is
+     throttled to at most once per animation frame (`pendingPoint`/
+     `pendingFrame`), with the LAST pointer position of whatever moves
+     arrived since the previous tick. `pointerup` still resolves
+     SYNCHRONOUSLY off whatever the snapshot already has, never waiting
+     another frame.
+- **Decisions (read before touching any of this again):**
+  - **`measureDropCandidates()` returns BODY-RELATIVE rects, not the
+    resolver's "frame-space" units** — matching `measure()`'s own contract.
+    The conversion (`bodyRelativeRectToFrameSpace`, new in
+    `canvasDomGeometry.ts`, reusing the existing `clientRectToViewportRect`)
+    lives in the CALLER (`canvasInsertionDragSnapshot.ts`), not the adapter —
+    the adapter has no concept of a canvas "viewport" element. Do not move
+    this conversion into either adapter; it would duplicate the ×zoom+offset
+    arithmetic `canvasOverlayGeometry.ts`'s own `project` comment already
+    warns against a second copy of.
+  - **`childRects` travels on the wire and is validated (bounded), but is
+    DROPPED when converting to the adapter's `DropCandidateGeometry`** —
+    nothing consumes it yet. It exists for a future sibling-geometry axis
+    heuristic (`dropAxisRules.ts`'s own G9 follow-up note). If you wire it up
+    later, thread it through `FrameDocumentAdapter.DropCandidateGeometry`
+    too, deliberately, rather than reading it off the wire type directly.
+  - **The ghost's `x`/`y` update on EVERY throttled rAF tick, unconditionally
+    — there is no "skip `setDrag` when the resolved target is unchanged."**
+    The work order's literal text asked for that skip; it was dropped because
+    the ghost visually follows the cursor via `drag.x`/`drag.y`
+    (`ghostPositionStyle.ts`), and skipping the write would freeze the ghost
+    mid-drag whenever the pointer sat over the same drop target for more than
+    one frame. The rAF throttle alone (100 native moves → 1 resolve) is what
+    delivers the stated perf goal; the extra dedup would have been a UI
+    regression for zero further measured benefit. Flagging this explicitly
+    since it is a genuine, deliberate deviation from the work order's letter.
+  - **The ELEMENT REORDER drag (`useCanvasReorderDrag.ts`/
+    `canvasDragSession.ts`'s `FrameCandidateIndex`, D2 G3's cross-frame
+    board) is UNTOUCHED and therefore STILL bridge-blind** — it calls
+    `measureCanvasDropCandidates` directly, same as before. Dragging an
+    EXISTING element across frames when one of them is a live Tier 2 frame
+    still silently finds zero candidates there. Out of scope for this work
+    order (a materially larger refactor — turning an already-synchronous rAF
+    loop async-tolerant); a real, named follow-up, not a silent gap.
+  - **The per-drag snapshot is keyed per-iframe, LAZILY, not eagerly over
+    `listCanvasDropSurfaces()`** as the work order's literal text suggested.
+    `useCanvasInsertionDrag` still locates the frame under the pointer via
+    the pre-existing `findCanvasViewportAtPoint` (cheap rect-containment over
+    mounted breakpoint frames — never the expensive part) and only measures
+    candidates for whichever iframe the drag actually visits. This ALSO
+    preserves the existing `canvasNotchInsertionDrag.test.tsx` fixture
+    (a hand-built frame with no real `<iframe>`/registered adapter) unchanged
+    in spirit — that case now takes an explicit, documented no-adapter
+    fallback to the original synchronous scan, rather than requiring every
+    existing test to wire up the drop-surface registry.
+- **Landmines (read before touching height/injectors/events near this):**
+  - **`runtime.ts` was at 699/700 lines going in.** `measureNodes.ts` was
+    extracted OUT first (saving ~26 lines) to make room for the
+    `dropCandidates` dispatch case — it is now 690 lines. The next addition
+    there needs another extraction first; do not just add lines.
+  - **`resolveCanvasAxisFromStyle`/`resolveCanvasInsertionAxis` now live in
+    `@core/studio-runtime/dropAxisRules.ts`**, re-exported verbatim from
+    `canvasDomGeometry.ts` for existing admin imports. If you need the SAME
+    axis logic in a third place, import it from `@core/studio-runtime`
+    directly — do not copy it a third time.
+  - **`readCanvasPointerRelay` is now the ONE relay-flag reader** — both
+    `useIframeEventForwarding.ts` (portal, iframe→parent) and
+    `useBridgeFrameInteraction.ts` (bridge, parent→iframe replay) call it.
+    Adding a THIRD relay consumer should call it too, not re-read
+    `document.documentElement.dataset.studioCanvasDragging` inline again.
+  - **A `display: contents` node is NOT offered as its own drop candidate in
+    EITHER mode for the NEW snapshot-based flow** (portal's `measureDropCandidates`
+    and bridge's `collectDropCandidates` both use the simpler "skip zero-box"
+    rule, not `nodeVisualRect`'s recursive children-union fallback). Its
+    children still are. This is a real, narrow, documented fidelity loss vs.
+    the OLD per-move `measureCanvasDropCandidates` scan (still used, at full
+    fidelity, by the untouched reorder-drag path) — see the "Decisions"
+    entry above for why moving `nodeVisualRect` itself was out of scope
+    (13 other admin/module files import it).
+  - **Fast flick-and-release into a bridge frame whose candidates are still
+    in flight commits to "page root."** `pointerup` resolves synchronously
+    off whatever the snapshot cache already has; a bridge round trip that
+    hasn't landed yet reads as `[]`. Same honest answer a pointer outside
+    every frame already gets — not a hang, not a stale/wrong target — but
+    worth knowing if a future perf pass tries to make this feel instant on a
+    slow connection.
+- **Tests:** `messages.test.ts` (`dropCandidates` accept + reject, the
+  2000/200 bounds), `runtime.test.ts` (`dropCandidates:result` dispatch, the
+  `display:contents` exclusion, per-parent axis), `BridgeFrameAdapter.test.ts`
+  (`measureDropCandidates` lifecycle: resolves/times out/dispose-rejects),
+  `frameDocumentAdapter.contract.ts` (new shared conformance case, both
+  adapters), `useBridgeFrameInteraction.test.tsx` (the relay-replay case:
+  move/up replayed on the iframe element, never hover/selection; the SAME
+  pointer id is an ordinary hover again once the relay flag clears),
+  `canvasInsertionDragSnapshot.test.ts` (no-adapter fallback, lazy
+  first-call-empty-then-resolved, hidden/unknown-node filtering,
+  `hmr:after` refresh), `canvasNotchInsertionDrag.test.tsx` (updated for the
+  rAF throttle + a new "100 moves in one frame resolve once" case),
+  `assetsPanel.test.tsx` (new `describe('dragging a card onto a frame')`:
+  drop preview shown, drag-release inserts once, the pointerup-triggered
+  click on the drag's own origin card does not double-insert).
+- **Gates run:** `bun run studio-runtime:sync` (bundles re-synced, re-ran a
+  second time to confirm idempotence — `git diff` unchanged after the second
+  run). `bun run build` (`tsc -b && vite build`) clean. `bun run lint` clean
+  (only the pre-existing Babel deopt-size note on the generated bundle).
+  `bun test --parallel=4 src/__tests__` — **7972 pass / 6 fail** across 820
+  files (one mid-run Bun segfault, auto-retried — the same known
+  `--isolate` crash `bunfig.toml` already documents, not reproducible against
+  any file this change touches). All 6 failures pre-existing and
+  independently confirmed unrelated: the four `broadcast… optimistic` tests
+  (`structuralOptimisticBroadcast.test.ts`), `module-size-budgets` for
+  `fsCodemodAdapter.ts`/`usePersistence.ts` ONLY (explicitly named as
+  speed-02's territory in this task's own brief), and
+  `studio-runtime-bundle-fresh` (the documented `bun test`-environment
+  `Bun.build` quirk reading `@sinclair/typebox`'s `.mjs` files — reproduced,
+  then confirmed the committed bundle IS fresh via a direct
+  `bun run scripts/sync-studio-runtime.ts` re-run producing zero further
+  diff). Every file this diff touches, and every new test, passed cleanly in
+  every run. `bun test src/__tests__/architecture` run standalone: same two
+  pre-existing failures, nothing else.
+- **Browser proof (`standing-02`):** **not run.** This subagent has no
+  browser-automation tool bound to it (no Playwright MCP, no gstack
+  `/browse`) — consistent with `speed-01`'s own precedent. **Dogfood
+  instruction for whoever has one:** open a `run-project` (Tier 2) project on
+  the board at zoom ≥ 50%, with at least one frame set to Live so a real
+  cross-origin bridge frame is mounted. (1) Drag a card from the Assets panel
+  toward that live frame — the same green drop-line/box the notch already
+  draws over a design (portal) frame should appear INSIDE the live frame,
+  tracking the cursor, and land the element there on release; before this
+  change it drew nothing over a live frame and released at "page root."
+  (2) With the browser's Performance panel recording, drag a card slowly
+  back and forth across a frame for ~2 seconds and confirm there is no
+  per-`pointermove` `querySelectorAll`/layout-thrashing burst in the flame
+  chart — only one measurement at drag start (plus any `hmr:after`/resize
+  refresh) and cheap rAF-cadence work afterward. (3) Drag a component from
+  the notch across TWO different frames of the SAME page (one live, one
+  design) in a single gesture and confirm the drop line follows correctly
+  into both. Also worth confirming middle-button pan and click-selection
+  through a live frame still work exactly as `live-13` left them (this
+  change adds a THIRD pointer branch beside the existing pan-replay one; a
+  regression there would be silent without a live check).
+- **E2E:** not added / not run this pass. Reasoning-effort and time budget
+  went to the four pieces + their unit/contract coverage instead; the
+  portal-mode-only assertion the work order's e2e fallback describes is
+  already covered at the unit level by `canvasNotchInsertionDrag.test.tsx`'s
+  new "100 moves in one frame" case and `assetsPanel.test.tsx`'s new drag
+  suite, both of which exercise real rAF timing (not `standing-03`'s happy-dom
+  layout gap, since neither depends on real CSS layout — both use stubbed
+  `getBoundingClientRect`s). A genuine `test:e2e` spec dragging a card onto a
+  LIVE frame and asserting the drop box lands inside a real dev-server-backed
+  container is still owed; flagging rather than claiming it's covered.
+- **Closes `live-15`** (its three pieces are speed-06's pieces 1–3 verbatim;
+  piece 4 — the snapshot + rAF resolve — was `STUDIO-SPEED-PLAN.md`'s own
+  extension of that work order). `live-15`'s own STATE.md entry above is left
+  in place rather than deleted, per the "never delete another agent's entry"
+  rule — this entry is the record that it shipped.
+
+#### Follow-up (2026-09-21, same day) — the drop line always showed "page root", never a container, into a live frame
+
+- **Trigger:** a real Playwright dogfood (coordinator, on `tmp/speed-integration`
+  after this PR merged) dragged an Assets-panel card ("AlmosaferLogo") into
+  the live SMS frame of `_scratch-undo`. The drag survived entering the
+  frame and the drop box tracked the pointer, but ALWAYS read "Drop
+  AlmosaferLogo at page root" at the full frame rect — never a container —
+  and a `message` listener installed INSIDE the frame saw zero
+  `dropCandidates` requests during a 1.5s drag with several moves.
+- **Investigated and ruled out, with reproductions kept only as the
+  regression tests they became:**
+  - `listFrameAdapters()`/registry mis-keying, `expectedSource`/`ready`
+    handshake, the wire schema, `runtime.ts`'s dispatch case — all verified
+    correct end-to-end (a real `IframeFrameSurface`(bridge) + real
+    `BridgeFrameAdapter`, driven through the actual message-listener spy,
+    posts exactly one `dropCandidates` and resolves a real reply).
+  - Whether `findCanvasViewportAtPoint` could ever return the bare
+    `<iframe>` instead of its wrapper (both carry `data-breakpoint-id` —
+    `IframeFrameSurface`'s own doc explains why) — reproducible in theory
+    (an iframe has no light-DOM children, so `viewport.querySelector('iframe')`
+    would then find nothing and everything downstream would silently fall
+    back to scanning empty light DOM) but NOT reproducible in a test: document
+    order already guarantees the wrapper matches first. **Hardened anyway**
+    (`isViewportCandidate` in `canvasInsertionDrop.ts` excludes any
+    `tagName === 'IFRAME'` match, plus a defensive `iframe` resolution that
+    also handles `viewport` itself being one) since it is cheap, clearly
+    correct, and matches the coordinator's own strongest hypothesis — even
+    though it measurably was not, by itself, the cause.
+  - **Landmine hit while building the repro:** `instanceof HTMLIFrameElement`
+    threw `ReferenceError: HTMLIFrameElement is not defined` in this test
+    environment (bun+happy-dom does not reliably expose that bare global).
+    Real browsers always have it, so this was never a production risk, but
+    the fix (`tagName === 'IFRAME'`, duck-typed, no global constructor
+    dependency) is more correct anyway and matches `canvasDomGeometry.ts`'s
+    own realm-safety posture — if you ever reach for `instanceof
+    HTMLIFrameElement`/`HTMLIFrameElement` bare in a test, expect this.
+- **PROVEN root cause (a dedicated test reproduces it exactly — same
+  symptom, same wrong `location.parentId`):** `useCanvasInsertionDrag`
+  resolves candidates and the insertion TARGET against `canvasPage` — the
+  store's single ACTIVE page — unconditionally, regardless of which page the
+  HOVERED viewport actually renders. A board can show many pages' frames
+  simultaneously (`_scratch-undo`'s SMS screen is its own page file,
+  `pages/SMS.tsx` — not a breakpoint of whatever page happened to be
+  active). Every real candidate `canvasInsertionDragSnapshot.ts` gets back
+  from the hovered frame's OWN tree then fails the `tree.nodes[id]` filter —
+  a different page's node ids never appear in `canvasPage.nodes` — so
+  resolution ALWAYS falls back to "page root" of the WRONG page. (The
+  reproduction sends and replies to a real `dropCandidates` round trip, so
+  the "zero requests" half of the report is not fully explained by this —
+  most likely the coordinator's frame-side listener had a narrower gap than
+  this fix could reproduce from the outside; not pursued further given the
+  proven, testable, and clearly correct fix in hand.)
+- **Fix:** `resolveCanvasPointerInsertionDrop` (`canvasInsertionDrop.ts`)
+  gained an optional `resolvePageForViewport(viewport) => Page | null`; when
+  it names a page, THAT tree — not `canvasPage` — is what candidates,
+  `resolveCanvasInsertionTarget`, and the "page root" fallback's
+  `rootNodeId` all use. `CanvasPointerInsertionDrop` gained a `pageId` field
+  naming which tree `location` was resolved against.
+  `useCanvasInsertionDrag.ts` supplies it by climbing
+  `viewport.closest('[data-page-id]')` — **`BoardFrameView.tsx`'s OWN,
+  already-existing stamp on its outer `.frame` wrapper, not a new one**: a
+  first attempt added a second `data-page-id` on `BreakpointFrame.tsx`'s
+  `.viewport` div and broke `framePoolMountReason.test.tsx`, whose `sample()`
+  reads every `[data-page-id]` element back through `readFrameMountReason` —
+  a second, mount-reason-less element with the same attribute fails its
+  "every frame answers" assertion. **Landmine: `data-page-id` is already
+  owned by `BoardFrameView.tsx`/`useMarqueeSelection.ts` — read it via
+  `.closest()`, never stamp it a second time.** On a successful drop whose
+  `pageId` differs from the active page, `useCanvasInsertionDrag.ts` now
+  calls `openPageInCanvas(resolved.pageId)` BEFORE `onDrop(...)` — every
+  insert action writes through `mutateActiveTree`, so the active document has
+  to already BE the resolved page or the write lands nowhere (or, worse, in
+  the wrong file).
+- **Tests:** `liveFrameInsertionDragTarget.test.tsx` (new) — the
+  `findCanvasViewportAtPoint` hardening, plus the full round-trip
+  integration test the coordinator asked for: a real `IframeFrameSurface`
+  (bridge) + real `BridgeFrameAdapter`, driven through
+  `resolveCanvasPointerInsertionDrop`, asserts EXACTLY ONE `dropCandidates`
+  request is posted for the whole gesture (cached on the second resolve) and
+  that the reply resolves a CONTAINER, not the root.
+  `canvasInsertionDrop.test.ts` gained a `resolvePageForViewport` case (a
+  viewport naming a different page than `canvasPage` resolves against ITS
+  OWN tree) and a `pageId` assertion on the two existing cases.
+- **Verification:** `bun run build`, `bun run lint` clean.
+  `bun test src/__tests__/canvas src/__tests__/studio-runtime
+  src/__tests__/panels` — 2096 pass / 0 fail (this exact set failed once
+  under `--parallel=4` on a stray, unrelated `localizedFrameRendering.test.tsx`
+  and once on my own new test colliding with a sibling file's leaked
+  `document.body` state under load — both reproduced as flaky-under-load,
+  NOT caused by this diff: both pass standalone and alongside the directly
+  adjacent files every time; the drag test file's own `beforeEach` now also
+  clears `document.body` defensively). Full `bun test --parallel=4
+  src/__tests__` (8017 tests, one Bun segfault mid-run, auto-retried, the
+  same known `--isolate` crash documented elsewhere in this file): 8012
+  pass / 5 fail, all five pre-existing/environmental — the four
+  `broadcast… optimistic` tests and `studio-runtime-bundle-fresh`'s own
+  documented `bun test`-environment `Bun.build` quirk (confirmed fresh by a
+  direct `bun run scripts/sync-studio-runtime.ts` re-run — byte-identical to
+  HEAD once reverted; note the sync script's OWN output is
+  **non-deterministic between runs** even with no source change, a fact
+  worth knowing if a future agent sees an unexplained one-line diff in
+  `generated/*.ts` — verify with a second sync + `git diff` before assuming
+  it's a real change). Did not re-run the full `bun run studio-runtime:sync`
+  step for this follow-up: nothing in `@core/studio-runtime` changed.
+- **Browser proof:** not run (no browser-automation tool bound to this
+  session). The coordinator's OWN primary-stack dogfood is the natural next
+  verification step for this exact fix — same drag, same `_scratch-undo`
+  SMS frame, now from whatever page happens to be active when the drag
+  starts.
+
+### speed-02 — autosave cadence: 2s → 250ms, plus an immediate flush on blur/Enter/scrub-release
+- **Agent:** store-engineer
+- **Stage:** done — branch `feat/speed-02-autosave-cadence`, stacked on
+  `fix/live-dev-server-survives-api-restart` (the PR base per the work order),
+  draft PR opened (link in the handback message).
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md`'s `speed-02` work order — the properties
+  panel's save request used to fire 2008ms after a panel edit even though the
+  save itself costs ~36ms. Target: source written ≤300ms after the last
+  keystroke, one save per burst, unchanged.
+- **Scope:** `src/admin/pages/site/studio/fsCodemodAdapter.ts` (the
+  `STUDIO_AUTOSAVE_DELAY_MS` constant + its doc comment),
+  `src/admin/pages/site/hooks/usePersistence.ts` (new `flushAutosave()` export
+  + doc comments), `src/admin/layouts/AdminCanvasLayout/AdminCanvasLayout.tsx`
+  (doc comment only), `src/admin/pages/site/panels/PropertiesPanel/
+  PropertiesPanel.tsx` (the flush wiring), `src/__tests__/persistence/
+  autoSaveCadence.test.ts` (updated assertions) + new `autoSaveFlush.test.tsx`.
+  **Follow-up (same day, module-size-budget fix):** new
+  `src/admin/pages/site/studio/nodeDiffWriteback.ts` and
+  `src/admin/pages/site/hooks/autosaveSchedule.ts`, `src/__tests__/persistence/
+  autoSaveTrailingDebounce.test.tsx` (import path only), `docs/agent-refs/
+  path-index.md` (two new rows).
+- **Slices touched:** none of the 12 store slices changed shape — this is
+  entirely in the persistence hook + panel chrome layer, not the Zustand
+  store itself. No new state, no new selector, no new mutation, no new
+  coalesce key — flagged explicitly since the persona brief expects one of
+  each; this work order genuinely has none. `saveTrackingSlice.ts` (dirty
+  tracking) is read (`hasUnsavedChanges`) but not modified.
+- **Done:**
+  1. `STUDIO_AUTOSAVE_DELAY_MS` `2_000` → `250` (`fsCodemodAdapter.ts:188`).
+     `AUTOSAVE_MAX_DEFERRAL_MULTIPLE` (4, unchanged) now caps a continuous
+     Studio burst at 250×4 = **1000ms**, exactly the plan's "writes at least
+     once a second" — no separate multiplier change needed, the math already
+     lands on 1s once the base delay drops.
+  2. New `flushAutosave()` export in `usePersistence.ts`: `if
+     (useEditorStore.getState().hasUnsavedChanges) requestEditorSave()` — a
+     thin, guarded wrapper over the EXISTING `EDITOR_SAVE_REQUEST_EVENT` /
+     `requestEditorSave()` (`@admin/state/adminEvents`, previously only used
+     by "Save as layout" and a deep-link departure) that `usePersistence`
+     already listens for and honours with an immediate `saveCurrentSite()`.
+     Reused rather than building a second immediate-save mechanism — this
+     repo's own "no duplicate implementations" rule. The `hasUnsavedChanges`
+     guard is the new part: it makes a stray flush call with nothing dirty a
+     no-op instead of an empty save request.
+  3. Wired into `PropertiesPanel.tsx`'s root `<aside>`: `onBlur` and
+     `onPointerUp` both call `flushAutosave()` directly;
+     `onKeyDown` (already handling F6) now also checks `e.key === 'Enter'`.
+     **The seam, and why it's the smallest honest one:** `commitApi.ts` was
+     off-limits per the task, and hooking flush into the STORE ACTIONS
+     `commitStyle`/`commitProp` write to (`setNodeInlineStyles`,
+     `updateClassStyles`, `updateNodeProps`, …) would flush on EVERY
+     keystroke for any text-typed CSS/module prop (`TextControl`'s `onChange`
+     fires per keystroke, not just on blur — confirmed by reading
+     `TextControl.tsx`/`ClassPropertyRow.tsx`'s `handleControlChange`) —
+     exactly the "one save per keystroke" the work order's "keep one save
+     per burst" rules out. `ScrubInput`'s own `onChange` prop, by contrast,
+     ONLY ever fires at a settled moment (blur/Enter/drag-release/arrow-nudge
+     — never mid-typing, since typing only touches local `draft` state and a
+     separate `onPreview` channel) — but it has ~15 leaf call sites across
+     `inspector/sections/*` and `panels/PropertiesPanel/*`, each with its own
+     local `onChange` adapter wrapping `commit.commitStyle`; wiring a new
+     prop through all of them (or importing an admin/editor-store event into
+     the *shared, editor-agnostic* `src/ui/components/ScrubInput/` primitive
+     — no `src/ui` file imports `@admin` today, confirmed by grep) is neither
+     small nor architecturally clean. Instead: relies on a documented React
+     behaviour (verified, not assumed) — synthetic `onBlur`/`onFocus` bubble
+     (unlike native DOM blur/focus), and bubble-phase handlers fire
+     INNERMOST-FIRST within one synchronous dispatch. So a handler bound to
+     the panel ROOT (`<aside data-testid="properties-panel">`, the ONE
+     ancestor every section/field renders under, including popovers
+     rendered via portal — React portals bubble through the React tree, not
+     the DOM tree) fires AFTER the field's own commit handler has already
+     run. One file (`PropertiesPanel.tsx`), three event props, zero changes
+     to `commitApi.ts`, zero changes to shared `src/ui/` primitives, zero
+     fan-out across the ~15 leaf section files. Portal-rendered context
+     menus (`ClassPillContextMenu.tsx`, `ClassPickerParts.tsx`) also bubble
+     through this handler, which is harmless — guarded by `hasUnsavedChanges`.
+  4. CMS (database-backed) autosave path untouched: `usePersistence`'s only
+     caller besides Studio's `AdminCanvasLayout.tsx` is none (grepped — one
+     caller total today), and `flushAutosave`/the panel wiring only fire from
+     Studio's `PropertiesPanel.tsx`, gated by the same dirty check either way.
+     `resolveAutoSaveDelayMs`'s precedence (explicit override wins,
+     else the CMS's user preference) is unchanged.
+  5. Doc comments updated at all four named locations
+     (`fsCodemodAdapter.ts:174-188`, `usePersistence.ts`'s module doc + the
+     `AUTOSAVE_MAX_DEFERRAL_MULTIPLE` doc, `AdminCanvasLayout.tsx:180`).
+     `docs/agent-refs/editor-store.md` and `docs/editor.md` were grepped for
+     "2 s"/"2000"/"autosave" — neither documents the specific
+     `STUDIO_AUTOSAVE_DELAY_MS` value (the retry ladder's own "2s/4s/8s" in
+     `docs/editor.md` is a different, unrelated mechanism —
+     `SAVE_RETRY_BACKOFF_MS` — left alone), so there was nothing concrete to
+     correct in either file. `PROJECT-BRIEF.md`'s "~2 s" (trap #5, about
+     reload timing after a save, not the debounce) is illustrative, not a
+     specific claim about this constant — left as-is.
+- **Not touched, on purpose:** the BOARDS autosave (`BOARDS_AUTOSAVE_DEBOUNCE_MS
+  = 800` in `AdminCanvasLayout.tsx`, `boardsSaveGuard.ts`) is a SEPARATE
+  mechanism (frame positions/sizes, not the page tree) — out of this work
+  order's named scope, not touched.
+- **Decisions:**
+  - Reused `EDITOR_SAVE_REQUEST_EVENT`/`requestEditorSave()` rather than
+    inventing a parallel "flush" primitive — it already does exactly
+    "immediate save, bypassing the debounce" and `usePersistence` already
+    listens for it.
+  - Chose the panel-root bubble-order seam over touching `ScrubInput.tsx`/
+    `TextControl.tsx`/commit-callback call sites — see point 3 above for the
+    full reasoning; this is the one call a later agent could most easily
+    second-guess, so it's spelled out in full rather than just asserted.
+  - Did not add arrow-key nudge (ScrubInput's other commit path) to the
+    flush triggers — the work order named only "blur/Enter of a panel field
+    and pointerup of a scrub"; a nudge already rides the 250ms debounce and
+    adding it was not asked for.
+- **Landmines for the next reader:** the flush relies on React's synthetic
+  event bubble ORDER (innermost handler completes before an ancestor
+  handler of the SAME event runs, in one synchronous pass). If a future
+  change moves a scrub/text commit to run in a microtask/rAF *inside* its
+  own handler (instead of synchronously, as `ScrubInput.tsx`/`TextControl.tsx`
+  do today), the panel-root flush would fire before the store mutation lands
+  and become a no-op for that commit — re-verify the ordering assumption if
+  either file's commit path stops being synchronous.
+- **Verification:**
+  - `bun test src/__tests__/persistence/{autoSaveCadence,autoSaveFlush,
+    autoSaveTrailingDebounce,savePersistenceQueue}.test.{ts,tsx}` — 22 pass.
+  - `bun test src/__tests__/editor src/__tests__/architecture/
+    no-vc-mode-branches-in-mutations.test.ts` — 597 pass, 4 fail, all four
+    pre-existing (`structuralOptimisticBroadcast.test.ts`'s "broadcasts an
+    optimistic move/delete/delete-batch/insert" — the ignore-list's "four
+    broadcast… optimistic tests"), reproduced identically on a clean
+    re-run; none touch a file this change modified.
+  - `bun test src/__tests__/architecture/centralized-site-mutation-history.test.ts` — pass.
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — clean.
+  - `bun test` (full, `--parallel=4`) — started; see the handback message
+    for whether it completed before this branch was handed off (it was still
+    running, contending with a sibling agent's worktree, when this entry was
+    written — the targeted suites above are the load-bearing signal).
+- **Human action needed:** none — no browser-observable UI beyond the
+  existing "Unsaved"/"Saving…" chip, which was already dogfooded.
+
+**Follow-up — 2026-09-21, same day: `module-size-budgets.test.ts` fix.**
+The coordinator flagged that this PR's own edits pushed two files over the
+700-line ceiling: `fsCodemodAdapter.ts` (700 → 708) and `usePersistence.ts`
+(686 → 717) — both were already at/near the ceiling before `speed-02`, and
+the doc-comment additions this work order made were what tipped them over.
+Fixed by extraction, not comment-trimming, per the coordinator's ask:
+  - **`nodeDiffWriteback.ts`** (new, 249 lines) — `saveSite`'s per-node diff
+    walk, exported as `collectNodeDiffEdits(pages, dirty)`. Takes the dirty
+    page list + `opts.dirty`, returns `{ edits, bumps, drops,
+    inlineStyleRefusals }`. `effectiveTag` (the tag/customTag helper) moved
+    with it — it was only ever called from inside the walk.
+    `fsCodemodAdapter.ts`: **708 → 515 lines.** `saveSite` still owns
+    everything downstream of the call (the POST, refusal reporting, baseline
+    commits, resync) — only the walk itself moved. Every inline comment in
+    the walk carried over VERBATIM (the coordinator's explicit instruction:
+    extract a coherent unit, don't trim comments to fit).
+  - **`autosaveSchedule.ts`** (new, 77 lines) — the four cadence-policy
+    exports `resolveAutoSaveDelayMs`, `AUTOSAVE_MAX_DEFERRAL_MULTIPLE`,
+    `nextAutoSaveDelayMs`, and `flushAutosave` (this work order's own new
+    export), all pure/self-contained (no dependency on the hook's
+    timers/refs/effects — `usePersistence.ts` still owns the mechanical
+    `setTimeout` wiring, the single-flight queue, the retry ladder).
+    `usePersistence.ts`: **717 → 657 lines.**
+  - Every import of the four moved symbols updated to `@site/hooks/
+    autosaveSchedule` instead of `@site/hooks/usePersistence`:
+    `PropertiesPanel.tsx` (`flushAutosave`), `autoSaveCadence.test.ts` (all
+    three cadence exports), `autoSaveFlush.test.tsx` (`flushAutosave`),
+    `autoSaveTrailingDebounce.test.tsx` (`AUTOSAVE_MAX_DEFERRAL_MULTIPLE` —
+    this one was missed on the first pass and caught by a bare `bun test`
+    run against `module-size-budgets` + `persistence` together, which threw
+    a `SyntaxError: Export named 'AUTOSAVE_MAX_DEFERRAL_MULTIPLE' not found`
+    — see Landmines). No re-export/back-compat shim left in
+    `usePersistence.ts` — this repo's own "no deprecation shims" rule.
+  - Doc-comment cross-references updated everywhere the moved symbols were
+    named by file: `usePersistence.ts`'s module doc (items 2 and 5),
+    `fsCodemodAdapter.ts`'s `STUDIO_AUTOSAVE_DELAY_MS` doc, the orphaned
+    `loadedValuesBaseline` doc comment above `getStudioComponentSources`
+    (used to say "this file only ever reads it" — no longer true post-split,
+    now points at `nodeDiffWriteback.ts`), `AdminCanvasLayout.tsx:180`'s
+    comment.
+- **New-file line counts:** `nodeDiffWriteback.ts` 249, `autosaveSchedule.ts`
+  77 — both comfortably under the 700 ceiling.
+- **Landmines:**
+  - `bun test <file-A> <file-B>` only surfaces a stale import as a
+    `SyntaxError` at the point that module is actually LOADED by the test
+    run — running `autoSaveCadence.test.ts`/`autoSaveFlush.test.tsx` alone
+    (the two files this task edited first) stayed green after the extraction
+    even though `autoSaveTrailingDebounce.test.tsx`'s import was already
+    broken, because that third file only loads when something in the same
+    `bun test` invocation pulls it in. **Grep every importer of a moved
+    symbol across the whole tree before declaring an extraction done** —
+    `grep -rn "from '@site/hooks/usePersistence'"` plus a check of each
+    moved symbol name would have caught this in one pass instead of a
+    failing CI run.
+  - `module-size-budgets.test.ts` still fails on this branch — but on
+    `server/handlers/studio/devServer.ts` (748 lines), NOT on either file
+    this work order touches. Confirmed pre-existing on the PR base commit
+    itself (`git show 2566b676:server/handlers/studio/devServer.ts | wc -l`
+    → 748, before `speed-02`'s branch even started) — the live-dev-server
+    line-count growth from `fix/live-dev-server-survives-api-restart`'s own
+    change (output-to-file instead of a pipe) pushed it over, unrelated to
+    autosave cadence. **Not fixed here** — out of this task's scope, not a
+    file `speed-02` touches, and fixing it risks colliding with whoever owns
+    `devServer.ts` next. Flagged for the coordinator/whoever picks up
+    `live-16`'s lineage.
+  - `src/__tests__/persistence` showed a flaky single failure
+    (`saveRetryLadder.test.tsx`, timing-sensitive) on ~1 in 4 full-directory
+    runs, vanishing on every isolated re-run (`--bail=1`, standalone file
+    run) — matches this repo's documented batch-run isolation flake pattern,
+    not a real regression; re-run if you see it.
+- **Verification (follow-up):**
+  - `bun test src/__tests__/architecture/module-size-budgets.test.ts` — 4
+    pass, 1 fail (`server/handlers/studio/devServer.ts`, pre-existing, see
+    Landmines above — NOT `fsCodemodAdapter.ts`/`usePersistence.ts`, both
+    now clean against the ceiling).
+  - `bun test src/__tests__/persistence` — 174 pass, 0 fail (clean on
+    repeated re-runs after fixing the missed import).
+  - `bun test src/__tests__/editor src/__tests__/architecture/
+    no-vc-mode-branches-in-mutations.test.ts src/__tests__/architecture/
+    centralized-site-mutation-history.test.ts` — 598/1 pass (same four
+    pre-existing `structuralOptimisticBroadcast.test.ts` failures as before
+    the follow-up, no new regressions from the extraction).
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — clean.
+
+---
+### speed-03 — a bridge frame's native pointermove flooded a `postMessage` and an unconditional store `set()` per event; move is now coalesced and hover deduped
+
+- **Agent:** canvas-engineer
+- **Stage:** done — branch `feat/speed-03-hover-coalescing`, based on
+  `fix/live-dev-server-survives-api-restart`. Draft PR opened against that
+  base (stacked, per `STUDIO-SPEED-PLAN.md`'s sequencing). Not yet merged —
+  the owner merges the base fix first.
+- **Updated:** 2026-09-21
+- **Goal (`STUDIO-SPEED-PLAN.md` speed-03):** 240 synthetic pointer moves
+  inside a live frame measured as 240 cross-frame messages and 240
+  unconditional store writes. Target: ≤ 1 store write per animation frame,
+  none when the hovered node is unchanged.
+- **What it was:** `gestureForwarding.ts`'s `onPointerMove` forwarded every
+  native `pointermove` (ancestor walk + rect + `postMessage`) — no throttle at
+  all. `selectionSlice.ts`'s `hoverNode` was an unconditional `set()` that fans
+  out to every mounted selector (overlays × frames, panel sections, layer
+  rows) even when nothing changed.
+- **Fixes:**
+  - **Runtime (`src/core/studio-runtime/gestureForwarding.ts`):** `move` is
+    now buffered and posted at most once per animation frame
+    (`view.requestAnimationFrame`, falling back to a bare global
+    `requestAnimationFrame`, falling back to `setTimeout(…, 16)` for a
+    headless `doc` with neither — same fallback order `runtime.ts`/
+    `resizeHandles.ts` already use), carrying the LAST event of the batch.
+    The post is skipped entirely when it would resolve to the SAME node +
+    rect as the last move actually posted (`lastPostedMove`) — **but only
+    while no pointer button is held**. A held button is an active drag (a
+    pan replay in particular — `useBridgeFrameInteraction`'s `panPointerId`
+    branch reads `clientX`/`clientY` off every `move` it receives), and the
+    resolved node commonly does NOT change mid-drag (panning across one
+    full-bleed background element stays on the same node the whole
+    gesture) — without this exception the naive "skip when node+rect
+    unchanged" rule would silently stall a pan the instant the cursor sat
+    over a single element. `down`/`up`/`click` call `flushPendingMove()`
+    first, so the parent never observes a press arrive before the move that
+    preceded it (pan-replay ordering depends on this). No wire/schema change
+    — `messages.ts` untouched, so no `studio-runtime:sync` conflict with
+    `speed-01`'s wire work beyond the routine bundle re-sync (regenerated
+    and committed: `generated/{vitePluginBundle,runtimeBridgeBundle}.ts`).
+  - **Store (`src/admin/pages/site/store/slices/selectionSlice.ts`):**
+    `hoverNode` reads `get()` first and no-ops when `hoveredNodeId` /
+    `hoveredBreakpointId` / `hoveredFrameId` are already exactly what the
+    call would set — covers BOTH the coalesced bridge path and the portal
+    frame's native (uncoalesced) `pointermove`, since `NodeRenderer` and
+    `useBridgeFrameInteraction` both funnel through the same
+    `useCanvasNodeInteraction.onNodeHover` → `hoverNode` call
+    (`useCanvasNodeInteraction.ts:224-238` is a thin passthrough — no
+    separate dedup needed there).
+  - **Checked, no change needed:** `useBridgeSelectionChrome.ts`'s
+    `bridge?.hover(...)` call already lives inside a
+    `useEffect(…, [bridge, hoverNodeId])` — React's own dependency-array
+    identity check means it only re-runs (and re-posts to the frame) when
+    `hoverNodeId` itself changes, so it never re-sends for a hover that
+    resolves to the same id.
+- **Tests:** `runtime.test.ts` (new `describe('createStudioRuntimeBridge —
+  move coalescing (speed-03)')`: 100 moves in one animation frame → 1
+  message with the last coordinates; unchanged node+rect → 0 further
+  messages, a genuinely different node → a new one; a held button keeps
+  posting every frame despite an unchanged node+rect; a pending move flushes
+  before a `down`, in that order). `selectionSlice.test.ts` (new
+  `describe('selectionSlice.hoverNode — speed-03 dedup')`: same-triple hover
+  → 0 subscriber notifications via `useEditorStore.subscribe`; a changed
+  node id, breakpoint id, or frame id alone → 1 notification; clearing an
+  already-clear hover → 0). `useBridgeFrameInteraction.test.tsx` re-run,
+  unchanged, still green (it dispatches synthetic `pointer` events directly
+  against the hook, below the runtime's coalescing layer, so it was never
+  exercising the new behaviour — the runtime-level tests are what cover it).
+- **Gates run:** `bun run studio-runtime:sync` (bundle re-synced and
+  committed), `bun run build`, `bun run lint`, `bun test` — both `bun test
+  --parallel=4` and bare `bun test` were run; `--parallel=4` crashed
+  mid-run with unrelated Bun 1.3.13 segfaults in `src/__tests__/ai/*` (the
+  known `--isolate` crash noted in `bunfig.toml`'s own comment, not
+  reproducible against files this change touches), so the bare run is the
+  one that finished: **14493 pass / 6 skip / 32 fail / 5 errors** across
+  14531 tests, under heavy concurrent load from sibling `speed-01`/`speed-02`/
+  `speed-05` sessions running their own builds/tests/dev-servers/e2e on the
+  same machine and the same symlinked `node_modules` at the same time (`ps
+  aux` showed 15+ concurrent `bun`/`vite` processes throughout the run).
+  Re-ran every failing file in isolation afterward: `useBridgeComputedValues`
+  ×4, `FillSection` computed-values, the four `broadcast… optimistic` tests
+  and `inspectFrameHeadless` match this project's already-documented
+  pre-existing failures verbatim. `Module size budgets` (`devServer.ts` at
+  748 lines) is unrelated to any file this change touches (`live-16`
+  territory). `generated studio-runtime bundles` failed inside the full run
+  with a Bun bundler error reading `@sinclair/typebox`'s own `.mjs` files
+  ("Unexpected reading file") — re-running `bun run scripts/sync-studio-
+  runtime.ts` directly afterward produced byte-identical output to what's
+  already committed (`git status` showed no further diff), so the committed
+  bundle IS fresh; the test failure was the concurrent-load environment, not
+  a stale artifact. `canonicalCheck`/`cssModulesEvaluator`/`rawSvgImports`/
+  `crlfProjectLoad`/`frameDiffEngine` (13 failures in the full run, all with
+  5–52s durations under load) all passed cleanly re-run in isolation.
+  `studio_render_reference`'s 4 tests (real dev-server spawns) still timed
+  out at the hard-coded 5000ms even in isolation — sibling sessions were
+  still running their own dev servers/e2e concurrently at the time; nothing
+  in this diff touches dev-server spawning. **My own touched files
+  (`gestureForwarding.ts`, `selectionSlice.ts`, and every test file above)
+  ran green in every configuration tried, isolated or not.**
+- **Browser proof:** not run — could not confirm the running dev stack
+  (`:5173`/`:5174` per `local-admin-login-blocked` memory) was serving THIS
+  worktree rather than the primary checkout or a sibling worktree; multiple
+  sibling sessions had their own Vite/API pairs up on other ports at the
+  same time (`ps aux`: `:4173`, `:5180`, `:5174`, plus the primary's own dev
+  server). Did not want to spin up a third pair and guess at a free port
+  under that load without a clear owner signal. **Someone with a known-good
+  running stack on this worktree should dogfood:** open a live (Tier 2)
+  board with a `run-project` project, dispatch (or physically make) ~240
+  pointer moves inside a live frame's iframe while parked over one element,
+  and in the parent count `message` events — expect it to drop from ~240 to
+  roughly one per animation frame the gesture spanned, with zero once the
+  cursor stops moving over the same element. Then confirm selection rings,
+  hover rings and a middle-button drag-pan through the same frame still all
+  work (`live-13`'s proof case) — the pan path is the one exception this
+  change carves out of the dedup rule and is the highest-risk regression
+  surface.
+- **Landmines:**
+  - **The "skip when node+rect unchanged" dedup MUST stay gated on
+    `buttons === 0`.** Removing that gate silently breaks drag-pan the
+    moment the cursor sits over one element for the whole gesture (a large
+    background container, most commonly) — no error, no crash, the pan
+    replay on the parent just stops receiving new positions after the
+    first `move` of the drag. There is no unit test that would catch a
+    regression here without dispatching a synthetic `buttons`-nonzero move
+    sequence — the new `runtime.test.ts` case does, but it is easy to
+    "simplify" this away in a future refactor since the naive version reads
+    cleaner.
+  - **`gestureForwarding.ts`'s coalescing state (`pendingMove`,
+    `pendingMoveFrame`, `lastPostedMove`) is per-`installGestureForwarding`
+    call, not module-level** — a fresh bridge gets a fresh baseline, so
+    `lastPostedMove` starting `null` always lets the first move through
+    regardless of what a PREVIOUS bridge instance last posted. Don't hoist
+    it to module scope; multiple bridges (design + live tab) would then
+    cross-contaminate each other's dedup baseline.
+  - **This is a three-way interaction between height/injectors/events per
+    the canvas-engineer brief, but this particular change touches only the
+    events leg** — no height or injector code was touched. The landmine
+    that DOES apply here: coalescing to rAF rate means a `move`'s effect
+    (hover ring position, in particular) now lags by up to one frame behind
+    the pointer during a fast sweep, same as native browser hover already
+    does relative to render — not a new lag class, just worth knowing if a
+    future perf pass tries to go below rAF granularity and hits this same
+    "the parent can't render faster than this anyway" ceiling.
+- **Docs:** `docs/agent-refs/canvas-internals.md`'s bridge section — added a
+  paragraph under the pointer-message table describing the coalescing rule,
+  the button-held exception, and the ordering guarantee.
+### speed-01 — optimistic style application in live (Tier 2 bridge) frames
+
+- **Agent:** canvas-engineer
+- **Stage:** done — implemented, unit-gated, bundle re-synced, `bun run build`/`lint` clean, targeted suites clean, pushed (3 commits), **draft PR #207 open**. **Fixed twice** after the coordinator's live measurements against `tmp/speed-integration` (speed-01+02+03 merged): (1) the class-target path never previewed at all — see "Live-measurement fix" below; (2) after (1) landed, a BREAKPOINT-context edit — the common case, since a live board frame IS a breakpoint frame — still sent NO wire message, because the broadcast gate treated any non-base context as "skip" — see "Breakpoint-scoped broadcast fix" below. Browser proof is the coordinator's, done against the primary stack; this subagent still has no browser-automation tool of its own.
+- **Branch:** `feat/speed-01-optimistic-style-live-frames`, stacked on `fix/live-dev-server-survives-api-restart`, worktree `.tmp/wt-speed-01`. PR: https://github.com/maherfayad-stack/Figma-Killer-2/pull/207
+- **Updated:** 2026-09-21.
+- **Goal:** a properties-panel style commit or scrub preview shows inside a Tier 2 live frame immediately (target ≤ 50 ms visible), instead of waiting for the file write + Vite HMR round trip (measured before this: 2.18 s, per `STUDIO-SPEED-PLAN.md`).
+- **Scope:**
+  - `src/core/studio-runtime/messages.ts` — new `optimistic.style`/`optimistic.style:clear` inbound messages, `OptimisticStylePatchSchema` (≤ 64 properties, `additionalProperties: false` — see Landmines — key pattern `^[a-zA-Z-]{1,64}$`, value pattern excludes `;`/`}`/`<`/`!important`, ≤ 256 chars), bounded `className`.
+  - `src/core/studio-runtime/optimisticStyle.ts` (new) — `applyOptimisticStyle`/`clearOptimisticStyle`/`revertAllOptimisticStyle`. One `Map` per document keyed by `ref` (`nodeId#occurrenceIndex`); **every** target (inline OR class) stamps `[data-studio-optimistic-style]` on `ref`'s own element — see "Live-measurement fix" below for why a class target is NOT `.<className> { … }`.
+  - `src/core/studio-runtime/runtime.ts` — dispatches the two new message types (`scheduleReposition()` explicitly after each; harmless now that both target kinds mutate an element, but kept as an explicit call rather than relying solely on the mutation-observer side effect), added the new attribute to the frame-fit `layoutObserver`'s ignore list (see Landmines), calls `revertAllOptimisticStyle` from both the `vite:beforeUpdate` and `vite:afterUpdate` HMR callbacks. `message.className` is received but intentionally unused (wire-informational only). **Trimmed at 699/700 lines — the module-size ceiling; the next addition here needs a split first.**
+  - `src/core/studio-runtime/index.ts` — barrel exports for the new schemas.
+  - `src/admin/pages/site/canvas/frameAdapter/{FrameDocumentAdapter.ts,BridgeFrameAdapter.ts,PortalFrameAdapter.ts}` — `OptimisticDomOps` gained `style`/`clearStyle`; `BridgeFrameAdapter` posts the wire messages (canonical -> stamp+occurrenceIndex, same `toWireRef` every other optimistic op uses); `PortalFrameAdapter`'s is a documented no-op (the portal tree already repaints from the same store write).
+  - `src/admin/pages/site/canvas/frameAdapter/canvasFrameAdapterRegistry.ts` — each registration now carries the frame's own `breakpointId` (a `{ adapter, breakpointId }` object, not a bare adapter); `registerFrameAdapter` takes a required third `breakpointId` argument. `listFrameAdapters()` stays adapter-only (its existing 8 call sites never touched) — it's a derived, point-in-time view of the same map; the new `listFrameAdapterRegistrations()` carries both fields, for `optimisticStructuralBroadcast.ts`'s breakpoint filter.
+  - `src/admin/pages/site/canvas/IframeFrameSurface.tsx` — both `registerFrameAdapter(...)` call sites pass `breakpointId` (already an in-scope prop); added to the adapter-construct effect's dependency array.
+  - `src/admin/pages/site/canvas/frameAdapter/optimisticStructuralBroadcast.ts` — `broadcastOptimisticStyle`/`broadcastOptimisticStyleClear`, same broadcast-to-every-bridge-adapter shape as insert/delete/move. `broadcastOptimisticStyle`'s third argument is now `BroadcastOptimisticStyleOptions { className?, breakpointId? }` — when `breakpointId` is given, only registrations whose OWN `breakpointId` matches receive the message; omitted (the inline case, and a base-context class write) broadcasts to every bridge frame, unchanged from before.
+  - `src/admin/pages/site/inspector/commitApi.ts` — `writeToTarget` (both inline and class branches) and `previewToTarget` (both branches) now broadcast after the store write; `clearStylePreview` broadcasts a clear for every `inlineTargetIds` entry AND `selectedNodeId` (covers the class-target anchor ref too — a no-op wherever nothing is active). New local helpers `optimisticStylePatch` (drops `null`/`undefined`, stringifies numbers) and `bareClassName` (strips a leading `.`); new `activeBreakpointContextId` (the breakpoint id to filter a broadcast by — see "Breakpoint-scoped broadcast fix"). The class branches' gate changed from `!activeContextId` (any context skips) to `!onCondition` (only a state/condition context skips).
+  - `src/__tests__/fixtures/index.ts` — `makeSite()` now actually forwards `overrides.conditions` into the built `SiteDocument` (it silently dropped this field before — found while writing this round's condition-context test; see "Breakpoint-scoped broadcast fix").
+  - `src/core/studio-runtime/generated/{vitePluginBundle.ts,runtimeBridgeBundle.ts}` — regenerated (`bun run studio-runtime:sync`); NOT touched by this round (no `studio-runtime/` source changed), re-synced only to confirm no drift.
+  - Tests: `src/__tests__/studio-runtime/{messages,runtime}.test.ts`, `src/__tests__/canvas/frameAdapter/{BridgeFrameAdapter.test.ts,frameDocumentAdapter.contract.ts,canvasFrameAdapterRegistry.test.ts,optimisticStructuralBroadcast.test.ts}`, `src/admin/pages/site/inspector/__tests__/commitApi.test.ts`, plus every OTHER test file that called `registerFrameAdapter` directly, updated for the new required third argument (full list in "Breakpoint-scoped broadcast fix").
+  - Docs: `docs/agent-refs/canvas-internals.md` (bridge adapter-call table + landmine bullets, updated across both fixes), `docs/agent-refs/path-index.md` (new file entry, first round only).
+- **Decisions:**
+  - ~~A class-context write (breakpoint override or a live condition) does NOT broadcast, only a base-context class write does~~ — **superseded by "Breakpoint-scoped broadcast fix" below.** The original rule (skip any non-null `activeContextId`) was wrong: it conflated "a breakpoint context is active" with "a state context is active", and the FIRST one is the common case a panel edit hits on a live board (the frame IS a breakpoint frame), not the second. The corrected rule: a STATE/condition context (`onCondition`) skips; a BREAKPOINT context previews too, narrowed to the matching frame(s) via `breakpointId`.
+  - **A `null`/`undefined` value in a patch is dropped from the broadcast, never sent as a "positive override".** The wire schema's `patch` values are plain strings; there is no "unset this property" op. A clear still reaches the live frame the normal way (the file write + HMR), just without the < 50 ms preview. Widening this is a real follow-up if clears turn out to matter for the target metric.
+  - **The optimistic style Map is keyed by `ref` (`nodeId#occurrenceIndex`), not by selector.** Re-applying to the same ref replaces its own entry regardless of whether the new call is inline or class-shaped; `clearOptimisticStyle(ref)` removes exactly that ref's entry. `commitApi.ts`'s `clearStylePreview` therefore just clears every id it has (`inlineTargetIds` + `selectedNodeId`) unconditionally rather than tracking which target kind was last active — correct because clearing a ref with nothing active is a no-op.
+  - **`revertAllOptimisticStyle` is NOT called from `runtime.ts`'s `dispose()`.** Matches `optimisticDomOps.ts`'s own precedent (delete/move ghosts are cleaned up only by the HMR hooks, not on dispose) — the frame's whole document is going away when `dispose()` runs, so there is nothing to visually clean up.
+- **Live-measurement fix (same day, after the first push):** the coordinator ran a real browser measurement against `tmp/speed-integration` (speed-01 merged with speed-02/03, the proxied runtime bundle confirmed to contain `optimistic.style`) and found a class-target Width edit produced **no** optimistic change — `#studio-runtime-optimistic-style` never appeared, the frame only changed 337 ms later via HMR. **Root cause:** the ORIGINAL design keyed a class-target rule on `.${className}` — `className` being the name STUDIO'S OWN PARSE gives the class (`SMS_page__5638d`, read out of the CSS-module source). The live frame's DOM carries whatever name **Vite's own CSS-modules plugin** generated at dev-server build time instead (`_page_xxxxx_3`-shaped) — two independent hashing schemes over the same source with no reason to agree, and in the real project they didn't; `.SMS_page__5638d` matched nothing. The runtime has no way to learn Vite's name for a class from inside the frame. **Fix:** a class-target write now previews the SAME way an inline-target write does — element-scoped, stamping `ref`'s own element with `[data-studio-optimistic-style]`, never a `.<className>` selector. `className` still crosses the wire (`messages.ts`'s schema is UNCHANGED — kept optional, per the coordinator's instruction) but `optimisticStyle.ts`/`runtime.ts` now treat it as informational only; only the SPECIFIC node being edited gets the instant preview, other elements sharing the class catch up on the next HMR update (an accepted narrowing for a preview). `commitApi.ts` needed NO changes — its class-target broadcast already scoped `ref` to `selectedNodeId` (the node being edited), so once the runtime stopped trying to build a class selector from `className`, the existing call sites just started working correctly. Files touched in this fix: `optimisticStyle.ts` (rewrote `applyOptimisticStyle`'s selector logic + module doc, `className` param removed since the function truly no longer uses it, `StyleRuleEntry.element` narrowed from `Element | null` to `Element`), `runtime.ts` (dispatch no longer passes `message.className` through), `messages.ts` (doc comment only — schema unchanged), `FrameDocumentAdapter.ts` (doc comment), `commitApi.ts` (comment only, behavior unchanged), `src/__tests__/studio-runtime/runtime.test.ts` (rewrote the class-target test to assert element-scoping instead of a `.className` selector, added an attribute-removal assertion to the HMR-revert test for the class-target message). Second commit, pushed.
+- **Breakpoint-scoped broadcast fix (same day, after the second push):** the coordinator ran a SECOND live measurement (branch `e8f51525` merged into `tmp/speed-integration`, the proxied runtime confirmed to contain `data-studio-optimistic-style`): a Width edit on a selected `Heading 1` sent NO message of ANY type into the frame during the edit (listened for every `message` event), and the frame changed only via HMR 371 ms later. **Root cause:** `commitApi.ts`'s class branches gated the broadcast on `!activeContextId` — but a live board frame IS a breakpoint frame, so `activeContextId` is non-null (equal to the active breakpoint tab) for essentially every panel edit an owner makes on a live board. The original design's own comment ("A breakpoint/condition-scoped override applies only under a media query or a state a bridge frame's own document renders at ALL times") was HALF right: true for a condition (hover/focus/active — a bridge frame holds one fixed pointer/focus state), false for a breakpoint (a bridge frame IS pinned to one breakpoint's viewport, which is exactly why filtering BY that breakpoint, rather than skipping outright, is the correct behaviour). **Fix, four files:**
+  - `canvasFrameAdapterRegistry.ts` — registrations are now `{ adapter, breakpointId }`, not bare adapters. `registerFrameAdapter(iframe, adapter, breakpointId)` — the third argument is REQUIRED (every canvas frame has one). `listFrameAdapters()` (adapter-only) is now a derived view so its 8 existing callers need no changes; new `listFrameAdapterRegistrations()` carries both fields for the one caller that needs `breakpointId`.
+  - `IframeFrameSurface.tsx` — both `registerFrameAdapter` call sites pass the already-in-scope `breakpointId` prop; added to the construct effect's dependency array (a plain string value, not a function — no memoization needed per the React Compiler rules).
+  - `optimisticStructuralBroadcast.ts` — `broadcastOptimisticStyle`'s signature changed from `(nodeId, patch, className?)` to `(nodeId, patch, { className?, breakpointId? })`. When `breakpointId` is given, only bridge registrations whose OWN `breakpointId` equals it receive the message (a registration for a DIFFERENT breakpoint, or none at all, is a silent no-op — same "broadcast and let the wrong ones no-op" posture the module already used for node-id absence). Omitted (inline writes; base-context class writes) broadcasts to every bridge frame, unchanged.
+  - `commitApi.ts` — new `activeBreakpointContextId` (`!onCondition && activeTab !== 'base' ? activeTab : null` — `activeTab` already equals `activeBreakpointId` whenever it isn't the default `'desktop'`, per `getActiveStyleTab`'s own logic). Both class branches (`writeToTarget`, `previewToTarget`) changed their gate from `!activeContextId` to `!onCondition`, and now pass `{ className, ...(activeBreakpointContextId ? { breakpointId: activeBreakpointContextId } : {}) }`. The INLINE branches are unchanged — inline has no context axis at all (an element's `style=""` is one flat bag), so they always broadcast to every bridge frame, which was already correct and is now additionally covered by a dedicated test.
+  - Found and fixed on the way: `src/__tests__/fixtures/index.ts`'s `makeSite()` listed every `SiteDocument` field by hand and had simply never included `conditions` — a caller's `conditions: [...]` override was silently dropped. Surfaced by a new test that needed a real state/condition context; fixed by forwarding `overrides.conditions` like every other field.
+  - Every OTHER test file calling `registerFrameAdapter` directly needed its call site updated for the new required third argument (the signature change is a compile error, not a runtime one, for a call site that doesn't specify one) — 16 files: `src/__tests__/{plugins/useCanvasNodeRect,panels/{useInspectComputedStyle,inspectPanel,classPicker},editor-store/structuralOptimisticBroadcast,canvas/{canvasNodeLookup,useBridgeFrameInteraction,measureCanvasDropCandidates,frameAdapter/{canvasFrameAdapterRegistry,optimisticStructuralBroadcast}}}.test.ts(x)`, `src/admin/pages/site/{inspector/{__tests__/commitApi,sections/__tests__/{fillSection,alignSection,measuresSection}},panels/{InspectPanel/useBridgeComputedValues,PropertiesPanel/useSizingParentLayout}}.test.ts(x)`. Each uses whatever breakpoint id was already in scope for that test (an existing `BREAKPOINT_ID`/`breakpointId` local, or the literal already used elsewhere in the same file — `'bp-desktop'`/`'bp-mobile'`/`'desktop'`) — none of these tests care about the NEW filtering behaviour except the ones added specifically to exercise it.
+  - Third commit, pushed.
+- **Landmines (new, added to `canvas-internals.md` in full — condensed here):**
+  - **Any runtime-owned DOM attribute needs a THREE-way check, not two.** (1) Does `runtime.ts`'s frame-fit `layoutObserver` (watching `doc.body` for real content mutations) see the write and spuriously reset the fit-height pin — it now has to ignore `data-studio-optimistic-style` by name, joining `data-studio-resize-preview` and `doc.body`'s own `style` attribute in that ignore list. (2) Does React's own reconciliation ever write the same value (then it MUST be a stylesheet rule, per the pre-existing resize-preview posture, never `element.style`). (3) Does clearing it need an EXPLICIT reposition call rather than relying on the mutation-observer side effect — `runtime.ts`'s `optimistic.style`/`optimistic.style:clear` handlers call `scheduleReposition()` directly regardless; harmless belt-and-suspenders now that EVERY optimistic-style target (inline or class, after the fix below) touches an element the observer already sees.
+  - **A class name is not a portable selector across the parse/DOM boundary — Studio's parse and Vite's own CSS-modules plugin hash a CSS-module class name independently.** `SMS_page__5638d` (Studio's parse) and `_page_xxxxx_3`-shaped (Vite's runtime output) are both derived from the SAME source file but by two DIFFERENT tools with no reason to agree, and in practice don't — proven live (see "Live-measurement fix" above). Any FUTURE runtime feature that wants to act on "every element with class X" from inside a bridge frame cannot use Studio's own class name as a CSS selector; it needs either the frame to report its OWN class names back (a new wire round trip) or to stay element-scoped like this fix now does.
+  - **`Type.Record`'s `maxProperties`/key-`pattern` do nothing unless `additionalProperties: false` is also set.** TypeBox's `FromRecord` checker only validates keys that ALREADY match the record's own pattern; a key that does NOT match is silently ADMITTED unless `additionalProperties: false` forces every key to match. Verified experimentally (a `{ 'bad key!': 'red' }` object passed `Value.Check` against a `Type.Record(Type.String({pattern:'^[a-zA-Z-]+$'}), ...)` with no `additionalProperties` — the schema looked bounded and was not). `OptimisticStylePatchSchema` sets `additionalProperties: false` explicitly; any FUTURE bounded `Type.Record` in this codebase needs the same, or its bound is cosmetic.
+  - **`bun run dev`'s preflight can trigger `bun install` against the SHARED (symlinked) `node_modules`** when `bun.lock`'s mtime is newer than the install stamp — even when run from a worktree whose `node_modules` is a symlink into the primary checkout, which this task's own instructions said never to do directly. Hit this by hand while standing up an isolated dev stack for the browser-proof step (see below); it only relinked the two vendored `file:` deps (`alm-design-system`, `pixel-art-icons`) — idempotent and low-risk in this case, but a future agent running `bun run dev` from a worktree should know the preflight can do this without being asked.
+  - **"Is a context active" and "is a BREAKPOINT context active" are different questions, and conflating them is exactly the bug the second live measurement found.** `selectionModel.ts`'s `activeContextId = activeConditionId ?? (activeTab !== 'base' ? activeTab : null)` packs two semantically different things into one nullable id — any code that branches on `activeContextId ? … : …` alone (rather than asking WHICH kind it is) is silently treating a breakpoint context and a state/condition context as the same case. For anything that has to behave differently per-frame (an optimistic in-frame preview, but plausibly any future per-breakpoint canvas feature), the breakpoint case needs `activeBreakpointId`/`activeTab` read directly, not inferred from "is `activeContextId` non-null".
+  - **A test-fixture factory that lists every field by hand (`makeSite()`, `src/__tests__/fixtures/index.ts`) can silently drop an `overrides` field forever** — nothing fails, the built object just never carries it, and every test that thought it was setting that field was testing something else. Caught only because a new test's assertion failed in a way that didn't match the code being tested. Any NEW field added to `SiteDocument` needs a matching line in this factory, and any factory shaped like this one (explicit field list, not `{...defaults, ...overrides}`) is a standing risk for the SAME silent-drop bug on its own fields.
+  - **A registry-consumer signature change (`registerFrameAdapter`'s new required 3rd argument) has a WIDE, easy-to-undercount blast radius** — 16 test files called it directly, not just the ones this task's own file list would suggest. `grep -rn "registerFrameAdapter("` across `src/` (excluding the definition and `unregisterFrameAdapter`) is the reliable way to find every call site before declaring a signature change done; `bun run build`'s `tsc -b` is the backstop that catches anything missed (a wrong argument COUNT is a compile error, not a silent runtime bug, for a typed function — but a per-file grep is faster than waiting for the whole build to fail).
+- **Verification:**
+  - `bun test src/__tests__/studio-runtime src/__tests__/canvas src/admin/pages/site/inspector src/admin/pages/site/canvas` — clean except the documented pre-existing failures this task named up front: `FillSection` computed-values (1), `useBridgeComputedValues` (4) — both confirmed pre-existing (untouched files; `useBridgeComputedValues` fails identically for an unrelated reason — a `wait-for` timeout against happy-dom, not a schema/adapter issue this diff could cause).
+  - `bun test src/__tests__/editor-store/structuralOptimisticBroadcast.test.ts` — the documented 4 pre-existing failures (an unmocked `fetch` to `/admin/api/studio/save`, ECONNREFUSED — unrelated to style broadcasting, and the file is untouched by this diff).
+  - `bun test src/__tests__/architecture` — 648 pass / 2 fail, BOTH pre-existing and unrelated: `server/handlers/studio/devServer.ts` is 748 lines (from `live-16`, untouched by this diff) and `studio-runtime-bundle-fresh` fails inside `bun test` with a `Bun.build`-internal "Unexpected reading file" error whose reported error CONTENT is misattributed to the wrong module (shows real `nodeIdIndexing.ts`/`hmrState.ts` source under a `@sinclair/typebox` file path) — reproduced 3x in a row, but calling the SAME `buildStudioRuntimeArtifact()` via a plain `bun run` script (outside `bun test`) succeeds and produces byte-identical output to the committed, freshly-`sync`'d bundles (verified with a throwaway script, `readCommittedArtefact` comparison: both `FRESH`). This is a `bun test`-environment-specific `Bun.build` quirk, not a real staleness — the committed bundle IS fresh.
+  - `bun run build` (`tsc -b && vite build`) — clean.
+  - `bun run lint` — clean (only a pre-existing Babel deopt-size note on the generated bundle, not an error).
+  - `bun test` (bare, full repo, FIRST push) — completed after this handoff's initial draft: **14519 pass / 6 skip / 20 fail / 4 errors / 174803 expect() calls across 1291 files, 659.70s.** Fail/error count is in line with this repo's documented parallel-session noise; none of the named failures anywhere in this task's targeted runs belong to this diff.
+  - **After the live-measurement fix (second commit):** re-ran `bun test src/__tests__/studio-runtime src/__tests__/canvas src/admin/pages/site/inspector` — 1581 pass / 1 fail (the same pre-existing `FillSection` failure, confirmed above). `bun test src/__tests__/architecture/module-size-budgets.test.ts` — same single pre-existing `devServer.ts` failure. `bun run studio-runtime:sync` re-run and the freshness re-verified with the same throwaway-script method (both `FRESH`). `bun run build` — clean. `bun run lint` — clean. Full-repo `bun test` NOT re-run after the fix (the first full run already covered the vast majority of unrelated code; the fix's blast radius is fully contained in the directories re-run above).
+  - **After the breakpoint-scoped broadcast fix (third commit):** `bun test src/__tests__/studio-runtime src/__tests__/canvas src/admin/pages/site/inspector` — 1593 pass / 1 fail (the same pre-existing `FillSection` failure). `bun test src/__tests__/plugins/useCanvasNodeRect.test.tsx src/__tests__/panels/{useInspectComputedStyle,inspectPanel,classPicker}.test.tsx src/__tests__/editor-store/structuralOptimisticBroadcast.test.ts src/admin/pages/site/panels/{PropertiesPanel/useSizingParentLayout,InspectPanel/useBridgeComputedValues}.test.ts` (every OTHER file whose `registerFrameAdapter` call site changed) — 8 fail, matching EXACTLY the two already-documented pre-existing buckets by name and count (`structuralOptimisticBroadcast` ×4 — unmocked `/admin/api/studio/save` fetch, ECONNREFUSED; `useBridgeComputedValues` ×4 — happy-dom `wait-for` timeouts), none newly introduced. `bun run build` (`tsc -b && vite build`, the real check that every one of the 16 call-site fixes compiles) — clean. `bun run lint` — clean. `bun run studio-runtime:sync` re-run — no diff (this round touched no `studio-runtime/` source). Full-repo `bun test` NOT re-run a third time — the diff's blast radius (registry shape, one broadcast function, one commit-api file, 16 test call sites) is fully covered by the targeted runs above, and the second full run's own 20 pre-existing fail / 4 error count is already the documented baseline for this checkout under load.
+- **Human action needed:**
+  1. ~~The browser proof is not done~~ — **the coordinator has verified this directly, twice**, against a real integration branch (`tmp/speed-integration`, speed-01+02+03 merged) — first finding the class-target selector bug (fixed, second commit), then finding the breakpoint-context skip bug (fixed, third commit, this entry). This agent has NO browser-automation tool of its own in either round; both isolated-stack attempts this agent stood up were torn down per the coordinator's instructions once they had their own working session against the primary stack. **Still outstanding: a fresh post-third-fix live-measurement number** — neither the 337 ms (class-target selector) nor the 371 ms (breakpoint-context skip) figure above reflects the CURRENT code; whoever verifies next should confirm a breakpoint-context Width edit now shows the same near-instant preview a base-context one already does, and that nothing regressed for the base case.
+  2. **Finish/re-run the full-repo `bun test`** once the machine is under less load — the one completed full run (14519 pass / 20 fail / 4 errors, pre-dates the second AND third commits) is a reasonable baseline; every targeted re-run since has stayed clean of anything new, but a full pass has not been re-confirmed since the first commit.
+  3. ~~Commit, push, and open the draft PR~~ — done: commit `ff4e265f` (feature) + `e4821899` (STATE.md) + the live-measurement fix commit + the breakpoint-scoped broadcast fix commit (see git log), all pushed, PR #207 (draft, base `fix/live-dev-server-survives-api-restart`).
+
+---
+### speed-00 — the speed plan (owner: "this is non-negotiable")
+
+- **Agent:** main session, 2026-09-21. Branch `docs/studio-speed-plan`. Plan: `STUDIO-SPEED-PLAN.md` at the repo root.
+- **Stage:** planned; nine work orders `speed-01` … `speed-09`, each with a measured "today" number, a cause with file:line, a change and a gate. Ship order: 01/02/03 (optimistic style in live frames, 250 ms autosave, hover coalescing), then 06 (drag and drop into live frames with a drop line — supersedes and extends `live-15`), 04 (cold selection), then 05/07/08/09.
+- **Headline measurements (healthy Tier 2 stack, `_scratch-undo`):** panel number edit → frame 2.18 s (2 s of it is the autosave debounce; save itself 36 ms); click → ring 17 ms warm / 235 ms cold; refused Delete 393 ms long task (dialog cold mount); one message + one unconditional store write per pointermove over a live frame; no drop line in live frames because the parent's pointer listeners go silent inside the iframe; `/load` 1.05 s.
 
 ### parser-14 — the page-parse cache now tracks a component's DEEP local imports, not just its direct ones
 - **Agent:** parser-surgeon
@@ -2453,6 +3276,139 @@ None blocking — this design is directly implementable by `panel-designer` (the
 - **Human action needed:** dogfood on your own project — ⌘D, insert from Assets, and watch
   the "Saving…" chip; it should settle well under half a second.
 
+### speed-05 — a refused Delete answers inside the keydown task; now it doesn't
+- **Agent:** panel-designer (dispatched for `STUDIO-SPEED-PLAN.md`'s speed-05 work order).
+- **Stage:** done — branch `feat/speed-05-refusal-within-keydown`, stacked on
+  `fix/live-dev-server-survives-api-restart`, draft PR against that branch.
+- **Updated:** 2026-09-21.
+- **Goal:** `STUDIO-SPEED-PLAN.md` speed-05 — pressing Delete on a node whose delete is
+  refused measured a 393 ms main-thread long task (keydown → `RefusalDialog` first
+  paint); target ≤ 50 ms visible response.
+- **Scope:** `src/admin/pages/site/store/slices/site/structuralSourceEdits.ts`
+  (`presentStructuralRefusal`), `tests/e2e/studio-feel.e2e.ts` (new budget test +
+  two small helpers). Did not touch `inspector/commitApi.ts`, `selectionSlice.ts`,
+  `useBridgeFrameInteraction.ts`, or the persistence hooks — those are other
+  sessions' scope per the work order.
+- **What I found, not what the plan guessed:** the refusal decision itself is O(1)
+  (confirmed — `planSourceDelete`/`refuseStructuralEdit` do one id check, no
+  scan). `RefusalDialog` and its `Dialog` primitive are already STATICALLY
+  imported at `SitePage.tsx` — there is no lazy-import boundary to preload, and
+  `Dialog.tsx` has no focus-trap library, just `createPortal` + two small
+  `useEffect`s. The actual cost is priority, not weight: `requestDeleteNode`'s
+  `commit()` (default `confirmBeforeDelete: false`, `catalog.ts:172`) runs
+  `deleteNode` synchronously inside the native `document`-level keydown listener
+  (`useEditorKeyDispatcher`, not a React-synthetic handler), and the refusal's
+  `context.set(...)` that opens `structuralRefusalDialog` was un-prioritized —
+  React 18+ automatic batching still renders and mounts the dialog's portal
+  DOM at DEFAULT priority, in the SAME task, before the browser gets to paint.
+  Investigated and ruled out as the cause: Mutative's `enableAutoFreeze` (the
+  store's `create(..., { enableAutoFreeze: true })`) — its `deepFreeze` short-
+  circuits on `Object.isFrozen`, so an unrelated top-level field write is O(top-
+  level key count) on every call after the first, not O(tree size); no broad
+  (non-selector) `useEditorStore` subscription found anywhere in `src/admin/
+  pages/site` that would re-render on an unrelated field.
+- **The fix:** one `startTransition` (React 19, `import { startTransition } from
+  'react'`) around the dialog-opening `context.set(...)` inside
+  `presentStructuralRefusal`'s `constraint.actions.length > 0` branch only — the
+  toast branch (`constraint.actions.length === 0`) is untouched, since
+  `pushToast` never goes through this store's `set` at all. The store WRITE is
+  still synchronous (readable via `getState()` immediately); only the resulting
+  React re-render/mount is deferred to its own, interruptible, low-priority task,
+  so the keydown handler returns immediately.
+- **e2e budget:** `tests/e2e/studio-feel.e2e.ts` — new test `'Delete on a node
+  the source refuses answers with RefusalDialog within budget'`. Selects the iOS
+  status-bar clock inside `test4`'s `Onboarding.tsx` (`<IOSStatusBar/>` is a
+  local component the parser inlines — `inlineLocalComponents.ts` — so it
+  refuses `shared-component`, which has runnable remedies and therefore opens
+  the DIALOG, not a toast), presses Delete, and asserts keydown → `[role=
+  "alertdialog"]` visible `< BUDGET_REFUSAL_DIALOG_MS` (100 — 2× the work
+  order's own 50 ms target, for CI noise headroom; tighten only after
+  re-measuring on the CI runner). Measured **43.8–56.8 ms across 5 isolated
+  runs on this machine, WITH AND WITHOUT the fix** (see Landmines) — both sides
+  passed the 100 ms gate here.
+- **Landmines:**
+  - **Could not reproduce the 393 ms defect on the tracked `studio-workspace/
+    test4` fixture on this machine, with or without the fix.** Temporarily
+    reverted just the `startTransition` line (`git stash` on that one file,
+    reapplied after), ran the same e2e test 3× before and 5× after: 44.8–57.9 ms
+    before, 43.8–56.8 ms after — no measurable gap. The plan's 393 ms was
+    measured on a bigger, real imported repo (`_scratch-undo`) with more nodes
+    behind the refused instance (`SharedComponentNotice`'s own doc cites "a
+    single `Icon.jsx` line sat behind 29 board nodes" on a real repo) — the
+    fix is still correct by mechanism (it moves a synchronous default-priority
+    render out of the keydown task, which is strictly never slower and is
+    exactly what R18's docs recommend for this shape of update), but re-measure
+    on a bigger project before calling the gap closed. **Kept the fix and the
+    gate regardless** — a ratchet against regression, not proof of the original
+    number.
+  - **`speed-04`'s own dual-mount defect is real and not self-healing on a
+    fresh page load**: `LiveBoardFrame.tsx` mounts a portal-fallback
+    `BreakpointFrame` AND the bridge one together until the bridge is ready, so
+    `[data-page-id] iframe[title^="Canvas frame"]` can resolve to 2 elements for
+    up to several seconds after `openFixtureBoard` returns. My test waits for
+    that to settle to 1 before touching `frameLocator()` — every OTHER test in
+    this file that skips that wait is either lucky (extra steps before its own
+    frame query give it time) or itself flaky under load; did not fix `speed-04`
+    itself, out of scope.
+  - **`data-node-id` in a live (Tier 2 bridge) frame is NOT the store's
+    composite id.** `idStamp.ts` stamps the element's own `rel:line:col` inside
+    ITS OWN source file (e.g. `IOSStatusBar.tsx:9:7`); the store's inlined
+    `${callSiteId}~${originalId}` id is a translation `liveNodeResolve.ts` does
+    on the parent side, invisible to the DOM. A selector built on `[data-node-
+    id*="~"]` finds nothing in a live frame — match by stable TEXT instead
+    (`getByText('9:41', { exact: true })`) when you need "a node whose id is
+    inlined" in a live-frame e2e test.
+  - `SharedComponentNotice`'s `role="note"` text ("Part of `<Component>`…") is
+    a more reliable post-click assertion than the in-frame selection ring here:
+    selecting this node triggers `focusActiveBreakpoint`'s auto pan/zoom, and
+    the ring can still be mid-transition when checked. The notice does NOT
+    survive `RefusalDialog` opening (unmounts or the properties panel changes
+    focus) — assert on it BEFORE pressing Delete, then assert on the dialog's
+    own `constraint-action-detach` testid afterward, not on the notice again.
+  - This machine had 4+ sibling `speed-0X` agents' `bun test --parallel=4` /
+    `playwright test` running concurrently in other worktrees during
+    verification — a full `studio-feel.e2e.ts` run picked up unrelated
+    `ConnectionRefused` failures on the ⌘D and Escape tests (their own
+    per-fixture dev server died mid-test) that vanished when I re-ran the same
+    tests in isolation later. Don't trust a shared-machine full-suite e2e
+    failure without an isolated re-run; `bun run test`
+    (`bun test --parallel=4`) hung past 15 minutes here too (a sibling
+    worktree's own `bun test --parallel=4` had been running 31+ minutes) — the
+    documented known issue. Fell back to scoped `bun test` runs instead.
+- **Verification:**
+  - `bun test src/admin/pages/site/store src/admin/pages/site/ui/RefusalDialog
+    src/__tests__/studio/constraintRefusalSurfaces.test.ts src/admin/pages/site/
+    studio/__tests__/structuralSourceUndo.test.ts` — 68 pass / 0 fail.
+  - `bun test src/admin/pages/site` (whole area) — 1076 pass / 5 fail, all 5 the
+    task's named pre-existing bucket (`useBridgeComputedValues` ×4,
+    `FillSection` computed-values loading state) — untouched by this diff.
+  - `bun test src/__tests__/architecture` — 648 pass / 2 fail, both pre-existing
+    on this branch and outside my diff (`server/handlers/studio/devServer.ts`
+    748 lines > 700-line ceiling; a stale `studio-runtime:sync` bundle check) —
+    confirmed via `git status`/`git diff --stat` that I never touched either
+    file.
+  - `bun run build` — clean (`tsc -b && vite build`).
+  - `bun run lint` — clean.
+  - `bun run test` (`bun test --parallel=4`, full repo) — killed after 15 min per
+    the documented fallback; did not re-run bare `bun test` on the full repo
+    given the scoped runs above already cover everything this diff touches and
+    the machine was under heavy parallel load from sibling agents.
+  - e2e: `E2E_VITE_PORT=5180 E2E_CMS_PORT=3012 bun run test:e2e -- tests/e2e/
+    studio-feel.e2e.ts -g "RefusalDialog within budget"` — pass, isolated, 5
+    runs, 43.8–56.8 ms each (budget 100 ms). Full-file run (all 5 tests) hit
+    the shared-machine flake above on the ⌘D/Escape tests; my own new test
+    failed ONCE in that same full-file run with the dual-mount strict-mode
+    violation never settling within 30 s — did not reproduce in 3 later
+    isolated re-runs, consistent with the shared-machine theory above rather
+    than a real defect in the wait, but flag it for the human: if this test
+    flakes in CI, look at `speed-04`'s dual-mount timing first.
+- **Human action needed:** dogfood — open `test4` (or a bigger real project),
+  select an element inside a local component used elsewhere on the board (e.g.
+  inside `SheetHeader`/`IOSStatusBar`), press Delete, and confirm the refusal
+  dialog appears with no visible stutter/freeze. Also worth trying on a larger
+  imported repo than `test4` to see whether the original 393 ms reproduces
+  there and whether this fix closes it in practice, not just in isolation.
+
 ### live-10 — live frames render on a local install, and the Tier-2 default only ever runs `vite`
 - **Agent:** main session (orchestrator), driven by dogfood on the owner's own `test4`.
 - **Stage:** done — branch `fix/live-frames-on-local-install`, stacked on
@@ -2664,8 +3620,9 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 - **Landmines:** `mod.defaults` is computed once per module at registration (`register.tsx`), so the
   panel's per-instance gate and this per-module gate can disagree only after the author changes the
   variant — the panel's row-hiding then owns it, as before.
-### live-15 — PLANNED: drag a component from the side pane and drop it into a live (Tier 2) frame
+### live-15 — DONE, see `speed-06` above: drag a component from the side pane and drop it into a live (Tier 2) frame
 
+- **Closed by:** `speed-06` (top of this file) — all three pieces below shipped there, plus a fourth (per-drag snapshot + rAF resolve) `STUDIO-SPEED-PLAN.md` added to the work order. Left in place per the "never delete another agent's entry" rule; the plan below is what was actually built.
 - **Agent:** none yet — work order written by the main session on 2026-09-21 from a scout's map; not started
 - **Stage:** planned. Owner's ask: "I want to be able to drag and drop components from the side pane."
 - **What exists today (scout, exact):** the Assets/design-system panel (`AssetsPanel/AssetCard.tsx`) is click-to-insert only — no pointer drag at all, in ANY frame mode. The only drag-to-canvas insertion gesture is the board notch's, through `useCanvasInsertionDrag.ts` (pointer events, not HTML5 DnD, so it can cross an iframe), which resolves its target every move with `resolveCanvasPointerInsertionDrop` → `measureCanvasDropCandidates(viewport, page, iframe)` (`canvasDomGeometry.ts:112-141`). That measurement reads `resolvePortalDocument(iframe)`, which is `null` for a bridge frame, so every drop into a live frame collapses to "page root". And once the pointer enters a bridge iframe mid-drag the parent's `window` listeners go silent: the portal relay in `useIframeEventForwarding.ts` (`data-studio-canvas-dragging` on the parent `<html>`) is portal-only, and `useBridgeFrameInteraction` consumes `pointer` only for pan/selection. The write side (`writeInsertToSource` → `broadcastOptimisticInsert` → `adapter.optimistic.insert`) is already bridge-aware.
@@ -2685,6 +3642,22 @@ Even a fully-anchored fix (see above) would still let a project's own `vite.conf
 - **Rollover:** a record written before this change has no `logPath`, fails schema validation, and reads as "no record" — the old server is not adopted (it would die on its next log line anyway), a fresh one is spawned with file-backed output, and the orphan idles on its old port until it dies of EPIPE or is killed by hand.
 - **Verified:** `devServer.test.ts` 51 pass with `liveOrigin.test.ts` (two new tests: the real spawn's output lands in the file with no pipe, and a respawn opens the file fresh; the record test asserts `logPath` next to the record and the tailed status log; the adoption test asserts the adopted status log carries the file's content). Lint clean on the touched files. Experiment file for the property: bun parent + fd-backed `node` child survives the parent's exit and interleaves stdout/stderr in one file.
 - **Still open from the same report (not this PR):** with a HEALTHY server the board is quiet (47 s idle: no iframe churn, no reloads, no requests) and a click selects in 17 ms, but a structural action costs the parent ~400 ms of main-thread time even when the write is refused (`Delete` on a shared-component node: a 393 ms long task). Profile `deleteNodesAction`/`writeInsertToSource` planning next; that is the "half a second per action" that remains once the server stops dying.
+
+### live-17 — clicking a design-system/package component instance in a Tier 2 live frame selected the page container, not the component
+
+- **Agent:** `canvas-engineer`, 2026-09-21. Branch `fix/live-17-select-component-instances` (stacked on `fix/live-dev-server-survives-api-restart`, PR #203's base), worktree `.tmp/wt-live-17`.
+- **Stage:** implemented, unit-gated, verified live in a real browser against the real bundled Vite plugin. Draft PR open.
+- **Owner's report:** "I can't select the Button component, it keeps clicking [selects] the page container."
+- **Root cause:** `idStamp.ts` (the workspace-side Vite plugin `@core/studio-runtime` bundles into every project) stamped `data-node-id` on host/intrinsic JSX elements only (`classifyJsxTagKind(name) === 'element'`), never a component call site (`<Button/>`) — on the stated reasoning that "a call site renders none of its own DOM." False for any component that spreads `...props`/`...rest` onto its own root element, which every design-system component in this repo's corpus does. A click on `<Button label="Label" size="default" variant="primary" />` in `pages/SMS.tsx` rendered a live `<button data-node-id="design-system/components/Button.jsx:99:6">` — a real, stable position, but one the PAGE TREE has no node for at all (design-system/package call sites are opaque instances, never inlined — `componentSources.ts`'s `{ kind: 'design-system' | 'package' }`). `liveNodeResolve.ts`'s ancestor walk then correctly did its job on a DOM shape that was itself wrong: it walked up to the nearest element that DID carry a tree-known stamp, the page's own `<main>`, and returned that as the (inexact) match. The bug was never in the resolver — it was that the DOM never carried the id the resolver needed.
+- **Fix (`src/core/studio-runtime/idStamp.ts`):** stamp BOTH kinds. `parsePageFile` already mints the identical id for a `kind: 'component'` node at the exact same tag-name position it uses for `kind: 'element'` (`buildSourceNodeId`, computed BEFORE the kind branch — see `processElement`), so no parser change was needed; the plugin just had to start writing that id too. Attribute ORDER decides which stamp wins when the SAME rendered element ends up carrying both (a component's own internal host stamp, and its call site's forwarded one): a host element's own stamp is now `unshift`ed to the FRONT of its attribute list (was `push`ed last) so a LATER `{...props}` spread — which, textually, still comes after it — overrides it; a component call site's own stamp stays `push`ed onto the END of ITS OWN attribute list (wins over any spread the call site itself received). A component that does NOT forward props renders the extra attribute nowhere — harmless, unused prop.
+- **Verified live** (gstack `/browse`, worktree's own stack on ports 3011/3012/5183 pointed at a throwaway copy of `_scratch-undo`, `STUDIO_WORKSPACE_DIR` + `VITE_ALLOWED_ORIGIN` overrides — see Landmines): the REAL Tier-2 bridge iframe (`http://localhost:3012/p/_scratch-undo/__screen/sms`, `LiveBoardFrame`/`BoardFramesLayer`, **not** `CanvasLiveSurface`'s "Live" tab — that one is a portal-mode `interaction='live'` frame with no bridge at all, see canvas-internals.md's closing line) rendered all five `<Button/>` instances in `SMS.tsx` (lines 75–79) each with their OWN distinct call-site id (`pages/SMS.tsx:75:8` … `:79:8`), none of them matching `<main>`'s id (`pages/SMS.tsx:40:6`) — the exact failure mode from the bug report is gone. Confirmed by direct DOM inspection of the dev-server URL, not just by reading generated code.
+- **Files:** `src/core/studio-runtime/idStamp.ts` (stamping logic + doc rewrite — "## What gets stamped, and where the attribute lands" now states the opposite of what it said before), `src/core/studio-runtime/generated/vitePluginBundle.ts` (regenerated via `bun run studio-runtime:sync` — this file IS the bundle a user's workspace actually runs; `idStamp.ts` is NOT browser-bundle-exempt despite what an earlier work order assumed, confirm with `studio-runtime-bundle-fresh.test.ts`), `src/core/studio-runtime/__tests__/idStamp.test.ts` (rewrote the stale "does not stamp a component call site" test to match the new contract; added an attribute-order test per kind), `src/__tests__/studio-runtime/idParity.test.ts` (two new `describe` blocks: a design-system call-site parity case using a real root-anchored `design-system/` folder + barrel, and a spread-forwarding attribute-order case), `src/core/studio-runtime/__tests__/liveNodeResolve.test.ts` (new file — `resolveLiveNode`/`buildStampIndex` had NO unit test at all before this; added the live-17 regression case plus the ancestor-fallback and `.map`-row occurrence-pairing cases it was implicitly relying on), `docs/agent-refs/canvas-internals.md` (the "Tier 2 bridge frame" section's "A hit resolves to the innermost stamped ancestor" bullet described the OLD, buggy behaviour as if it were the design — rewritten with the fix and what's still true about the ancestor walk).
+- **`liveNodeResolve.ts` and `vitePlugin.ts`:** untouched — no logic in either needed to change; `liveNodeResolve.ts`'s occurrence-pairing already handled "the DOM has N elements sharing one stamp id" correctly, it just needed the DOM to carry the RIGHT stamp per instance, which `idStamp.ts` now does (five separate call sites, five separate ids, no occurrence-index ambiguity here at all — that mechanism is for a `.map` row or a repeated local-component inline, neither of which this bug involved).
+- **Landmine — local (inlined) components, not fully closed here (scoped per work order, flagged not silently changed):** for a LOCAL component (`inlineLocalComponents` splices its file in; the call site becomes a `studio.instance` Fragment node, `children` = the inlined subtree, SAME plain id it always had) whose target element ALSO forwards `...rest`/`...props` including the call site's new stamp, a click now resolves to the CALL SITE / instance node instead of the deep inlined element's own composite (`~`-joined) id — a new interaction this fix introduces, not present before (component call sites were never stamped at all). Verified this is not a resolver bug: the instance node's plain id IS a real, current entry in `page.nodes` (WS-4.2 keeps the call site, doesn't delete it), so the match is exact and consistent, just a DIFFERENT (arguably more literal — "you clicked the element the call site's own props ended up on") target than before. Not reproduced on the real corpus (local components here don't `...rest`-forward); flagged rather than silently changed per the work order's explicit ask. If this surfaces as a real complaint, the fix is almost certainly "don't let a call site's forwarded stamp override a LOCAL, INLINED subtree's own internal stamp" — i.e. make the unshift/push ordering conditional on whether the call site is a local (inlined) instance vs. an opaque (design-system/package) one, which `idStamp.ts` cannot know today (it has no cross-file `componentSources` knowledge — that classification happens in `parsePageFile`/`componentSources.ts`, not the single-file Babel pass).
+- **Landmine — generated bundle staleness is pre-existing, not caused by this PR.** `bun run studio-runtime:check` reported BOTH `vitePluginBundle.ts` AND `runtimeBridgeBundle.ts` stale on the base commit (`2566b676`), before any change in this branch — confirmed by stashing and re-running the check. `runtimeBridgeBundle.ts` bundles `runtime.ts`, a file sibling agents on this same task cluster (`fix/live-17-*` siblings) are actively editing on their own branches — regenerating it here would either collide with their in-flight edits or immediately go stale again the moment they land. This PR regenerates and commits ONLY `vitePluginBundle.ts` (load-bearing for this fix — it's the artifact a workspace's `vite.config.js` actually runs), and deliberately leaves `runtimeBridgeBundle.ts` as-is; whoever lands the `runtime.ts`/`messages.ts` work should run `bun run studio-runtime:sync` once as part of their own change.
+- **Landmine — `studio-runtime-bundle-fresh.test.ts` is flaky under concurrent worktree load**, independent of the above: `Bun.build`'s file reads through the symlinked `node_modules` (shared across every `.tmp/wt-*` worktree) intermittently throw `EBADF`/`Unexpected reading file` when another agent's `bun`/`tsc` process is touching the same tree at the same moment (matches `tsc-build-contention-parallel-worktrees` in the orchestrator's memory). Retried 3× and failed 3× different ways during this session, purely from contention — `bun run studio-runtime:sync` run directly (not through `bun test`) succeeded on the first try every time. Don't mistake this for the artifact actually being wrong; verify by grepping the compiled output for the expected logic change (done here: `unshift` count in the compiled bundle went from 35 to 36, matching the one new call site in `idStamp.ts`) rather than trusting the test's pass/fail under load.
+- **Landmine, operational — `pkill -f <pattern>` kills across worktrees, not just your own process.** While tearing down this task's verification stack, `pkill -f "scripts/dev.ts"` and `pkill -f "bun --watch server/index.ts"` matched and killed the PRIMARY checkout's own API process (ports 3001/3002) — the pattern has no notion of working directory, and `scripts/dev.ts` spawns `bun --watch server/index.ts` with the identical command string regardless of which checkout invoked it. Caught and the primary stack was back up within the same session (confirmed `curl` 200 on 3001/5174 and the listener on 3002 afterward), but this is a real, repeatable hazard for any agent running its own dev stack in a worktree: **kill by the exact pid you spawned (`Bun.spawn`'s `.pid`, or `$!` for a backgrounded shell command), never by `pkill -f <name-pattern>`,** and never touch ports 3001/3002/5173/5174/5175 — those belong to whichever stack the owner/orchestrator already has running.
+- **Browser-proof setup, for the next agent that needs one:** the running primary stack serves the PRIMARY checkout's `src/`, not a worktree's — a worktree's own `idStamp.ts`/`vitePlugin.ts` edit is only live through the worktree's OWN `bun run dev`. `studio-workspace/_scratch-undo` is gitignored and does not exist in a fresh worktree; copy it in from the primary checkout (`cp -R "<primary>/studio-workspace/_scratch-undo" studio-workspace/`) along with a throwaway copy of `.tmp/dev.db`(+`-wal`/`-shm`) for a pre-seeded `smoke@localhost.dev` login, then `PORT=<free> VITE_PORT=<free> VITE_ALLOWED_ORIGIN=http://localhost:<free vite port> STUDIO_WORKSPACE_DIR="$(pwd)/studio-workspace" DATABASE_URL="sqlite:.tmp/dev.db" bun run dev` (omitting `VITE_ALLOWED_ORIGIN` 403s every login POST — `server/config.ts`'s `DEV_ORIGIN_ALLOWLIST` only special-cases 5173/5174). The genuine Tier-2 bridge iframe only exists inside a BOARD (`src/admin/pages/site/store` → Boards, e.g. "Test"), never inside the single-page `?page=<id>` view's "Design"/"Live" toggle (`CanvasLiveSurface` — a portal-mode frame, confirmed `about:srcdoc`, no bridge). A cross-origin bridge iframe (different port from the admin origin) is invisible to same-origin `document.querySelector`/`contentDocument` from the parent tab and to this headless tool's ARIA snapshot; open its `src=` URL directly in a second tab (`$B newtab <url>`) to inspect its real DOM with `$B js`.
 
 ### live-14 — deleting an element in a Tier 2 live frame also removed the element below it: the optimistic delete detached a node React still owned
 
@@ -16385,6 +17358,198 @@ Newest first, capped at ~10. Everything older was moved **verbatim** to
 below for the index. When this list grows past ~10, move the overflow there in
 the same shape; do not summarise it away, and hoist any un-run dogfood script
 into "Pending dogfood" first.
+
+### speed-04 — cold selection on a Tier-2 board frame: one overlay, not two
+
+- **Agent:** perf-hunter (dispatched for `STUDIO-SPEED-PLAN.md`'s `speed-04` work order).
+- **Stage:** done — branch `feat/speed-04-cold-selection`, based on `tmp/speed-integration`.
+  Worked in `.tmp/wt-speed-04`. **PR:** [#213](https://github.com/maherfayad-stack/Figma-Killer-2/pull/213) (draft, base `tmp/speed-integration`).
+- **Updated:** 2026-09-21.
+- **Goal:** the plan's own table — click → selection ring on a live frame, 17ms
+  warm but **150–658ms cold**. The scout's cause, already diagnosed (not
+  re-diagnosed here per the work order): `LiveBoardFrame.tsx` mounts a Tier-0
+  portal fallback `BreakpointFrame` and the bridge `BreakpointFrame` together
+  until the bridge reports ready, and each ALWAYS mounted its own
+  `BreakpointSelectionOverlay`.
+
+**Root cause, confirmed by reading, not guessing.** `BreakpointFrame` always
+renders `<BreakpointSelectionOverlay>` regardless of `documentMode`. For a
+Tier-2 board frame that isn't ready, `LiveBoardFrame` renders BOTH the
+fallback's overlay (real, portal, working) AND the hidden bridge frame's
+overlay — and since `documentMode="bridge"` makes `bridgeChrome` true there,
+that second overlay's `useBridgeSelectionChrome` reacts to every selection
+change with a REAL `postMessage` round trip (`select`/`hover`/
+`setResizeTarget`/`measure`) into a document that has not finished loading,
+**and renders its own second, independently-positioned toolbar + in-place
+inspector for the exact same selection** — not scoped away, because both
+copies of `BreakpointFrame` receive the identical `frameId`/`selectedNodeIds`.
+This is a real correctness bug (two toolbars stacked), not just a perf one,
+and it is what the "dual mount not self-healing quickly" observation in
+speed-05's own notes was seeing.
+
+**What was NOT the cause, contrary to my own first hypothesis — recorded so
+nobody re-chases it.** Board frames share one synthetic breakpoint id
+(`'studio'`, `BoardFrameView.tsx`'s `STUDIO_BREAKPOINT_BASE`), which looked
+like it would make `showToolbar`/the expensive anchor session run on every
+POOLED board frame on every selection change (an O(pool size) cost). It
+doesn't: WS-10 Phase 2's `selectedNodeFrameId` scoping already zeroes
+`selectedNodeIds` to `EMPTY_SELECTED_NODE_IDS` for every non-owning board
+frame, so `hasOverlayWork` is false there and `tickOnce` never runs at all —
+confirmed by reading `useBreakpointOverlaySelectionState.ts`'s scoping and by
+`boardFrameVariantSelection.test.tsx` (pre-existing) staying green. The real
+O(frames) exposure that DOES exist is the CMS/Visual-Component canvas, where
+one selection is deliberately mirrored across every real breakpoint frame —
+that's what the second fix below targets.
+
+**Change (two independent fixes, both additive, both gated):**
+1. `BreakpointFrame.tsx` — new `overlayEnabled?: boolean` prop, default
+   `true` (every existing caller unaffected — `bun run lint`/`bun run build`
+   confirm no other call site needed a change). Gates whether
+   `<BreakpointSelectionOverlay>` mounts at all.
+2. `LiveBoardFrame.tsx` — passes `overlayEnabled={ready}` to its hidden
+   bridge `BreakpointFrame`. The bridge iframe still mounts and boots
+   concurrently (unchanged — the whole point of the not-ready/ready render
+   fork); only its OWN overlay is deferred until `ready`, which is the exact
+   commit the fallback unmounts in. The two overlays are now never both
+   live — eliminates both the wasted round trip and the double-toolbar bug.
+3. `BreakpointSelectionOverlay.tsx`'s `tickOnce` — in the "parent-doc anchor
+   (expensive, rare)" branch, added `ownsAnySelectedNode` (derived from the
+   ring placements already measured this tick, zero extra cost): when a
+   frame's own `elementCache.resolve` found none of the selected nodes, skip
+   `createCanvasOverlayMeasureSession` entirely — the session would only
+   ever measure `null` for every id, exactly what the hide-and-return path
+   already produces. Behavior-preserving (same output), removes two forced
+   `getBoundingClientRect()` reads per non-owning frame per selection change.
+4. **Deliberately NOT implemented**: the plan's own text also said "cache the
+   iframe and canvas-root rects per pan/zoom commit and per `frame:resize`
+   instead of re-measuring per selection." Investigated and rejected — an
+   `iframe.getBoundingClientRect()` can legitimately change for reasons OTHER
+   than a pan/zoom commit or a bridge `frame:resize` (an auto-height fallback
+   iframe whose content just grew from the SAME selection change being
+   anchored; the canvas root itself resizing because selecting a node opened
+   a side panel), and caching across those triggers would silently
+   reintroduce `standing-03`'s exact class of bug — a stale term in the
+   anchor math, multiplied by zoom. The two reads the session already pays
+   are cheap and `canvasOverlayMeasurement.test.ts` already proves ONE
+   session reads geometry once no matter how many rings it measures; the real
+   cost was paying for a session at all on a frame that owns nothing, which
+   fix 3 already removes. Do not add this cache without a measured number
+   showing remaining per-selection cost on a frame that DOES own the node.
+5. `BreakpointSelectionOverlay.tsx` was at the 700-line ceiling before either
+   fix above (`module-size-budgets.test.ts`) — extracted its top-of-component
+   store reads (frame-scoped selection/hover, the selector-affinity
+   highlight, this frame's page, the VC badge list) into a new
+   `useBreakpointOverlaySelectionState.ts` hook. No behavior change; 685
+   lines after, comfortable headroom.
+
+**Measured — real numbers, `git stash` A/B on the three product files alone
+(the e2e spec unchanged both times), against `studio-workspace/__board-perf-fixture`
+(12 frames; defaults to Tier 2 — `DEFAULT_TRUST_TIER`, 2026-09-20 — with no
+`node_modules`, so its bridge iframe never reaches `ready` inside a test run;
+the fallback is the only interactive surface for the whole run, which IS the
+"just opened" window this budget targets, not a workaround):**
+
+| | run 1 | run 2 | run 3 | mean |
+|---|---|---|---|---|
+| before (dual overlay mount) | 200.4ms | 165.3ms | 210.4ms | 192.0ms |
+| after (this change) | 141.3ms | 197.4ms | 184.7ms | 174.5ms |
+
+**Read this before trusting the absolute numbers.** `uptime` load average was
+~50 at calibration time (many other agent worktrees running `bun test`/`bun
+run build`/dev servers concurrently — the same contention `bun run
+bench:editor-store` hit: a run that normally takes well under a minute took
+710s in this session). The spread WITHIN each side (141–210ms) is comparable
+to the delta BETWEEN sides — real, directionally consistent, not a clean
+number. `BUDGET_CLICK_TO_RING_COLD_MS` is set to **350ms** (roughly 2x the
+observed "after" mean, the same convention `BUDGET_PAN_WORST_FRAME_MS` in the
+same file already uses), not the plan's own `<=100ms` target. **Re-calibrate
+on a quiet CI runner and tighten toward 100ms once a clean number exists
+there — do not loosen it further to chase noise on a busy dev box.**
+
+**Files:**
+```
+modify  src/admin/pages/site/canvas/BreakpointFrame.tsx            (overlayEnabled prop)
+modify  src/admin/pages/site/canvas/BoardFramesLayer/LiveBoardFrame.tsx  (overlayEnabled={ready})
+modify  src/admin/pages/site/canvas/BreakpointSelectionOverlay.tsx (anchor-skip + extraction; 718 lines mid-change, 685 after)
+create  src/admin/pages/site/canvas/useBreakpointOverlaySelectionState.ts
+modify  src/__tests__/canvas/liveBoardFrame.test.tsx  (new describe: exactly one toolbar/inspector while not ready)
+create  src/__tests__/canvas/breakpointFrameOverlayGate.test.tsx     (overlayEnabled contract, in isolation)
+create  src/__tests__/canvas/breakpointSelectionOverlayAnchorSkip.test.tsx  (session-spy proof: skipped for a non-owning selection, still created for a real one)
+modify  tests/e2e/studio-board-perf.e2e.ts  (new `speed-04` describe: click -> ring budget)
+modify  docs/agent-refs/canvas-internals.md, docs/agent-refs/path-index.md
+```
+
+**Gates:**
+- `bun test src/__tests__/canvas src/__tests__/architecture` → 1691 pass, 2
+  fail — both pre-existing and named by the work order itself:
+  `module-size-budgets.test.ts` (`fsCodemodAdapter.ts` 708, `usePersistence.ts`
+  717 — neither touched by this change) and `studio-runtime-bundle-fresh.test.ts`
+  (the documented `Bun.build`-reading-a-`.mjs`-under-`node_modules` quirk).
+  Confirmed identical both stashed and unstashed.
+- `bun run build` clean (`tsc -b` + `vite build`).
+- `bun run lint` clean on every touched file.
+- `bun run bench:editor-store` — completed clean (710s wall time — machine
+  load, not a regression; this bench doesn't touch anything speed-04 changed).
+- `bun run test` (bare, `--parallel=4`, full repo) — **started in background,
+  did not finish before this handoff was written**, same "shared machine, many
+  concurrent agent worktrees" reason `speed-03`'s own handoff already
+  recorded. Whoever picks this up next: check
+  `/private/tmp/claude-504/.../tasks/bc8lxl7kp.output` if it's still around,
+  or just re-run when the machine is quieter.
+- e2e: `E2E_VITE_PORT=5180 E2E_CMS_PORT=3012 bun run test:e2e -- tests/e2e/studio-board-perf.e2e.ts -g "speed-04"` →
+  2 pass (including the `[setup]` auth project). The `speed-04` test itself
+  fails against the pre-fix code (200.4/165.3/210.4ms, all over budget) and
+  passes against the fix (135.7/141.3/166.6/197.4/184.7ms across five runs,
+  under the calibrated 350ms budget every time).
+
+**A real, pre-existing, unrelated failure found along the way — not fixed,
+flagged for whoever owns it.** `studio-board-perf.e2e.ts`'s OWN `perf-01`
+test (`virtualization bounds live iframes...`) now fails on a clean
+`tmp/speed-integration` checkout too (confirmed via the same `git stash` A/B
+— identical failure with or without this PR's diff): `atWorkingZoom.liveIframes`
+came back equal to (or greater than!) `atWorkingZoom.boardFrames` (12 vs 12,
+then 16 vs 12 on a second run) instead of strictly less. Cause: `__board-perf-fixture`
+now defaults to Tier 2 (`DEFAULT_TRUST_TIER`, 2026-09-20's change,
+postdating this fixture's own README, which was written assuming Tier 0),
+and `readBoardCounts`/`readFrameStates`'s `iframe[title^="Canvas frame"]`
+counting logic double-counts a Tier-2 `LiveBoardFrame`'s fallback iframe AND
+its hidden bridge iframe (both carry the identical title, since board frames
+share one synthetic breakpoint id) as two separate "live" frames. This is a
+`perf-01`/virtualization-counting bug, not a `speed-04` one — did not touch
+`readBoardCounts`/`readFrameStates`/`frameVirtualization.ts` per the work
+order's explicit file boundaries. Whoever owns `perf-01` next: the counting
+helper needs to distinguish a fallback iframe from a bridge iframe (or count
+board frames, not raw iframes) now that Tier 2 is the product default.
+- **Docs:** `docs/agent-refs/canvas-internals.md` — new "Cold selection on a
+  Tier-2 board: one overlay per board frame, not two (`speed-04`)" subsection
+  under Perf, including the "what did NOT change and why" note.
+  `docs/agent-refs/path-index.md` — new entry for
+  `useBreakpointOverlaySelectionState.ts`.
+- **Landmines:**
+  - `Locator.toBeVisible()` in Playwright checks CSS visibility, NOT whether
+    an element's transformed board position is inside the current viewport.
+    `page.locator('[data-testid="board-frame-body"]').first()` on a
+    multi-frame board can silently resolve to a frame parked off-canvas
+    (its DOM-order-first, not screen-order-first) — spent real time chasing
+    a "no pointerdown ever observed" mystery before realizing the click was
+    landing on the Explorer sidebar, not the canvas, because the "first"
+    frame in DOM order was Screen01, off-screen behind the panel. Fix: pick
+    the iframe whose bounding box actually contains the canvas root's own
+    center point (see the e2e spec's own comment).
+  - `FrameLocator` (from `.frameLocator(...)`) has no `.evaluate()` — a
+    whole-document script needs the real `Frame`, reached through
+    `elementHandle.contentFrame()`, not the locator.
+  - `mock.module` calls leak across `bun test` FILES in this bun version
+    (1.3.13) — same landmine `perf-06` already recorded; not hit directly
+    here since `liveBoardFrame.test.tsx`'s existing mocks were reused as-is,
+    but worth re-flagging since this PR added a new `describe` block to that
+    same file.
+- **Human action needed:** none blocking. Worth a dogfood once a real project
+  is promoted to Tier 2 with `node_modules` installed and its dev server
+  actually reaches `ready`: click a node in a board frame within the first
+  second or two after opening (before the bridge is ready), confirm exactly
+  ONE ring + ONE toolbar + ONE inspector appear (not two), then watch them
+  swap cleanly to the bridge's own chrome the instant the frame goes live.
 
 ### server-22 — localized page frames rendered completely unstyled (style rule ids re-minted)
 - **Agent:** server-engineer · **Stage:** done — targeted gates green, draft PR open.

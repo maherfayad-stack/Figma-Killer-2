@@ -275,6 +275,148 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
   })
 })
 
+// `speed-01` — a properties-panel style commit/scrub previewed in-frame
+// ahead of the file write + HMR round trip.
+describe('createStudioRuntimeBridge — optimistic style', () => {
+  const STYLE_TAG = 'studio-runtime-optimistic-style'
+  const STYLE_ATTR = 'data-studio-optimistic-style'
+
+  function makeFakeHot() {
+    const handlers = new Map<string, () => void>()
+    return {
+      hot: { on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => { handlers.set(event, cb) } },
+      fireBeforeUpdate: () => handlers.get('vite:beforeUpdate')?.(),
+      fireAfterUpdate: () => handlers.get('vite:afterUpdate')?.(),
+    }
+  }
+
+  it("applies an inline-target patch as a kebab-cased, !important stylesheet rule, never touching the element's own style", () => {
+    document.body.innerHTML = `<div data-node-id="n1" style="color: blue"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { backgroundColor: 'red', width: '100px' },
+    })
+
+    const el = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    expect(el.hasAttribute(STYLE_ATTR)).toBe(true)
+    expect(el.getAttribute('style')).toBe('color: blue')
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).toContain('background-color: red !important')
+    expect(sheet).toContain('width: 100px !important')
+  })
+
+  it('re-applying to the same ref REPLACES its rule rather than appending a second one', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'green' } })
+
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).not.toContain('red')
+    expect(sheet.match(/color:/g)).toHaveLength(1)
+    expect(sheet).toContain('color: green !important')
+  })
+
+  // A class-target write (`className` present) previews the SAME way an
+  // inline write does — `className` is wire-informational only. Studio's
+  // parse names a class differently than Vite's own CSS-modules plugin does
+  // in the live frame's DOM, so a `.<className>` selector would match
+  // nothing there — see `optimisticStyle.ts`'s module doc.
+  it('a class-target patch (className present) previews element-scoped too, never as a `.className` selector', () => {
+    document.body.innerHTML = `<div data-node-id="n1" class="_page_j4o6g_3"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { color: 'red' },
+      className: 'SMS_page__5638d', // Studio's own parse name — deliberately NOT the DOM's real class
+    })
+
+    const el = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    expect(el.hasAttribute(STYLE_ATTR)).toBe(true)
+    const sheet = document.getElementById(STYLE_TAG)?.textContent ?? ''
+    expect(sheet).toContain('color: red !important')
+    expect(sheet).not.toContain('.SMS_page__5638d')
+    expect(sheet).not.toContain('._page_j4o6g_3')
+  })
+
+  it('clear drops the rule and the attribute for that ref, and no-ops for a ref with nothing active', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+
+    expect(() =>
+      bridge!.handleMessage({ type: 'optimistic.style:clear', ref: { nodeId: 'missing', occurrenceIndex: 0 } }),
+    ).not.toThrow()
+
+    bridge.handleMessage({ type: 'optimistic.style:clear', ref: { nodeId: 'n1', occurrenceIndex: 0 } })
+
+    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+  })
+
+  it('vite:beforeUpdate reverts every optimistic style rule and attribute; vite:afterUpdate does the same for a frame that missed the before', () => {
+    document.body.innerHTML = `<div data-node-id="n1"></div><div data-node-id="n2" class="card"></div>`
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireBeforeUpdate, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    fireBeforeUpdate()
+    expect(document.querySelector('[data-node-id="n1"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n2', occurrenceIndex: 0 },
+      patch: { color: 'blue' },
+      className: 'card',
+    })
+    fireAfterUpdate()
+    expect(document.getElementById(STYLE_TAG)).toBeNull()
+    expect(document.querySelector('[data-node-id="n2"]')?.hasAttribute(STYLE_ATTR)).toBe(false)
+  })
+
+  it('repositions the selection ring after an apply — inline target and class target both', async () => {
+    document.body.innerHTML = `<div data-node-id="n1" class="card"></div>`
+    const target = document.querySelector<HTMLElement>('[data-node-id="n1"]')!
+    let call = 0
+    target.getBoundingClientRect = () => {
+      call += 1
+      const x = call === 1 ? 0 : call * 10
+      return { left: x, top: 0, width: 10, height: 10, right: x + 10, bottom: 10, x, y: 0, toJSON: () => ({}) }
+    }
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
+    const ring = document.querySelector<HTMLElement>('[data-canvas-selection-ring]')!
+    expect(ring.style.transform).toBe('translate(0px, 0px)')
+
+    bridge.handleMessage({ type: 'optimistic.style', ref: { nodeId: 'n1', occurrenceIndex: 0 }, patch: { color: 'red' } })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(ring.style.transform).not.toBe('translate(0px, 0px)')
+
+    const afterInline = ring.style.transform
+    bridge.handleMessage({
+      type: 'optimistic.style',
+      ref: { nodeId: 'n1', occurrenceIndex: 0 },
+      patch: { color: 'blue' },
+      className: 'card',
+    })
+    await new Promise((resolve) => requestAnimationFrame(resolve))
+    expect(ring.style.transform).not.toBe(afterInline)
+  })
+})
+
 describe('createStudioRuntimeBridge — measure', () => {
   it('replies with measure:result carrying a rect and the requested computed-style properties', () => {
     document.body.innerHTML = `<div data-node-id="m1"></div>`
@@ -301,6 +443,70 @@ describe('createStudioRuntimeBridge — measure', () => {
 
     const reply = posted.at(-1)!.data as { message: { measurements: Array<{ rect: unknown }> } }
     expect(reply.message.measurements[0]!.rect).toBeNull()
+  })
+})
+
+// `speed-06` — the reply the parent's per-drag snapshot round-trips against.
+describe('createStudioRuntimeBridge — dropCandidates', () => {
+  it('replies with one candidate per stamped node, with an axis and no empty-box entries', () => {
+    document.body.innerHTML = `
+      <div data-node-id="row" style="display:flex; flex-direction:row;">
+        <span data-node-id="a"></span>
+        <span data-node-id="b"></span>
+      </div>
+    `
+    for (const [id, rect] of [
+      ['row', { x: 0, y: 0, width: 200, height: 40 }],
+      ['a', { x: 0, y: 0, width: 100, height: 40 }],
+      ['b', { x: 100, y: 0, width: 100, height: 40 }],
+    ] as const) {
+      const el = document.querySelector<HTMLElement>(`[data-node-id="${id}"]`)!
+      el.getBoundingClientRect = () => ({ ...rect, left: rect.x, top: rect.y, right: rect.x + rect.width, bottom: rect.y + rect.height, toJSON: () => ({}) }) as DOMRect
+    }
+    document.body.getBoundingClientRect = () => ({ x: 0, y: 0, width: 200, height: 40, left: 0, top: 0, right: 200, bottom: 40, toJSON: () => ({}) }) as DOMRect
+
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'dropCandidates', requestId: 'drop-1' })
+
+    const reply = posted.at(-1)!.data as {
+      message: { type: string; requestId: string; candidates: Array<{ nodeId: string; axis: string; rect: { width: number; height: number } }> }
+    }
+    expect(reply.message.type).toBe('dropCandidates:result')
+    expect(reply.message.requestId).toBe('drop-1')
+    const nodeIds = reply.message.candidates.map((c) => c.nodeId).sort()
+    expect(nodeIds).toEqual(['a', 'b', 'row'])
+    // `a`/`b` sit inside the flex-row container `row` — inserting a sibling
+    // beside either of them is a HORIZONTAL choice; `row` itself sits inside
+    // the (default, block) `<body>`, a VERTICAL choice.
+    const a = reply.message.candidates.find((c) => c.nodeId === 'a')!
+    expect(a.axis).toBe('horizontal')
+    const row = reply.message.candidates.find((c) => c.nodeId === 'row')!
+    expect(row.axis).toBe('vertical')
+    for (const candidate of reply.message.candidates) {
+      expect(candidate.rect.width > 0 || candidate.rect.height > 0).toBe(true)
+    }
+  })
+
+  it('excludes a node whose element has no box (a `display: contents` wrapper) but keeps its children', () => {
+    document.body.innerHTML = `
+      <div data-node-id="wrapper" style="display:contents;">
+        <span data-node-id="child"></span>
+      </div>
+    `
+    const child = document.querySelector<HTMLElement>('[data-node-id="child"]')!
+    child.getBoundingClientRect = () => ({ x: 0, y: 0, width: 40, height: 20, left: 0, top: 0, right: 40, bottom: 20, toJSON: () => ({}) }) as DOMRect
+    document.body.getBoundingClientRect = () => ({ x: 0, y: 0, width: 40, height: 20, left: 0, top: 0, right: 40, bottom: 20, toJSON: () => ({}) }) as DOMRect
+
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+
+    bridge.handleMessage({ type: 'dropCandidates', requestId: 'drop-2' })
+
+    const reply = posted.at(-1)!.data as { message: { candidates: Array<{ nodeId: string }> } }
+    const nodeIds = reply.message.candidates.map((c) => c.nodeId)
+    expect(nodeIds).toEqual(['child'])
   })
 })
 
@@ -605,6 +811,110 @@ describe('createStudioRuntimeBridge — design mode owns the gesture', () => {
   })
 })
 
+// `speed-03` — every native pointermove used to become its own postMessage
+// (measured ≈120/s while idly hovering a live frame); `move` is now
+// coalesced to one post per animation frame and skipped when it would repeat
+// the last posted node + rect.
+describe('createStudioRuntimeBridge — move coalescing (`speed-03`)', () => {
+  function pointerEvent(type: string, init: MouseEventInit): Event {
+    const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+  }
+
+  function nextFrame(): Promise<void> {
+    return new Promise((resolve) => requestAnimationFrame(() => resolve()))
+  }
+
+  function pointerMessages(posted: Array<{ data: unknown }>) {
+    return posted
+      .map((p) => (p.data as { message: Record<string, unknown> }).message)
+      .filter((m) => m.type === 'pointer')
+  }
+
+  it('100 moves inside one animation frame coalesce to a single message carrying the last coordinates', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    for (let i = 0; i < 100; i += 1) {
+      box.dispatchEvent(pointerEvent('pointermove', { clientX: i, clientY: i }))
+    }
+    // Nothing posts before the frame the batch is coalesced onto fires.
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(0)
+
+    await nextFrame()
+    const moves = pointerMessages(posted).filter((m) => m.phase === 'move')
+    expect(moves).toHaveLength(1)
+    expect(moves[0]).toMatchObject({ clientX: 99, clientY: 99, nodeId: 'pages/Home.tsx:3:4' })
+  })
+
+  it('skips the post when the resolved node and rect are unchanged from the last posted move', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 1, clientY: 1 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(1)
+
+    // Same node, same rect (happy-dom has no layout engine — every element's
+    // `getBoundingClientRect()` is the zero rect, so this also covers the
+    // "both null-ish" background case) — a different client position alone
+    // must not produce a second post.
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 40, clientY: 40 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(1)
+
+    // Genuinely leaving the node produces a new post.
+    document.body.appendChild(document.createElement('span'))
+    box.remove()
+    document.dispatchEvent(pointerEvent('pointermove', { clientX: 41, clientY: 41 }))
+    await nextFrame()
+    expect(pointerMessages(posted).filter((m) => m.phase === 'move')).toHaveLength(2)
+  })
+
+  it('keeps posting while a button is held, even over the same node + rect — a pan replay needs every position', async () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    box.dispatchEvent(pointerEvent('pointerdown', { button: 1, buttons: 4, clientX: 0, clientY: 0 }))
+    box.dispatchEvent(pointerEvent('pointermove', { buttons: 4, clientX: 10, clientY: 10 }))
+    await nextFrame()
+    box.dispatchEvent(pointerEvent('pointermove', { buttons: 4, clientX: 20, clientY: 20 }))
+    await nextFrame()
+
+    const moves = pointerMessages(posted).filter((m) => m.phase === 'move')
+    expect(moves).toHaveLength(2)
+    expect(moves.map((m) => m.clientX)).toEqual([10, 20])
+  })
+
+  it('flushes a pending move before a down, so the parent never sees the down first', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+
+    // The move is still pending (no frame has fired) when the down lands.
+    box.dispatchEvent(pointerEvent('pointermove', { clientX: 5, clientY: 5 }))
+    box.dispatchEvent(pointerEvent('pointerdown', { clientX: 5, clientY: 5, button: 0, buttons: 1 }))
+
+    const phases = pointerMessages(posted).map((m) => m.phase)
+    expect(phases).toEqual(['move', 'down'])
+  })
+})
+
 // `live-13` — the frame draws and drags the resize handles; the parent commits.
 describe('createStudioRuntimeBridge — resize handles', () => {
   const FRAME = '[data-canvas-resize-frame]'
@@ -729,5 +1039,199 @@ describe('createStudioRuntimeBridge — resize handles', () => {
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
     fireAfterUpdate()
     expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
+  })
+})
+
+// `live-18` — double-click-to-edit text inside a bridge frame.
+describe('createStudioRuntimeBridge — inline text edit', () => {
+  function mouseEvent(type: string, init: MouseEventInit = {}): MouseEvent {
+    return new MouseEvent(type, { bubbles: true, cancelable: true, ...init })
+  }
+  function keyEvent(type: string, init: KeyboardEventInit): KeyboardEvent {
+    return new KeyboardEvent(type, { bubbles: true, cancelable: true, ...init })
+  }
+  function messages(posted: Array<{ data: unknown }>): Array<Record<string, unknown>> {
+    return posted.map((p) => (p.data as { message: Record<string, unknown> }).message)
+  }
+  function mountText(text: string): HTMLElement {
+    const el = document.createElement('p')
+    el.setAttribute('data-node-id', 'pages/Home.tsx:5:2')
+    el.textContent = text
+    document.body.appendChild(el)
+    return el
+  }
+
+  it('a double-click in design mode posts text:editStart and claims the gesture', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    const dbl = mouseEvent('dblclick')
+    el.dispatchEvent(dbl)
+    expect(dbl.defaultPrevented).toBe(true)
+    expect(messages(posted).filter((m) => m.type === 'text:editStart')).toEqual([
+      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+    // Not yet contentEditable — the parent hasn't replied.
+    expect(el.getAttribute('contenteditable')).toBeNull()
+  })
+
+  it('a double-click in live mode does nothing — the runtime asks only in design mode', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'live' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
+  })
+
+  it('an allowed reply seeds the text, makes the element editable, and focuses it', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'canonical text' })
+
+    expect(el.contentEditable).toBe('plaintext-only')
+    expect(el.textContent).toBe('canonical text')
+    expect(document.activeElement).toBe(el)
+  })
+
+  it('a refused reply leaves the element untouched', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: false })
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+  })
+
+  it('a reply for a stale/mismatched request is ignored', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    // No editStart was ever sent for this node — a reply with nothing pending.
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'nope' })
+    expect(el.getAttribute('contenteditable')).toBeNull()
+  })
+
+  it('Enter without Shift commits the CURRENT DOM text and removes the attribute; the app never sees the keydown', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+
+    let appKeydowns = 0
+    document.body.addEventListener('keydown', () => { appKeydowns += 1 })
+    el.textContent = 'hello world' // the user typed directly into the real element
+    const enter = keyEvent('keydown', { key: 'Enter' })
+    el.dispatchEvent(enter)
+
+    expect(enter.defaultPrevented).toBe(true)
+    expect(appKeydowns).toBe(0)
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello world')
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toEqual([
+      { type: 'text:commit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, text: 'hello world' },
+    ])
+  })
+
+  it('Shift+Enter does not commit — plain newline behaviour is left to the browser', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.dispatchEvent(keyEvent('keydown', { key: 'Enter', shiftKey: true }))
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toHaveLength(0)
+    expect(el.getAttribute('contenteditable')).not.toBeNull()
+  })
+
+  it('Escape cancels — restores the seeded text, removes the attribute, and posts text:cancel', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'typed but abandoned'
+    const escape = keyEvent('keydown', { key: 'Escape' })
+    el.dispatchEvent(escape)
+
+    expect(escape.defaultPrevented).toBe(true)
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+    expect(messages(posted).filter((m) => m.type === 'text:cancel')).toEqual([
+      { type: 'text:cancel', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toHaveLength(0)
+  })
+
+  it('blur commits — clicking away ends the session', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'blurred away'
+    el.dispatchEvent(new Event('blur'))
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(messages(posted).filter((m) => m.type === 'text:commit')).toEqual([
+      { type: 'text:commit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, text: 'blurred away' },
+    ])
+  })
+
+  it('a text over the 20000-char ceiling is truncated before it is posted', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'x'.repeat(20_050)
+    el.dispatchEvent(keyEvent('keydown', { key: 'Enter' }))
+
+    const commit = messages(posted).find((m) => m.type === 'text:commit') as { text: string } | undefined
+    expect(commit?.text).toHaveLength(20_000)
+  })
+
+  it("vite:beforeUpdate with an edit still open cancels it (nothing was ever written to the store to undo)", () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    const handlers = new Map<string, () => void>()
+    const hot = { on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => { handlers.set(event, cb) } }
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const el = mountText('hello')
+    el.dispatchEvent(mouseEvent('dblclick'))
+    bridge.handleMessage({ type: 'text:edit', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, allowed: true, text: 'hello' })
+    el.textContent = 'unsaved edit'
+
+    handlers.get('vite:beforeUpdate')?.()
+
+    expect(el.getAttribute('contenteditable')).toBeNull()
+    expect(el.textContent).toBe('hello')
+    expect(messages(posted).filter((m) => m.type === 'text:cancel')).toEqual([
+      { type: 'text:cancel', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+    ])
+  })
+
+  it('a double-click on the runtime\'s own chrome is never a text edit', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    bridge.handleMessage({ type: 'select', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] })
+    const ring = document.querySelector('[data-canvas-selection-ring]')!
+    ring.dispatchEvent(mouseEvent('dblclick'))
+    expect(messages(posted).some((m) => m.type === 'text:editStart')).toBe(false)
   })
 })

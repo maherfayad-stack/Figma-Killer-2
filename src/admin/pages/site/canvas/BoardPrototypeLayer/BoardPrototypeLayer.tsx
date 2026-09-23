@@ -83,7 +83,7 @@ import { frameBoardRect, toBoardRect, useNodeFrameRects } from './usePrototypeEn
 import { usePrototypeLinkPick } from './usePrototypeLinkPick'
 import styles from './BoardPrototypeLayer.module.css'
 
-/** Stable identity so the measuring hook does not rebuild its observer. */
+/** Stable identity so the measuring hook does not rebuild its subscriptions. */
 const EMPTY_IDS: string[] = []
 /** Stable identity for the design-mode short-circuit below. */
 const EMPTY_RESOLVED_IDS: ReadonlyMap<string, string> = new Map()
@@ -113,7 +113,7 @@ export function BoardPrototypeLayer() {
     boardMode === 'prototype' ? resolvedLinkSourceIds(links, pages) : EMPTY_RESOLVED_IDS
 
   // The `+` handle needs the same measurement as a connector's source, so it
-  // rides the same observer rather than opening a second one. Sorted so the
+  // rides the same measurement pass rather than opening a second one. Sorted so the
   // hook's join key is stable under map-iteration order changes.
   // The toolbar's pending request has to be measured too, or the pick it asked
   // for can never resolve an anchor to draw from.

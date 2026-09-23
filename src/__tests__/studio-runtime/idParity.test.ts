@@ -169,3 +169,83 @@ describe("idParity — a `.map` row (staticLoopExpansion.test.ts's Packages fixt
     expect(pluginStampedIds).toEqual(new Set([...rowStampIds, div!.id]))
   })
 })
+
+describe('idParity — a design-system component call site (live-17)', () => {
+  it("a call site the parser never inlines (design-system, opaque) keeps its OWN plain id, and the plugin now stamps that exact id too", () => {
+    // Mirrors the real bug's shape: `design-system/` is the root-anchored,
+    // Studio-written folder `componentSources.ts` classifies as
+    // `{ kind: 'design-system' }` — never `local` — so `inlineLocalComponents`
+    // must leave the call site opaque (see `designSystemDir.ts`).
+    write('design-system/index.js', "export { Button } from './Button'\n")
+    const buttonRelFile = 'design-system/Button.jsx'
+    const buttonSource = [
+      'export function Button({ className, ...rest }) {',
+      '  return <button className={className} {...rest} />',
+      '}',
+      '',
+    ].join('\n')
+    write(buttonRelFile, buttonSource)
+
+    const pageRelFile = 'pages/SMS.tsx'
+    const pageSource = [
+      "import { Button } from '../design-system'",
+      'export default function SMS() {',
+      '  return (',
+      '    <main>',
+      '      <Button label="Label" size="default" variant="primary" />',
+      '    </main>',
+      '  )',
+      '}',
+      '',
+    ].join('\n')
+    const pageFile = write(pageRelFile, pageSource)
+
+    const project = createWorkspaceProject(tmpDir)
+    const parsed = parsePageFile(pageFile, tmpDir, project)
+    const sources = resolveComponentSources(project, pageFile, tmpDir, parsed)
+
+    const buttonCallSite = Object.values(parsed.nodes).find((n) => n.name === 'Button')
+    expect(buttonCallSite).toBeDefined()
+    expect(sources[buttonCallSite!.id]).toEqual({ kind: 'design-system', name: 'Button' })
+
+    // Not local: `inlineLocalComponents` must skip it and keep the call site
+    // opaque, at its OWN id — never a composite `~` id.
+    const expanded = inlineLocalComponents(parsed, sources, project, tmpDir)
+    expect(expanded.nodes[buttonCallSite!.id]).toBeDefined()
+    expect(expanded.nodes[buttonCallSite!.id]!.kind).toBe('component')
+    expect(buttonCallSite!.id).not.toContain('~')
+
+    // The fix: the plugin now stamps the call site's opening element with
+    // this exact id — before live-17, a component call site was never
+    // stamped at all, and the live DOM carried only `Button.jsx`'s own
+    // internal id, which has no entry in the tree at all.
+    const pageStampedIds = stampedIds(stampHostElementIds(pageSource, pageRelFile).code)
+    expect(pageStampedIds.has(buttonCallSite!.id)).toBe(true)
+  })
+})
+
+describe('idParity — spread-forwarding order (live-17)', () => {
+  it("a host element's own stamp is textually BEFORE a `{...props}` spread, so a forwarded call-site stamp is the LATER (winning) attribute", () => {
+    const buttonRelFile = 'design-system/Button.jsx'
+    const buttonSource = [
+      'export function Button({ className, ...rest }) {',
+      '  return <button className={className} {...rest} />',
+      '}',
+      '',
+    ].join('\n')
+
+    const stamped = stampHostElementIds(buttonSource, buttonRelFile)
+    expect(stamped.changed).toBe(true)
+
+    const opening = stamped.code.match(/<button[^>]*>/)?.[0]
+    expect(opening).toBeDefined()
+    const stampIndex = opening!.indexOf(STUDIO_NODE_ID_ATTR)
+    const spreadIndex = opening!.indexOf('{...rest}')
+    expect(stampIndex).toBeGreaterThan(-1)
+    // Load-bearing: JSX/`createElement` prop merging applies LATER attributes
+    // over earlier ones, so `Button.jsx`'s own internal stamp (unshifted to
+    // the front here) is exactly the attribute a forwarded call-site stamp
+    // (inside `{...rest}`, textually later) is meant to lose to.
+    expect(stampIndex).toBeLessThan(spreadIndex)
+  })
+})

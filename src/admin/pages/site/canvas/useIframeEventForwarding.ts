@@ -72,6 +72,7 @@
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { installFrameDragRelay } from './canvasFrameDragRelay'
+import { readCanvasPointerRelay } from './canvasPointerRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { useEditorStore } from '@site/store/store'
 import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
@@ -291,11 +292,8 @@ export function useIframeEventForwarding(
       iframe.dispatchEvent(forwarded)
     }
     const isCanvasDragActive = (): { pointerId: number } | null => {
-      const html = iframe.ownerDocument?.documentElement
-      if (!html) return null
-      if (html.dataset.studioCanvasDragging !== '1') return null
-      const id = Number(html.dataset.studioCanvasDraggingPointerId ?? NaN)
-      return Number.isFinite(id) ? { pointerId: id } : { pointerId: 0 }
+      const ownerDoc = iframe.ownerDocument
+      return ownerDoc ? readCanvasPointerRelay(ownerDoc) : null
     }
     // True while a pan gesture started inside this iframe is still in
     // flight (space+left-click hold). We start a pan on pointerdown when

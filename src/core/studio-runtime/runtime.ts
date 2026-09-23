@@ -57,8 +57,11 @@ import {
   type RuntimeMode,
 } from './messages'
 import { installGestureForwarding } from './gestureForwarding'
+import { installInlineTextEdit } from './inlineTextEdit'
 import { rectRelativeToBody } from './nodeDom'
 import { installResizeHandles } from './resizeHandles'
+import { measureNodes } from './measureNodes'
+import { collectDropCandidates } from './dropCandidates'
 import { startRuntimeErrorTaps } from './runtimeErrorTaps'
 import {
   applyOptimisticDelete,
@@ -68,12 +71,13 @@ import {
   revertOptimisticDom,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
+import { applyOptimisticStyle, clearOptimisticStyle, OPTIMISTIC_STYLE_ATTR, revertAllOptimisticStyle } from './optimisticStyle'
 import { startHoverSuppression, type HoverSuppressionController } from './hoverSuppressionRules'
 import { startScrollUnroll, type ScrollUnrollController } from './scrollUnrollRules'
 import { startAnimationFreeze, type AnimationFreezeController } from './animationFreezeRules'
 import { SELECTION_CHROME_RULES, SELECTION_OVERLAY_ROOT_ID, SELECTION_STYLE_TAG_ID } from './selectionChromeCss'
 import { wireHmrStateAcrossUpdates, type ViteHotContext } from './hmrState'
-import { findNthNodeById, NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
+import { findNthNodeById } from './nodeIdIndexing'
 import { collectScrollDeficits, DEFAULT_FRAME_FIT_HEIGHT, resolveFrameFitHeight, type FrameFitMetrics } from './frameFitRules'
 import { OVERLAY_ID_ATTR } from './overlayStyleAttr'
 
@@ -83,18 +87,6 @@ const OVERLAY_STYLE_ID_PREFIX = 'studio-runtime-overlay-'
 
 /** A generic RTL stand-in — mirrors `previewAxesFrameEffect.ts`'s `RTL_PREVIEW_LANG` (Studio has no real per-project locale to reach for here; see `setAxes` below for why this file does not import that module directly). */
 const RTL_PREVIEW_LANG = 'ar'
-
-const DEFAULT_MEASURED_PROPERTIES = [
-  'display',
-  'position',
-  'width',
-  'height',
-  'color',
-  'background-color',
-  'font-size',
-  'font-weight',
-  'opacity',
-]
 
 export interface StudioRuntimeBridgeOptions {
   /** The exact origin every inbound `postMessage` must come from. */
@@ -385,22 +377,20 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   }
 
   // ---- measure ------------------------------------------------------------
+  // Split out (`measureNodes.ts`) with `dropCandidates.ts` (`speed-06`) to
+  // keep this module under the 700-line ceiling.
   function handleMeasure(
     requestId: string,
     refs: readonly { nodeId: string; occurrenceIndex: number }[],
     properties: readonly string[] | undefined,
   ): void {
-    const props = properties?.length ? properties : DEFAULT_MEASURED_PROPERTIES
-    const measurements: NodeMeasurement[] = refs.map(({ nodeId, occurrenceIndex }) => {
-      const el = findByNodeId(doc, nodeId, occurrenceIndex)
-      if (!el || !doc.body) return { nodeId, occurrenceIndex, rect: null, computedStyle: {} }
-      const rect = rectRelativeToBody(el, doc.body)
-      const computed = view.getComputedStyle(el)
-      const computedStyle: Record<string, string> = {}
-      for (const prop of props) computedStyle[prop] = computed.getPropertyValue(prop)
-      return { nodeId, occurrenceIndex, rect, computedStyle }
-    })
+    const measurements: NodeMeasurement[] = measureNodes(doc, view, refs, properties)
     postOutbound({ type: 'measure:result', requestId, measurements })
+  }
+
+  // ---- dropCandidates (`speed-06`) -----------------------------------------
+  function handleDropCandidates(requestId: string): void {
+    postOutbound({ type: 'dropCandidates:result', requestId, candidates: collectDropCandidates(doc) })
   }
 
   // ---- setAxes --------------------------------------------------------------
@@ -422,7 +412,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
     html.style.colorScheme = axes.colorScheme
   }
 
-  // ---- outbound: pointer + text:edit ---------------------------------------
+  // ---- outbound: every message this frame ever posts shares one sender ----
   function postOutbound(message: OutboundRuntimeMessage): void {
     parentWindow.postMessage(toOutboundEnvelope(message), parentOrigin)
   }
@@ -431,20 +421,8 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   // `gestureForwarding.ts` (`live-12`), reading `mode` live through the getter.
   const disposeGestureForwarding = installGestureForwarding(doc, { getMode: () => mode, post: postOutbound })
 
-  // A minimal inline-text-edit bridge: any `contenteditable` element that
-  // also carries a node id reports its live text on every `input`. Seeding
-  // the editable content, latching it against the parent's own inline-edit
-  // session, and routing the result to `textOrigin` writeback are L5/L7
-  // concerns — this is the emission half only.
-  function onInput(ev: Event): void {
-    const target = ev.target instanceof Element ? ev.target : null
-    if (!target?.hasAttribute('contenteditable')) return
-    const nodeId = target.getAttribute(NODE_ID_ATTR)
-    if (!nodeId) return
-    const occurrence = occurrenceIndexOf(doc, target)
-    postOutbound({ type: 'text:edit', nodeId, occurrenceIndex: occurrence?.occurrenceIndex ?? 0, text: target.textContent ?? '' })
-  }
-  doc.addEventListener('input', onInput, true)
+  // `live-18` — double-click-to-edit text; see `inlineTextEdit.ts`'s module doc.
+  const textEdit = installInlineTextEdit({ doc, getMode: () => mode, post: postOutbound })
 
   // ---- outbound: runtime errors (Z5) — taps + bounds in `runtimeErrorTaps.ts` ----
   const disposeErrorTaps = startRuntimeErrorTaps(view, (finding) => postOutbound({ type: 'error', ...finding }))
@@ -476,6 +454,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
           // (3) the resize preview's own stamp on the element it sizes — a
           // drag in flight, not new content.
           if (record.target === resize.previewElement() && record.type === 'attributes') return true
+          if (record.type === 'attributes' && record.attributeName === OPTIMISTIC_STYLE_ATTR) return true // (4) `speed-01`'s style stamp, any element
           return record.target instanceof Element && record.target.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null
         }
         if (records.every(isIgnorable)) return
@@ -600,6 +579,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'setResizeTarget':
         resize.setTarget(message.ref, message.proportional)
         return
+      case 'text:edit':
+        textEdit.handleReply(message)
+        return
       case 'optimistic.insert':
         applyOptimisticInsert(doc, message)
         return
@@ -611,6 +593,17 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         return
       case 'optimistic.text':
         applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
+        return
+      case 'optimistic.style':
+        applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`
+        scheduleReposition()
+        return
+      case 'optimistic.style:clear':
+        clearOptimisticStyle(doc, message.ref)
+        scheduleReposition()
+        return
+      case 'dropCandidates':
+        handleDropCandidates(message.requestId)
         return
     }
   }
@@ -639,16 +632,16 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       doc,
       options.hot,
       () => {
-        // Before React reconciles the update: hand it back the DOM it built
-        // (`live-14`, see `optimisticDomOps.ts`).
+        // Before React reconciles: hand it back the DOM it built (`live-14`).
         revertOptimisticDom(doc)
+        revertAllOptimisticStyle(doc)
+        textEdit.onHmrBefore()
         postOutbound({ type: 'hmr:before' })
       },
       () => {
         sweepOptimisticGhosts(doc)
-        // The source now carries a committed resize — React re-rendered with
-        // it, so the held preview can go without anything snapping back.
-        resize.clearPreview()
+        resize.clearPreview() // the source now carries it; idempotent with `hmr:before` above
+        revertAllOptimisticStyle(doc)
         postOutbound({ type: 'hmr:after' })
       },
     )
@@ -663,7 +656,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       view.removeEventListener('resize', scheduleReposition)
       disposeGestureForwarding()
       resize.dispose()
-      doc.removeEventListener('input', onInput, true)
+      textEdit.dispose()
       disposeErrorTaps()
       layoutObserver?.disconnect()
       if (repositionRaf !== null) (view.cancelAnimationFrame?.bind(view) ?? cancelAnimationFrame)(repositionRaf)

@@ -1,8 +1,6 @@
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
-  canvasFrameDocuments,
   escapeCssAttributeValue,
-  findCanvasNodeRectSource,
   findRenderedCanvasNodeElement,
   preferredRenderedCanvasNode,
   RenderedCanvasNodeCache,
@@ -42,7 +40,7 @@ function addCanvasFrame(html: string, breakpointId = 'bp-desktop'): HTMLIFrameEl
   frameDoc.body.innerHTML = html
   const adapter = new PortalFrameAdapter(frameDoc)
   adapters.push(adapter)
-  registerFrameAdapter(frame, adapter)
+  registerFrameAdapter(frame, adapter, breakpointId)
   return frame
 }
 
@@ -193,55 +191,6 @@ describe('RenderedCanvasNodeCache', () => {
 
     frame.contentDocument!.body.innerHTML = ''
     expect(cache.resolve('title')).toHaveLength(0)
-  })
-})
-
-// ---------------------------------------------------------------------------
-// canvasFrameDocuments / findCanvasNodeRectSource — registry-based (`live-05`,
-// STATE.md, Batch 7 — the last of `canvasNodeLookup.ts`'s raw
-// `frame.contentDocument` reach-ins, previously a `document.querySelectorAll
-// ('iframe')` scan). BoardPrototypeLayer's `usePrototypeEndpoints.ts` is the
-// sole real caller.
-// ---------------------------------------------------------------------------
-
-describe('canvasFrameDocuments / findCanvasNodeRectSource', () => {
-  it('lists every registered, portal-mode canvas frame document', () => {
-    addCanvasFrame('<h1 data-node-id="a"></h1>', 'bp-desktop')
-    addCanvasFrame('<h1 data-node-id="b"></h1>', 'bp-tablet')
-
-    const docs = canvasFrameDocuments()
-
-    expect(docs).toHaveLength(2)
-    expect(docs.map((d) => d.doc.body.getAttribute('data-breakpoint-id')).sort()).toEqual([
-      'bp-desktop',
-      'bp-tablet',
-    ])
-  })
-
-  it('ignores an unregistered iframe, even one with data-breakpoint-id', () => {
-    const frame = document.createElement('iframe')
-    document.body.appendChild(frame)
-    const frameDoc = frame.contentDocument!
-    frameDoc.body.setAttribute('data-breakpoint-id', 'bp-desktop')
-
-    expect(canvasFrameDocuments()).toHaveLength(0)
-  })
-
-  it('finds the node element in the first frame that renders it', () => {
-    addCanvasFrame('<h1 data-node-id="title"></h1>')
-
-    const found = findCanvasNodeRectSource('title')
-
-    expect(found).not.toBeNull()
-    expect((found?.source as HTMLElement).tagName).toBe('H1')
-  })
-
-  it('returns null once the frame is unregistered', () => {
-    const frame = addCanvasFrame('<h1 data-node-id="title"></h1>')
-    expect(findCanvasNodeRectSource('title')).not.toBeNull()
-
-    unregisterFrameAdapter(frame)
-    expect(findCanvasNodeRectSource('title')).toBeNull()
   })
 })
 

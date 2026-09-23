@@ -26,11 +26,48 @@
  * which is also what a click-to-insert resolves through — so "where the ghost
  * says it will land" and "where it lands" are the same computation, not two
  * that agree by luck.
+ *
+ * ## `speed-06` — candidates are a per-drag snapshot, resolution is rAF-throttled
+ *
+ * Before this, EVERY raw `pointermove` re-ran `resolveCanvasPointerInsertionDrop`,
+ * which re-scanned the frame's whole DOM (`querySelectorAll` + one
+ * `getBoundingClientRect`/`getComputedStyle` per node) — and did nothing at
+ * all for a Tier 2 bridge frame (`resolvePortalDocument` is `null` there, so
+ * the scan silently found zero candidates and every live-frame drop fell
+ * back to "page root"). `beginInsertionDragSnapshotSession`
+ * (`canvasInsertionDragSnapshot.ts`) now measures each frame's candidates
+ * ONCE, lazily, the first time the drag visits it (bridge-aware — it goes
+ * through `FrameDocumentAdapter.measureDropCandidates()`), and resolution
+ * itself runs at most once per animation frame, with the LAST pointer
+ * position of whatever moves arrived since the previous frame.
+ *
+ * ## `speed-06` follow-up — a board can show more than one page's frames
+ *
+ * A live Playwright dogfood on real dev-server-backed frames found the drop
+ * line always fell back to "page root", never a container, whenever the
+ * hovered frame's `<iframe>` shared its `data-breakpoint-id` stamp with the
+ * WRAPPER it lives inside (see `canvasInsertionDrop.ts`'s own hardening) —
+ * but the deeper, PROVEN cause (a dedicated round-trip test reproduces it)
+ * is that resolution ALWAYS filtered candidates against `canvasPage`, the
+ * store's single ACTIVE page, even when the hovered frame showed a
+ * DIFFERENT page entirely (a board can have many). Every real candidate
+ * measured from that other frame's own tree then failed
+ * `canvasInsertionDragSnapshot.ts`'s `tree.nodes[id]` check — a different
+ * page's node ids never appear in `canvasPage.nodes` — so resolution always
+ * fell back to "page root" of the WRONG page. `resolvePageForViewport`
+ * below climbs to `data-page-id` on the frame's own outer wrapper
+ * (`BoardFrameView.tsx`'s existing stamp — not a second copy on the
+ * viewport itself) and resolves ITS tree instead; a successful drop then
+ * switches the active document to that page (`openPageInCanvas`) BEFORE
+ * committing the insert, since every insert action writes through
+ * `mutateActiveTree` — the page a resolved node id happens to belong to is
+ * not enough on its own.
  */
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import type { InsertLocation } from '@site/store/insertLocation'
-import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { resolveCanvasPointerInsertionDrop, type CanvasDropPreview } from './canvasInsertionDrop'
+import { beginInsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 
 /** Pointer travel (screen px) before a press becomes a drag rather than a click. */
@@ -89,11 +126,56 @@ export function useCanvasInsertionDrag<TGhost>({
     const startX = event.clientX
     const startY = event.clientY
     let started = false
+    const snapshot = beginInsertionDragSnapshotSession()
+
+    // `speed-06` follow-up — the hovered viewport's OWN page, when it
+    // differs from `canvasPage`. `data-page-id` is `BoardFrameView.tsx`'s
+    // OWN existing stamp (its outer `.frame` wrapper — `viewport.closest`,
+    // not a second copy on the viewport itself: `framePoolMountReason.test.tsx`
+    // already reads every `[data-page-id]` element back through
+    // `readFrameMountReason`, so a second, mount-reason-less element with
+    // the same attribute would fail that test's "every frame answers" check).
+    // `null` (unknown page id, or none found — a hand-built test fixture, a
+    // canvas surface with no board frame wrapper) keeps resolving against
+    // `canvasPage`, matching the previous behavior.
+    const resolvePageForViewport = (viewport: HTMLElement) => {
+      const pageId = viewport.closest<HTMLElement>('[data-page-id]')?.dataset.pageId
+      if (!pageId || pageId === canvasPage?.id) return null
+      const site = useEditorStore.getState().site
+      return site ? lookupCanvasPageById(site, pageId) : null
+    }
 
     const resolveDrop = (clientX: number, clientY: number) =>
       canvasPage
-        ? resolveCanvasPointerInsertionDrop({ canvasPage, clientX, clientY, label })
+        ? resolveCanvasPointerInsertionDrop({
+            canvasPage,
+            clientX,
+            clientY,
+            label,
+            candidatesForViewport: (viewport, iframe, tree) => snapshot.candidatesFor(viewport, iframe, tree),
+            resolvePageForViewport,
+          })
         : null
+
+    // `speed-06` — at most one resolve per animation frame, with the LAST
+    // pointer position of whatever moves arrived since the previous one (100
+    // native moves inside a single frame resolve exactly once).
+    let pendingPoint: { x: number; y: number } | null = null
+    let pendingFrame: number | null = null
+
+    const applyPendingResolve = () => {
+      pendingFrame = null
+      const point = pendingPoint
+      pendingPoint = null
+      if (!point) return
+      const resolved = resolveDrop(point.x, point.y)
+      setDrag({ ghost, x: point.x, y: point.y, preview: resolved?.preview ?? null })
+    }
+
+    const scheduleResolve = (clientX: number, clientY: number) => {
+      pendingPoint = { x: clientX, y: clientY }
+      pendingFrame ??= window.requestAnimationFrame(applyPendingResolve)
+    }
 
     const teardown = () => {
       window.removeEventListener('pointermove', move)
@@ -101,6 +183,11 @@ export function useCanvasInsertionDrag<TGhost>({
       window.removeEventListener('pointercancel', cancel)
       clearCanvasPointerRelay()
       teardownRef.current = null
+      if (pendingFrame !== null) {
+        window.cancelAnimationFrame(pendingFrame)
+        pendingFrame = null
+      }
+      snapshot.dispose()
       if (started) onDraggingChange?.(false)
     }
 
@@ -110,13 +197,18 @@ export function useCanvasInsertionDrag<TGhost>({
         started = true
         onDraggingChange?.(true)
       }
-      const resolved = resolveDrop(moveEvent.clientX, moveEvent.clientY)
-      setDrag({ ghost, x: moveEvent.clientX, y: moveEvent.clientY, preview: resolved?.preview ?? null })
+      scheduleResolve(moveEvent.clientX, moveEvent.clientY)
     }
 
     const up = (upEvent: PointerEvent) => {
-      // Resolve BEFORE teardown: the relay has to still be armed for the drop
-      // point to hit-test against a frame's iframe.
+      // Resolve BEFORE teardown, synchronously — never wait another
+      // animation frame for a release that ends the gesture anyway. The
+      // relay also has to still be armed for the drop point to hit-test
+      // against a frame's iframe. A bridge frame the drag never actually
+      // paused over (a fast flick-and-release) may still have its
+      // candidates in flight at this point; `snapshot.candidatesFor` then
+      // answers `[]` and the drop falls back to "page root" — the same
+      // honest answer a pointer outside every frame gets, not a hang.
       const resolved = started ? resolveDrop(upEvent.clientX, upEvent.clientY) : null
       teardown()
       setDrag(null)
@@ -128,6 +220,13 @@ export function useCanvasInsertionDrag<TGhost>({
       }, 0)
 
       if (!resolved) return
+      // `speed-06` follow-up — `resolved.location.parentId` is a node id in
+      // `resolved.pageId`'s OWN tree; every insert action writes through
+      // `mutateActiveTree`, so the active document has to already BE that
+      // page before `onDrop` runs, not after.
+      if (resolved.pageId !== canvasPage?.id) {
+        useEditorStore.getState().openPageInCanvas(resolved.pageId)
+      }
       if (onDrop(ghost, resolved.location)) setActiveBreakpoint(resolved.breakpointId)
     }
 

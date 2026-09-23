@@ -54,6 +54,16 @@ const SELECTION_RING = '[data-canvas-selection-ring="true"]'
  */
 const ALT_DUPLICATE_MARKER = '[data-gesture="alt-duplicate"]'
 
+/**
+ * `speed-05` — `STUDIO-SPEED-PLAN.md`'s gate for a refused structural
+ * gesture: keydown → `RefusalDialog` visible. The work order's own target
+ * (measured against the 393 ms defect) is ≤ 50 ms "visible response"; this
+ * gate keeps a wider margin (2×) for CI machine noise around the actual DOM
+ * mount `startTransition` no longer blocks the keydown task on — tighten it
+ * only after re-measuring on the CI runner, not this machine.
+ */
+const BUDGET_REFUSAL_DIALOG_MS = 100
+
 const SOURCE_PROJECT_DIR = path.join(WORKSPACE_ROOT, 'test4')
 /** Fixed name, not per-PID: a crashed run's leftovers are visibly overwritten rather than accumulating. */
 const FIXTURE_DIR = path.join(WORKSPACE_ROOT, '__e2e-studio-feel')
@@ -191,6 +201,80 @@ async function firstLeafNode(contentFrame: FrameLocator): Promise<Locator> {
     if (box && box.width >= 12 && box.height >= 12) return candidate
   }
   throw new Error('firstLeafNode: no leaf node in the frame is large enough to click')
+}
+
+/**
+ * `speed-05` — a leaf node whose delete is REFUSED with a runnable remedy
+ * (`RefusalDialog`, not a toast): the iOS status bar's clock, always the
+ * first thing painted by `Onboarding.tsx`'s `<IOSStatusBar/>` — a LOCAL
+ * component the parser inlines (`inlineLocalComponents.ts`), so its markup
+ * carries a composite id (`${callSiteId}~${originalId}`, `INLINE_ID_SEPARATOR`
+ * = `~`) in the STORE's page tree and refuses a delete with `shared-component`
+ * (`sourceStructure.ts`'s `isInlinedNodeId`), whose remedies table gives it a
+ * non-empty `actions` array — the dialog path, not the toast path
+ * (`presentStructuralRefusal`'s own doc).
+ *
+ * Matched by TEXT, not by the id's `~` shape: `test4`'s board runs Tier 2
+ * live (bridge) frames, whose DOM is the real React app — `idStamp.ts` stamps
+ * `data-node-id` with the element's OWN `rel:line:col` inside
+ * `IOSStatusBar.tsx`, not the store's composite id (`liveNodeResolve.ts` does
+ * that translation on the parent side, invisibly to the DOM). `9:41` is a
+ * literal string in `IOSStatusBar.tsx`, not translated per-locale, so it is
+ * stable across the fixture's `lang=ar` board.
+ */
+async function firstInlinedLeafNode(contentFrame: FrameLocator): Promise<Locator> {
+  const target = contentFrame.getByText('9:41', { exact: true })
+  await expect(
+    target,
+    'the fixture frame never rendered the iOS status bar clock — nothing here would refuse a delete with a remedy',
+  ).toBeVisible({ timeout: 30_000 })
+  return target
+}
+
+/**
+ * `speed-05` — the budget for a refused structural gesture: real DOM time
+ * from the keydown the browser dispatches to `RefusalDialog`'s first paint,
+ * not a proxy for it. A capture-phase `window` listener records the keydown
+ * timestamp (capture so it fires before any handler that might
+ * `stopPropagation`), and a `MutationObserver` on `document.body` records the
+ * first moment `[role="alertdialog"]` — `RefusalDialog`'s own role, `tone`
+ * is always `'danger'` — appears. `ConfirmDeleteDialog` shares the role but
+ * never mounts here: `confirmBeforeDelete` defaults to `false`, so
+ * `requestDeleteNode`'s `commit` runs synchronously and the refusal is the
+ * only alertdialog this gesture can open.
+ */
+async function startRefusalTiming(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const state = { keydownAt: 0, dialogVisibleAt: 0, observer: null as MutationObserver | null }
+    window.__studioRefusalTiming = state
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
+      if (state.keydownAt !== 0) return
+      state.keydownAt = performance.now()
+      window.removeEventListener('keydown', onKeyDown, true)
+    }
+    window.addEventListener('keydown', onKeyDown, true)
+
+    state.observer = new MutationObserver(() => {
+      if (state.dialogVisibleAt !== 0) return
+      if (document.querySelector('[role="alertdialog"]')) state.dialogVisibleAt = performance.now()
+    })
+    state.observer.observe(document.body, { subtree: true, childList: true })
+  })
+}
+
+/** Reads back `startRefusalTiming`'s two timestamps and tears the sampler down. */
+async function readRefusalTiming(page: Page): Promise<number> {
+  return page.evaluate(() => {
+    const state = window.__studioRefusalTiming
+    if (!state) throw new Error('the refusal timing sampler was never installed')
+    state.observer?.disconnect()
+    delete window.__studioRefusalTiming
+    if (state.keydownAt === 0) throw new Error('no Delete keydown was ever observed')
+    if (state.dialogVisibleAt === 0) throw new Error('RefusalDialog never appeared')
+    return state.dialogVisibleAt - state.keydownAt
+  })
 }
 
 /**
@@ -499,6 +583,80 @@ test.describe('V1: the studio feels like a design tool', () => {
       expect(framesAfter, `Alt+drag removed the original frame ${id} instead of copying it`).toContain(id)
     }
   })
+
+  /**
+   * `speed-05` — `STUDIO-SPEED-PLAN.md`'s refusal budget. Before the fix, the
+   * whole cost — `refuseStructuralEdit`'s O(1) verdict plus `RefusalDialog`'s
+   * cold portal mount — ran inside the SAME main-thread task as the Delete
+   * keydown (measured 393 ms, one long task). `presentStructuralRefusal`'s
+   * dialog branch now opens `structuralRefusalDialog` inside `startTransition`,
+   * so the keydown task ends immediately and React mounts the dialog in its
+   * own, interruptible, low-priority render.
+   */
+  test('Delete on a node the source refuses answers with RefusalDialog within budget', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page)
+    const firstFrame = page.locator('[data-page-id]').first()
+    await panIntoView(page, canvasRoot, firstFrame)
+
+    // `speed-04`'s own defect: a live board frame mounts a portal fallback
+    // AND the bridge `BreakpointFrame` together until the bridge is ready, so
+    // the same page container can carry two `iframe[title^="Canvas frame"]`
+    // matches for a moment — one placeholder `srcdoc`, one real `src`. Wait
+    // for that to settle to one before asking Playwright to resolve INTO it,
+    // or `frameLocator()` throws a strict-mode violation on the ambiguity.
+    await expect(
+      firstFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
+      'the first board frame never settled to one live iframe',
+    ).toHaveCount(1, { timeout: 30_000 })
+
+    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const target = await firstInlinedLeafNode(contentFrame)
+    await panIntoView(page, canvasRoot, target, 80)
+    await clickInFrame(page, target)
+
+    // Confirm the CLICK actually selected the inlined status-bar clock, not
+    // some other node — `SharedComponentNotice`'s own `role="note"` banner
+    // ("Part of IOSStatusBar…") only renders for a selection whose id is
+    // `isInlinedNodeId`, which is exactly the shape `shared-component` needs
+    // to refuse the coming delete with a remedy. More reliable than the
+    // in-frame selection ring here: selecting this node auto-focuses the
+    // canvas on it (`focusActiveBreakpoint`), and the resulting pan/zoom can
+    // still be settling when the ring would otherwise be checked.
+    const sharedComponentNotice = page.getByRole('note').filter({ hasText: 'Part of' })
+    await expect(
+      sharedComponentNotice,
+      'clicking the iOS status bar clock did not select an inlined shared-component node',
+    ).toBeVisible({ timeout: 15_000 })
+
+    // Delete is a `node`-scope keyboard shortcut and needs the canvas to hold
+    // DOM focus, same as the ⌘D test above.
+    await canvasRoot.focus()
+
+    await startRefusalTiming(page)
+    await page.keyboard.press('Delete')
+
+    await expect(
+      page.locator('[role="alertdialog"]'),
+      'the refused delete never opened RefusalDialog',
+    ).toBeVisible({ timeout: 5_000 })
+
+    const elapsedMs = await readRefusalTiming(page)
+    annotate('Delete refusal: keydown → RefusalDialog visible', `${elapsedMs.toFixed(1)}ms`)
+
+    expect(
+      elapsedMs,
+      `keydown → RefusalDialog visible exceeded ${BUDGET_REFUSAL_DIALOG_MS}ms — speed-05's whole point is that this ` +
+        'answer happens outside the keydown task; read STUDIO-SPEED-PLAN.md speed-05 before loosening it',
+    ).toBeLessThan(BUDGET_REFUSAL_DIALOG_MS)
+
+    // The dialog answered the RIGHT refusal — `shared-component`'s own
+    // remedies (`STRUCTURAL_ACTIONS` in `structuralConstraint.ts`), not some
+    // other reason a wrong selection would have produced.
+    await expect(
+      page.getByTestId('constraint-action-detach'),
+      'RefusalDialog opened without the shared-component remedies — the wrong node was likely selected',
+    ).toBeVisible()
+  })
 })
 
 declare global {
@@ -506,6 +664,11 @@ declare global {
     __studioToastLog?: {
       created: Array<{ kind: string; title: string }>
       observer: MutationObserver
+    }
+    __studioRefusalTiming?: {
+      keydownAt: number
+      dialogVisibleAt: number
+      observer: MutationObserver | null
     }
   }
 }
