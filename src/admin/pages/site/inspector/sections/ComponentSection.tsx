@@ -107,6 +107,10 @@ const EXTRACT_OFFER_REASONS = new Set([
   'maps-over-props',
   'unsupported-params',
   'no-renderable-jsx',
+  'spread-ambiguous',
+  'body-local',
+  'unbound-reference',
+  'name-collision',
 ])
 
 export function ComponentSection() {
