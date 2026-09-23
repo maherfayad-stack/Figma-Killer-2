@@ -156,7 +156,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** 4 new server test files plus 1 client test file, and 1 e2e spec, run in Chromium and passing. Relocate, watcher-push and e2e were each proven to fail with the fix disabled in place. Build and lint are clean. The chunked suite shows only pre-existing failures: bundle freshness, optimistic broadcast, bridge measurement, headless capture, dev server and WebSocket.
 
 ### store-17 — P1-F: undo tells the truth (ERR-1, ERR-3, ERR-2 stop-gap, ERR-28, ERR-6)
-- **Agent:** store-engineer (+ panel-designer for `ScrubInput`) · **Branch:** `fix/undo-tells-the-truth` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
+- **Agent:** store-engineer (+ panel-designer for `ScrubInput`) · **Branch:** `fix/undo-tells-the-truth` · **PR:** #230 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-23
 - **Stage:** verifying (draft PR open)
 - **Goal:** ⌘Z never undoes the undo, never jams, never lies about disk.
 - **Done:**
