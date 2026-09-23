@@ -32,11 +32,15 @@ services:
       # Every user's projects (Studio's documents). Must stay on the
       # `workspace` volume below, or recreating the container deletes them.
       STUDIO_WORKSPACE_DIR: /app/studio-workspace
+      # Private runtime state: encrypted MCP server secrets, Claude CLI logins.
+      # On the `private` volume below for the same reason.
+      STUDIO_DATA_DIR: /app/.data
       STUDIO_SECRET_KEY: ${STUDIO_SECRET_KEY:-}
       TRUSTED_PROXY_CIDRS: ${TRUSTED_PROXY_CIDRS:-}
     volumes:
       - uploads:/app/uploads
       - workspace:/app/studio-workspace
+      - private:/app/.data
     depends_on:
       postgres:
         condition: service_healthy
@@ -51,3 +55,4 @@ volumes:
   postgres_data:
   uploads:
   workspace:
+  private:

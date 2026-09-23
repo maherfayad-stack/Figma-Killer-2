@@ -1,24 +1,29 @@
 /**
- * Gate (P1-H): the Studio workspace survives a container recreate in every
- * image, Compose stack and platform template this repo ships.
+ * Gate (P1-H): the Studio workspace, and Studio's private data, survive a
+ * container recreate in every image, Compose stack and platform template this
+ * repo ships.
  *
  * The workspace root holds every user's real React projects, Studio's source
- * of truth, with no other copy. Until P1-H the image kept it at
- * `/app/studio-workspace` and no Compose file or template mounted anything
- * there, so `docker compose pull && docker compose up -d` (an ordinary
- * upgrade) deleted every project. This test fails if that can happen again:
+ * of truth, with no other copy. The private data root (`STUDIO_DATA_DIR`,
+ * `<cwd>/.data`) holds encrypted MCP server secrets and Claude CLI logins.
+ * Until P1-H the image kept both under `/app` and no Compose file or template
+ * mounted anything there, so `docker compose pull && docker compose up -d`
+ * (an ordinary upgrade) deleted every project. This test fails if that can
+ * happen again:
  *
- *   1. The server resolves the root from `STUDIO_WORKSPACE_DIR`, else
- *      `<cwd>/studio-workspace`, checked against `projectsRootDir()` itself,
- *      so the path this test reasons about is the path the server uses.
- *   2. The Dockerfile's runtime stage names the root, and creates it owned by
- *      `bun` (an empty named volume mounted there inherits that owner).
+ *   1. The server resolves each root from its variable, else a `<cwd>`
+ *      default, checked against the resolvers themselves, so the path this
+ *      test reasons about is the path the server uses.
+ *   2. The Dockerfile's runtime stage names both roots and creates them owned
+ *      by `bun` (an empty named volume mounted there inherits that owner),
+ *      and does NOT hand Studio's own code to `bun` (review F3).
  *   3. Every supported Compose stack (compose.prod.yml plus any mix of its
- *      overlays) mounts a declared named volume at or above that root.
- *   4. Both Render Blueprints point the root inside their persistent disk.
+ *      overlays) mounts a declared, writable named volume at or above each
+ *      root, with no service-level `tmpfs` over it.
+ *   4. Both Render Blueprints point both roots inside their persistent disk.
  *   5. Every documented env block for the `/app/storage` single-volume layout
  *      (Railway, Render, `docker run`, the release bundle's INSTALL.md) sets
- *      the root inside `/app/storage` too.
+ *      both roots inside `/app/storage` too.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
@@ -26,9 +31,17 @@ import { join, resolve } from 'node:path'
 import { Type, type Static } from '@sinclair/typebox'
 import { Value } from '@sinclair/typebox/value'
 import { projectsRootDir } from '../../../server/handlers/studioProjects'
+import { resolveStudioDataRoot } from '../../../server/runtimeDirs'
 import { readSource, REPO_ROOT, toRepoRelativePosix, walkSourceTree } from './helpers/sourceTree'
 
 const WORKSPACE_ENV = 'STUDIO_WORKSPACE_DIR'
+const DATA_ENV = 'STUDIO_DATA_DIR'
+
+/** Each persisted root: its variable, and the server's default relative to the working directory. */
+const PERSISTED_ROOTS = [
+  { variable: WORKSPACE_ENV, cwdDefault: 'studio-workspace' },
+  { variable: DATA_ENV, cwdDefault: '.data' },
+] as const
 
 function read(relPath: string): string {
   return readFileSync(join(REPO_ROOT, relPath), 'utf-8')
@@ -42,22 +55,28 @@ function isAtOrUnder(path: string, dir: string): boolean {
 
 // ─── 1. The server's resolution ────────────────────────────────────────────
 
-describe('the server resolves the workspace root the way the image assumes', () => {
-  const previous = process.env[WORKSPACE_ENV]
+describe('the server resolves each root the way the image assumes', () => {
+  const previous = { workspace: process.env[WORKSPACE_ENV], data: process.env[DATA_ENV] }
   afterEach(() => {
-    if (previous === undefined) delete process.env[WORKSPACE_ENV]
-    else process.env[WORKSPACE_ENV] = previous
+    for (const [variable, value] of [[WORKSPACE_ENV, previous.workspace], [DATA_ENV, previous.data]] as const) {
+      if (value === undefined) delete process.env[variable]
+      else process.env[variable] = value
+    }
   })
 
-  it(`reads ${WORKSPACE_ENV} when set`, () => {
+  it(`reads ${WORKSPACE_ENV} and ${DATA_ENV} when set`, () => {
     const configured = join(REPO_ROOT, '.tmp', 'somewhere-on-a-volume')
     process.env[WORKSPACE_ENV] = configured
+    process.env[DATA_ENV] = join(configured, 'private')
     expect(projectsRootDir()).toBe(resolve(configured))
+    expect(resolveStudioDataRoot()).toBe(resolve(configured, 'private'))
   })
 
-  it('falls back to <cwd>/studio-workspace when unset', () => {
+  it('falls back to <cwd>/studio-workspace and <cwd>/.data when unset', () => {
     delete process.env[WORKSPACE_ENV]
+    delete process.env[DATA_ENV]
     expect(projectsRootDir()).toBe(join(process.cwd(), 'studio-workspace'))
+    expect(resolveStudioDataRoot()).toBe(resolve(process.cwd(), '.data'))
   })
 })
 
@@ -67,6 +86,7 @@ interface DockerRuntimeStage {
   workdir: string
   env: Record<string, string>
   runLines: string[]
+  copyLines: string[]
 }
 
 /** The final stage of the Dockerfile: the image that actually runs. */
@@ -74,33 +94,42 @@ function parseDockerfileRuntimeStage(): DockerRuntimeStage {
   const lines = read('Dockerfile').split(/\r?\n/)
   const lastFrom = lines.findLastIndex((line) => /^FROM\s/i.test(line))
   expect(lastFrom).toBeGreaterThanOrEqual(0)
-  const stage: DockerRuntimeStage = { workdir: '/', env: {}, runLines: [] }
+  const stage: DockerRuntimeStage = { workdir: '/', env: {}, runLines: [], copyLines: [] }
   for (const line of lines.slice(lastFrom + 1)) {
     const workdir = /^WORKDIR\s+(\S+)/i.exec(line)
     if (workdir) stage.workdir = workdir[1]
     const env = /^ENV\s+([A-Z0-9_]+)=(\S+)/i.exec(line)
     if (env) stage.env[env[1]] = env[2]
     if (/^RUN\s/i.test(line)) stage.runLines.push(line)
+    if (/^COPY\s/i.test(line)) stage.copyLines.push(line)
   }
   return stage
 }
 
 const runtimeStage = parseDockerfileRuntimeStage()
 
-/** Where the image's server process puts the workspace when nothing overrides it. */
-const imageWorkspaceRoot = runtimeStage.env[WORKSPACE_ENV] ?? `${runtimeStage.workdir}/studio-workspace`
+/** Where the image's server process puts a root when nothing overrides it. */
+function imageRoot(root: (typeof PERSISTED_ROOTS)[number]): string {
+  return runtimeStage.env[root.variable] ?? `${runtimeStage.workdir}/${root.cwdDefault}`
+}
 
 describe('Dockerfile', () => {
-  it(`sets ${WORKSPACE_ENV} explicitly in the runtime stage`, () => {
-    expect(runtimeStage.env[WORKSPACE_ENV]).toBeDefined()
-    expect(imageWorkspaceRoot.startsWith('/')).toBe(true)
-  })
+  for (const root of PERSISTED_ROOTS) {
+    it(`sets ${root.variable} explicitly, and creates that directory owned by bun`, () => {
+      expect(runtimeStage.env[root.variable]).toBeDefined()
+      expect(imageRoot(root).startsWith('/')).toBe(true)
+      const run = runtimeStage.runLines.find((line) => /mkdir\s+-p/.test(line)) ?? ''
+      const [mkdirPart, chownPart = ''] = run.split('&&')
+      expect(mkdirPart.split(/\s+/)).toContain(imageRoot(root))
+      expect(chownPart).toMatch(/^\s*chown bun:bun /)
+      expect(chownPart.trim().split(/\s+/)).toContain(imageRoot(root))
+    })
+  }
 
-  it('creates the workspace root and hands /app to the non-root bun user, so a fresh named volume is writable', () => {
-    const mkdir = runtimeStage.runLines.find((line) => /mkdir\s+-p/.test(line))
-    expect(mkdir).toBeDefined()
-    expect(mkdir?.split(/\s+/)).toContain(imageWorkspaceRoot)
-    expect(mkdir).toMatch(/chown -R bun:bun \/app\b/)
+  // Review F3: a Tier 2 dev server runs as `bun`; it must not own Studio's code.
+  it("leaves Studio's own code root-owned (no recursive chown of /app, no --chown on COPY)", () => {
+    for (const line of runtimeStage.runLines) expect(line).not.toMatch(/chown\s+(-R|--recursive)\b/)
+    for (const line of runtimeStage.copyLines) expect(line).not.toContain('--chown')
   })
 })
 
@@ -108,12 +137,18 @@ describe('Dockerfile', () => {
 
 const ComposeVolumeSchema = Type.Union([
   Type.String(),
-  Type.Object({ type: Type.Optional(Type.String()), source: Type.Optional(Type.String()), target: Type.String() }),
+  Type.Object({
+    type: Type.Optional(Type.String()),
+    source: Type.Optional(Type.String()),
+    target: Type.String(),
+    read_only: Type.Optional(Type.Boolean()),
+  }),
 ])
 
 const ComposeAppSchema = Type.Object({
   environment: Type.Optional(Type.Record(Type.String(), Type.String())),
   volumes: Type.Optional(Type.Array(ComposeVolumeSchema)),
+  tmpfs: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
 })
 
 const ComposeFileSchema = Type.Object({
@@ -127,11 +162,13 @@ interface ResolvedVolume {
   type: string
   source: string
   target: string
+  readOnly: boolean
 }
 
 interface ComposeStack {
   env: Record<string, string>
   volumes: ResolvedVolume[]
+  tmpfs: string[]
   declaredVolumes: Set<string>
 }
 
@@ -150,16 +187,16 @@ function composeApp(relPath: string): ComposeApp | undefined {
 
 function resolveVolume(volume: Static<typeof ComposeVolumeSchema>): ResolvedVolume {
   if (typeof volume !== 'string') {
-    return { type: volume.type ?? 'volume', source: volume.source ?? '', target: volume.target }
+    return { type: volume.type ?? 'volume', source: volume.source ?? '', target: volume.target, readOnly: volume.read_only === true }
   }
-  const [source, target] = volume.split(':')
+  const [source, target, mode = ''] = volume.split(':')
   const isBind = source.startsWith('.') || source.startsWith('/') || source.startsWith('~')
-  return { type: isBind ? 'bind' : 'volume', source, target: target ?? source }
+  return { type: isBind ? 'bind' : 'volume', source, target: target ?? source, readOnly: mode.split(',').includes('ro') }
 }
 
-/** Compose's own override rules for the two keys that matter: environment merges by key, volumes by target. */
+/** Compose's own override rules for the keys that matter: environment merges by key, volumes by target, tmpfs appends. */
 function composeStack(files: readonly string[]): ComposeStack {
-  const stack: ComposeStack = { env: {}, volumes: [], declaredVolumes: new Set() }
+  const stack: ComposeStack = { env: {}, volumes: [], tmpfs: [], declaredVolumes: new Set() }
   for (const file of files) {
     for (const name of Object.keys(parseComposeFile(file).volumes ?? {})) stack.declaredVolumes.add(name)
     const app = composeApp(file)
@@ -169,6 +206,8 @@ function composeStack(files: readonly string[]): ComposeStack {
       stack.volumes = stack.volumes.filter((existing) => existing.target !== volume.target)
       stack.volumes.push(volume)
     }
+    const tmpfs = app.tmpfs === undefined ? [] : typeof app.tmpfs === 'string' ? [app.tmpfs] : app.tmpfs
+    stack.tmpfs.push(...tmpfs.map((entry) => entry.split(':')[0]))
   }
   return stack
 }
@@ -201,21 +240,27 @@ describe('Compose', () => {
   })
 
   for (const files of everyComposeStack()) {
-    it(`${files.join(' + ')} mounts a persistent volume over the path the server uses`, () => {
-      const stack = composeStack(files)
-      const workspaceRoot = stack.env[WORKSPACE_ENV] ?? imageWorkspaceRoot
-      const covering = stack.volumes.filter((volume) => isAtOrUnder(workspaceRoot, volume.target))
-      expect(covering.length).toBeGreaterThan(0)
-      for (const volume of covering) {
-        expect(volume.type).not.toBe('tmpfs')
-        if (volume.type === 'volume') expect(stack.declaredVolumes.has(volume.source)).toBe(true)
-      }
-    })
+    for (const root of PERSISTED_ROOTS) {
+      it(`${files.join(' + ')} mounts a writable, persistent volume over ${root.variable}`, () => {
+        const stack = composeStack(files)
+        const path = stack.env[root.variable] ?? imageRoot(root)
+        const covering = stack.volumes.filter((volume) => isAtOrUnder(path, volume.target))
+        expect(covering.length).toBeGreaterThan(0)
+        for (const volume of covering) {
+          expect(volume.type).not.toBe('tmpfs')
+          expect(volume.readOnly).toBe(false)
+          if (volume.type === 'volume') expect(stack.declaredVolumes.has(volume.source)).toBe(true)
+        }
+        expect(stack.tmpfs.filter((target) => isAtOrUnder(path, target))).toEqual([])
+      })
+    }
   }
 
-  it('compose.prod.yml pins the same root the image defaults to', () => {
-    expect(composeStack([COMPOSE_BASE]).env[WORKSPACE_ENV]).toBe(imageWorkspaceRoot)
-  })
+  for (const root of PERSISTED_ROOTS) {
+    it(`compose.prod.yml pins the same ${root.variable} the image defaults to`, () => {
+      expect(composeStack([COMPOSE_BASE]).env[root.variable]).toBe(imageRoot(root))
+    })
+  }
 })
 
 // ─── 4. Render Blueprints ──────────────────────────────────────────────────
@@ -231,15 +276,18 @@ const RenderBlueprintSchema = Type.Object({
 
 describe('Render Blueprints', () => {
   for (const file of ['docs/deployment/render/sqlite/render.yaml', 'docs/deployment/render/postgres/render.yaml']) {
-    it(`${file} points ${WORKSPACE_ENV} inside its persistent disk`, () => {
-      const parsed: unknown = Bun.YAML.parse(read(file))
-      if (!Value.Check(RenderBlueprintSchema, parsed)) throw new Error(`${file}: unexpected Blueprint shape`)
-      for (const service of parsed.services) {
-        const root = service.envVars.find((envVar) => envVar.key === WORKSPACE_ENV)?.value
-        expect(root).toBeDefined()
-        expect(isAtOrUnder(root ?? '', service.disk.mountPath)).toBe(true)
-      }
-    })
+    for (const root of PERSISTED_ROOTS) {
+      it(`${file} points ${root.variable} at a dedicated directory inside its persistent disk`, () => {
+        const parsed: unknown = Bun.YAML.parse(read(file))
+        if (!Value.Check(RenderBlueprintSchema, parsed)) throw new Error(`${file}: unexpected Blueprint shape`)
+        for (const service of parsed.services) {
+          const path = service.envVars.find((envVar) => envVar.key === root.variable)?.value ?? ''
+          expect(isAtOrUnder(path, service.disk.mountPath)).toBe(true)
+          // Never the mount root itself: that also holds the database and uploads (review F1).
+          expect(path).not.toBe(service.disk.mountPath)
+        }
+      })
+    }
   }
 })
 
@@ -267,11 +315,17 @@ describe('documented /app/storage env blocks', () => {
   })
 
   for (const { file, text } of sources) {
-    it(`${file}: every block that puts uploads on ${SINGLE_VOLUME_ROOT} puts the workspace there too`, () => {
+    it(`${file}: every block that puts uploads on ${SINGLE_VOLUME_ROOT} puts the workspace and private data there too`, () => {
       for (const block of fencedBlocks(text)) {
         if (!block.includes(`UPLOADS_DIR=${SINGLE_VOLUME_ROOT}/`)) continue
-        const root = new RegExp(`${WORKSPACE_ENV}=("?)(\\S+?)\\1(\\s|$)`).exec(block)?.[2]
-        expect({ block, root }).toEqual({ block, root: expect.stringMatching(new RegExp(`^${SINGLE_VOLUME_ROOT}/`)) })
+        for (const root of PERSISTED_ROOTS) {
+          const path = new RegExp(`${root.variable}=("?)(\\S+?)\\1(\\s|$)`).exec(block)?.[2]
+          expect({ variable: root.variable, block, path }).toEqual({
+            variable: root.variable,
+            block,
+            path: expect.stringMatching(new RegExp(`^${SINGLE_VOLUME_ROOT}/.+`)),
+          })
+        }
       }
     })
   }

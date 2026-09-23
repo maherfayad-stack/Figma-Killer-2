@@ -214,14 +214,17 @@ describe('createArchiveEntryDecider', () => {
 // ---------------------------------------------------------------------------
 
 describe('writeArchiveToWorkspace', () => {
+  let root: string
   let tmpDir: string
 
   beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-ingest-'))
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-ingest-root-'))
+    tmpDir = path.join(root, 'acme-widgets')
+    fs.mkdirSync(tmpDir)
   })
 
   afterEach(() => {
-    fs.rmSync(tmpDir, { recursive: true, force: true })
+    fs.rmSync(root, { recursive: true, force: true })
   })
 
   it('refuses to clear a target that already holds a studio workspace (.studio/ present)', async () => {
@@ -232,7 +235,7 @@ describe('writeArchiveToWorkspace', () => {
 
     const accepted = new Map([['a', 'a.txt']])
     await expect(
-      writeArchiveToWorkspace(tmpDir, accepted, () => strToU8('hello'), 0),
+      writeArchiveToWorkspace(tmpDir, root, accepted, () => strToU8('hello'), 0),
     ).rejects.toThrow(/existing studio workspace/)
     // The user's board data survived — no partial write happened first.
     expect(fs.existsSync(path.join(tmpDir, '.studio', 'boards.json'))).toBe(true)
@@ -242,7 +245,7 @@ describe('writeArchiveToWorkspace', () => {
   it('rejects with a 400 status via ArchiveIngestError, never a path in the message', async () => {
     fs.mkdirSync(path.join(tmpDir, '.studio'), { recursive: true })
     try {
-      await writeArchiveToWorkspace(tmpDir, new Map(), () => strToU8(''), 0)
+      await writeArchiveToWorkspace(tmpDir, root, new Map(), () => strToU8(''), 0)
       throw new Error('expected rejection')
     } catch (err) {
       expect(err).toBeInstanceOf(ArchiveIngestError)
@@ -254,10 +257,77 @@ describe('writeArchiveToWorkspace', () => {
   it('clears a pre-existing target directory before repopulating it', async () => {
     fs.writeFileSync(path.join(tmpDir, 'stale.txt'), 'leftover from a previous import')
     const accepted = new Map([['entry', 'pages/Home.tsx']])
-    await writeArchiveToWorkspace(tmpDir, accepted, () => strToU8('export default function Home(){}'), 0)
+    await writeArchiveToWorkspace(tmpDir, root, accepted, () => strToU8('export default function Home(){}'), 0)
 
     expect(fs.existsSync(path.join(tmpDir, 'stale.txt'))).toBe(false)
     expect(fs.existsSync(path.join(tmpDir, 'pages', 'Home.tsx'))).toBe(true)
+  })
+
+  // P1-H review F4: the clear is guarded on the REAL path, the way `gitClone.ts` guards a clone.
+  describe('target containment (checked before anything is cleared)', () => {
+    let outside: string
+
+    beforeEach(() => {
+      outside = fs.mkdtempSync(path.join(os.tmpdir(), 'archive-ingest-outside-'))
+      fs.writeFileSync(path.join(outside, 'precious.txt'), 'not yours')
+    })
+
+    afterEach(() => {
+      fs.rmSync(outside, { recursive: true, force: true })
+    })
+
+    async function expectRefused(target: string): Promise<void> {
+      try {
+        await writeArchiveToWorkspace(target, root, new Map([['e', 'x.txt']]), () => strToU8('x'), 0)
+        throw new Error('expected rejection')
+      } catch (err) {
+        expect(err).toBeInstanceOf(ArchiveIngestError)
+        expect((err as ArchiveIngestError).status).toBe(404)
+        expect((err as ArchiveIngestError).message).not.toContain(root)
+      }
+    }
+
+    it('refuses the workspace root itself, and deletes nothing', async () => {
+      fs.writeFileSync(path.join(tmpDir, 'keep.txt'), 'a real project file')
+      await expectRefused(root)
+      expect(fs.existsSync(path.join(tmpDir, 'keep.txt'))).toBe(true)
+    })
+
+    it('refuses a target outside the root', async () => {
+      await expectRefused(path.join(outside, 'acme-widgets'))
+      expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('not yours')
+    })
+
+    it('refuses a symlinked <root>/<owner>-<repo> that points outside the root', async () => {
+      const link = path.join(root, 'evil-repo')
+      fs.symlinkSync(outside, link, 'junction')
+      await expectRefused(link)
+      expect(fs.readFileSync(path.join(outside, 'precious.txt'), 'utf8')).toBe('not yours')
+    })
+
+    it('refuses a symlinked target that resolves back to the root itself', async () => {
+      const link = path.join(root, 'loop-repo')
+      fs.symlinkSync(root, link, 'junction')
+      fs.writeFileSync(path.join(tmpDir, 'keep.txt'), 'a real project file')
+      await expectRefused(link)
+      expect(fs.existsSync(path.join(tmpDir, 'keep.txt'))).toBe(true)
+    })
+
+    it('refuses a dangling symlink at the target', async () => {
+      const gone = path.join(outside, 'gone')
+      fs.mkdirSync(gone)
+      const link = path.join(root, 'dangling-repo')
+      fs.symlinkSync(gone, link, 'junction')
+      fs.rmSync(gone, { recursive: true, force: true })
+      await expectRefused(link)
+    })
+
+    it('accepts a new target directly under the root', async () => {
+      const fresh = path.join(root, 'brand-new')
+      const outcome = await writeArchiveToWorkspace(fresh, root, new Map([['e', 'x.txt']]), () => strToU8('x'), 0)
+      expect(outcome.files).toBe(1)
+      expect(fs.existsSync(path.join(fresh, 'x.txt'))).toBe(true)
+    })
   })
 })
 

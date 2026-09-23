@@ -3,7 +3,7 @@
 
 This index maps supported deployment targets to the files, variables, and persistence rules they need.
 
-Studio is one Bun process packaged by the root `Dockerfile`, but it opens TWO listeners: the admin `Bun.serve` on `PORT`, and a second, independent, cookie-free `Bun.serve` on `LIVE_PORT` (`server/liveOrigin.ts`) that proxies a Tier 2 project's own dev server for the live canvas. The server reads runtime configuration from `server/config.ts`: `PORT`, `DATABASE_URL`, `UPLOADS_DIR`, `STATIC_DIR`, `PUBLIC_ORIGIN`, `TRUSTED_PROXY_CIDRS`, `LIVE_PORT`, and `LIVE_ORIGIN`. The workspace root (every user's projects) comes from `STUDIO_WORKSPACE_DIR`, read by `projectsRootDir()` in `server/handlers/studioProjects.ts`. Reversible server secrets, including AI provider credentials, plugin secret settings, and MFA TOTP seeds, are encrypted with `STUDIO_SECRET_KEY` when configured. Database migrations run automatically on boot in `server/index.ts`.
+Studio is one Bun process packaged by the root `Dockerfile`, but it opens TWO listeners: the admin `Bun.serve` on `PORT`, and a second, independent, cookie-free `Bun.serve` on `LIVE_PORT` (`server/liveOrigin.ts`) that proxies a Tier 2 project's own dev server for the live canvas. The server reads runtime configuration from `server/config.ts`: `PORT`, `DATABASE_URL`, `UPLOADS_DIR`, `STATIC_DIR`, `PUBLIC_ORIGIN`, `TRUSTED_PROXY_CIDRS`, `LIVE_PORT`, and `LIVE_ORIGIN`. The workspace root (every user's projects) comes from `STUDIO_WORKSPACE_DIR` and the private data root (MCP secrets, Claude CLI logins) from `STUDIO_DATA_DIR`, both parsed by `server/runtimeDirs.ts`. Reversible server secrets, including AI provider credentials, plugin secret settings, and MFA TOTP seeds, are encrypted with `STUDIO_SECRET_KEY` when configured. Database migrations run automatically on boot in `server/index.ts`.
 
 ---
 
@@ -11,15 +11,15 @@ Studio is one Bun process packaged by the root `Dockerfile`, but it opens TWO li
 
 | Target | Use when | Database | Persistent storage | Docs |
 |---|---|---|---|---|
-| Railway SQLite template | Fastest managed install for a single site | SQLite file | One Railway app volume mounted at `/app/storage` (DB, uploads, workspace) | [railway.md](railway.md) |
-| Railway Postgres template | Managed install for teams or horizontal scale later | Railway Postgres | App volume for uploads and workspace, Postgres service volume for DB | [railway.md](railway.md) |
-| Render SQLite template | Managed Docker install outside Railway | SQLite file | One Render disk mounted at `/app/storage` (DB, uploads, workspace) | [render.md](render.md) |
-| Render Postgres template | Managed Postgres install outside Railway | Render Postgres | Render disk for uploads and workspace, Render Postgres storage for DB | [render.md](render.md) |
-| VPS Docker Compose | Self-hosted server, full control | SQLite or bundled Postgres | Docker named volumes (`workspace`, `uploads`, and `data` or `postgres_data`) | [vps.md](vps.md) |
-| Generic Docker host | Any platform that runs the Dockerfile/image | SQLite or external Postgres | A mounted directory/volume for DB, uploads and workspace | [docker-image.md](docker-image.md) |
+| Railway SQLite template | Fastest managed install for a single site | SQLite file | One Railway app volume mounted at `/app/storage` (DB, uploads, workspace, private data) | [railway.md](railway.md) |
+| Railway Postgres template | Managed install for teams or horizontal scale later | Railway Postgres | App volume for uploads, workspace and private data, Postgres service volume for DB | [railway.md](railway.md) |
+| Render SQLite template | Managed Docker install outside Railway | SQLite file | One Render disk mounted at `/app/storage` (DB, uploads, workspace, private data) | [render.md](render.md) |
+| Render Postgres template | Managed Postgres install outside Railway | Render Postgres | Render disk for uploads, workspace and private data, Render Postgres storage for DB | [render.md](render.md) |
+| VPS Docker Compose | Self-hosted server, full control | SQLite or bundled Postgres | Docker named volumes (`workspace`, `private`, `uploads`, and `data` or `postgres_data`) | [vps.md](vps.md) |
+| Generic Docker host | Any platform that runs the Dockerfile/image | SQLite or external Postgres | A mounted directory/volume for DB, uploads, workspace and private data | [docker-image.md](docker-image.md) |
 | VPS HTTPS | Public domain on a VPS | Unchanged | Caddy cert volume plus app volumes | [tls-caddy.md](tls-caddy.md) |
 
-Back up the workspace, the database and uploaded media. See [backup-restore.md](backup-restore.md).
+Back up the workspace, the private data, the database and uploaded media. See [backup-restore.md](backup-restore.md).
 
 **Upgrading an install created before the workspace volume existed?** Its projects are in the container's writable layer and the next recreate deletes them. Copy them out of the running container first: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
 
@@ -32,7 +32,8 @@ PORT          HTTP port the Bun server listens on
 DATABASE_URL  sqlite:/path/to/cms.db, file:/path/to/cms.db, postgres://..., or postgresql://...
 UPLOADS_DIR   directory for media, plugin packs, fonts, and published disk artefacts
 STATIC_DIR    built admin SPA directory; /app/dist in the Docker image
-STUDIO_WORKSPACE_DIR  the workspace root: every user's projects, Studio's documents; MUST be on persistent storage
+STUDIO_WORKSPACE_DIR  the workspace root: every user's projects, Studio's documents; a DEDICATED absolute directory on persistent storage
+STUDIO_DATA_DIR       private runtime state (MCP server secrets, Claude CLI logins); absolute, on persistent storage; defaults to <cwd>/.data
 STUDIO_SECRET_KEY  base64 32-byte key for encrypted server secrets
 PUBLIC_ORIGIN        comma-separated public origin(s) the CSRF check trusts; auto-detected from RENDER_EXTERNAL_URL / RAILWAY_PUBLIC_DOMAIN on those platforms
 TRUSTED_PROXY_CIDRS  optional; trusts proxy socket peers for forwarded client-IP attribution only (audit logs, rate-limit keys) — NOT used for CSRF
@@ -53,9 +54,14 @@ PORT=3001
 STATIC_DIR=/app/dist
 UPLOADS_DIR=/app/uploads
 STUDIO_WORKSPACE_DIR=/app/studio-workspace
+STUDIO_DATA_DIR=/app/.data
 ```
 
-The image creates `/app/studio-workspace` owned by its non-root `bun` user, so an empty named volume mounted there is writable. At boot the server creates the workspace root if it is missing, and logs a `[studio:workspace]` warning if it finds the root on the container's writable layer or a `tmpfs` (`server/handlers/studio/workspacePersistence.ts`).
+The image creates `/app/studio-workspace` and `/app/.data` owned by its non-root `bun` user, so an empty named volume mounted on either is writable. Studio's own code under `/app` stays root-owned. At boot the server (`server/handlers/studio/workspacePersistence.ts`):
+
+- **refuses to start** when either setting is blank, whitespace-padded or relative, or when the workspace root is, contains, or sits inside something that must never become a "project": the database directory, uploads, the built admin app, Studio's own code, or the private data root (`workspaceRootGuard.ts`);
+- creates the workspace root if it is missing;
+- logs a `[studio:workspace]` warning when the workspace root or the private data root is on the container's writable layer or a `tmpfs`.
 
 Managed platforms often override `PORT`. That is fine; the server uses `process.env.PORT`. When a managed platform terminates HTTPS before forwarding HTTP to the container, the CSRF origin check derives the site's public origin from `PUBLIC_ORIGIN` — auto-detected from `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN` on Render and Railway, so one-click deploys need no manual value. Set `PUBLIC_ORIGIN` explicitly (a comma-separated list) when adding a custom domain. `TRUSTED_PROXY_CIDRS` is independent of CSRF and only attributes the real client IP for audit logs and rate-limit keys.
 
@@ -106,15 +112,15 @@ SQLite is the default for single-site installs. Postgres is for multiple simulta
 
 SQLite installs also need the SQLite database file on persistent storage. On platforms with only one app volume, put both the SQLite file and uploads under the same mounted root.
 
-**The Studio workspace needs persistent storage, and every shipped template provides it.** Every project a user edits lives under the workspace root (`STUDIO_WORKSPACE_DIR`; `<cwd>/studio-workspace` when unset). It is Studio's source of truth and has no other copy.
+**The Studio workspace and the private data need persistent storage, and every shipped template provides it.** Every project a user edits lives under the workspace root (`STUDIO_WORKSPACE_DIR`; `<cwd>/studio-workspace` when unset). It is Studio's source of truth and has no other copy. The private data root (`STUDIO_DATA_DIR`; `<cwd>/.data` when unset) holds the MCP server secrets and Claude CLI logins.
 
-| Target | Workspace root | Persisted by |
-|---|---|---|
-| VPS Compose (`compose.prod.yml`) | `/app/studio-workspace` | the `workspace` named volume |
-| Railway, Render, `docker run` with one volume | `/app/storage/studio-workspace` | the app volume/disk at `/app/storage` |
-| Direct Bun install | `<checkout>/studio-workspace` | the host filesystem |
+| Target | Workspace root | Private data root | Persisted by |
+|---|---|---|---|
+| VPS Compose (`compose.prod.yml`) | `/app/studio-workspace` | `/app/.data` | the `workspace` and `private` named volumes |
+| Railway, Render, `docker run` with one volume | `/app/storage/studio-workspace` | `/app/storage/.data` | the app volume/disk at `/app/storage` |
+| Direct Bun install | `<checkout>/studio-workspace` | `<checkout>/.data` | the host filesystem |
 
-If you mount your own storage, `STUDIO_WORKSPACE_DIR` must point at or inside it. The layout is gated by `src/__tests__/architecture/workspace-volume-persistence.test.ts`, which parses the Dockerfile, every Compose stack, and both Render Blueprints. Installs created before this change must move the workspace once: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume". Backup and restore: [backup-restore.md](backup-restore.md) → "The Studio workspace".
+**The workspace root must be a DEDICATED directory.** Every folder in it is served as an editable project. Point it at a volume of its own (the Compose layout), or at a subdirectory of your volume that holds nothing else (`/app/storage/studio-workspace`). **Never** use the volume's mount root when `DATABASE_URL` or `UPLOADS_DIR` also live on that volume: the database directory and uploads would become projects. The server refuses to start on that layout, and on `/`, `/app`, or any root that overlaps uploads, the built admin app, Studio's code or the private data. The layout is gated by `src/__tests__/architecture/workspace-volume-persistence.test.ts`, which parses the Dockerfile, every Compose stack, and both Render Blueprints, for both roots. Installs created before this change must move the workspace once: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume". Backup and restore: [backup-restore.md](backup-restore.md) → "The Studio workspace".
 
 ## Docs Inventory
 
@@ -135,5 +141,7 @@ If you mount your own storage, `STUDIO_WORKSPACE_DIR` must point at or inside it
 - `server/index.ts` — migrations, media storage, and server boot
 - `Dockerfile` — production image contract
 - `compose.prod.yml`, `compose.sqlite.yml`, `compose.tls.yml`, `compose.build.yml` — VPS Compose files
-- `server/handlers/studio/workspacePersistence.ts` — creates the workspace root at boot and warns when it is not on persistent storage
+- `server/handlers/studio/workspacePersistence.ts` — creates the workspace root at boot and warns when it or the private data is not on persistent storage
+- `server/handlers/studio/workspaceRootGuard.ts` — refuses to boot on an unsafe workspace root
+- `server/runtimeDirs.ts` — `STUDIO_WORKSPACE_DIR` / `STUDIO_DATA_DIR` parsing
 - `docs/deployment/render/sqlite/render.yaml`, `docs/deployment/render/postgres/render.yaml` — Render Blueprint templates

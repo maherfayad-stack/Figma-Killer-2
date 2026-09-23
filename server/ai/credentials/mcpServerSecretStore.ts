@@ -56,15 +56,15 @@ import {
 } from '../../secrets/encryption'
 import { ensurePrivateDirectory, writePrivateFileReplacing } from './privateTempDir'
 import { getMasterKeyFingerprint, loadMasterKey } from '../../secrets/masterKey'
+import { resolveStudioDataRoot } from '../../runtimeDirs'
 
-const DEFAULT_DATA_ROOT_SEGMENT = ['.data', 'mcp-server-secrets'] as const
 
 /** Resolve (without creating) the data root — overridable via env for ops flexibility, same convention as `resolveClaudeCliDataRoot`. */
 export function resolveMcpServerSecretsRoot(
   env: Record<string, string | undefined> = process.env,
 ): string {
   const configured = env.MCP_SERVER_SECRETS_DATA_DIR
-  return configured ? resolve(configured) : resolve(process.cwd(), ...DEFAULT_DATA_ROOT_SEGMENT)
+  return configured ? resolve(configured) : join(resolveStudioDataRoot(env), 'mcp-server-secrets')
 }
 
 const SAFE_SEGMENT = /^[A-Za-z0-9._-]+$/

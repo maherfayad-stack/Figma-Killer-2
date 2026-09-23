@@ -14,7 +14,7 @@ Run the image with:
 - `PORT` set to the platform's HTTP port
 - `DATABASE_URL` pointing at SQLite or Postgres
 - `UPLOADS_DIR` mounted on persistent storage
-- `STUDIO_WORKSPACE_DIR` (every user's projects) on persistent storage; the image default `/app/studio-workspace` is NOT a volume by itself
+- `STUDIO_WORKSPACE_DIR` (every user's projects) and `STUDIO_DATA_DIR` (MCP secrets, CLI logins) on persistent storage; the image defaults `/app/studio-workspace` and `/app/.data` are NOT volumes by themselves
 - `STATIC_DIR=/app/dist`
 - `STUDIO_SECRET_KEY` set before configuring AI provider credentials, plugin secret settings, or TOTP MFA
 - `PUBLIC_ORIGIN` set to the site's public origin when the platform terminates HTTPS before forwarding to the container (auto-detected from `RENDER_EXTERNAL_URL` / `RAILWAY_PUBLIC_DOMAIN` on those platforms)
@@ -25,6 +25,7 @@ Use one persistent mount root when the platform only supports one app volume:
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
 STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 ```
 
 ## Build Locally
@@ -59,13 +60,14 @@ docker run -d \
   -e STATIC_DIR=/app/dist \
   -e UPLOADS_DIR=/app/storage/uploads \
   -e STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace \
+  -e STUDIO_DATA_DIR=/app/storage/.data \
   -e STUDIO_SECRET_KEY="replace-with-output-of-generate-secret-key" \
   -v studio-storage:/app/storage \
   --restart unless-stopped \
   studio:local
 ```
 
-The single volume stores the SQLite database, uploaded media, and the Studio workspace (every user's projects).
+The single volume stores the SQLite database, uploaded media, the Studio workspace (every user's projects) and the private data. Each gets its own subdirectory; never point `STUDIO_WORKSPACE_DIR` at `/app/storage` itself, or the database and uploads become projects (the server refuses to start).
 
 ## Run With External Postgres
 
@@ -82,15 +84,16 @@ docker run -d \
   -e STATIC_DIR=/app/dist \
   -e UPLOADS_DIR=/app/storage/uploads \
   -e STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace \
+  -e STUDIO_DATA_DIR=/app/storage/.data \
   -e STUDIO_SECRET_KEY="replace-with-output-of-generate-secret-key" \
   -v studio-storage:/app/storage \
   --restart unless-stopped \
   studio:local
 ```
 
-The app volume is still required in Postgres mode because the Studio workspace lives under `STUDIO_WORKSPACE_DIR`, and uploads, fonts, plugin packs, and published disk artefacts live under `UPLOADS_DIR`.
+The app volume is still required in Postgres mode because the Studio workspace and private data live under `STUDIO_WORKSPACE_DIR` and `STUDIO_DATA_DIR`, and uploads, fonts, plugin packs, and published disk artefacts live under `UPLOADS_DIR`.
 
-A container created from an older command without `STUDIO_WORKSPACE_DIR` keeps its projects in its writable layer, which `docker rm` deletes. Move them before recreating it: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
+A container created from an older command without these variables keeps its projects and secrets in its writable layer, which `docker rm` deletes. Move them before recreating it: [backup-restore.md](backup-restore.md) → "Moving the workspace onto a volume".
 
 Replace `studio:local` with `ghcr.io/corebunch/studio:<tag>` when deploying from a published image.
 
@@ -109,6 +112,7 @@ PORT=8080
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
 STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 STUDIO_SECRET_KEY=<output of bun run scripts/generate-secret-key.ts>
 PUBLIC_ORIGIN=https://${{RAILWAY_PUBLIC_DOMAIN}}
@@ -135,6 +139,7 @@ PORT=10000
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
 STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 ```
 
@@ -147,7 +152,8 @@ Render auto-injects `RENDER_EXTERNAL_URL`, which Studio uses as the CSRF public 
 |---|---|---|
 | `DATABASE_URL` | Yes | `sqlite:...`, `file:...`, `postgres://...`, or `postgresql://...` |
 | `UPLOADS_DIR` | Yes for durable media | Persistent upload directory |
-| `STUDIO_WORKSPACE_DIR` | Yes, on persistent storage | The workspace root: every user's projects. The image sets `/app/studio-workspace`; mount a volume there, or point it inside your volume (e.g. `/app/storage/studio-workspace`) |
+| `STUDIO_WORKSPACE_DIR` | Yes, on persistent storage | The workspace root: every user's projects. Absolute. The image sets `/app/studio-workspace`; mount a volume there, or point it at a **dedicated subdirectory** of your volume (e.g. `/app/storage/studio-workspace`), never the volume's mount root when the DB or uploads share it |
+| `STUDIO_DATA_DIR` | Yes, on persistent storage | Private runtime state: MCP server secrets, Claude CLI logins. Absolute. The image sets `/app/.data`; on a single volume use e.g. `/app/storage/.data` |
 | `STATIC_DIR` | Yes in Docker | `/app/dist` |
 | `PORT` | Platform-dependent | HTTP listen port; defaults to `3001` |
 | `STUDIO_SECRET_KEY` | Yes for reversible server secrets | Output of `bun run scripts/generate-secret-key.ts` |

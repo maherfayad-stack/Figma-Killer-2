@@ -98,6 +98,7 @@ PORT=8080
 DATABASE_URL=sqlite:/app/storage/data/cms.db
 UPLOADS_DIR=/app/storage/uploads
 STUDIO_WORKSPACE_DIR=/app/storage/studio-workspace
+STUDIO_DATA_DIR=/app/storage/.data
 STATIC_DIR=/app/dist
 RAILWAY_RUN_UID=0
 STUDIO_SECRET_KEY=<output of bun run scripts/generate-secret-key.ts>

@@ -42,17 +42,29 @@ ENV UPLOADS_DIR=/app/uploads
 # mounts the `workspace` volume here; the Railway/Render templates point this
 # variable into their /app/storage disk). The directory is created below and
 # owned by `bun` so an empty named volume mounted here inherits that owner.
-# Gated by src/__tests__/architecture/workspace-volume-persistence.test.ts.
 ENV STUDIO_WORKSPACE_DIR=/app/studio-workspace
+# Studio's private runtime state: encrypted MCP server secrets, the Claude
+# CLI's per-user config and login, idempotency records. Persisted the same way
+# (compose.prod.yml's `private` volume; /app/storage/.data on the platforms).
+ENV STUDIO_DATA_DIR=/app/.data
+# Both are gated by src/__tests__/architecture/workspace-volume-persistence.test.ts.
 
-COPY --from=production-deps --chown=bun:bun /app/node_modules ./node_modules
-COPY --from=build --chown=bun:bun /app/dist ./dist
-COPY --chown=bun:bun package.json bun.lock ./
-COPY --chown=bun:bun tsconfig*.json ./
-COPY --chown=bun:bun server ./server
-COPY --chown=bun:bun src ./src
+# Studio's own code stays ROOT-owned: the server runs as `bun`, and so does a
+# Tier 2 project's dev server (arbitrary code from an imported repo), which
+# must not be able to rewrite /app/dist (the admin app the owner loads),
+# /app/server or /app/node_modules.
+COPY --from=production-deps /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY package.json bun.lock ./
+COPY tsconfig*.json ./
+COPY server ./server
+COPY src ./src
 
-RUN mkdir -p /app/uploads /app/data /app/studio-workspace && chown -R bun:bun /app
+# Only the directories the server writes are `bun`-owned (not recursive over
+# /app): uploads, the SQLite dir, the workspace, private data, and .tmp (the
+# dev-server process records). An empty named volume mounted on one of them
+# inherits that owner.
+RUN mkdir -p /app/uploads /app/data /app/studio-workspace /app/.data /app/.tmp && chown bun:bun /app/uploads /app/data /app/studio-workspace /app/.data /app/.tmp
 
 USER bun
 EXPOSE 3001

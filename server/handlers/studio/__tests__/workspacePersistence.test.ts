@@ -3,8 +3,20 @@
  * not survive a container recreate (P1-H). The decision is pure over the
  * mountinfo text, so each case below is a real-shaped `/proc/self/mountinfo`.
  */
-import { describe, expect, it } from 'bun:test'
-import { coveringMount, parseMountInfo, workspacePersistenceWarning } from '../workspacePersistence'
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  coveringMount,
+  DATA_ROOT_SUBJECT,
+  parseMountInfo,
+  persistenceWarning,
+  prepareWorkspaceRoot,
+  type PrepareWorkspaceRootInput,
+  WORKSPACE_ROOT_SUBJECT,
+} from '../workspacePersistence'
+import { WorkspaceRootRefusal } from '../workspaceRootGuard'
 
 /** Docker's container root, the writable layer. */
 const OVERLAY_ROOT =
@@ -55,7 +67,9 @@ describe('coveringMount', () => {
   })
 })
 
-describe('workspacePersistenceWarning', () => {
+describe('persistenceWarning', () => {
+  const workspacePersistenceWarning = (root: string, text: string) => persistenceWarning(WORKSPACE_ROOT_SUBJECT, root, text)
+
   it('warns when the root is on the container writable layer (the shipped-image bug P1-H fixes)', () => {
     const warning = workspacePersistenceWarning('/app/studio-workspace', mountinfo(OVERLAY_ROOT, PROC, ETC_HOSTS))
     expect(warning).toContain('writable layer')
@@ -89,5 +103,104 @@ describe('workspacePersistenceWarning', () => {
 
   it('is silent when the mount table is unreadable or empty (never a false alarm)', () => {
     expect(workspacePersistenceWarning('/app/studio-workspace', '')).toBeNull()
+  })
+
+  it('names the private data root and its own variable when that is the subject', () => {
+    const warning = persistenceWarning(DATA_ROOT_SUBJECT, '/app/.data', mountinfo(OVERLAY_ROOT))
+    expect(warning).toContain("Studio's private data root /app/.data")
+    expect(warning).toContain('STUDIO_DATA_DIR')
+  })
+})
+
+// P1-H review F5: the boot hook itself. Its contract is "refuse an unsafe
+// layout, otherwise never throw and never block boot".
+describe('prepareWorkspaceRoot', () => {
+  let base: string
+  let app: string
+  let warnings: unknown[][]
+  let errors: unknown[][]
+
+  beforeEach(() => {
+    base = mkdtempSync(join(tmpdir(), 'prepare-ws-root-'))
+    app = join(base, 'app')
+    mkdirSync(join(app, 'uploads'), { recursive: true })
+    warnings = []
+    errors = []
+  })
+
+  afterEach(() => {
+    rmSync(base, { recursive: true, force: true })
+  })
+
+  function input(workspaceRoot: string, extra: Partial<PrepareWorkspaceRootInput> = {}): PrepareWorkspaceRootInput {
+    return {
+      cwd: app,
+      config: { databaseUrl: 'postgres://db/studio', uploadsDir: join(app, 'uploads'), staticDir: join(app, 'dist') },
+      env: { STUDIO_WORKSPACE_DIR: workspaceRoot, STUDIO_DATA_DIR: join(app, '.data') },
+      platform: 'linux',
+      readMountInfo: () => mountinfo(OVERLAY_ROOT),
+      log: { warn: (...args: unknown[]) => warnings.push(args), error: (...args: unknown[]) => errors.push(args) },
+      ...extra,
+    }
+  }
+
+  it('creates a missing root, including missing parents', () => {
+    const root = join(app, 'storage', 'studio-workspace')
+    const layout = prepareWorkspaceRoot(input(root, { platform: 'win32' }))
+    expect(layout.workspaceRoot).toBe(root)
+    expect(statSync(root).isDirectory()).toBe(true)
+    expect(errors).toEqual([])
+  })
+
+  it('logs, and does not throw, when the root cannot be created (its parent is a regular file)', () => {
+    writeFileSync(join(app, 'blocker'), '')
+    expect(() => prepareWorkspaceRoot(input(join(app, 'blocker', 'studio-workspace'), { platform: 'win32' }))).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(String(errors[0][0])).toContain('Could not create the workspace root')
+  })
+
+  it('logs, and does not throw, when the root is itself a regular file', () => {
+    writeFileSync(join(app, 'studio-workspace'), '')
+    expect(() => prepareWorkspaceRoot(input(join(app, 'studio-workspace'), { platform: 'win32' }))).not.toThrow()
+    expect(errors).toHaveLength(1)
+  })
+
+  it('accepts a symlinked root that resolves to a safe directory, without error', () => {
+    const real = join(base, 'volume', 'studio-workspace')
+    mkdirSync(real, { recursive: true })
+    const link = join(app, 'studio-workspace')
+    symlinkSync(real, link, 'junction')
+    const layout = prepareWorkspaceRoot(input(link, { platform: 'win32' }))
+    expect(layout.workspaceRoot).toBe(link)
+    expect(statSync(link).isDirectory()).toBe(true)
+    expect(errors).toEqual([])
+  })
+
+  it('warns for both the workspace root and the private data root on a writable layer', () => {
+    prepareWorkspaceRoot(input(join(app, 'studio-workspace')))
+    expect(warnings.map((args) => String(args[1]))).toEqual([
+      expect.stringContaining('Studio workspace root'),
+      expect.stringContaining("Studio's private data root"),
+    ])
+  })
+
+  it('never throws when the mount table cannot be read', () => {
+    const exploding = () => {
+      throw new Error('EACCES: /proc/self/mountinfo')
+    }
+    expect(() => prepareWorkspaceRoot(input(join(app, 'studio-workspace'), { readMountInfo: exploding }))).not.toThrow()
+    expect(errors).toHaveLength(1)
+    expect(warnings).toEqual([])
+  })
+
+  it('skips the mount check off Linux and when there is no mount table', () => {
+    prepareWorkspaceRoot(input(join(app, 'studio-workspace'), { platform: 'darwin' }))
+    prepareWorkspaceRoot(input(join(app, 'studio-workspace'), { readMountInfo: () => null }))
+    expect(warnings).toEqual([])
+  })
+
+  it('DOES throw a WorkspaceRootRefusal for an unsafe layout, before creating anything', () => {
+    expect(() => prepareWorkspaceRoot(input(join(app, 'uploads', 'ws')))).toThrow(WorkspaceRootRefusal)
+    expect(() => statSync(join(app, 'uploads', 'ws'))).toThrow()
   })
 })

@@ -33,6 +33,7 @@ import {
 import { PROJECTS_TRASH_DIR_NAME } from './studio/projectDirGuard'
 import { readProjectThumbnailStat } from './studio/projectThumbnailFile'
 import { isRealpathContainedAllowingMissing } from './studio/workspacePackageResolve'
+import { readAbsoluteDirSetting, WORKSPACE_DIR_ENV } from '../runtimeDirs'
 
 /**
  * Root that holds every studio project. Each immediate subfolder of
@@ -60,10 +61,16 @@ import { isRealpathContainedAllowingMissing } from './studio/workspacePackageRes
  * Every path Studio derives for a project (a new project, a GitHub import, a
  * clone, an upload) must be built from THIS function, never from
  * `process.cwd()`: a second root would put projects outside the volume.
+ *
+ * The value must be absolute (`readAbsoluteDirSetting`: a blank or relative
+ * value throws), and `studio/workspaceRootGuard.ts` refuses to boot on a root
+ * that overlaps the database, uploads, Studio's own code or its private data.
  */
-export function projectsRootDir(): string {
-  const override = process.env.STUDIO_WORKSPACE_DIR
-  return override ? resolve(override) : join(process.cwd(), 'studio-workspace')
+export function projectsRootDir(
+  env: Record<string, string | undefined> = process.env,
+  cwd: string = process.cwd(),
+): string {
+  return readAbsoluteDirSetting(WORKSPACE_DIR_ENV, env) ?? join(cwd, 'studio-workspace')
 }
 
 /**
@@ -590,6 +597,9 @@ export function listStudioProjects(projectsRoot: string): StudioProjectSummary[]
  * Unsorted on purpose: the display-name sort belongs to the listing, which is
  * the only caller that has display names to sort by.
  */
+/** ext2/3/4's recovery directory at the root of every such filesystem. */
+const LOST_AND_FOUND_DIR_NAME = 'lost+found'
+
 export function listStudioProjectDirs(projectsRoot: string): string[] {
   if (!existsSync(projectsRoot) || !statSync(projectsRoot).isDirectory()) return []
   return readdirSync(projectsRoot, { withFileTypes: true })
@@ -601,6 +611,11 @@ export function listStudioProjectDirs(projectsRoot: string): string[] {
         // would point Studio at a directory whose children are deleted
         // projects. See `./studio/projectTrash.ts`.
         entry.name !== PROJECTS_TRASH_DIR_NAME &&
+        // A block-device filesystem mounted AT the root (a bind-mounted disk,
+        // a Kubernetes volume) carries a root-owned, mode-0700 `lost+found`.
+        // It is filesystem bookkeeping, never a project, and every operation
+        // on it would fail with EACCES.
+        entry.name !== LOST_AND_FOUND_DIR_NAME &&
         !EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name),
     )
     .map((entry) => join(projectsRoot, entry.name))

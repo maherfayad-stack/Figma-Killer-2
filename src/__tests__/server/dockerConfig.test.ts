@@ -34,7 +34,9 @@ describe('self-host docker config', () => {
   it('keeps TypeScript path aliases available in the runtime image', () => {
     const dockerfile = readFileSync('Dockerfile', 'utf8')
 
-    expect(dockerfile).toContain('COPY --chown=bun:bun tsconfig*.json ./')
+    // Root-owned on purpose (P1-H review F3): the runtime user must not own
+    // Studio's code. Ownership itself is gated by workspace-volume-persistence.test.ts.
+    expect(dockerfile).toContain('COPY tsconfig*.json ./')
   })
 
   it('installs the runtime script bundler in production dependencies', () => {

@@ -289,7 +289,7 @@ export async function runGithubImport(
 
   const targetDir = resolve(options.dir ?? defaultGithubImportDir(owner, repo))
 
-  return await writeArchiveToWorkspace(targetDir, decider.accepted, (name) => zip[name], decider.skipped).catch(
+  return await writeArchiveToWorkspace(targetDir, projectsRootDir(), decider.accepted, (name) => zip[name], decider.skipped).catch(
     asGithubImportError,
   )
 }

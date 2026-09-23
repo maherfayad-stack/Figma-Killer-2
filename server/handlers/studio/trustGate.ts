@@ -85,6 +85,12 @@ export const TRUST_TIER_REQUIRED_CODE = 'trust-tier-required'
  * exist, so reading the tier there silently answers `DEFAULT_TRUST_TIER`
  * forever, whatever tier the owner actually chose for the project.
  *
+ * **Since the default became `run-project`, that misread FAILS OPEN.** A
+ * project whose owner lowered it to `static` would be granted Tier 2 (its own
+ * dev server, a preview deploy) because the lookup missed the file that says
+ * `static`. Under the old Tier 0 default the same misread failed closed. So
+ * a wrong `projectDir` here is now a privilege grant, not a harmless refusal.
+ *
  * That was a real, shipped defect, not a hypothetical: `deploy.ts` read the
  * tier off `resolveAppRoot(dir)` while `devServer.ts` and `referenceRender.ts`
  * read the project directory, so a monorepo project could be promoted to Tier

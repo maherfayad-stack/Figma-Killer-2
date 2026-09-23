@@ -16,6 +16,21 @@ const { mediaStorageRegistry } = await import('@core/plugins/mediaStorageRegistr
 const config = readServerConfig()
 configureTrustedProxyCidrs(config.trustedProxyCidrs)
 configurePublicOrigins(config.publicOrigins)
+// The workspace root holds every user's projects with no other copy, and
+// every folder in it is served as an editable project. Before the database
+// opens: refuse a root that would expose the database, uploads, Studio's own
+// code or its secrets as projects; create the root if a fresh volume has none
+// yet; and, in a container, warn loudly when it (or the private data root) is
+// not on a mounted volume.
+const { prepareWorkspaceRoot } = await import('./handlers/studio/workspacePersistence')
+const { WorkspaceRootRefusal } = await import('./handlers/studio/workspaceRootGuard')
+try {
+  prepareWorkspaceRoot({ config })
+} catch (err) {
+  if (!(err instanceof WorkspaceRootRefusal)) throw err
+  console.error('[studio:workspace]', err.message)
+  process.exit(1)
+}
 const { db, migrations } = createDbClient(config.databaseUrl)
 await runMigrations(db, migrations)
 // System role sync runs after migrations on every boot — the Owner row's
@@ -37,11 +52,6 @@ startConversationPurgeTick(db)
 // `getGithubTokenForUser(userId)` be the single-argument function those
 // callers share — see `server/handlers/studio/githubToken.ts`.
 provideGithubCredentialDb(db)
-// The workspace root holds every user's projects with no other copy. Create
-// it if a fresh volume has none yet, and, in a container, warn loudly at boot
-// when it is not on a mounted volume (the next recreate would delete it).
-const { prepareWorkspaceRoot } = await import('./handlers/studio/workspacePersistence')
-prepareWorkspaceRoot()
 
 /**
  * Build the CORS response headers for an incoming request.
