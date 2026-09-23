@@ -23,6 +23,7 @@ import { collectAllNodeIds, historySurvivesReload } from './historyPreservation'
 import { retainBoardOnlyEntries } from '../boardHistory'
 import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRemap'
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
+import { notePagesRead } from './pageReadEpoch'
 import { createReparseNodeFollower, publishReparseFollow, type NodeIdFollower } from './reparseNodeFollow'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import type { Draft } from 'mutative'
@@ -120,6 +121,7 @@ export function createLifecycleActions({
   return {
     createSite: (name) => {
       const site = createDefaultSiteDocument(name)
+      notePagesRead('all') // ERR-6 — see `pageReadEpoch.ts`
       reconcileSiteExplorerInPlace(site)
       reindexSiteTreeParents(site)
       const siteRuntime = cloneSiteRuntimeConfig(site.runtime)
@@ -158,6 +160,9 @@ export function createLifecycleActions({
       // site cannot bleed into the canvas after switching projects.
       // (Guideline #307 / Architect message #1216 — critical integration note)
       renderCache.clear()
+      // ERR-6 — every page is replaced; an in-flight move/delete must not
+      // replay its inverse over what disk just said (`pageReadEpoch.ts`).
+      notePagesRead('all')
       reconcileFrameworkClasses(site)
       reconcileSiteExplorerInPlace(site)
       reindexSiteTreeParents(site)
@@ -278,6 +283,7 @@ export function createLifecycleActions({
     },
 
     clearSite: () => {
+      notePagesRead('all')
       set((state) => {
         state.site = null
         state.packageJson = clonePackageJson(DEFAULT_SITE_PACKAGE_JSON)
@@ -373,6 +379,9 @@ export function createLifecycleActions({
       }
 
       if (upsertedIds.size === 0 && actuallyRemovedIds.size === 0) return
+      // ERR-6 — a removal shifts every surviving page's position in
+      // `site.pages`, which is what an inverse patch addresses it by.
+      notePagesRead(actuallyRemovedIds.size > 0 ? 'all' : upsertedIds)
 
       // The project-wide registries the same reload recomputed. A re-parsed
       // page's `classIds` name rules from the registry computed WITH it, so

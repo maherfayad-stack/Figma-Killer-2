@@ -232,8 +232,28 @@ Only a second miss is shown: one `warning`, "Not saved — the file changed".
 
 **What is not guarded yet:** `css` (a file + selector, no position) and
 `styled` (its template location travels in `styledStyleRuleSources`, not on a
-node). P1-D builds re-location on this: a changed file's edits are re-found by
-the same fingerprint comparison, run over the positions a line diff proposes.
+node).
+
+**Re-location (P1-D).** A mismatch is not refused straight away. The server
+keeps the last few texts of every file a parse read or a write batch touched
+(`sourceTextHistory.ts`); `studioEditRelocate.ts` takes the ones in which the
+expected element sits at the id's position, maps the line through a line diff
+to the file now (`sourceLineMap.ts` — the earliest AND latest optimal
+alignments, column carried across a re-indent), and re-reads the fingerprint
+at each proposed position. Exactly one match → the edit is re-addressed there
+(`withSourceLocation`) and runs; the response lists it in `retargeted` and
+sets `shifted`, and every other field still reports under the id the caller
+sent. None or two → `element-moved` exactly as before, and the board's own
+recovery above takes over. No history (a server restart) is the same refusal.
+
+**Noticing outside edits (P1-D, ERR-19).** `projectWatch.ts` watches the open
+project (retained by the editor bridge stream) and tells Studio's own writes
+from everyone else's by whether a file's `mtime` falls inside a project
+write-lock hold. An `outside` change to a board input is pushed down the
+bridge as `studio_live_reload` with `diskChanged: { files }`; the tab saves
+anything pending first (so those edits are re-found server-side), then calls
+`resyncBoardAfterWrite(files)` — the same narrow-or-full re-read Studio's own
+writes use, which P1-B's follower then maps the selection through.
 
 ---
 
@@ -413,7 +433,6 @@ from the node id and `lockReason` alone:
 | `group` / `ungroup` | K3's members of the "this caller cannot write" family (`refuseMintedNodeCopy`), plus a group whose members mix imported markup with canvas-only nodes |
 | `has-behaviour` | K3, AST-decided: the container being ungrouped carries something other than `className`/`style`/`id`/`data-*` (a handler, a `ref`, a `key`, a spread), or it is a COMPONENT rather than an intrinsic element. Removing it would drop behaviour, so the remedy is to open it in code |
 | `content-model` | `struct-11`: the container a group would write cannot legally sit where it would land (`<div>` in a `<p>`, anything in a `<ul>`/`<tr>`/`<select>`) or cannot legally hold what it would hold (a wrapper around an `<li>`, a `<td>`, a `<figcaption>`). Decided from `@core/utils/htmlContentModel` — early by `previewStructuralGroup` when the tags are nameable, and always by the codemod against the AST. The remedy is the jump: `origin` is the CONTAINER whose content model forbids it |
-| `stale-undo` | `store-14`, decided on the CLIENT: ⌘Z (or ⌘⇧Z) on a source-writing gesture whose recorded inverse names a node the live tree no longer has. Something changed the file outside the undo stack, so re-issuing the write would edit whatever now sits at that line. Carries the jump-to-source remedy, and the sentence names the file |
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
 The AST adds the refusals only it can answer: `not-siblings`,

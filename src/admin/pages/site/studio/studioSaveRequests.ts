@@ -227,16 +227,22 @@ async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSaveRespo
  * response's post-write identities land (`recordOwnWrites`). Every writer that
  * posts through here — the autosave diff, every structural commit, every
  * one-shot — rides the same guard.
+ *
+ * `idempotencyKey` is for a caller that retries this one write itself
+ * (`studioStructuralCommits.ts`, ERR-6): every attempt shares it, so a replay of
+ * a write that landed gets the stored answer instead of a second write.
  */
 export async function postEdits(
   edits: readonly Record<string, unknown>[],
   identities?: IdentityCapture,
+  idempotencyKey?: string,
 ): Promise<StudioSaveResponse> {
   const expect = identities ? expectationsFor(identities) : {}
   const result = await apiRequest('/admin/api/studio/save', {
     method: 'POST',
     body: { dir: studioWriteDir(), edits, ...(Object.keys(expect).length > 0 ? { expect } : {}) },
     schema: StudioSaveResponseSchema,
+    ...(idempotencyKey ? { idempotencyKey } : {}),
   })
   recordOwnWrites(identities, result.fingerprints ?? [])
   return result

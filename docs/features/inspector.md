@@ -1168,6 +1168,17 @@ re-rendered the reverted draft, so both `ScrubInput` and `TokenAwareInput` set
 a flag that makes that one blur discard instead of commit — otherwise Escape
 writes the very value it was pressed to abandon.
 
+**A parked caret commits nothing (ERR-1).** Keeping focus means the caret
+usually sits in a field that has nothing left to say. `ScrubInput` tracks one
+bit, `typed` — set by a keystroke into the text, cleared by every commit,
+nudge, revert and sync — and while it is clear the field follows its `value`
+exactly as an unfocused one does, and blur and Enter commit nothing. Before
+this, a parked field kept its stale text and wrote it back on click-away: type
+a width, Enter, ⌘Z, click the canvas, and the undo was undone and the redo
+stack cleared. The same happened to an agent edit, a resync or a selection
+change that landed while the caret sat there. Text the user IS typing is never
+overwritten by an external change, and still commits on blur.
+
 ### §5.5 One scrub engine, and the mark is the handle
 
 Drag-a-number is one interaction, so it is one module: `useScrubDrag`

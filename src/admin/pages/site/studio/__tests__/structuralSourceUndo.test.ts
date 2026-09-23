@@ -24,7 +24,7 @@ import { useEditorStore } from '@site/store/store'
 import { registerEditorSave } from '@site/hooks/editorSaveRef'
 import { applySitePagesPatch } from '@site/hooks/siteReloadApply'
 import { CMS_SITE_PAGES_PATCH_EVENT, type CmsSitePagesPatchDetail } from '@admin/state/adminEvents'
-import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
+import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../../../../../__tests__/fixtures'
 import { resetStructuralCommitQueue } from '../structuralCommitQueue'
 import { setStudioLoadedDir } from '../studioWorkspaceDir'
@@ -207,6 +207,15 @@ describe('a structural source write is one undo step', () => {
 
   const lastEdits = () => saveCalls[saveCalls.length - 1]!.edits
 
+  /** Every toast on the bus right now. */
+  function currentToasts(): Toast[] {
+    let snapshot: Toast[] = []
+    subscribeToasts((toasts) => {
+      snapshot = toasts
+    })()
+    return snapshot
+  }
+
   /**
    * `store-15` — whether the TOP entry's `inverse` has been filled in.
    * `delete`'s entry exists (and `canUndo` is already true) the instant the
@@ -237,6 +246,33 @@ describe('a structural source write is one undo step', () => {
     await waitFor(() => useEditorStore.getState().site?.pages[0]?.nodes[MADE_ID] === undefined)
     // ONE step: the entry moved to the redo stack, and nothing else was undone.
     expect(useEditorStore.getState().canUndo).toBe(false)
+    expect(useEditorStore.getState().canRedo).toBe(true)
+  })
+
+  it('⌘D in one frame, click another frame, ⌘Z: still deletes the copy (ERR-3)', async () => {
+    // A second frame on the board: pressing on it activates its page.
+    const other = makePage({
+      id: 'other',
+      rootNodeId: 'pages/Other.tsx:4:5',
+      nodes: { 'pages/Other.tsx:4:5': makeNode({ id: 'pages/Other.tsx:4:5', moduleId: 'base.container' }) },
+    })
+    useEditorStore.getState().loadSite(makeSite({ pages: [pageBefore(), other] }))
+    useEditorStore.getState().setActivePage(PAGE_ID)
+    stubFetch([
+      { createdNodeIds: [MADE_ID], pages: [pageWithMade()] },
+      { pages: [pageBefore()] },
+    ])
+
+    useEditorStore.getState().duplicateNode(ROW_ID)
+    await waitFor(() => useEditorStore.getState().canUndo)
+
+    useEditorStore.getState().setActivePage('other')
+    useEditorStore.getState().undo()
+    // The old active-tree check called MADE_ID "missing", opened a modal
+    // blaming the file, and left the entry on top of the stack.
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+    await waitFor(() => saveCalls.length === 2)
+    expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: MADE_ID }])
     expect(useEditorStore.getState().canRedo).toBe(true)
   })
 
@@ -374,7 +410,7 @@ describe('a structural source write is one undo step', () => {
     expect(lastEdits()).toEqual([{ kind: 'delete', nodeId: moved(MADE_ID) }])
   })
 
-  it('says what it cannot take back, instead of posting a write the server would refuse', async () => {
+  it('skips what it cannot take back — one notice, no dialog, no write the server would refuse (ERR-28)', async () => {
     stubFetch([{ createdNodeIds: [MADE_ID], pages: [pageGrouped()] }])
 
     // A design-system container, registered here rather than pulled in from
@@ -397,14 +433,17 @@ describe('a structural source write is one undo step', () => {
     await waitFor(() => useEditorStore.getState().canUndo)
 
     useEditorStore.getState().undo()
-    const dialog = useEditorStore.getState().structuralRefusalDialog
-    expect(dialog?.title).toBe('Undo refused')
-    expect(dialog?.constraint.explanation).toContain('component')
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+    const notice = currentToasts().find((toast) => toast.title.startsWith('Skipped “Group”'))
+    expect(notice?.kind).toBe('warning')
+    expect(notice?.body).toContain('component')
     expect(saveCalls).toHaveLength(1)
+    // The step is gone, not parked on top of the stack.
+    expect(useEditorStore.getState()._historyPast).toHaveLength(0)
     registry.unregister('test.card')
   })
 
-  it('refuses — naming the file — when the inverse no longer resolves against the board', async () => {
+  it('skips — naming the file — when the inverse no longer resolves against the board (ERR-28)', async () => {
     stubFetch([
       // The write reported an id, but the page the resync brought back does
       // not contain it: the file is not what this entry was recorded against.
@@ -415,12 +454,12 @@ describe('a structural source write is one undo step', () => {
     await waitFor(() => useEditorStore.getState().canUndo)
 
     useEditorStore.getState().undo()
-    const dialog = useEditorStore.getState().structuralRefusalDialog
-    expect(dialog?.title).toBe('Undo refused')
-    expect(dialog?.constraint.explanation).toContain('pages/Home.tsx')
-    // Nothing was written, and the step did not move.
+    expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+    const notice = currentToasts().find((toast) => toast.title.startsWith('Skipped “Duplicate”'))
+    expect(notice?.body).toContain('pages/Home.tsx')
+    // Nothing was written, and the stack is not jammed on this step.
     expect(saveCalls).toHaveLength(1)
-    expect(useEditorStore.getState().canUndo).toBe(true)
+    expect(useEditorStore.getState().canUndo).toBe(false)
   })
 
   /**

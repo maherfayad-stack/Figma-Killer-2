@@ -480,6 +480,7 @@ export async function tryServeStudio(
         removed,
         prunedImports,
         fingerprints,
+        retargeted,
       } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
@@ -534,6 +535,9 @@ export async function tryServeStudio(
         // workspace-relative node id, so the board's next edit to the same
         // element is not refused `element-moved` by this one.
         fingerprints,
+        // P1-D — the edits whose element was re-found after its file changed
+        // on disk, and where each was written. Plain workspace-relative ids.
+        retargeted,
       })
     } catch (err) {
       return studioRouteFailure(err)

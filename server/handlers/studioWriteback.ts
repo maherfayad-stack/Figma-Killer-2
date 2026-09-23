@@ -79,7 +79,8 @@ import {
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
 import { createSyntaxGuard } from './studioSyntaxGuard'
 import { expandMergedOutcomes } from './studioEditMerge'
-import { findMovedEdits, fingerprintAfterWrite } from './studioEditIdentity'
+import { fingerprintAfterWrite, resolveEditIdentities } from './studioEditIdentity'
+import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { countLines, recordCreatedPosition, resolveCreatedNodeIds, type CreatedNodePosition } from './studioEditPositions'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
@@ -431,23 +432,32 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
  * place that knows the ordering/dedup/shift rules.
  *
  * `expect` (P1-A) is the identity the caller recorded for each node id its
- * edits name. An edit naming an id whose position now holds something else
- * refuses `element-moved` before any codemod runs — see `studioEditIdentity.ts`.
+ * edits name. An edit naming an id whose position now holds something else is
+ * re-found in its changed file and written THERE (P1-D, reported in
+ * `retargeted`), or — when it cannot be found exactly once — refuses
+ * `element-moved` before any codemod runs. See `studioEditIdentity.ts`.
+ * Every outcome is reported under the id the caller SENT, so a caller pairs
+ * results with its own edits whether or not they were re-found.
  */
 export function applyStudioEditBatch(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations = {},
 ): StudioEditBatchResult {
-  const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, edits))
-  // P1-A — which edits name a position whose element is not the one the client
-  // read. Decided against the files as they stand BEFORE this batch writes a
-  // byte, and those edits never reach a codemod. See `studioEditIdentity.ts`.
-  const moved = findMovedEdits(dir, ordered, expect)
+  // P1-A/P1-D — which edits still name the element the client read, which name
+  // one that moved within its changed file (re-addressed to where it is now),
+  // and which cannot be found exactly once (refused, never reaching a
+  // codemod). Decided against the files as they stand BEFORE this batch writes
+  // a byte, and before ordering — a re-addressed edit sorts by where it will
+  // actually write. See `studioEditIdentity.ts`.
+  const identity = resolveEditIdentities(dir, edits, expect)
+  const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, identity.runnable))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
   const touchedFiles = new Set<string>()
-  for (const edit of ordered) {
+  // A refused edit's file is still reported: the caller re-reads exactly these
+  // to recover from an `element-moved` refusal.
+  for (const edit of [...ordered, ...identity.moved.map((entry) => entry.edit)]) {
     const file = studioEditFile(dir, edit.nodeId)
     if (file) touchedFiles.add(file)
     // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
@@ -519,8 +529,8 @@ export function applyStudioEditBatch(
   }
 
   let written = 0
-  let skipped = 0
-  const refusals: StudioEditRefusal[] = []
+  let skipped = identity.moved.length
+  const refusals: StudioEditRefusal[] = identity.moved.map((entry) => entry.refusal)
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
   const createdStylesheets: { nodeId: string; file: string }[] = []
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
@@ -542,12 +552,6 @@ export function applyStudioEditBatch(
     const brokenTarget = syntaxRefusal(edit)
     if (brokenTarget) {
       refusals.push(brokenTarget)
-      skipped += 1
-      continue
-    }
-    const movedRefusal = moved.get(edit)
-    if (movedRefusal) {
-      refusals.push(movedRefusal)
       skipped += 1
       continue
     }
@@ -597,13 +601,21 @@ export function applyStudioEditBatch(
     if (rel && pruned.declarations.length > 0) prunedImports.push({ file: rel, declarations: [...pruned.declarations] })
   }
 
-  let shifted = false
+  // A re-found edit means the caller's ids for its file were already stale
+  // before this batch wrote anything — `shifted` is how every caller learns
+  // to re-read them.
+  let shifted = identity.retargeted.length > 0
   const lineCountAfter = new Map<string, number>()
   for (const file of touchedFiles) {
     const after = countLines(file)
     lineCountAfter.set(file, after)
     if (after !== lineCountBefore.get(file)) shifted = true
   }
+
+  // P1-D — what the files say now is what the caller's ids describe next: a
+  // value write does not re-read the board. Remembered so the NEXT batch can
+  // be re-found through a later outside change (`sourceTextHistory.ts`).
+  if (written > 0) rememberSourceTexts(touchedFiles)
 
   // W7-3 — the project's launcher preview is now out of date. Debounced and
   // fire-and-forget: `refreshAfterSave` returns immediately and the capture
@@ -615,21 +627,27 @@ export function applyStudioEditBatch(
   // looks like.
   if (written > 0) projectThumbnailQueue.refreshAfterSave(dir)
 
+  // Every per-edit outcome under the id the caller SENT — see this function's doc.
+  const sentId = new Map(identity.retargeted.map(({ nodeId, to }) => [to, nodeId]))
+  const asSent = <T extends { nodeId: string }>(outcomes: T[]): T[] =>
+    outcomes.map((outcome) => (sentId.has(outcome.nodeId) ? { ...outcome, nodeId: sentId.get(outcome.nodeId)! } : outcome))
+
   return {
     written,
     skipped,
     shifted,
     sharedComponents,
-    refusals,
-    swapDetails,
-    createdStylesheets,
-    promoteDetails,
-    addSlotPropDetails,
-    unexplainedSkips,
+    refusals: asSent(refusals),
+    swapDetails: asSent(swapDetails),
+    createdStylesheets: asSent(createdStylesheets),
+    promoteDetails: asSent(promoteDetails),
+    addSlotPropDetails: asSent(addSlotPropDetails),
+    unexplainedSkips: asSent(unexplainedSkips),
     touchedFiles: [...touchedFiles],
-    removed,
+    removed: asSent(removed),
     prunedImports,
-    fingerprints,
+    fingerprints: asSent(fingerprints),
+    retargeted: identity.retargeted,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
     relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
   }

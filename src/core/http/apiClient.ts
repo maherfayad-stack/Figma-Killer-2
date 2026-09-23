@@ -139,10 +139,14 @@ const IDEMPOTENCY_KEY_HEADER = 'X-Studio-Idempotency-Key'
  * and (for a state-changing method) the idempotency key to attach on every
  * attempt so the server can recognise a replay. `null` for "do not retry".
  */
-function retryPlanFor(method: string, path: string): { idempotencyKey: string | null } | null {
+function retryPlanFor(
+  method: string,
+  path: string,
+  callerKey: string | undefined,
+): { idempotencyKey: string | null } | null {
   const upper = method.toUpperCase()
   if (ALWAYS_SAFE_METHODS.has(upper)) return { idempotencyKey: null }
-  if (IDEMPOTENT_REPLAY_PATHS.has(path)) return { idempotencyKey: crypto.randomUUID() }
+  if (IDEMPOTENT_REPLAY_PATHS.has(path)) return { idempotencyKey: callerKey ?? crypto.randomUUID() }
   return null
 }
 
@@ -272,6 +276,16 @@ interface ApiRequestOptions<S extends TSchema = TSchema> {
    * call" override rather than something every call site must reason about.
    */
   retryGatewayDown?: boolean
+  /**
+   * The replay key, when the CALLER retries one logical write across several
+   * calls (a structural commit's own network-failure ladder, ERR-6). Every
+   * attempt then carries the same `X-Studio-Idempotency-Key`, so an attempt
+   * whose predecessor landed but lost its response gets the stored answer
+   * back instead of running the write twice. Honoured only on
+   * `IDEMPOTENT_REPLAY_PATHS` — anywhere else there is no server-side replay
+   * to lean on, and the key is ignored. Omit it and each call mints its own.
+   */
+  idempotencyKey?: string
   /** Injectable backoff sleep — test seam only; defaults to a real timer. */
   sleepImpl?: (ms: number, signal?: AbortSignal | null) => Promise<void>
 }
@@ -379,13 +393,14 @@ async function requestResponse(
     fallbackMessage,
     fetchImpl = globalThis.fetch.bind(globalThis),
     retryGatewayDown = true,
+    idempotencyKey,
     sleepImpl = sleep,
   } = options
 
   // `null` means "do not retry this call at all" — either the caller opted
   // out, or `retryPlanFor` found no server-side safety proof for this
   // method+path combination.
-  const plan = retryGatewayDown ? retryPlanFor(method, path) : null
+  const plan = retryGatewayDown ? retryPlanFor(method, path, idempotencyKey) : null
 
   const finalHeaders: Record<string, string> = { ...headers }
   if (plan?.idempotencyKey) finalHeaders[IDEMPOTENCY_KEY_HEADER] = plan.idempotencyKey

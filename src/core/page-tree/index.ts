@@ -30,6 +30,7 @@ export {
   isStudioPageRootId,
   matchesCallSitePosition,
   toRuntimeStampId,
+  withSourceLocation,
 } from './sourceNodeId'
 export type { SourceNodeLocation } from './sourceNodeId'
 export {

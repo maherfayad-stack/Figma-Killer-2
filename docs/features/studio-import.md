@@ -857,6 +857,8 @@ Three decisions worth knowing before touching it:
 
 `setJsxProp` also refuses by itself now (WB-11): an attribute whose initializer is not a string, number or boolean literal refuses `binding-overwrite` instead of baking a literal over the binding — the client's `codeProps` guard was the only protection, and an agent's `studio_apply_edits` never passes through it.
 
+**P1-D re-finds instead of refusing, when it honestly can.** The server remembers the last few texts of each file a parse read (and each file a write batch touched). An edit whose expected element is no longer at its position is looked for through a line diff from the text the board read to the text on disk now, under every optimal reading of that diff, and each proposed position is re-checked by fingerprint. Exactly one match: the edit is written there, the save response lists it under `retargeted` and reports `shifted`. None, or two identical candidates: `element-moved`, as before. And a project open in a tab is watched (`projectWatch.ts`), so an edit made in VS Code, a `git pull` or the agent's own Edit tool re-reads the board by itself within a fraction of a second — the stale id rarely reaches the server at all.
+
 Not guarded yet: `css` edits (a file and a selector, no position) and `styled` edits (their template location is not on a node). The client half — the identity table, the recovery, and the structural queue's re-finding of ids — is in `docs/agent-refs/studio-pipeline.md` → "Element identity".
 
 ### A save only reloads when a write actually landed
