@@ -306,3 +306,20 @@ describe('ERR-12 — a drag nobody finished', () => {
     expect(harness.target.style.width).toBe('200px')
   })
 })
+
+describe('the click that ends a drag stays on the handle', () => {
+  it('never reaches the page body, so the sized element stays selected', () => {
+    seed()
+    harness = mount('box-sizing: border-box; width: 200px; height: 100px')
+    render()
+    const reached: string[] = []
+    harness.frameDoc.body.addEventListener('click', () => reached.push('body'), true)
+    const handle = harness.handles.querySelector(`[${RESIZE_HANDLE_ATTR}="w"]`)!
+    handle.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    handle.dispatchEvent(new Event('dblclick', { bubbles: true, cancelable: true }))
+    expect(reached).toEqual([])
+    // A click on the page itself is untouched.
+    harness.target.dispatchEvent(new Event('click', { bubbles: true, cancelable: true }))
+    expect(reached).toEqual(['body'])
+  })
+})

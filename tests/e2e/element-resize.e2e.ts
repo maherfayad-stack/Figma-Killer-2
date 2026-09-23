@@ -198,6 +198,12 @@ test.describe('P2-D — resize obeys CSS (computed layout)', () => {
     near(afterWest.right, before.right)
     near(afterWest.left, before.left - 30)
     near(afterWest.width, before.width + 30)
+    // The click that ends the drag lands on the handle; it must not select the
+    // page body the overlay sits in.
+    await expect(page.getByTestId(`dom-tree-item-${sourceNodeId(FIXTURE_PAGE, REL, 'div', DIV.abs)}`)).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
 
     const north = await dragHandle(page, content, 'n', 0, 10, zoom)
     await north.release()

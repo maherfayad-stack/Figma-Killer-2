@@ -89,18 +89,30 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
     const view = iframeDoc?.defaultView
     if (!frame || !iframeDoc || !view || !nodeId) return
 
-    // The same resolver `CanvasResizeHandles` gates on, so the thing being
-    // dragged and the thing the handles were drawn for cannot disagree — which
-    // matters most for an `alm.*` node, where the node id sits on a
-    // `display: contents` host and the box is one level down.
-    const target = presentedElementForNode(iframeDoc, nodeId)
-    if (!target) return
-
     const cleanups: Array<() => void> = []
     // The drag in flight, if any — cancelled when the handles are torn down
     // under it, so a gesture can never outlive its element and leave
     // `canvasGesture` frozen.
     let cancelActive: (() => void) | null = null
+
+    // A press on a handle ends in a `click` (and two in a `dblclick`) ON the
+    // handle — and the overlay root sits inside the page's body, so that click
+    // bubbled into the body node's click-to-select: every resize ended with
+    // the PAGE selected instead of the element just sized (measured in
+    // `element-resize.e2e.ts`). Captured at the document, which runs before
+    // any node's own capture handler, and only for targets inside the handle
+    // frame — a click anywhere else is untouched.
+    const swallowHandleClick = (event: MouseEvent) => {
+      if (!frame.contains(event.target as Node | null)) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+    iframeDoc.addEventListener('click', swallowHandleClick, true)
+    iframeDoc.addEventListener('dblclick', swallowHandleClick, true)
+    cleanups.push(() => {
+      iframeDoc.removeEventListener('click', swallowHandleClick, true)
+      iframeDoc.removeEventListener('dblclick', swallowHandleClick, true)
+    })
 
     for (const handleEl of frame.querySelectorAll<HTMLElement>(`[${RESIZE_HANDLE_ATTR}]`)) {
       const handle = handleEl.getAttribute(RESIZE_HANDLE_ATTR) as ResizeHandle | null
@@ -114,6 +126,14 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         event.preventDefault()
         event.stopPropagation()
 
+        // The same resolver `CanvasResizeHandles` gates on, so the thing being
+        // dragged and the thing the handles were drawn for cannot disagree —
+        // which matters most for an `alm.*` node, where the node id sits on a
+        // `display: contents` host and the box is one level down. Resolved per
+        // press, not per effect: a write re-renders the page, and an element
+        // captured before it may no longer be the one on screen.
+        const target = presentedElementForNode(iframeDoc, nodeId)
+        if (!target) return
         const start = readResizeBoxStart(view, target)
         const state = useEditorStore.getState()
         // `K4` — the scale tool (`K`) locks the ratio as if ⇧ were held. Read

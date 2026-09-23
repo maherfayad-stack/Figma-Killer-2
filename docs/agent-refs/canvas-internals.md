@@ -718,6 +718,19 @@ events. Five cases are bridged explicitly:
    same-origin document via `collectSameOriginDocuments`. Cross-realm
    `instanceof Node` fails, so use `isNode` (`src/ui/lib/sameOriginDocuments.ts`).
 
+**A drag must survive a release it never hears (ERR-12).** A `pointerup` over
+a frame goes to that frame's document, so any drag listening on the parent can
+lose it. Every canvas drag — element resize (both hosts), reorder, insertion,
+ruler guides (move and create), prototype links, comment pins, the board
+marquee — runs under `guardDragSession` (`@core/studio-runtime`): a
+`pointermove` with the button up finishes the drag at its last point, and a
+real window focus loss cancels it. A parent-document drag also holds pointer
+capture AND arms the cross-iframe relay (`markCanvasPointerRelay`), which is
+what the guide drags lacked. The guard's `blur` is only a hint: focus moving
+INTO a frame blurs the parent window, so the check waits one task and asks the
+top document's `hasFocus()`. It is separate from P2-B's window-blur reset of
+the pan/Alt latches.
+
 ### One keyboard dispatcher, six scopes (`K1`)
 
 **A canvas shortcut that must work from anywhere cannot be a React `onKeyDown`.**
@@ -794,12 +807,14 @@ currently means. Two rules keep it from becoming a second input system:
   reordering for free. `useCanvas` lost its private `spaceActiveRef` in the
   process: a ref saw one of the three sources.
 - **The scale tool is a flag on the existing handles, not new handles.**
-  `CanvasResizeHandles` reads the store and passes `proportional` into
-  `useElementResizeDrag`, which captures it at `pointerdown` — so pressing `K`
-  mid-drag never changes a gesture already under the cursor. The geometry is
-  pure (`elementResize.ts`): the ratio comes from the START size, a corner
-  follows the larger relative movement, and a zero-sized element (a
-  `display: contents` host) degrades to a free resize instead of dividing by
+  `useElementResizeDrag` reads `canvasTool === 'scale'` from the store at
+  `pointerdown` and latches it for the gesture — so pressing `K` mid-drag never
+  changes a gesture already under the cursor. ⇧ does the same thing and is NOT
+  latched: it and ⌥ (resize from the centre) are read from every pointer move
+  and every modifier key change (P2-D, IX-6c). The geometry is pure
+  (`@core/studio-runtime`'s `elementResizeRules.ts`): the ratio comes from the
+  START border box, a corner follows the larger scale, and a zero-sized element
+  (a `display: contents` host) degrades to a free resize instead of dividing by
   zero.
 
 `R` / `O` insert a `base.container` as the **next sibling** of the selection via
@@ -951,10 +966,35 @@ Declared by `base.text`, `base.button`, `base.link`. Values store `\n`, render
   refusals (no element of its own, a `display` CSS ignores a size on, a module
   that does not own its own `style=""`) exist because handles that track the
   cursor for a whole drag and then snap back are worse than no handles.
-  `elementResize.ts` returns a SIZE and never a position: an element's position
-  is produced by layout, and writing an `x` would mean writing
-  `position: absolute`, a much larger edit than the one a user asks for by
-  grabbing an edge.
+  What a drag writes (P2-D) — one `setNodeInlineStyles` call, so one undo
+  entry and one source write:
+  - **The CSS size, not the rect** (IX-6a). The drag moves the BORDER box;
+    `readResizeBoxStart` (`elementResizeMeasure.ts`) reads the computed
+    `width`/`height` plus the padding + border `content-box` puts outside
+    them, and `resizeElementBox` converts back. The aspect lock and the 8px
+    floor are visual, so they run on the border box.
+  - **A flex / grid child goes Fixed** (IX-6b) through the inspector's own
+    `sizingPatch('fixed', …)` (`elementResizeSizing.ts` → `elementSizing.ts`):
+    the Fill marker (`flex: 1 1 0`, `align-self: stretch`) goes with the
+    width, and a `flex` the CASCADE still applies (a class) is overridden with
+    `flex: 0 1 auto` — probed once at `pointerdown`. The preview applies the
+    same patch and restores every property it touched before the commit.
+  - **A flow element gets a size and never a position**: its position is
+    produced by layout, so the W/N handles invert the delta. A
+    `position: absolute | fixed` element is the exception (IX-6d): its W/N
+    handles (and ⌥) also move `left` (`insetInlineStart` under RTL) / `top`
+    so the opposite edge stays put.
+  - **The W×H badge** (IX-18) is a child of the handle frame, shown by
+    `selectionChromeCss.ts` only while the frame carries
+    `data-canvas-resizing`; its text is the ring's own measured rect, written
+    by `positionResizeFrame` in the overlay's write phase.
+  - **The click that ends a drag is swallowed** at the frame document
+    (capture phase) when its target is inside the handle frame. The overlay
+    root lives in the page's `<body>`, so that click used to bubble into the
+    body node's click-to-select and every resize ended with the page selected.
+  - The live runtime's handles (`resizeHandles.ts`) run the same rules and
+    guard. Not yet there: the flex/grid companions, because the resolver needs
+    the node's stored styles, which the frame side of the wire does not have.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
   With a selection and Alt held, hovering another node paints the distances
   between the two boxes and the hovered node's padding bands/content box, into
@@ -1491,7 +1531,7 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 |---|---|---|
 | `pointer` (`down`/`move`/`up`/`click`, with the hit's stamped id **and its stamped ancestor chain**, plus `button`/`buttons`/`pointerId`/`pointerType`) | capture-phase document listeners, both modes; never for the runtime's own chrome; `move` is coalesced (`speed-03`, see below) | `useBridgeFrameInteraction` → a PAN press (`shouldStartCanvasPointerPan`: middle button, or primary with Space/hand tool) is replayed on the iframe element as a real `PointerEvent` with its moves and release, and the click after it dropped; otherwise activates the frame's page if inactive, then the same `CanvasSelectionContext` handlers `NodeRenderer` calls (`onFrameNodeClick`, `onNodeHover`, `onNodePointerDown/Up`) |
 | `wheel` (design mode only; the frame's own scroll is cancelled) | same listeners | re-dispatched as a `WheelEvent` on the iframe element in parent client pixels, so it bubbles to the canvas root like a portal frame's |
-| `resize:commit` (`{ width?, height? }` as integer `px` strings) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
+| `resize:commit` (`{ width?, height?, left?, insetInlineStart?, top? }` as integer `px` strings; offsets may be negative) | `resizeHandles.ts` — a finished drag on the in-frame handles | `useBridgeFrameInteraction` → `setNodeInlineStyles`, the one write `useElementResizeDrag` makes for a portal frame |
 | `text:editStart` (`live-18`, design mode only) / `text:commit` (final text, bounded to 20 000 chars) / `text:cancel` | `inlineTextEdit.ts` — a double-click on a stamped element opens a session; the runtime owns the whole contentEditable lifecycle itself (seeding, focus, select-all, Escape/Enter, blur) and only the request and the final result cross the wire | `useBridgeFrameInteraction` → `text:editStart` runs the SAME `startInlineEdit` predicate the portal double-click handler applies and replies via `adapter.startTextEdit(nodeId, allowed, text?)`; `text:commit` calls `applyInlineEditValue` + `endInlineEdit`; `text:cancel` calls `cancelInlineEdit` — nothing is written to the store until commit, so cancel (and an HMR update landing mid-edit) is a plain no-op here |
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
