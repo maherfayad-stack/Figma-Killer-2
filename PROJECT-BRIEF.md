@@ -91,34 +91,13 @@ never silently no-ops.
 1. **Parse, never execute.** No component is rendered server-side, no hook is
    called. Every value on the canvas was read out of the AST. This is why there
    is a hand-written bounded evaluator with explicit tiers instead of "just run
-   it". **Every project starts at Tier 2 (`run-project`) by default —
-   `DEFAULT_TRUST_TIER`, owner decision, 2026-09-20** (superseding the narrower
-   2026-09-17 override below). **The parse itself never executes anything at
-   any tier**; the tier only decides whether Studio may run the workspace's OWN
-   code (its style toolchain, its package components, its dev server) on top of
-   the parse. The tier is a per-project fact the owner can lower (the Live
-   pill's "Back to static") and raise again — nothing promotes automatically
-   any more because nothing needs to. Tier 1 (`render-packages`) buys exactly
-   two things — the workspace's own style toolchain compiles in a capped
-   subprocess (`styleCompileTier1.ts`) and its package components are bundled
-   and rendered in the canvas (`componentBundle.ts`) — reachable now only for a
-   project explicitly demoted below Tier 2, since Tier 2 already implies it
-   (`trust !== 'static'`). Tier 2 (`run-project`) is genuinely distinct from
-   Tier 1 still: the dev-server manager, the preview deploy, and the agent's
-   `studio_render_reference` all demand `trust === 'run-project'` exactly, via
-   `server/handlers/studio/trustGate.ts` — not the looser `trust !== 'static'`
-   that Tier-1 consumers read, so a project explicitly set to `static` is
-   refused exactly as before. Read the default for what it is: **Tier 2 is a
-   PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — every project ships
-   with `studio_render_reference`'s gates satisfied by default, and no human
-   answers a question to get there. Anything that needs a human to have agreed
-   must ask at the point of use, and the single-operator posture is what makes
-   the default acceptable at all. (Superseded: before 2026-09-20, one narrow
-   automatic promotion — the owner's call on 2026-09-17,
-   `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 — promoted only a Vite project
-   with a lockfile, once, with a notice and an Undo in the board chrome. That
-   mechanism (`LiveAutoPromoteNotice`) is gone; there is no lower default left
-   to promote FROM.)
+   it". **The parse never executes anything at any tier.** The per-project
+   trust tier only decides whether Studio may run the workspace's own code
+   (style toolchain, package components, dev server) on top of the parse, and
+   **every project starts at Tier 2 (`run-project`)**. That default is a
+   product default, not a consent: anything that needs a human to have agreed
+   asks at the point of use. The model, the gates and the default:
+   [`docs/features/trust-tiers.md`](docs/features/trust-tiers.md).
 2. **A write must have exactly one honest target.** Every lock, every
    `codeProps` entry, every refusal exists because writing an edit there would
    destroy a binding, change N places at once, or write to a file that does not
@@ -131,15 +110,11 @@ never silently no-ops.
 
 | | |
 |---|---|
-| Base branch for PRs | `main` (protected — never push to it). Branch per change, `<type>/<kebab>` |
-| Roadmap | [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) — the feature plan (WS-1…WS-9). **Intent, not status** — most of it has shipped; check §0a below before believing a "not built" claim there. [`STUDIO-NEXT-WORKSTREAMS.md`](STUDIO-NEXT-WORKSTREAMS.md) carries the workstreams beyond it (WS-10…WS-14) |
-| Defect + parity plan | [`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) — **§0a is the granular per-track status ledger.** When you need finer detail than the two lists below, read it there, not here |
-| **Active plan** | [`STUDIO-FIGMA-FEEL-PLAN.md`](STUDIO-FIGMA-FEEL-PLAN.md) — **the plan currently being executed** (opened 2026-09-17). Tracks Z (zero noise, a barrier before everything else), S (snappy), K (keys and hands), P (panels/prototype/preview), A (agent), G (GitHub), V (verification). Its §0 lists what is already true, §6 the owner's seven decisions, §7 the defects found in the audit that opened it |
-| Live canvas + inspector plan | [`STUDIO-LIVE-CANVAS-PLAN.md`](STUDIO-LIVE-CANVAS-PLAN.md) — **landed**: Tier 2 live runtime frames (L1–L8), refusals-as-choices (R1–R3) and the Penpot-measured inspector rebuild (P0–P6) are all in the tree. L9 is the only unstarted work order. Every project now starts at Tier 2 by default (2026-09-20), so Track L is exercised on every project open, not just a promoted one |
-| Built-in design system | [`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`](STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md) — **shipped (DS-1…DS-9)**, 2026-09-17. The `@alm-design/design-system` npm is retired: the design system is vendored at `vendor/alm-design-system/`, projects carry their own `design-system/` folder, the insert dialog is an **Assets** panel of live previews, and the toolbar `+` is **Add page**. Only DS-4b (drag a card to the canvas) is open |
+| Base branch for PRs | `feat/canvas-excellence`, the program trunk: every bundle PR targets it (`ROADMAP.md` §4). `main` is protected: never push to it. Branch per change, `<type>/<kebab>` |
+| Plan | [`ROADMAP.md`](ROADMAP.md): **the one living plan.** Phases P0–P6, one bundle per PR, each naming the audit IDs it closes, plus every open row carried from the finished plans (§13). Settled owner decisions: [`docs/decisions.md`](docs/decisions.md). Finished plans are archived, filenames unchanged, in [`docs/archive/plans/`](docs/archive/plans/): read them only for the rationale a code comment cites |
 | Live coordination | [`STATE.md`](STATE.md) — **read at the start of every task, write at the end** |
 | Entry point in the app | `/admin/site` — `src/admin/router.tsx` renders the studio editor there unconditionally; there is no mode flag and no `?studio` param. Which project is open comes from `src/admin/pages/site/studio/studioWorkspaceDir.ts` (localStorage-sticky, set by the Overview launcher; the server falls back to the first project on disk) |
-| Test projects on disk | `studio-workspace/` — whatever folders are there on your checkout (`test4` and `test4 copy` on this one). **User data: never `rm -rf` one, and never assume a given project exists.** |
+| Test projects on disk | `studio-workspace/`. The repository tracks the fixtures `__board-perf-fixture`, `__canonical-fixture`, `__vite-live-fixture` and the owner's `test4`; anything else on your checkout is local. **User data: never `rm -rf` one, and never assume a given project exists.** |
 
 ### What works today (do not rebuild)
 
@@ -183,57 +158,23 @@ never silently no-ops.
   `node_modules` and injected into the canvas iframe as a read-only
   `@layer vendor` bucket (`ProjectCssInjector`), ordered below the editable
   `@layer user-authored` class registry — Tier 0 safe, no trust gate
-- **Trust tiers.** `.studio/meta.json`'s `trust` field has three values —
-  `static` (Tier 0), `render-packages` (Tier 1), `run-project` (Tier 2) —
-  read/written by `server/handlers/studio/trustTier.ts` and driven from the
-  client by `setStudioProjectTrust`/`promoteProjectToTier1`
-  (`studio/studioProjectTrust.ts`). **Every project starts at `run-project`
-  (Tier 2) by default — `DEFAULT_TRUST_TIER`, owner decision, 2026-09-20** —
-  superseding the earlier, narrower 2026-09-17 override
-  (`STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2) that auto-promoted only a Vite
-  project with a lockfile, once, via a board notice with an Undo
-  (`LiveAutoPromoteNotice` — retired in the same change). Nothing promotes
-  automatically any more because nothing needs to: the tier is a per-project
-  fact the owner can lower (the Live pill's "Back to static") and raise again.
-  A non-Vite project's Live pill still reads "Live needs Vite" (§6 decision 5,
-  deferred) — that capability check is unrelated to the trust tier and stays.
-  Tier 2 (`run-project`) has a real gated consumer beyond the MCP visual-audit
-  tool: `server/handlers/studio/devServer.ts`'s dev-server process manager
-  (Track L, `live-01`) — one reused, idle-timed subprocess per project,
-  exposed as a polled `status`/`start`/`stop` route family and prewarmed the
-  instant a Tier-2 project's canvas mounts (now every project, on open).
-  **A Tier-2 action needs two independent gates, and the tier is the one that
-  cannot be delegated.** The `studio.run.project` capability (held by
-  Owner *and* Admin, A10) says a caller may run project code at all; the
-  project's own tier says *this* project may be run. Every Tier-2 entry point
-  checks both through the one shared helper — `requireTrustTier` for an HTTP
-  route, `checkTrustTier` for an agent tool — in
-  `server/handlers/studio/trustGate.ts`. Until A10 the MCP tool
-  `studio_render_reference` checked only the capability, which made it
-  strictly weaker than the route performing the identical spawn (`sec-05`
-  finding 1); the trap to avoid is adding a Tier-2 tool that leans on the
-  capability alone. **Tier 2 is a PRODUCT DEFAULT, not a consent boundary**
-  (`sec-12`) — every project ships with both gates satisfied by default, and
-  no human answered a question to get there; anything that genuinely needs a
-  human to have agreed must ask at the point of use.
-- **A built-in design system, and an Assets panel to insert from**
-  (`STUDIO-BUILTIN-DESIGN-SYSTEM-PLAN.md`, DS-1…DS-9). The 39-component ALM
-  design system is **vendored into Studio** at `vendor/alm-design-system/` and
-  registered as the `alm.*` pack (`src/modules/alm/register.tsx`) — it renders
-  at **Tier 0**, with no npm, no install and no promotion, because it is
-  Studio's own code. A DS-backed project carries a Studio-written
-  `<project>/design-system/` folder (`designSystemFiles.ts`) and imports it
-  relatively, so the downloaded repository builds with react + vite and nothing
-  else; the parser treats that folder as a black box
-  (`src/core/page-parser/designSystemDir.ts`). A project that still imports the
-  retired npm gets a board banner offering a one-click source rewrite
-  (`designSystemMigrate.ts`) — never automatic. The left rail's **Assets**
-  panel (`src/admin/pages/site/panels/AssetsPanel/`) replaced the full-screen
-  insert dialog: design-system components grouped by purpose, elements,
-  layouts, saved components and icons, **every card a live render of the real
-  component** inside a shadow root, searched by name, description and purpose
-  keywords (`rankAssets.ts`). The toolbar / notch `+` is now **Add page**
-  (`AddPagePicker.tsx`).
+- **Trust tiers.** `.studio/meta.json`'s `trust` field: `static` (Tier 0),
+  `render-packages` (Tier 1), `run-project` (Tier 2, the default for every
+  project). A Tier-2 action needs two gates, the connector capability
+  `studio.run.project` and the project's own tier, checked together in
+  `server/handlers/studio/trustGate.ts`; a new Tier-2 tool that leans on the
+  capability alone is the trap. A non-Vite project's Live pill reads "Live
+  needs Vite". See [`docs/features/trust-tiers.md`](docs/features/trust-tiers.md)
+  and, for what Tier 2 runs, [`docs/features/live-canvas.md`](docs/features/live-canvas.md).
+- **A built-in design system, and an Assets panel to insert from.** The
+  39-component ALM design system is vendored at `vendor/alm-design-system/` and
+  registered as the `alm.*` pack; it renders at every tier with no install. A
+  DS-backed project carries a Studio-written `<project>/design-system/` folder
+  and imports it relatively, so a download builds with react + vite alone. The
+  left rail's **Assets** panel shows every insertable thing as a live render,
+  searchable by name, description and keywords; a card inserts on click or
+  drags onto a frame. The toolbar / notch `+` is **Add page**. See
+  [`docs/features/design-system.md`](docs/features/design-system.md).
 - npm package components (`pkg-01`/`pkg-02`/E4): manifest → bundle → register
   → render is wired end to end for **any** installed package —
   `server/handlers/studio/componentBundle.ts`
@@ -389,16 +330,14 @@ never silently no-ops.
   (`tests/e2e/studio-feel-phase0.e2e.ts`) is seven cases, all asserting and all green. G8 is
   driven against a real private GitHub repository (`github-sync.e2e.ts`), and one real agent turn
   is wall-clocked (`agent-turn.e2e.ts`); both self-skip and say why when their preconditions are
-  absent. **The full cold suite is NOT green** — 64 specs are still untriaged, see the plan's
-  "What is still open after three waves".
+  absent. **The full cold suite is NOT green**: its triage is an open row in `ROADMAP.md` §13.
 
 ### What does NOT work today
 
-This list is deliberately short and is the *orientation* set. The granular,
-per-track ledger is
-[`STUDIO-FIGMA-PARITY-PLAN.md`](STUDIO-FIGMA-PARITY-PLAN.md) **§0a** — it
-tracks partially-landed tracks (D2's structural drag work, Track G density,
-A7) at a resolution this file should not try to carry.
+This list is deliberately short and is the *orientation* set. Every open row,
+with its source and the bundle that will close it, is in
+[`ROADMAP.md`](ROADMAP.md) §13; the defects the 2026-09-23 audit found are the
+phases P1–P6 of the same file.
 
 One update from the style-compile consent work (2026-09-06), itself
 superseded by the 2026-09-20 default-tier change: a fresh Tailwind/Sass/
@@ -432,16 +371,20 @@ for a project explicitly demoted to `static`.
 - `.module.scss` / `.module.sass` / `.module.less` are **detected and warned
   about** (`css-module-sass-not-supported`) but not compiled — only plain
   `.module.css` is.
-- **CSS-in-JS is detection-only.** `styleToolchainDetect.ts` recognises
-  styled-components / emotion / stitches as a dependency and reports it in the
-  project profile. Nothing reads or writes those styles.
-- **Cross-FILE reparent refuses** — `refuseStructuralEdit` in
-  `src/core/page-tree/sourceStructure.ts`. Every structural verb now writes
-  within one file (W4-1: duplicate, wrap and same-file reparent joined reorder,
-  delete and insert; K3: group and ungroup), but moving markup into another
-  module would land it where the values it reads do not exist. A same-file move
-  whose subtree captures a binding that is not in scope at the destination
-  refuses too, naming the binding.
+- **CSS-in-JS is partly editable.** A styled-components / emotion *tagged
+  template* renders (`src/core/page-parser/cssInJsExtract.ts`) and a
+  declaration's value writes back in place
+  (`src/core/ast-codemods/setStyledDeclaration.ts`); its synthetic class
+  refuses a class edit. The **object** form (`css({ … })`, an object `css`
+  prop) is neither read nor written, refused by name on both sides.
+- **Cross-file moves are limited.** A drag from one frame into a container in
+  another frame moves the markup between files (`transplantJsxElement.ts`),
+  carrying the imports it needs, and refuses when the subtree reads a
+  body-local binding (a prop, a hook result, a `.map` parameter). Any other
+  reparent into a container that lives in another file refuses with
+  `cross-file` (`refuseStructuralEdit`, `src/core/page-tree/sourceStructure.ts`).
+  A same-file move whose subtree captures a binding that is not in scope at the
+  destination refuses too, naming the binding.
 - **⌘G groups a CONTIGUOUS RUN of siblings, and only that** (K3). One container
   around one span (`wrapJsxElements`); a selection that crosses parents or has
   a gap in it refuses with `multi-select` — "select siblings next to each
@@ -471,9 +414,9 @@ for a project explicitly demoted to `static`.
   `detachComponent.ts` refuses with `package-component` and points at the
   extract-a-copy action instead.
 
-Features not yet built are specced in
-[`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md). **Read the relevant
-workstream section before designing anything.**
+Features not yet built are specced in [`ROADMAP.md`](ROADMAP.md). **Find the
+bundle your task belongs to and read its row and the audit IDs it closes before
+designing anything.**
 
 ---
 
@@ -493,9 +436,12 @@ need to scan the repo.
 | [`docs/agent-refs/glossary.md`](docs/agent-refs/glossary.md) | You hit a term you don't recognise. |
 
 Deeper, human-authored docs (longer, still accurate for Studio):
-[`docs/features/studio-import.md`](docs/features/studio-import.md) (578 lines —
-the definitive parser contract) and
-[`docs/features/canvas-iframe-per-frame.md`](docs/features/canvas-iframe-per-frame.md).
+[`docs/features/studio-import.md`](docs/features/studio-import.md) (the
+definitive parser contract),
+[`docs/features/canvas-iframe-per-frame.md`](docs/features/canvas-iframe-per-frame.md)
+(static frames), [`docs/features/live-canvas.md`](docs/features/live-canvas.md)
+(Tier 2 frames) and [`docs/features/trust-tiers.md`](docs/features/trust-tiers.md).
+Every doc, one row each: [`docs/README.md`](docs/README.md).
 
 ---
 
@@ -647,7 +593,7 @@ sessions are not yours — triage with `git status` / `git diff` and say so.
 
 **Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run
 `bun run test:e2e` too — it is the fourth gate, not an optional extra.**
-`standing-02` says why: happy-dom has no layout engine, so a unit test on
+The reason: happy-dom has no layout engine, so a unit test on
 those surfaces structurally cannot fail on the thing it is named after (WS-8.2
 shipped a real frame-height bug behind a green one). Assert on *computed*
 layout — measured rects, `scrollHeight`, computed styles after layout.
@@ -711,5 +657,5 @@ Consequences:
 - [ ] If a structural rule moved, its gate test in `src/__tests__/architecture/` moved too.
 - [ ] `bun run build && bun test && bun run lint` pass for the files you touched.
 - [ ] If the change touched canvas / frames / overlays / geometry / panel height,
-      `bun run test:e2e` ran too (`standing-02` — happy-dom cannot answer those).
+      `bun run test:e2e` ran too (happy-dom cannot answer those).
 - [ ] **`STATE.md` updated with a handoff entry** — see `handoff-protocol.md`.

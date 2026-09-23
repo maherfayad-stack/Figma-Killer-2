@@ -56,7 +56,7 @@ bun run test:e2e           # starts its own stack — do not hand-start one firs
 `build`, `test`, and `lint` are the three gates every change runs. **A change
 that touches the canvas, a frame, an overlay, geometry, or a panel's height
 runs `bun run test:e2e` as well** — it is the fourth gate, not an optional
-extra. `standing-02` says why: happy-dom has no layout engine, so a unit test
+extra. The reason: happy-dom has no layout engine, so a unit test
 on those surfaces structurally cannot fail on the thing it is named after
 (WS-8.2 shipped a real frame-height defect behind a green one). Assert on
 *computed* layout — measured rects, `scrollHeight`, computed styles after
@@ -87,7 +87,7 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
 `inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
 those four measure **computed layout and frame time**, the one class of
-question happy-dom structurally cannot answer (`standing-02`). It stays its own
+question happy-dom structurally cannot answer. It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
 

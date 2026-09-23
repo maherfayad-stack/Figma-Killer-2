@@ -7,10 +7,10 @@ This file is the **agent rule book** — the constraints every change must satis
 | File | What it gives you |
 |---|---|
 | **[`PROJECT-BRIEF.md`](PROJECT-BRIEF.md)** | **Start here.** What this product actually is, what already works, the traps that catch every new agent, and which specialist + docs your task needs. It exists so you never have to re-scan the repo. |
-| **[`STATE.md`](STATE.md)** | Live coordination. What is in flight, what is blocked, and durable facts previous agents learned the hard way. **Read before working; write a handoff before stopping.** |
-| [`docs/agent-refs/`](docs/agent-refs/) | Compressed, agent-facing references: `path-index.md` (where everything lives), `conventions-quickref.md` (the gated rules), `studio-pipeline.md`, `canvas-internals.md`, `editor-store.md`, `handoff-protocol.md`, `glossary.md`. |
-| [`STUDIO-IMPORT-V2-PLAN.md`](STUDIO-IMPORT-V2-PLAN.md) | The roadmap. Most feature requests are already specced here — find the workstream before designing. |
-| [`docs/README.md`](docs/README.md) | Full documentation index, for depth. |
+| **[`STATE.md`](STATE.md)** | Live coordination. What is in flight, what is blocked, what a human still owes, and durable operational facts. **Read before working; write a handoff before stopping.** |
+| [`ROADMAP.md`](ROADMAP.md) | The one living plan. Most feature requests are already a bundle here: find it, and the audit IDs it closes, before designing. Settled owner decisions are in [`docs/decisions.md`](docs/decisions.md). |
+| [`docs/README.md`](docs/README.md) | The doc map: every doc, one row, with when to read it and how far to trust it. |
+| [`docs/agent-refs/`](docs/agent-refs/) | The compressed, agent-facing reference the BRIEF's routing table names for your task: `path-index.md`, `conventions-quickref.md`, `studio-pipeline.md`, `canvas-internals.md`, `editor-store.md`, `handoff-protocol.md`, `glossary.md`. |
 
 **If a doc conflicts with `PROJECT-BRIEF.md`, the brief wins** — parts of `docs/`
 still describe the dormant CMS half of this fork.
@@ -64,7 +64,7 @@ A user opens a React project (hand-written, uploaded, or pulled from GitHub) as 
 
 Two invariants explain most of the codebase:
 
-1. **Parse, never execute.** Everything on the canvas was read out of the AST by a bounded evaluator with explicit tiers — no component is rendered server-side, no hook is called. *(The per-project trust tier has shipped, and it is narrow. `.studio/meta.json`'s `trust` field has three values — `static` (Tier 0), `render-packages` (Tier 1), `run-project` (Tier 2) — read and written by `server/handlers/studio/trustTier.ts`. **Every project is `run-project` (Tier 2) by default — `DEFAULT_TRUST_TIER`** (owner decision, 2026-09-20, superseding the narrower 2026-09-17 override below). **The parse itself never executes anything at any tier.** The tier is a per-project fact the owner can lower (the Live pill's "Back to static") and raise again; nothing promotes automatically any more because nothing needs to. Promoting to Tier 1 buys exactly two things: the workspace's own style toolchain compiles in a capped subprocess (`styleCompileTier1.ts`), and its package components are bundled and rendered in the canvas (`componentBundle.ts`) — reachable now only for a project explicitly demoted below Tier 2, since Tier 2 already implies it (`trust !== 'static'`). **Tier 2 is a PRODUCT DEFAULT, not a consent boundary** (`sec-12`) — every project ships both of `studio_render_reference`'s gates satisfied by default, and no human answers a question to get there. Anything that needs a human to have agreed must ask at the point of use, and the single-operator posture is what makes the default acceptable at all. Every Tier-2 entry point still checks BOTH gates through `trustGate.ts`: the connector capability (`studio.run.project`) AND `trust === 'run-project'` exactly — a preview deploy (`deploy.ts`) and the dev-server process manager (`server/handlers/studio/devServer.ts`, Track L's `live-01`) both refuse with 409 unless a project explicitly set to `static` is excepted, via the shared `requireTrustTier` helper in `server/handlers/studio/trustGate.ts`. (Superseded: before 2026-09-20, `STUDIO-FIGMA-FEEL-PLAN.md` §6 decision 2 auto-promoted only a Vite project with a lockfile, once, via a board notice with an Undo — that mechanism is gone; there is no lower default left to promote FROM.))*
+1. **Parse, never execute.** Everything on the canvas was read out of the AST by a bounded evaluator with explicit tiers — no component is rendered server-side, no hook is called. The per-project trust tier (`.studio/meta.json` `trust`: `static`, `render-packages`, `run-project`; default `run-project`) only decides whether Studio may run the workspace's own toolchain on top of the parse. **Tier 2 is a product default, not a consent:** anything that needs a human to have agreed must ask at the point of use. Every Tier-2 entry point checks both the `studio.run.project` capability and `trust === 'run-project'` through `server/handlers/studio/trustGate.ts` (gated by `studio-tier2-two-gates.test.ts`). The model and the default: [`docs/features/trust-tiers.md`](docs/features/trust-tiers.md).
 2. **A write must have exactly one honest target.** If an edit cannot land in exactly one place in the user's source without destroying a binding or silently changing N call sites, the editor refuses it and says why.
 
 ### The dormant CMS half
@@ -368,7 +368,7 @@ bun test
 bun run lint
 ```
 
-**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** `standing-02` says why: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those four by path than the whole suite.
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those four by path than the whole suite.
 
 ### When to run
 
@@ -392,7 +392,7 @@ The bar is: **your work is clean.**
 
 ## TL;DR
 
-0. **Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md) and [`STATE.md`](STATE.md) first, and write a `STATE.md` handoff before you stop.** This is Studio — a design tool over a real React repo — not the CMS half of the fork that parts of `docs/` still describe.
+0. **Read [`PROJECT-BRIEF.md`](PROJECT-BRIEF.md), [`STATE.md`](STATE.md) and [`ROADMAP.md`](ROADMAP.md) first, and write a `STATE.md` handoff before you stop.** This is Studio — a design tool over a real React repo — not the CMS half of the fork that parts of `docs/` still describe.
 1. Live installations exist with real user data. Refactor **code** freely — no compat shims needed. **DB schema is the exception: every change ships as an additive, non-destructive migration; never rewrite a committed migration or require a DB drop.**
 2. Never preserve backward compatibility in code, never leave band-aids, never duplicate "old vs new" code paths.
 3. If the architecture would be cleaner with a multi-file refactor — do the refactor, in this change.
