@@ -39,6 +39,12 @@ export interface ValueOrigin {
   line: number
   /** 1-based column of the literal token. */
   col: number
+  /**
+   * P1-A — the literal token's identity as read (`literalFingerprint`), so a
+   * write aimed at this position can be refused `element-moved` when the file
+   * shifted and a different string sits there now.
+   */
+  fingerprint?: string
 }
 
 export type StaticValue =

@@ -301,7 +301,7 @@ const findNodesTool: AiTool = {
   scope: 'shared',
   execution: 'server',
   description:
-    'Query nodes across a project\'s pages by moduleId, tag, class name, text, lock state, or codeProps presence. The agent\'s "show me everything that failed to resolve" — pass lockedOnly:true to find every dynamic/unresolved node, or codeValuedOnly:true to find every per-prop value with nowhere writable to land. Results are capped (default 100) and always include enough to call studio_get_node_source next.',
+    'Query nodes across a project\'s pages by moduleId, tag, class name, text, lock state, or codeProps presence. The agent\'s "show me everything that failed to resolve" — pass lockedOnly:true to find every dynamic/unresolved node, or codeValuedOnly:true to find every per-prop value with nowhere writable to land. Results are capped (default 100) and always include enough to call studio_get_node_source next. Each match carries sourceFingerprint when the node has one: pass it back in the expect map of studio_apply_edits ({ [nodeId]: sourceFingerprint }) so an edit made after the file changed refuses element-moved instead of writing to whatever now sits at that line.',
   inputSchema: FindNodesInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const {
@@ -337,6 +337,7 @@ const findNodesTool: AiTool = {
       classNames: string[]
       lockReason?: string
       codeProps?: string[]
+      sourceFingerprint?: string
     }> = []
 
     outer: for (const page of pages) {
@@ -363,6 +364,8 @@ const findNodesTool: AiTool = {
           classNames,
           ...(node.lockReason ? { lockReason: node.lockReason } : {}),
           ...(node.codeProps && node.codeProps.length > 0 ? { codeProps: node.codeProps } : {}),
+          // P1-A — hand it back in the `expect` of `studio_apply_edits` to have a stale id refuse instead of writing a neighbour.
+          ...(node.sourceFingerprint ? { sourceFingerprint: node.sourceFingerprint } : {}),
         })
       }
     }

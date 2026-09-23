@@ -36,7 +36,7 @@
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
 import { type Page, type SiteDocument } from '@core/page-tree'
-import { apiRequest, ndjsonRequest } from '@core/http'
+import { ndjsonRequest } from '@core/http'
 import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
@@ -48,7 +48,10 @@ import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsave
 import { getStudioWorkspaceDir, setStudioLoadedDir, studioWriteDir } from './studioWorkspaceDir'
 import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenStatus'
 import { setStudioProjectKey, setStudioTrustTier } from './studioProjectTrust'
-import { StudioSaveResponseSchema, notifyCreatedStylesheets } from './studioSaveRequests'
+import { notifyCreatedStylesheets, postEdits } from './studioSaveRequests'
+import { captureIdentities } from './sourceIdentity'
+import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
+import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
 import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline, resetLoadedValues } from './loadedValuesBaseline'
@@ -385,20 +388,36 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // running it inline would let those commits overwrite the fresh disk
     // baseline with the pre-reload document. See `studioBoardResync.ts`.
     let resyncTouchedFiles: readonly string[] | null = null
+    // P1-A — the value edits the server refused `element-moved` (the file
+    // changed under the board), recovered LAST, after every baseline below has
+    // advanced and the ordinary resync has run. See `elementMovedRecovery.ts`.
+    let movedRecovery: (() => Promise<void>) | null = null
 
     if (edits.length > 0) {
-      const result = await apiRequest('/admin/api/studio/save', {
-        method: 'POST',
-        body: { dir: loadedDir(), edits },
-        schema: StudioSaveResponseSchema,
-      })
+      // P1-A — who every id names, as the board knows it now; sent as `expect`.
+      const identities = captureIdentities(edits.flatMap((edit) => structuralEditNodeIds(edit)))
+      const result = await postEdits(edits, identities)
+      const moved = elementMovedNodeIds(result.refusals)
+      if (moved.size > 0) {
+        const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))
+        movedRecovery = async () => {
+          const retry = await retryAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [], postEdits)
+          if (!retry || elementMovedNodeIds(retry.refusals).size > 0) return warnElementMoved(moved)
+          reportEditRefusals(retry.refusals ?? [])
+          notifyUnexplainedSkips(retry.unexplainedSkips ?? [])
+          // The re-read before the retry showed the file WITHOUT the edit;
+          // this one shows it with.
+          if (retry.written > 0) await resyncBoardAfterWrite(retry.touchedFiles ?? [])
+        }
+      }
 
       // WS-4.4/4.5/6.3 — every named refusal gets its own toast carrying the
       // actual reason (`refusalToasts.ts`), de-duped by (kind, target, reason)
       // rather than by advancing the baseline past it — which used to be how a
       // repeat toast was avoided, and silently threw the edit away with it
-      // (`style-02`).
-      const refusals = result.refusals ?? []
+      // (`style-02`). `element-moved` is not a refusal the user acts on — it
+      // is recovered from above.
+      const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))
       reportEditRefusals(refusals)
       for (const refusal of refusals) {
         if (refusal.kind === 'css' || refusal.kind === 'styled') {
@@ -422,7 +441,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // `unexplainedSkipsNotice.ts`. `?? []` covers an older/dev server that
       // hasn't picked up the field yet; `notifyUnexplainedSkips([])` is a
       // documented no-op, matching the old `unexplainedSkips > 0` guard.
-      const unexplainedSkips = result.skipped - refusals.length
+      const unexplainedSkips = result.skipped - (result.refusals ?? []).length
       notifyUnexplainedSkips(result.unexplainedSkips ?? [])
 
       // Track B1 create branch — name the file Studio invented and register it
@@ -511,5 +530,6 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // adopt a value the server refused as the new baseline, which would make
     // the user's retry diff as "no change" (`style-02`'s bug #3).
     if (resyncTouchedFiles) await resyncBoardAfterWrite(resyncTouchedFiles, { refusedRuleIds })
+    if (movedRecovery) await movedRecovery()
   },
 }

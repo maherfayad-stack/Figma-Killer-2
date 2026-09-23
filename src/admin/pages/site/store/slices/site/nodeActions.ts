@@ -40,6 +40,7 @@ import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@site/studio/studioStructuralCommits'
+import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
 import { createDeleteNodesAction } from './deleteNodesAction'
@@ -309,6 +310,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // the write's own resync is about to erase anyway. Treated exactly like
       // a missing node. See `structuralOptimism.ts`'s "one gap left open".
       if (excludePendingOptimisticTargets([nodeId]).length === 0) return
+      // ERR-4 — a delete pressed while another structural write is in flight
+      // runs after it, against the element it was pressed on (re-found by
+      // identity), never whatever that write moved into its old line.
+      if (deferWhileStructuralCommitInFlight((relocate) => actions.deleteNode(relocate(nodeId)), [nodeId])) return
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
       const tree = readTree()
@@ -470,6 +475,16 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
 
     moveNodes: (nodeIds, newParentId, newIndex) => {
       if (nodeIds.length === 0) return
+      // ERR-4 — queued behind an in-flight structural write like every other
+      // structural writer, and re-found by identity when it runs.
+      if (
+        deferWhileStructuralCommitInFlight(
+          (relocate) => actions.moveNodes(nodeIds.map(relocate), relocate(newParentId), newIndex),
+          [...nodeIds, newParentId],
+        )
+      ) {
+        return
+      }
       // `struct-01` — a move on a studio-imported tree is written to the
       // user's `.tsx` as "put this element next to that sibling", so the
       // anchor has to be resolved against the tree BEFORE it changes.

@@ -33,12 +33,15 @@ import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQu
 import {
   dissolveWrapperTemplate,
   resolveStructuralInverse,
+  structuralEditNodeIds,
   type StructuralEditPayload,
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
 } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { postEdits, type InsertPropValue } from './studioSaveRequests'
+import { captureIdentities, type IdentityCapture } from './sourceIdentity'
+import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 
 /**
  * What a structural commit does beyond posting: what it says when it lands,
@@ -77,6 +80,7 @@ interface StructuralCommitOptions {
    */
   reissue?: 'undo' | 'redo'
   optimistic?: OptimisticPreviewHandle // `perf-10` — local preview, settled/rolled back in `commitStructuralBody`.
+  replanned?: true // P1-A — this post IS the one silent re-plan after `element-moved`; a second one warns instead.
 }
 
 /**
@@ -515,17 +519,9 @@ export async function commitStudioStructuralReissue(
  *      doc — so this gate mainly matters for the "nothing to resync" case:
  *      reloading when disk is unchanged would replace the user's optimistic
  *      move/delete/insert with the pre-edit source, undoing it silently.
- *      KNOWN LIMITATION, not fixed here: a REFUSED move/delete (the
- *      "residue only the AST can answer" case — see `commitStudioMove`'s own
- *      doc) already applied its optimistic tree mutation before the refusal
- *      came back; with no reload to correct it, the board can show a
- *      move/delete that never actually reached the source until some LATER,
- *      unrelated reload happens to resync it. Building a targeted revert of
- *      just that transaction (rather than either "reload everything" or
- *      "leave it diverged") is `STUDIO-FIGMA-PARITY-PLAN.md`'s already-
- *      identified follow-up (audit finding E3), deferred deliberately: doing
- *      it here risks the exact same Ctrl+Z-vs-in-flight-POST race E3 already
- *      catalogs as needing its own guard.
+ *      KNOWN LIMITATION: a move/delete the AST REFUSES already applied its
+ *      optimistic tree mutation, and with no reload the board shows it until
+ *      a later reload resyncs (audit E3 — a targeted revert is its own work).
  *   2. Before posting, flush any edit still inside the autosave debounce and
  *      AWAIT it, so a prop/text/style edit made moments before this
  *      structural gesture is durably written (and, per 0.1's fix, its own
@@ -536,14 +532,11 @@ export async function commitStudioStructuralReissue(
  *      autosave loop's own error state already surfaces that failure via the
  *      toolbar's save indicator).
  *
- * `STUDIO-FIGMA-PARITY-PLAN.md` Track C5 (reload surgery, Band 2, built on
- * top of 0.2 above) — the ONE thing that changed since: "reload" on a landed
- * write no longer means "reparse the whole workspace" by default. See
- * `studioBoardResync.ts`'s `resyncBoardAfterWrite` for the full contract;
- * every gate described in items 1/2 above (still gated on `written > 0`,
- * still flushes first, still leaves a refused move/delete visually diverged
- * until a later reload) is UNCHANGED — C5 only changes what a "reload" does
- * once the gate says one should happen.
+ * Track C5 changed only what a "reload" does once the gate above says one
+ * should happen (`studioBoardResync.ts`); every gate here is unchanged.
+ *
+ * P1-A: every commit posts the identity of each id it names, captured when the
+ * gesture was made, and an `element-moved` refusal is re-planned once, silently.
  */
 async function commitStructural(
   edits: readonly StructuralEditPayload[],
@@ -553,9 +546,12 @@ async function commitStructural(
   // Held for the whole body, including the resync at the bottom — see
   // `structuralCommitQueue.ts` for why the window has to extend past the POST
   // itself, and what happens to a gesture that arrives inside it.
+  // P1-A — who every id names, captured at the gesture's own moment: before the
+  // flush below, or a commit ahead in the queue, can renumber the file.
+  const identities = captureIdentities(edits.flatMap((edit) => structuralEditNodeIds(edit)))
   beginStructuralCommit()
   try {
-    await commitStructuralBody(edits, refusalTitle, options)
+    await commitStructuralBody(edits, refusalTitle, options, identities)
   } finally {
     endStructuralCommit()
   }
@@ -565,6 +561,7 @@ async function commitStructuralBody(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
   options: StructuralCommitOptions,
+  identities: IdentityCapture,
 ): Promise<void> {
   try {
     await flushEditorSave()
@@ -573,9 +570,11 @@ async function commitStructuralBody(
   }
 
   try {
-    const result = await postEdits(edits)
+    const result = await postEdits(edits, identities)
+    // `element-moved` is never toasted here — it is recovered from below.
+    const moved = elementMovedNodeIds(result.refusals)
     for (const refusal of result.refusals ?? []) {
-      pushToast({ kind: 'error', title: refusalTitle, body: refusal.message })
+      if (!moved.has(refusal.nodeId)) pushToast({ kind: 'error', title: refusalTitle, body: refusal.message })
     }
     if (options.success && result.written > 0) {
       pushToast({
@@ -638,6 +637,14 @@ async function commitStructuralBody(
     // (1) above) leaves a refused move/delete visually diverged until a
     // later reload happens to resync it.
     if (willReload) await resyncBoardAfterWrite(result.touchedFiles ?? [])
+    // P1-A — the file changed under the board. Re-read it and re-plan ONCE,
+    // silently (`elementMovedRecovery.ts`); only a second miss says anything.
+    if (moved.size > 0) {
+      const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))
+      const replan = options.replanned ? null : await replanAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [])
+      if (replan) await commitStructuralBody(replan.edits, refusalTitle, { ...options, optimistic: undefined, replanned: true }, replan.identities)
+      else warnElementMoved(moved)
+    }
   } catch (err) {
     // Fire-and-forget from the store's mutation guard, so this is the only
     // place the failure can be reported. No response was ever obtained, so

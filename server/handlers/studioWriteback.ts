@@ -48,7 +48,7 @@
  * logged and skipped by the route rather than aborting the whole batch.
  */
 import { join } from 'node:path'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import {
   createImportPruneSession,
   detachComponentInstance,
@@ -56,6 +56,7 @@ import {
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
+  JsxPropTargetError,
   setJsxStyle,
   JsxStyleTargetError,
   setJsxTagName,
@@ -65,7 +66,7 @@ import {
   swapComponentInstance,
   type DeletedJsxText,
 } from '@core/ast-codemods'
-import { buildSourceNodeId } from '@core/page-tree'
+import type { SourceFingerprintExpectations } from '@core/page-tree'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
@@ -76,6 +77,8 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
+import { findMovedEdits, fingerprintAfterWrite } from './studioEditIdentity'
+import { countLines, recordCreatedPosition, resolveCreatedNodeIds, type CreatedNodePosition } from './studioEditPositions'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   isRefusingEditKind,
@@ -192,7 +195,14 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // actual JSX attribute is `<name>` at this SAME location (the instance
       // node's own id is the call site's own plain location).
       const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
-      setJsxProp({ ...loc, prop, value: edit.value })
+      try {
+        setJsxProp({ ...loc, prop, value: edit.value })
+      } catch (err) {
+        // WB-11 — the attribute holds code, and a literal written over it would
+        // delete the binding. A named decision, same channel as `style-target`.
+        if (err instanceof JsxPropTargetError) throw new StudioEditRefusalError(err.reason, err.message)
+        throw err
+      }
       return { applied: true }
     }
     case 'text':
@@ -417,9 +427,21 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
  * Single source of truth for "apply a batch of edits" — both the HTTP save
  * route and `studio_apply_edits` (MCP) call this, so there is exactly one
  * place that knows the ordering/dedup/shift rules.
+ *
+ * `expect` (P1-A) is the identity the caller recorded for each node id its
+ * edits name. An edit naming an id whose position now holds something else
+ * refuses `element-moved` before any codemod runs — see `studioEditIdentity.ts`.
  */
-export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]): StudioEditBatchResult {
+export function applyStudioEditBatch(
+  dir: string,
+  edits: readonly StudioEdit[],
+  expect: SourceFingerprintExpectations = {},
+): StudioEditBatchResult {
   const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, edits))
+  // P1-A — which edits name a position whose element is not the one the client
+  // read. Decided against the files as they stand BEFORE this batch writes a
+  // byte, and those edits never reach a codemod. See `studioEditIdentity.ts`.
+  const moved = findMovedEdits(dir, ordered, expect)
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
   const touchedFiles = new Set<string>()
@@ -511,7 +533,14 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
   // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
   // that produced it.
   const removed: (DeletedJsxText & { nodeId: string })[] = []
+  const fingerprints: { nodeId: string; fingerprint: string }[] = []
   for (const edit of ordered) {
+    const movedRefusal = moved.get(edit)
+    if (movedRefusal) {
+      refusals.push(movedRefusal)
+      skipped += 1
+      continue
+    }
     try {
       const outcome = applyStudioEdit(dir, edit)
       if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
@@ -529,6 +558,8 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         if (outcome.removed) removed.push({ nodeId: edit.nodeId, ...outcome.removed })
+        const identity = fingerprintAfterWrite(dir, edit)
+        if (identity) fingerprints.push(identity)
       } else {
         skipped += 1
         unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
@@ -586,71 +617,10 @@ export function applyStudioEditBatch(dir: string, edits: readonly StudioEdit[]):
     touchedFiles: [...touchedFiles],
     removed,
     prunedImports,
+    fingerprints,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
     relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
   }
-}
-
-/** Lines in `file`, or 0 when it does not exist — the one reading every line-count comparison here uses. */
-function countLines(file: string): number {
-  return existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : 0
-}
-
-/**
- * `store-13` — one element a batch created, pinned to a coordinate that later
- * edits in the same batch cannot invalidate.
- *
- * `linesFromEnd` is the file's line count at the moment this edit finished,
- * minus the created element's line. `orderStudioEditsForApply` applies a batch
- * BOTTOM-TO-TOP, so every edit that runs after this one sits strictly ABOVE
- * the element just created: it can only add or remove lines before it, which
- * moves the element's absolute line and leaves its distance from the end of
- * the file exactly as it was. Recording the absolute line instead would report
- * a stale position for every created element but the last — reachable today
- * with a multi-selection ⌘D.
- */
-interface CreatedNodePosition {
-  /** Workspace-relative POSIX path — the head of the node id. */
-  rel: string
-  /** Absolute path, for the final line count. */
-  file: string
-  col: number
-  linesFromEnd: number
-}
-
-/** Pin one `created` location to the file it landed in. Skips an edit whose id no longer decodes — there is no honest node id to mint from it. */
-function recordCreatedPosition(
-  into: CreatedNodePosition[],
-  dir: string,
-  nodeId: string,
-  created: { line: number; col: number },
-): void {
-  const location = studioEditLocation(dir, nodeId)
-  const file = studioEditFile(dir, nodeId)
-  if (!location || !file) return
-  into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })
-}
-
-/**
- * The created elements' node ids, re-derived against the file as the WHOLE
- * batch left it — the plain `rel:line:col` the parser will mint for the same
- * element on its next read (`buildSourceNodeId`, so this cannot drift from the
- * parser's own spelling).
- *
- * A file missing from `lineCountAfter` never happens for a created element (it
- * was written, so it is in `touchedFiles`), but is skipped rather than guessed.
- */
-function resolveCreatedNodeIds(
-  positions: readonly CreatedNodePosition[],
-  lineCountAfter: ReadonlyMap<string, number>,
-): string[] {
-  const ids: string[] = []
-  for (const position of positions) {
-    const after = lineCountAfter.get(position.file)
-    if (after === undefined) continue
-    ids.push(buildSourceNodeId(position.rel, after - position.linesFromEnd, position.col))
-  }
-  return ids
 }
 
 /**
@@ -675,6 +645,7 @@ function resolveCreatedNodeIds(
 export function applyStudioEditBatchLocked(
   dir: string,
   edits: readonly StudioEdit[],
+  expect: SourceFingerprintExpectations = {},
 ): Promise<StudioEditBatchResult> {
-  return withProjectWriteLock(dir, () => applyStudioEditBatch(dir, edits))
+  return withProjectWriteLock(dir, () => applyStudioEditBatch(dir, edits, expect))
 }

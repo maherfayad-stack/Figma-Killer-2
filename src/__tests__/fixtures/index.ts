@@ -79,6 +79,9 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     lockReason: overrides.lockReason,
     codeProps: overrides.codeProps,
     resolvedProps: overrides.resolvedProps,
+    // P1-A — the parser's identity stamp, which every write sends back as
+    // `expect`. Dropped here, no test could reach the element identity guard.
+    ...(overrides.sourceFingerprint !== undefined ? { sourceFingerprint: overrides.sourceFingerprint } : {}),
   }
 }
 

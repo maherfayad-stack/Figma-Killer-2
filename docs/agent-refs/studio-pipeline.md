@@ -71,10 +71,11 @@ had no persistence at all: installing a font mutated the store and nothing
 else, so the family picker's "Installed fonts" group was empty again on the
 next load.
 
-POST /admin/api/studio/save  { dir, edits: StudioEdit[] }
+POST /admin/api/studio/save  { dir, edits: StudioEdit[], expect?: { [nodeId]: fingerprint } }
    └─ studioEditLocation()  → { rel, line, col }  (split composite id, keep TAIL)
+   └─ findMovedEdits()      → element-moved refusals, BEFORE any write (P1-A)
    └─ applyStudioEdit()     → one ast-codemod per edit
-   → { written, skipped, shifted, sharedComponents }
+   → { written, skipped, shifted, sharedComponents, refusals, fingerprints, … }
 ```
 
 ---
@@ -154,6 +155,85 @@ for the full contract.
 
 ---
 
+## Element identity — a position is not an identity (P1-A)
+
+An id says WHERE an element was when the board read the file. When the file
+changes under the board — the agent's Edit tool, VS Code, `git pull`, or a
+structural write still in flight — the same `line:col` names a different
+element, and before P1-A a prop, text or delete edit landed on that neighbour
+and reported `written: 1` (WB-1, ERR-4). Every write now says WHO it expects to
+find, and the server refuses when someone else is there.
+
+**The fingerprint.** `<label>#<8 hex>` — a `SourceFingerprintSchema` string
+(`@core/page-tree`'s `sourceFingerprint.ts`, the wire half):
+
+| Target | `label` | Hashed (FNV-1a 32, whitespace collapsed, and dropped next to `< > = { }`) |
+|---|---|---|
+| A JSX element | its tag as written (`li`, `Card`, `motion.div`) | the opening tag + the element's DIRECT text: its `JsxText` children and any `{…}` child with no JSX inside |
+| A literal (`literal`/`asset` targets) | `literal` | the token's own text, quotes included |
+
+Why exactly that: the opening tag alone cannot tell `<li>One</li>` from
+`<li>Two</li>`, which is precisely the neighbour a shifted line lands on; the
+whole subtree would change every ANCESTOR's fingerprint on every descendant
+edit. With direct text only, a write changes the identity of the element it
+targets and nothing else. Whitespace normalisation makes a CRLF checkout, a
+re-indent or a formatter breaking a long tag hash the same.
+
+**Minted once, by the parser.** `@core/page-parser`'s `sourceFingerprint.ts`
+is the only computation: `processElement` stamps `ParsedNode.fingerprint`
+(skipped on a `.map` row — its id has no writable location), `originOf` and
+`importSpecifierLocation` stamp `ValueOrigin.fingerprint`, and
+`parsedPageToSitePage` carries them to `PageNode.sourceFingerprint` and the
+origin objects. The guard reads a position back through
+`@core/ast-codemods`' `readSourceFingerprintAt`, which calls the SAME two
+functions — a guard that hashed differently would refuse every write.
+`sourceFingerprint.test.ts` pins "parser and guard agree at every node".
+
+**The wire.** `POST /save` takes `expect: { [nodeId]: fingerprint }` for any id
+an edit names (`nodeId`, `anchorNodeId`, `parentNodeId`, `siblingNodeIds`);
+MCP `studio_apply_edits` takes the same field, and `studio_find_nodes` returns
+`sourceFingerprint` per match so an agent can send it. Per-id opt-in: an id
+with no entry is not checked. The response adds `fingerprints: [{ nodeId,
+fingerprint }]` — each landed VALUE edit's target identity AFTER the write.
+
+**The server** (`studioEditIdentity.ts`): `findMovedEdits` reads every named
+position BEFORE the batch writes a byte (a prop and a style edit on one element
+must not see each other's write as a move) and refuses a mismatch — or an empty
+position — with reason `element-moved` (`ELEMENT_MOVED_REASON`), which never
+reaches a codemod. `fingerprintAfterWrite` measures a value edit's target right
+after that edit, before any edit above it runs, so the original id stays the
+right key.
+
+**The client** (`sourceIdentity.ts`) keeps a table: source LOCATION (the id's
+tail) → a MUTABLE record. `usePersistence` (and the MCP live-reload path)
+feeds it on every board read (`noteBoardRead`: `reset` for a full load,
+`merge` for a narrow patch, which drops the files' old positions). A writer
+CAPTURES records; `postEdits(edits, identities)` sends their current values as
+`expect` and writes the response's `fingerprints` back INTO the captured
+records. That object identity is the point: Studio's own value write updates a
+capture in place (so a structural gesture captured before a flush that wrote a
+prop to the same element still posts the truth), while a re-read REPLACES
+records (so a capture taken before a resync still describes the element the
+user acted on). Captured at: `commitStructural` entry (the gesture's own
+moment), `saveSite` (the diff's moment), `postOneEdit` (a click), and
+`deferWhileStructuralCommitInFlight` (see `editor-store.md`).
+
+**Recovery, never an error** (`elementMovedRecovery.ts`). An `element-moved`
+refusal re-reads the touched files, waits until the board actually has them
+(`waitForBoardRead` — narrow patch or full load), re-finds every named element
+by its captured identity (`relocateCapturedIds`: same position, else exactly
+ONE match in the same file, else nothing), and re-posts once through the
+writer's own path — `commitStructuralBody` again (`replanned: true`), the
+autosave's own `postEdits` followed by a resync, or a one-shot's `postEdits`.
+Only a second miss is shown: one `warning`, "Not saved — the file changed".
+
+**What is not guarded yet:** `css` (a file + selector, no position) and
+`styled` (its template location travels in `styledStyleRuleSources`, not on a
+node). P1-D builds re-location on this: a changed file's edits are re-found by
+the same fingerprint comparison, run over the positions a line diff proposes.
+
+---
+
 ## The value evaluator — tiers are the boundary
 
 A **bounded partial evaluator, not a JS interpreter**. Do not blur the tiers.
@@ -189,7 +269,7 @@ parsed first" decide whether any copy resolved.
 
 | Rule | Why |
 |---|---|
-| **Never write a resolved value back as a literal** | `title={c.sheetTitle}` → writing `"Where to?"` deletes the binding |
+| **Never write a resolved value back as a literal** | `title={c.sheetTitle}` → writing `"Where to?"` deletes the binding. The client's `codeProps` guard declines to send it, AND `setJsxProp` refuses `binding-overwrite` on any initializer that is not a string/number/boolean literal (WB-11) — the server is the boundary every writer, agent included, crosses |
 | **Resolved TEXT is the exception** — it writes to `textOrigin` | The dictionary entry is an ordinary string literal at a known `rel:line:col`. Emitted as `kind:'literal'` |
 | **Reload only when `written > 0`** | A reload re-parses and replaces the document. With zero writes it overwrites the user's in-memory edit — the change reverted itself ~2 s after typing |
 | **A reload is NARROW by default** | `shifted`/`sharedComponents` used to mean a full `loadSite()`; on an App Router board, shared layout chrome makes `sharedComponents` the common case, so every save reparsed all forty pages. `resyncBoardAfterWrite` (`studioBoardResync.ts`) asks `/reload-scope` which pages the touched files feed and patches only those. It widens whenever it cannot prove the scope — narrowing may never UNDER-reload |

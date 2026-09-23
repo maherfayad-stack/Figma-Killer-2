@@ -34,7 +34,7 @@
  *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
  *       404 on anything rejected or missing.
  *
- *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[] }
+ *   POST /admin/api/studio/save   body: { dir, edits: StudioEdit[], expect?: { [nodeId]: fingerprint } }
  *       A batch of typed edits (`kind: 'prop' | 'text' | 'style'`). The edit
  *       model (`StudioEdit`), the bottom-to-top apply ordering, and the
  *       per-edit dir+edit→codemod dispatch (`applyStudioEdit`) live in
@@ -478,7 +478,8 @@ export async function tryServeStudio(
         relocatedNodeIds,
         removed,
         prunedImports,
-      } = await applyStudioEditBatchLocked(dir, edits)
+        fingerprints,
+      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
@@ -528,6 +529,10 @@ export async function tryServeStudio(
         // `prunedImports.file` is already workspace-relative — nothing to strip.
         removed,
         prunedImports,
+        // P1-A — each landed value write's new identity, keyed by its own
+        // workspace-relative node id, so the board's next edit to the same
+        // element is not refused `element-moved` by this one.
+        fingerprints,
       })
     } catch (err) {
       return studioRouteFailure(err)

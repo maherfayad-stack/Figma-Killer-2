@@ -291,6 +291,9 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       ...(node.textOrigin ? { textOrigin: node.textOrigin } : {}),
       // WS-8.3 — same straight copy, for the import behind a resolved image.
       ...(node.assetOrigin ? { assetOrigin: node.assetOrigin } : {}),
+      // P1-A — the element's identity as read; every write aimed at it sends
+      // this back so the server can refuse `element-moved`. See `PageNode.sourceFingerprint`.
+      ...(node.fingerprint ? { sourceFingerprint: node.fingerprint } : {}),
       // §2 — which local component this node was inlined out of. Provenance,
       // not a lock: the properties panel warns that an edit here rewrites that
       // component's file and so lands on every instance of it.
