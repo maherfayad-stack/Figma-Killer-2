@@ -63,6 +63,38 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### canvas-22 — P1-E3: the SVG→JSX converter never writes code that crashes React
+- **Agent:** canvas-engineer · **Branch:** `fix/svg-to-jsx-never-writes-broken-code` · **PR:** draft against `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-23
+- **Stage:** verifying (draft PR open)
+- **Goal:** ROADMAP P1-E (SVG part). Closes audit `08-svg.md` §2 defects 2, 3 and 5. Defect 4 (the `href` sanitizer hook) waits for P5-D and its security review.
+- **Scope:** `src/admin/pages/site/studio/{svgToJsxNode.ts, svgImportStyles.ts (new)}`, `src/__tests__/studio/svgToJsxNode.test.ts`, `docs/editor.md`, `docs/agent-refs/path-index.md`. No canvas DOM, injector, height or event code, no `sanitize.ts`, no parser.
+- **Done so far:**
+  - A `style="…"` string becomes presentation attributes (SVG's presentation set intersected with React's alias list) plus a `style` OBJECT for the rest. It is never written as a string. Values only CSS can resolve (`var()`, `calc()`, reset keywords) stay in the object.
+  - `<style>`: single-class rules, including comma lists, are inlined by the real cascade (rule < inline < `!important`). The block and any `<defs>` it leaves empty are dropped. Any other selector or `@`-rule is refused with a sentence that names it.
+  - ids get a per-conversion random suffix. `url(#…)`, `href`/`xlink:href="#…"` and `aria-labelledby`/`-describedby` are rewritten to match. A bare `#hex` colour is never touched.
+  - Both SVG writers (`SlotPicker.tsx`, `insertablePropValues.ts`) already use this converter, and a grep found no other writer.
+- **Next step:** owner dogfood (script in the PR body), then merge.
+- **Decisions:**
+  - Paint that arrived as SVG-internal CSS now lands as presentation attributes, the weakest cascade source, so the user's page CSS can recolour it. This is deliberate and matches Penpot.
+  - The converter still sanitises first.
+  - The audit §5.5 rename to `svgMarkupToInsertNode` is left to SVG-5.
+- **Landmines:**
+  - Under happy-dom, DOMPurify drops a `<style>` inside `<svg>` together with everything after it; a browser keeps it. `<style>` tests must call `convertSanitizedSvg`, not `svgToJsxNode`.
+  - `sanitizeSvg` still strips `href`, so the href rewrite does nothing until P5-D adds its hook.
+  - DOMPurify does not vet CSS `url()`, so a remote `url()` in `fill` or `style` survives (pre-existing; listed under "Found, not fixed" in the PR).
+  - Under Bun, `vite build` hung twice after "modules transformed" while the machine was loaded. It built under Node, and a later retry under Bun built normally.
+- **Verification:**
+  - 15 new tests, proven to fail on the old converter, including React's real "style prop expects a mapping" error. `svgToJsxNode.test.ts` now passes 26/26.
+  - `bun run build` and lint are clean.
+  - Chunked `bun test --parallel=1`, 30 failures in total, all live-browser, dev-server, WebSocket, optimistic-broadcast or bundle-freshness tests, none touching the converter:
+    - `architecture`: 1 (bundle freshness)
+    - rest of `src/__tests__`: 4 (optimistic broadcast)
+    - `src/core`: 0
+    - `src/admin`: 5 (bridge measurement)
+    - `src/modules` and `src/ui`: 0
+    - `server`: 21 (headless capture, dev server, WebSocket)
+- **Human action needed:** dogfood `/admin/site` icon-slot upload. The four steps are in the PR body.
+
 ---
 
 ## Blocked
