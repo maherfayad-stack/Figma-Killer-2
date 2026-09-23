@@ -156,7 +156,14 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
         clientX: 0,
         clientY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
-      ancestors: [],
+
+        button: 0,
+
+        buttons: 1,
+
+        pointerId: 1,
+
+        pointerType: 'mouse',
         ancestors: [
           { nodeId: 'design-system/components/Button.jsx:101:26', occurrenceIndex: 0 },
           { nodeId: 'design-system/components/Button.jsx:90:4', occurrenceIndex: 0 },
@@ -189,6 +196,14 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
       clientX: 0,
       clientY: 0,
       modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
+
+      button: 0,
+
+      buttons: 1,
+
+      pointerId: 1,
+
+      pointerType: 'mouse',
       ancestors: [],
     })
     stub.dispatch(envelope)
@@ -214,11 +229,43 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
         clientX: 0,
         clientY: 0,
         modifiers: { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false },
-      ancestors: [],
+
+        button: 0,
+
+        buttons: 1,
+
+        pointerId: 1,
+
+        pointerType: 'mouse',
+        ancestors: [],
       }),
     )
 
     expect(received).toEqual(['x:1:1'])
+  })
+
+  // `live-13` — the resize target crosses the wire as a stamp + occurrence, and the commit comes back canonical.
+  it('setResizeTarget posts the wire ref for a .map() row, and null to clear', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    adapter.setResizeTarget({ nodeId: 'row:1:1#1' }, { proportional: true })
+    adapter.setResizeTarget(null, { proportional: false })
+    const last = stub.posted.slice(-2).map((e) => e.message)
+    expect(last).toEqual([
+      { type: 'setResizeTarget', ref: { nodeId: 'row:1:1', occurrenceIndex: 1 }, proportional: true },
+      { type: 'setResizeTarget', ref: null, proportional: false },
+    ])
+  })
+
+  it('emits an inbound resize:commit with the canonical row id and the patch untouched', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    const received: unknown[] = []
+    adapter.on('resize:commit', (msg) => received.push(msg))
+    stub.dispatch(toOutboundEnvelope({ type: 'resize:commit', nodeId: 'row:1:1', occurrenceIndex: 1, patch: { width: '240px', height: '96px' } }))
+    expect(received).toEqual([{ type: 'resize:commit', nodeId: 'row:1:1#1', patch: { width: '240px', height: '96px' } }])
   })
 
   it('setNodeIds rebuilds the index so a later select uses the new tree order', () => {

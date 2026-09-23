@@ -10,6 +10,7 @@ import { CanvasSelectionContext } from '@site/canvas/CanvasContexts'
 import type { FrameDocumentAdapter, FrameRuntimeEvent } from '@site/canvas/frameAdapter/FrameDocumentAdapter'
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { useBridgeFrameInteraction } from '@site/canvas/BoardFramesLayer/useBridgeFrameInteraction'
+import { useEditorStore } from '@site/store/store'
 
 
 // happy-dom has no `WheelEvent`; the runtime and the hook construct one. A
@@ -54,6 +55,8 @@ function Harness({ adapter, isActive = true, onActivate = () => {} }: { adapter:
 }
 
 const MODS = { shiftKey: false, altKey: false, ctrlKey: false, metaKey: false }
+/** A primary-button mouse press, as the runtime reports one. */
+const MOUSE = { button: 0, buttons: 1, pointerId: 1, pointerType: 'mouse' }
 const NO_SELECTION = { onNodeClick: () => {}, onFrameNodeClick: () => {}, onNodeHover: () => {}, onNodeContextMenu: () => {}, onNodeDoubleClick: () => {}, onNodePointerDown: () => {}, onNodePointerUp: () => {} }
 
 afterEach(() => {
@@ -80,9 +83,9 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/Home.tsx:3:4', rect: null, clientX: 1, clientY: 2, modifiers: { ...MODS, metaKey: true } })
-    emit({ type: 'pointer', phase: 'click', nodeId: null, rect: null, clientX: 1, clientY: 2, modifiers: MODS })
-    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/Home.tsx:5:6', rect: null, clientX: 1, clientY: 2, modifiers: MODS })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/Home.tsx:3:4', rect: null, clientX: 1, clientY: 2, modifiers: { ...MODS, metaKey: true }, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: null, rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/Home.tsx:5:6', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
     expect(clicks).toEqual([['pages/Home.tsx:3:4', { ...MODS, metaKey: true }, 'bp-mobile', 'frame-1']])
     expect(hovers).toEqual([['pages/Home.tsx:5:6', 'bp-mobile', 'frame-1']])
   })
@@ -122,8 +125,8 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={adapter} isActive={false} onActivate={(bp) => order.push(`activate:${bp}`)} />
       </CanvasSelectionContext.Provider>,
     )
-    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS })
-    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS })
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
     expect(order).toEqual(['activate:bp-mobile', 'activate:bp-mobile', 'select:pages/SMS.tsx:41:8'])
   })
 
@@ -135,7 +138,7 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={adapter} isActive onActivate={() => { activated += 1 }} />
       </CanvasSelectionContext.Provider>,
     )
-    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
     expect(activated).toBe(0)
   })
 
@@ -147,8 +150,60 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={first.adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    expect(first.subscriptions()).toBe(2)
+    expect(first.subscriptions()).toBe(3)
     view.unmount()
     expect(first.subscriptions()).toBe(0)
+  })
+
+  // `live-13` — a pan press inside the frame is the canvas's gesture, replayed
+  // on the iframe element so `useCanvas`'s drag handler sees it.
+  it('replays a middle-button press, its moves and its release on the iframe element, and drops the click that follows', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const iframe = document.createElement('iframe')
+    document.body.appendChild(iframe)
+    iframe.getBoundingClientRect = () => ({ left: 100, top: 50, width: 200, height: 300, right: 300, bottom: 350, x: 100, y: 50, toJSON: () => ({}) })
+    Object.defineProperty(iframe, 'clientWidth', { value: 400 })
+    Object.defineProperty(iframe, 'clientHeight', { value: 600 })
+    registerFrameAdapter(iframe, adapter)
+    const seen: PointerEvent[] = []
+    for (const type of ['pointerdown', 'pointermove', 'pointerup'] as const) document.addEventListener(type, (e) => seen.push(e as PointerEvent))
+    const order: string[] = []
+    render(
+      <CanvasSelectionContext.Provider value={{ ...NO_SELECTION, onFrameNodeClick: (id) => order.push(`select:${id}`), onNodePointerDown: (id) => order.push(`down:${id}`), onNodeHover: (id) => order.push(`hover:${id}`) }}>
+        <Harness adapter={adapter} isActive={false} onActivate={(bp) => order.push(`activate:${bp}`)} />
+      </CanvasSelectionContext.Provider>,
+    )
+    const MIDDLE = { button: 1, buttons: 4, pointerId: 7, pointerType: 'mouse' }
+    emit({ type: 'pointer', phase: 'down', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 40, clientY: 60, modifiers: MODS, ...MIDDLE })
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, button: -1 })
+    emit({ type: 'pointer', phase: 'up', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 80, clientY: 60, modifiers: MODS, ...MIDDLE, buttons: 0 })
+    expect(seen.map((e) => e.type)).toEqual(['pointerdown', 'pointermove', 'pointerup'])
+    expect(seen.every((e) => e.target === iframe && e.pointerId === 7)).toBe(true)
+    expect(seen[0].button).toBe(1)
+    expect(seen[0].clientX).toBe(100 + 40 * 0.5)
+    expect(seen[1].clientX).toBe(100 + 80 * 0.5)
+    // Neither the press nor the click that ended the pan touched selection or activation…
+    expect(order).toEqual([])
+    // …and the next ordinary click does.
+    emit({ type: 'pointer', phase: 'click', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE })
+    expect(order).toEqual(['activate:bp-mobile', 'select:pages/SMS.tsx:41:8'])
+    // A move from a different pointer while nothing is panning is a hover, as before.
+    emit({ type: 'pointer', phase: 'move', nodeId: 'pages/SMS.tsx:41:8', rect: null, clientX: 1, clientY: 2, modifiers: MODS, ...MOUSE, button: -1, buttons: 0 })
+    expect(order.at(-1)).toBe('hover:pages/SMS.tsx:41:8')
+    unregisterFrameAdapter(iframe)
+  })
+
+  it('commits a resize the frame finished through setNodeInlineStyles', () => {
+    const { adapter, emit } = makeFakeAdapter()
+    const commits: unknown[] = []
+    useEditorStore.setState({ setNodeInlineStyles: (nodeId: string, patch: unknown) => commits.push([nodeId, patch]) } as Parameters<typeof useEditorStore.setState>[0])
+    render(
+      <CanvasSelectionContext.Provider value={NO_SELECTION}>
+        <Harness adapter={adapter} />
+      </CanvasSelectionContext.Provider>,
+    )
+    emit({ type: 'resize:commit', nodeId: 'pages/SMS.tsx:41:8', patch: { width: '240px' } })
+    expect(commits).toEqual([['pages/SMS.tsx:41:8', { width: '240px' }]])
   })
 })

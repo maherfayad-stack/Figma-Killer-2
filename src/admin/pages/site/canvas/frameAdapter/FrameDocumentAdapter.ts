@@ -32,7 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { RuntimeErrorKind } from '@core/studio-runtime'
+import type { ElementSizePatch, RuntimeErrorKind } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -77,6 +77,29 @@ export type FrameRuntimeEvent =
       phase: 'down' | 'move' | 'up' | 'click'
       nodeId: string | null
       rect: NodeRect | null
+      clientX: number
+      clientY: number
+      modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
+      /** `live-13` — `PointerEvent.button`/`buttons`/`pointerId`/`pointerType`, so a consumer can tell a pan press from a selection and replay one gesture coherently. */
+      button: number
+      buttons: number
+      pointerId: number
+      pointerType: string
+    }
+  /**
+   * `live-13` — a finished drag on the frame's own resize handles changed the
+   * node's size; `patch` is the inline-style write the consumer commits
+   * through the store (only the dimensions the drag changed, as `px`
+   * strings). Bridge mode only in practice: a portal frame's handles are the
+   * parent's own React elements (`CanvasResizeHandles`) and commit directly.
+   */
+  | { type: 'resize:commit'; nodeId: string; patch: ElementSizePatch }
+  /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
+  | {
+      type: 'wheel'
+      deltaX: number
+      deltaY: number
+      deltaMode: number
       clientX: number
       clientY: number
       modifiers: { shiftKey: boolean; altKey: boolean; ctrlKey: boolean; metaKey: boolean }
@@ -133,6 +156,15 @@ export interface FrameDocumentAdapter {
    * not share a name. Map `interaction === 'live' ? 'live' : 'design'`.
    */
   setInteractionMode(mode: 'design' | 'live'): void
+  /**
+   * `live-13` — which node carries resize handles (`null` clears them), and
+   * whether `K4`'s scale tool is armed. The caller has already applied the
+   * module policy (`resizeOffer.ts`); the frame applies the geometric one
+   * (an element whose computed display ignores a size gets no handles).
+   * Portal mode draws its handles as the parent's own React elements
+   * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
+   */
+  setResizeTarget(ref: NodeRef | null, options: { proportional: boolean }): void
   optimistic: OptimisticDomOps
   /** Subscribes to a runtime event. Portal mode: real DOM/synthetic events (`ready` fires once, synchronously — a portal frame has no real "boot" moment). Bridge mode: the matching inbound `postMessage` from `runtime.ts`. */
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe

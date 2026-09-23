@@ -30,9 +30,7 @@
  *      same node.
  */
 import { canWriteInlineStyleForModule } from '@core/page-tree'
-
-/** Outer displays CSS simply ignores `width`/`height` on. */
-const UNSIZEABLE_DISPLAYS = new Set(['inline', 'contents', 'none'])
+import { isSizeableDisplay } from '@core/studio-runtime'
 
 export interface ResizeOfferInput {
   /**
@@ -57,7 +55,17 @@ export interface ResizeOfferInput {
 
 /** True when a drag on this node has an honest target in the user's source. */
 export function canOfferResize({ moduleId, hasOwnElement, display }: ResizeOfferInput): boolean {
-  if (moduleId === null || !canWriteInlineStyleForModule(moduleId)) return false
+  if (!canOfferResizeForModule(moduleId)) return false
   if (!hasOwnElement) return false
-  return !UNSIZEABLE_DISPLAYS.has(display)
+  return isSizeableDisplay(display)
+}
+
+/**
+ * The module half of {@link canOfferResize} on its own — what the parent can
+ * answer for a Tier 2 bridge frame, whose element and computed display live
+ * on the far side of the wire. The frame's runtime applies the geometric half
+ * (`isSizeableDisplay`) itself when it is told the target (`live-13`).
+ */
+export function canOfferResizeForModule(moduleId: string | null): boolean {
+  return moduleId !== null && canWriteInlineStyleForModule(moduleId)
 }

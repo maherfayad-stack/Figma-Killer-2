@@ -14,6 +14,7 @@
 import type { OutboundRuntimeMessage, RuntimeMode } from './messages'
 import { NODE_ID_ATTR, occurrenceIndexOf } from './nodeIdIndexing'
 import { nearestNodeOccurrence, rectRelativeToBody } from './nodeDom'
+import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
 /** How many stamped ancestors a pointer message carries — deeper than any real component nesting, small enough to never matter on the wire. */
 const MAX_ANCESTORS = 32
@@ -35,10 +36,31 @@ export interface GestureForwardingOptions {
   post: (message: OutboundRuntimeMessage) => void
 }
 
+/**
+ * `live-13` — the runtime's own chrome (rings, resize handles) lives inside
+ * the selection overlay root. A press on a resize handle is the handle's
+ * gesture, not the page's: it is neither forwarded as a pointer on some node
+ * nor cancelled before the handle's own listener can see it.
+ */
+function isRuntimeChrome(target: Element | null): boolean {
+  return target?.closest(`#${SELECTION_OVERLAY_ROOT_ID}`) !== null && target !== null
+}
+
+const POINTER_TYPES = new Set(['mouse', 'pen', 'touch'])
+
+/** The button/pointer identity fields of `ev` — a `click` is a plain `MouseEvent` and carries no pointer id. */
+function pointerIdentity(ev: PointerEvent | MouseEvent): { button: number; buttons: number; pointerId: number; pointerType: 'mouse' | 'pen' | 'touch' | '' } {
+  const pointer = ev as Partial<PointerEvent>
+  const pointerType = typeof pointer.pointerType === 'string' && POINTER_TYPES.has(pointer.pointerType) ? (pointer.pointerType as 'mouse' | 'pen' | 'touch') : ''
+  const pointerId = typeof pointer.pointerId === 'number' && Number.isInteger(pointer.pointerId) && pointer.pointerId >= 0 ? pointer.pointerId : 0
+  return { button: ev.button, buttons: ev.buttons, pointerId, pointerType }
+}
+
 /** Installs the capture-phase listeners on `doc`; the returned function removes them. */
 export function installGestureForwarding(doc: Document, { getMode, post }: GestureForwardingOptions): () => void {
 function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEvent | MouseEvent): void {
   const target = ev.target instanceof Element ? ev.target : null
+  if (isRuntimeChrome(target)) return
   const anchor = target?.closest(`[${NODE_ID_ATTR}]`) ?? null
   const rect = anchor && doc.body ? rectRelativeToBody(anchor, doc.body) : null
   const occurrence = nearestNodeOccurrence(doc, target)
@@ -52,6 +74,7 @@ function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEven
     clientY: ev.clientY,
     modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
     ancestors: stampedAncestors(doc, target),
+    ...pointerIdentity(ev),
   })
 }
 /**
@@ -70,6 +93,7 @@ function forwardPointer(phase: 'down' | 'move' | 'up' | 'click', ev: PointerEven
 function editorOwnsGesture(ev: Event): boolean {
   if (getMode() !== 'design') return false
   const target = ev.target instanceof Element ? ev.target : null
+  if (isRuntimeChrome(target)) return false
   return !target?.closest('[contenteditable]')
 }
 const onPointerDown = (ev: PointerEvent) => {

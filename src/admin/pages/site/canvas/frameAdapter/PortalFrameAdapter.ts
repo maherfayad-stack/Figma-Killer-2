@@ -308,6 +308,16 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     applyPreviewAxesToFrameDocument(this.doc.documentElement, axes, getColorSchemeCapability())
   }
 
+  /**
+   * A portal frame's resize handles are the parent's own React elements,
+   * portaled into this document's overlay root (`CanvasResizeHandles`) and
+   * dragged from the parent (`useElementResizeDrag`) — a same-origin document
+   * allows it, and that path commits synchronously in the same tick. The
+   * in-frame handles this call drives exist for the cross-origin bridge; a
+   * second set here would be two sets of handles on one element.
+   */
+  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+
   setInteractionMode(mode: 'design' | 'live'): void {
     if (mode === this.interactionMode) return
     this.interactionMode = mode
@@ -347,6 +357,10 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
         clientX: ev.clientX,
         clientY: ev.clientY,
         modifiers: { shiftKey: ev.shiftKey, altKey: ev.altKey, ctrlKey: ev.ctrlKey, metaKey: ev.metaKey },
+        button: ev.button,
+        buttons: ev.buttons,
+        pointerId: 'pointerId' in ev ? ev.pointerId : 0,
+        pointerType: 'pointerType' in ev ? ev.pointerType : '',
       })
     }
     const onDown = (ev: PointerEvent) => forward('down', ev)

@@ -279,6 +279,10 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
     this.post({ type: 'setMode', mode })
   }
 
+  setResizeTarget(ref: NodeRef | null, { proportional }: { proportional: boolean }): void {
+    this.post({ type: 'setResizeTarget', ref: ref ? this.toWireRef(ref.nodeId) : null, proportional })
+  }
+
   on<E extends FrameRuntimeEvent['type']>(event: E, handler: (msg: Extract<FrameRuntimeEvent, { type: E }>) => void): Unsubscribe {
     let set = this.eventHandlers.get(event)
     if (!set) {
@@ -351,6 +355,28 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
           phase: message.phase,
           nodeId: this.nearestKnownNodeId(message),
           rect: message.rect,
+          clientX: message.clientX,
+          clientY: message.clientY,
+          modifiers: message.modifiers,
+          button: message.button,
+          buttons: message.buttons,
+          pointerId: message.pointerId,
+          pointerType: message.pointerType,
+        })
+        return
+      case 'resize:commit':
+        this.emit({
+          type: 'resize:commit',
+          nodeId: this.toCanonicalNodeId(message.nodeId, message.occurrenceIndex),
+          patch: message.patch,
+        })
+        return
+      case 'wheel':
+        this.emit({
+          type: 'wheel',
+          deltaX: message.deltaX,
+          deltaY: message.deltaY,
+          deltaMode: message.deltaMode,
           clientX: message.clientX,
           clientY: message.clientY,
           modifiers: message.modifiers,

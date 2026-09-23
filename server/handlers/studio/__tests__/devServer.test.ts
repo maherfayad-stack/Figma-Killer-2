@@ -33,7 +33,7 @@ import {
   tryServeStudioDevServer,
   type DevServerOverrides,
 } from '../devServer'
-import { STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
+import { isProcessAlive, STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
 import { writeStudioMeta } from '../studioMeta'
 import type { SpawnedProcessLike } from '../subprocessRunner'
 
@@ -699,7 +699,9 @@ describe('dev-server records — adoption across a server restart', () => {
     const result = await ensureDevServer(tmpDir, {
       spawn: () => {
         spawned += 1
-        return makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc
+        // The fresh server lands on ANOTHER port — its own output, not the
+        // adoption line about the old one, must be where the URL comes from.
+        return makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5178/\n'] }).proc
       },
       isProcessAlive: () => true,
       probe: async () => {
@@ -710,11 +712,31 @@ describe('dev-server records — adoption across a server restart', () => {
     expect(probed).toBe(1)
     expect(spawned).toBe(1)
     expect(result.ok).toBe(true)
+    expect(result.ok && result.baseUrl).toBe('http://127.0.0.1:5178')
     const status = getDevServerStatus(tmpDir)
     expect(status.phase).toBe('ready')
     expect(status.log).toContain('no longer answered')
+    expect(status.log).not.toMatch(/https?:\/\/[^\s]*\)\./)
     expect(recordFiles()).toHaveLength(1)
+    const record = JSON.parse(fs.readFileSync(path.join(stateDir, recordFiles()[0]!), 'utf8')) as { baseUrl: string }
+    expect(record.baseUrl).toBe('http://127.0.0.1:5178')
     stopDevServer(tmpDir)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  // `live-14` — pid 0 signals the whole process group, and a zombie still takes a signal.
+  it('the default liveness check rejects pid 0 and negative pids, and a record with pid 0 is never read back', async () => {
+    expect(isProcessAlive(0)).toBe(false)
+    expect(isProcessAlive(-1)).toBe(false)
+    expect(isProcessAlive(process.pid)).toBe(true)
+    const tmpDir = makeTmpDir('studio-devserver-pid0-')
+    writePackageJson(tmpDir, { dev: 'vite' })
+    expect((await ensureDevServer(tmpDir, { spawn: () => makeFakeProcess({ stdoutChunks: READY_CHUNKS }).proc })).ok).toBe(true)
+    const file = path.join(stateDir, recordFiles()[0]!)
+    const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>
+    fs.writeFileSync(file, JSON.stringify({ ...record, pid: 0 }), 'utf8')
+    forgetDevServersForTest()
+    expect(getDevServerStatus(tmpDir).phase).toBe('stopped')
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 })

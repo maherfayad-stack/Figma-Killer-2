@@ -232,13 +232,20 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     },
   )
 
-  it('delete removes the element', () => {
-    document.body.innerHTML = `<div data-node-id="gone"></div>`
+  // `live-14` — a detached node broke React's next reconciliation and took
+  // the sibling below with it; a delete hides, and the update puts it back.
+  it('delete hides the element through a stylesheet rule, never detaches it or touches its inline style', () => {
+    document.body.innerHTML = `<div data-node-id="gone" style="color: red"></div><div data-node-id="below"></div>`
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
 
     bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'gone', occurrenceIndex: 0 })
-    expect(document.querySelector('[data-node-id="gone"]')).toBeNull()
+    const gone = document.querySelector<HTMLElement>('[data-node-id="gone"]')!
+    expect(gone.isConnected).toBe(true)
+    expect(gone.hasAttribute('data-studio-optimistic-hidden')).toBe(true)
+    expect(gone.getAttribute('style')).toBe('color: red')
+    expect(document.getElementById('studio-runtime-optimistic')?.textContent).toContain('[data-studio-optimistic-hidden] { display: none !important; }')
+    expect(document.querySelector('[data-node-id="below"]')?.previousElementSibling).toBe(gone)
   })
 
   it('move re-parents the element at the given index', () => {
@@ -460,6 +467,31 @@ describe('createStudioRuntimeBridge — optimistic-insert ghost sweep', () => {
     expect(document.querySelectorAll('[data-studio-optimistic]')).toHaveLength(0)
   })
 
+  // `live-14` — before React reconciles an update, the DOM is the one it built.
+  it('vite:beforeUpdate un-hides an optimistic delete and puts an optimistic move back; vite:afterUpdate does the same for a frame that missed the before', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireBeforeUpdate, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    document.body.innerHTML = `
+      <div data-node-id="from"><div data-node-id="a"></div><div data-node-id="item"></div><div data-node-id="c"></div></div>
+      <div data-node-id="to"></div>
+    `
+    bridge.handleMessage({ type: 'optimistic.move', nodeId: 'item', occurrenceIndex: 0, parentNodeId: 'to', parentOccurrenceIndex: 0, index: 0 })
+    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'a', occurrenceIndex: 0 })
+    expect(document.querySelector('[data-node-id="to"] [data-node-id="item"]')).not.toBeNull()
+    expect(document.querySelector('[data-node-id="a"]')?.hasAttribute('data-studio-optimistic-hidden')).toBe(true)
+
+    fireBeforeUpdate()
+
+    const from = document.querySelector('[data-node-id="from"]')!
+    expect([...from.children].map((el) => el.getAttribute('data-node-id'))).toEqual(['a', 'item', 'c'])
+    expect(document.querySelector('[data-studio-optimistic-hidden]')).toBeNull()
+
+    bridge.handleMessage({ type: 'optimistic.delete', nodeId: 'c', occurrenceIndex: 0 })
+    fireAfterUpdate()
+    expect(document.querySelector('[data-studio-optimistic-hidden]')).toBeNull()
+  })
+
   it('still posts hmr:after after sweeping', () => {
     const { fakeWindow, posted } = makeFakeParentWindow()
     const { hot, fireAfterUpdate } = makeFakeHot()
@@ -526,6 +558,22 @@ describe('createStudioRuntimeBridge — design mode owns the gesture', () => {
     ])
   })
 
+  // `live-13` — the parent tells a pan from a selection by the button state.
+  it('forwards the button, buttons and pointer identity with every pointer phase', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    document.body.appendChild(box)
+    box.dispatchEvent(pointerEvent('pointerdown', { button: 1, buttons: 4 }))
+    const down = posted.map((p) => (p.data as { message: Record<string, unknown> }).message).find((m) => m.type === 'pointer')!
+    expect(down.button).toBe(1)
+    expect(down.buttons).toBe(4)
+    expect(typeof down.pointerId).toBe('number')
+    expect(['mouse', 'pen', 'touch', '']).toContain(down.pointerType)
+  })
+
   it('a contenteditable text run keeps its click in design mode — the caret has to land for an inline edit', () => {
     const { fakeWindow } = makeFakeParentWindow()
     bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
@@ -554,5 +602,132 @@ describe('createStudioRuntimeBridge — design mode owns the gesture', () => {
     button.dispatchEvent(wheel)
     expect(wheel.defaultPrevented).toBe(false)
     expect(posted.some((p) => (p.data as { message: { type: string } }).message.type === 'wheel')).toBe(false)
+  })
+})
+
+// `live-13` — the frame draws and drags the resize handles; the parent commits.
+describe('createStudioRuntimeBridge — resize handles', () => {
+  const FRAME = '[data-canvas-resize-frame]'
+  const HANDLE = '[data-canvas-resize-handle]'
+  const PREVIEW_ATTR = 'data-studio-resize-preview'
+
+  function pointerEvent(type: string, init: MouseEventInit): Event {
+    const Ctor = typeof PointerEvent === 'function' ? PointerEvent : MouseEvent
+    return new Ctor(type, { bubbles: true, cancelable: true, ...init })
+  }
+  function mountBox(display = 'block'): HTMLElement {
+    const box = document.createElement('div')
+    box.setAttribute('data-node-id', 'pages/Home.tsx:3:4')
+    box.style.display = display
+    box.getBoundingClientRect = () => ({ left: 10, top: 20, width: 100, height: 50, right: 110, bottom: 70, x: 10, y: 20, toJSON: () => ({}) })
+    document.body.appendChild(box)
+    return box
+  }
+  function messages(posted: Array<{ data: unknown }>): Array<Record<string, unknown>> {
+    return posted.map((p) => (p.data as { message: Record<string, unknown> }).message)
+  }
+  function makeFakeHot() {
+    const handlers = new Map<string, () => void>()
+    return {
+      hot: { on: (event: 'vite:beforeUpdate' | 'vite:afterUpdate', cb: () => void) => { handlers.set(event, cb) } },
+      fireAfterUpdate: () => handlers.get('vite:afterUpdate')?.(),
+    }
+  }
+
+  it('setResizeTarget draws eight handles around a sizeable element, and null hides them', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    mountBox()
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
+    const frame = document.querySelector<HTMLElement>(FRAME)!
+    expect(frame.closest('#studio-canvas-selection-overlay-root')).not.toBeNull()
+    expect(frame.style.display).toBe('')
+    expect(frame.style.width).toBe('100px')
+    expect(frame.style.height).toBe('50px')
+    expect(frame.querySelectorAll(HANDLE)).toHaveLength(8)
+    bridge.handleMessage({ type: 'setResizeTarget', ref: null, proportional: false })
+    expect(frame.style.display).toBe('none')
+  })
+
+  it('offers nothing on an element whose display ignores a size', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    mountBox('inline')
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
+    const frame = document.querySelector<HTMLElement>(FRAME)
+    expect(frame === null || frame.style.display === 'none').toBe(true)
+  })
+
+  it('a drag on the east handle previews through a stylesheet, is not forwarded as a pointer, and commits only the width', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = mountBox()
+    let appPointerDowns = 0
+    box.addEventListener('pointerdown', () => { appPointerDowns += 1 })
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
+    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
+
+    const down = pointerEvent('pointerdown', { clientX: 110, clientY: 40, button: 0 })
+    east.dispatchEvent(down)
+    expect(down.defaultPrevented).toBe(true)
+    expect(appPointerDowns).toBe(0)
+    // With the pointer captured, the handle stays the target of every move and
+    // the release — as a real browser delivers them.
+    east.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 70 }))
+    east.dispatchEvent(pointerEvent('pointerup', { clientX: 150, clientY: 70 }))
+
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
+    expect(document.getElementById('studio-runtime-resize-preview')?.textContent).toContain('width: 140px !important')
+    expect(document.getElementById('studio-runtime-resize-preview')?.textContent).not.toContain('height')
+    // The element's own inline style is untouched — React's later write is not something to clear.
+    expect(box.style.width).toBe('')
+    const all = messages(posted)
+    expect(all.filter((m) => m.type === 'pointer')).toHaveLength(0)
+    expect(all.filter((m) => m.type === 'resize:commit')).toEqual([
+      { type: 'resize:commit', nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0, patch: { width: '140px' } },
+    ])
+  })
+
+  it('a cancelled drag commits nothing and drops the preview; a new target drops a held one', () => {
+    const { fakeWindow, posted } = makeFakeParentWindow()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
+    bridge.handleMessage({ type: 'setMode', mode: 'design' })
+    const box = mountBox()
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
+    const south = document.querySelector<HTMLElement>('[data-canvas-resize-handle="s"]')!
+    // Dispatched on the DOCUMENT itself, deliberately: a browser that refused
+    // the pointer capture delivers the rest of the gesture to the page, where
+    // design mode stops propagation at the document — the capture-phase drag
+    // listeners must still see it.
+    south.dispatchEvent(pointerEvent('pointerdown', { clientX: 50, clientY: 70, button: 0 }))
+    document.dispatchEvent(pointerEvent('pointermove', { clientX: 50, clientY: 100 }))
+    document.dispatchEvent(pointerEvent('pointercancel', {}))
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
+    expect(document.getElementById('studio-runtime-resize-preview')).toBeNull()
+    expect(messages(posted).filter((m) => m.type === 'resize:commit')).toHaveLength(0)
+
+    south.dispatchEvent(pointerEvent('pointerdown', { clientX: 50, clientY: 70, button: 0 }))
+    document.dispatchEvent(pointerEvent('pointermove', { clientX: 50, clientY: 100 }))
+    document.dispatchEvent(pointerEvent('pointerup', { clientX: 50, clientY: 100 }))
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
+    bridge.handleMessage({ type: 'setResizeTarget', ref: null, proportional: false })
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
+  })
+
+  it('an HMR update clears a held preview — the source now carries the size', () => {
+    const { fakeWindow } = makeFakeParentWindow()
+    const { hot, fireAfterUpdate } = makeFakeHot()
+    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document, hot })
+    const box = mountBox()
+    bridge.handleMessage({ type: 'setResizeTarget', ref: { nodeId: 'pages/Home.tsx:3:4', occurrenceIndex: 0 }, proportional: false })
+    const east = document.querySelector<HTMLElement>('[data-canvas-resize-handle="e"]')!
+    east.dispatchEvent(pointerEvent('pointerdown', { clientX: 110, clientY: 40, button: 0 }))
+    document.dispatchEvent(pointerEvent('pointermove', { clientX: 150, clientY: 40 }))
+    document.dispatchEvent(pointerEvent('pointerup', { clientX: 150, clientY: 40 }))
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(true)
+    fireAfterUpdate()
+    expect(box.hasAttribute(PREVIEW_ATTR)).toBe(false)
   })
 })
