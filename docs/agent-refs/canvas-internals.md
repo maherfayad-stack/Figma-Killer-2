@@ -687,7 +687,9 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 - **Size.** Each image is written with `width`/`height` attributes: the
   intrinsic size the landing route read from the header bytes, clamped to the
   drop container's content-box width (`clampImageSize`, one computed-style read
-  at drop time). Unknown size writes no attributes.
+  at drop time). Unknown size writes no attributes. The canvas renders those
+  attributes (`ImageEditor`'s `authoredDimension`), so the box it reserves is
+  the one the app's browser reserves.
 - **The ghost** (IMG-8). `dropImagesIntoPage` activates the dropped-on page,
   paints one optimistic `base.image` per file from its object URL
   (`previewOptimisticInsertRun`) marked `data-studio-uploading`, and writes the
@@ -696,6 +698,10 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   the structural queue (`beginStructuralCommit`) from before the upload until
   the commit ends, so no other structural write can resync the page under the
   ghost or renumber the insert's ids. Object URLs are revoked on every outcome.
+- **Every studio board frame is a drop surface**, active or not
+  (`BreakpointSelectionOverlay` registers it on the structure permission
+  alone): a file dragged in from the OS has no pointerdown, so gating on the
+  active frame made every drop onto an unclicked frame refuse.
 - **The relay carries the held keys** (`altKey`/`shiftKey`/`metaKey`/
   `ctrlKey`) across the iframe boundary — they change what the drop means.
 - **Insert image… (IX-img).** `canvasImagePicker.ts` opens a file picker and

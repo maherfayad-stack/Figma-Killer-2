@@ -336,8 +336,16 @@ export function BreakpointSelectionOverlay({
   })
 
   // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
+  //
+  // P5-B — gated on the permission ALONE, not on this frame's breakpoint being
+  // the active one. A file dragged in from the operating system arrives with
+  // no pointerdown, so the frame under it has usually never been activated;
+  // gating on activation made every such drop refuse "Drop onto a frame" on a
+  // freshly opened board. The drop activates its own page when it lands
+  // (`imageDropActions.ts`), and a cross-frame element drag already starts
+  // from an active frame whose breakpoint every studio frame shares.
   useCanvasDropSurfaceRegistration({
-    enabled: canEditStructureHere,
+    enabled: permissions.canEditStructure,
     frameId,
     pageId: framePageId,
     viewportRef,

@@ -119,6 +119,13 @@ test.beforeEach(() => {
           platform: 'web',
           pagesDir: 'pages',
           frameDefaults: { width: 900, height: 640 },
+          // The relay under test is the DESIGN frame's. Since the Tier-2
+          // default (#198) a project starts its own dev server and a live frame
+          // mounts beside the design one — two canvas iframes for one page, and
+          // a server whose cwd is this directory, which Windows then refuses
+          // to delete between cases. Static keeps the spec on the one frame
+          // it is about.
+          trust: 'static',
         },
         null,
         2,
