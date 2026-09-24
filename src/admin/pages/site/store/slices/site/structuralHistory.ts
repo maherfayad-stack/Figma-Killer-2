@@ -28,7 +28,7 @@
  * from what this function returns) and writes a `reinsert-source` edit once
  * the delete's own commit reports the bytes it discarded.
  */
-import { hasWritableSourceLocation, type NodeTree, type PageNode } from '@core/page-tree'
+import { hasWritableSourceLocation, type NodeTree, type PageNode, type SiblingMove } from '@core/page-tree'
 import { resolveActiveTreeTarget } from './helpers'
 import type { SiteSliceHelpers, StructuralHistory, StructuralHistoryMove } from './types'
 
@@ -135,6 +135,30 @@ export function reissueStructuralMove(
   const top = get()._historyPast.at(-1)
   // A performed move always commits one transaction; a refused one commits
   // none — and has already said why, in its own toast or dialog.
+  if (!top || top === before) return { kind: 'skipped', notice: null }
+  return { kind: 'posted', pendingCommitId: top.pendingCommit?.id ?? null }
+}
+
+/**
+ * P2-C2 — re-issue one direction of a sibling batch through `moveSiblings`,
+ * the action that made it: one write, one entry, every refusal gate. Same
+ * owning-page rule as {@link reissueStructuralMove}; every move of a batch is
+ * on one page (a selection steps within the active tree), so the first move
+ * decides it.
+ */
+export function reissueStructuralSiblings(
+  get: SiteSliceHelpers['get'],
+  moves: readonly SiblingMove[],
+): StructuralStepOutcome {
+  const [first] = moves
+  const owner = first ? owningPageOfMove(get(), first) : null
+  if (owner === null || !first) {
+    return { kind: 'skipped', notice: 'The elements it moved are no longer on the board.' }
+  }
+  if (owner !== ACTIVE_TREE) get().openPageInCanvas(owner)
+  const before = get()._historyPast.at(-1)
+  get().moveSiblings([...moves])
+  const top = get()._historyPast.at(-1)
   if (!top || top === before) return { kind: 'skipped', notice: null }
   return { kind: 'posted', pendingCommitId: top.pendingCommit?.id ?? null }
 }

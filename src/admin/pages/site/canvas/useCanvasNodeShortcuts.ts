@@ -34,22 +34,22 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { moveNodeAmongSiblings } from './canvasNodeArrowMove'
+import { stepSelectionAmongSiblings } from './canvasNodeArrowMove'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /**
  * `Alt+↑`/`Alt+↓` (`layers.moveUp`/`layers.moveDown`, G12), and `⌘]`/`⌘[`
  * since `K4`: one place earlier / later in the child order, through the same
- * `moveNodeAmongSiblings` the arrow reorder uses (P2-C), so the keyboard's
- * two reorders can never disagree about what "one place" means.
+ * `stepSelectionAmongSiblings` the arrow reorder uses, so the keyboard's two
+ * reorders can never disagree about what "one place" means.
  *
- * Single-node only: a multi-selection has no well-defined "up" (the members may
- * not even share a parent), so this silently no-ops for a multi-select.
+ * The whole selection moves (P2-C2, OD-16): every layer one place along its
+ * own parent's order, as one undo entry and one source write
+ * (`@core/page-tree`'s `planSiblingSteps` says which cases can be).
  */
 function runMoveShortcut(direction: 'up' | 'down', selectedNodeId: string, currentIds: readonly string[]): void {
-  if (currentIds.length > 1) return
-  moveNodeAmongSiblings(selectedNodeId, direction === 'up' ? -1 : 1)
+  stepSelectionAmongSiblings(currentIds.length > 0 ? currentIds : [selectedNodeId], direction === 'up' ? -1 : 1)
 }
 
 /**

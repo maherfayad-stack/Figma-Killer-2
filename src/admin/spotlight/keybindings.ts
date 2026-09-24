@@ -71,6 +71,15 @@
  *   ⌥ held     | measure; nothing hovered →  | the same (P2-E, IX-19): hovered | The tree ladder keeps ⌥ over the
  *              | measure to the parent frame | layer, else the selection's     | selection; once a node was hovered
  *              |                             | parent                          | in the hold, no parent fallback
+ *   arrows,    | every shape moves; flex     | OD-16 (P2-C2): absolute layers  | One entry, one write per gesture
+ *   ⌥↑/⌥↓,     | children reorder together   | nudge together; a mixed         | (`planSiblingSteps`). A grid-row
+ *   ⌘[ / ⌘]    |                             | selection leaves its flow       | step of 2+ layers and a nested
+ *   with 2+    |                             | layers put; flow children step  | pair refuse by name: they are not
+ *   layers     |                             | along their own parent, order   | independent writes (P3-D)
+ *              |                             | kept                            |
+ *   ↑ / ↓ on a | swap with the cell above /  | OD-16: move by the resolved     | ← / → still step one cell; the
+ *   grid child | below                       | column count (one row); none    | last row does not wrap
+ *              |                             | past the last row               |
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'
@@ -544,7 +553,8 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // it is scoped by SELECTION rather than by key. Three handlers read it, one
   // per kind of selection, and the editor key ladder decides between them:
   //   - `useBoardAnnotationKeyboard` (annotation rung): selected notes / docs;
-  //   - `useCanvasNodeArrowKeys` (node rung): the selected layer — an
+  //   - `useCanvasNodeArrowKeys` (node rung): the selected layers (all of
+  //     them since P2-C2, OD-16) — an
   //     absolute one nudges its offsets, a layout child reorders ±1 along its
   //     parent's axis (`canvasNodeArrowMove.ts`). Canvas-scoped like Tab: in
   //     a panel the arrows stay the panel's;
