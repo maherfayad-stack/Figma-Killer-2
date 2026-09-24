@@ -84,6 +84,7 @@ import { resolveProjectFidelityMode } from '../../handlers/studio/projectFidelit
 import { resolveProjectDesignPolicy } from '../../handlers/studio/projectDesignPolicy'
 import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 import { prepareStudioHttpTurn } from '../studioHttpTurn'
+import { compactHistoryForTurn } from '../historyCompaction'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
 import { collectUserSuppliedUrls } from '../mcp/tools/studio/remoteFetchPolicy'
@@ -254,7 +255,7 @@ async function handleAiChat(
   if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
   // The CLI brings native file tools; every HTTP driver gets Studio's (AI-2). The prompt reads this same array.
   const fileAccess = agentFileAccessForProvider(credential.providerId)
-  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null, fileAccess })
+  const tools = selectStudioTools(user.capabilities, { studioProjectOpen: validatedWorkspaceDir !== null, fileAccess, planMode: permissionMode === 'plan' })
   if (requestedImage && !modelCapabilities.visionInput) {
     return jsonResponse(
       { error: 'The selected model does not support image input. Choose a vision-capable model.' },
@@ -510,8 +511,11 @@ async function handleAiChat(
         const request: AiStreamRequest = {
           systemPrompt,
           // Full conversation history — direct HTTP drivers replay it every
-          // turn (there is no server-side session to resume).
-          messages,
+          // turn (there is no server-side session to resume) — with its older
+          // part summarised once it outgrows the window (AI-18).
+          messages: await compactHistoryForTurn({
+            db, conversationId: conversation.id, modelId: conversation.modelId, credentials: resolvedCredential, messages, toolContextBase, signal: turnSignal,
+          }),
           tools,
           modelId: conversation.modelId,
           modelCapabilities,

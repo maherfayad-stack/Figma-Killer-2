@@ -226,6 +226,7 @@ export function createAgentSlice(
     agentComposerEpoch: 0,
     agentPermissionRequest: null,
     agentQueuedMessage: null,
+    agentSelectionDismissed: null,
     ...agentSessionControlsInitialState(),
     ...agentTurnChangesInitialState(),
 
@@ -246,6 +247,10 @@ export function createAgentSlice(
 
     ...createAgentSessionControlsActions(set),
     ...createAgentTurnChangesActions(set, get),
+
+    dismissAgentSelection(key) {
+      set({ agentSelectionDismissed: key })
+    },
 
     queueAgentMessage(content) {
       // Replaces rather than appends: the composer sends one draft at a time,
@@ -268,12 +273,12 @@ export function createAgentSlice(
       else set({ isAgentStreaming: false })
     },
 
-    resolveAgentPermission(id, behavior) {
+    resolveAgentPermission(id, behavior, message) {
       // The card clears in `promptForPermission`'s finally, keyed by id, so a
       // stale click (already answered, already abandoned) is a no-op.
       settlePermissionDecision(id, {
         behavior,
-        ...(behavior === 'deny' ? { message: 'You declined this action.' } : {}),
+        ...(behavior === 'deny' ? { message: message ?? 'You declined this action.' } : message ? { message } : {}),
       })
     },
 

@@ -445,6 +445,7 @@ itself succeeded, one page inside it did not.
 | `no-board-frame` | no | The page exists but has no frame placed on the board yet. |
 | `no-design-reference` | no | This page has no design to measure against — either nothing is registered for the project, or every registered reference belongs to a different screen. Register one, or say plainly that there is no design rather than guessing a score. |
 | `no-open-project` | no | This tool writes only into the project open for this turn, and none is. The file-authoring tools never take a directory argument. |
+| `plan-not-approved` | no | The turn is in plan mode and no plan has been approved yet, so no write runs. Call studio_propose_plan with the steps and wait for the user's approval. |
 | `no-package-json` | no | This project has no package.json, so there is no dependency manifest to act on. |
 | `no-such-component` | no | No component of that name is in the design-system catalog of this project (the one studio_list_components reads). The refusal lists the nearest names. |
 | `no-such-file` | no | No readable regular file at that project-relative path, or it exceeds the read cap. |

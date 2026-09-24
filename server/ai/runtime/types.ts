@@ -249,6 +249,13 @@ export interface ToolContext {
   readonly userSuppliedUrls?: readonly string[]
   readonly snapshot: unknown
   readonly signal: AbortSignal
+  /**
+   * The chat turn's browser bridge, for the rare SERVER tool that must ask the
+   * user something mid-turn and wait (`studio_propose_plan`, AI-22).
+   * `undefined` for a call with no chat panel behind it (an external MCP
+   * client) — such a tool must answer without one.
+   */
+  readonly bridge?: AiBrowserBridge
 }
 
 // ---------------------------------------------------------------------------

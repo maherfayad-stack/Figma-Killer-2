@@ -41,6 +41,7 @@ import type {
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
   PERMISSION_REQUEST_TOOL,
+  PROPOSE_PLAN_TOOL,
   awaitPermissionDecision,
   describePermissionRequest,
   parsePermissionRequestInput,
@@ -246,6 +247,23 @@ export async function processStreamEvent(
           break
         }
         await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: decision }, signal)
+        break
+      }
+
+      // AI-22 — the HTTP agent's plan, in plan mode: the same card as the
+      // CLI's ExitPlanMode prompt, and the answer goes back as the tool's
+      // result, which is what lets the agent proceed (or revise).
+      if (event.toolName === PROPOSE_PLAN_TOOL) {
+        const decision = await promptForPermission(set, PROPOSE_PLAN_TOOL, event.input)
+        if (!bridge.bridgeId) {
+          console.error('[AgentSlice] plan toolRequest received before bridgeReady')
+          break
+        }
+        const answer = {
+          approved: decision.behavior === 'allow',
+          ...(decision.message ? { feedback: decision.message } : {}),
+        }
+        await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: answer }, signal)
         break
       }
 

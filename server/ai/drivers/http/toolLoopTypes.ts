@@ -25,6 +25,13 @@ export interface TurnToolResult {
   readonly id: string
   readonly name: string
   readonly output: AiToolOutput
+  /**
+   * What the result is ABOUT — the page(s) or file its call named
+   * (`heavyResultScope`). Heavy-evidence elision supersedes a result only by a
+   * later one about the same thing (AI-18): a screenshot of page A is not made
+   * stale by a screenshot of page B.
+   */
+  readonly scope?: string
 }
 
 /** Per-turn token usage reported by the provider. */
