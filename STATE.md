@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### mcp-29 — P4-D: the assistant designs with craft (AI-19, AI-12, AI-14, AI-16, AI-17, AI-15, AI-9)
-- **Agent:** mcp-tooling (+ parser-surgeon for the token codemod) · **Branch:** `feat/agent-designs-with-craft` off `6efc088a` · **PR:** see the PR list (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
+- **Agent:** mcp-tooling (+ parser-surgeon for the token codemod) · **Branch:** `feat/agent-designs-with-craft` off `6efc088a` · **PR:** #241 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open)
 - **Goal:** a creative, tool-packed assistant: one prompt for both paths that teaches design, not only matching; tools to place frames, change tokens, write component usages and check breakpoints; the selection in the digest.
 - **Prompt (AI-19):** "done" first and mode-specific; decide before drawing, real content, one critique pass against a craft rubric, Initiative; the eSIM facts are gone; "keep the screen a static composition" (dropped from CLAUDE.md by P4-B) now lives under Canvas invariants; "specification, not inspiration" moved into BALANCED. The largest prefix went from ~36.9K to ~32.5K characters. Gate: `agent-prompt-craft.test.ts` checks the CLI file and both HTTP wires (sections, mode block, no project facts, a 34,000-char budget).
