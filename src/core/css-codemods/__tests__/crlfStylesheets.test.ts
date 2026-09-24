@@ -15,7 +15,24 @@
  * cannot be trusted to still be CRLF when the test opens it.
  */
 import { describe, expect, it } from 'bun:test'
-import { insertRule, removeDeclaration, setDeclaration, setDeclarationAtMedia } from '../index'
+import {
+  insertRule,
+  removeDeclaration as removeDeclarationResult,
+  setDeclaration as setDeclarationResult,
+  type DeclarationWriteResult,
+} from '../index'
+
+/** This file is about line endings, so a declaration write that refuses is a failure of the fixture, not a case. */
+function written(result: DeclarationWriteResult): { css: string; changed: boolean } {
+  if (!result.ok) throw new Error(`unexpected refusal: ${result.refusal.reason}`)
+  return { css: result.css, changed: result.changed }
+}
+const setDeclaration = (css: string, selector: string, property: string, value: string) =>
+  written(setDeclarationResult(css, selector, property, value))
+const setDeclarationAtMedia = (css: string, selector: string, query: string, property: string, value: string) =>
+  written(setDeclarationResult(css, selector, property, value, { atRule: `media ${query}` }))
+const removeDeclaration = (css: string, selector: string, property: string) =>
+  written(removeDeclarationResult(css, selector, property))
 import { insertKeyframes, removeDeclarationAtKeyframe, setDeclarationAtKeyframe } from '../keyframes'
 
 const PROGRAMME_LINES = [

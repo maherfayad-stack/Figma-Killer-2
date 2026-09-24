@@ -41,6 +41,7 @@ import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
 import { useAdminUi } from '@admin/state/adminUi'
+import { requestEditorSave } from '@admin/state/adminEvents'
 import { notifyInlineStyleUnsaved } from '@site/panels/inlineStyleUnsavedNotice'
 import { armSidecarBaselines, loadSidecarSettings, noteFrameworkSynced, saveChangedSidecarSettings } from './sidecarSync'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
@@ -49,7 +50,7 @@ import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenS
 import { setStudioProjectKey, setStudioTrustTier } from './studioProjectTrust'
 import { notifyCreatedStylesheets, postEdits } from './studioSaveRequests'
 import { captureIdentities } from './sourceIdentity'
-import { refusedEditKeys } from './editOutcomes'
+import { editOutcomeKey, refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
@@ -67,6 +68,8 @@ import {
 import {
   collectStyleRuleEdits,
   commitBaseline as commitStyleRuleBaseline,
+  noteStylesheetWritten,
+  resetCssDestinationMemory,
   setStudioStyleRuleSources,
 } from './styleRuleWriteback'
 import {
@@ -78,6 +81,7 @@ import {
 import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
 import { setStudioLoadWarnings } from './studioLoadWarningsStore'
 import { collectNodeDiffEdits } from './nodeDiffWriteback'
+import { notifyRowTemplateWrites } from './rowTemplateWrites'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
@@ -101,6 +105,9 @@ let componentSources: Record<string, ComponentSource> = {}
 
 /** WS-3.3 — `.studio/meta.json`'s `paletteHiddenModuleIds` override, from the last load. See `getStudioComponentSources` for the same "remembered from last load" shape. */
 let paletteHiddenModuleIds: readonly string[] = []
+
+/** The project the stylesheet-destination memory (`resetCssDestinationMemory`) belongs to. */
+let cssDestinationMemoryDir: string | null = null
 
 /**
  * Every source-backed node's values AS LOADED, keyed by node id, so `saveSite`
@@ -222,6 +229,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
     } = meta
+    // ERR-14 — the automatic stylesheet choices are this project's; a load of
+    // a DIFFERENT project starts without them (a resync keeps them).
+    if (dir !== cssDestinationMemoryDir) resetCssDestinationMemory()
+    cssDestinationMemoryDir = dir
     setStudioLoadedDir(dir)
     componentSources = sources
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
@@ -315,17 +326,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // filtered — `collectClassIdsDrift`/`commitClassIdsBaseline`/
     // `collectStyleRuleEdits` below stay unfiltered (cheaper per-node checks,
     // lower risk to touch alongside the 0.6 seam than the payoff is worth).
-    const { edits, bumps, drops, inlineStyleRefusals } = collectNodeDiffEdits(site.pages, opts.dirty)
+    const { edits, bumps, drops, inlineStyleRefusals, rowTemplateWrites } = collectNodeDiffEdits(site.pages, opts.dirty)
 
     // Track B2 — Studio (filesystem) mode now has a real `class` edit kind
     // (`setJsxClassName`): `collectClassNameEdits` diffs `node.classIds`
     // against the load-time baseline right here — the same place
     // `collectStyleRuleEdits` (just below) diffs `site.styleRules` — and
     // turns most of the drift into `kind: 'class'` edits sent in the same
-    // batch as everything else. The residual `unwritable` subset (a `.map`
-    // row, a synthetic root — no single JSX location a class token could
-    // land on) still gets Phase 0.6's honesty toast, now scoped to exactly
-    // that subset instead of every class change in the project. Fires
+    // batch as everything else (a `.map` row's goes to its row template,
+    // OD-8). The residual `unwritable` subset (a synthetic root — no JSX
+    // location a class token could land on) still gets Phase 0.6's honesty
+    // toast, scoped to exactly that subset instead of every class change in
+    // the project. Fires
     // exactly when the write is attempted, catches every entry point
     // (including a future AI-agent-driven class edit), and never re-fires
     // for a node whose classes are unchanged since the last save.
@@ -363,9 +375,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     edits.push(...cssPlan.edits)
 
     // Every way that plan can decline, told to the user in the one shape each
-    // deserves — including Z8's destination question, which opens a dialog
-    // rather than a toast. `refusalToasts.ts` owns which is which.
-    reportStyleRulePlanRefusals(cssPlan, useEditorStore.getState().presentRefusalDialog)
+    // deserves. `refusalToasts.ts` owns which is which. (There is no
+    // destination question any more — P3-C's ERR-14/ERR-15: the planner
+    // chooses among several stylesheets, and creates the first one.)
+    reportStyleRulePlanRefusals(cssPlan)
 
     // WS-10 §4.4 (Phase 4) — a locale-variant board frame's text edits.
     // `localizedPages` lives OUTSIDE `site` (a parallel map, not part of
@@ -386,12 +399,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     edits.push(...localizedEdits)
 
     // `style-02` — the two baselines below must not advance past a REFUSED
-    // write. Both lists start with the refusals this client already made
-    // (a token/destination it will not guess) and grow with the server's.
-    // Z8 — a rule whose DESTINATION was refused starts in this set: nothing
-    // reached disk, and the held-back baseline is what leaves its
-    // declarations in the diff for the remedy's re-run to write.
-    const refusedRuleIds = new Set<string>(cssPlan.destinationRefusals.map((refusal) => refusal.ruleId))
+    // write. The class list starts with the tokens this client already held
+    // back (one it will not guess, or one waiting on a stylesheet this very
+    // save creates) and both grow with the server's refusals.
+    const refusedRuleIds = new Set<string>()
     const refusedClassNodeIds = [...classPlan.refusedNodeIds]
 
     // The files a landed write touched, deferred to the END of this function:
@@ -434,13 +445,23 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         if (refusal.kind === 'css' || refusal.kind === 'styled') {
           for (const ruleId of cssPlan.ruleIdsByNodeId[refusal.nodeId] ?? []) refusedRuleIds.add(ruleId)
         }
-        if (refusal.kind === 'class') refusedClassNodeIds.push(refusal.nodeId)
+        if (refusal.kind === 'class') {
+          refusedClassNodeIds.push(refusal.nodeId)
+          // OD-8 — a refused row-TEMPLATE write holds back the rows that sent it.
+          for (const write of classPlan.rowTemplateWrites) {
+            if (write.templateId === refusal.nodeId) refusedClassNodeIds.push(write.nodeId)
+          }
+        }
       }
 
       // Track B1 create branch — name the file Studio invented and register it
       // in the write-back map, so the same rule is writable through the ordinary
-      // `set` path on its next edit with no reload.
-      notifyCreatedStylesheets(result, site.styleRules)
+      // `set` path on its next edit with no reload. ERR-15 — a class whose
+      // token waited on that file (`awaitingCreatedStylesheet`, held back
+      // silently) attaches on a save run straight away, not on "your next
+      // change".
+      const createdStylesheets = notifyCreatedStylesheets(result, site.styleRules)
+      if (createdStylesheets > 0 && classPlan.awaitingCreatedStylesheet) requestEditorSave()
 
       // E1 fix (`STUDIO-FIGMA-PARITY-PLAN.md` 0.1) — advance the node-value
       // baseline to what this batch wrote, so the NEXT autosave tick diffs
@@ -452,6 +473,11 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // aggregate count: one unwritable edit held back every baseline, and the
       // whole batch was re-sent on every tick after it.
       const refused = refusedEditKeys(result.refusals)
+      // ERR-14 — when several stylesheets could take a new class, the planner
+      // prefers the one the user is already writing into.
+      for (const edit of cssPlan.edits) {
+        if (edit.kind === 'css' && 'file' in edit && !refused.has(editOutcomeKey(edit))) noteStylesheetWritten(edit.file)
+      }
       commitNodeValuesBaseline(bumps.filter((bump) => !refused.has(bump.editKey)))
       // `style-03` — a REMOVED inline style has no value to record, so its
       // baseline entry has to be deleted instead; leaving it behind would
@@ -478,6 +504,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // bug: an unwritable text edit reverted itself on a timer.
       if (result.written > 0 && (result.shifted || result.sharedComponents)) {
         resyncTouchedFiles = result.touchedFiles ?? []
+      }
+
+      // P3-C (OD-8) — a `.map` row's style or class edit went to its row
+      // template: every row changed on disk, but only the one the user touched
+      // changed on the canvas. Re-read the page so all of them show it, and say
+      // that the change landed on every row (`rowTemplateWrites.ts`).
+      const landedRowWrites = [...rowTemplateWrites, ...classPlan.rowTemplateWrites].filter(
+        (write) => !refused.has(write.editKey),
+      )
+      if (result.written > 0 && landedRowWrites.length > 0) {
+        resyncTouchedFiles = result.touchedFiles ?? []
+        notifyRowTemplateWrites(landedRowWrites)
       }
     }
 

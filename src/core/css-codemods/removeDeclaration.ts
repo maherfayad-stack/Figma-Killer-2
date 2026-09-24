@@ -11,10 +11,20 @@
  * refusal exists to prevent, one level down: not "we cannot write this", but
  * "we did not even look".
  *
- * A CST round-trip via `postcss`, exactly like its sibling: parse, remove one
- * declaration node, `.toString()`. Every byte this codemod did not touch
- * round-trips verbatim through postcss's `raws`, so clearing one property
- * produces a one-line diff in the user's real stylesheet.
+ * A CST round-trip via `postcss`, exactly like its sibling: parse, remove
+ * declaration nodes, `.toString()`. Every byte this codemod did not touch
+ * round-trips verbatim through postcss's `raws`.
+ *
+ * ## Every declaration of it, so the class stops setting it (P3-C, WB-16)
+ *
+ * This used to remove the FIRST declaration in the FIRST matching rule, and
+ * `analyzeDeclarationTarget` refused a removal whenever a second one existed —
+ * a later block, or the property twice in one block — because removing the
+ * first left the second in effect: the file changed and the canvas did not.
+ * The honest reading of "clear this property from the class" is every
+ * declaration of it the scope's matching rules carry, and that is one edit. A
+ * covering SHORTHAND stays (clearing `padding-top` is not clearing `padding`);
+ * whatever it then shows is what the canvas shows too.
  *
  * ## What it cleans up, and what it does not
  *
@@ -22,83 +32,53 @@
  * that says nothing, and leaving it behind would make "clear every property"
  * accumulate empty blocks over a session. A rule still holding a comment keeps
  * its block, because a comment is a node and the user wrote it. Emptying the
- * last rule inside an `@media` block removes the block for the same reason.
+ * last rule inside a conditional block removes the block for the same reason.
  *
- * It does NOT decide whether the removal is HONEST — whether the declaration
- * this file removes is the one the cascade was actually honouring. That is
- * `analyzeDeclarationTarget`'s job, which the caller runs first on the same
- * text, exactly as it already does before `setDeclaration`. A property that is
- * simply absent is `changed: false`, never an error: re-sending an
- * already-applied removal on a later autosave tick must be a no-op.
+ * A property that is simply absent is `changed: false`, never an error:
+ * re-sending an already-applied removal on a later autosave tick must be a
+ * no-op.
  */
-import postcss, { type AtRule, type Container, type Root } from 'postcss'
-import { findRule } from './setDeclaration'
 import { preservingLineEndings } from './preserveLineEndings'
-
-export interface RemoveDeclarationResult {
-  /** The rewritten stylesheet text — identical to the input when `changed` is `false`. */
-  css: string
-  /** `false` when the declaration was already absent (a pure no-op edit). */
-  changed: boolean
-}
-
-/** The `@media` at-rule in `root` whose params match `query`, trimmed — the same exact-string match `setDeclarationAtMedia` uses. */
-function findMediaAtRule(root: Root, query: string): AtRule | undefined {
-  const target = query.trim()
-  let found: AtRule | undefined
-  root.each((node) => {
-    if (found) return false
-    if (node.type === 'atrule' && node.name === 'media' && node.params.trim() === target) {
-      found = node
-      return false
-    }
-    return undefined
-  })
-  return found
-}
+import { readDeclarationScope, type DeclarationWriteOptions, type DeclarationWriteRefusal, type DeclarationWriteResult } from './setDeclaration'
 
 /**
- * Remove one declaration from a selector's rule, optionally inside an
- * `@media` block. See this module's doc for the empty-block cleanup and for
- * what this deliberately leaves to `analyzeDeclarationTarget`.
+ * Remove every declaration of `property` from the rules matching `selector` in
+ * the scope `options.atRule` names (the unconditional rules when omitted). See
+ * this module's doc.
  */
 export function removeDeclaration(
   cssText: string,
   selector: string,
   property: string,
-  options: { atMedia?: string } = {},
-): RemoveDeclarationResult {
-  return preservingLineEndings(cssText, (source) => {
-    const root: Root = postcss.parse(source)
-
-    let container: Container = root
-    let mediaAtRule: AtRule | undefined
-    if (options.atMedia) {
-      mediaAtRule = findMediaAtRule(root, options.atMedia)
-      if (!mediaAtRule) return { css: source, changed: false } // no such block — nothing to remove
-      container = mediaAtRule
+  options: DeclarationWriteOptions = {},
+): DeclarationWriteResult {
+  let refusal: DeclarationWriteRefusal | null = null
+  const rewrite = preservingLineEndings(cssText, (source) => {
+    const read = readDeclarationScope(source, options)
+    if ('refusal' in read) {
+      refusal = read.refusal
+      return { css: source, changed: false }
     }
-
-    const rule = findRule(container, selector)
-    if (!rule) return { css: source, changed: false }
-
-    const propLower = property.toLowerCase()
-    let removed = false
-    rule.each((node) => {
-      if (node.type === 'decl' && node.prop.toLowerCase() === propLower) {
-        node.remove()
-        removed = true
-        return false
-      }
-      return undefined
-    })
-    if (!removed) return { css: source, changed: false }
-
-    if (rule.nodes.length === 0) {
-      rule.remove()
-      if (mediaAtRule && (mediaAtRule.nodes?.length ?? 0) === 0) mediaAtRule.remove()
+    const target = selector.trim()
+    const prop = property.toLowerCase()
+    let changed = false
+    for (const container of read.containers) {
+      container.each((node) => {
+        if (node.type !== 'rule' || node.selector.trim() !== target) return
+        node.each((child) => {
+          if (child.type === 'decl' && child.prop.toLowerCase() === prop) {
+            child.remove()
+            changed = true
+          }
+        })
+        if (node.nodes.length === 0) node.remove()
+      })
     }
-
-    return { css: root.toString(), changed: true }
+    if (!changed) return { css: source, changed: false }
+    for (const container of read.containers) {
+      if (container !== read.root && (container.nodes?.length ?? 0) === 0) container.remove()
+    }
+    return { css: read.root.toString(), changed: true }
   })
+  return refusal ? { ok: false, refusal } : { ok: true, ...rewrite }
 }

@@ -286,6 +286,26 @@ export interface ParsedNode {
    */
   resolvedProps?: Record<string, { source: string; note?: string; origin?: ValueOrigin }>
   /**
+   * P3-C (WB-6) — COMPONENT call sites only: where each prop written as a
+   * plain string-literal attribute (`title="Where to?"`, `title={"Where to?"}`)
+   * physically lives.
+   *
+   * Never a write target of its own — `setJsxProp` rewrites a literal attribute
+   * directly, and `instanceOf.callSiteProps` is how the panel edits it. It
+   * exists for the value that crosses INTO the component: `<h2>{title}</h2>`
+   * in the component's file is code (writing there would delete the binding for
+   * every instance), but the text it shows is this call site's literal, owned by
+   * this instance alone. `componentSubstitution.ts` hands this origin through
+   * with the value, and the inlined node records it as `textOrigin` /
+   * `resolvedProps[k].origin` exactly like a dictionary read.
+   *
+   * Absent on a call site inside a `.map` row: one piece of JSX renders every
+   * row's call site, so its literal is shared by N instances and is not one
+   * honest target. A value the call site RESOLVED (`title={c.key}`) needs no
+   * entry here — its origin is already `resolvedProps[k].origin`.
+   */
+  literalPropOrigins?: Record<string, ValueOrigin>
+  /**
    * Present on the node the parser SELECTED when a component had more than
    * one JSX-bearing `return`, or a JSX child was a ternary/`&&` — see
    * `getReturnedJsxRoots`/`selectJsxBranch` in `parsePageFile.ts`. Lists the
@@ -318,7 +338,15 @@ export interface ParsedNode {
    *
    * Absent when the text is computed rather than passed through (a template
    * literal, a concatenation, a function's return value): there is no single
-   * literal to rewrite. See `ValueOrigin`.
+   * literal to rewrite. See `ValueOrigin`. Absent, too, when the literal is
+   * not a STRING (`{PRICE}` over `const PRICE = 9`): the writer rewrites string
+   * literals, and offering an edit it would then refuse is the thing Phase 3
+   * removes.
+   *
+   * P3-C (WB-6) — also set on an INLINED node whose text a call site passed in
+   * (`<Header title="Where to?"/>` → `<h2>{title}</h2>`): the origin is the
+   * call site's own attribute literal (`literalPropOrigins`), or whatever that
+   * call site's value itself resolved through.
    */
   textOrigin?: ValueOrigin
   /**

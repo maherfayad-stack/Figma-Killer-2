@@ -21,11 +21,18 @@
  * shapes and why loop-bearing transforms stay unresolved.
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
-import { tryResolveExpression, type PageEvalContext } from './nodeResolution'
-import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
+import {
+  extractInlineStyles,
+  extractProps,
+  extractSingleText,
+  rawHtmlValueExpression,
+  resolveRawSvgMarkup,
+  templateHeadClassNames,
+} from './jsxAttributeReaders'
+import { shortenSource, tryResolveExpression, type PageEvalContext, type Resolution } from './nodeResolution'
+import { createEvalScope, type LocalBinding, type StaticValue, type ValueOrigin } from './staticEval'
 import type { ReturnedJsx } from './branchSelection'
-import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'
+import type { FunctionLike, ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 
 /** `extractInlineStyles` takes a full `ParseContext`; the image-import map is only consulted by `extractProps`, never on the style path. */
@@ -36,8 +43,21 @@ type JsxOpeningLike = JsxElement | JsxSelfClosingElement
  * What `buildSubstitutionEnv` resolved a destructured prop param to: a value the
  * call site passed (scalar, or a structured one for a component prop — see
  * `ParsedPropValue`), or its `{children}`.
+ *
+ * `origin` (P3-C, WB-6) is where a STRING value the call site passed
+ * physically lives — its own attribute literal (`ParsedNode.literalPropOrigins`)
+ * or the literal its expression resolved through (`resolvedProps[k].origin`).
+ * It travels with the value into the component, so an inlined node that renders
+ * it records the call site's literal as its write target instead of the
+ * component's `{param}` (which is code, and shared by every instance). Never
+ * set for a component's own destructure DEFAULT: that literal feeds every call
+ * site that omits the prop, so an edit there would change instances the user
+ * did not touch.
  */
-export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: 'children' }
+export type Substitution = { kind: 'value'; value: ParsedPropValue; origin?: ValueOrigin } | { kind: 'children' }
+
+/** The call-site facts `buildSubstitutionEnv` reads. */
+export type SubstitutionCallSite = Pick<ParsedNode, 'props' | 'literalPropOrigins' | 'resolvedProps'>
 
 /**
  * Lifts a call site's already-captured prop value back into a `StaticValue`, so
@@ -45,12 +65,17 @@ export type Substitution = { kind: 'value'; value: ParsedPropValue } | { kind: '
  * (`<Row item={pkg}/>` → `{item.gb}`). The round trip through
  * `ParsedPropValue` is lossless for everything the parser kept — the entries it
  * dropped (functions, unresolved values) were never representable anyway.
+ *
+ * A top-level string carries its `origin` as the literal it is (P3-C): the
+ * evaluator hands a bound value through unchanged, so `{title}` and
+ * `{title || 'Untitled'}` resolve WITH it and `{`${title}!`}` — a computed
+ * value — without it, by the evaluator's own existing rule.
  */
-function toStaticValue(value: ParsedPropValue): StaticValue {
+function toStaticValue(value: ParsedPropValue, origin?: ValueOrigin): StaticValue {
   // `complete: true` on both: this is a plain JS value the parser already
   // finished reading, so its keys and its length ARE what they are — there is
   // no unread spread or computed key left to surprise `pluck`.
-  if (Array.isArray(value)) return { kind: 'array', items: value.map(toStaticValue), complete: true }
+  if (Array.isArray(value)) return { kind: 'array', items: value.map((item) => toStaticValue(item)), complete: true }
   if (typeof value === 'object') {
     return {
       kind: 'object',
@@ -58,7 +83,13 @@ function toStaticValue(value: ParsedPropValue): StaticValue {
       complete: true,
     }
   }
-  return { kind: 'literal', value }
+  return origin && typeof value === 'string' ? { kind: 'literal', value, origin } : { kind: 'literal', value }
+}
+
+/** Where the call site's value for `attrName` is written, when it is a string with one literal behind it. */
+function callSiteOrigin(callSite: SubstitutionCallSite, attrName: string, value: ParsedPropValue): ValueOrigin | undefined {
+  if (typeof value !== 'string') return undefined
+  return callSite.literalPropOrigins?.[attrName] ?? callSite.resolvedProps?.[attrName]?.origin
 }
 
 /**
@@ -70,7 +101,8 @@ function toStaticValue(value: ParsedPropValue): StaticValue {
  * yields no entry for that param, so any `{paramName}` reference to it is
  * simply left unresolved (existing lock/drop path), never guessed at.
  */
-export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<string, ParsedPropValue>): Map<string, Substitution> {
+export function buildSubstitutionEnv(fn: FunctionLike, callSite: SubstitutionCallSite): Map<string, Substitution> {
+  const callSiteProps = callSite.props
   const env = new Map<string, Substitution>()
   const first = fn.getParameters()[0]
   if (!first) return env
@@ -94,10 +126,13 @@ export function buildSubstitutionEnv(fn: FunctionLike, callSiteProps: Record<str
     }
 
     if (Object.hasOwn(callSiteProps, attrName)) {
-      env.set(paramName, { kind: 'value', value: callSiteProps[attrName]! })
+      const value = callSiteProps[attrName]!
+      const origin = callSiteOrigin(callSite, attrName, value)
+      env.set(paramName, { kind: 'value', value, ...(origin ? { origin } : {}) })
       continue
     }
 
+    // A destructure DEFAULT carries no origin — see `Substitution`.
     const initializer = element.getInitializer()
     if (!initializer) continue
     if (Node.isStringLiteral(initializer) || Node.isNumericLiteral(initializer)) {
@@ -164,7 +199,7 @@ export function applySubstitutions(
       locals: new Map<string, LocalBinding>([
         ...createEvalScope(sourceFile, fn).locals,
         ...[...env].flatMap(([name, sub]): [string, LocalBinding][] =>
-          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value) }]] : [],
+          sub.kind === 'value' ? [[name, { kind: 'resolved', value: toStaticValue(sub.value, sub.origin) }]] : [],
         ),
       ]),
     },
@@ -185,6 +220,24 @@ export function applySubstitutions(
       const attributes = isElement ? el.getOpeningElement().getAttributes() : el.getAttributes()
 
       let patchedProps: Record<string, ParsedPropValue> | undefined
+      // P3-C (WB-6) — where each value filled in below physically lives, when a
+      // call site's literal is behind it. The attribute in THIS file stays code
+      // (`codeProps`, from `parseJsxTree`'s catch-all), and the origin is what
+      // makes it writable — at the call site, never over `{param}`.
+      let patchedResolved: Record<string, Resolution> | undefined
+      let patchedCodeProps: string[] | undefined
+      const recordOrigin = (key: string, resolution: Resolution): void => {
+        if (!resolution.origin) return
+        patchedResolved ??= { ...existing.resolvedProps }
+        patchedResolved[key] = {
+          source: shortenSource(resolution.source),
+          ...(resolution.note ? { note: resolution.note } : {}),
+          origin: resolution.origin,
+        }
+        if (key === 'text') return // text's code-ness is `codeText`, not a `codeProps` entry
+        const codeProps = patchedCodeProps ?? existing.codeProps ?? []
+        if (!codeProps.includes(key)) patchedCodeProps = [...codeProps, key]
+      }
 
       // Re-read EVERY attribute against the param-bound scope, filling only the
       // gaps `parseJsxTree` left. The loop below handles a param forwarded as a
@@ -194,11 +247,17 @@ export function applySubstitutions(
       // typed React component, and none of it resolved: the component's own file
       // sees `plan` as a parameter with no value anywhere in it.
       if (paramEvalContext) {
-        const { props: reread } = extractProps(attributes, { ...readerCtx, eval: paramEvalContext }, existing.kind)
+        const { props: reread, resolutionsByKey } = extractProps(
+          attributes,
+          { ...readerCtx, eval: paramEvalContext },
+          existing.kind,
+        )
         for (const [key, value] of Object.entries(reread)) {
           if (key in existing.props) continue
           patchedProps ??= { ...existing.props }
           patchedProps[key] = value
+          const resolution = resolutionsByKey[key]
+          if (resolution) recordOrigin(key, resolution)
         }
       }
 
@@ -217,6 +276,7 @@ export function applySubstitutions(
         if (typeof sub.value === 'object' && existing.kind !== 'component') continue
         patchedProps ??= { ...existing.props }
         patchedProps[attrName] = sub.value
+        if (sub.origin) recordOrigin(attrName, { source: expr.getText(), origin: sub.origin })
       }
 
       // `<Icon svg={checkSvg}/>` → `<span dangerouslySetInnerHTML={{__html: svg}}/>`:
@@ -259,8 +319,8 @@ export function applySubstitutions(
             patchedProps ??= { ...existing.props }
             patchedProps.className = resolved.trim()
           } else if (expr && Node.isTemplateExpression(expr)) {
-            const head = expr.getHead().getLiteralText().trim()
-            if (head.length > 0) {
+            const head = templateHeadClassNames(expr)
+            if (head !== undefined) {
               patchedProps ??= { ...existing.props }
               patchedProps.className = head
             }
@@ -282,6 +342,7 @@ export function applySubstitutions(
       }
 
       let patchedText = existing.text
+      let patchedTextOrigin = existing.textOrigin
       if (existing.text === undefined && existing.children.length === 0 && isElement) {
         const meaningful = el
           .getJsxChildren()
@@ -292,15 +353,28 @@ export function applySubstitutions(
             const sub = env.get(expr.getText())
             // Only a scalar has a text form. `String({…})` is `[object Object]`,
             // which is worse than leaving the element empty.
-            if (sub?.kind === 'value' && typeof sub.value !== 'object') patchedText = String(sub.value)
+            if (sub?.kind === 'value' && typeof sub.value !== 'object') {
+              patchedText = String(sub.value)
+              if (sub.origin) {
+                patchedTextOrigin = sub.origin
+                recordOrigin('text', { source: expr.getText(), origin: sub.origin })
+              }
+            }
           }
         }
         // Same story as the props re-read: the text is commonly not the param
         // itself but something read off it (`{plan.name}`,
         // `{seatLabel(plan.seats)}`). Reusing `extractSingleText` keeps one
-        // reader for "what counts as a text-only leaf".
+        // reader for "what counts as a text-only leaf". Its `origin` is the
+        // call site's literal whenever the value passed through unchanged
+        // (`{plan.name}` off a `plan` the call site read from a data module).
         if (patchedText === undefined && paramEvalContext) {
-          patchedText = extractSingleText(meaningful, { ...readerCtx, eval: paramEvalContext }).text
+          const reread = extractSingleText(meaningful, { ...readerCtx, eval: paramEvalContext })
+          patchedText = reread.text
+          if (reread.origin && reread.resolution) {
+            patchedTextOrigin = reread.origin
+            recordOrigin('text', { ...reread.resolution, origin: reread.origin })
+          }
         }
       }
 
@@ -337,6 +411,12 @@ export function applySubstitutions(
           ...(patchedProps ? { props: patchedProps } : {}),
           ...(patchedStyles ? { inlineStyles: patchedStyles } : {}),
           ...(patchedText !== undefined ? { text: patchedText } : {}),
+          // Substituted text came from a parameter: it is code in this file
+          // whether or not an origin was found for it (`codeText`'s contract).
+          ...(patchedText !== undefined && patchedText !== existing.text ? { codeText: true } : {}),
+          ...(patchedTextOrigin ? { textOrigin: patchedTextOrigin } : {}),
+          ...(patchedResolved ? { resolvedProps: patchedResolved } : {}),
+          ...(patchedCodeProps ? { codeProps: patchedCodeProps } : {}),
           children: patchedChildren,
         }
       }

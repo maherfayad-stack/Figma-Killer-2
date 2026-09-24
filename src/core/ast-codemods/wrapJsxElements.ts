@@ -56,7 +56,7 @@ import {
   type JsxChildRange,
 } from './jsxChildRange'
 import { elementChildren, indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree } from './jsxSubtree'
 import type { WrapJsxRefusalReason } from './wrapJsxElement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
@@ -88,7 +88,7 @@ export interface WrapJsxElementsParams {
  */
 export type WrapJsxElementsRefusalReason =
   // Everything an insert can refuse (`not-found`, `no-jsx-parent`,
-  // `expression-child`, `stale-source`, `not-siblings`, `binding-conflict`,
+  // `expression-child`, `stale-source`, `not-siblings`,
   // `unsafe-tag`, …) plus `content-model` — the wrapper is written through the
   // same gates as `wrapJsxElement`, and refuses for the same extra reason.
   | WrapJsxRefusalReason
@@ -139,17 +139,14 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
     memberTags: run.ranges.map((range) => intrinsicTagName(range.element)),
   })
   if (!wrapper.ok) return refuseWrap(wrapper.refusal.reason, wrapper.refusal.message)
-  const tag = wrapper.name
-
-  if (importSpecifier !== undefined) {
-    const binding = conflictingBinding(sourceFile, name, importSpecifier)
-    if (binding) {
-      return refuseWrap(
-        'binding-conflict',
-        `This file already uses the name "${name}" for something else (${binding}), so grouping with that component here would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  // WB-19 — a component whose name the file already uses for something else
+  // is imported under an alias (`{ Card as Card2 }`) and written by it,
+  // never refused: the alias renders the same component and shadows nothing.
+  const bindings = planImportBindings(
+    sourceFile,
+    importSpecifier === undefined ? new Map() : new Map([[wrapper.name, { specifier: importSpecifier }]]),
+  )
+  const tag = bindings.localName(wrapper.name)
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -184,11 +181,7 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
       }
     : { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
 
-  const importEdits = resolveImportEdits(
-    sourceFile,
-    verbatim,
-    importSpecifier === undefined ? new Map() : new Map([[tag, { specifier: importSpecifier }]]),
-  )
+  const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
   return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, edit.start), edit.text) }

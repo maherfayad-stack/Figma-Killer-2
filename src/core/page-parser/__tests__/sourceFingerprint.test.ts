@@ -33,7 +33,7 @@ import {
   type ParsedNode,
 } from '@core/page-parser'
 import { createProject, loadSourceFile, readSourceFingerprintAt } from '@core/ast-codemods'
-import { decodeSourceNodeId, hasWritableSourceLocation } from '@core/page-tree'
+import { decodeSourceNodeId, hasWritableSourceLocation, loopTemplateNodeId } from '@core/page-tree'
 
 let tmpDir: string
 
@@ -106,11 +106,16 @@ describe('every parsed node records who sits at its position', () => {
     expect(items[0]!.fingerprint).not.toBe(items[1]!.fingerprint)
   })
 
-  it('gives a .map row no fingerprint — its id has no writable location to guard', () => {
+  it('P3-C (OD-8) — stamps every .map row with its TEMPLATE element, where its style and class edits land', () => {
     writeRecipeBox()
     const rows = load('src/views/Pantry.tsx').filter((node) => node.id.includes('#'))
     expect(rows.length).toBeGreaterThan(0)
-    for (const row of rows) expect(row.fingerprint).toBeUndefined()
+    const project = createProject()
+    for (const row of rows) {
+      const template = decodeSourceNodeId(loopTemplateNodeId(row.id)!)!
+      const sourceFile = loadSourceFile(project, path.join(tmpDir, ...template.rel.split('/')))
+      expect(row.fingerprint).toBe(readSourceFingerprintAt(sourceFile, template.line, template.col))
+    }
   })
 
   it('stamps an inlined node with the COMPONENT file element its writes land on', () => {
@@ -150,7 +155,8 @@ describe('every parsed node records who sits at its position', () => {
     let checked = 0
     for (const node of load('src/views/Pantry.tsx')) {
       if (!node.fingerprint) continue
-      const location = decodeSourceNodeId(node.id)!
+      // A `.map` row reads back at its row template (OD-8).
+      const location = decodeSourceNodeId(loopTemplateNodeId(node.id) ?? node.id)!
       const sourceFile = loadSourceFile(project, path.join(tmpDir, ...location.rel.split('/')))
       expect(readSourceFingerprintAt(sourceFile, location.line, location.col)).toBe(node.fingerprint)
       checked += 1

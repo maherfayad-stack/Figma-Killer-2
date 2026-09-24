@@ -11,7 +11,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
   explainClassNameConstraint,
-  explainCssRuleConstraint,
   explainDetachConstraint,
   explainPropConstraint,
   explainStyleConstraint,
@@ -122,12 +121,27 @@ describe('explainPropConstraint', () => {
 // ---------------------------------------------------------------------------
 
 describe('explainStyleConstraint', () => {
-  it('row 6 — whole node has no writable location at all', () => {
-    const node = { id: 'src/screens/Home.jsx:70:21#2', codeProps: ['style:color'] }
+  it('row 6 — whole node has no writable location and no row template at all', () => {
+    const node = { id: 'home:body', codeProps: ['style:color'] }
     const constraint = explainStyleConstraint(node, 'color')
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('no-inline-style-target')
     expect(constraint.explanation).toContain('Assign a class instead')
+  })
+
+  it('P3-C (OD-8) — a .map row’s literal style is writable (to the template); a per-row value explains its source', () => {
+    expect(explainStyleConstraint({ id: 'src/screens/Home.jsx:70:21#2', codeProps: [] }, 'color')).toBeNull()
+    const perRow = explainStyleConstraint(
+      {
+        id: 'src/screens/Home.jsx:70:21#2',
+        codeProps: ['style:color'],
+        resolvedProps: { 'style:color': { source: 'item.tone' } },
+      },
+      'color',
+    )
+    assertWellFormed(perRow)
+    expect(perRow.reason).toBe('resolved-style-expression')
+    expect(perRow.explanation).toContain('item.tone')
   })
 
   it('row 5 — a resolved style expression names its source', () => {
@@ -524,26 +538,6 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
       assertWellFormed(constraint)
       expect(constraint.actions).toEqual([])
     }
-  })
-
-  it('B1/B1b — no-editable-stylesheet offers "style the element instead"', () => {
-    const constraint = explainCssRuleConstraint('no-editable-stylesheet', 'This class has no hand-editable source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-  })
-
-  it('B1/B1b — ambiguous-stylesheet and stylesheet-import-shape-mismatch also offer the inline hatch', () => {
-    for (const reason of ['ambiguous-stylesheet', 'stylesheet-import-shape-mismatch']) {
-      const constraint = explainCssRuleConstraint(reason, `refused: ${reason}`)
-      assertWellFormed(constraint)
-      expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-    }
-  })
-
-  it('row 26 — breakpoint-override-unsupported carries no action (told, not fixed)', () => {
-    const constraint = explainCssRuleConstraint('breakpoint-override-unsupported', 'Breakpoint override not saved to source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions).toEqual([])
   })
 
   it('row 22 — swap refusal passes the codemod\'s own reason/message through', () => {

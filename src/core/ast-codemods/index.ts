@@ -7,6 +7,8 @@ export type { SetJsxTextParams } from './setJsxText'
 export { setJsxStyle, JsxStyleTargetError } from './setJsxStyle'
 export type { SetJsxStyleParams } from './setJsxStyle'
 export { setJsxClassName } from './setJsxClassName'
+export { createModuleImportPlan } from './cssModuleImportPlan'
+export type { ModuleImportPlan, PendingModuleImports } from './cssModuleImportPlan'
 export type {
   ClassNameRefusal,
   ClassNameRefusalReason,

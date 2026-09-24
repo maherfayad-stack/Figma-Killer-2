@@ -28,6 +28,7 @@ export {
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  loopTemplateNodeId,
   matchesCallSitePosition,
   toRuntimeStampId,
   withSourceLocation,
@@ -98,7 +99,6 @@ export type {
 // module's own doc for why this stays a read-only translation layer.
 export {
   explainClassNameConstraint,
-  explainCssRuleConstraint,
   explainDetachConstraint,
   explainPropConstraint,
   explainStyleConstraint,

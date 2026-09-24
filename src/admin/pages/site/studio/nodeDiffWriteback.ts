@@ -14,9 +14,11 @@
  */
 import {
   type Page,
+  type PageNode,
   canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isPropWritableToSource,
+  loopTemplateNodeId,
   styleValueKey,
 } from '@core/page-tree'
 import type { SaveSiteOptions } from '@core/persistence/types'
@@ -31,12 +33,15 @@ import {
 } from './loadedValuesBaseline'
 import type { StudioEditPayload } from './studioEditPayload'
 import { editOutcomeKey } from './editOutcomes'
+import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 
 export interface NodeDiffResult {
   edits: StudioEditPayload[]
   bumps: NodeValueBump[]
   drops: NodeValueDrop[]
   inlineStyleRefusals: InlineStyleModuleRefusal[]
+  /** P3-C (OD-8) — the edits a `.map` row sent to its row template. See {@link RowTemplateWrite}. */
+  rowTemplateWrites: RowTemplateWrite[]
 }
 
 /**
@@ -51,6 +56,38 @@ function effectiveTag(props: Record<string, unknown> | undefined): string | unde
   if (tag !== CUSTOM_HTML_TAG_VALUE) return tag
   const custom = props?.customTag
   return typeof custom === 'string' && custom.length > 0 ? custom : undefined
+}
+
+type OriginBackedValue = { key: string; value: string | number; origin: { rel: string; line: number; col: number } }
+
+/**
+ * WB-8 (P3-C) — every scalar value on `node` whose code-valued prop the parser
+ * traced to a single string literal (`resolvedProps[key].origin`), keyed the
+ * way `codeProps` and the baseline key it: a flat prop name, or
+ * `callSiteProps:<name>` for an instance's call-site props.
+ *
+ * The module's text prop is left to the `textOrigin` branch, which owns it
+ * (`parsedPageToSitePage` re-keys text's resolution onto that prop with the
+ * same origin, and emitting it twice would send the same write twice).
+ */
+function originBackedValues(node: PageNode, textProp: string | undefined): OriginBackedValue[] {
+  const resolved = node.resolvedProps
+  if (!resolved) return []
+  const out: OriginBackedValue[] = []
+  const collect = (key: string, value: unknown): void => {
+    if (typeof value !== 'string' && typeof value !== 'number') return
+    const origin = resolved[key]?.origin
+    if (origin) out.push({ key, value, origin })
+  }
+  for (const [prop, value] of Object.entries(node.props ?? {})) {
+    if (prop === textProp && node.textOrigin) continue
+    collect(prop, value)
+  }
+  if (node.moduleId === 'studio.instance') {
+    const callSiteProps = (node.props as { callSiteProps?: Record<string, unknown> }).callSiteProps ?? {}
+    for (const [name, value] of Object.entries(callSiteProps)) collect(`callSiteProps:${name}`, value)
+  }
+  return out
 }
 
 /**
@@ -82,10 +119,56 @@ export function collectNodeDiffEdits(
   // `style=""` target (`pkg.*`, `studio.instance`). Collected rather than
   // dropped, and toasted below: see `inlineStyleUnsavedNotice.ts`.
   const inlineStyleRefusals: InlineStyleModuleRefusal[] = []
+  const rowTemplateWrites: RowTemplateWrite[] = []
   /** Push one edit and answer the outcome key its bumps and drops carry. */
   const emit = (edit: StudioEditPayload): string => {
     edits.push(edit)
     return editOutcomeKey(edit)
+  }
+
+  /**
+   * The node's inline-style drift, written to `targetId` — its own location,
+   * or (OD-8) its row template. Answers the edit's outcome key, or `undefined`
+   * when there was nothing to write or the module has no `style=""` target.
+   */
+  const writeInlineStyles = (
+    node: PageNode,
+    baseline: ReturnType<typeof getLoadedNodeValues>,
+    targetId: string,
+  ): string | undefined => {
+    // Inline style edits (a colour, a shadow, a width dragged off a resize
+    // handle) write a `style={{}}` attribute onto the source element.
+    // `canWriteInlineStyleForModule` rather than a second inline copy of
+    // the rule: it is the one predicate every OFFER has to agree with
+    // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
+    // is what happens when a copy drifts. See it for which modules qualify.
+    const { changed, removed } = diffInlineStyles(node, baseline)
+    if (Object.keys(changed).length === 0 && removed.length === 0) return undefined
+    if (!canWriteInlineStyleForModule(node.moduleId)) {
+      // `font-revert` — this used to be an `if` around the write, so a
+      // `pkg.*` / `studio.instance` node's style drift was dropped in
+      // SILENCE: the canvas showed it, the save reported success, and the
+      // next reload put the old value back. Refused out loud now, at the one
+      // chokepoint every write path (single composer, multi composer, canvas
+      // handles, agent) already passes through.
+      inlineStyleRefusals.push({
+        nodeLabel: node.label ?? node.id,
+        moduleId: node.moduleId,
+        properties: [...Object.keys(changed), ...removed],
+      })
+      return undefined
+    }
+    const editKey = emit({
+      kind: 'style',
+      nodeId: targetId,
+      style: changed,
+      ...(removed.length > 0 ? { remove: removed } : {}),
+    })
+    for (const [k, v] of Object.entries(changed)) {
+      bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })
+    }
+    for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property), editKey })
+    return editKey
   }
 
   // C4 — this loop used to scan every node of every page on every autosave
@@ -125,10 +208,41 @@ export function collectNodeDiffEdits(
         }
       }
 
+      // WB-8 (P3-C) — a code-valued prop the parser traced to ONE string
+      // literal (`resolvedProps[k].origin`: a dictionary entry, or the call-site
+      // literal a component was handed) is editable, but ONLY at that literal.
+      // `isPropWritableToSource` authorises it on exactly this promise; a
+      // `kind: 'prop'` write would bake a string over the binding (and
+      // `setJsxProp` refuses `binding-overwrite` for it anyway). Like the text
+      // branch above, this runs BEFORE the location guard: the origin is not
+      // this node's JSX, so a `.map` row whose prop read its own array element
+      // writes its own string — it used to pass the store's gate and then be
+      // dropped here in silence. An instance's call-site props are the same
+      // rule under the `callSiteProps:` key, where a `prop` edit at the call
+      // site used to be emitted instead.
+      const writtenAtOrigin = new Set<string>()
+      for (const { key, value, origin } of originBackedValues(node, textProp)) {
+        writtenAtOrigin.add(key)
+        if (baseline && Object.is(baseline[key], value)) continue
+        const editKey = emit({ kind: 'literal', nodeId: `${origin.rel}:${origin.line}:${origin.col}`, text: String(value) })
+        bumps.push({ nodeId: node.id, key, value, editKey })
+      }
+
       // No single source location to write to (a synthetic `index:body` root, a
-      // `.map` iteration). Reached only after the text-origin branch above,
+      // `.map` iteration). Reached only after the two origin branches above,
       // which is why a `.map` row can still have its own copy edited.
-      if (!hasWritableSourceLocation(node.id)) continue
+      //
+      // P3-C (OD-8) — a row's inline STYLE goes to its row template, the one
+      // JSX site that renders every row; the caller tells the user it restyled
+      // all of them. Nothing else about a row is written there: its literal
+      // attributes stay read-only, and its tag is the template's tag.
+      if (!hasWritableSourceLocation(node.id)) {
+        const templateId = loopTemplateNodeId(node.id)
+        if (templateId === null) continue
+        const editKey = writeInlineStyles(node, baseline, templateId)
+        if (editKey !== undefined) rowTemplateWrites.push({ editKey, nodeId: node.id, templateId, rowCount: rowsOfTemplate(page, templateId) })
+        continue
+      }
 
       // The element's own name, not an attribute — see `effectiveTag`. Diffed
       // against the loaded baseline the same way, then routed to the rename
@@ -166,23 +280,8 @@ export function collectNodeDiffEdits(
         // — silently destroying the binding. `setJsxText` refuses that on
         // the text path, but `setJsxProp` will happily do it.
         if (baseline && Object.is(baseline[prop], value)) continue
-        // A code-valued prop the evaluator traced to a real literal
-        // (`title={t.home.skipTheTaxiQueue}` -> `skipTheTaxiQueue: '…'` in
-        // `i18n/translations.ts`) is editable — but ONLY at that literal.
-        // `isPropWritableToSource` authorises it on exactly this promise;
-        // falling through to the `kind: 'prop'` write below would bake a
-        // string over the binding, which is the thing the whole rule exists
-        // to prevent. Same shape as the `textOrigin` branch above.
-        const propOrigin = node.resolvedProps?.[prop]?.origin
-        if (propOrigin) {
-          const editKey = emit({
-            kind: 'literal',
-            nodeId: `${propOrigin.rel}:${propOrigin.line}:${propOrigin.col}`,
-            text: String(value),
-          })
-          bumps.push({ nodeId: node.id, key: prop, value, editKey })
-          continue
-        }
+        // Already emitted as a `literal` edit aimed at its origin, above.
+        if (writtenAtOrigin.has(prop)) continue
         // Second gate on the same rule the store applies, here because THIS is
         // the boundary that writes files: `updateNodeProps` refuses a
         // code-valued prop, but a tree can also arrive from an agent or a
@@ -211,47 +310,16 @@ export function collectNodeDiffEdits(
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
           const codeKey = `callSiteProps:${name}`
           if (baseline && Object.is(baseline[codeKey], value)) continue
+          if (writtenAtOrigin.has(codeKey)) continue
           if (!isPropWritableToSource(node, codeKey)) continue
           const editKey = emit({ kind: 'prop', nodeId: node.id, prop: codeKey, value })
           bumps.push({ nodeId: node.id, key: codeKey, value, editKey })
         }
       }
 
-      // Inline style edits (a colour, a shadow, a width dragged off a resize
-      // handle) write a `style={{}}` attribute onto the source element.
-      // `canWriteInlineStyleForModule` rather than a second inline copy of
-      // the rule: it is the one predicate every OFFER has to agree with
-      // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
-      // is what happens when a copy drifts. See it for which modules qualify.
-      const { changed, removed } = diffInlineStyles(node, baseline)
-      if (Object.keys(changed).length > 0 || removed.length > 0) {
-        if (canWriteInlineStyleForModule(node.moduleId)) {
-          const editKey = emit({
-            kind: 'style',
-            nodeId: node.id,
-            style: changed,
-            ...(removed.length > 0 ? { remove: removed } : {}),
-          })
-          for (const [k, v] of Object.entries(changed)) {
-            bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })
-          }
-          for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property), editKey })
-        } else {
-          // `font-revert` — this used to be an `if` around the block above,
-          // so a `pkg.*` / `studio.instance` node's style drift was dropped
-          // in SILENCE: the canvas showed it, the save reported success, and
-          // the next reload put the old value back. Refused out loud now,
-          // at the one chokepoint every write path (single composer, multi
-          // composer, canvas handles, agent) already passes through.
-          inlineStyleRefusals.push({
-            nodeLabel: node.label ?? node.id,
-            moduleId: node.moduleId,
-            properties: [...Object.keys(changed), ...removed],
-          })
-        }
-      }
+      writeInlineStyles(node, baseline, node.id)
     }
   }
 
-  return { edits, bumps, drops, inlineStyleRefusals }
+  return { edits, bumps, drops, inlineStyleRefusals, rowTemplateWrites }
 }

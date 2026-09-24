@@ -16,6 +16,7 @@
  */
 import { join } from 'node:path'
 import { fileSyntaxError, type SourceSyntaxError } from '@core/page-parser'
+import { cssCreateImportTarget } from './studioCssWriteback'
 import { refusalFor } from './studioEditRefusals'
 import { canonicalSourceRel, studioEditLocation } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
@@ -34,12 +35,13 @@ function filesWrittenBy(dir: string, edit: StudioEdit): string[] {
     const destination = studioEditLocation(dir, edit.parentNodeId)
     if (destination) rels.push(destination.rel)
   }
-  // A `create` writes the new stylesheet's `import` into the page — the
-  // stylesheet itself is CSS, which this guard has no business parsing.
-  // `pageFile` arrives as a bare path, so it goes through the same guard a
-  // node id's `rel` does before anything reads it.
+  // A `create` writes the new stylesheet's `import` into the page (or, with no
+  // page, the app entry) — the stylesheet itself is CSS, which this guard has
+  // no business parsing. The importer arrives as a bare path, so it goes
+  // through the same guard a node id's `rel` does before anything reads it.
   if (edit.kind === 'css' && edit.op === 'create') {
-    const page = canonicalSourceRel(dir, edit.pageFile)
+    const importer = cssCreateImportTarget(dir, edit)
+    const page = importer ? canonicalSourceRel(dir, importer) : null
     if (page) rels.push(page)
   }
   return rels

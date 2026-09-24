@@ -359,8 +359,12 @@ function processElement(
   // `loc` stays the real source location even for an expanded loop iteration —
   // that IS where this element is written. Only the id is made unique.
   const id = buildSourceNodeId(ctx.relFile, line, column, ctx.idSuffix)
-  // P1-A — who this position names, for the writeback guard. A `.map` row has no writable location to guard.
-  const identity = ctx.idSuffix ? {} : { fingerprint: jsxElementFingerprint(element) }
+  // P1-A — who this position names, for the writeback guard. A `.map` row is
+  // stamped too (P3-C, OD-8): its style and class edits are written to the
+  // row TEMPLATE, which is this very element, so the guard must be able to
+  // tell whether the template still stands at `loc`. Every row of one
+  // template carries the same fingerprint — it is one piece of JSX.
+  const identity = { fingerprint: jsxElementFingerprint(element) }
 
   const attributes = Node.isJsxElement(element)
     ? element.getOpeningElement().getAttributes()
@@ -536,6 +540,9 @@ function processElement(
     ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
     ...(lock.resolution ? { resolution: lock.resolution } : {}),
     ...(resolvedProps ? { resolvedProps } : {}),
+    // P3-C (WB-6) — a call site's literal attributes, for the values that cross
+    // into the component. See `ParsedNode.literalPropOrigins`.
+    ...(Object.keys(propsResult.literalOrigins).length > 0 ? { literalPropOrigins: propsResult.literalOrigins } : {}),
   }
   ctx.nodes[id] = node
 

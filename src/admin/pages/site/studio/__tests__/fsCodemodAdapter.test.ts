@@ -920,15 +920,16 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
-    // `#2` marks this as a `.map` iteration — `hasWritableSourceLocation`
-    // reports `false` for it (one piece of source JSX renders every row), so
-    // there is genuinely nowhere honest for `setJsxClassName` to write.
+    // An imported page's synthetic `<pageId>:body` root: the importer minted it,
+    // but nothing was written at it, so there is genuinely nowhere honest for
+    // `setJsxClassName` to write. (A `.map` row used to be the example here;
+    // since P3-C, OD-8, its class goes to the row template — tested below.)
     function unwritablePage(classIds: string[]) {
       return makePage({
-        rootNodeId: 'root',
+        id: 'home',
+        rootNodeId: 'home:body',
         nodes: {
-          root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1#2'] }),
-          'pages/Home.tsx:3:1#2': makeNode({ id: 'pages/Home.tsx:3:1#2', moduleId: 'base.container', label: 'Card', classIds }),
+          'home:body': makeNode({ id: 'home:body', moduleId: 'base.body', label: 'Card', classIds }),
         },
       })
     }
@@ -983,6 +984,55 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       // advanced after the first save, so this must be silent.
       await fsCodemodAdapter.saveSite(siteWithUnwritableClassIds(['class-1']))
       expect(collectToasts()).toHaveLength(0)
+    })
+  })
+
+  describe('P3-C (OD-8) — a class on a `.map` row is written to the row template', () => {
+    function menuPage(classIdsOfRow1: string[]) {
+      return makePage({
+        id: 'menu',
+        rootNodeId: 'menu:body',
+        nodes: {
+          'menu:body': makeNode({ id: 'menu:body', moduleId: 'base.body', children: ['pages/Menu.tsx:7:10#0', 'pages/Menu.tsx:7:10#1'] }),
+          'pages/Menu.tsx:7:10#0': makeNode({ id: 'pages/Menu.tsx:7:10#0', moduleId: 'base.container', label: 'Dish' }),
+          'pages/Menu.tsx:7:10#1': makeNode({ id: 'pages/Menu.tsx:7:10#1', moduleId: 'base.container', label: 'Dish', classIds: classIdsOfRow1 }),
+        },
+      })
+    }
+
+    it('sends one class edit at the template, says it applied to every row, and re-reads the page', async () => {
+      stubFetch({
+        '/admin/api/studio/load': {
+          dir: '/tmp/studio-test', projectName: 'studio-test',
+          pages: [menuPage([])],
+          componentSources: {}, styleRules: {},
+          styleRuleSources: { 'class-1': { file: 'pages/Menu.css', selector: '.featured' } },
+          conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
+        },
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 0, shifted: false, sharedComponents: false, touchedFiles: ['/tmp/studio-test/pages/Menu.tsx'],
+        },
+      })
+      await loadThenResetCalls()
+      let latest: Toast[] = []
+      subscribeToasts((snapshot) => {
+        latest = [...snapshot]
+      })
+
+      await fsCodemodAdapter.saveSite(
+        makeSite({
+          styleRules: { 'class-1': { id: 'class-1', name: 'featured', kind: 'class', styles: {}, contexts: {} } as never },
+          pages: [menuPage(['class-1'])],
+        }),
+      )
+
+      const save = calls.find((c) => c.url === '/admin/api/studio/save')
+      expect((save?.body as { edits: unknown[] }).edits).toEqual([
+        { kind: 'class', nodeId: 'pages/Menu.tsx:7:10', add: [{ kind: 'literal', token: 'featured' }], remove: [] },
+      ])
+      expect(latest.map((toast) => [toast.kind, toast.title])).toEqual([['info', 'Applied to all 2 rows']])
+      // The write changed every row on disk, so the board re-reads the page.
+      expect(calls.some((c) => c.url === '/admin/api/studio/reload-scope' || c.url.startsWith('/admin/api/studio/load'))).toBe(true)
     })
   })
 

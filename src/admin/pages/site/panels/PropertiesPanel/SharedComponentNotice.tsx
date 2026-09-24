@@ -16,7 +16,7 @@
  */
 import { WarningDiamondSolidIcon } from 'pixel-art-icons/icons/warning-diamond-solid'
 import { useEditorStore } from '@site/store/store'
-import { isInlinedNodeId } from '@core/page-tree'
+import { decodeSourceNodeId, isInlinedNodeId } from '@core/page-tree'
 import { inlineTailKey } from '@site/store/slices/site/nodeIndex'
 import styles from './SharedComponentNotice.module.css'
 
@@ -25,9 +25,17 @@ interface SharedComponentNoticeProps {
   componentName: string
   /** The selected node's id — used to count how many instances share its source line. */
   nodeId: string
+  /**
+   * P3-C (WB-6) — where this node's TEXT is written, when that is not the
+   * component's file: `<Header title="Where to?"/>` hands its `<h2>{title}</h2>`
+   * the call site's literal, so a text edit changes this instance alone (or a
+   * dictionary entry). Everything else on the element still writes the
+   * component, which is what the rest of the sentence says.
+   */
+  textOrigin?: { rel: string; line: number }
 }
 
-export function SharedComponentNotice({ componentName, nodeId }: SharedComponentNoticeProps) {
+export function SharedComponentNotice({ componentName, nodeId, textOrigin }: SharedComponentNoticeProps) {
   // A primitive selector: no object identity to keep stable, reading the O(1)
   // `_inlineTailToCount` index (WS-5.2) instead of scanning every node of
   // every page on every store change. An inlined node's id is
@@ -41,12 +49,24 @@ export function SharedComponentNotice({ componentName, nodeId }: SharedComponent
     return s._inlineTailToCount.get(tail) ?? 1
   })
 
+  const componentFile = decodeSourceNodeId(nodeId)?.rel
+  const textElsewhere = textOrigin !== undefined && textOrigin.rel !== componentFile ? textOrigin : undefined
+
   return (
     <div className={styles.notice} role="note">
       <WarningDiamondSolidIcon size={14} className={styles.icon} />
       <p className={styles.text}>
         Part of <strong>{componentName}</strong>. Edits are written to its source file
         {instanceCount > 1 ? <> and apply to all <strong>{instanceCount}</strong> places it&apos;s used</> : null}.
+        {textElsewhere ? (
+          <>
+            {' '}Its text is set outside the component, so a text edit is written to{' '}
+            <strong>
+              {textElsewhere.rel}:{textElsewhere.line}
+            </strong>{' '}
+            instead.
+          </>
+        ) : null}
       </p>
     </div>
   )
