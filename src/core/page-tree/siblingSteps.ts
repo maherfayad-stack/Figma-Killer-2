@@ -43,7 +43,7 @@
  */
 import type { NodeTree } from './treeSchema'
 import type { PageNode } from './pageNode'
-import type { SequencedMove } from './moveSequence'
+import { topLevelSelection, type SequencedMove } from './moveSequence'
 
 /**
  * One element moved within its own parent: `index` is where it lands, counted
@@ -57,26 +57,6 @@ export type SiblingStepRefusal = 'multi-row' | 'nested' | 'locked'
 export type SiblingStepPlan =
   | { ok: true; moves: SiblingMove[] }
   | { ok: false; reason: SiblingStepRefusal }
-
-/**
- * The selected ids that move on their own: present, not the root, and not
- * inside another selected node. Order follows `nodeIds`.
- */
-export function topLevelSelection(tree: NodeTree<PageNode>, nodeIds: readonly string[]): string[] {
-  // The root never moves, so it carries nothing: a selection holding it
-  // still moves its other members.
-  const selected = new Set(nodeIds.filter((id) => id !== tree.rootNodeId))
-  return nodeIds.filter((id) => {
-    const node = tree.nodes[id]
-    if (!node || id === tree.rootNodeId) return false
-    let parentId = node.parentId
-    while (parentId) {
-      if (selected.has(parentId)) return false
-      parentId = tree.nodes[parentId]?.parentId ?? null
-    }
-    return true
-  })
-}
 
 /** True when `nodeId` is `ancestorId` or sits inside it. */
 function isSelfOrDescendant(tree: NodeTree<PageNode>, nodeId: string, ancestorId: string): boolean {

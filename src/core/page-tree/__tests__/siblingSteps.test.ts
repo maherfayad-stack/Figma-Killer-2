@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { moveNode } from '../mutations'
-import { planSiblingSteps, topLevelSelection, type SiblingMove } from '../siblingSteps'
-import { invertMoveSequence } from '../moveSequence'
+import { planSiblingSteps, type SiblingMove } from '../siblingSteps'
+import { invertMoveSequence, topLevelSelection } from '../moveSequence'
 import type { NodeTree } from '../treeSchema'
 import type { PageNode } from '../pageNode'
 

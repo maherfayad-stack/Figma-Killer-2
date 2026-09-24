@@ -247,7 +247,6 @@ export { wrapNode, wrapNodes, unwrapNode } from './wrapMutations'
 // P2-C2 — a multi-selection stepping among its siblings, as independent single-element moves.
 export {
   planSiblingSteps,
-  topLevelSelection,
   type SiblingMove,
   type SiblingStepPlan,
   type SiblingStepRefusal,
@@ -258,6 +257,7 @@ export {
   invertMoveSequence,
   moveOnScratch,
   planMoveSequence,
+  topLevelSelection,
   type ScratchTree,
   type SequencedMove,
 } from './moveSequence'
