@@ -110,7 +110,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### mcp-30 — P4-E: assets for the agent (AI-13, AI-20, P4-C review F8)
 - **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` (trunk merged in) · **PR:** #248 (draft, base `feat/canvas-excellence`; long form, threat list and tool table in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open); **needs security-guard review**
+- **Stage:** verifying: the security review of #248 came back CHANGES-REQUIRED; F1, F2, F3 and F7 are fixed and need re-review. F4, F5 and F6 are deferred (reasons in the PR).
 - **Goal:** the agent finds a real icon or photo instead of drawing a grey box, lists the project's images and fonts, and can no longer be steered into fetching from an arbitrary host (F8).
 - **Tools added** (all `execution: server`):
   - `studio_find_image` (`ai.tools.write` + `studio.write`, `write`, `headlessOnly`): `{ dir?, query, orientation?, size?, count ≤4, photoId?, targetDir? }`. Pexels (direct HTTP) lands photos and credits each in `IMAGE-CREDITS.md`. With no `PEXELS_API_KEY` it returns `configured:false` and "Stock photo search is not set up on this Studio server…"; it is not an error.
@@ -122,7 +122,12 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `landAgentAsset`: agent write gate, project lock and turn log for fetch, find_image and extract_reference_asset (`prototype/` was reachable).
   - Prompt ladder rewritten (find, then name the gap); a digest line when stock search is not set up. Codes `host-not-allowed`, `stock-search-failed`, `stock-key-refused`.
 - **Decisions:** Pexels (licence allows self-hosting; one image host). Figma and Dev Mode hosts were added beyond the brief's "stock + user" list so the Figma asset flow keeps working; flagged in the PR. The key is env-only.
-- **Landmines:** `ConnectorRegistryBinding` now requires `userSuppliedUrls`. Test servers need `node:http` + `Bun.fetch`, because the suite preload swaps in happy-dom's `Response`/`fetch`. `chat.ts` is at 699/700 lines.
+- **Review #248 fixes:**
+  - F1: `INERT_FILE_CSP` (`default-src 'none'; sandbox`, `static.ts`), one helper for studio asset, uploads and published SVG/HTML; `applySecurityHeaders` now APPENDS to a route's CSP; the SVG sanitizer is hardened.
+  - F2: `origin: 'studio'` on composed user text ("Address with AI"), which `collectUserSuppliedUrls` skips.
+  - F3: loopback allowed only at `:3845/assets/`.
+  - F7: the target folder is judged as a parent.
+- **Landmines:** `ConnectorRegistryBinding` now requires `userSuppliedUrls`. A route that sets its own CSP under `/admin` now keeps it. Test servers need `node:http` + `Bun.fetch`, because the suite preload swaps in happy-dom's `Response`/`fetch`. `chat.ts` is at 699/700 lines.
 - **Verification:** build and lint clean; every chunk run under the lock; only pre-existing failures (render_reference dev server, bundle freshness, optimistic broadcast, bridge measurement, liveOrigin WS). `editorLayoutPersistence` timed out in a 200-file batch and passes alone.
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
 
