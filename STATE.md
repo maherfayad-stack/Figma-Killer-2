@@ -108,6 +108,28 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Select a code input and the banner (mixed), press ↓: the banner moves, the input stays.
   5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
 
+### store-19 — P3-D: structural refusals become writes (ERR-7, ERR-8, ERR-16, WB-14, WB-20, WB-21, WB-22; WB-15 not done)
+- **Agent:** store-engineer · **Branch:** `feat/structural-refusals-become-writes` off `be5733fb` · **PR:** #250 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:**
+  - **One engine for N-element gestures.** `@core/page-tree` `moveSequence.ts` (single-element moves applied IN ORDER, each against the scratch tree the last left) → store `moveNodesInSequence` (`moveSequenceActions.ts`, was `siblingStepActions.ts`) → `commitStudioSequence` → `/save` `sequence: true` → `server/handlers/studioEditSequence.ts` (each edit a one-edit batch, every named id re-addressed by DOCUMENT ORDER, all files restored if any step refuses). Multi-drag, ⌥-drag of N, paste of N, P2-C2 steps all ride it. History gesture `siblings` → `moves`.
+  - ERR-8: paste finds its source on the board (`studioPasteWrites.ts`: by id, else unique fingerprint); a copy into another file is a `transplant` copy. ERR-16: cross-file reparent → transplant; wrap of N → group. WB-22: a `.map` list edge is an anchor; landing last with no neighbour appends. WB-20/21: `resolveJsxChildRange(…, unit)` — `{cond && <X/>}` moves/deletes whole, ternary branch → `null`; mixed-line moves take the anchor's shape; group splits a mid-line run.
+  - OD-7: `instanceOnlyGesture.ts` — a `shared-component` refusal (with a retry) detaches THIS call site, follows ids by child-index path, replays via `retry(mapId)` (every retry closure now takes an id MAP), links the entries (`HistoryEntry.linkedToNext`, cascading undo/redo). Detach reports `created`/`removed`; its import is retired by the batch prune pass so undo (`reinsert-detached`) restores it.
+- **Slices / selectors:** site slice only; no new selector. New actions: `moveNodesInSequence` (entry `moves`, no coalesce key, one entry per gesture). Removed: `moveSiblings`, `invertSiblingMoves`, `refuseStructuralEdit`'s `multi`.
+- **Tests (each shown failing with its fix disabled in place):** `structuralJsxCodemods`/`groupJsxCodemods` (+9), `studioEditSequence.test.ts` (6, new engine), `moveSequence.test.ts` (14), `structuralGesturesBecomeWrites.test.ts` (6), `instanceOnlyGesture.test.ts` (3), `duplicateToPlan` (+4). e2e `structural-gestures-one-write.e2e.ts` (ports 51674/31602): ERR-7 green (bytes exact, one sequence save, one ⌘Z); ERR-8 copy lands but its ⌘Z did not restore in 30 s (open); OD-7 blocked at the harness selecting the inner element (store test covers it).
+- **Landmines:**
+  - **P3-C collision:** `studioWriteback.ts` — the `detach` case (`retireImport: false`, returns `created`/`removed`) and `removesMarkup` += `detach`. No schema change; `SaveBodySchema.sequence` is in `studioRouteBodies.ts`.
+  - The sequence engine follows ids by document order among the elements a step did NOT act on (`actedOnBefore/After`); a new sequenced kind must declare what it acts on there or it will refuse.
+  - A ternary-branch delete reports no `removed` bytes, so its ⌘Z is skipped with a notice.
+  - Pre-existing fails seen: `structuralOptimisticBroadcast.test.ts` (4, same on `be5733fb`).
+- **Not done (next):** OD-8/WB-15 list rows edit the array literal (design in PR body); non-adjacent group (gather then group, one undo); multi cross-frame drop; OD-7 automatic component-copy fallback (the dialog still offers it); multi-file image drop is P5-B IMG-2.
+- **Human action needed:** dogfood on `test4`, `/admin/site`, static tier:
+  1. Layers: click one row, Ctrl-click a non-adjacent one, drag onto a third: both land together; `git diff` shows only those lines moved; one ⌘Z restores the file.
+  2. ⌥-drag two selected layers: two copies, one save, one ⌘Z removes both.
+  3. ⌘C a layer in one frame, click a layer in another frame, ⌘V: the copy lands in the second page's file.
+  4. Inside a component used twice (e.g. a `SheetHeader`), select an inner element (Enter, Tab), press Delete: no dialog; only THIS instance is detached and loses the element; the component file and the other instance are unchanged; one ⌘Z restores the page exactly.
+  5. Drag an element that shares a line with a sibling to below a whole-line sibling: it lands on its own line.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -151,6 +173,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry in the archive
 - `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry in the archive
 - `canvas-27` · `/admin/site` on `test4`, SMS · two absolute layers nudge together (one save, one ⌘Z), two code inputs step together, ⌥↓ on a pair, a mixed selection nudges only the absolute one. Script: the `canvas-27` entry under `## Now`
+- `store-19` · `/admin/site` on `test4` · a Layers multi-drag writes once and undoes once; ⌥-drag of two; ⌘C/⌘V across frames; Delete inside one instance of a shared component (no dialog, only that instance, one ⌘Z). Script: the `store-19` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row
