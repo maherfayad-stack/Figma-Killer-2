@@ -70,7 +70,7 @@ describe('the free canvas never reaches the running app (G-EX-1)', () => {
 
     expect(withLayers).toBe(without)
     // The banner says where the data came from; no IMPORT may ever reach into it.
-    expect(withLayers).not.toMatch(/from ['"][^'"]*.studio/)
+    expect(withLayers).not.toMatch(/from ['"][^'"]*\.studio/)
     expect(withLayers).not.toContain('cl0123456789')
     expect(withLayers).not.toContain('secret-scratch')
   })

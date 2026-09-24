@@ -89,7 +89,9 @@ test.beforeEach(() => {
     'public/.gitkeep': '',
     'package.json': JSON.stringify({ name: 'free-canvas-fixture', private: true, type: 'module' }, null, 2) + '\n',
     '.studio/meta.json':
-      JSON.stringify({ displayName: 'Zz Free Canvas Fixture', platform: 'web', pagesDir: 'pages', frameDefaults: { width: 900, height: 600 } }, null, 2) + '\n',
+      // Static: the free canvas renders the same (always-static) surface at
+      // every tier, and a static board has one design iframe per frame to aim at.
+      JSON.stringify({ displayName: 'Zz Free Canvas Fixture', platform: 'web', pagesDir: 'pages', trust: 'static', frameDefaults: { width: 900, height: 600 } }, null, 2) + '\n',
     '.studio/boards.json':
       JSON.stringify(
         {
@@ -145,6 +147,9 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
   await page.mouse.up()
 }
 
+/** An `import … from '….studio/…'` or `import('….studio/…')` — how app code could reach a layer module. */
+const IMPORTS_FROM_STUDIO_DIR = new RegExp(String.raw`(from|import)\s*\(?\s*['"][^'"]*\.studio/`)
+
 const centre = (box: { x: number; y: number; width: number; height: number }) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
 
 test.describe('the free canvas', () => {
@@ -152,11 +157,14 @@ test.describe('the free canvas', () => {
 
   test('an image on the empty board persists, stays out of the app, goes into a frame and back out', async ({ page }) => {
     const pageBefore = readPage()
-    const appBefore = appFiles()
 
     // ── 1. Drop an image on the empty board ────────────────────────────────
     let canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = await frameForPage(page, canvasRoot, 'home')
+    // Snapshot AFTER the board opened: opening scaffolds the preview shell
+    // (`index.html`, `vite.config.js`, `package.json` scripts), which is
+    // Studio's own doing and not this feature's.
+    const appBefore = appFiles()
     const frameBox = (await frame.boundingBox())!
     const rootBox = (await canvasRoot.boundingBox())!
     // Right of the frame, inside the canvas: empty board.
@@ -177,7 +185,10 @@ test.describe('the free canvas', () => {
     for (const [name, text] of appBefore) expect(appAfter.get(name), `${name} changed`).toBe(text)
     const added = [...appAfter.keys()].filter((name) => !appBefore.has(name))
     expect(added.every((name) => name.startsWith('public/') && name.endsWith('.png')), `unexpected new app files: ${added}`).toBe(true)
-    for (const [name, text] of appAfter) expect(text.includes('.studio/'), `${name} reaches into .studio/`).toBe(false)
+    for (const [name, text] of appAfter) {
+      expect(IMPORTS_FROM_STUDIO_DIR.test(text), `${name} imports from .studio/`).toBe(false)
+      expect(text.includes(layerId), `${name} names the loose layer`).toBe(false)
+    }
     const registry = fs.readFileSync(rel('prototype', 'registry.generated.jsx'), 'utf8')
     expect(registry, 'the live preview registry names the loose layer').not.toContain(layerId)
 
