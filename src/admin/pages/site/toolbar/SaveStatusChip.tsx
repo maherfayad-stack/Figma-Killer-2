@@ -21,6 +21,11 @@
  *                              waiting out the autosave debounce
  *   error + `retrying`       → "Saving…" — the automatic ladder is mid-flight
  *   error, ladder exhausted  → "Unsaved — retry", danger tone, clickable
+ *   `boardStale` (any state) → "Out of date — reload", clickable (ERR-18): a
+ *                              background re-read failed after its retries,
+ *                              so the board may show older files than disk.
+ *                              Unsaved work still outranks it — that chip is
+ *                              about the user's edits, this one about disk's.
  *
  * The ladder itself (3 tries, 2s/4s/8s) lives in `usePersistence` —
  * `SAVE_RETRY_BACKOFF_MS` — because retrying a save is the persistence
@@ -36,8 +41,9 @@
  */
 import { useSyncExternalStore } from 'react'
 import { Button } from '@ui/components/Button'
+import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { cn } from '@ui/cn'
-import type { PersistenceSaveStatus } from '@site/hooks/usePersistence'
+import type { PersistenceSaveStatus } from '@site/hooks/persistenceStatus'
 import {
   isStructuralCommitInFlight,
   subscribeStructuralCommitInFlight,
@@ -48,6 +54,8 @@ interface SaveStatusChipProps {
   status: PersistenceSaveStatus
   /** The persistence controller's `saveSite`. Rejects when the save failed. */
   onRetry: () => Promise<void>
+  /** ERR-18 — the persistence controller's `boardStale`. */
+  boardStale?: boolean
 }
 
 function readStructuralInFlight(): boolean {
@@ -59,7 +67,7 @@ function structuralInFlightServerSnapshot(): boolean {
   return false
 }
 
-export function SaveStatusChip({ status, onRetry }: SaveStatusChipProps) {
+export function SaveStatusChip({ status, onRetry, boardStale = false }: SaveStatusChipProps) {
   const structuralInFlight = useSyncExternalStore(
     subscribeStructuralCommitInFlight,
     readStructuralInFlight,
@@ -99,6 +107,23 @@ export function SaveStatusChip({ status, onRetry }: SaveStatusChipProps) {
         }}
       >
         <span>{stuck ? 'Unsaved — retry' : 'Unsaved'}</span>
+      </Button>
+    )
+  }
+
+  if (boardStale) {
+    return (
+      <Button
+        variant="ghost"
+        size="micro"
+        className={styles.chip}
+        data-save-status="stale"
+        tooltip="Your work is saved, but the board could not re-read your files. Read them again."
+        onClick={() => {
+          void requestCmsSiteReload()
+        }}
+      >
+        <span>Out of date — reload</span>
       </Button>
     )
   }

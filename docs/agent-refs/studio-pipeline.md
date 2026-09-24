@@ -77,8 +77,10 @@ next load.
 POST /admin/api/studio/save  { dir, edits: StudioEdit[], expect?: { [nodeId]: fingerprint } }
    └─ studioEditLocation()  → { rel, line, col }  (split composite id, keep TAIL)
    └─ findMovedEdits()      → element-moved refusals, BEFORE any write (P1-A)
-   └─ applyStudioEdit()     → one ast-codemod per edit
+   └─ applyStudioEdit()     → one ast-codemod per edit; every decline → a NAMED refusal (WB-12)
    → { written, skipped, shifted, sharedComponents, refusals, fingerprints, … }
+      `refusals` is COMPLETE: an edit wrote exactly when no refusal names its
+      (nodeId, kind, prop). `skipped === refusals.length`. See `studioEditRefusals.ts`.
 ```
 
 ---
@@ -303,8 +305,9 @@ second page to read a dictionary never records the module behind it.
 | **Reload only when `written > 0`** | A reload re-parses and replaces the document. With zero writes it overwrites the user's in-memory edit — the change reverted itself ~2 s after typing |
 | **A reload is NARROW by default** | `shifted`/`sharedComponents` used to mean a full `loadSite()`; on an App Router board, shared layout chrome makes `sharedComponents` the common case, so every save reparsed all forty pages. `resyncBoardAfterWrite` (`studioBoardResync.ts`) asks `/reload-scope` which pages the touched files feed and patches only those. It widens whenever it cannot prove the scope — narrowing may never UNDER-reload |
 | **A save's resync runs LAST** | It rewrites the same diff baselines `saveSite` advances after its POST; running it inline lets the save's own commit overwrite the fresh disk baseline with the pre-reload document |
-| **`skipped > 0` raises a toast** | A refusal the user can't see is indistinguishable from data loss |
-| **`applyStudioEdit` returning `false` counts as `skipped`** | It used to increment neither counter, so the client assumed a write happened |
+| **Every edit that does not write is a named refusal** (WB-12, `studioEditRefusals.ts`) | The old anonymous "unexplained skip" became one red "Some changes were not saved" blaming the wrong cause. Now: `mixed-children`, `element-moved` (a locate miss — the board re-reads and retries it silently), `component-tag`, `not-a-literal`, `spread-attribute`, `no-source-location`/`stylesheet-unavailable`/`asset-unavailable` (an `applied: false` outcome), `write-failed` (an exception nobody named; logged server-side). The sentence is written from the reason, never the codemod's message, which carries an absolute path |
+| **Baselines commit PER EDIT** (WB-35, `editOutcomes.ts`) | The response used to carry only aggregate counts, so one refused edit held back — and re-sent on every save — the whole batch. Each bump carries its edit's outcome key; the landed ones advance, the refused ones stay in the diff |
+| **A save-time refusal is a WARNING with its remedy** (WB-13, `refusalToasts.ts`) | One card per (kind, target, reason) per session, with "Open in code" when the refusal names a source position. Never `kind: 'error'` — the editor declined a write it could not make honestly; nothing broke. Gated by `error-toast-sites.test.ts` |
 | **`tag` has its own edit kind + codemod** | Routing it through `setJsxProp` added a literal `tag="section"` attribute and left the element a `<div>` — 140 fake controls on one corpus |
 | **Path containment in the decoder** | `rel` arrives from the client inside `nodeId`; the save route builds `join(dir, rel)` |
 | **`loadSite` keeps the currently-open page** when the incoming site still has its id | Resetting to home mid-edit reads as the canvas moving on its own |

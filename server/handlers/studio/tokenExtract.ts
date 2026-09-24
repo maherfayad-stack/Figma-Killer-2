@@ -120,7 +120,7 @@
 import { join } from 'node:path'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { readStudioFrameworkFile, writeStudioFrameworkFile } from '../studioFramework'
 import { readCappedFile } from './styleCompileFileRead'
@@ -367,8 +367,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       return jsonResponse({ source: result.source, counts: result.counts, warnings: result.warnings })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/tokenExtract]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/tokenExtract]', err)
     }
   }
 
@@ -390,8 +389,7 @@ export async function tryServeStudioTokens(req: Request, url: URL, pathname: str
       })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio/tokenExtract]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio/tokenExtract]', err)
     }
   }
 

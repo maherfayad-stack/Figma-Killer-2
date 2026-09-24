@@ -39,7 +39,7 @@ import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { CloudUploadSolidIcon } from 'pixel-art-icons/icons/cloud-upload-solid'
 import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
 import { dropStudioAsset } from '@site/studio/dropStudioAsset'
-import { saveStudioAssetEdit } from '@site/studio/studioSaveRequests'
+import { saveStudioAssetEdit } from '@site/studio/studioAssetEdit'
 import styles from './ImageSourceSection.module.css'
 
 interface ImageSourceSectionProps {

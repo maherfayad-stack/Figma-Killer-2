@@ -47,13 +47,18 @@ export interface SetJsxPropParams {
  * writeback batch reports; `path` is `<file>:<line>:<col>` of the element.
  */
 export class JsxPropTargetError extends Error {
-  readonly reason = 'binding-overwrite'
   readonly path: string
+  /**
+   * `binding-overwrite` — the attribute holds code a literal would delete;
+   * `spread-attribute` — the name only exists inside a `{...spread}`.
+   */
+  readonly reason: 'binding-overwrite' | 'spread-attribute'
 
-  constructor(message: string, path: string) {
+  constructor(message: string, path: string, reason: 'binding-overwrite' | 'spread-attribute' = 'binding-overwrite') {
     super(message)
     this.name = 'JsxPropTargetError'
     this.path = path
+    this.reason = reason
   }
 }
 
@@ -111,8 +116,10 @@ export function setJsxProp(params: SetJsxPropParams): void {
     // `getAttribute(name)` only matches spread attributes if `name` happens
     // to equal the literal text "...expr", which should never occur for a
     // real prop name — guard against silently clobbering one anyway.
-    throw new Error(
+    throw new JsxPropTargetError(
       `Attribute "${prop}" on the element at ${file}:${line}:${col} is a spread attribute and cannot be set as a literal prop.`,
+      `${file}:${line}:${col}`,
+      'spread-attribute',
     )
   } else {
     element.addAttribute({ name: prop, initializer: initializerText })

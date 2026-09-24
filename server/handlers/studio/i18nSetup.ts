@@ -37,7 +37,7 @@ import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { extractStringsToDictionary, relativeSpecifier, type StringExtraction } from '@core/ast-codemods'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import { findHardcodedStrings, type HardcodedString } from './hardcodedStrings'
@@ -263,7 +263,6 @@ export async function tryServeStudioI18nSetup(req: Request, _url: URL, pathname:
     return jsonResponse(setUpProjectI18n(dir))
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:i18nSetup]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:i18nSetup]', err)
   }
 }

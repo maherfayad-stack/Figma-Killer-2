@@ -381,7 +381,10 @@ describe('Track B1 integration — create branch: zero stylesheets, but a real p
     ])
 
     expect(result.written).toBe(0)
-    expect(result.refusals).toHaveLength(0) // not a NAMED refusal — an attack, not a sentence to show a user
+    // WB-12 — every edit that does not write is named; a hand-crafted escape is
+    // told only that there was nowhere to write, never where it tried.
+    expect(result.refusals).toEqual([expect.objectContaining({ reason: 'stylesheet-unavailable' })])
+    expect(result.refusals[0]!.message).not.toContain('outside.css')
     expect(result.createdStylesheets).toHaveLength(0)
     expect(fs.existsSync(path.join(path.dirname(tmpDir), 'outside.css'))).toBe(false)
   })

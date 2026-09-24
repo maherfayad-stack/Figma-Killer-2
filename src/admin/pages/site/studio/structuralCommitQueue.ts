@@ -53,9 +53,14 @@
  * A held ⌘D auto-repeats about thirty times a second and each commit is a POST
  * plus a re-parse, so an unbounded queue would keep writing copies for a
  * minute after the key came up — the plan's habit 2 ("loops have no ceilings")
- * wearing a new hat. {@link MAX_DEFERRED_STRUCTURAL_GESTURES} bounds it, and
- * the overflow is REPORTED rather than dropped in silence: one warning card
- * (Z1 collapses repeats onto it) saying the burst outran the writer.
+ * wearing a new hat. {@link MAX_DEFERRED_STRUCTURAL_GESTURES} bounds it.
+ *
+ * ERR-25 — the overflow is dropped WITHOUT a toast. The only way to get past
+ * twenty queued gestures is a held key auto-repeating, and what the person
+ * sees is right: the copies keep appearing while the writer catches up, and
+ * the extra repeats simply do not happen, exactly as a held key past a
+ * program's own limit does anywhere else. "Too many changes at once" blamed
+ * the user for holding a key. Logged for devtools.
  */
 import { pushToast } from '@ui/components/Toast'
 import { captureIdentities, relocateCapturedIds } from './sourceIdentity'
@@ -144,12 +149,7 @@ export function deferWhileStructuralCommitInFlight(
 ): boolean {
   if (!structuralCommitInFlight) return false
   if (deferred.length >= MAX_DEFERRED_STRUCTURAL_GESTURES) {
-    pushToast({
-      kind: 'warning',
-      title: 'Too many changes at once',
-      body: `Studio is still writing the last ${MAX_DEFERRED_STRUCTURAL_GESTURES} changes to your project, so this one was not queued. Let it catch up and try again.`,
-      location: 'site-editor',
-    })
+    console.warn(`[structuralCommitQueue] ${MAX_DEFERRED_STRUCTURAL_GESTURES} gestures already queued; dropping a repeat`)
     return true
   }
   const identities = captureIdentities(nodeIds)

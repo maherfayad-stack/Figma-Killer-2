@@ -35,6 +35,7 @@ export {
 export type { SourceNodeLocation } from './sourceNodeId'
 export {
   ELEMENT_MOVED_REASON,
+  isStaleTargetRefusalReason,
   SourceFingerprintExpectationsSchema,
   SourceFingerprintSchema,
   sourceFingerprintLabel,
@@ -102,7 +103,6 @@ export {
   explainPropConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
-  explainUnexplainedSkip,
 } from './editConstraint'
 // The structural half of the same translation layer — see
 // `structuralConstraint.ts`'s own doc for why it is a separate module.

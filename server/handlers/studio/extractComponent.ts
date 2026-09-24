@@ -31,7 +31,7 @@
 import { join } from 'node:path'
 import { extractComponentCopy } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { studioEditLocation } from '../studioWriteback'
 
@@ -78,7 +78,6 @@ export async function tryServeStudioExtractComponent(req: Request, _url: URL, pa
     return jsonResponse({ ok: true, newFile: result.newFile, newComponentName: result.newComponentName })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:extractComponent]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:extractComponent]', err)
   }
 }

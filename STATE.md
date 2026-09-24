@@ -154,6 +154,21 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
   5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
 
+### store-18 — P3-A: toast and failure policy (WB-12, WB-13, WB-33, WB-35, ERR-13, ERR-18, ERR-22, ERR-24, ERR-25, ERR-26, ERR-29)
+- **Agent:** store-engineer · **Branch:** `fix/quiet-editor-toast-policy` (trunk `a03f410a` merged in) · **PR:** #244 (draft; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** never show an edit the editor cannot keep; never a red toast for something the editor could have done itself.
+- **Slices / modules touched:** no new slice, no new selector. `site` slice: `deleteNode`/`deleteNodes` queue a Delete on a pending preview and retarget it (`structuralOptimism.resolvePreviewTargets`, bounded map fed by `settle(createdNodeIds)`). No history or coalesce change: the queued delete runs the ordinary delete (its own entry, tagged as before).
+- **Wire (serial file, done):** `studioEditSchemas.ts` / `studioWriteback.ts` — every decline is a named refusal (`studioEditRefusals.ts`); `unexplainedSkips` and `isRefusingEditKind` are GONE; `refusals` is complete and carries `prop` for `prop` edits; `skipped === refusals.length`. Value codemod errors carry `reason`; new `JsxElementNotFoundError`.
+- **Client:** baselines commit per edit (`editOutcomes.ts`, bumps carry `editKey`); refusal toasts are warnings + "Open in code"; `unexplainedSkipsNotice.ts` deleted; `saveStudioAssetEdit` moved to `studioAssetEdit.ts` (store-graph cycle). No structural commit toasts success. Queue overflow, play-mode back/close, ⌘K save failure, eyedropper, comment/prototype/content/share loads: silent. `@core/http` `retryWhileUnreachable` is the one quiet ladder (structural writes, loads, boards, page create/delete, frame default, trust tier).
+- **Load (ERR-18):** `usePersistence` retries loads on `LOAD_RETRY_BACKOFF_MS`, exposes `retryLoad` + `boardStale`; the chip shows "Out of date — reload"; status types moved to `hooks/persistenceStatus.ts`.
+- **Boundaries (ERR-13/26):** `ErrorBoundary autoRetry` (canvas: 1); `ChromeBoundary` on 11 chrome seams; "chunk failed" only via `isChunkLoadError`; editor-window sink `canvas/editorWindowDiagnostics.ts` feeds `canvasDiagnosticsBuffer` (scope `editor`).
+- **Server (WB-33):** `server/http.ts` `internalServerError` replaces 48 raw `err.message` 500s.
+- **Gates:** `error-toast-sites.test.ts` (128 → 104 error-toast sites, per-file list), `server-500-hides-exception-text.test.ts`, ERR-13 block in `error-boundary-coverage.test.ts`. SitePage cap 39.4 → 40.6 KB (noted in the test).
+- **Landmines:** a client test that stubs a refusal must name the edit's real kind — `base.text`'s text prop is a `text` edit only when the base modules are registered. A refused edit now STAYS in the diff and is re-sent by the next save of its page (toast deduped per session).
+- **Next:** orchestrator merge. Not done: the upload retry (no server idempotency proof for `/asset-upload`), `ExportSection` "Nothing to copy" is `info` rather than a disabled menu entry.
+- **Human action needed:** dogfood on `test4`: (1) stop the server, reload the editor — "Opening this project… Trying again", start it within 10 s: the board opens; stop it for longer: "Could not open this project" + Retry works. (2) ⌘D then Delete at once on the copy: the copy is removed, no "Still writing". (3) Right-click → canvas chrome still works after any crash; no "Editor chunk failed to load".
+
 ### canvas-26 — P2-E: snapping and measuring (IX-5a, IX-5b, IX-6e, IX-24, IX-19) + OD-15 (arrows after a Layers click)
 - **Agent:** canvas-engineer · **Branch:** `feat/snapping-and-measuring` off `a03f410a` · **PR:** #243 (draft, base `feat/canvas-excellence`; long form + gate triage in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)

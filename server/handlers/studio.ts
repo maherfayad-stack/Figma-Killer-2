@@ -281,7 +281,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, relative, sep } from 'node:path'
 import { createBoardsFile, parseBoardsFile, serializeBoardsFile, type BoardsFile } from '@core/studio-board'
-import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody } from '../http'
+import { badRequest, jsonResponse, ndjsonResponse, readValidatedBody, internalServerError } from '../http'
 import {
   mergeProjectFrameDefaults,
   projectDisplayName,
@@ -318,7 +318,7 @@ import {
  */
 function studioRouteFailure(err: unknown): Response {
   rethrowProjectDirRefusal(err)
-  return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+  return internalServerError('[studio]', err)
 }
 
 export async function tryServeStudio(
@@ -473,7 +473,6 @@ export async function tryServeStudio(
         refusals,
         swapDetails,
         createdStylesheets,
-        unexplainedSkips,
         touchedFiles,
         createdNodeIds,
         relocatedNodeIds,
@@ -484,18 +483,15 @@ export async function tryServeStudio(
       } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
-      // WS-4.4/4.5 — `refusals` names WHY a `detach`/`swap` edit specifically
-      // didn't write (a typed reason + message), so the client can show that
-      // instead of a generic "skipped" toast — see `StudioEditRefusal`'s doc.
+      // WB-12 — `refusals` names WHY each edit that did not write didn't (a
+      // typed reason + message), and it is complete: an edit the client sent
+      // wrote exactly when no refusal names it — see `StudioEditRefusal`'s doc.
       // `swapDetails` — instance-ui-01 — is the mirror for a SUCCESSFUL swap:
       // which props were dropped / still need a value, per `StudioEditSwapDetail`.
       // `createdStylesheets` — Track B1 — is the mirror for a SUCCESSFUL
       // `css`/`create` edit: the stylesheet the server actually invented, so
       // the client can show WHICH file was created (never silent) and record
       // it writable for the next edit — see `StudioEditBatchResult`'s doc.
-      // `unexplainedSkips` — item 0.7 — names the node(s) behind every skip
-      // that ISN'T covered by `refusals`, so the client can point at them
-      // instead of only reporting a bare count.
       // Track C5 — `touchedFiles`, workspace-ROOT-relative (never the raw
       // absolute path — same posture as every other client-facing field here),
       // so `commitStructural` can ask `/reload-scope` whether a targeted
@@ -509,7 +505,6 @@ export async function tryServeStudio(
         refusals,
         swapDetails,
         createdStylesheets,
-        unexplainedSkips,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
         // `store-13`/`store-14` — the node ids this batch made and moved.
         // `applyStudioEditBatch` has computed these since `store-13`, but the
@@ -658,8 +653,7 @@ export async function tryServeStudio(
       return buildStudioDownloadResponse(dir)
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 

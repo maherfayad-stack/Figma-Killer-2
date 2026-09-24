@@ -617,18 +617,67 @@ export default function Home() {
   })
 })
 
-describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md item 0.7)', () => {
-  it('names a synthetic-node skip (no writable source location) with its nodeId and kind', () => {
+describe('applyStudioEditBatch — every edit that does not write is a named refusal (WB-12)', () => {
+  // Before WB-12 each of these fell into `unexplainedSkips`, which the client
+  // could only answer with one red "Some changes were not saved to source"
+  // that blamed "text that comes from a prop or a variable" for all of them.
+
+  it('a synthetic node refuses `no-source-location`', () => {
     const result = applyStudioEditBatch(tmpDir, [
       { kind: 'prop', nodeId: 'index:body', prop: 'title', value: 'Hi' },
     ])
 
     expect(result.skipped).toBe(1)
-    expect(result.refusals).toHaveLength(0)
-    expect(result.unexplainedSkips).toEqual([{ nodeId: 'index:body', kind: 'prop' }])
+    expect(result.refusals).toEqual([
+      expect.objectContaining({ nodeId: 'index:body', kind: 'prop', prop: 'title', reason: 'no-source-location' }),
+    ])
   })
 
-  it('does not double-count a NAMED refusal as an unexplained skip', () => {
+  it('a text edit on an element with mixed children refuses `mixed-children`, and the sentence carries no path', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <p>Hi <b>there</b></p>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'text', nodeId: 'src/Home.tsx:2:11', text: 'Bye' }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals).toHaveLength(1)
+    expect(result.refusals[0]).toMatchObject({ kind: 'text', reason: 'mixed-children' })
+    // WB-33 — the codemod's own message names the absolute temp path; the
+    // sentence a person reads must not.
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
+    expect(result.refusals[0]!.message).not.toContain('ast-codemods')
+    expect(read('src/Home.tsx')).toContain('<p>Hi <b>there</b></p>')
+  })
+
+  it('a value edit whose line:col holds no element refuses `element-moved` (the board recovers it)', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi</h1>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'src/Home.tsx:1:1', prop: 'title', value: 'new' },
+    ])
+
+    expect(result.refusals).toEqual([
+      expect.objectContaining({ kind: 'prop', prop: 'title', reason: 'element-moved' }),
+    ])
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
+  })
+
+  it('renaming a component tag refuses `component-tag`', () => {
+    write('src/Home.tsx', `import { Card } from './Card'\nexport default function Home() {\n  return <Card />\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'tag', nodeId: 'src/Home.tsx:3:11', tag: 'section' }])
+
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'tag', reason: 'component-tag' })])
+  })
+
+  it('a literal edit whose position holds something other than a string refuses `not-a-literal`', () => {
+    write('src/copy.ts', `export const COPY = { title: 42 }\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{ kind: 'literal', nodeId: 'src/copy.ts:1:30', text: 'Hello' }])
+
+    expect(result.refusals).toEqual([expect.objectContaining({ kind: 'literal', reason: 'not-a-literal' })])
+  })
+
+  it('does not double-count a NAMED refusal', () => {
     write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
 
     const result = applyStudioEditBatch(tmpDir, [{
@@ -640,10 +689,23 @@ describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md
 
     expect(result.skipped).toBe(1)
     expect(result.refusals).toHaveLength(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
   })
 
-  it('a successful write contributes nothing to unexplainedSkips', () => {
+  it('WB-35 — a partly refused batch writes the rest, and names only the refused edit', () => {
+    write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi <b>x</b></h1>\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'prop', nodeId: 'src/Home.tsx:2:11', prop: 'title', value: 'new' },
+      { kind: 'text', nodeId: 'src/Home.tsx:2:11', text: 'Bye' },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.skipped).toBe(1)
+    expect(result.refusals.map((refusal) => `${refusal.kind}:${refusal.reason}`)).toEqual(['text:mixed-children'])
+    expect(read('src/Home.tsx')).toContain('title="new"')
+  })
+
+  it('a successful write contributes no refusal', () => {
     write('src/Home.tsx', `export default function Home() {\n  return <h1 title="old">Hi</h1>\n}\n`)
 
     const result = applyStudioEditBatch(tmpDir, [
@@ -651,7 +713,7 @@ describe('applyStudioEditBatch — unexplainedSkips (STUDIO-FIGMA-PARITY-PLAN.md
     ])
 
     expect(result.written).toBe(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
+    expect(result.refusals).toEqual([])
   })
 })
 
@@ -1253,7 +1315,7 @@ describe('applyStudioEdit — the add-slot-prop kind (E2.2)', () => {
 
     expect(result.written).toBe(0)
     expect(result.skipped).toBe(0)
-    expect(result.unexplainedSkips).toEqual([])
+    expect(result.refusals).toEqual([])
     expect(result.addSlotPropDetails).toHaveLength(1)
     expect(result.addSlotPropDetails[0]?.committed).toBe(false)
     expect(result.addSlotPropDetails[0]?.callSites).toHaveLength(1)
@@ -1598,7 +1660,7 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
     expect(written).not.toContain('color')
   })
 
-  it('turns a JsxStyleTargetError into a NAMED refusal, so it is never an unexplained skip', () => {
+  it('turns a JsxStyleTargetError into a NAMED refusal, whose sentence carries no path', () => {
     write('src/ui/Card.tsx', ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n'))
 
     const result = applyStudioEditBatch(tmpDir, [
@@ -1607,9 +1669,9 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
 
     expect(result.written).toBe(0)
     expect(result.skipped).toBe(1)
-    expect(result.unexplainedSkips).toHaveLength(0)
     expect(result.refusals).toHaveLength(1)
     expect(result.refusals[0]!.reason).toBe('style-target')
+    expect(result.refusals[0]!.message).not.toContain(tmpDir)
   })
 })
 

@@ -171,6 +171,12 @@ export type { ComponentCallSite } from './componentCallSites'
  * has to find the exact same span a write would land on, and a second locator
  * there could drift from this one.
  */
-export { createProject, findJsxElementAtLocation, loadSourceFile, resolveJsxWholeElement } from './locateJsxElement'
+export {
+  createProject,
+  findJsxElementAtLocation,
+  JsxElementNotFoundError,
+  loadSourceFile,
+  resolveJsxWholeElement,
+} from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
 export { readSourceFingerprintAt } from './sourceFingerprintAt'

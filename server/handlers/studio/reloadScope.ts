@@ -96,7 +96,7 @@
  */
 import { join } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { canonicalSourceRel } from '../studioWriteback'
 import { discoverAppRouterRoutes, discoverPageFiles, projectPagesDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assignAppRouterPageIds, assignPageIds } from '../studioPageIds'
@@ -229,7 +229,6 @@ export async function tryServeStudioReloadScope(req: Request, _url: URL, pathnam
     return jsonResponse(pageIds ? { ok: true, narrow: true, pageIds } : { ok: true, narrow: false })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:reloadScope]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:reloadScope]', err)
   }
 }
