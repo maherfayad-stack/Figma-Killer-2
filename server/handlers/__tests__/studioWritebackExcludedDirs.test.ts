@@ -94,10 +94,44 @@ describe('the node-id decode refuses every unwritable directory', () => {
     expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
   })
 
-  // FC-1's extension point is deliberately CLOSED. When FC-1 opens exactly
-  // `.studio/canvas/<id>.tsx`, it flips this assertion in its own reviewed
-  // change — and must keep every other `.studio` path refused.
-  it('does not yet open the future free-canvas layer path', () => {
+  // FC-1 (P5-G) opens EXACTLY `.studio/canvas/<id>.tsx` — the free canvas's
+  // layer modules — and nothing wider. The acceptance below failed before FC-1
+  // (the extension point was empty); every refusal after it must keep holding.
+  it('opens the free-canvas layer path, and only its exact spelling', () => {
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toEqual({
+      rel: '.studio/canvas/cl0123456789.tsx',
+      line: 1,
+      col: 1,
+    })
+  })
+
+  it.each([
+    ['another .studio file', '.studio/meta.tsx:1:1'],
+    ['a nested canvas path', '.studio/canvas/x/cl0123456789.tsx:1:1'],
+    ['a sibling directory', '.studio/canvasx/cl0123456789.tsx:1:1'],
+    ['a canvas file with another extension', '.studio/canvas/cl0123456789.ts:1:1'],
+    ['a canvas file with a second extension', '.studio/canvas/cl0123456789.tsx.tsx:1:1'],
+    ['an id that is too short', '.studio/canvas/cl012345678.tsx:1:1'],
+    ['an id that is too long', '.studio/canvas/cl01234567890.tsx:1:1'],
+    ['an id with upper case', '.studio/canvas/cl0123456789A.tsx:1:1'],
+    ['an id without the prefix', '.studio/canvas/xx0123456789.tsx:1:1'],
+    ['upper-cased .studio', '.STUDIO/canvas/cl0123456789.tsx:1:1'],
+    ['upper-cased canvas', '.studio/CANVAS/cl0123456789.tsx:1:1'],
+    ['a trailing-dot spelling', '.studio./canvas/cl0123456789.tsx:1:1'],
+    ['backslash separators', '.studio\\canvas\\cl0123456789.tsx:1:1'],
+    ['traversal out of canvas', '.studio/canvas/../meta.tsx:1:1'],
+    ['traversal into canvas', 'src/../.studio/canvas/cl0123456789.tsx:1:1'],
+    ['a nested .studio', 'src/.studio/canvas/cl0123456789.tsx:1:1'],
+    ['an absolute path', '/.studio/canvas/cl0123456789.tsx:1:1'],
+    ['a stream suffix', '.studio/canvas/cl0123456789.tsx::$DATA:1:1'],
+  ])('keeps refusing %s', (_label, nodeId) => {
+    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
+  })
+
+  it('judges a .studio/canvas that is a link by where it really lands', () => {
+    // A cloned repository can carry a symlink; git stores them. A canvas
+    // directory linked into `.git` must not become a way to write there.
+    linkDir('.git/hooks', '.studio/canvas')
     expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toBeNull()
   })
 

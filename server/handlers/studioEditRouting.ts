@@ -22,6 +22,7 @@
 import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
+import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
@@ -169,18 +170,27 @@ export function isWritableSourceRel(rel: string): boolean {
 
 /**
  * Source files Studio itself authors INSIDE an otherwise unwritable directory:
- * the one extension point in {@link isWritableSourceRel}'s directory check,
- * and deliberately EMPTY.
+ * the one extension point in {@link isWritableSourceRel}'s directory check.
  *
- * It exists for the free canvas (`docs/audits/2026-09-23-studio-audit/10-free-canvas.md`,
- * FC-1), whose loose layers are real `.tsx` modules at `.studio/canvas/<id>.tsx`.
- * FC-1 adds exactly one anchored pattern here — `^\.studio/canvas/cl[a-z0-9]{10}\.tsx$`,
- * never a prefix — under its own security review, and flips the pinning test
- * in `studioWritebackExcludedDirs.test.ts`. Nothing else belongs in it. It
- * widens this node-id decoder only: the agent's native writes
- * (`agentWriteScope.ts`), CSS writeback and asset landing never consult it.
+ * It holds exactly one pattern (FC-1, P5-G, under security-guard review): the
+ * free canvas's layer modules, `.studio/canvas/<id>.tsx`
+ * (`docs/audits/2026-09-23-studio-audit/10-free-canvas.md`). The pattern is
+ * `@core/studio-board`'s `CANVAS_LAYER_REL_PATTERN` — anchored at both ends,
+ * forward slashes only, lowercase only, one fixed id grammar (`cl` + ten
+ * base-36 characters) — so it admits no traversal, no nesting, no other
+ * extension and no case or separator variant of the same file. Every other
+ * `.studio` path stays refused: `.studio/meta.tsx`, `.studio/canvas/x/y.tsx`,
+ * `.STUDIO/canvas/<id>.tsx` and a backslash spelling all fail it.
+ *
+ * It widens this node-id decoder only. `canonicalSourceRel` still re-runs the
+ * guard on the REAL path, so a `.studio/canvas` that is a link elsewhere is
+ * judged by where it really lands. The agent's native writes
+ * (`agentWriteScope.ts`), CSS writeback and asset landing never consult it,
+ * and a batch run for an agent refuses every canvas-layer target
+ * (`studioCanvasLayerWriteback.ts`'s `refuseAgentCanvasLayerEdit`). Nothing
+ * else belongs in this list without its own security review.
  */
-const STUDIO_AUTHORED_SOURCE_PATTERNS: readonly RegExp[] = []
+const STUDIO_AUTHORED_SOURCE_PATTERNS: readonly RegExp[] = [CANVAS_LAYER_REL_PATTERN]
 
 function isStudioAuthoredSourceRel(rel: string): boolean {
   return STUDIO_AUTHORED_SOURCE_PATTERNS.some((pattern) => pattern.test(rel))

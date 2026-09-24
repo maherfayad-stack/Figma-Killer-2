@@ -1,5 +1,6 @@
 import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
-import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
+import type { Board, BoardFrame, BoardGuide, BoardsFile, CanvasLayerPlacement, DocBlock, NoteColor, StickyNote } from './types'
+import { isCanvasLayerId } from './canvasLayers'
 import type { PreviewAxes } from './previewAxes'
 
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
@@ -122,6 +123,45 @@ function coerceGuide(raw: unknown): BoardGuide | undefined {
   return { id, axis: raw.axis, position: raw.position }
 }
 
+/**
+ * P5-G — one loose layer's placement. The id is the one field that must be
+ * exactly right: it names a file under `.studio/canvas/`, so anything that is
+ * not a well-formed layer id is DROPPED here rather than carried to a reader
+ * that would build a path from it. Everything else is tolerant, like the
+ * annotation coercers above; an optional field is omitted when absent or
+ * invalid so a file round-trips byte-for-byte.
+ */
+function coerceLayer(raw: unknown): CanvasLayerPlacement | undefined {
+  if (!isPlainObject(raw)) return undefined
+  const id = raw.id
+  if (typeof id !== 'string' || !isCanvasLayerId(id)) return undefined
+  const layer: CanvasLayerPlacement = {
+    id,
+    x: typeof raw.x === 'number' && Number.isFinite(raw.x) ? raw.x : 0,
+    y: typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : 0,
+  }
+  if (typeof raw.w === 'number' && Number.isFinite(raw.w) && raw.w >= 1) layer.w = raw.w
+  if (typeof raw.z === 'number' && Number.isFinite(raw.z)) layer.z = raw.z
+  if (typeof raw.name === 'string' && raw.name.length > 0) layer.name = raw.name.slice(0, 120)
+  if (raw.locked === true) layer.locked = true
+  if (raw.hidden === true) layer.hidden = true
+  return layer
+}
+
+/** Every well-formed placement, each id at most once (the first wins — a duplicate would render one module twice). */
+function coerceLayers(raw: unknown): CanvasLayerPlacement[] {
+  if (!Array.isArray(raw)) return []
+  const seen = new Set<string>()
+  const layers: CanvasLayerPlacement[] = []
+  for (const entry of raw) {
+    const layer = coerceLayer(entry)
+    if (!layer || seen.has(layer.id)) continue
+    seen.add(layer.id)
+    layers.push(layer)
+  }
+  return layers
+}
+
 function coerceBoard(raw: unknown): Board | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -146,7 +186,14 @@ function coerceBoard(raw: unknown): Board | undefined {
     ? raw.guides.map(coerceGuide).filter((g): g is BoardGuide => g !== undefined)
     : []
 
-  return { id, name, frames, notes, docs, guides }
+  // `layers` (P5-G) — omitted when empty, so a board with no loose layers
+  // reads and writes exactly as it did before the free canvas existed. Every
+  // server-side writer (`boardFrames.ts`, the MCP board tools) reads through
+  // here and writes back what it read, so coercing it HERE is what keeps a
+  // page create or a frame resize from silently dropping every loose layer.
+  const layers = coerceLayers(raw.layers)
+
+  return { id, name, frames, notes, docs, guides, ...(layers.length > 0 ? { layers } : {}) }
 }
 
 export function parseBoardsFile(raw: unknown): BoardsFile {
