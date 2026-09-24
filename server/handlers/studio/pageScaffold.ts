@@ -34,7 +34,7 @@
  */
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
-import { designSystemImportSpecifier, parsePageFile } from '@core/page-parser'
+import { designSystemImportSpecifier, isWorkspaceWritablePath, parsePageFile, pathEntryExists } from '@core/page-parser'
 import { DEFAULT_PAGE_KIND, type PageKind } from '@core/studio-board'
 import {
   discoverPageFiles,
@@ -78,8 +78,10 @@ export function createScaffoldedPage(
   const componentName = pageComponentNameFromInput(nameInput) || nextPageName(pagesDir, ext, pageNameBase(kind))
   const relPath = `${componentName}${ext}`
   const file = join(pagesDir, relPath)
-  if (existsSync(file)) return { ok: false, conflict: `A page named "${componentName}" already exists.` }
-  mkdirSync(pagesDir, { recursive: true })
+  // `lstat`, not `existsSync`: a dangling symlink at the name reads as
+  // "absent" to `existsSync`, and the write below would follow it and create
+  // the file wherever it points — outside the project included.
+  if (pathEntryExists(file)) return { ok: false, conflict: `A page named "${componentName}" already exists.` }
   // The project's own dialect — a project carrying the built-in design system
   // (`<project>/design-system/`) means the overlay kinds scaffold its real
   // `BottomSheet`/`Dialog` instead of a hand-rolled copy, imported by the
@@ -89,13 +91,31 @@ export function createScaffoldedPage(
     kit: detectPageTemplateKit(dir),
     designSystemImport: designSystemImportSpecifier(relative(dir, file).split(sep).join('/')),
   })
-  writeFileSync(file, starter.component)
   // Written alongside the component, never lazily: the component imports it by
   // name, so a missing stylesheet is a broken page, not a deferred nicety. A
   // design-system-backed overlay has no stylesheet of its own — the package
   // draws it — and gets no empty file written for it.
-  if (starter.styles !== undefined && starter.stylesFileName !== undefined) {
-    writeFileSync(join(pagesDir, starter.stylesFileName), starter.styles)
+  const styles = starter.styles !== undefined && starter.stylesFileName !== undefined
+    ? { file: join(pagesDir, starter.stylesFileName), contents: starter.styles }
+    : null
+  if (styles && pathEntryExists(styles.file)) {
+    return { ok: false, conflict: `A stylesheet named "${starter.stylesFileName}" already exists, so the page "${componentName}" was not created over it.` }
+  }
+  // The pages folder is the project's to lay out, and a repository can make it
+  // (or anything above it) a link: every target must land inside the project,
+  // outside `.studio`/`.git`/`node_modules`, on its real path.
+  if (!isWorkspaceWritablePath(dir, file) || (styles && !isWorkspaceWritablePath(dir, styles.file))) {
+    return { ok: false, conflict: `The pages folder resolves outside the project or through a link that points nowhere, so the page "${componentName}" was not created.` }
+  }
+  mkdirSync(pagesDir, { recursive: true })
+  // `wx`: created, never overwritten — a file that appeared since the check
+  // above is somebody's work.
+  try {
+    writeFileSync(file, starter.component, { flag: 'wx' })
+    if (styles) writeFileSync(styles.file, styles.contents, { flag: 'wx' })
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return { ok: false, conflict: `A page named "${componentName}" already exists.` }
+    throw err
   }
   const pageId = pageIdFromRelPath(relPath)
   // D5 §11.3 — a scaffolded screen the user cannot see is not a screen.

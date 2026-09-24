@@ -54,6 +54,7 @@ export {
   hostExecutedWorkspaceFile,
   isHostConfigFileName,
   isSecretBearingFileName,
+  isUnlinkedWorkspacePath,
   isWorkspaceWritablePath,
   pathEntryExists,
   realWorkspaceRel,

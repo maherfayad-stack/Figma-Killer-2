@@ -305,6 +305,29 @@ export function realWorkspaceRel(root: string, target: string): string | null {
 }
 
 /**
+ * Whether `target` is reached from `root` through plain directory entries
+ * only — strictly inside it, with no symlink or junction anywhere on the way
+ * and none at `target` itself (dangling or not).
+ *
+ * The rule for a file STUDIO owns and rewrites in a user's project: its
+ * preview shell (`prototype/`, `vite.config.js`, `index.html`), the generated
+ * agent guide (`CLAUDE.md`, `.claude/`), the vendored `design-system/`, and
+ * Studio's own `.studio/` records. A repository imported from GitHub can carry
+ * a link at any of those names, and a write through it lands wherever it
+ * points — `vite.config.js -> ~/.bashrc` would be overwritten on first open.
+ * Studio never needs to write one of its own files through a link, so it
+ * never does, whether the link leads in or out. Not for the user's own source:
+ * a writeback follows a link that stays inside the project
+ * ({@link isWorkspaceWritablePath}).
+ */
+export function isUnlinkedWorkspacePath(root: string, target: string): boolean {
+  const lexical = relative(resolve(root), resolve(target))
+  if (lexical === '' || isAbsolute(lexical) || lexical === '..' || lexical.startsWith(`..${sep}`)) return false
+  const real = realWorkspaceRel(root, target)
+  return real !== null && comparableWorkspaceRel(real) === comparableWorkspaceRel(lexical)
+}
+
+/**
  * Whether `target` (absolute) is a path Studio may write inside the project at
  * `root`: strictly inside it both textually and on the real path, with no
  * unwritable directory on either. The one predicate every writer that builds
