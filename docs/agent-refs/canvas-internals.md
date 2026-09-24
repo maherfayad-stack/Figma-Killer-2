@@ -819,6 +819,19 @@ The rules the ladder replaced prose with:
 - **V is home (IX-11)** — the move tool, and it disarms the comment tool too.
 - **Escape is "deselect", not "select parent"** — traversal took Figma's own
   Enter/⇧Enter, because re-pointing Escape re-opens the bug `select-01` fixed.
+- **Enter (P5-E, IX-7):** on ONE text layer it opens the inline edit, the
+  double-click path (`canvasTextEditStart.ts` — portal frames only, because a
+  live frame's text edit is started by its runtime and a session opened from
+  here would arm the `inline-edit` rung over nothing editable); on anything
+  else it selects EVERY child of the selection (`selectChildNodes`). ⇧Enter
+  selects the parent of every selected layer. With a draw tool armed, the
+  `node` rung gives Enter up and the `board` rung inserts at the selection.
+- **Layer commands (P5-E):** ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align, ⌘⇧] / ⌘⇧[ front /
+  back, ⇧A flex, ⌘⌥C / ⌘⌥V copy / paste style — `useCanvasLayerCommandKeys`
+  on the `node` rung, component-owned. Letters with ⌥ are matched on
+  `event.code` (⌥A is `'å'` on a Mac). ⌘C / ⌘V reject ⌥ since then: before,
+  Ctrl+Alt+V pasted a layer AND a style. The right-click menu and the palette
+  run the same functions (`layerCommands.ts`, `layerAlign.ts`).
 - `canvas.moveSelection` is the only bare-arrow binding in the registry and it
   is scoped by **what is selected**, never globally. Three rungs read it:
   notes/docs (`annotation`), the selected layer (`node`,
@@ -911,14 +924,42 @@ currently means. Two rules keep it from becoming a second input system:
   (a `display: contents` host) degrades to a free resize instead of dividing by
   zero.
 
-`R` / `O` insert a `base.container` as the **next sibling** of the selection via
-`resolveSiblingAfterLocation` (`store/insertLocation.ts`), where `F` still
-inserts *inside*. `O` carries `borderRadius: 50%` **into the insert itself** —
-`insertNode(…, inlineStyles)` sets the bag before the node enters the tree, and
-`writeInsertToSource` passes it to `commitStudioInsert` as a `style` prop. A
+### The draw tools (P5-E, IX-12, OD-5)
+
+`R` / `O` (and `E`) / `T` / `F` **arm** a draw tool — `canvasTool` is
+`'rectangle' | 'ellipse' | 'text' | 'frame'` — instead of inserting at once.
+While armed, `CanvasRoot` mounts `CanvasDrawToolLayer`: a crosshair,
+click-catching layer over the whole canvas in the PARENT document (z 44:
+over the frames, under the rulers and notch), so one gesture works the same
+over a portal and a live bridge frame and neither frame's document sees the
+press. Hover shows the insertion drag's own drop line
+(`resolveCanvasPointerInsertionDrop` + a per-arming candidate snapshot); a
+click inserts there (a box gets Figma's 100 × 100, text its natural size), a
+drag also writes the drawn `width` / `height` (screen px ÷ the frame's zoom;
+⇧ square, ⌥ from the centre), and the tool puts itself away. Space / the hand
+tool make the layer click-through (the pan owns the pointer). T opens the new
+text for typing through `createdNodeFollowUp.ts` → `canvasTextEditStart.ts`.
+⏎ with a tool armed is the old immediate insert (`T` / `F` inside the
+selection, `R` / `O` after it).
+
+Everything a draw writes rides the insert itself: the size, `O`'s
+`borderRadius: 50%` and the rectangle / ellipse default fill go in
+`insertNode(…, inlineStyles)`, which `writeInsertToSource` passes to
+`commitStudioInsert` as a `style` prop — one write, one undo entry. A
 follow-up `setNodeInlineStyles` could not work on a studio tree: there the
 insert is an async source write that returns `''`, so no id exists to style
 until the resync lands.
+
+**The empty board is P5-G's.** A press outside every frame is offered to
+`registerBoardDrawHandler`'s handler (`canvasDrawTool.ts`) with the drawn
+rectangle in BOARD units; with none registered it is ignored and the ghost
+says "draw inside a frame".
+
+**`createdNodeFollowUp.ts`** is the seam for "do X to the element this gesture
+creates": it snapshots the node ids at arming time and runs once, on the
+first selection of a node that did not exist then (`store-13` selects what a
+write created when its resync lands), within 8 s. Selecting anything that
+already existed drops it.
 
 **During an inline edit both keyboard paths must stand down.** The `inline-edit`
 rung claims every keystroke and acts on none, and
@@ -1115,6 +1156,33 @@ a component in a live frame selected the element inside it.
   - The live runtime's handles (`resizeHandles.ts`) run the same rules and
     guard. Not yet there: the flex/grid companions, because the resolver needs
     the node's stored styles, which the frame side of the wire does not have.
+- **Padding and gap handles (P5-E, IX-17).** `CanvasSpacingHandles` renders
+  INSIDE the resize-handle frame (before the handles, so an edge strip wins
+  at the edge), so the bands ride the ring's one measurement. Shown for a
+  single flex / grid container; gap bands between consecutive children
+  (`columnGap` side by side, `rowGap` stacked). The one layout read
+  (`spacingHandleMeasure.ts`) runs in a rAF on mount, on a store change to
+  the node and on a `ResizeObserver` tick; during a drag the bands follow the
+  preview arithmetically. Positions are `--band-*` custom properties read by
+  `canvasSpacingChromeCss.ts`, appended to the portal injector's unlayered
+  chrome sheet (not `selectionChromeCss.ts`: the runtime bundle has no
+  handles). A drag previews on the element's own `style` and commits ONE
+  `commitStyleMany` through the inspector's commit API
+  (`selectionStyleCommands.ts`), so it lands where the Layout section's field
+  would (inline, or the one class that already sets it). ⇧ writes the axis
+  pair, ⌥ all four. Portal frames only.
+- **Style writes from outside the inspector** (`selectionStyleCommands.ts` +
+  `SelectionStyleCommandHost`): ⇧A, a flow child's align, paste-style's
+  single-target half and the spacing handles QUEUE a command; the host mounts
+  `useSelectionModel` + `useInspectorCommit` only while one waits, runs it in
+  a layout effect (so a canvas preview cleared inside it and the committed
+  value paint together), then unmounts. One write-target rule, zero idle cost.
+- **In-frame marquee (P5-E, IX-16, OD-6).** A press on the page ROOT itself
+  (no child under the pointer) that travels 4 px sweeps a rectangle painted
+  in the overlay root; it selects the touched layers at the shallowest hit
+  depth (⌥ the deepest, ⇧ adds), live, and swallows the release's click.
+  `useInFrameMarquee` (a capture listener on the frame document beside the
+  body drag trigger), rules in `inFrameMarquee.ts`. ⌘-drag stays free move.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
   With a selection and Alt held, hovering another node paints the distances
   between the two boxes and the hovered node's padding bands/content box — and
@@ -1554,8 +1622,9 @@ invalidating the candidate index. Full contract:
 `docs/reference/canvas-dnd.md` → "The drag session (S2)".
 
 **⌘-drag is the ONE gesture allowed to write a position (K6).** It writes
-`left`/`top` — or `inset-inline-start` under `direction: rtl` — as an inline
-style on one element, plus `position: absolute` when the element was in flow
+the offsets the source authored (P5-E, IX-21: a `right`-anchored layer keeps
+`right`), or `left`/`top` — `inset-inline-start` under `direction: rtl` — for a
+layer that becomes absolute in the gesture, as an inline style on one element, plus `position: absolute` when the element was in flow
 (without it the offsets do nothing, and a declaration with no effect is a
 silent no-op). It **refuses** when the container is `position: static`,
 because absolute positioning there hands the element to a different ancestor

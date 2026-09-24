@@ -151,6 +151,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
+### canvas-28 — P5-E: tools and handles (armed draw tools, padding/gap handles, align, layer commands)
+- **Agent:** canvas-engineer · **Branch:** `feat/canvas-tools-and-handles` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, test list and dogfood in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Closes:** IX-12 (OD-5), IX-17, IX-20, IX-21, IX-7, IX-10, IX-props, IX-16 (OD-6), IX-26, IX-27, UX-22, UX-23. IX-9 single layer (multi → after P3-D's `moveNodesInSequence`). IX-8 was already wired by speed-06 (verified, unchanged).
+- **Canvas files touched:** `CanvasRoot`, `CanvasDrawToolLayer` (+css, new), `canvasDrawTool` (new), `useCanvasToolShortcuts`, `useCanvasSelectionKeyboard`, `canvasTextEditStart` (new), `createdNodeFollowUp` (new), `CanvasResizeHandles`, `CanvasSpacingHandles` + `spacingHandleRules` + `spacingHandleMeasure` + `useSpacingHandleDrag` + `canvasSpacingChromeCss` (new), `CanvasSelectionOverlayInjector`, `useElementResizeDrag`, `elementResizeAnchoring` (new), `canvasFreeMove`, `canvasNodeArrowMove`, `canvasSelectionMeasure` (new), `layerAlign` / `layerCommands` / `useCanvasLayerCommandKeys` (new), `selectionStyleCommands` + `SelectionStyleCommandHost` (new), `useInFrameMarquee` + `inFrameMarquee` (new), `useCanvasReorderDrag`, `canvasNodesUnderPoint` (new), `useCanvasLayerContextMenu`, `CanvasLayerContextMenu`, `CanvasNotch`, `SelectionToolbar`. Also `spotlight/keybindings*` (+`keybindingTools`, `keybindingLayerCommands`), `LayerNodeContextMenu` (+`LayerArrangeMenuItems`), store `canvasSlice`, `selectionTraversalActions`, `styleRule/assignmentActions` (`applyNodeStyles`), UI `Tooltip` / `Button` / `ContextMenuItem` (`shortcut`).
+- **Decisions:** draw tools draw on a parent-document layer (works over live frames too, adds no canvas DOM); a drawn box/ellipse gets Figma's `#d9d9d9` fill; FRONT = last child (paint order), so ⌘⇧] and ⌘] point at opposite ends of the Layers list (recorded in the conflict register); ⌥ letters match on `event.code`; E is an alias of O; ⌘↑/⌘↓ aliases for ±1 were NOT added (Penpot's ⌘↑ = forward would contradict K4's "up = earlier").
+- **P5-G seam:** `registerBoardDrawHandler` in `canvasDrawTool.ts` receives empty-board draws in board units.
+- **Landmines:**
+  - **Events × injectors:** the spacing-band CSS is appended to the portal chrome sheet (unlayered, `!important` only on `cursor`, like the resize handles). The band drag and the in-frame marquee both claim presses inside the overlay root / page root with capture listeners on the frame document; the marquee skips targets inside `[data-studio-canvas-overlay-root]` because the page root can be `<body>` itself.
+  - **Height:** the spacing drag holds `canvasGesture` until the queued commit runs (a layout effect after pointerup), so the frame refit waits one extra commit.
+  - **Events × store:** `SelectionStyleCommandHost` runs queued writes in a LAYOUT effect; a command that clears a DOM preview must do it inside the command, never in the pointerup.
+  - ⌘C / ⌘V now reject ⌥ (Ctrl+Alt+V used to paste a layer and a style in one press).
+  - `createdNodeFollowUp` snapshots every node id when armed (one pass per T-draw / ⇧A group).
+- **Found, not fixed:** in the PR body.
+- **Human action needed:** dogfood (PR body): `test4`, `/admin/site`, static tier, SMS frame, 100%; R-drag, T-click-type, padding ⇧/⌥ drags, ⌥A on the `.banner`, ⇧A, ⌘⌥C/⌘⌥V, right-click "Select layer".
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
