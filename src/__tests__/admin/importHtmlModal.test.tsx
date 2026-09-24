@@ -40,7 +40,6 @@ function resetStore() {
     importHtmlModalPrefill: '<section><h1>Hello</h1><p>World</p></section>',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,

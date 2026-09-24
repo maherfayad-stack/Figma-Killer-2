@@ -27,6 +27,7 @@ import type { PrototypeLink, PrototypeTriggerKind } from '@core/studio-prototype
 import { useEditorStore } from '@site/store/store'
 import { followPrototypeLinkAt, releasePrototypePress } from '@site/studio/playNavigation'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
+import { setCanvasHover } from './canvasHover'
 import { canvasClickSelectionMode } from './canvasSelectionUtils'
 
 export interface CanvasNodeInteractionOptions {
@@ -97,7 +98,6 @@ interface PlayGesture {
 
 export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions): CanvasNodeInteraction {
   const selectNode = useEditorStore((s) => s.selectNode)
-  const hoverNode = useEditorStore((s) => s.hoverNode)
   const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const setFocusedPanel = useEditorStore((s) => s.setFocusedPanel)
   const startInlineEdit = useEditorStore((s) => s.startInlineEdit)
@@ -226,7 +226,7 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
     // The hover ring is editing chrome, and an armed player is not an editing
     // surface — a visitor clicking through a prototype should see the
     // component's OWN hover state and nothing of ours. Standing it down also
-    // takes a store commit off every pointer arrival mid-playback.
+    // takes a hover write off every pointer arrival mid-playback.
     // `setPlayMode` clears the ring that was showing when Play was armed.
     if (options.playMode) {
       // The one thing the player DOES do with a hover: follow a `hover` link.
@@ -235,7 +235,8 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
       if (nodeId !== null) followLinkAt(nodeId, 'hover')
       return
     }
-    hoverNode(nodeId, breakpointId, frameId)
+    // NOT a store write (P2-I, PERF-1): see `canvasHover.ts`.
+    setCanvasHover(nodeId, breakpointId ?? null, frameId ?? null)
   }
 
   const onNodeContextMenu = (

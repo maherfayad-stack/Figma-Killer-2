@@ -6,6 +6,7 @@ import { findHomePage, reconcileSiteExplorerInPlace, reindexNodeParents } from '
 import type { Page, SiteDocument } from '@core/page-tree'
 import { removeFramesForPage } from '@core/studio-board'
 import { renderCache } from '@site/canvas/renderCache'
+import { clearCanvasHover, followCanvasHover, getCanvasHover } from '@site/canvas/canvasHover'
 import {
   clonePackageJson,
   DEFAULT_SITE_PACKAGE_JSON,
@@ -51,7 +52,7 @@ function reindexSiteTreeParents(site: SiteDocument): void {
 function holdsNodeIds(state: EditorStore): boolean {
   return (
     state.selectedNodeIds.length > 0 ||
-    state.hoveredNodeId !== null ||
+    getCanvasHover() !== null ||
     state.activeInlineEdit !== null ||
     state.enteredInstanceIds.length > 0
   )
@@ -86,22 +87,12 @@ function followCanvasStateThroughReparse(state: Draft<EditorStore>, follow: Node
   if (state.selectedNodeId !== anchor) state.selectedNodeId = anchor
   if (hadSelection && selection.length === 0) {
     state.selectedNodeFrameId = null
-    state.hoveredNodeId = null
-    state.hoveredBreakpointId = null
-    state.hoveredFrameId = null
+    clearCanvasHover()
     state.activeClassId = null
   }
 
-  if (state.hoveredNodeId !== null) {
-    const hovered = follow(state.hoveredNodeId)
-    if (hovered === null) {
-      state.hoveredNodeId = null
-      state.hoveredBreakpointId = null
-      state.hoveredFrameId = null
-    } else if (hovered !== state.hoveredNodeId) {
-      state.hoveredNodeId = hovered
-    }
-  }
+  // The hover lives off the store (`canvasHover.ts`) and follows the same rule.
+  followCanvasHover(follow)
 
   if (state.activeInlineEdit) {
     const edited = follow(state.activeInlineEdit.nodeId)

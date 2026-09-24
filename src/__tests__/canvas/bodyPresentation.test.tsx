@@ -44,7 +44,6 @@ beforeEach(() => {
     collapsedBreakpointIds: [],
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     canUndo: false,
@@ -344,7 +343,6 @@ describe('canvas iframe body presentation', () => {
       activePageId: wrapper.id,
       selectedNodeId: wrapperRoot.id,
       selectedNodeIds: [wrapperRoot.id],
-      hoveredNodeId: wrapperRoot.id,
     } as Parameters<typeof useEditorStore.setState>[0])
 
     renderCanvas()
@@ -361,7 +359,6 @@ describe('canvas iframe body presentation', () => {
         activePageId: page.id,
         selectedNodeId: null,
         selectedNodeIds: [],
-        hoveredNodeId: null,
       })
     })
 
@@ -369,7 +366,6 @@ describe('canvas iframe body presentation', () => {
       expect(frameDocument.body.hasAttribute('data-node-id')).toBe(false)
       expect(frameDocument.body.hasAttribute('data-module-id')).toBe(false)
       expect(frameDocument.body.hasAttribute('data-canvas-selected')).toBe(false)
-      expect(frameDocument.body.hasAttribute('data-hovered')).toBe(false)
       expect(frameDocument.body.hasAttribute('tabindex')).toBe(false)
       expect(frameDocument.body.style.backgroundColor).toBe('rgb(7, 11, 19)')
     })

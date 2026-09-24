@@ -122,7 +122,10 @@ const PluginRuntimeBridge = lazy(() =>
  * through `AdminPageLayout`.
  */
 export function AdminCanvasLayout() {
-  const site = useEditorStore((s) => s.site)
+  // The document's identity only — never `s.site` itself, which Mutative
+  // replaces on every edit and would re-render the whole editor shell on every
+  // keystroke (P2-I, PERF-12; gated by `no-full-site-scan-in-selectors.test.ts`).
+  const siteId = useEditorStore((s) => s.site?.id ?? null)
   // Toolbar branding — pulled from the editor store here (we already have
   // it loaded) and forwarded to the prop-driven Toolbar below. Keeps the
   // Toolbar component itself free of editor-store imports.
@@ -205,12 +208,12 @@ export function AdminCanvasLayout() {
   // admin theme. Reading the preferences here keeps the attributes in sync
   // with Settings without per-component subscriptions.
   //
-  // Read BEFORE the `!site` early return so the hook order stays stable across
+  // Read BEFORE the `siteId === null` early return so the hook order stays stable across
   // the hydration gate (React rules-of-hooks: hooks must run in the same order
   // on every render).
   const appearance = useEditorAppearancePreferences()
 
-  const loadError = !site && persistence.saveStatus.state === 'error'
+  const loadError = siteId === null && persistence.saveStatus.state === 'error'
     ? persistence.saveStatus.message ?? 'Reload the admin page and try again.'
     : null
 
@@ -255,7 +258,7 @@ export function AdminCanvasLayout() {
           <LazyChunkBoundary
             location="site-editor-body"
             fallback={<AdminCanvasEditorBodyLoading />}
-            resetKeys={[site?.id ?? null]}
+            resetKeys={[siteId]}
             onReset={AdminCanvasEditorBody.reset}
           >
             <AdminCanvasEditorBody

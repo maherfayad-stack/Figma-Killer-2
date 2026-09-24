@@ -86,7 +86,6 @@ export function deriveSelectorPickerModel(input: SelectorPickerModelInput): Sele
 const CANVAS_NODE_EDITOR_ATTRS = new Set([
   'data-node-id',
   'data-module-id',
-  'data-hovered',
   'tabindex',
   'role',
   'aria-pressed',

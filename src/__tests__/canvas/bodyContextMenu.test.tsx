@@ -26,8 +26,6 @@ beforeEach(() => {
     canvasView: 'design',
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
     clipboardEntry: null,
     previewClassAssignment: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },

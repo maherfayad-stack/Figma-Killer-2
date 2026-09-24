@@ -392,7 +392,6 @@ function freshStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     _historyPast: [],
     _historyFuture: [],
     _historyCoalesceKey: null,

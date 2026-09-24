@@ -200,7 +200,84 @@ function findFullSiteScanLines(content: string): number[] {
 const WHOLE_SITE_SCAN_ROOTS = [
   join(SRC_ROOT, 'admin/pages/site/inspector'),
   join(SRC_ROOT, 'admin/pages/site/canvas'),
+  // P2-I (PERF-12): the always-mounted chrome. The editor shell, the hooks
+  // the shell and `CanvasRoot` run, and the Explorer's page list are mounted
+  // for the whole session, so one whole-`site` read there re-renders them on
+  // every keystroke no matter which panel is open.
+  join(SRC_ROOT, 'admin/layouts'),
+  join(SRC_ROOT, 'admin/pages/site/hooks'),
+  join(SRC_ROOT, 'admin/pages/site/panels/ExplorerPanel'),
 ]
+
+/**
+ * P2-I (PERF-12) — the covered set for the whole-PAGES-LIST detector. The
+ * same always-mounted chrome, minus `inspector/`: the inspector resolves a
+ * multi-selection's nodes across pages, so its page reads legitimately change
+ * with the nodes it shows.
+ */
+const WHOLE_PAGES_SCAN_ROOTS = WHOLE_SITE_SCAN_ROOTS.filter((root) => !root.endsWith('inspector'))
+
+// `useEditorStore((s) => s.site?.pages)` and `… s.site?.pages ?? EMPTY)`: the
+// whole pages array, which Mutative replaces whenever ANY node on ANY page
+// changes — a keystroke. A component that needs the page LIST (ids, titles)
+// reads `selectPageDirectory`; one that needs one page reads it by id.
+const WHOLE_PAGES_SELECTOR_RE =
+  /useEditorStore\(\s*\(?\s*\w+\s*\)?\s*=>\s*\w+(?:\?|!)?\.site(?:\?|!)?\.pages\s*(?:\?\?\s*[\w$.]+\s*)?\)/
+
+function findWholePagesSelectorLines(content: string): number[] {
+  const hits: number[] = []
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i]!
+    if (/^\s*(\/\/|\*|\/\*)/.test(line)) continue
+    if (WHOLE_PAGES_SELECTOR_RE.test(line)) hits.push(i + 1)
+  }
+  return hits
+}
+
+// ---------------------------------------------------------------------------
+// Third detector — a whole-pages derivation INSIDE a selector (P2-I, PERF-12)
+// ---------------------------------------------------------------------------
+
+/**
+ * `.pages.filter(` / `.map(` / `.flatMap(` / `.reduce(` inside the argument of
+ * a `useEditorStore(` call: an O(pages) walk AND a fresh array on every store
+ * change, per subscriber (`CanvasComposedTree`'s template filter ran once per
+ * mounted frame per `set()`). Argument-scoped, not line-scoped, so a selector
+ * that spans lines is still seen. `.find(`/`.some(` by id stay allowed — see
+ * `FOR_OF_PAGES_RE`'s comment for why.
+ */
+const PAGES_DERIVATION_RE = /\.pages\??\.(?:filter|map|flatMap|reduce)\(/
+
+/** The argument text of every `useEditorStore(` call in `content`, with its 1-based line. */
+function useEditorStoreArguments(content: string): Array<{ line: number; text: string }> {
+  const out: Array<{ line: number; text: string }> = []
+  const re = /useEditorStore\(/g
+  for (let match = re.exec(content); match !== null; match = re.exec(content)) {
+    const start = match.index + match[0].length
+    let depth = 1
+    let i = start
+    for (; i < content.length && depth > 0; i++) {
+      const ch = content[i]
+      if (ch === '(') depth++
+      else if (ch === ')') depth--
+    }
+    out.push({ line: content.slice(0, match.index).split('\n').length, text: content.slice(start, i - 1) })
+  }
+  return out
+}
+
+function findPagesDerivationSelectorLines(content: string): number[] {
+  // Blank comment lines (keeping the line count) so a quoted tombstone in a
+  // doc comment is neither a hit nor an unbalanced paren the scan runs into.
+  const code = content
+    .split('\n')
+    .map((line) => (/^\s*(\/\/|\*|\/\*)/.test(line) ? '' : line))
+    .join('\n')
+  return useEditorStoreArguments(code)
+    .filter(({ text }) => PAGES_DERIVATION_RE.test(text))
+    .map(({ line }) => line)
+}
 
 // `useEditorStore((s) => s.site)` / `useEditorStore((state) => state.site)`,
 // optionally through `?.`/`!.` on the way to `.site` — and NOTHING narrower
@@ -382,6 +459,61 @@ describe('Architecture gate — no full-site pages scan reachable from a useEdit
     }
 
     expect(violations).toHaveLength(0)
+  })
+
+  it('no useEditorStore( selector in the always-mounted chrome returns the whole pages list (PERF-12)', () => {
+    const violations: string[] = []
+    for (const root of WHOLE_PAGES_SCAN_ROOTS) {
+      for (const file of collectSourceFiles(root)) {
+        const content = readOrNull(file)
+        if (content === null) continue
+        const rel = toPosix(relative(SRC_ROOT, file))
+        for (const lineNum of findWholePagesSelectorLines(content)) violations.push(`${rel}:${lineNum}`)
+      }
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        '[no-full-site-scan-in-selectors] An always-mounted component subscribes to the WHOLE ' +
+        '`site.pages` array. Mutative replaces that array whenever any node on any page changes, ' +
+        'so the component re-renders on every keystroke. Read `selectPageDirectory` for the page ' +
+        'list, or one page by id.\n\nViolations:\n' + violations.map((v) => `  ${v}`).join('\n'),
+      )
+    }
+    expect(violations).toHaveLength(0)
+  })
+
+  it('no useEditorStore( selector derives a new array from site.pages (PERF-12)', () => {
+    const violations: string[] = []
+    for (const file of collectSourceFiles(SCAN_ROOT)) {
+      const content = readOrNull(file)
+      if (content === null || !USE_EDITOR_STORE_HOOK_RE.test(content)) continue
+      const rel = toPosix(relative(SRC_ROOT, file))
+      for (const lineNum of findPagesDerivationSelectorLines(content)) violations.push(`${rel}:${lineNum}`)
+    }
+    if (violations.length > 0) {
+      throw new Error(
+        '[no-full-site-scan-in-selectors] A useEditorStore( selector filters/maps `site.pages`: an ' +
+        'O(pages) walk plus a fresh array on EVERY store change, for EVERY subscriber. Use a ' +
+        'single-slot memoized selector keyed on the pages array (`selectTemplatePages`, ' +
+        '`selectPageDirectory`) so the work happens once per pages change and the result keeps its ' +
+        'identity.\n\nViolations:\n' + violations.map((v) => `  ${v}`).join('\n'),
+      )
+    }
+    expect(violations).toHaveLength(0)
+  })
+
+  it('the PERF-12 detectors flag the shapes they name, and nothing narrower', () => {
+    expect(findWholePagesSelectorLines('  const pages = useEditorStore((s) => s.site?.pages)')).toEqual([1])
+    expect(findWholePagesSelectorLines('  const pages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)')).toEqual([1])
+    expect(findWholePagesSelectorLines('  const n = useEditorStore((s) => s.site?.pages.length ?? 0)')).toEqual([])
+    expect(findWholePagesSelectorLines('  const p = useEditorStore((s) => s.site?.pages.find((x) => x.id === id))')).toEqual([])
+    expect(
+      findPagesDerivationSelectorLines(
+        'const a = 1\nconst t = useEditorStore(\n  useShallow((s) => s.site?.pages.filter(isTemplatePage) ?? EMPTY),\n)',
+      ),
+    ).toEqual([2])
+    expect(findPagesDerivationSelectorLines('const p = useEditorStore((s) => s.site?.pages.find((x) => x.id === id))')).toEqual([])
+    expect(findPagesDerivationSelectorLines(' * was `useEditorStore((s) => s.site?.pages.filter(f))` before')).toEqual([])
   })
 
   it('WHOLE_SITE_SELECTOR_RE flags a bare `s.site` selector but not a narrower one', () => {

@@ -55,6 +55,22 @@ interface ActiveInlineEdit {
   committed: boolean
 }
 
+/**
+ * Whether `session` edits THIS rendering of `nodeId` — the same node id in the
+ * same breakpoint frame AND the same board frame (two "duplicate as variant"
+ * frames share both the node id and the `'studio'` breakpoint id, trap #2).
+ * A primitive answer on purpose: `NodeRenderer` subscribes to it once per
+ * mounted node (P2-I).
+ */
+export function isInlineEditSessionFor(
+  session: Pick<ActiveInlineEdit, 'nodeId' | 'breakpointId' | 'frameId'> | null,
+  nodeId: string,
+  breakpointId: string | undefined,
+  frameId: string | null,
+): boolean {
+  return session !== null && session.nodeId === nodeId && session.breakpointId === breakpointId && session.frameId === frameId
+}
+
 interface InlineEditSlice {
   activeInlineEdit: ActiveInlineEdit | null
   /**

@@ -5,7 +5,6 @@ const RESERVED_DATA_PREFIX_RE = /^data-(studio|canvas)-/i
 const RESERVED_DATA_NAMES = new Set([
   'data-node-id',
   'data-module-id',
-  'data-hovered',
 ])
 const RESERVED_HTML_ATTRIBUTE_NAMES = new Set(['class', 'style'])
 

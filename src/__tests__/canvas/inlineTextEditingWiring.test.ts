@@ -27,6 +27,7 @@ const CANVAS_VIEWPORT = new URL('../../admin/pages/site/hooks/useCanvas.ts', imp
 const IFRAME_EVENT_FORWARDING = new URL('../../admin/pages/site/canvas/useIframeEventForwarding.ts', import.meta.url)
 const BREAKPOINT_FRAME = new URL('../../admin/pages/site/canvas/BreakpointFrame.tsx', import.meta.url)
 const CONTEXTS = new URL('../../admin/pages/site/canvas/CanvasContexts.ts', import.meta.url)
+const INLINE_EDIT_SLICE = new URL('../../admin/pages/site/store/slices/inlineEditSlice.ts', import.meta.url)
 
 describe('inline text editing wiring (in-place contentEditable)', () => {
   it('the node-interaction hook starts a session on double-click, gated to design mode', () => {
@@ -51,14 +52,14 @@ describe('inline text editing wiring (in-place contentEditable)', () => {
     // Edits flow live: read the contentEditable text back, commit through the store.
     expect(src).toContain('const inlineEditBinding: InlineEditBinding | undefined = isInlineEditing')
     expect(src).toContain('applyInlineEditValue(readInlineEditableText')
-    // Session is scoped to the one frame that owns it. The three reads of the
-    // session (`isInlineEditing` + the two session values) were collapsed into
-    // ONE `useShallow` subscription for the per-node selector budget, so the
-    // match now reads a local `session` binding rather than `s.activeInlineEdit`
-    // three times — the SCOPING is what this gate is about, not the spelling.
-    expect(src).toContain('const session = s.activeInlineEdit')
-    expect(src).toContain('session.breakpointId === breakpointId')
-    expect(src).toContain('session.frameId === frameId')
+    // Session is scoped to the one frame that owns it. Since P2-I the match is
+    // ONE primitive selector through `isInlineEditSessionFor` (the session's
+    // constant values are read through `getState()` where they are used) — the
+    // SCOPING is what this gate is about, not the spelling.
+    expect(src).toContain('isInlineEditSessionFor(s.activeInlineEdit, nodeId, breakpointId, frameId)')
+    const slice = readFileSync(INLINE_EDIT_SLICE, 'utf-8')
+    expect(slice).toContain('session.breakpointId === breakpointId')
+    expect(slice).toContain('session.frameId === frameId')
   })
 
   it('NodeRenderer passes inlineEdit to the module component (the element IS the editor)', () => {

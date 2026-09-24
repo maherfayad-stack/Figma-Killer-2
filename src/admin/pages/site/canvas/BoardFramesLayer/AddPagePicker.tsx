@@ -25,7 +25,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type RefObject } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import type { Page } from '@core/page-tree'
+import { selectPageDirectory } from '@site/store/slices/pageDirectory'
 import type { Board, PageKind } from '@core/studio-board'
 import { Button, type ButtonProps } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem, MenuSearchHeader } from '@ui/components/ContextMenu'
@@ -41,11 +41,6 @@ import {
   type AddPageChoice,
 } from './addPagePickerModel'
 import styles from './AddPagePicker.module.css'
-
-// Stable fallback references — an inline `?? []` hands back a NEW array every
-// render, which a Zustand selector must never do (it breaks
-// useSyncExternalStore's change check and can spiral into a render loop).
-const EMPTY_PAGES: Page[] = []
 
 interface AddPagePickerProps {
   label?: string
@@ -124,7 +119,8 @@ function AddPagePickerMenu({
   onClose: () => void
 }) {
   const boards = useEditorStore((s) => s.boards.boards)
-  const pages = useEditorStore((s) => s.site?.pages ?? EMPTY_PAGES)
+  // The page LIST, not `site.pages` (replaced on every edit — P2-I, PERF-12).
+  const pages = useEditorStore(selectPageDirectory)
   const addFrame = useEditorStore((s) => s.addFrame)
   const [query, setQuery] = useState('')
   const [busy, setBusy] = useState(false)

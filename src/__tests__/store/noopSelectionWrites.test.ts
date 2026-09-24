@@ -8,14 +8,16 @@
  *
  *   - the marquee (`useMarqueeSelection.ts`) writes the annotation selection on
  *     EVERY pointermove, with a hit set that is the same for almost every move;
- *   - `hoverNode` runs on every pointer crossing (guarded since `speed-03`;
- *     pinned here so the guard cannot quietly go).
+ *   - hover runs on every pointer crossing. It was guarded against same-value
+ *     writes in `speed-03`; since P2-I it is not store state at all
+ *     (`canvas/canvasHover.ts`), pinned below so it cannot quietly come back.
  *
  * The assertion is on the number of store notifications, which is exactly
  * "did the sweep run".
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
+import { setCanvasHover } from '@site/canvas/canvasHover'
 
 let notifications = 0
 let unsubscribe: (() => void) | null = null
@@ -26,9 +28,6 @@ beforeEach(() => {
     selectedNodeIds: [],
     selectedNodeId: null,
     selectedFrameIds: [],
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
   } as Parameters<typeof useEditorStore.setState>[0])
   notifications = 0
   unsubscribe = useEditorStore.subscribe(() => {
@@ -77,10 +76,11 @@ describe('no-op selection writes notify nobody (PERF-11)', () => {
     expect(notifications).toBe(1)
   })
 
-  it('hovering the node that is already hovered is not a store write', () => {
-    useEditorStore.getState().hoverNode('node-1', 'studio', 'frame-1')
-    expect(notifications).toBe(1)
-    for (let move = 0; move < 20; move += 1) useEditorStore.getState().hoverNode('node-1', 'studio', 'frame-1')
-    expect(notifications).toBe(1)
+  it('hovering is never a store write, not even a real change (P2-I moved it to canvasHover.ts)', () => {
+    setCanvasHover('node-1', 'studio', 'frame-1')
+    for (let move = 0; move < 20; move += 1) setCanvasHover('node-1', 'studio', 'frame-1')
+    setCanvasHover('node-2', 'studio', 'frame-1')
+    setCanvasHover(null)
+    expect(notifications).toBe(0)
   })
 })
