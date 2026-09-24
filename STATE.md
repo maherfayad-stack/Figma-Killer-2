@@ -91,7 +91,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   8. Pick a value in an inspector dropdown, then press Delete: the selected element is deleted.
 
 ### parser-17 — P3-B: ordinary React renders (WB-3, WB-4, WB-26, WB-5)
-- **Agent:** parser-surgeon · **Branch:** `feat/ordinary-react-renders` · **PR:** see the PR body (long form lives there) · **Updated:** 2026-09-24
+- **Agent:** parser-surgeon · **Branch:** `feat/ordinary-react-renders` · **PR:** #240 (draft; long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open)
 - **Goal:** text in container tags, `memo`/`forwardRef`/`React.memo`, `export { default as X }` barrels, `import * as UI`, `React.Fragment`, and class/HOC pages all render — or the frame names the shape. Never a blank frame.
 - **Scope (parser files):** `src/core/page-parser/{componentDeclaration,reactImports}.ts` (new), `parsePageFile.ts`, `inlineLocalComponents.ts`, `componentSources.ts`, `types.ts`, `branchSelection.ts`, `staticEval.ts`, `staticEvalCore.ts`, `componentSubstitution.ts`, `cssInJsExtract.ts`, `nextAppLayout.ts`, `index.ts`; `src/core/ast-codemods/{resolveComponentCallSite,extractComponentCopy,swapComponentInstance}.ts`; `src/core/studio-sync/parsedPageToSitePage.ts`. Also: `server/handlers/studio/{moduleMapping,loadWarnings,studioLoadContract}.ts`, `src/modules/base/{text/*,utils/htmlTag.ts}` (`text/tags.ts` deleted), `src/admin/pages/site/studio/{studioLoadWarningsStore,studioLoadStreamSchema,fsCodemodAdapter,studioLiveReloadFetch}.ts`, `canvas/CanvasEmptyPageHint.tsx` + one prop in `BoardFrameView.tsx`.
