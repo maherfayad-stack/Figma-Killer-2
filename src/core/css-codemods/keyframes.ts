@@ -59,9 +59,7 @@
  */
 import postcss, { type AtRule, type Root, type Rule } from 'postcss'
 import { applyDeclaration } from './setDeclaration'
-import { preservingLineEndings } from './preserveLineEndings'
-import type { SetDeclarationResult } from './setDeclaration'
-import type { RemoveDeclarationResult } from './removeDeclaration'
+import { preservingLineEndings, type CssRewrite } from './preserveLineEndings'
 import type { InsertRuleResult } from './insertRule'
 
 /** One step of an `@keyframes` block, as authored. */
@@ -258,7 +256,7 @@ export function setDeclarationAtKeyframe(
   keyText: string,
   property: string,
   value: string,
-): SetDeclarationResult {
+): CssRewrite {
   return preservingLineEndings(cssText, (source) => {
     const root: Root = postcss.parse(source)
     const atRule = findKeyframesAtRules(root, name)[0]
@@ -294,7 +292,7 @@ export function removeDeclarationAtKeyframe(
   name: string,
   keyText: string,
   property: string,
-): RemoveDeclarationResult {
+): CssRewrite {
   return preservingLineEndings(cssText, (source) => {
     const root: Root = postcss.parse(source)
     const atRule = findKeyframesAtRules(root, name)[0]
