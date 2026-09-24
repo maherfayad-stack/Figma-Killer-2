@@ -125,6 +125,18 @@ export function readBoardOrigin(element: Element): BoardOrigin {
   return { left: rect.left, top: rect.top, zoom: rect.width > 0 ? rect.width / BOARD_ORIGIN_SPAN : 1 }
 }
 
+/**
+ * Whether an element is the EMPTY board itself — the canvas root or the
+ * transform layer — rather than anything on it (a frame, a note, chrome).
+ * The one test for "this gesture ended on the free canvas": a frame's
+ * registered drop viewport can extend past the frame's visible, clipped box
+ * (its iframe grows to content), so geometry against the registry over-reports
+ * frames; what is actually under the pointer does not.
+ */
+export function isEmptyBoardTarget(target: EventTarget | Element | null): boolean {
+  return target instanceof HTMLElement && (target.dataset.studioCanvasRoot === 'true' || target.dataset.testid === 'canvas-transform-layer')
+}
+
 /** The board-origin element of the canvas `root` (or the document), or `null` off a Studio board. */
 export function findBoardOrigin(root: ParentNode = document): BoardOrigin | null {
   const element = root.querySelector('[data-studio-board-origin]')

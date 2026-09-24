@@ -13,10 +13,8 @@
  * moment the cross-frame branch reads its verdict. Everything measured here
  * the session already measured, except the board origin, which is one rect.
  */
-import type { BoardDropSurfaces } from '../canvasDragBoard'
-import { canvasSurfaceAtPoint } from '../canvasDragBoard'
 import type { ClientPoint, FrameCandidateIndex } from '../canvasDragSession'
-import { clientToBoardPoint, findBoardOrigin } from './canvasLayerGeometry'
+import { clientToBoardPoint, findBoardOrigin, isEmptyBoardTarget } from './canvasLayerGeometry'
 
 export interface CanvasLiftDrop {
   originPageId: string
@@ -27,7 +25,6 @@ export function resolveCanvasLiftDrop(input: {
   /** The page the dragged element is written in; `null` for a surface with no page (no lift). */
   originPageId: string | null
   draggedId: string
-  board: BoardDropSurfaces
   index: FrameCandidateIndex
   /** Where the press started, and where it was released — parent-document client coordinates. */
   origin: ClientPoint
@@ -35,11 +32,12 @@ export function resolveCanvasLiftDrop(input: {
   canvasRoot: HTMLElement | null
 }): CanvasLiftDrop | null {
   if (!input.originPageId || !input.canvasRoot) return null
-  // Over ANY frame — the origin one included — is a drop into that frame, not a lift.
-  if (canvasSurfaceAtPoint(input.board, input.point)) return null
-  // Released outside the board (a panel, the toolbar): nothing to place it on.
-  const root = input.canvasRoot.getBoundingClientRect()
-  if (input.point.x < root.left || input.point.x > root.right || input.point.y < root.top || input.point.y > root.bottom) return null
+  // Only a release ON the empty board is a lift: over any frame (the origin
+  // one included) it is a drop into that frame, and over a panel or the
+  // toolbar there is nothing to place it on. Asked of what is under the
+  // pointer — see `isEmptyBoardTarget` for why not of the registry's rects.
+  const under = input.canvasRoot.ownerDocument.elementFromPoint(input.point.x, input.point.y)
+  if (!isEmptyBoardTarget(under) || !input.canvasRoot.contains(under)) return null
   const origin = findBoardOrigin(input.canvasRoot)
   if (!origin) return null
 

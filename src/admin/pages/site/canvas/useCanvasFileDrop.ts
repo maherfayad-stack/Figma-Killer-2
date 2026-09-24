@@ -62,7 +62,7 @@ import {
   type CanvasFileDragSession,
 } from './canvasFileDragPreview'
 import { planCanvasFileDrop } from './canvasFileDrop'
-import { findBoardOrigin } from './BoardCanvasLayer/canvasLayerGeometry'
+import { findBoardOrigin, isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
 import type { DroppedFileFacts } from './canvasFileDrop'
 import type { CanvasTransform } from './math'
 
@@ -239,11 +239,6 @@ async function landAndInsert(file: File, pageId: string, parentId: string, index
     return
   }
   useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
-}
-
-/** Whether a drop landed on the empty board — the canvas root or the transform layer — rather than on anything on it. */
-function isEmptyBoardTarget(target: EventTarget | null): boolean {
-  return target instanceof HTMLElement && (target.dataset.studioCanvasRoot === 'true' || target.dataset.testid === 'canvas-transform-layer')
 }
 
 /**
