@@ -130,7 +130,7 @@ function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioL
   return {
     board: { activeBoardId: null, frames: [] },
     activePage: null,
-    selection: null,
+    selection: { nodes: [], omitted: 0 },
     fidelity: null,
     install: { hasPackageJson: true, hasNodeModules: true, dependencyCount: 3 },
     axes: { direction: 'ltr', colorScheme: 'light' },

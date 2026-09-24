@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test'
-import { generateVariantSeeds, MAX_VARIANTS_PER_SET, VARIANT_DENSITIES } from './variantSeeds'
+import { generateVariantSeeds, MAX_VARIANTS_PER_SET, VARIANT_COLOR_STRATEGIES, VARIANT_DENSITIES } from './variantSeeds'
 import { buildProjectTokenIndex } from './projectTokenIndex'
-import { LAYOUT_ARCHETYPES, MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
+import { archetypesFor, LAYOUT_ARCHETYPES, MIN_TYPE_HIERARCHY_RATIO } from './compositionAudit'
 
 const PROJECT_CSS = `:root {
   --spacing-xs: 4px;
@@ -209,5 +209,57 @@ describe('generateVariantSeeds — design policy', () => {
 
   it('defaults to balanced when no policy is given', () => {
     for (const variant of seeds()) expect(variant.style.designPolicy).toBe('balanced')
+  })
+})
+
+// ---------------------------------------------------------------------------
+// AI-12 — mobile app screens get app bands, and every set varies colour strategy
+// ---------------------------------------------------------------------------
+
+describe('generateVariantSeeds — surface and colour strategy (AI-12)', () => {
+  const appSeeds = (rngSeed = 7) =>
+    generateVariantSeeds({ tokens, brief: 'A checkout screen.', baseName: 'Checkout', count: 3, rngSeed, surface: 'app' })
+
+  it('an app set is composed only of app bands, and its directives carry the app chrome rule', () => {
+    const appIds = new Set(archetypesFor('app').map((a) => a.id))
+    for (const variant of appSeeds()) {
+      expect(variant.style.surface).toBe('app')
+      for (const id of variant.style.archetypes) expect(appIds.has(id)).toBe(true)
+      expect(variant.directive).toContain('This is a mobile app screen.')
+      expect(variant.directive).toContain('tab bar')
+    }
+  })
+
+  it('an app set still opens each variant on a different band', () => {
+    const openings = appSeeds().map((v) => v.style.archetypes[0])
+    expect(new Set(openings).size).toBe(openings.length)
+  })
+
+  it('a web set never gets app bands, and no chrome rule', () => {
+    const webIds = new Set(archetypesFor('web').map((a) => a.id))
+    for (const variant of seeds()) {
+      expect(variant.style.surface).toBe('web')
+      for (const id of variant.style.archetypes) expect(webIds.has(id)).toBe(true)
+      expect(variant.directive).not.toContain('This is a mobile app screen.')
+    }
+  })
+
+  it('assigns each colour strategy without replacement, and says it in the directive', () => {
+    const set = seeds()
+    expect(new Set(set.map((v) => v.style.colorStrategy)).size).toBe(3)
+    for (const variant of set) {
+      expect(VARIANT_COLOR_STRATEGIES).toContain(variant.style.colorStrategy!)
+      expect(variant.directive).toContain(`- Colour strategy: ${variant.style.colorStrategy}`)
+    }
+  })
+
+  it('a recorded rngSeed still reproduces every pre-existing axis', () => {
+    // Colour strategy is drawn after the older axes, so adding it moved none
+    // of them: these are the values rngSeed 42 produced BEFORE AI-12.
+    expect(seeds(42).map((v) => [v.style.density, v.style.radiusFamily, v.style.accentToken, v.style.archetypes.join('>')])).toEqual([
+      ['compact', 'sharp', '--color-primary-violet', 'split>pricing>hero'],
+      ['regular', 'round', '--color-brand-coral', 'pricing>hero>feature-grid'],
+      ['airy', 'pill', '--color-accent-aqua', 'hero>feature-grid>testimonial-band'],
+    ])
   })
 })

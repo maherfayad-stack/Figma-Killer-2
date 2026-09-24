@@ -51,21 +51,23 @@ import { dirname } from 'node:path'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
-import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { AGENT_FILE_MAX_BYTES, pathRefusal } from './fileReadTools'
-import { pushStudioDiskChange } from './liveReloadPush'
+import {
+  afterWrites,
+  checkContent,
+  commitPlannedWrites,
+  currentText,
+  isRefusal,
+  staleRefusal,
+  turnProject,
+} from './agentWriteSupport'
 import {
   AGENT_PATH_MAX_CHARS,
   contentHash,
-  hasOtherHardLinks,
-  readTextFile,
   resolveAgentFilePath,
-  statIfPresent,
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
-import { appendTurnWrite } from '../../../../handlers/studio/turnWriteLog'
-import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 
 const EXPECTED_HASH_FIELD = Type.Optional(
   Type.String({
@@ -73,83 +75,6 @@ const EXPECTED_HASH_FIELD = Type.Optional(
     description: 'The `hash` studio_read_file (or a previous write/edit of this file) returned. The write refuses with stale-source when the file on disk no longer has that hash — someone changed it after you read it.',
   }),
 )
-
-/** The open project this turn writes into, or the refusal when there is none. */
-function turnProject(ctx: ToolContext): string | ToolRefusal {
-  if (!ctx.workspaceDir) {
-    return toolRefusal('no-open-project', 'No Studio project is open for this turn, so there is nowhere to write.', {
-      remedy: 'Ask the user to open the project in Studio and send the message again.',
-    })
-  }
-  return resolveToolProjectDir(undefined, ctx)
-}
-
-/** Text content a write may land, or the refusal. */
-function checkContent(content: string, rel: string): ToolRefusal | null {
-  if (content.includes('\0')) {
-    return toolRefusal('not-text', `The content for "${rel}" contains a NUL character, so it is not text.`, {
-      remedy: 'Images, fonts and other binary files go through studio_upload_asset or studio_fetch_remote_asset.',
-    })
-  }
-  const bytes = Buffer.byteLength(content, 'utf8')
-  if (bytes > AGENT_FILE_MAX_BYTES) {
-    return toolRefusal('file-too-large', `The content for "${rel}" is ${bytes.toLocaleString('en-US')} bytes, over the ${AGENT_FILE_MAX_BYTES.toLocaleString('en-US')}-byte cap.`, {
-      remedy: 'Split it: move a large section into its own component file, or its styles into their own stylesheet.',
-    })
-  }
-  return null
-}
-
-function staleRefusal(rel: string, expectedHash: string, actualHash: string): ToolRefusal {
-  return toolRefusal('stale-source', `"${rel}" changed since you read it (you passed hash ${expectedHash}; it is now ${actualHash}), so writing would discard a change you never saw.`, {
-    remedy: 'Read it again with studio_read_file and rebuild the change against what is there now.',
-    details: { path: rel, hash: actualHash },
-  })
-}
-
-/**
- * The current text of an existing target, with every refusal a write shares:
- * not a regular file, a hard link, not text, over the cap, stale. `null`
- * content means the file does not exist yet.
- */
-function currentText(
-  target: AgentFileTarget,
-  expectedHash: string | undefined,
-): { content: string | null; hash: string | null } | ToolRefusal {
-  const stat = statIfPresent(target.abs)
-  if (!stat) {
-    if (expectedHash !== undefined) {
-      return toolRefusal('stale-source', `"${target.rel}" does not exist any more, but you passed a hash for it.`, {
-        remedy: 'List the folder with studio_list_files to see what is there now.',
-      })
-    }
-    return { content: null, hash: null }
-  }
-  if (!stat.isFile()) return toolRefusal('not-a-file', `"${target.rel}" is a directory, not a file.`)
-  if (hasOtherHardLinks(stat)) {
-    return toolRefusal('protected-path', `"${target.rel}" has other hard-linked names on disk, so writing it would change them too — possibly outside the project.`)
-  }
-  const read = readTextFile(target.abs, AGENT_FILE_MAX_BYTES)
-  if (read.kind === 'too-large') {
-    return toolRefusal('file-too-large', `"${target.rel}" is ${read.bytes.toLocaleString('en-US')} bytes, over the ${AGENT_FILE_MAX_BYTES.toLocaleString('en-US')}-byte cap for the file tools.`)
-  }
-  if (read.kind === 'not-text') return toolRefusal('not-text', `"${target.rel}" ${read.reason}, so a text tool cannot rewrite it.`)
-  if (read.kind !== 'text') return toolRefusal('not-a-file', `"${target.rel}" could not be read as a file.`)
-  if (expectedHash !== undefined && expectedHash !== read.hash) return staleRefusal(target.rel, expectedHash, read.hash)
-  return { content: read.content, hash: read.hash }
-}
-
-function isRefusal(value: unknown): value is ToolRefusal {
-  return typeof value === 'object' && value !== null && (value as { ok?: unknown }).ok === false
-}
-
-/** Record every written file in the turn log and push one reload naming all of them. Runs after the bytes landed. */
-function afterWrites(dir: string, ctx: ToolContext, written: readonly AgentFileTarget[]): void {
-  if (written.length === 0) return
-  const userKey = studioAgentUserKey(ctx.userId)
-  for (const target of written) appendTurnWrite(dir, userKey, target.abs)
-  pushStudioDiskChange(dir, written.map((target) => target.rel))
-}
 
 // ---------------------------------------------------------------------------
 // studio_write_file
@@ -394,30 +319,9 @@ const editFilesTool: AiTool = {
         plan.next = next.content
       }
 
-      // Write. A failure part-way restores every file already written, so the
-      // batch is all-or-nothing on disk, not only in the checks above.
-      const written: Array<{ target: AgentFileTarget; original: string }> = []
-      try {
-        for (const plan of plans.values()) {
-          if (plan.next === plan.original) continue
-          writeFileSync(plan.target.abs, plan.next, 'utf8')
-          written.push({ target: plan.target, original: plan.original })
-        }
-      } catch (err) {
-        const unrestored: string[] = []
-        for (const { target, original } of written) {
-          try {
-            writeFileSync(target.abs, original, 'utf8')
-          } catch (restoreErr) {
-            console.error('[studio:mcp] studio_edit_files could not restore a file after a failed batch:', restoreErr)
-            unrestored.push(target.rel)
-          }
-        }
-        // A file that could not be restored DID change: log it and reload it like any write.
-        afterWrites(dir, ctx, written.map(({ target }) => target).filter((target) => unrestored.includes(target.rel)))
-        return toolRefusal('io-error', `Writing the batch failed (${err instanceof Error ? err.message : String(err)}). ${unrestored.length === 0 ? 'Every file already written was restored, so nothing changed.' : `These files could not be restored and hold the new content: ${unrestored.join(', ')}.`}`)
-      }
-      afterWrites(dir, ctx, written.map(({ target }) => target))
+      // Write — all-or-nothing on disk too, not only in the checks above.
+      const committed = commitPlannedWrites(dir, ctx, plans.values())
+      if (isRefusal(committed)) return committed
       return {
         ok: true as const,
         files: [...plans.values()].map((plan) => ({ path: plan.target.rel, hash: contentHash(plan.next), changed: plan.next !== plan.original })),

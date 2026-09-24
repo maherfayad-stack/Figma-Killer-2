@@ -24,6 +24,9 @@ import { studioMeasureElementMcpTools } from './measureElement'
 import { studioPackageDocMcpTools } from './packageDocTools'
 import { studioProjectTokenMcpTools } from './projectTokenTools'
 import { studioComponentCatalogMcpTools } from './componentCatalogTools'
+import { studioComponentSnippetMcpTools } from './componentSnippetTool'
+import { studioSetTokensMcpTools } from './setTokensTool'
+import { studioArrangeFramesMcpTools } from './arrangeFramesTool'
 import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
 import { studioScreenshotTool } from './screenshot'
@@ -49,6 +52,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioProjectMcpTools,
   ...studioFileReadMcpTools,
   ...studioEditMcpTools,
+  ...studioArrangeFramesMcpTools,
   studioFidelityReportTool,
   ...studioExportMcpTools,
   ...studioReferenceMcpTools,
@@ -61,7 +65,9 @@ export const studioMcpTools: AiTool[] = [
   ...studioComputedStylesMcpTools,
   ...studioPackageDocMcpTools,
   ...studioProjectTokenMcpTools,
+  ...studioSetTokensMcpTools,
   ...studioComponentCatalogMcpTools,
+  ...studioComponentSnippetMcpTools,
   ...studioFigmaBindingMcpTools,
   ...studioRemoteAssetMcpTools,
   ...studioCommentMcpTools,

@@ -52,6 +52,12 @@ export interface CaptureGrant {
   /** The exact pages this grant can render. A page outside this list is not served. */
   readonly pageIds: readonly string[]
   readonly axes?: Partial<PreviewAxes>
+  /**
+   * Render every frame at this CSS width instead of its board width (AI-16,
+   * `studio_screenshot`'s `widths`). A capture-time override only: the board
+   * is never written, so a responsive check leaves no trace on it.
+   */
+  readonly frameWidth?: number
   readonly expiresAt: number
 }
 
@@ -75,6 +81,7 @@ export interface MintCaptureTokenInput {
   dir: string
   pageIds: readonly string[]
   axes?: Partial<PreviewAxes>
+  frameWidth?: number
 }
 
 /** Mint a capture-only grant for one headless capture. The caller MUST revoke it in a `finally`. */
@@ -87,6 +94,7 @@ export function mintCaptureToken(input: MintCaptureTokenInput): string {
     dir: input.dir,
     pageIds: [...input.pageIds],
     ...(input.axes ? { axes: input.axes } : {}),
+    ...(input.frameWidth === undefined ? {} : { frameWidth: input.frameWidth }),
     expiresAt: now + CAPTURE_TOKEN_TTL_MS,
   })
   return token

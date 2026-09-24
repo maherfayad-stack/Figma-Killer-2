@@ -118,6 +118,10 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // Board geometry and per-frame axes — state that lives in `.studio/`, not
   // in the source files the agent can write.
   'studio_set_frames',
+  // AI-17 — place frames (x/y, a row, a grid) with a note per frame. The
+  // creative block asks for variants side by side; nothing could place a
+  // frame until this existed.
+  'studio_arrange_frames',
   'studio_set_frame_axes',
   'studio_duplicate_frame_as_variant',
   // The user's own feedback on the board, as a work queue — and the two writes
@@ -137,8 +141,14 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   'studio_project_profile',
   'studio_list_pages',
   'studio_list_tokens',
+  // AI-15 — change a token's value as a CST edit on its ONE declaration,
+  // through the agent write gate; refuses a token declared in two places.
+  'studio_set_tokens',
   'studio_list_components',
   'studio_find_component',
+  // AI-14 — the exact import for the file it goes into, and a usage with
+  // valid enum values: what the catalog tools list but never wrote out.
+  'studio_component_snippet',
   // Assets and dependencies.
   'studio_upload_asset',
   'studio_fetch_remote_asset',

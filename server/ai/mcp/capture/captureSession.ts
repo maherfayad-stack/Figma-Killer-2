@@ -79,8 +79,12 @@ export interface AuthoredGeometry {
   height: number
 }
 
-/** Authored frame geometry for each requested page, defaulted exactly the way the live capture path defaults it. */
-export function authoredGeometry(dir: string, pageIds: readonly string[]): Map<string, AuthoredGeometry> {
+/**
+ * Authored frame geometry for each requested page, defaulted exactly the way
+ * the live capture path defaults it. `frameWidth` replaces every frame's width
+ * — a capture-time breakpoint override, never written back (AI-16).
+ */
+export function authoredGeometry(dir: string, pageIds: readonly string[], frameWidth?: number): Map<string, AuthoredGeometry> {
   const boardsFile = readBoardsFileOrEmpty(dir)
   const byPageId = new Map<string, AuthoredGeometry>()
   for (const board of boardsFile.boards) {
@@ -91,7 +95,8 @@ export function authoredGeometry(dir: string, pageIds: readonly string[]): Map<s
   }
   const selected = new Map<string, AuthoredGeometry>()
   for (const pageId of pageIds) {
-    selected.set(pageId, byPageId.get(pageId) ?? { width: FRAME_WIDTH, height: FRAME_HEIGHT })
+    const authored = byPageId.get(pageId) ?? { width: FRAME_WIDTH, height: FRAME_HEIGHT }
+    selected.set(pageId, frameWidth === undefined ? authored : { ...authored, width: frameWidth })
   }
   return selected
 }
@@ -112,6 +117,8 @@ export interface CaptureSessionInput {
   dir: string
   pageIds: readonly string[]
   axes?: Partial<PreviewAxes>
+  /** Render every frame at this width instead of its board width — see `CaptureGrant.frameWidth`. */
+  frameWidth?: number
   viewport: { width: number; height: number }
   deviceScaleFactor?: number
 }
@@ -143,6 +150,7 @@ export async function withSettledCapture<T>(
     dir: input.dir,
     pageIds: input.pageIds,
     ...(input.axes ? { axes: input.axes } : {}),
+    ...(input.frameWidth === undefined ? {} : { frameWidth: input.frameWidth }),
   })
   const url = overrides.baseUrl
     ? `${overrides.baseUrl.replace(/\/$/, '')}/admin/agent-capture?token=${encodeURIComponent(token)}`

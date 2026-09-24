@@ -149,6 +149,20 @@ the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
 out the write surface with the one operation none of these three cover:
 scaffolding a brand-new page file.
 
+**P4-D — board placement, token values, snippets** (audit 06, AI-14/15/17):
+`studio_arrange_frames` (`studio.write`) moves frames — explicit x/y, a row, a
+column or a grid, with an optional sticky note per frame — in the same
+`.studio/boards.json` `studio_set_frames` resizes, and pushes the same
+`boardsChanged` live reload. `studio_set_tokens` (`studio.write`) changes design
+token values as a formatting-preserving CST edit on each token's one
+declaration, all-or-nothing, through the agent write gate
+(`resolveAgentFilePath` / `agentWriteRefusal`), refusing a token declared twice
+or won by a package, Studio's design system or compiled output.
+`studio_component_snippet` (read, ungated) returns a component's exact import
+for a named file and a prop-checked JSX usage. All three are in this registry
+AND on both in-canvas agent surfaces. `studio_screenshot` also takes `widths`:
+each screen at each breakpoint, headless only, never written to the board.
+
 **The built-in design system (DS-3).** `studio_list_components`/
 `studio_find_component` list Studio's own design system as
 `apiSource: "builtin"` entries for any project that carries the

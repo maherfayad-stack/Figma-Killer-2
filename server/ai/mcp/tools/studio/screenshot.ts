@@ -47,9 +47,22 @@
  * `studio_list_pages` first to translate that into an id is a round trip
  * bought with nothing. `"Checkout"`, `"Checkout.tsx"`, `"pages/Checkout.tsx"`
  * and the raw page id all resolve to the same frame.
+ *
+ * ## Several widths without touching the board (AI-16)
+ *
+ * `widths` renders each screen at each breakpoint through the same headless
+ * path, one capture per width, with the width carried in the capture grant
+ * (`CaptureGrant.frameWidth`) — never written to `.studio/boards.json`. The
+ * old way to check a phone screen at desktop width was to resize its frame,
+ * look, and resize it back, which mutated the user's board and left it wrong
+ * whenever a turn ended between the two. A width override is headless-only:
+ * the live tab can photograph a frame only at its board width, so when
+ * headless cannot run this refuses instead of returning the board width in
+ * place of the one that was asked for.
  */
 import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
+import { toolRefusal, type AiToolImage } from '@core/ai'
 import { createWorkspaceProject } from '@core/page-parser'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { syncBoardFramesFromDisk } from '../../../../handlers/studio/boardFrames'
@@ -62,6 +75,10 @@ import { MAX_BATCH_PAGES, resolveRequestedPages } from './pageNameMatch'
 
 /** The browser capture path's own batch ceiling (`StudioExportFramesInputSchema`) — now the shared family-wide cap (`pageNameMatch.ts`'s `MAX_BATCH_PAGES`). */
 const MAX_FRAMES = MAX_BATCH_PAGES
+/** Breakpoints one responsive check may ask for — phone, tablet, desktop, wide. */
+const MAX_WIDTHS = 4
+const MIN_CAPTURE_WIDTH = 240
+const MAX_CAPTURE_WIDTH = 2560
 
 const ScreenshotInputSchema = Type.Object(
   {
@@ -94,6 +111,14 @@ const ScreenshotInputSchema = Type.Object(
         },
       ),
     ),
+    widths: Type.Optional(
+      Type.Array(Type.Integer({ minimum: MIN_CAPTURE_WIDTH, maximum: MAX_CAPTURE_WIDTH }), {
+        minItems: 1,
+        maxItems: MAX_WIDTHS,
+        description:
+          'Responsive check: render each screen at each of these CSS widths, e.g. [375, 768, 1280], instead of its board width. The board is never resized — the override exists only inside this capture — and each frame keeps its own height (tall content is unrolled). Headless only: when the headless browser cannot run this refuses rather than photograph another width. Screens x widths is capped at 20.',
+      }),
+    ),
   },
   { additionalProperties: false },
 )
@@ -106,14 +131,15 @@ export const studioScreenshotTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the parse to re-read the files from disk, then renders each requested screen and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. It does NOT need a Studio browser tab open, and it never disturbs one that is — the capture runs in a headless browser on the server against what is ON DISK, which is exactly what you just wrote; the open editor tab is used only as a fallback when the headless browser cannot run. `capturedVia` in the result says which path answered. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Each result carries the captured width/height, its index into the response images, `nodeRects` (node id -> frame-local rect, so a spot on the image maps back to the nodes under it), and — for a .tsx/.jsx screen — `canonical: { isCanonical, violations, advisories }`, the WS-13 canonical-JSX self-check, run against the file you just wrote so a non-literal prop/className, a spread prop, a Sass/CSS-in-JS import, an unresolvable dynamic map, or a likely unnecessary wrapper element shows up on the very call your own "write, then look" loop already makes. It does NOT catch a hardcoded colour, a fixed pixel width, or a literal inline style object — those are values the system prompt\'s own rules ban, not structural editability breaks; studio_measure_reference and careful reading remain how you catch those.',
+    'See what a screen actually looks like. Places a board frame for any page file that does not have one yet, waits for the parse to re-read the files from disk, then renders each requested screen and returns it as a PNG image block. This is how you verify your own work: write the files, then look at them. It does NOT need a Studio browser tab open, and it never disturbs one that is — the capture runs in a headless browser on the server against what is ON DISK, which is exactly what you just wrote; the open editor tab is used only as a fallback when the headless browser cannot run. `capturedVia` in the result says which path answered. Name screens the way you named the files ("Checkout"), or omit `pages` to capture the whole project. Pass `widths` (e.g. [375, 768, 1280]) to see each screen at those breakpoints without resizing the board; every frame then carries `requestedWidth`. Each result carries the captured width/height, its index into the response images, `nodeRects` (node id -> frame-local rect, so a spot on the image maps back to the nodes under it), and — for a .tsx/.jsx screen — `canonical: { isCanonical, violations, advisories }`, the WS-13 canonical-JSX self-check, run against the file you just wrote so a non-literal prop/className, a spread prop, a Sass/CSS-in-JS import, an unresolvable dynamic map, or a likely unnecessary wrapper element shows up on the very call your own "write, then look" loop already makes. It does NOT catch a hardcoded colour, a fixed pixel width, or a literal inline style object — those are values the system prompt\'s own rules ban, not structural editability breaks; studio_measure_reference and careful reading remain how you catch those.',
   inputSchema: ScreenshotInputSchema,
   handler: async (input, ctx: ToolContext) => {
-    const { dir: dirInput, pages: requested, dpr, axes } = input as {
+    const { dir: dirInput, pages: requested, dpr, axes, widths } = input as {
       dir?: string
       pages?: string[]
       dpr?: number
       axes?: { direction?: 'ltr' | 'rtl'; colorScheme?: 'light' | 'dark' }
+      widths?: number[]
     }
     const dir = resolveToolProjectDir(dirInput, ctx)
 
@@ -122,14 +148,20 @@ export const studioScreenshotTool: AiTool = {
 
     const { pages } = await loadStudioPages(dir)
     const { ids, unmatched } = resolveRequestedPages(pages, requested, MAX_FRAMES)
+    const uniqueWidths = widths ? [...new Set(widths)] : undefined
+    if (uniqueWidths && ids.length * uniqueWidths.length > MAX_FRAMES) {
+      return toolRefusal('invalid-input', `${ids.length} screens at ${uniqueWidths.length} widths is ${ids.length * uniqueWidths.length} captures, over the ${MAX_FRAMES}-capture cap.`, {
+        remedy: 'Name fewer screens in pages, or check fewer widths per call.',
+      })
+    }
     if (ids.length === 0) {
       const known = pages.map((p) => p.title).join(', ') || '(no pages found)'
-      return {
-        ok: false,
-        error: unmatched.length > 0
+      return toolRefusal(
+        'no-such-page',
+        unmatched.length > 0
           ? `No screen matched ${unmatched.map((n) => `"${n}"`).join(', ')}. This project has: ${known}.`
-          : `This project has no screens to capture yet.`,
-      }
+          : 'This project has no screens to capture yet.',
+      )
     }
 
     // 2. Capture — headless first, the live editor tab as fallback. The
@@ -139,15 +171,42 @@ export const studioScreenshotTool: AiTool = {
     // specifically because step 1 just made disk the source of truth: this
     // tool exists to look at files the agent has already written. Only the
     // live-tab fallback pays the live-reload wait (`reloadBeforeLiveFallback`).
-    const captured = await captureFrames({
+    const capture = (frameWidth?: number) => captureFrames({
       userId: ctx.userId,
       dir,
       pageIds: ids,
       reloadBeforeLiveFallback: { boardsChanged: placed.length > 0 },
       ...(dpr === undefined ? {} : { dpr }),
       ...(axes === undefined ? {} : { axes }),
+      ...(frameWidth === undefined ? {} : { frameWidth }),
       ...(ctx.signal ? { signal: ctx.signal } : {}),
     })
+    // AI-16 — one capture per width, and never a board write in between: each
+    // width is a capture-time override (`CaptureFramesRequest.frameWidth`),
+    // headless only, so a responsive check leaves the board exactly as it was.
+    let captured: Awaited<ReturnType<typeof captureFrames>>
+    if (uniqueWidths) {
+      const frames: Array<Record<string, unknown>> = []
+      const images: AiToolImage[] = []
+      let source: Awaited<ReturnType<typeof captureFrames>>['source'] = 'none'
+      for (const width of uniqueWidths) {
+        const atWidth = await capture(width)
+        if (!atWidth.output.ok) return atWidth.output
+        const data = atWidth.output.data as { frames?: Array<Record<string, unknown>> } | null
+        for (const frame of data?.frames ?? []) {
+          frames.push({
+            ...frame,
+            requestedWidth: width,
+            ...(typeof frame.imageIndex === 'number' ? { imageIndex: frame.imageIndex + images.length } : {}),
+          })
+        }
+        images.push(...(atWidth.output.images ?? []))
+        source = atWidth.source
+      }
+      captured = { source, output: { ok: true, data: { frames, source, widths: uniqueWidths }, images } }
+    } else {
+      captured = await capture()
+    }
     if (!captured.output.ok) return captured.output
 
     // A6 (STUDIO-FIGMA-PARITY-PLAN.md): re-arm the WS-13 canonical-JSX

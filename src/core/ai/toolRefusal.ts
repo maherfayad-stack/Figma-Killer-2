@@ -112,6 +112,14 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'This project has no package.json, so there is no dependency manifest to act on.',
   },
+  'no-such-token': {
+    retryable: false,
+    meaning: 'No stylesheet the canvas loads declares that CSS custom property at the document root — in the requested colour scheme, when one was named. The refusal says whether the light value exists when the dark one does not.',
+  },
+  'no-such-component': {
+    retryable: false,
+    meaning: 'No component of that name is in the design-system catalog of this project (the one studio_list_components reads). The refusal lists the nearest names.',
+  },
   'no-writable-location': {
     retryable: false,
     meaning: 'The node has no single honest source location to write to — a synthetic node, or one produced inside a `.map` iteration.',
@@ -121,6 +129,18 @@ export const TOOL_REFUSAL_CODES = {
   'ambiguous-reference': {
     retryable: false,
     meaning: 'Two or more equally-ranked design references could stand in for this page. Name one explicitly with referenceId.',
+  },
+  'ambiguous-declaration': {
+    retryable: false,
+    meaning: 'The design token is declared in more than one place for the same colour scheme (two project stylesheets, or a responsive/second selector in one file), so no single declaration is "the" token. The refusal lists every file:line; edit the one you mean with the file tools.',
+  },
+  'read-only-source': {
+    retryable: false,
+    meaning: 'The declaration that wins comes from a package, from the built-in Studio design system, or from compiled Sass/PostCSS/Tailwind output — not a project file that can be edited in place. Override it in a stylesheet of the project, or edit the source the output was compiled from.',
+  },
+  'invalid-prop-value': {
+    retryable: false,
+    meaning: 'A prop value is not one the component accepts — an enum value outside its declared set, a non-boolean for a boolean prop, or a prop the component does not declare. The refusal lists the accepted values.',
   },
   'reference-unreadable': {
     retryable: false,

@@ -109,6 +109,29 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body. Every CONFIRMED finding's test failed before the fix (pre-fix trunk run, plus in-place disables).
 - **Human action needed:** dogfood `/admin/site` on a repo with `memo`/barrels and a `lazy()` page (script in the PR body).
 
+### mcp-29 — P4-D: the assistant designs with craft (AI-19, AI-12, AI-14, AI-16, AI-17, AI-15, AI-9)
+- **Agent:** mcp-tooling (+ parser-surgeon for the token codemod) · **Branch:** `feat/agent-designs-with-craft` off `6efc088a` · **PR:** #241 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** a creative, tool-packed assistant: one prompt for both paths that teaches design, not only matching; tools to place frames, change tokens, write component usages and check breakpoints; the selection in the digest.
+- **Prompt (AI-19):** "done" first and mode-specific; decide before drawing, real content, one critique pass against a craft rubric, Initiative; the eSIM facts are gone; "keep the screen a static composition" (dropped from CLAUDE.md by P4-B) now lives under Canvas invariants; "specification, not inspiration" moved into BALANCED. The largest prefix went from ~36.9K to ~32.5K characters. Gate: `agent-prompt-craft.test.ts` checks the CLI file and both HTTP wires (sections, mode block, no project facts, a 34,000-char budget).
+- **Tools added** (all `execution: server`, in the registry AND on both agent paths):
+  - `studio_set_tokens`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, set: [{ name, value, scheme? }] ≤40 }`. It makes a CST edit (`@core/css-codemods` `setCustomPropertyValueAtLine`) through `resolveAgentFilePath(…,'write')`, under the write lock, and it is all-or-nothing. Refusals: `no-such-token` ("--x is not declared at the document root of any stylesheet the canvas loads"), `read-only-source`, `ambiguous-declaration` (lists every file:line), and `stale-source`.
+  - `studio_arrange_frames`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, pageIds+layout(row|column|grid)+columns?+gap?+origin? | positions[{pageId,x,y}], notes?[{pageId,text}], boardId? }`. When a page has no frame it refuses `no-board-frame`: "No frame on board … for: X" with the remedy "call studio_screenshot first".
+  - `studio_component_snippet`: a read, ungated. Input `{ dir?, name, forFile, props?, children?, package? }`. Refusals: `no-such-component` (gives the nearest names) and `invalid-prop-value` (lists the accepted values).
+  - `studio_screenshot` gains `widths[]` (≤4, 240–2560). It is headless-only and never writes the board. When headless cannot run, the error says: "capture-unavailable: the Npx capture needs the headless browser… no other width was substituted".
+- **Other changes:**
+  - AI-12: the app archetype pool plus `APP_CHROME_RULE`, a `surface` taken from the platform or the frame widths, and a colour-strategy axis. The axis is drawn last, so old rngSeeds reproduce.
+  - AI-9: `StudioAgentSnapshot.selection[{nodeId, box?}]` replaces `selectedNodeId`. The box is measured client-side (`selectionBoxes.ts`, leaf imports only, fail-soft). `selectionDigest.ts` adds file:line:col, an excerpt read under containment, and the box.
+  - The shared write steps moved to `agentWriteSupport.ts`, and five refusal codes were added.
+- **Decisions:**
+  - No new quality_check findings (touch target, line length, edge alignment). Every non-DS finding is a Stop-gate error, and a CSS-only heuristic would block turns on false positives. This needs a layout-measured grader.
+  - `studio_set_tokens` never creates a token.
+- **Landmines:**
+  - The snapshot wire shape changed (`selection`). Anything that builds a `StudioAgentSnapshot` must send the array.
+  - `WRITE_GATED_ADDED_SINCE` now lists `studio_arrange_frames` and `studio_set_tokens`.
+  - Prefix budget: raise `STATIC_PREFIX_BUDGET_CHARS` deliberately, never silently.
+- **Next:** the owner runs a creative and a match brief (bench:agent-turn) on both paths. The HTTP-path dogfood is in the PR body.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -126,6 +149,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
+- `mcp-29` · a mobile project, CLI and API-key paths · "design a checkout screen, 3 directions": variants use app bands, sit side by side with a note each; select two elements and ask "what are these": the reply names both file:lines; "make the brand colour coral" edits one `--brand` declaration. Script: the PR body
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
