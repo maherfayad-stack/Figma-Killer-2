@@ -35,6 +35,13 @@
  * rtl`. `top` is unaffected: RTL mirrors the inline axis only, never the
  * block axis.
  *
+ * The property is spelled `insetInlineStart` — the key of the element's
+ * `style={{…}}` object, which React only reads in camelCase — and the same
+ * choice `inlineOffsetProperty` makes for a resize, so the two gestures never
+ * write different offsets. Only the in-frame preview, which talks to the
+ * CSSOM, converts it to `inset-inline-start` (`cssPropertyName`). This used
+ * to write the kebab key into the source (P2-D's finding, fixed in P2-C).
+ *
  * ## Snapping
  *
  * Free movement without alignment is worse than reordering, so the moved rect
@@ -51,7 +58,7 @@
  * React's re-render is the last thing to touch the property).
  */
 import { registry } from '@core/module-engine'
-import { isPositionedFreely } from '@core/studio-runtime'
+import { inlineOffsetProperty, isPositionedFreely, type InlineOffsetProperty } from '@core/studio-runtime'
 import {
   explainStaticParentConstraint,
   getNodeHtmlTag,
@@ -68,19 +75,17 @@ import { computeSnap, type SnapGuide, type SnapRect } from './boardSnapping'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
+import { cssPropertyName } from './elementResizeSizing'
 
 /** Snap distance in FRAME-space pixels. Matches the board's own feel. */
 export const FREE_MOVE_SNAP_PX = 6
 
-/** Which physical/logical property the horizontal offset is written to. */
-export type FreeMoveInlineProperty = 'left' | 'inset-inline-start'
-
 export interface FreeMovePlan {
   /** The element whose own inline style the gesture writes. */
   element: HTMLElement
-  inlineProperty: FreeMoveInlineProperty
+  inlineProperty: InlineOffsetProperty
   /**
-   * `+1` for `left`, `-1` for `inset-inline-start`: a drag to visual-right
+   * `+1` for `left`, `-1` for `insetInlineStart`: a drag to visual-right
    * increases `left` but DECREASES the distance from an RTL inline start.
    */
   inlineSign: 1 | -1
@@ -144,16 +149,16 @@ export interface FreeMoveStyleInput {
 export function planFreeMoveProperties(
   own: FreeMoveStyleInput,
   parentPosition: string,
-): { inlineProperty: FreeMoveInlineProperty; inlineSign: 1 | -1; needsAbsolute: boolean } | null {
+): { inlineProperty: InlineOffsetProperty; inlineSign: 1 | -1; needsAbsolute: boolean } | null {
   const alreadyFree = isPositionedFreely(own.position)
   // `fixed` is contained by the viewport, not by the parent, so the parent's
   // own position is not a question for it.
   if (!alreadyFree && parentPosition === 'static') return null
 
-  const rtl = own.direction === 'rtl'
+  const inlineProperty = inlineOffsetProperty(own.direction)
   return {
-    inlineProperty: rtl ? 'inset-inline-start' : 'left',
-    inlineSign: rtl ? -1 : 1,
+    inlineProperty,
+    inlineSign: inlineProperty === 'left' ? 1 : -1,
     needsAbsolute: !alreadyFree,
   }
 }
@@ -265,7 +270,7 @@ function lengthOrZero(value: string): number {
 export function readFreeMoveBase(
   element: HTMLElement,
   style: FreeMoveStyleInput,
-  inlineProperty: FreeMoveInlineProperty,
+  inlineProperty: InlineOffsetProperty,
 ): { baseInline: number; baseTop: number } {
   const rawInline = inlineProperty === 'left' ? style.left : style.insetInlineStart
   const inlineAuto = Number.isNaN(Number.parseFloat(rawInline))
@@ -316,7 +321,7 @@ export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number): FreeMo
  */
 export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
   if (plan.needsAbsolute) plan.element.style.setProperty('position', 'absolute')
-  plan.element.style.setProperty(plan.inlineProperty, `${Math.round(step.inline)}px`)
+  plan.element.style.setProperty(cssPropertyName(plan.inlineProperty), `${Math.round(step.inline)}px`)
   plan.element.style.setProperty('top', `${Math.round(step.top)}px`)
 }
 
@@ -329,7 +334,7 @@ export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
  * never seen.
  */
 export function clearFreeMovePreview(plan: FreeMovePlan): void {
-  plan.element.style.removeProperty(plan.inlineProperty)
+  plan.element.style.removeProperty(cssPropertyName(plan.inlineProperty))
   plan.element.style.removeProperty('top')
   if (plan.needsAbsolute) plan.element.style.removeProperty('position')
 }

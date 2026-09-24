@@ -55,7 +55,14 @@
  *   ⌘[ / ⌘]    | (unbound)                   | reorder ±1 in flow order        | "Up" = earlier in the DOM (IX-9)
  *   H          | toggle history              | hand tool (latched)             | Figma's
  *   ⇧H / ⇧V    | flip                        | unbound                         | Reserved for flip (IX-misc)
- *   ← ↑ → ↓    | nudge / move a flex child   | frames only today               | P2-C decides nodes (IX-1)
+ *   ← ↑ → ↓    | nudge / move a flex child   | the same, by what is selected:  | P2-C (IX-1). Canvas-scoped like Tab:
+ *              |                             | a frame or note nudges; an      | in a panel the arrows stay the
+ *              |                             | absolute layer nudges its       | panel's (a tree, a field)
+ *              |                             | offsets; a layout child         |
+ *              |                             | reorders ±1 along its axis      |
+ *   held arrow | repeats the step            | a nudge repeats, and writes     | A structural write per repeat
+ *              |                             | ONCE on keyup; a reorder is     | would queue 30 writes a second
+ *              |                             | one step per press              |
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'
@@ -219,13 +226,12 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // a node required a mouse. Alt+↑/↓ rather than a plain arrow key, for two
   // reasons that both still hold:
   //
-  //  1. Plain arrows are no longer free. `viewport-01` gave them to
-  //     `board.nudgeFrames` below — but ONLY while board frames are selected
-  //     (Figma's own "arrows move the selected frame"). With a NODE selected
-  //     the arrows stay unclaimed: sibling SELECTION went to Tab / ⇧Tab
-  //     (P2-B, IX-3), so the arrows are left for moving the node (P2-C,
-  //     IX-1). That is the whole rule: arrows are scoped by WHAT IS SELECTED,
-  //     never globally grabbed.
+  //  1. Plain arrows are not free. `canvas.moveSelection` below owns them,
+  //     scoped by WHAT IS SELECTED, never globally grabbed: selected frames
+  //     and notes nudge (`viewport-01`), and a selected node moves (P2-C,
+  //     IX-1) — an absolute one nudges its offsets, a layout child reorders
+  //     along its parent's axis. Sibling SELECTION went to Tab / ⇧Tab
+  //     (P2-B, IX-3), not to the arrows.
   //  2. Alt+↑/↓ doesn't collide with `CanvasTreeLadderOverlay`'s Alt-HOLD
   //     hover-ladder gesture (that overlay only intercepts Arrow keys while
   //     its ladder is actively showing, i.e. Alt held AND hovering a valid
@@ -522,24 +528,30 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // Arrow-key frame nudge (viewport-01). Virtual id — moving a board frame is
-  // a canvas gesture, not a palette action.
+  // Arrow keys move the selection (viewport-01 for frames, P2-C / IX-1 for
+  // nodes). Virtual id — moving a selection is a canvas gesture, not a
+  // palette action.
   //
   // This is the ONE binding in the registry that claims a bare arrow key, and
-  // it is deliberately scoped by SELECTION rather than by key: `useBoardFrameNudge`
-  // stands down unless `selectedFrameIds` is non-empty, so with a node
-  // selected (or nothing selected) the arrows stay free — see the
-  // `layers.moveUp` note above for why that matters. `ignoreInEditableField`
-  // plus the hook's own text-input / overlay guards keep arrows working
-  // normally in every input, inspector field, and inline text edit.
+  // it is scoped by SELECTION rather than by key. Three handlers read it, one
+  // per kind of selection, and the editor key ladder decides between them:
+  //   - `useBoardAnnotationKeyboard` (annotation rung): selected notes / docs;
+  //   - `useCanvasNodeArrowKeys` (node rung): the selected layer — an
+  //     absolute one nudges its offsets, a layout child reorders ±1 along its
+  //     parent's axis (`canvasNodeArrowMove.ts`). Canvas-scoped like Tab: in
+  //     a panel the arrows stay the panel's;
+  //   - `useBoardFrameNudge` (board rung): selected board frames.
+  // With nothing selected nobody claims them. `ignoreInEditableField` plus
+  // each hook's own text-input / overlay guards keep arrows working normally
+  // in every input, inspector field, and inline text edit.
   //
-  // Direction and step are decoded by the handler from `event.key` /
-  // `event.shiftKey` (1 board unit, 10 with Shift) — one binding for the
-  // whole gesture, the same shape `layers.delete` uses to match both Delete
-  // and Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
+  // Direction and step are decoded by `nudgeDelta` below from `event.key` /
+  // `event.shiftKey` (1 unit, 10 with Shift) — one binding for the whole
+  // gesture, the same shape `layers.delete` uses to match both Delete and
+  // Backspace. Alt is excluded so `layers.moveUp/moveDown` keep ⌥↑/⌥↓.
   {
-    commandId: 'board.nudgeFrames',
-    displayName: 'Nudge selected frames (Shift for 10)',
+    commandId: 'canvas.moveSelection',
+    displayName: 'Move the selection: nudge, or reorder a layout child (Shift for 10)',
     shortcut: { mac: '← ↑ → ↓', win: '← ↑ → ↓' },
     match: (e) =>
       !e.metaKey && !e.ctrlKey && !e.altKey &&
@@ -579,19 +591,23 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   ...GESTURE_KEYBINDINGS,
 ]
 
-/** Board units one arrow press moves a selected frame, and the Shift step. */
-export const FRAME_NUDGE_STEP = 1
-export const FRAME_NUDGE_STEP_LARGE = 10
+/**
+ * Units one arrow press moves the selection, and the Shift step: board units
+ * for a frame or a note, CSS px for an absolute layer.
+ */
+export const NUDGE_STEP = 1
+export const NUDGE_STEP_LARGE = 10
 
 /**
- * Decode a `board.nudgeFrames` keystroke into a board-space delta.
- * Returns `null` for any event the binding doesn't cover, so the caller can
- * fall through. Lives here (not in the handler) so the registry entry above
- * and its meaning stay in one file — the same reason `layers.redo`'s Ctrl+Y
- * alias lives in its `match` rather than in `UndoRedoButtons.tsx`.
+ * Decode a `canvas.moveSelection` keystroke into a delta, in the units of
+ * whatever is being moved. Returns `null` for any event the binding doesn't
+ * cover, so the caller can fall through. Lives here (not in a handler) so the
+ * registry entry above and its meaning stay in one file — the same reason
+ * `layers.redo`'s Ctrl+Y alias lives in its `match` rather than in
+ * `UndoRedoButtons.tsx`. A reorder reads only the delta's direction.
  */
-export function frameNudgeDelta(e: KeyEventLike): { dx: number; dy: number } | null {
-  const step = e.shiftKey ? FRAME_NUDGE_STEP_LARGE : FRAME_NUDGE_STEP
+export function nudgeDelta(e: KeyEventLike): { dx: number; dy: number } | null {
+  const step = e.shiftKey ? NUDGE_STEP_LARGE : NUDGE_STEP
   switch (e.key) {
     case 'ArrowLeft': return { dx: -step, dy: 0 }
     case 'ArrowRight': return { dx: step, dy: 0 }
