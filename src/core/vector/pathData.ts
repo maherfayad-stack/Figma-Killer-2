@@ -89,7 +89,11 @@ export function impliedRepeatCommand(previous: PathCommand): PathCommand | undef
 
 class Scanner {
   pos = 0
-  constructor(readonly d: string) {}
+  readonly d: string
+
+  constructor(d: string) {
+    this.d = d
+  }
 
   skipWhitespace(): void {
     while (isWhitespace(this.d[this.pos])) this.pos += 1
