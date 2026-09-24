@@ -147,8 +147,8 @@ export function MultiSelectTargetBar({ model }: { model: SelectionModel }) {
 // ---------------------------------------------------------------------------
 
 function PartialWriteNotices({ model }: { model: SelectionModel }) {
-  const { inlineUnwritableNodes, blockedPropertyCounts, selectedNodes } = model
-  const blocked = [...blockedPropertyCounts.entries()]
+  const { inlineUnwritableNodes, inlineWriteReach, selectedNodes } = model
+  const blocked = inlineWriteReach ? [...inlineWriteReach.blockedByProperty.entries()] : []
 
   return (
     <>

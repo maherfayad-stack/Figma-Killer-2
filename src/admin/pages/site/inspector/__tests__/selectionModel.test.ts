@@ -331,8 +331,9 @@ describe('useSelectionModel — N nodes', () => {
     // `color` is locked on both -> the control refuses. `width` is locked on
     // one of two -> the write still lands on the other, so it stays offered.
     expect(result.current.selectedNode?.codeProps).toEqual(['style:color'])
-    expect(result.current.blockedPropertyCounts.get('color')).toBe(2)
-    expect(result.current.blockedPropertyCounts.get('width')).toBe(1)
+    expect(result.current.inlineWriteReach?.total).toBe(2)
+    expect(result.current.inlineWriteReach?.blockedByProperty.get('color')).toBe(2)
+    expect(result.current.inlineWriteReach?.blockedByProperty.get('width')).toBe(1)
   })
 
   it('excludes a layer whose module takes no inline style from the write, and names it', () => {
