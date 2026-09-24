@@ -194,6 +194,10 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'This tool writes only into the project open for this turn, and none is. The file-authoring tools never take a directory argument.',
   },
+  'plan-not-approved': {
+    retryable: false,
+    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs. Call studio_propose_plan with the steps and wait for the user\'s approval.',
+  },
   'stale-anchor': {
     retryable: false,
     meaning: 'A comment thread\'s anchored element has moved or gone, so resolving it would attach the reply to the wrong thing.',

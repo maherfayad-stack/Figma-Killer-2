@@ -139,6 +139,11 @@ import { resolvedApprovedRegisteredMcpServers } from './registeredMcpServers'
 import { generateStudioProjectGuide } from '../../handlers/studio/projectGuide'
 import { readTurnWriteLog, resetTurnWriteLog } from '../../handlers/studio/turnWriteLog'
 import { STUDIO_AGENT_USER_KEY_ENV, studioAgentUserKey } from '../../handlers/studio/agentUserScope'
+import {
+  STUDIO_AGENT_CONVERSATION_KEY_ENV,
+  beginAgentCheckpointTurn,
+  conversationCheckpointKey,
+} from '../../handlers/studio/agentCheckpoints'
 import { resolveTurnRouting } from '../routing/turnRouting'
 import {
   stageAttachments,
@@ -360,6 +365,10 @@ export async function* streamClaudeCli(
     // `turnWriteLog.ts`'s "turn boundary" note for why the reset has to
     // happen HERE, right before spawn, and not inside either hook.
     resetTurnWriteLog(workspaceCwd, agentUserKey)
+    // AI-7 — this turn's file checkpoint. The hooks find it through the
+    // conversation key on the environment below; see `agentCheckpoints.ts`.
+    const turnId = req.toolContextBase.turnId
+    if (turnId) beginAgentCheckpointTurn(workspaceCwd, agentUserKey, { conversationId: req.toolContextBase.conversationId, turnId })
   }
 
   // The CLI caches "this server needs authentication" per config dir and a
@@ -379,6 +388,10 @@ export async function* streamClaudeCli(
     // one project's `.claude/settings.local.json` is shared by every user of
     // that project. Non-identifying by construction. See `agentUserScope.ts`.
     [STUDIO_AGENT_USER_KEY_ENV]: agentUserKey,
+    // WHICH conversation, for the checkpoint hooks (AI-7). Not the turn: a warm
+    // process outlives its turn, and the pool is keyed per conversation, so
+    // this is the one value that stays true for the process's whole life.
+    [STUDIO_AGENT_CONVERSATION_KEY_ENV]: conversationCheckpointKey(req.toolContextBase.conversationId),
     ...(req.credentials.apiKey ? { CLAUDE_CODE_OAUTH_TOKEN: req.credentials.apiKey } : {}),
   })
 

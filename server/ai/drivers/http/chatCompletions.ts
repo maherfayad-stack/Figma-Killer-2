@@ -27,6 +27,7 @@ import type { SseFrame } from './sse'
 import { parseToolArguments, toolArgumentsParse } from './toolArgs'
 import { openAiReasoningEffort } from '../openAiReasoning'
 import { nanoid } from 'nanoid'
+import { ToolInputProgress } from '../toolInputProgress'
 
 // ---------------------------------------------------------------------------
 // Provider-native chat/completions message shapes (request side)
@@ -230,6 +231,8 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
   // chunks (id + name on the first, arguments piecemeal after).
   private readonly toolsByIndex = new Map<number, MutableToolCall>()
   private readonly order: number[] = []
+  /** AI-26 — argument progress while a call streams. */
+  private readonly inputProgress = new ToolInputProgress()
   private emitted = false
   private usage: TurnUsage | null = null
   private truncated = false
@@ -271,7 +274,11 @@ export class ChatCompletionsTurnTranslator implements TurnTranslator<ChatTurn> {
           }
           if (tc.id) acc.id = tc.id
           if (tc.function?.name) acc.name = tc.function.name
-          if (typeof tc.function?.arguments === 'string') acc.arguments += tc.function.arguments
+          if (typeof tc.function?.arguments === 'string') {
+            acc.arguments += tc.function.arguments
+            const progress = this.inputProgress.append(acc.id, acc.name, tc.function.arguments)
+            if (progress) events.push(progress)
+          }
         }
       }
     }
