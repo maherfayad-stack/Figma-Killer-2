@@ -109,10 +109,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
 
 ### mcp-30 — P4-E: assets for the agent (AI-13, AI-20, P4-C review F8)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` · **PR:** not yet · **Updated:** 2026-09-24
-- **Stage:** implementing
-- **Goal:** the agent finds a real icon or photo instead of drawing a grey box; lists the project's own images and fonts; and `studio_fetch_remote_asset` can no longer be pointed at an arbitrary host (F8).
-- **Next:** tests for find_image/find_icon/list tools, prompt ladder, docs, gates, draft PR, security-guard review.
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` (trunk merged in) · **PR:** draft, base `feat/canvas-excellence` (long form, threat list and tool table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open); **needs security-guard review**
+- **Goal:** the agent finds a real icon or photo instead of drawing a grey box, lists the project's images and fonts, and can no longer be steered into fetching from an arbitrary host (F8).
+- **Tools added** (all `execution: server`):
+  - `studio_find_image` (`ai.tools.write` + `studio.write`, `write`, `headlessOnly`): `{ dir?, query, orientation?, size?, count ≤4, photoId?, targetDir? }`. Pexels (direct HTTP) lands photos and credits each in `IMAGE-CREDITS.md`. With no `PEXELS_API_KEY` it returns `configured:false` and "Stock photo search is not set up on this Studio server…"; it is not an error.
+  - `studio_find_icon` (read): `{ dir?, query, limit ≤12, forFile? }`. With no catalog: "This project has no design-system icon files Studio can read… never draw one."
+  - `studio_list_assets` (read): `{ dir?, query?, offset?, limit ≤100 }`. `studio_list_fonts` (read): `{ dir?, query?, limit ≤20 }`.
+- **Done:**
+  - `remoteFetchPolicy.ts`: Figma hosts, the stock host, the opted-in loopback, or a URL the user pasted (exact); anything else is `host-not-allowed` before any request. Covers `fetch_remote_asset` and `register_design_reference({url})`. User URLs come from `chat.ts` via `ToolContextBase.userSuppliedUrls`; on the CLI path via `connectorUserUrls.ts`.
+  - `remoteAssetFetch.ts`: 30 s deadline, image content-type allowlist, and a magic-byte match.
+  - `landAgentAsset`: agent write gate, project lock and turn log for fetch, find_image and extract_reference_asset (`prototype/` was reachable).
+  - Prompt ladder rewritten (find, then name the gap); a digest line when stock search is not set up. Codes `host-not-allowed`, `stock-search-failed`, `stock-key-refused`.
+- **Decisions:** Pexels (licence allows self-hosting; one image host). Figma and Dev Mode hosts were added beyond the brief's "stock + user" list so the Figma asset flow keeps working; flagged in the PR. The key is env-only.
+- **Landmines:** `ConnectorRegistryBinding` now requires `userSuppliedUrls`. Test servers need `node:http` + `Bun.fetch`, because the suite preload swaps in happy-dom's `Response`/`fetch`. `chat.ts` is at 699/700 lines.
+- **Verification:** build and lint clean; every chunk run under the lock; only pre-existing failures (render_reference dev server, bundle freshness, optimistic broadcast, bridge measurement, liveOrigin WS). `editorLayoutPersistence` timed out in a 200-file batch and passes alone.
+- **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
 
 ## Blocked
 
