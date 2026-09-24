@@ -8,7 +8,8 @@ import {
   computeSnap,
   collectPeerRects,
   guideSnapRects,
-  SNAP_THRESHOLD_BOARD_UNITS,
+  SNAP_THRESHOLD_SCREEN_PX,
+  snapThresholdAtZoom,
   type SnapRect,
 } from '@site/canvas/boardSnapping'
 import { createBoard, type BoardGuide } from '@core/studio-board'
@@ -99,7 +100,16 @@ describe('computeSnap', () => {
   })
 
   it('exposes a sensible positive default threshold', () => {
-    expect(SNAP_THRESHOLD_BOARD_UNITS).toBeGreaterThan(0)
+    expect(SNAP_THRESHOLD_SCREEN_PX).toBeGreaterThan(0)
+  })
+
+  it('IX-5a: the threshold is screen px — rect units scale with 1 / zoom', () => {
+    expect(snapThresholdAtZoom(1)).toBe(SNAP_THRESHOLD_SCREEN_PX)
+    expect(snapThresholdAtZoom(0.5)).toBe(SNAP_THRESHOLD_SCREEN_PX * 2)
+    expect(snapThresholdAtZoom(4)).toBe(SNAP_THRESHOLD_SCREEN_PX / 4)
+    // An unreadable zoom is 100%, never an infinite pull.
+    expect(snapThresholdAtZoom(0)).toBe(SNAP_THRESHOLD_SCREEN_PX)
+    expect(snapThresholdAtZoom(Number.NaN)).toBe(SNAP_THRESHOLD_SCREEN_PX)
   })
 })
 

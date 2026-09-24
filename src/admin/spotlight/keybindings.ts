@@ -63,6 +63,14 @@
  *   held arrow | repeats the step            | a nudge repeats, and writes     | A structural write per repeat
  *              |                             | ONCE on keyup; a reorder is     | would queue 30 writes a second
  *              |                             | one step per press              |
+ *   arrows     | (Layers keeps focus)        | OD-15: a POINTER pick in Layers | Figma's. `returnKeyboardToCanvas`;
+ *   after a    |                             | hands focus to the canvas, so   | Tab-ing into the tree keeps ↑/↓
+ *   Layers     |                             | the arrows move the layer; a    | as row navigation (the a11y
+ *   click      |                             | keyboard entry keeps the tree's | path), and a rename field keeps
+ *              |                             | ↑/↓ (select the next row)       | its caret (P2-B's input guard)
+ *   ⌥ held     | measure; nothing hovered →  | the same (P2-E, IX-19): hovered | The tree ladder keeps ⌥ over the
+ *              | measure to the parent frame | layer, else the selection's     | selection; once a node was hovered
+ *              |                             | parent                          | in the hold, no parent fallback
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'

@@ -29,7 +29,7 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { collectPeerRects, computeSnap, SNAP_THRESHOLD_BOARD_UNITS } from '../boardSnapping'
+import { collectPeerRects, computeSnap, snapThresholdAtZoom } from '../boardSnapping'
 
 interface DragState {
   pointerId: number
@@ -149,7 +149,8 @@ export function useBoardFrameMoveDrag({
     const snapped = computeSnap(
       { x: drag.frameX + dx, y: drag.frameY + dy, width, height },
       peers,
-      SNAP_THRESHOLD_BOARD_UNITS,
+      // IX-5a — the same screen-px pull at every zoom.
+      snapThresholdAtZoom(zoom),
     )
 
     // K2 — an Alt+drag spawns its copy on the FIRST move, not at
