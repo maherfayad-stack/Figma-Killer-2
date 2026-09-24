@@ -1,6 +1,5 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   SELECTION_RING,
   clickInFrame,
   countSourceOccurrences,
@@ -23,6 +22,7 @@ import {
   type RecordedConsoleEvent,
   type SourceNodeLocation,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame } from './helpers/canvasIframe'
 
 /**
  * The **Phase 0 exit dogfood**, machine-checked.
@@ -207,7 +207,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     const run = await findSiblingRun(contentFrame)
     const targetId = run.childIds[0]!
@@ -320,7 +320,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     // The widest gap in the run: a 0px gap has nothing to be right or wrong
     // about, and two touching boxes would make this case pass on a measurement
@@ -411,7 +411,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     // Drag the first sibling PAST its neighbour onto the third, not onto the
     // one it already precedes: dropping an element where it already is has no
@@ -566,7 +566,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     const run = await findSiblingRun(contentFrame)
     const firstId = run.childIds[0]!
@@ -726,7 +726,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
@@ -788,7 +788,7 @@ test.describe('Phase 0 exit dogfood', () => {
   }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const smsFrame = await frameForPage(page, canvasRoot, DOGFOOD_PAGE_ID)
-    const contentFrame = smsFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(smsFrame)
 
     const run = await findSiblingRun(contentFrame)
     const targetId = run.childIds[0]!

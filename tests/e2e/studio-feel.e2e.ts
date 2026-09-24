@@ -3,6 +3,8 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BUDGET_ZOOM_MEAN_FRAME_MS, BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
+import { createFixtureProject, removeFixtureProject, type FixtureProject } from './helpers/studioFixtureProject'
 
 /**
  * `STUDIO-FIGMA-FEEL-PLAN.md` V1 — the browser gate for "does this feel like a
@@ -45,7 +47,6 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * `scripts/bench/lib/liveFrameFixture.ts` documents.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const SELECTION_RING = '[data-canvas-selection-ring="true"]'
 
 /**
@@ -64,21 +65,23 @@ const ALT_DUPLICATE_MARKER = '[data-gesture="alt-duplicate"]'
  */
 const BUDGET_REFUSAL_DIALOG_MS = 100
 
-const SOURCE_PROJECT_DIR = path.join(WORKSPACE_ROOT, 'test4')
 /** Fixed name, not per-PID: a crashed run's leftovers are visibly overwritten rather than accumulating. */
 const FIXTURE_DIR = path.join(WORKSPACE_ROOT, '__e2e-studio-feel')
 
 let fixtureReady = false
+let fixture: FixtureProject | undefined
 
 test.beforeAll(() => {
-  if (!fs.existsSync(SOURCE_PROJECT_DIR)) return
-  fs.rmSync(FIXTURE_DIR, { recursive: true, force: true })
-  fs.cpSync(SOURCE_PROJECT_DIR, FIXTURE_DIR, { recursive: true })
-  fixtureReady = true
+  // The shared helper, not a raw rm + copy: when Playwright restarts a worker
+  // after a failure, the server's watcher on this project still holds the
+  // directory for a few seconds, and deleting it fails with EPERM on Windows.
+  // `createFixtureProject` overwrites it in place instead.
+  fixture = createFixtureProject('test4', path.basename(FIXTURE_DIR))
+  fixtureReady = fixture.ready
 })
 
 test.afterAll(() => {
-  fs.rmSync(FIXTURE_DIR, { recursive: true, force: true })
+  if (fixture) removeFixtureProject(fixture)
 })
 
 /** Board frames recorded on disk, across every board in the project. */
@@ -124,7 +127,7 @@ async function openFixtureBoard(page: Page): Promise<Locator> {
  * is on screen. Failing after all of that is a real failure, and says so.
  */
 async function bringAFrameOnScreen(page: Page, canvasRoot: Locator): Promise<void> {
-  const anyFrame = page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()
+  const anyFrame = visibleCanvasIframe(page).first()
   if (await anyFrame.isVisible({ timeout: 30_000 }).catch(() => false)) return
 
   await canvasRoot.focus()
@@ -360,7 +363,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(firstFrame)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
     await clickInFrame(page, target)
@@ -425,7 +428,7 @@ test.describe('V1: the studio feels like a design tool', () => {
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(firstFrame)
     const rings = contentFrame.locator(SELECTION_RING)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
@@ -598,18 +601,16 @@ test.describe('V1: the studio feels like a design tool', () => {
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
 
-    // `speed-04`'s own defect: a live board frame mounts a portal fallback
-    // AND the bridge `BreakpointFrame` together until the bridge is ready, so
-    // the same page container can carry two `iframe[title^="Canvas frame"]`
-    // matches for a moment — one placeholder `srcdoc`, one real `src`. Wait
-    // for that to settle to one before asking Playwright to resolve INTO it,
-    // or `frameLocator()` throws a strict-mode violation on the ambiguity.
+    // A live board frame mounts a portal fallback AND a hidden bridge iframe
+    // until the bridge is ready (never, in this fixture: it has no
+    // node_modules). Wait for the one DISPLAYED canvas iframe
+    // (`helpers/canvasIframe.ts`) before resolving into it.
     await expect(
-      firstFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
-      'the first board frame never settled to one live iframe',
+      visibleCanvasIframe(firstFrame),
+      'the first board frame never showed exactly one canvas iframe',
     ).toHaveCount(1, { timeout: 30_000 })
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(firstFrame)
     const target = await firstInlinedLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
 

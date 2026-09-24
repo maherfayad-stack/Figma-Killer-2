@@ -2,7 +2,6 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
@@ -12,6 +11,7 @@ import {
   startToastRecorder,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P3-A (WB-12, WB-13, WB-35) — a save batch the server PARTLY refuses commits
@@ -129,8 +129,8 @@ test.describe('P3-A — a partly refused save', () => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
     await expect(content.locator(`[data-node-id="${TITLE}"]`)).toBeVisible({ timeout: 30_000 })
 
     await appendTextInline(page, canvasRoot, content, TITLE, 'Title')
