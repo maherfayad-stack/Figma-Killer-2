@@ -65,6 +65,23 @@ describe('checkpoint hooks (spawned)', () => {
     }
   }, SPAWN_TIMEOUT_MS * 2)
 
+  it('a native Write of a credential file is refused by the hook (the same gate as the HTTP tools), and nothing is copied', async () => {
+    const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-checkpoint-hooks-')))
+    try {
+      fs.writeFileSync(path.join(dir, 'id_rsa'), 'PRIVATE')
+      beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'turn1' })
+      const env = {
+        [STUDIO_AGENT_USER_KEY_ENV]: USER,
+        [STUDIO_AGENT_CONVERSATION_KEY_ENV]: conversationCheckpointKey(CONVERSATION),
+      }
+      const exit = await run(DENY_SCRIPT, { hook_event_name: 'PreToolUse', tool_name: 'Edit', tool_input: { file_path: path.join(dir, 'id_rsa') }, cwd: dir }, env)
+      expect(exit).toBe(2)
+      expect(fs.readdirSync(path.join(dir, '.studio', 'agent-checkpoints', USER, 'turn1', 'files'))).toEqual([])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
+  }, SPAWN_TIMEOUT_MS)
+
   it('a write the gate refuses takes no pre-image', async () => {
     const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-checkpoint-hooks-')))
     try {
