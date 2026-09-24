@@ -1369,7 +1369,7 @@ Because `text`/`imports` are strings the client sends — and this is the one co
 
 ### Commit shape
 
-Structural edits are **one-shot commits** (`commitStudioMove` / `commitStudioDelete` in `studioSaveRequests.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
+Structural edits are **one-shot commits** (`commitStudioMoves` / `commitStudioDelete` in `studioSaveRequests.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
 
 ### Measured on the real corpus
 

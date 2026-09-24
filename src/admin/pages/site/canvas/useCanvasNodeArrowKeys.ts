@@ -1,8 +1,8 @@
 /**
- * useCanvasNodeArrowKeys — the `node` rung's arrow keys (P2-C, IX-1): the
- * selected layer NUDGES if it is absolutely positioned and REORDERS if it is
- * laid out by its parent. The rules are `canvasNodeArrowMove.ts`; this file is
- * the gesture around them.
+ * useCanvasNodeArrowKeys — the `node` rung's arrow keys (P2-C, IX-1; the
+ * whole selection since P2-C2, OD-16): absolutely positioned layers NUDGE,
+ * layers laid out by their parent REORDER. The rules are
+ * `canvasNodeArrowMove.ts`; this file is the gesture around them.
  *
  * ## A held key is one undo entry and one source write
  *
@@ -11,14 +11,22 @@
  * for one gesture (parity 0.3, "undo flooding"). So a hold is a SESSION:
  *
  *   - nudge: every keydown moves a PREVIEW (the same transient channel an
- *     inspector scrub uses — `setPreviewNodeStyles` for a portal frame, the
- *     optimistic style broadcast for a live one), and the release writes ONE
- *     `setNodeInlineStyles` — one history entry — and flushes the autosave
- *     straight away, so the source is written once, at the end;
- *   - reorder: the first keydown moves the layer one place (`moveNode`, a
- *     structural write through the commit queue); the repeats of that hold are
- *     claimed and dropped. A structural write per repeat would queue thirty a
- *     second, each its own undo step. Press again for the next place.
+ *     inspector scrub uses — `setPreviewNodeStyles`, one bag per layer, for a
+ *     portal frame; the optimistic style broadcast for a live one), and the
+ *     release writes ONE `setNodesInlineStylesPerNode` — one history entry
+ *     for the whole selection — and flushes the autosave straight away, so
+ *     the source is written once, at the end;
+ *   - reorder: the first keydown moves the selection one step
+ *     (`stepSiblings`: one save batch, one entry — see `@core/page-tree`'s
+ *     `planSiblingSteps` for which selections that covers); the repeats of
+ *     that hold are claimed and dropped. A structural write per repeat would
+ *     queue thirty a second. Press again for the next place.
+ *
+ * ## A mixed selection
+ *
+ * Positioned members nudge and flow members stay put — a flow child has no
+ * pixel position to move (Penpot's `move-selected` rule). A selection that is
+ * all flow children reorders, each along its own parent's axis.
  *
  * The release is the dispatcher's keyup BROADCAST (`dispatchEditorKeyUp`):
  * a keyup on the editor document, a keyup inside a portal or bridge frame
@@ -30,8 +38,9 @@
  *
  * Whether a layer is absolute, and which way its parent lays children out, is
  * a computed-style question, and a live frame answers it over `postMessage`
- * (`measureArrowTarget`). Keydowns that arrive meanwhile are accumulated, and
- * a release that arrives meanwhile is honoured once the answer lands.
+ * (`measureArrowTargets` — one round trip for the whole selection). Keydowns
+ * that arrive meanwhile are accumulated, and a release that arrives meanwhile
+ * is honoured once the answer lands.
  *
  * ## Guards
  *
@@ -41,22 +50,19 @@
  *     panel — the Layers tree, an inspector control — the arrows stay that
  *     panel's. Delete and ⌘D are scoped by intent; arrows are also how a
  *     panel is navigated, so they cannot be.
- *   - One selected layer. A multi-selection claims the key and does nothing
- *     (multi-select move is P5-F), as ⌥↑ / ⌥↓ already do.
+ *   - A locked layer does not move, and neither does a selection holding one.
  */
 import { useRef } from 'react'
-import { canWriteInlineStyleForModule, isStylePatchWritableToSource } from '@core/page-tree'
+import { canWriteInlineStyleForModule, isStylePatchWritableToSource, topLevelSelection } from '@core/page-tree'
 import { getKeybindingForCommand, nudgeDelta } from '@admin/spotlight/keybindings'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { flushAutosave } from '@site/hooks/autosaveSchedule'
 import { pushToast } from '@ui/components/Toast'
 import {
-  authoredOffsets,
-  measureArrowTarget,
-  moveNodeAmongSiblings,
+  measureArrowTargets,
   nudgeStylePatch,
-  reorderStep,
-  resolveArrowMove,
+  reorderSteps,
+  resolveArrowSelectionMove,
   type NudgePlan,
 } from './canvasNodeArrowMove'
 import { isCanvasKeyboardSurface, isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
@@ -67,61 +73,80 @@ import {
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 interface ArrowSession {
-  nodeId: string
+  /** The layers the hold moves: the selection's top level, in selection order. */
+  nodeIds: string[]
+  /** `nodeIds` joined — a hold continues only while the selection is the same one. */
+  key: string
   /** Visual px (or, for a reorder, just a direction) accumulated over the hold. */
   dx: number
   dy: number
   /** `measuring` until the layout read lands; `nudging` while a preview is live; `spent` once there is nothing left to do. */
   state: 'measuring' | 'nudging' | 'spent'
-  plan: NudgePlan | null
+  /** The positioned layers a nudge moves, each with its own offsets. */
+  plans: ReadonlyMap<string, NudgePlan> | null
   /** The key was released while the layout read was still in flight. */
   released: boolean
 }
 
 const REFUSAL_TITLE = "This layer can't be nudged"
+const LOCKED_TITLE = 'Locked layers do not move'
 
-function previewNudge(session: ArrowSession): void {
-  if (!session.plan) return
-  const patch = nudgeStylePatch(session.plan, session.dx, session.dy)
-  useEditorStore.getState().setPreviewNodeStyles({ nodeIds: [session.nodeId], styles: patch })
-  broadcastOptimisticStyle(session.nodeId, patch)
+/** Each nudged layer's patch for the hold so far. */
+function nudgePatches(session: ArrowSession): { nodeId: string; patch: Record<string, string> }[] {
+  return [...(session.plans ?? [])].map(([nodeId, plan]) => ({ nodeId, patch: nudgeStylePatch(plan, session.dx, session.dy) }))
 }
 
-function dropNudgePreview(nodeId: string): void {
-  useEditorStore.getState().clearPreviewNodeStyles(nodeId)
-  broadcastOptimisticStyleClear(nodeId)
+function previewNudge(session: ArrowSession): void {
+  const patches = nudgePatches(session)
+  useEditorStore.getState().setPreviewNodeStyles({
+    nodeIds: patches.map(({ nodeId }) => nodeId),
+    styles: {},
+    stylesByNode: Object.fromEntries(patches.map(({ nodeId, patch }) => [nodeId, patch])),
+  })
+  for (const { nodeId, patch } of patches) broadcastOptimisticStyle(nodeId, patch)
+}
+
+function dropNudgePreview(session: ArrowSession): void {
+  const store = useEditorStore.getState()
+  for (const nodeId of session.plans?.keys() ?? []) {
+    store.clearPreviewNodeStyles(nodeId)
+    broadcastOptimisticStyleClear(nodeId)
+  }
 }
 
 /**
- * The one write a nudge makes. The committed value keeps showing in a live
- * frame through the same optimistic broadcast the inspector's commit sends,
- * until Vite's update carries it for real.
+ * The one write a nudge makes: every layer's own patch in ONE transaction
+ * (`setNodesInlineStylesPerNode`), so a held arrow over a multi-selection is
+ * one undo entry, then one flushed save. The committed values keep showing in
+ * a live frame through the same optimistic broadcast the inspector's commit
+ * sends, until Vite's update carries them for real.
  */
 function commitNudge(session: ArrowSession): void {
   session.state = 'spent'
-  const plan = session.plan
-  if (!plan) return
-  const patch = nudgeStylePatch(plan, session.dx, session.dy)
   const store = useEditorStore.getState()
-  const node = selectActiveCanvasPage(store)?.nodes[session.nodeId]
-  if (!node || Object.keys(patch).length === 0) {
-    dropNudgePreview(session.nodeId)
+  const page = selectActiveCanvasPage(store)
+  const patches = nudgePatches(session).filter(
+    ({ nodeId, patch }) => page?.nodes[nodeId] !== undefined && Object.keys(patch).length > 0,
+  )
+  if (patches.length === 0) {
+    dropNudgePreview(session)
     return
   }
-  store.setNodeInlineStyles(session.nodeId, patch)
-  store.clearPreviewNodeStyles(session.nodeId)
-  broadcastOptimisticStyle(session.nodeId, patch)
+  store.setNodesInlineStylesPerNode(patches)
+  store.clearPreviewNodeStyles()
+  for (const { nodeId, patch } of patches) broadcastOptimisticStyle(nodeId, patch)
   flushAutosave()
 }
 
-/** Why a nudge has no honest target, or `null` when it has one. */
-function nudgeRefusal(nodeId: string, patchKeys: readonly string[]): string | null {
+/** Why a layer's nudge has no honest target, or `null` when it has one. */
+function nudgeRefusal(nodeId: string, plan: NudgePlan): string | null {
   const node = selectActiveCanvasPage(useEditorStore.getState())?.nodes[nodeId]
   if (!node) return null
   if (!canWriteInlineStyleForModule(node.moduleId)) {
     return "Its position is decided inside the component it renders, so it can't be written at this call site."
   }
-  const probe = Object.fromEntries(patchKeys.map((key) => [key, '0px']))
+  const keys = [...plan.horizontal, ...plan.vertical].map((term) => term.property)
+  const probe = Object.fromEntries(keys.map((key) => [key, '0px']))
   if (!isStylePatchWritableToSource(node, probe)) {
     return 'Its position is computed in code. Edit the expression in the source instead.'
   }
@@ -136,26 +161,21 @@ function nudgeRefusal(nodeId: string, patchKeys: readonly string[]): string | nu
 async function resolveSession(session: ArrowSession, current: () => ArrowSession | null, end: () => void): Promise<void> {
   const store = useEditorStore.getState()
   const page = selectActiveCanvasPage(store)
-  const node = page?.nodes[session.nodeId]
-  const measured = page && node ? await measureArrowTarget(page, session.nodeId, store.activeBreakpointId) : null
-  const move = measured && node
-    ? resolveArrowMove(measured, authoredOffsets(node, useEditorStore.getState().site?.styleRules))
-    : null
+  const measured = page ? await measureArrowTargets(page, session.nodeIds, store.activeBreakpointId) : null
+  const move = page && measured ? resolveArrowSelectionMove(page, measured, useEditorStore.getState().site?.styleRules) : null
 
   if (move?.kind === 'reorder') {
     session.state = 'spent'
-    const step = reorderStep(move.layout, session)
-    if (step !== null) moveNodeAmongSiblings(session.nodeId, step)
+    const steps = reorderSteps(move.layouts, session)
+    if (Object.keys(steps).length > 0) useEditorStore.getState().stepSiblings(session.nodeIds, steps)
   } else if (move?.kind === 'nudge') {
-    const refusal = nudgeRefusal(session.nodeId, [
-      ...move.plan.horizontal.map((term) => term.property),
-      ...move.plan.vertical.map((term) => term.property),
-    ])
+    // All or nothing: a selection moves together, or not at all.
+    const refusal = [...move.plans].map(([nodeId, plan]) => nudgeRefusal(nodeId, plan)).find((reason) => reason !== null)
     if (refusal) {
       session.state = 'spent'
       pushToast({ kind: 'info', title: REFUSAL_TITLE, body: refusal })
     } else {
-      session.plan = move.plan
+      session.plans = move.plans
       session.state = 'nudging'
       previewNudge(session)
       if (session.released || current() !== session) commitNudge(session)
@@ -197,21 +217,22 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
       if (!delta) return false
 
       const store = useEditorStore.getState()
-      const nodeId = store.selectedNodeId
-      if (!nodeId) return false
+      if (!store.selectedNodeId) return false
       // Claimed from here on: the canvas owns the arrows with a layer
       // selected, and letting one through would scroll the frame or the chrome.
       event.preventDefault()
-      if (store.selectedNodeIds.length > 1) return true
       const page = selectActiveCanvasPage(store)
-      const node = page?.nodes[nodeId]
-      if (!page || !node || nodeId === page.rootNodeId || node.locked) return true
+      if (!page) return true
+      const selected = store.selectedNodeIds.length > 0 ? store.selectedNodeIds : [store.selectedNodeId]
+      const nodeIds = topLevelSelection(page, selected)
+      if (nodeIds.length === 0) return true
+      const key = nodeIds.join('\n')
 
       // The selection moved on mid-hold, or this is a NEW press whose
       // predecessor is still waiting for its layout read: the old hold is
       // over, and it finishes on its own once the read lands.
       const previous = sessionRef.current
-      if (previous && (previous.nodeId !== nodeId || previous.released)) {
+      if (previous && (previous.key !== key || previous.released)) {
         release()
         sessionRef.current = null
       }
@@ -225,7 +246,15 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
         return true
       }
 
-      const next: ArrowSession = { nodeId, dx: delta.dx, dy: delta.dy, state: 'measuring', plan: null, released: false }
+      // A locked layer does not move, and neither does a selection holding
+      // one — said once per press, never per auto-repeat.
+      if (nodeIds.some((id) => page.nodes[id]?.locked === true)) {
+        sessionRef.current = { nodeIds, key, dx: 0, dy: 0, state: 'spent', plans: null, released: false }
+        pushToast({ kind: 'info', title: LOCKED_TITLE, body: 'Unlock it (⌘⇧L) to move the selection.' })
+        return true
+      }
+
+      const next: ArrowSession = { nodeIds, key, dx: delta.dx, dy: delta.dy, state: 'measuring', plans: null, released: false }
       sessionRef.current = next
       void resolveSession(next, () => sessionRef.current, end)
       return true
@@ -238,4 +267,3 @@ export function useCanvasNodeArrowKeys(editable: boolean, isLive: boolean): void
     },
   )
 }
-

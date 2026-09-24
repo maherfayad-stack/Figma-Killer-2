@@ -114,7 +114,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMoves` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 

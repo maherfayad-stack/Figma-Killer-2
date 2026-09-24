@@ -33,5 +33,6 @@ export function mergePreviewedInlineStyles(
   if (!previewNodeStyles || !previewNodeStyles.nodeIds.includes(nodeId)) {
     return inlineStyles
   }
-  return { ...(inlineStyles ?? {}), ...previewNodeStyles.styles }
+  // P2-C2 — a per-node bag (a multi-selection nudge) lays over the shared one.
+  return { ...(inlineStyles ?? {}), ...previewNodeStyles.styles, ...previewNodeStyles.stylesByNode?.[nodeId] }
 }

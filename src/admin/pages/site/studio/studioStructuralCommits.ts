@@ -116,14 +116,22 @@ interface StructuralCommitOptions {
  *
  * No `undo` template: a move mutates the tree, so it already has a history
  * entry that `structuralHistory.ts` re-issues in either direction.
+ *
+ * Several moves in one request only when they are INDEPENDENT — P2-C2's
+ * `moveSiblings`, whose `planSiblingSteps` guarantees no move's region
+ * overlaps another's. `applyStudioEditBatch` then applies them bottom-to-top,
+ * so no write shifts a pending one's line, exactly as for a multi-delete.
  */
-export async function commitStudioMove(
-  nodeId: string,
-  anchorNodeId: string,
-  position: 'before' | 'after',
+export async function commitStudioMoves(
+  moves: readonly { nodeId: string; anchorNodeId: string; position: 'before' | 'after' }[],
   rollback?: StructuralCommitRollback,
 ): Promise<void> {
-  await commitStructural([{ kind: 'move', nodeId, anchorNodeId, position }], 'Move refused', rollback ? { rollback } : {})
+  if (moves.length === 0) return
+  await commitStructural(
+    moves.map(({ nodeId, anchorNodeId, position }) => ({ kind: 'move', nodeId, anchorNodeId, position })),
+    'Move refused',
+    rollback ? { rollback } : {},
+  )
 }
 
 /**

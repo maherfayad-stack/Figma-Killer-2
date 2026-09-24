@@ -39,7 +39,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
 import { wouldCreateCycle, syncSlotInstances, applySlotSyncResult } from '@core/visualComponents'
 import { pushToast } from '@ui/components/Toast'
-import { commitStudioDelete, commitStudioMove, commitStudioReparent } from '@site/studio/studioStructuralCommits'
+import { commitStudioDelete, commitStudioMoves, commitStudioReparent } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { broadcastOptimisticDelete, broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { resolveActiveTreeTarget } from './helpers'
@@ -49,6 +49,7 @@ import { createTransplantActions } from './transplantActions'
 import { createImageDropActions } from './imageDropActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
+import { createSiblingStepActions } from './siblingStepActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { excludePendingOptimisticTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
@@ -83,6 +84,8 @@ type NodeActions = Pick<
   | 'setNodesHidden'
   | 'moveNode'
   | 'moveNodes'
+  | 'stepSiblings'
+  | 'moveSiblings'
   | 'duplicateNode'
   | 'duplicateNodes'
   | 'duplicateNodesTo'
@@ -474,6 +477,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
     // source file. See `visibilityActions.ts`.
     ...createVisibilityActions(helpers),
 
+    // P2-C2 — a multi-selection stepped among its siblings as one gesture.
+    // A batch of one is `moveNodes` below. See `siblingStepActions.ts`.
+    ...createSiblingStepActions(helpers, readTree, (ids, parentId, index) => actions.moveNodes(ids, parentId, index)),
+
     moveNode: (nodeId, newParentId, newIndex) => {
       actions.moveNodes([nodeId], newParentId, newIndex)
     },
@@ -552,7 +559,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           rollback,
         })
       } else if (commit?.anchorNodeId) {
-        void commitStudioMove(commit.nodeId, commit.anchorNodeId, commit.position, rollback)
+        void commitStudioMoves([{ nodeId: commit.nodeId, anchorNodeId: commit.anchorNodeId, position: commit.position }], rollback)
       }
     },
 

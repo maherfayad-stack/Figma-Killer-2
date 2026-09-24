@@ -22,6 +22,7 @@ import type {
   PageTemplateConfig,
   ConditionDef,
   StyleRule,
+  SiblingMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
@@ -33,7 +34,6 @@ import type { EditorStore } from '@site/store/types'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
@@ -319,6 +319,9 @@ export interface SiteSlice {
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void
+  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / apply independent moves: one entry, one save batch. `siblingStepActions.ts`. */
+  stepSiblings: (nodeIds: string[], steps: Readonly<Record<string, number>>) => void
+  moveSiblings: (moves: SiblingMove[]) => void
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]

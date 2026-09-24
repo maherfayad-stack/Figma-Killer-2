@@ -75,6 +75,11 @@ interface ClassStylesPreview {
 export interface NodeStylesPreview {
   nodeIds: string[]
   styles: Partial<CSSPropertyBag>
+  /**
+   * P2-C2 — a different bag per node, laid over `styles`: a multi-selection
+   * arrow nudge moves every absolute layer by one delta from its OWN offsets.
+   */
+  stylesByNode?: Readonly<Record<string, Partial<CSSPropertyBag>>>
 }
 
 export type CssRuleApplyMode = 'merge' | 'replace'

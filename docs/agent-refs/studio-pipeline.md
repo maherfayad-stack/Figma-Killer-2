@@ -555,7 +555,7 @@ when it copied and `relocated` when it moved — the two have different undos.
 Both id lists are on the `/save` response.
 
 **Commit shape.** Structural edits are one-shot commits
-(`commitStudioMove` / `commitStudioDelete` / `commitStudioDuplicate` /
+(`commitStudioMoves` / `commitStudioDelete` / `commitStudioDuplicate` /
 `commitStudioGroup` / `commitStudioUngroup` / … in
 `studioStructuralCommits.ts`), like
 asset/detach/swap — never the `saveSite` diff, which has no notion of parent or
