@@ -109,7 +109,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
 
 ### mcp-30 — P4-E: assets for the agent (AI-13, AI-20, P4-C review F8)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` (trunk merged in) · **PR:** draft, base `feat/canvas-excellence` (long form, threat list and tool table in its body) · **Updated:** 2026-09-24
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` (trunk merged in) · **PR:** #248 (draft, base `feat/canvas-excellence`; long form, threat list and tool table in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open); **needs security-guard review**
 - **Goal:** the agent finds a real icon or photo instead of drawing a grey box, lists the project's images and fonts, and can no longer be steered into fetching from an arbitrary host (F8).
 - **Tools added** (all `execution: server`):
