@@ -1206,6 +1206,7 @@ The gate runs the matrix backwards too: every registered `sideEffects: 'write'` 
 | Tool | Why there is no canvas action to be parity with |
 |---|---|
 | `studio_plan_variants` | Nothing in the editor plans variants. Its only artefact is `.studio/variants.json`, which no panel reads, renders or can create — it exists so a LATER turn can edit variant B's recorded density instead of re-rolling the set. The editor's equivalent of "try three directions" is the user writing three screens by hand, which produces no seed record at all. |
+| `studio_find_image` | The editor has no stock search: a user brings an image by dropping or picking a file they already have (asset-drop, the image picker). This is how the agent gets one it was not handed; what it writes is an ordinary image file plus a line in `IMAGE-CREDITS.md`, both of which the user sees and edits like any other file. |
 
 <!-- headless-only-tools:end -->
 

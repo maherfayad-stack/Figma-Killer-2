@@ -216,6 +216,8 @@ const findImageTool: AiTool = {
   execution: 'server',
   sideEffects: 'write',
   requiresWrite: true,
+  headlessOnly:
+    'The editor has no stock search: a user brings an image by dropping or picking a file they already have (asset-drop, the image picker). This is how the agent gets one it was not handed, and what it writes is an ordinary image file plus a line in IMAGE-CREDITS.md, which the user sees and edits like any other file.',
   requiredCapabilities: ['studio.write'],
   description:
     'Find a real photo for a slot and land it in the project: searches licensed stock (Pexels; free to use), downloads the best `count` matches (default 1) into targetDir (default src/assets), and credits each photographer in IMAGE-CREDITS.md. Use it before ever drawing a placeholder for a photo. Returns landed: [{ relPath, src, buildSafe, width, height, alt, photoId, credit }] and moreResults (photoId, alt, size) — call again with photoId to land one of those instead. Write concrete queries ("chef plating pasta in a dark kitchen"), set orientation to the slot\'s shape. If stock search is not configured it says so plainly and lands nothing; do not retry, move down the Assets ladder. Requires studio.write.',

@@ -490,9 +490,7 @@ async function handleAiChat(
           workspaceDir: validatedWorkspaceDir ?? undefined,
           fidelityMode: resolvedFidelityMode,
           designPolicy: resolvedDesignPolicy,
-          // What the USER pasted, from their own text blocks across the whole
-          // conversation: the hosts an agent may make Studio fetch from beyond
-          // the fixed list (`remoteFetchPolicy.ts`, security review F8).
+          // The user's own pasted URLs: what an agent may fetch beyond the fixed hosts (`remoteFetchPolicy.ts`).
           userSuppliedUrls: collectUserSuppliedUrls(messages),
           snapshot,
         }
