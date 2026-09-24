@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -11,6 +10,7 @@ import {
   sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame } from './helpers/canvasIframe'
 
 /**
  * P3-B — real-browser proof that ordinary React renders, and that the one shape
@@ -74,7 +74,7 @@ test.describe('P3-B — ordinary React renders', () => {
   test('text in an <li>, a memo() component and a React.Fragment child all render their own markup', async ({ page }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = await frameForPage(page, canvasRoot, 'home')
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const content = canvasContentFrame(frame)
 
     // By node id, not class: a class with no stylesheet rule never reaches the
     // DOM (`studio-import.md`, board-27f), and this fixture ships no CSS.
@@ -89,7 +89,7 @@ test.describe('P3-B — ordinary React renders', () => {
   test('double-click editing the <li> text writes exactly that <li>', async ({ page }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const frame = await frameForPage(page, canvasRoot, 'home')
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const content = canvasContentFrame(frame)
     const item = content.locator(`[data-node-id="${sourceNodeId(HOME, 'pages/Home.tsx', 'li', 1)}"]`).first()
     await panIntoView(page, canvasRoot, item, 80)
     const box = await item.boundingBox()
