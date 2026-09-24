@@ -68,6 +68,15 @@ export const StudioAgentSnapshotSchema = Type.Object({
 
 export type StudioAgentSnapshot = Static<typeof StudioAgentSnapshotSchema>
 
+/**
+ * A selection's identity — what the panel's selection chip records when the
+ * user removes the selection from the next message (AI-28). Selecting
+ * anything else brings the chip, and the selection, back.
+ */
+export function agentSelectionKey(nodeIds: readonly string[]): string {
+  return nodeIds.join('|')
+}
+
 /** Measures where each node id is drawn, frame-local. Injected so this module stays importable by the server, which never touches the canvas. */
 export type SelectionBoxMeasurer = (nodeIds: readonly string[]) => ReadonlyMap<string, Static<typeof FrameLocalBoxSchema>>
 
@@ -101,6 +110,10 @@ export function buildStudioAgentSnapshot(
     ? state.selectedNodeIds
     : state.selectedNodeId ? [state.selectedNodeId] : []
   ).slice(-MAX_SNAPSHOT_SELECTION)
+  // The user removed this exact selection from the conversation (the chip's
+  // ×): the turn is told nothing is selected, rather than something they
+  // chose not to send.
+  if (selectedIds.length > 0 && state.agentSelectionDismissed === agentSelectionKey(selectedIds)) selectedIds.length = 0
   const boxes = selectedIds.length > 0 ? measureBoxes(selectedIds) : new Map()
   const selection = selectedIds.map((nodeId) => {
     const box = boxes.get(nodeId)

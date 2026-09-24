@@ -12,7 +12,7 @@
  * the operator's job (env var, secret manager, etc.).
  *
  * @see server/secrets/masterKey.ts
- * @see docs/plans/2026-05-26-ai-runtime-rewrite.md → "Encryption"
+ * @see docs/deployment/README.md → `STUDIO_SECRET_KEY`
  */
 
 const KEY_BYTE_LENGTH = 32

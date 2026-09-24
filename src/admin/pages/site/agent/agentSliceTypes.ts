@@ -3,6 +3,7 @@ import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
 import type { AgentMessage, AgentRoutedTurn } from './types'
 import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
+import type { AgentRevertResult, AgentTurnChanges } from './agentTurnChangeTypes'
 
 export interface AgentSliceConfig {
   /**
@@ -65,7 +66,8 @@ export interface AgentSlice {
    * See `permissionPrompt.ts`.
    */
   agentPermissionRequest: AgentPermissionRequest | null
-  resolveAgentPermission(id: string, behavior: PermissionBehavior): void
+  /** `message` is what a denial tells the agent — the plan card's "revise without these steps". */
+  resolveAgentPermission(id: string, behavior: PermissionBehavior, message?: string): void
 
   /**
    * A message typed while a turn was still streaming, sent automatically once
@@ -119,6 +121,26 @@ export interface AgentSlice {
   setAgentPermissionMode(mode: AgentSlice['agentPermissionMode']): void
   setAgentFidelityMode(mode: AgentSlice['agentFidelityMode']): void
   setAgentDesignPolicy(policy: AgentSlice['agentDesignPolicy']): void
+
+  /**
+   * AI-28 — the selection (`agentSelectionKey`) the user removed from the
+   * conversation with the selection chip's ×. While it is still the
+   * selection, the turn's snapshot carries none; any other selection clears
+   * the effect by no longer matching.
+   */
+  agentSelectionDismissed: string | null
+  dismissAgentSelection(key: string | null): void
+
+  /**
+   * AI-7 — what each agent turn of this conversation changed on disk, keyed by
+   * turn id (the persisted id of the user message that opened it). Filled from
+   * the server's checkpoint store after every turn and on conversation load;
+   * see `agentTurnChanges.ts`.
+   */
+  agentTurnChanges: Record<string, AgentTurnChanges>
+  refreshAgentTurnChanges(): Promise<void>
+  /** Put back what a turn changed — all of it, or just `paths`. A refusal comes back as data, never thrown. */
+  revertAgentTurn(turnId: string, paths?: readonly string[]): Promise<AgentRevertResult>
 
   openAgent(): void
   closeAgent(): void

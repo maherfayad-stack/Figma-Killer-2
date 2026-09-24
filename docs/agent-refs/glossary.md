@@ -38,6 +38,11 @@ string, so there is no traversal surface. In-memory, per-process, minutes-long
 TTL as a safety net rather than the boundary. Deliberately not the operator's
 session cookie — taking a picture of a parsed page needs none of that authority.
 
+**Conflict register** — the table in `src/admin/spotlight/keybindings.ts`'s
+header that decides, once, what a key means where Figma and Penpot disagree
+(OD-3, [`docs/decisions.md`](../decisions.md)). A contested key gets a row
+there before it gets a binding.
+
 **Code-derived connector** — a flow edge Studio READ out of the project's own
 navigation code (`src/core/studio-prototype/codeFlow.ts`), not one the user
 drew. Recomputed on every load, never persisted — a stale claim about what the
@@ -69,6 +74,14 @@ backs it. Drives `SharedComponentNotice` and its instance count.
 **Frame virtualization** — mounting only frames intersecting the viewport plus a
 margin. `frameVirtualization.ts`, pure board→screen math.
 
+**Identity fingerprint** — a hash of an element's opening tag plus its direct
+text (or of a literal's token), minted by the parser
+(`src/core/page-parser/sourceFingerprint.ts`) and checked by the server before
+any write (`server/handlers/studioEditIdentity.ts`). It is how a write proves
+the element at `line:col` is still the one the board read; a mismatch is
+re-located or refused `element-moved`. See `studio-pipeline.md` → "Element
+identity".
+
 **Inlining** — expanding a local component's JSX at its call site so the canvas
 shows real markup. The call-site node is **replaced**, not wrapped.
 
@@ -85,6 +98,11 @@ delete, reorder, wrap. Says nothing about whether its props are editable.
 children when the element itself has no box (`display: contents`, fragments).
 Keeps box-less nodes selectable and droppable.
 
+**Named refusal** — an edit that ends without writing, reported with a reason
+code and a sentence (`server/handlers/studioEditRefusals.ts`). The save
+response's `refusals` list is complete; the client shows it as a warning with
+its remedy, never a red toast (`refusalToasts.ts`).
+
 **Origin (`ValueOrigin`)** — workspace-relative path + 1-based line/column of the
 **literal a resolved value physically came from**. Attached at the single place a
 literal is read, so passing a value along carries it for free and computing a
@@ -97,6 +115,11 @@ becomes a `pkg.<sanitized-package>.<ComponentName>` module
 whose rendering comes from the bundled real component (Tier 1,
 `componentBundle.ts`). Below Tier 1 the canvas shows
 `PackageComponentPlaceholder.tsx` with the promote button.
+
+**Outside edit** — a change to a project file that Studio did not write (an
+editor, `git pull`, another agent). `server/handlers/studio/projectWatch.ts`
+notices it while a tab has the project open, and the tab re-reads the named
+files (`diskChanged` on `studio_live_reload`).
 
 **`ParsedPage` / `ParsedNode`** — the parser's own output shape, before
 `parsedPageToSitePage` converts it into the editor's `Page`.
@@ -146,9 +169,14 @@ file — is the same 404. Docs: `docs/features/studio-share.md`.
 **`spliceReference`** — the operation that replaces a call-site node with the
 component's root nodes.
 
-**`StudioEdit`** — one typed edit in a save batch: `prop` \| `text` \| `style` \|
-`tag` \| `literal` \| `asset` \| `styled` \| the structural `move`/`delete`/
-`insert` kinds. Each maps to one AST or CSS codemod.
+**`StudioEdit`** — one typed edit in a save batch (`StudioEditSchema`,
+`server/handlers/studioEditSchemas.ts`): `prop` \| `text` \| `style` \| `class`
+\| `styled` \| `literal` \| `tag` \| `asset` \| `detach` \| `swap` \| `css`, plus
+the structural kinds (`move`, `reparent`, `delete`, `reinsert-source`,
+`duplicate`, `insert`, `wrap`, `group`, `ungroup`, `transplant`) and the slot
+kinds (`insert-slot`, `promote-component`, `add-slot-prop`). Each maps to one
+AST or CSS codemod. An edit that does not write comes back as a **named
+refusal**.
 
 **`studio-asset:` sentinel** — what an image import resolves to during parsing.
 Rewritten to `/admin/api/studio/asset?dir=…&path=…` once `dir` is in scope.
@@ -189,7 +217,7 @@ Full description, the gates and the default:
 [`docs/features/trust-tiers.md`](../features/trust-tiers.md).
 
 **Unroll** — neutralizing inner scroll containers on the design canvas so a whole
-app screen is visible in one frame (`canvasScrollUnroll.ts`,
+app screen is visible in one frame (`src/core/studio-runtime/scrollUnrollRules.ts`,
 `CanvasScrollUnrollInjector.tsx`). Scoped to a CONFIRMED scroll region
 (`[data-studio-unroll-overflow-y="auto"|"scroll"]`), never the universal
 selector — a clip mask and an ellipsis container are not scroll regions.

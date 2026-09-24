@@ -13,6 +13,9 @@
  *   - **A fresh turn-write log.** The boundary the Studio file tools append to
  *     (`fileWriteTools.ts`), drawn AFTER the prompt reported what the last turn
  *     wrote, exactly where `claudeCli.ts` draws it.
+ *   - **The turn's file checkpoint** (AI-7, `agentCheckpoints.ts`) — opened at
+ *     the same boundary, so every write the file tools make this turn is
+ *     bracketed by a pre- and a post-image the user can revert to.
  *
  * Lives beside `chatSystemPrompt.ts` rather than inside `handlers/chat.ts` for
  * the same reason that module does: it never touches a `Request`.
@@ -20,12 +23,22 @@
 import { generateStudioProjectGuide } from '../handlers/studio/projectGuide'
 import { resetTurnWriteLog } from '../handlers/studio/turnWriteLog'
 import { studioAgentUserKey } from '../handlers/studio/agentUserScope'
+import { beginAgentCheckpointTurn } from '../handlers/studio/agentCheckpoints'
 
-export function prepareStudioHttpTurn(dir: string, userId: string): void {
+export interface StudioHttpTurn {
+  readonly userId: string
+  readonly conversationId: string
+  /** The persisted user message id — see `ToolContextBase.turnId`. */
+  readonly turnId: string
+}
+
+export function prepareStudioHttpTurn(dir: string, turn: StudioHttpTurn): void {
   try {
     generateStudioProjectGuide(dir)
   } catch (err) {
     console.error('[ai/chat] failed to generate the project guide — continuing without one:', err)
   }
-  resetTurnWriteLog(dir, studioAgentUserKey(userId))
+  const userKey = studioAgentUserKey(turn.userId)
+  resetTurnWriteLog(dir, userKey)
+  beginAgentCheckpointTurn(dir, userKey, { conversationId: turn.conversationId, turnId: turn.turnId })
 }

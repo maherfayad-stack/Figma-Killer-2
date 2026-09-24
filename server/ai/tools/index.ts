@@ -26,6 +26,7 @@ import { toolAllowedForCapabilities } from './capabilityGate'
 import type { AiTool } from './types'
 import { siteTools } from './site'
 import { studioAgentTools, studioHttpAgentTools, type AgentFileAccess } from './studio'
+import { proposePlanTool } from '../mcp/tools/studio/proposePlanTool'
 
 /** The CMS site toolset — unchanged default when no Studio project is open. */
 export const studioTools: AiTool[] = siteTools
@@ -41,6 +42,13 @@ export interface SelectStudioToolsContext {
    * {@link agentFileAccessForProvider}; defaults to `native`.
    */
   readonly fileAccess?: AgentFileAccess
+  /**
+   * The composer's Plan mode (AI-22). On an HTTP driver it adds
+   * `studio_propose_plan`, and the tool loop then refuses every write until a
+   * plan is approved. The `claude` CLI has plan mode natively
+   * (`--permission-mode plan` + `ExitPlanMode`), so it gets nothing extra.
+   */
+  readonly planMode?: boolean
 }
 
 /**
@@ -78,6 +86,8 @@ export function selectStudioTools(
 ): AiTool[] {
   const tools = !context.studioProjectOpen
     ? studioTools
-    : context.fileAccess === 'studio-tools' ? studioHttpAgentTools : studioAgentTools
+    : context.fileAccess === 'studio-tools'
+      ? [...studioHttpAgentTools, ...(context.planMode ? [proposePlanTool] : [])]
+      : studioAgentTools
   return tools.filter((t) => toolAllowedForCapabilities(t, capabilities))
 }
