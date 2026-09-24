@@ -21,7 +21,9 @@
  * rule one level up: a class the user just created has no file yet, and
  * picking the wrong one is not a cosmetic mistake — the declarations land
  * somewhere the page does not import, and the canvas and the repo disagree
- * forever. So it resolves, or it refuses by name.
+ * forever. So it resolves by a stated order, and — P3-C — it always resolves:
+ * choosing among several real stylesheets, or creating the first one, is
+ * something the editor can do itself (see `resolveCssInsertDestination`).
  */
 import {
   callSitePosition,
@@ -68,11 +70,6 @@ export function getStudioStyleRuleSources(): Record<string, StyleRuleSource> {
 /** Replaces the whole registry — called once per `loadSite`, through `setStudioStyleRuleSources`. */
 export function replaceStyleRuleSources(sources: Record<string, StyleRuleSource>): void {
   styleRuleSources = sources
-  // A pin answers ONE `ambiguous-stylesheet` refusal against ONE registry. A
-  // fresh load re-resolves every rule's source from disk, so a pin that
-  // survived it would be a destination decision made against a project state
-  // that no longer exists.
-  pinnedDestinations = {}
 }
 
 /**
@@ -103,27 +100,36 @@ export function getOpenPageFile(): string | null {
 }
 
 /**
- * `StyleRule.id -> the stylesheet the USER chose for it`, from the
- * `ambiguous-stylesheet` refusal's remedies (`RefusalDialog`).
+ * `StyleRule.id -> the stylesheet Studio chose for it automatically` (ERR-14).
  *
- * `ambiguous-stylesheet` is the one destination refusal that is a QUESTION
- * rather than a dead end: N hand-editable stylesheets exist, all of them are
- * real write targets, and Studio will not pick one for the user. Recording
- * their answer here — and consulting it before anything else below — is what
- * turns that refusal into a choice: the next save resolves the same rule to
- * `{ kind: 'existing', file }` and the declarations land.
+ * The ranking in `rankCandidateStylesheets` reads session state (which
+ * stylesheet was written last), so asked twice it could answer twice
+ * differently — and it IS asked twice per write: once by the save planner
+ * that sends the `insert`, and again by `commitBaseline`, which records the
+ * rule's source from the same question once the insert landed. Remembering
+ * the first answer per rule makes the pair agree, and makes the panel's
+ * preview and the save agree too: a class goes where the chip said it would.
+ * An answer is honoured only while the file is still one of the project's
+ * editable stylesheets.
  */
-let pinnedDestinations: Record<string, string> = {}
+const chosenDestinations = new Map<string, string>()
 
 /**
- * Records the stylesheet the user picked for `ruleId` out of an
- * `ambiguous-stylesheet` refusal's candidate list. Only ever called with a
- * file that WAS one of those candidates; `resolveCssInsertDestination`
- * re-checks that it still is before honouring it, so a pin can never outlive
- * the fact that made it honest.
+ * The stylesheet a CSS write landed in most recently this session — the
+ * first thing `rankCandidateStylesheets` prefers. A user styling classes into
+ * `styles/app.css` expects the next new class to go there too.
  */
-export function pinCssInsertDestination(ruleId: string, file: string): void {
-  pinnedDestinations[ruleId] = file
+let lastWrittenStylesheet: string | null = null
+
+/** Records that a CSS write landed in `file` (called by `saveSite` for every `css` edit the server wrote). */
+export function noteStylesheetWritten(file: string): void {
+  lastWrittenStylesheet = file
+}
+
+/** Forgets every automatic choice and the last-written stylesheet — a different project, or a test. */
+export function resetCssDestinationMemory(): void {
+  chosenDestinations.clear()
+  lastWrittenStylesheet = null
 }
 
 /**
@@ -154,32 +160,23 @@ export function isEditorAuthoredRuleId(ruleId: string): boolean {
 }
 
 /**
- * A resolved insert destination, or a NAMED refusal.
+ * Where a brand-new class's first declarations go. Always an answer — P3-C
+ * (ERR-14, ERR-15) retired the two refusals this used to end in.
  *
- *   - `kind: 'existing'` — the one editable stylesheet this workspace
- *     already knows how to write to (`op: 'insert'`).
- *   - `kind: 'create'` — no editable stylesheet exists yet, but this rule
- *     names a page to co-locate a NEW one with (`op: 'create'`); the SERVER
- *     picks the actual file name/convention (see `studioCssWriteback.ts`'s
+ *   - `kind: 'existing'` — an editable stylesheet this workspace already
+ *     writes to (`op: 'insert'`). `alternatives` lists the other candidates
+ *     when Studio CHOSE among several (`rankCandidateStylesheets`), so a
+ *     surface can say so; it is empty when the answer was the only one.
+ *   - `kind: 'create'` — no editable stylesheet exists yet (`op: 'create'`).
+ *     `pageFile` names the page to co-locate the new one with, or is `null`
+ *     for a class with no page at all, in which case the server creates one
+ *     beside the app's entry module and imports it there. The SERVER picks
+ *     the actual file name/convention (`studioCssWriteback.ts`'s
  *     `applyCssCreateEdit`).
  */
 export type CssInsertDestination =
-  | { ok: true; kind: 'existing'; file: string }
-  | { ok: true; kind: 'create'; pageFile: string }
-  | {
-      ok: false
-      reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'
-      message: string
-      /**
-       * Every stylesheet that WOULD have been an honest target, for the
-       * refusal that is a question rather than a dead end. `ambiguous-stylesheet`
-       * carries all N of them so the user can pick one (`RefusalDialog` renders
-       * one remedy per entry, `pinCssInsertDestination` records the answer);
-       * `no-editable-stylesheet` carries none, because there were none —
-       * that is what makes it terminal.
-       */
-      candidates: string[]
-    }
+  | { kind: 'existing'; file: string; alternatives: string[] }
+  | { kind: 'create'; pageFile: string | null }
 
 /**
  * One rule the user changed that could not be written, and the specific
@@ -201,35 +198,6 @@ export interface UnmappedStyleRule {
   label: string
   /** A complete, user-readable sentence, or `null` for "no source, no more specific reason". */
   reason: string | null
-}
-
-/**
- * One brand-new class whose first declarations had nowhere honest to go —
- * `resolveCssInsertDestination` refused (Z8).
- *
- * Reported separately from `unmapped`, which it used to be folded into,
- * because the two are opposite kinds of fact and the user can only act on one
- * of them. An `unmapped` rule is a Tailwind utility or a compiled build
- * artefact: permanently unwritable, nothing to decide. A destination refusal
- * is about a class that IS writable the moment somebody names a file — and for
- * `ambiguous-stylesheet` the answer is a list of real files sitting right
- * there in `candidates`. Folding that into a toast threw the choice away.
- *
- * Carrying `ruleId` is what makes the choice re-runnable: the caller pins it
- * (`pinCssInsertDestination`) and the next save resolves the same rule to
- * `{ kind: 'existing' }`. It is also how the caller holds this rule's diff
- * BASELINE back — nothing reached disk, so adopting the new value would make
- * the user's answer land on a diff that reads "no change".
- */
-export interface CssDestinationRefusal {
-  ruleId: string
-  /** The class as the user sees it — `rule.selector` or its name. */
-  label: string
-  reason: 'no-editable-stylesheet' | 'ambiguous-stylesheet'
-  /** The refusal's own complete sentence, from `resolveCssInsertDestination`. */
-  message: string
-  /** Every stylesheet the user may choose between — empty for the terminal refusal. */
-  candidates: string[]
 }
 
 /**
@@ -348,16 +316,56 @@ function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
   return stemOf(pageFile) === stemOf(cssFile)
 }
 
+/** Directory segments of a workspace-relative file path (`pages/Home.tsx` -> `['pages']`). */
+function directorySegments(file: string): string[] {
+  return file.split('/').slice(0, -1)
+}
+
+/** How many leading directory segments two files share — `src/a/x.css` and `src/a/b/y.tsx` share 2. */
+function sharedDirectoryDepth(a: string, b: string): number {
+  const left = directorySegments(a)
+  const right = directorySegments(b)
+  let depth = 0
+  while (depth < left.length && depth < right.length && left[depth] === right[depth]) depth += 1
+  return depth
+}
+
+/**
+ * ERR-14 — the candidates, best first, when more than one editable stylesheet
+ * could take a new class and none is the rule's own page's. Deterministic from
+ * what every caller shares (the rule-source registry, the anchor page, the
+ * last write), so the panel's preview and the save agree:
+ *
+ *   1. the stylesheet written most recently this session — the user is
+ *      styling into it;
+ *   2. a plain `.css` before a `*.module.css`: a module's classes reach only
+ *      the files that import it, while a plain stylesheet is global once
+ *      loaded;
+ *   3. the nearest to the anchor page by shared directory;
+ *   4. the one holding the most rules — the project's main stylesheet;
+ *   5. alphabetical, so a tie never depends on iteration order.
+ */
+function rankCandidateStylesheets(files: readonly string[], anchorPageFile: string | null): string[] {
+  const ruleCount = new Map<string, number>()
+  for (const source of Object.values(styleRuleSources)) {
+    ruleCount.set(source.file, (ruleCount.get(source.file) ?? 0) + 1)
+  }
+  const isModule = (file: string) => /\.module\.css$/i.test(file)
+  const nearness = (file: string) => (anchorPageFile ? sharedDirectoryDepth(file, anchorPageFile) : 0)
+  return [...files].sort(
+    (a, b) =>
+      Number(b === lastWrittenStylesheet) - Number(a === lastWrittenStylesheet) ||
+      Number(isModule(a)) - Number(isModule(b)) ||
+      nearness(b) - nearness(a) ||
+      (ruleCount.get(b) ?? 0) - (ruleCount.get(a) ?? 0) ||
+      a.localeCompare(b),
+  )
+}
+
 /**
  * Where a rule with no write-back source at all should have its first
- * declarations written. Resolution order:
+ * declarations written. Always an answer (P3-C); resolution order:
  *
- *   0. The stylesheet the USER already chose for this rule out of an
- *      `ambiguous-stylesheet` refusal (`pinCssInsertDestination`, Z8).
- *      Consulted first and honoured only while it is still one of the
- *      project's editable stylesheets — an answer the user gave outranks
- *      every heuristic below it, and nothing else in this function is
- *      allowed to second-guess it.
  *   1. The stylesheet CO-LOCATED WITH THE RULE'S OWN PAGE, when the rule
  *      names one and such a file is already a known write target
  *      (`pages/Home.tsx` -> `pages/Home.module.css`). This is not a guess
@@ -376,16 +384,21 @@ function isCoLocatedStylesheet(pageFile: string, cssFile: string): boolean {
  *      every DISTINCT, hand-editable (`classifyStylesheetEditability` ===
  *      'plain-css') `.css` file already named in `styleRuleSources`, IF
  *      there is exactly one.
- *   3. Else, if the count was MORE than one, refuse with
- *      `ambiguous-stylesheet`, naming every candidate — Studio will not
- *      guess which file a new class belongs in. This branch NEVER creates:
- *      the ambiguity is about multiple EXISTING choices, not about needing
- *      a new one. Z8: the refusal now carries those candidates as data, so
- *      the caller can ASK (a `RefusalDialog` with one remedy per file)
- *      instead of reporting a dead end the user cannot act on.
- *   4. Else (zero candidates) — try to name the anchor page. If one
- *      resolves, offer `kind: 'create'`. If not, refuse with
- *      `no-editable-stylesheet`.
+ *   3. Else, with MORE than one, Studio CHOOSES (ERR-14) —
+ *      `rankCandidateStylesheets`, remembered per rule for the session
+ *      (`chosenDestinations`) so the save, the baseline and the panel agree.
+ *      This used to refuse `ambiguous-stylesheet` and open a "Which
+ *      stylesheet should this class live in?" modal ~2 s after the first
+ *      keystroke, from autosave, while the user was still typing. Every
+ *      candidate IS a real write target — the question was which one, and the
+ *      editor can answer it: the file it last wrote, a global sheet over
+ *      another page's module, the nearest, the main one. The others ride along
+ *      as `alternatives` for any surface that wants to say so.
+ *   4. Else (zero candidates) — `kind: 'create'`: beside the anchor page, or,
+ *      with no page at all (ERR-15), beside the app's entry module
+ *      (`pageFile: null`). That last case used to refuse
+ *      `no-editable-stylesheet` — a red "Style not saved to source" for the
+ *      first class in a project that simply had no stylesheet yet.
  *
  * ## The anchor page, and why step 1 is no longer a near-miss
  *
@@ -407,42 +420,23 @@ export function resolveCssInsertDestination(
     if (classifyStylesheetEditability(source.file).kind === 'plain-css') files.add(source.file)
   }
 
-  // The user's own answer to an earlier ambiguity outranks every heuristic
-  // below — but only while it names a stylesheet this project still writes to.
-  const pinned = pinnedDestinations[rule.id]
-  if (pinned && files.has(pinned)) return { ok: true, kind: 'existing', file: pinned }
-
   // The rule's own page answers this before any counting does; the open page
   // answers for a rule that has no page of its own yet (Z8).
   const anchorPageFile = pageFileForRule(rule, pageIndex) ?? openPageFile
   if (anchorPageFile) {
     const coLocated = [...files].sort().find((file) => isCoLocatedStylesheet(anchorPageFile, file))
-    if (coLocated) return { ok: true, kind: 'existing', file: coLocated }
+    if (coLocated) return { kind: 'existing', file: coLocated, alternatives: [] }
   }
 
-  if (files.size === 1) return { ok: true, kind: 'existing', file: [...files][0]! }
+  if (files.size === 1) return { kind: 'existing', file: [...files][0]!, alternatives: [] }
 
   if (files.size > 1) {
-    const candidates = [...files].sort()
-    return {
-      ok: false,
-      reason: 'ambiguous-stylesheet',
-      candidates,
-      message:
-        `Studio found ${candidates.length} candidate stylesheets in this project (${candidates.join(', ')}) ` +
-        'and will not guess which one a new class belongs in.',
-    }
+    const ranked = rankCandidateStylesheets([...files], anchorPageFile)
+    const remembered = chosenDestinations.get(rule.id)
+    const file = remembered !== undefined && files.has(remembered) ? remembered : ranked[0]!
+    chosenDestinations.set(rule.id, file)
+    return { kind: 'existing', file, alternatives: ranked.filter((candidate) => candidate !== file) }
   }
 
-  if (anchorPageFile) return { ok: true, kind: 'create', pageFile: anchorPageFile }
-
-  return {
-    ok: false,
-    reason: 'no-editable-stylesheet',
-    candidates: [],
-    message:
-      'Studio could not find a hand-editable .css file in this project, and neither this class nor the page on ' +
-      'screen names one to co-locate a new one with. Open the page this class belongs to, or add a .css file to ' +
-      'the project, then try again.',
-  }
+  return { kind: 'create', pageFile: anchorPageFile }
 }

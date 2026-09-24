@@ -11,7 +11,6 @@
 import { describe, expect, it } from 'bun:test'
 import {
   explainClassNameConstraint,
-  explainCssRuleConstraint,
   explainDetachConstraint,
   explainPropConstraint,
   explainStyleConstraint,
@@ -524,26 +523,6 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
       assertWellFormed(constraint)
       expect(constraint.actions).toEqual([])
     }
-  })
-
-  it('B1/B1b — no-editable-stylesheet offers "style the element instead"', () => {
-    const constraint = explainCssRuleConstraint('no-editable-stylesheet', 'This class has no hand-editable source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-  })
-
-  it('B1/B1b — ambiguous-stylesheet and stylesheet-import-shape-mismatch also offer the inline hatch', () => {
-    for (const reason of ['ambiguous-stylesheet', 'stylesheet-import-shape-mismatch']) {
-      const constraint = explainCssRuleConstraint(reason, `refused: ${reason}`)
-      assertWellFormed(constraint)
-      expect(constraint.actions[0]?.kind).toBe('style-inline-instead')
-    }
-  })
-
-  it('row 26 — breakpoint-override-unsupported carries no action (told, not fixed)', () => {
-    const constraint = explainCssRuleConstraint('breakpoint-override-unsupported', 'Breakpoint override not saved to source.')
-    assertWellFormed(constraint)
-    expect(constraint.actions).toEqual([])
   })
 
   it('row 22 — swap refusal passes the codemod\'s own reason/message through', () => {

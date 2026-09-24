@@ -46,7 +46,13 @@
  *     declarations into it. Creating a file AND rewriting the importing
  *     `.tsx` in the same edit needs filesystem + AST access the client does
  *     not have, which is why this is server-decided rather than
- *     client-resolved like `insert`.
+ *     client-resolved like `insert`. With NO `pageFile` (P3-C, ERR-15 — a
+ *     class on no element, with no page open) the stylesheet is created
+ *     beside the app's entry module (`findEntryFile`: `index.html`'s module
+ *     script, else `src/main.tsx` and friends) as `studio.css`, a plain
+ *     global sheet, and imported there — every page can reach a class in it.
+ *     This used to be the client's `no-editable-stylesheet` refusal. Only a
+ *     project with no entry module at all still refuses (`no-app-entry`).
  *   - `op: 'keyframe-set'` / `'keyframe-unset'` / `'keyframes-insert'` — the
  *     same three moves one scope over, inside a `@keyframes` block (W5-5).
  *     Their schemas and their pure writers live in `studioCssKeyframes.ts`;
@@ -102,7 +108,7 @@
  * (or its own destination resolution) named — so there is no honest sentence
  * to show a user, only an attack to decline.
  */
-import { isAbsolute, join } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
 import { isWorkspaceWritablePath, listWorkspaceFiles, unwritableWorkspaceSegment } from '@core/page-parser'
@@ -116,6 +122,7 @@ import {
   setDeclarationAtMedia,
 } from '@core/css-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { findEntryFile } from '@core/studio-sync/collectPageStylesheets'
 import { applyKeyframeEdit, CssKeyframeEditSchemas, isKeyframeEdit } from './studioCssKeyframes'
 
 /**
@@ -207,12 +214,15 @@ const CssInsertEditSchema = Type.Object({
  * and the client refuses rather than guessing). Everything else matches
  * `CssInsertEditSchema`: `declarations` is the FULL current bag, `atMedia`
  * is carried for parity though unused by this pass.
+ *
+ * `pageFile` absent ⇒ the stylesheet goes beside the app's ENTRY module
+ * instead (P3-C, ERR-15) — see this module's doc and `cssCreateImportTarget`.
  */
 const CssCreateEditSchema = Type.Object({
   kind: Type.Literal('css'),
   op: Type.Literal('create'),
   nodeId: Type.String(),
-  pageFile: Type.String(),
+  pageFile: Type.Optional(Type.String()),
   selector: Type.String(),
   declarations: Type.Record(Type.String(), Type.String()),
   atMedia: Type.Optional(Type.String()),
@@ -238,7 +248,7 @@ export const CssEditSchema = Type.Union([
 ])
 
 export type CssEdit = Static<typeof CssEditSchema>
-type CssCreateEdit = Extract<CssEdit, { op: 'create' }>
+export type CssCreateEdit = Extract<CssEdit, { op: 'create' }>
 
 /**
  * `applyCssEdit`'s outcome. `refusal` is a NAMED, expected result carrying a
@@ -462,6 +472,34 @@ function ensureStylesheetImport(pageAbsPath: string, cssAbsPath: string, convent
   return { ok: true }
 }
 
+/** The stylesheet `op: 'create'` makes beside the app entry when no page anchors the class (ERR-15). */
+const ENTRY_STYLESHEET_NAME = 'studio.css'
+
+/**
+ * The workspace-relative (POSIX) source file an `op: 'create'` edit adds its
+ * stylesheet `import` to, or `null` when there is none: the named `pageFile`,
+ * or — absent — the app's entry module (`findEntryFile`, the same answer the
+ * entry-stylesheet walk uses, so the new sheet is on the path the load already
+ * collects global CSS from). Shape-checked like every client path; the caller
+ * still resolves it through `resolveContainedSourcePagePath` before writing.
+ *
+ * Exported because two other readers must name the SAME file: the syntax
+ * guard (a broken importer is never written) and the batch's touched-file set
+ * (its import list gains a line).
+ */
+export function cssCreateImportTarget(dir: string, edit: CssCreateEdit): string | null {
+  if (edit.pageFile !== undefined) {
+    const segments = safeRelSegments(edit.pageFile, SOURCE_FILE_EXT_RE)
+    return segments ? segments.join('/') : null
+  }
+  const entry = findEntryFile(dir)
+  if (entry === undefined) return null
+  const rel = relative(resolve(dir), entry)
+  if (rel.length === 0 || rel.startsWith('..') || isAbsolute(rel)) return null
+  const segments = safeRelSegments(rel.split(sep).join('/'), SOURCE_FILE_EXT_RE)
+  return segments ? segments.join('/') : null
+}
+
 /**
  * `op: 'create'` — Track B1's deferred middle branch, now landed. Resolves
  * the page, detects the project's stylesheet convention, computes and
@@ -472,14 +510,33 @@ function ensureStylesheetImport(pageAbsPath: string, cssAbsPath: string, convent
  * something there).
  */
 function applyCssCreateEdit(dir: string, edit: CssCreateEdit): CssEditOutcome {
-  const pageSegments = safeRelSegments(edit.pageFile, SOURCE_FILE_EXT_RE)
-  if (!pageSegments) return { applied: false }
-
-  const pageAbsPath = resolveContainedSourcePagePath(dir, edit.pageFile)
+  const importer = cssCreateImportTarget(dir, edit)
+  if (importer === null) {
+    return edit.pageFile === undefined
+      ? {
+          applied: false,
+          refusal: {
+            reason: 'no-app-entry',
+            message:
+              'This project has no stylesheet yet and no app entry module (index.html’s module script, or ' +
+              'src/main.tsx) to import a new one from, so the class was not written. Open the page it belongs to, ' +
+              'then change it again.',
+          },
+        }
+      : { applied: false }
+  }
+  const importerSegments = importer.split('/')
+  const pageAbsPath = resolveContainedSourcePagePath(dir, importer)
   if (pageAbsPath === null) return { applied: false }
 
-  const convention = detectStylesheetConvention(dir)
-  const cssRelPath = coLocatedStylesheetRelPath(pageSegments, convention)
+  // A page gets a sheet co-located with it, in this project's convention. The
+  // app ENTRY gets a plain global `studio.css`: a CSS Module's classes reach
+  // only the file that imports it, and the entry renders none of the markup.
+  const convention = edit.pageFile === undefined ? 'css' : detectStylesheetConvention(dir)
+  const cssRelPath =
+    edit.pageFile === undefined
+      ? [...importerSegments.slice(0, -1), ENTRY_STYLESHEET_NAME].join('/')
+      : coLocatedStylesheetRelPath(importerSegments, convention)
 
   const editability = classifyStylesheetEditability(cssRelPath)
   if (editability.kind === 'compiled') {

@@ -59,7 +59,7 @@ export type ConstraintScope = 'prop' | 'style-property' | 'node' | 'gesture'
  * (rows 7-18) is absorbed directly — see `sourceStructure.ts` for that union's
  * own doc. Everything else is this module's own vocabulary, one branch per
  * taxonomy row/family, or absorbed verbatim from a sibling track's own
- * refusal union (B2's `className` vocabulary, B1/B1b's CSS vocabulary,
+ * refusal union (B2's `className` vocabulary,
  * `detachComponent.ts`'s `DetachRefusalReason`) — named here as PLAIN STRING
  * LITERALS matching those unions' own values, not type-imported, because
  * importing from `@core/ast-codemods`/`@core/css-codemods` into `@core/page-tree`
@@ -98,12 +98,6 @@ export type ConstraintReason =
   | 'unbound-reference'
   // Row 22 — Swap refusal (component shape mismatch, etc).
   | 'swap-refused'
-  // Row 25-26 — CSS class/breakpoint has no hand-editable source, absorbed
-  // from B1/B1b's `classifyStylesheetEditability` vocabulary.
-  | 'no-editable-stylesheet'
-  | 'ambiguous-stylesheet'
-  | 'stylesheet-import-shape-mismatch'
-  | 'breakpoint-override-unsupported'
   // Row 27 — inline text edit blocked before it starts. RESERVED, not
   // currently produced: text is an ordinary prop key to `explainPropConstraint`
   // (its resolvedProps entry is keyed `'text'`, remapped to the module's own
@@ -155,9 +149,7 @@ export interface EditConstraintAction {
     | 'extract'
     | 'select-container'
     | 'promote-tier1'
-    | 'style-inline-instead'
     | 'preview-branch'
-    | 'choose-stylesheet'
     /**
      * K6 — write `position: relative` onto the container the refusal names, so
      * a ⌘-drag can place its child by coordinates. The only action kind whose
@@ -190,16 +182,6 @@ export interface EditConstraintAction {
    * (`detach`/`extract`/`preview-branch` all mutate editor state).
    */
   target?: { rel: string; line: number; col: number }
-  /**
-   * For `choose-stylesheet` (Z8) — the destination this remedy picks.
-   *
-   * A separate field from `target` because it is a FILE, not a position: an
-   * `ambiguous-stylesheet` refusal knows which stylesheets exist but nothing
-   * about where in them a rule would land (that is postcss's answer at write
-   * time, server-side), and inventing a `1:1` to fit `target`'s shape would
-   * claim a location this module cannot honestly name.
-   */
-  stylesheet?: { ruleId: string; file: string }
 }
 
 export interface EditConstraint {
@@ -428,42 +410,3 @@ export function explainClassNameConstraint(reason: string, message: string): Edi
         : [],
   }
 }
-
-/**
- * Explains a CSS rule/breakpoint-override save-time refusal — B1/B1b's
- * `classifyStylesheetEditability` vocabulary, passed through by value.
- *
- * Z8 — `ambiguous-stylesheet` is the one refusal in this family that is a
- * QUESTION: N hand-editable stylesheets exist, every one of them is a real
- * write target, and Studio refuses to pick. Given the candidate list (and the
- * rule to write), it becomes one runnable remedy per file: the user names the
- * destination and the same write is re-issued against it. Without them the
- * function is unchanged and still offers only the inline hatch — a caller that
- * cannot supply a rule id (the `StyleTargetChip` preview, which is explaining
- * a class nobody has asked to write yet) gets exactly what it got before.
- */
-export function explainCssRuleConstraint(
-  reason: string,
-  message: string,
-  destination?: { ruleId: string; candidates: readonly string[] },
-): EditConstraint {
-  const chooseActions: EditConstraintAction[] =
-    reason === 'ambiguous-stylesheet' && destination
-      ? destination.candidates.map((file) => ({
-          label: `Write it into ${file}`,
-          kind: 'choose-stylesheet' as const,
-          stylesheet: { ruleId: destination.ruleId, file },
-        }))
-      : []
-  const inlineHatch: EditConstraintAction[] =
-    reason === 'no-editable-stylesheet' || reason === 'ambiguous-stylesheet' || reason === 'stylesheet-import-shape-mismatch'
-      ? [{ label: 'Style the element instead', kind: 'style-inline-instead' }]
-      : []
-  return {
-    reason: reason as ConstraintReason,
-    scope: 'node',
-    explanation: message,
-    actions: [...chooseActions, ...inlineHatch],
-  }
-}
-

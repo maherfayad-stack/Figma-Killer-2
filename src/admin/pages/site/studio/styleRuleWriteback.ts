@@ -95,8 +95,10 @@
  *
  * When zero editable stylesheets exist yet, `resolveCssInsertDestination`
  * does not refuse outright — it names the PAGE this rule belongs to and
- * returns `{ ok: true, kind: 'create', pageFile }`, and `collectStyleRuleEdits`
- * emits an `op: 'create'` edit instead of `insert`.
+ * returns `{ kind: 'create', pageFile }` — `pageFile: null` for a class with no
+ * page at all, which the server answers with a stylesheet beside the app's
+ * entry module (ERR-15) — and `collectStyleRuleEdits` emits an `op: 'create'`
+ * edit instead of `insert`.
  *
  * The SERVER does the actual work (`studioCssWriteback.ts`'s
  * `applyCssCreateEdit`) — detects whether this project leans on CSS Modules
@@ -128,7 +130,6 @@ import {
   resolveCssInsertDestination,
   resolveOpenPageFile,
   setOpenPageFile,
-  type CssDestinationRefusal,
   type UnmappedStyleRule,
 } from './cssInsertDestination'
 import { collectKeyframesEdits, type CssKeyframeEditPayload } from './keyframesWriteback'
@@ -165,13 +166,13 @@ export {
   buildClassPageIndex,
   getOpenPageFile,
   getStudioStyleRuleSources,
-  pinCssInsertDestination,
+  noteStylesheetWritten,
+  resetCssDestinationMemory,
   recordCreatedStylesheet,
   resolveCssInsertDestination,
   resolveOpenPageFile,
   setOpenPageFile,
   StyleRuleSourceSchema,
-  type CssDestinationRefusal,
   type CssInsertDestination,
   type StyleRuleSource,
   type UnmappedStyleRule,
@@ -227,14 +228,15 @@ export interface CssInsertEditPayload {
  * A brand-new rule's first write into a stylesheet that DOES NOT EXIST YET
  * (Track B1's deferred branch, now landed), matching `studioCssWriteback.ts`'s
  * `CssCreateEditSchema`. `pageFile` is the page this rule is co-located
- * with — see `resolveCssInsertDestination`'s doc for how it is derived and
- * why a rule with no page association never reaches this shape.
+ * with — see `resolveCssInsertDestination`'s doc for how it is derived.
+ * Absent for a rule with no page association at all (ERR-15): the server then
+ * creates the stylesheet beside the app's entry module and imports it there.
  */
 export interface CssCreateEditPayload {
   kind: 'css'
   op: 'create'
   nodeId: string
-  pageFile: string
+  pageFile?: string
   selector: string
   declarations: Record<string, string>
   atMedia?: string
@@ -286,12 +288,6 @@ export interface StyleRuleEditPlan {
    * caller must TELL them, not skip silently. See this module's doc.
    */
   unmapped: UnmappedStyleRule[]
-  /**
-   * Brand-new classes whose DESTINATION was refused — see
-   * `CssDestinationRefusal`. The caller presents these as a choice, and must
-   * hold their baselines back so the choice still has something to write.
-   */
-  destinationRefusals: CssDestinationRefusal[]
   /**
    * Selectors the user changed under a REAL breakpoint/condition. Writing one
    * needs `setDeclarationAtMedia` plus the condition's query, which the
@@ -411,7 +407,6 @@ export function collectStyleRuleEdits(
 ): StyleRuleEditPlan {
   const edits: StyleEditPayload[] = []
   const unmapped: UnmappedStyleRule[] = []
-  const destinationRefusals: CssDestinationRefusal[] = []
   const unwritableContexts: string[] = []
   const ruleIdsByNodeId: Record<string, string[]> = {}
   const pageIndex = buildClassPageIndex(pages)
@@ -550,22 +545,9 @@ export function collectStyleRuleEdits(
         unmapped.push({ label, reason: null })
         continue
       }
+      // P3-C (ERR-14, ERR-15) — always an answer: an existing stylesheet
+      // (chosen by Studio when there are several), or a new one.
       const destination = resolveCssInsertDestination(rule, pageIndex)
-      if (!destination.ok) {
-        // Z8 — NOT `unmapped`. This class is perfectly writable the moment a
-        // file is named, and `ambiguous-stylesheet` names every file it could
-        // be. Reported as its own kind so the caller can ask the question
-        // instead of toasting a dead end, and so this rule's baseline is held
-        // back until the answer lands.
-        destinationRefusals.push({
-          ruleId,
-          label,
-          reason: destination.reason,
-          message: destination.message,
-          candidates: destination.candidates,
-        })
-        continue
-      }
       // A brand-new rule has nothing on disk to REMOVE a property from, so
       // only the set half of the diff reaches an insert/create.
       const declarations = settableDeclarations(changes)
@@ -584,17 +566,17 @@ export function collectStyleRuleEdits(
         continue
       }
       // `kind: 'create'` — no editable stylesheet exists yet; the server
-      // invents one co-located with `destination.pageFile` and reports back
-      // which file it made (`recordCreatedStylesheet`/`notifyCreatedStylesheets`
-      // pick that up from the save response). `nodeId` carries the rule id
-      // itself so the response can be joined back to it — see
-      // `ruleIdFromCssCreateNodeId`.
+      // invents one co-located with `destination.pageFile` (or, with no page,
+      // beside the app entry) and reports back which file it made
+      // (`recordCreatedStylesheet`/`notifyCreatedStylesheets` pick that up
+      // from the save response). `nodeId` carries the rule id itself so the
+      // response can be joined back to it — see `ruleIdFromCssCreateNodeId`.
       claim(`${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`, ruleId)
       edits.push({
         kind: 'css',
         op: 'create',
         nodeId: `${CSS_CREATE_NODE_ID_PREFIX}${ruleId}`,
-        pageFile: destination.pageFile,
+        ...(destination.pageFile !== null ? { pageFile: destination.pageFile } : {}),
         selector: rule.selector,
         declarations,
       })
@@ -603,7 +585,7 @@ export function collectStyleRuleEdits(
     pushScopedEdits(changes, undefined)
   }
 
-  return { edits, unmapped, destinationRefusals, unwritableContexts, ruleIdsByNodeId }
+  return { edits, unmapped, unwritableContexts, ruleIdsByNodeId }
 }
 
 /**

@@ -1,32 +1,31 @@
 /**
- * Z8 — an ambiguous CSS destination reaches the user as a QUESTION.
+ * P3-C (ERR-14, ERR-15) — a new class's stylesheet is the editor's choice,
+ * never a question and never a refusal.
  *
- * The refusal itself was already honest: N hand-editable stylesheets exist,
- * Studio will not guess, say so. What it was not was ANSWERABLE — it arrived
- * as a red toast naming four files, and there was nothing the user could do
- * about it inside the editor. This file pins the whole transport: the plan's
- * refusal becomes an `EditConstraint` with one remedy per candidate file, the
- * remedy opens `RefusalDialog` rather than the toast bus, clicking it pins the
- * destination and asks for a save, and the NEXT plan writes.
+ * ERR-14: with two or more hand-editable stylesheets and none co-located with
+ * the class's page, the planner refused `ambiguous-stylesheet` and the save
+ * opened a "Which stylesheet should this class live in?" modal about two
+ * seconds after the first keystroke — from autosave, while the user was still
+ * typing. Every candidate IS a real write target; which one is something the
+ * editor can decide. Now it does, by a stated order (`rankCandidateStylesheets`):
+ * the stylesheet written last, a global sheet over another page's module, the
+ * nearest, the main one, then alphabetical — and it remembers the answer per
+ * rule, so the save, the baseline and the panel agree.
  *
- * The terminal half is pinned too, deliberately. `no-editable-stylesheet` has
- * zero candidates — there is no question to ask — so it must keep toasting. A
- * modal with no answer in it is worse than a sentence.
+ * ERR-15: with no stylesheet at all and no page to put one beside, the planner
+ * refused `no-editable-stylesheet` and toasted "Style not saved to source".
+ * Now it asks the server to create one beside the app's entry module.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import type { StyleRule } from '@core/page-tree'
-import { explainCssRuleConstraint } from '@core/page-tree'
-import { resolveConstraintAction } from '@site/store/constraintActions'
-import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
-import {
-  reportStyleRulePlanRefusals,
-  resetRefusalToasts,
-  styleRulePlanTouchedSomething,
-} from '@site/studio/refusalToasts'
+import { reportStyleRulePlanRefusals, resetRefusalToasts } from '@site/studio/refusalToasts'
 import {
   STUDIO_BREAKPOINT_ID,
   collectStyleRuleEdits,
+  noteStylesheetWritten,
+  resetCssDestinationMemory,
+  resolveCssInsertDestination,
   setOpenPageFile,
   setStudioStyleRuleSources,
 } from '@site/studio/styleRuleWriteback'
@@ -38,12 +37,12 @@ const TWO_STYLESHEETS = {
   b: { file: 'src/styles/marketing.css', selector: '.b' },
 }
 
-function newRule(): StyleRule {
+function newRule(id = RULE_ID, name = 'promo-banner'): StyleRule {
   return {
-    id: RULE_ID,
+    id,
     kind: 'class',
-    name: 'promo-banner',
-    selector: '.promo-banner',
+    name,
+    selector: `.${name}`,
     styles: {},
     contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'tomato' } },
     order: 0,
@@ -61,15 +60,10 @@ function toasts(): ReadonlyArray<Toast> {
   return captured
 }
 
-/** Collects whatever the reporter would have opened `RefusalDialog` with. */
-function dialogSpy(): { open: (dialog: StructuralRefusalDialogState) => void; opened: StructuralRefusalDialogState[] } {
-  const opened: StructuralRefusalDialogState[] = []
-  return { open: (dialog) => void opened.push(dialog), opened }
-}
-
 beforeEach(() => {
   setStudioStyleRuleSources({}, {})
   setOpenPageFile(null)
+  resetCssDestinationMemory()
   resetRefusalToasts()
   __resetToastBusForTests()
 })
@@ -78,100 +72,130 @@ afterEach(() => {
   __resetToastBusForTests()
 })
 
-describe('an ambiguous destination opens the dialog, never a toast', () => {
+describe('ERR-14 — several stylesheets: Studio chooses, and says nothing', () => {
   beforeEach(() => {
     setStudioStyleRuleSources(TWO_STYLESHEETS, {})
-    // Neither stylesheet is co-located with the page on screen, so the
-    // ambiguity is real — exactly the case Z8 keeps as a choice.
+    // Neither stylesheet is co-located with the page on screen — the case that
+    // used to open the modal.
     setOpenPageFile('src/screens/Billing.jsx')
   })
 
-  it('renders one remedy per candidate file and nothing on the toast bus', () => {
+  it('inserts the rule into one stylesheet and reports nothing', () => {
     const plan = collectStyleRuleEdits({ [RULE_ID]: newRule() })
-    const spy = dialogSpy()
+    reportStyleRulePlanRefusals(plan)
 
-    reportStyleRulePlanRefusals(plan, spy.open)
-
-    expect(toasts()).toEqual([])
-    expect(spy.opened).toHaveLength(1)
-    const { constraint } = spy.opened[0]!
-    expect(constraint.reason).toBe('ambiguous-stylesheet')
-    expect(constraint.actions.filter((a) => a.kind === 'choose-stylesheet').map((a) => a.stylesheet?.file)).toEqual([
-      'src/styles/base.css',
-      'src/styles/marketing.css',
+    expect(plan.edits).toEqual([
+      {
+        kind: 'css',
+        op: 'insert',
+        nodeId: 'css:insert:src/styles/base.css#.promo-banner',
+        file: 'src/styles/base.css',
+        selector: '.promo-banner',
+        declarations: { color: 'tomato' },
+      },
     ])
-    expect(spy.opened[0]!.title).toContain('stylesheet')
+    expect(plan.unmapped).toEqual([])
+    expect(toasts()).toEqual([])
   })
 
-  it('opens once per refusal, not once per autosave tick', () => {
-    // The rule's baseline is held back on purpose (nothing reached disk), so
-    // the SAME refusal recurs on every save until it is answered. An
-    // un-deduped dialog would reopen itself over the top of the user
-    // answering it.
-    const spy = dialogSpy()
-    reportStyleRulePlanRefusals(collectStyleRuleEdits({ [RULE_ID]: newRule() }), spy.open)
-    reportStyleRulePlanRefusals(collectStyleRuleEdits({ [RULE_ID]: newRule() }), spy.open)
-
-    expect(spy.opened).toHaveLength(1)
-  })
-
-  it('answering it makes the very same declarations land in the file the user named', () => {
-    const spy = dialogSpy()
-    reportStyleRulePlanRefusals(collectStyleRuleEdits({ [RULE_ID]: newRule() }), spy.open)
-
-    const chosen = spy.opened[0]!.constraint.actions.find((action) => action.kind === 'choose-stylesheet')!
-    const run = resolveConstraintAction(chosen)
-    expect(run).not.toBeNull()
-    run!()
-
-    const plan = collectStyleRuleEdits({ [RULE_ID]: newRule() })
-    expect(plan.destinationRefusals).toEqual([])
-    expect(plan.edits).toHaveLength(1)
-    expect(plan.edits[0]).toMatchObject({
-      op: 'insert',
+  it('names the stylesheets it chose over', () => {
+    expect(resolveCssInsertDestination(newRule())).toEqual({
+      kind: 'existing',
       file: 'src/styles/base.css',
-      selector: '.promo-banner',
-      declarations: { color: 'tomato' },
+      alternatives: ['src/styles/marketing.css'],
     })
   })
-})
 
-describe('a terminal destination refusal keeps its toast', () => {
-  it('toasts when there is no candidate to choose between, and opens no dialog', () => {
-    // Zero stylesheets, no class page, no page on screen: nothing to ask.
-    const plan = collectStyleRuleEdits({ [RULE_ID]: newRule() })
-    const spy = dialogSpy()
+  it('prefers the stylesheet the user wrote to last', () => {
+    noteStylesheetWritten('src/styles/marketing.css')
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/styles/marketing.css' })
+  })
 
-    reportStyleRulePlanRefusals(plan, spy.open)
-
-    expect(spy.opened).toEqual([])
-    expect(toasts()).toHaveLength(1)
-    expect(toasts()[0]!.body).toContain('could not find a hand-editable .css file')
+  it('keeps a rule’s first answer for the session, so the save and the baseline agree', () => {
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/styles/base.css' })
+    noteStylesheetWritten('src/styles/marketing.css')
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/styles/base.css' })
+    // A different new class does follow the last write.
+    expect(resolveCssInsertDestination(newRule('nanoid-other', 'other'))).toMatchObject({ file: 'src/styles/marketing.css' })
   })
 })
 
-describe('the plan still advances the baseline for every rule it did not refuse', () => {
-  it('counts a destination refusal as something that happened', () => {
-    setStudioStyleRuleSources(TWO_STYLESHEETS, {})
+describe('ERR-14 — the ranking', () => {
+  it('a global stylesheet beats another page’s CSS Module', () => {
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'pages/Onboarding.module.css', selector: '.a' },
+        b: { file: 'src/index.css', selector: '.b' },
+      },
+      {},
+    )
+    setOpenPageFile('pages/Home.tsx')
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/index.css' })
+  })
+
+  it('then the nearest to the class’s page', () => {
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'styles/app.css', selector: '.a' },
+        b: { file: 'src/screens/shared.css', selector: '.b' },
+      },
+      {},
+    )
     setOpenPageFile('src/screens/Billing.jsx')
-    const plan = collectStyleRuleEdits({ [RULE_ID]: newRule() })
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/screens/shared.css' })
+  })
 
-    expect(plan.edits).toEqual([])
-    expect(styleRulePlanTouchedSomething(plan)).toBe(true)
+  it('then the one holding the most rules', () => {
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'styles/z-main.css', selector: '.a' },
+        b: { file: 'styles/z-main.css', selector: '.b' },
+        c: { file: 'styles/a-extra.css', selector: '.c' },
+      },
+      {},
+    )
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'styles/z-main.css' })
+  })
+
+  it('a stylesheet co-located with the class’s page still wins outright', () => {
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'src/index.css', selector: '.a' },
+        b: { file: 'pages/Home.module.css', selector: '.b' },
+      },
+      {},
+    )
+    noteStylesheetWritten('src/index.css')
+    setOpenPageFile('pages/Home.tsx')
+    expect(resolveCssInsertDestination(newRule())).toEqual({
+      kind: 'existing',
+      file: 'pages/Home.module.css',
+      alternatives: [],
+    })
   })
 })
 
-describe('explainCssRuleConstraint — the engine half', () => {
-  it('offers no choice without candidates, so a preview surface is unchanged', () => {
-    const constraint = explainCssRuleConstraint('ambiguous-stylesheet', 'Two candidates.')
-    expect(constraint.actions.map((action) => action.kind)).toEqual(['style-inline-instead'])
+describe('ERR-15 — no stylesheet and no page: create one at the app entry', () => {
+  it('plans a create with no page, and reports nothing', () => {
+    const plan = collectStyleRuleEdits({ [RULE_ID]: newRule() })
+    reportStyleRulePlanRefusals(plan)
+
+    expect(plan.edits).toEqual([
+      {
+        kind: 'css',
+        op: 'create',
+        nodeId: `css:create:${RULE_ID}`,
+        selector: '.promo-banner',
+        declarations: { color: 'tomato' },
+      },
+    ])
+    expect(toasts()).toEqual([])
   })
 
-  it('never offers a choice for a reason that has none', () => {
-    const constraint = explainCssRuleConstraint('no-editable-stylesheet', 'Nothing to write into.', {
-      ruleId: RULE_ID,
-      candidates: ['src/styles/base.css'],
-    })
-    expect(constraint.actions.map((action) => action.kind)).toEqual(['style-inline-instead'])
+  it('with a page on screen, creates beside the page as before', () => {
+    setOpenPageFile('pages/Home.tsx')
+    expect(collectStyleRuleEdits({ [RULE_ID]: newRule() }).edits).toMatchObject([
+      { op: 'create', pageFile: 'pages/Home.tsx' },
+    ])
   })
 })

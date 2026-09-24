@@ -20,6 +20,7 @@ import {
   commitBaseline,
   getStudioStyleRuleSources,
   recordCreatedStylesheet,
+  resetCssDestinationMemory,
   resolveCssInsertDestination,
   ruleIdFromCssCreateNodeId,
   setOpenPageFile,
@@ -51,6 +52,8 @@ beforeEach(() => {
   // every case below states the world it wants: no page open unless it says
   // so. `cssInsertDestinationOpenPage.test.ts` owns the anchor's own cases.
   setOpenPageFile(null)
+  // P3-C — so is the per-rule memory of an automatic stylesheet choice.
+  resetCssDestinationMemory()
 })
 
 describe('collectStyleRuleEdits — the studio context is the base declaration set', () => {
@@ -197,25 +200,26 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     })
   })
 
-  it('refuses with no-editable-stylesheet when there is no candidate and no page to co-locate a new one with', () => {
+  it('P3-C (ERR-15) — asks the server to create one at the app entry when there is no candidate and no page', () => {
     setStudioStyleRuleSources({}, {})
     // No `scope` at all — a freestanding class, e.g. made via ClassPicker's
-    // "create class" with nothing selected. No page association, so this
-    // refuses rather than guessing "the currently open page".
+    // "create class" with nothing selected, and no page open. This used to
+    // refuse `no-editable-stylesheet`; the stylesheet now goes beside the
+    // app's entry module, which every page can reach.
     const edited = newRule({ contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } } })
 
     const plan = collectStyleRuleEdits({ [NEW_RULE_ID]: edited })
 
-    expect(plan.edits).toHaveLength(0)
-    // Z8 — a destination refusal is NOT `unmapped`. `unmapped` means "no
-    // hand-authored stylesheet exists for this class, ever"; this class has
-    // no home YET, which is a different fact with a different surface.
     expect(plan.unmapped).toEqual([])
-    expect(plan.destinationRefusals).toHaveLength(1)
-    expect(plan.destinationRefusals[0]!.label).toBe('.new-class')
-    expect(plan.destinationRefusals[0]!.reason).toBe('no-editable-stylesheet')
-    expect(plan.destinationRefusals[0]!.candidates).toEqual([])
-    expect(plan.destinationRefusals[0]!.message).toContain('could not find a hand-editable .css file')
+    expect(plan.edits).toEqual([
+      {
+        kind: 'css',
+        op: 'create',
+        nodeId: `css:create:${NEW_RULE_ID}`,
+        selector: '.new-class',
+        declarations: { color: 'red' },
+      },
+    ])
   })
 
   it('emits a create edit, naming the page, when zero stylesheets exist but the rule is node-scoped to a real page', () => {
@@ -239,7 +243,7 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     expect(plan.edits[0]!.nodeId).toBe(`css:create:${NEW_RULE_ID}`)
   })
 
-  it('refuses with ambiguous-stylesheet, naming the candidates, when more than one stylesheet is known — never creates', () => {
+  it('P3-C (ERR-14) — chooses one of several known stylesheets, and never creates a third', () => {
     setStudioStyleRuleSources(
       {
         a: { file: 'pages/Home.css', selector: '.a' },
@@ -249,8 +253,8 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     )
     // Node-scoped, but NEITHER candidate is co-located with the rule's page:
     // the page is `src/pages/Home.tsx` and the stylesheets live in `pages/`.
-    // With no per-page answer available, the ambiguity is real and refusing is
-    // right — and this must still never create a third file.
+    // Both are real write targets; this used to refuse `ambiguous-stylesheet`
+    // and ask. Equally near, equally sized: alphabetical decides.
     const edited = newRule({
       scope: { type: 'node', nodeId: 'src/pages/Home.tsx:12:5', role: 'module-style' },
       contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
@@ -258,13 +262,16 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
 
     const plan = collectStyleRuleEdits({ [NEW_RULE_ID]: edited })
 
-    expect(plan.edits).toHaveLength(0)
-    expect(plan.destinationRefusals[0]!.label).toBe('.new-class')
-    expect(plan.destinationRefusals[0]!.message).toContain('pages/Home.css')
-    expect(plan.destinationRefusals[0]!.message).toContain('pages/Other.css')
-    // Z8 — the candidates are carried as DATA, not just named in a sentence:
-    // that list is what `RefusalDialog` turns into one remedy per file.
-    expect(plan.destinationRefusals[0]!.candidates).toEqual(['pages/Home.css', 'pages/Other.css'])
+    expect(plan.edits).toEqual([
+      {
+        kind: 'css',
+        op: 'insert',
+        nodeId: 'css:insert:pages/Home.css#.new-class',
+        file: 'pages/Home.css',
+        selector: '.new-class',
+        declarations: { color: 'red' },
+      },
+    ])
   })
 
   it('writes into the stylesheet co-located with the rule\'s own page instead of refusing', () => {
@@ -294,9 +301,9 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
     })
 
     expect(resolveCssInsertDestination(onHome)).toEqual({
-      ok: true,
       kind: 'existing',
       file: 'pages/Home.module.css',
+      alternatives: [],
     })
 
     // …and the same registry resolves a DIFFERENT page to its own stylesheet,
@@ -323,7 +330,13 @@ describe('collectStyleRuleEdits — Track B1 insert for an editor-authored rule 
       contextStyles: { [STUDIO_BREAKPOINT_ID]: { color: 'red' } },
     })
 
-    expect(resolveCssInsertDestination(onOrphanPage)).toMatchObject({ reason: 'ambiguous-stylesheet' })
+    // P3-C (ERR-14) — no longer a refusal: Studio picks one of the two by its
+    // stated order (both modules, equally near and sized — alphabetical).
+    expect(resolveCssInsertDestination(onOrphanPage)).toEqual({
+      kind: 'existing',
+      file: 'pages/Home.module.css',
+      alternatives: ['pages/SignUp.module.css'],
+    })
   })
 
   it('does NOT insert-candidate an IMPORTED rule even with no source (sc- prefix stays unmapped)', () => {
@@ -447,7 +460,7 @@ describe('resolveCssInsertDestination', () => {
 
   it('resolves the single known plain-css file', () => {
     setStudioStyleRuleSources({ a: { file: 'pages/Home.css', selector: '.a' } }, {})
-    expect(resolveCssInsertDestination(unscopedRule)).toEqual({ ok: true, kind: 'existing', file: 'pages/Home.css' })
+    expect(resolveCssInsertDestination(unscopedRule)).toEqual({ kind: 'existing', file: 'pages/Home.css', alternatives: [] })
   })
 
   it('ignores a compiled/non-editable stylesheet as a candidate', () => {
@@ -455,51 +468,46 @@ describe('resolveCssInsertDestination', () => {
       { a: { file: 'pages/Home.css', selector: '.a' }, b: { file: 'dist/style.min.css', selector: '.b' } },
       {},
     )
-    expect(resolveCssInsertDestination(unscopedRule)).toEqual({ ok: true, kind: 'existing', file: 'pages/Home.css' })
+    expect(resolveCssInsertDestination(unscopedRule)).toEqual({ kind: 'existing', file: 'pages/Home.css', alternatives: [] })
   })
 
-  it('refuses when zero candidates exist and the rule has no page association', () => {
+  it('P3-C (ERR-15) — creates at the app entry when zero candidates exist and the rule has no page association', () => {
     setStudioStyleRuleSources({}, {})
-    const result = resolveCssInsertDestination(unscopedRule)
-    expect(result.ok).toBe(false)
-    expect(result).toMatchObject({ reason: 'no-editable-stylesheet' })
+    expect(resolveCssInsertDestination(unscopedRule)).toEqual({ kind: 'create', pageFile: null })
   })
 
   it('offers to create a co-located stylesheet when zero candidates exist but the rule names a real page', () => {
     setStudioStyleRuleSources({}, {})
     expect(resolveCssInsertDestination(nodeScopedRule)).toEqual({
-      ok: true,
       kind: 'create',
       pageFile: 'src/pages/Home.tsx',
     })
   })
 
-  it('does not offer to create for a rule scoped to a non-source (CMS) node id', () => {
+  it('does not co-locate with a non-source (CMS) node id — that rule goes to the app entry', () => {
     setStudioStyleRuleSources({}, {})
     const cmsScoped = rule({ scope: { type: 'node', nodeId: 'abc123nanoid', role: 'module-style' } })
-    const result = resolveCssInsertDestination(cmsScoped)
-    expect(result.ok).toBe(false)
-    expect(result).toMatchObject({ reason: 'no-editable-stylesheet' })
+    expect(resolveCssInsertDestination(cmsScoped)).toEqual({ kind: 'create', pageFile: null })
   })
 
-  it('refuses with ambiguous-stylesheet when more than one candidate exists', () => {
+  it('P3-C (ERR-14) — chooses one when more than one candidate exists', () => {
     setStudioStyleRuleSources(
       { a: { file: 'pages/Home.css', selector: '.a' }, b: { file: 'pages/Other.css', selector: '.b' } },
       {},
     )
-    const result = resolveCssInsertDestination(unscopedRule)
-    expect(result.ok).toBe(false)
-    expect(result).toMatchObject({ reason: 'ambiguous-stylesheet' })
+    expect(resolveCssInsertDestination(unscopedRule)).toEqual({
+      kind: 'existing',
+      file: 'pages/Home.css',
+      alternatives: ['pages/Other.css'],
+    })
   })
 
-  it('refuses with ambiguous-stylesheet even for a node-scoped rule — never creates a third file', () => {
+  it('P3-C (ERR-14) — chooses one for a node-scoped rule too, and never creates a third file', () => {
     setStudioStyleRuleSources(
       { a: { file: 'pages/Home.css', selector: '.a' }, b: { file: 'pages/Other.css', selector: '.b' } },
       {},
     )
-    const result = resolveCssInsertDestination(nodeScopedRule)
-    expect(result.ok).toBe(false)
-    expect(result).toMatchObject({ reason: 'ambiguous-stylesheet' })
+    expect(resolveCssInsertDestination(nodeScopedRule)).toMatchObject({ kind: 'existing', file: 'pages/Home.css' })
   })
 })
 

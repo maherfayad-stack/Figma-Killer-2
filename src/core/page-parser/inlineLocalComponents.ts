@@ -287,7 +287,7 @@ function expandCallSite(
 
     const targetRelFromRoot = path.relative(state.workspaceRoot, target.sourceFile.getFilePath()).split(path.sep).join('/')
     let subPage = parseJsxTree(roots, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
-    const env = buildSubstitutionEnv(fn, callSiteNode.props)
+    const env = buildSubstitutionEnv(fn, callSiteNode)
     subPage = applySubstitutions(roots, subPage, env, callSiteNode.children, target.sourceFile, targetRelFromRoot, fn, state.evalOptions)
 
     // §2.5 — tag every node this call site's subtree produces with the
