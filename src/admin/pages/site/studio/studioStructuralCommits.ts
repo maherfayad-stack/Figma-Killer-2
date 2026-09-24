@@ -447,6 +447,15 @@ export async function commitStudioInsert(insert: {
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
+  /**
+   * P5-B (IMG-2) — more intrinsic elements written right AFTER this one, in
+   * order, in the SAME write (`InsertEditSchema.siblings`): three dropped
+   * images are one insert, one resync and one undo step, whose inverse deletes
+   * all three (`delete-created` reads every created id).
+   */
+  siblings?: readonly { name: string; props: Record<string, InsertPropValue> }[]
+  /** What ⌘Z names this step. Defaults to `Add <name>`. */
+  undoLabel?: string
   optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
@@ -463,11 +472,12 @@ export async function commitStudioInsert(insert: {
         ...(insert.designSystemImport === undefined ? {} : { designSystemImport: insert.designSystemImport }),
         ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,
+        ...(insert.siblings && insert.siblings.length > 0 ? { siblings: insert.siblings.map((node) => ({ ...node })) } : {}),
       },
     ],
     'Add refused',
     {
-      undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: { kind: 'delete-created' } },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )

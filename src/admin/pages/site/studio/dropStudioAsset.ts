@@ -20,7 +20,7 @@
  * answers "which directory in this project can back a literal, and what is
  * the literal" and this call carries that answer back.
  */
-import { apiRequest } from '@core/http'
+import { apiUploadRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { studioWriteDir } from './studioWorkspaceDir'
 
@@ -47,23 +47,35 @@ const AssetDropResponseSchema = AssetDropPublicResponseSchema
 
 export type DroppedStudioAsset = Static<typeof AssetDropResponseSchema>
 
+export interface DropStudioAssetOptions {
+  /**
+   * P5-B (IMG-8) — fraction of the bytes sent, 0..1. The canvas drop fills
+   * its ghost with it, which is why this goes through `apiUploadRequest`
+   * (XHR) rather than `apiRequest` (`fetch` reports no upload progress).
+   */
+  onProgress?: (fraction: number) => void
+  signal?: AbortSignal
+}
+
 /**
  * Land `file` in the open project and return where it went.
  *
  * Throws `ApiError` on any refusal, carrying the server's own sentence — the
  * caller toasts it verbatim rather than inventing a second explanation for a
  * decision it did not make. A lost response is retried with an idempotency
- * key (`IDEMPOTENT_REPLAY_PATHS`), and the server replays the first answer.
+ * key (`IDEMPOTENT_REPLAY_PATHS`, which `apiUploadRequest` reads exactly as
+ * `apiRequest` does), and the server replays the first answer.
  */
-export async function dropStudioAsset(file: File): Promise<DroppedStudioAsset> {
+export async function dropStudioAsset(file: File, options: DropStudioAssetOptions = {}): Promise<DroppedStudioAsset> {
   const formData = new FormData()
   const dir = studioWriteDir()
   if (dir) formData.append('dir', dir)
   formData.append('file', file, file.name)
 
-  return apiRequest('/admin/api/studio/asset-drop', {
-    method: 'POST',
+  return apiUploadRequest('/admin/api/studio/asset-drop', {
     body: formData,
     schema: AssetDropResponseSchema,
+    ...(options.onProgress ? { onProgress: options.onProgress } : {}),
+    ...(options.signal ? { signal: options.signal } : {}),
   })
 }
