@@ -132,6 +132,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
+### mcp-31 — P4-F: trust and panel (AI-7, AI-28, AI-18, AI-26, AI-22)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-turns-you-can-undo` off `30d046d5` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, dogfood script in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying — **needs security-guard review** (revert writes user files).
+- **Goal:** every agent turn is undoable; the panel shows what the agent sees and does; long HTTP conversations compact.
+- **Done:**
+  - AI-7: `server/handlers/studio/agentCheckpoints.ts` — per-turn pre/post images at `.studio/agent-checkpoints/<userKey>/<turnId>/` (gitignored here, excluded from Studio's commit staging). CLI: `PreToolUse` (`denyControlPlaneWrite.ts`, after the gate) + `PostToolUse` (`recordToolWrite.ts`), turn found via `STUDIO_AGENT_CONVERSATION_KEY` + `current-<key>.json`. HTTP: `agentWriteSupport.ts` brackets every write. Revert = compare-and-swap on the post-image hash, all-or-nothing for a turn, through `resolveAgentFilePath(…,'write')` + `withProjectWriteLock`.
+  - Routes (all `server/ai/handlers/agentCheckpoints.ts`): `GET /admin/api/ai/agent-checkpoints` + `/diff` (`ai.chat`, own conversation), `POST …/revert` (`ai.chat` + `studio.write`; 409 while the turn streams). New wire event `turn { turnId }`.
+  - AI-28: docked default; selection chip (× keeps it out of the next message); suggestion chips; recovered failures muted; variant thumbnails (server tools' images now ride `toolResult.previewImages`).
+  - AI-26: `toolInputProgress` from Anthropic, OpenAI-compatible and CLI partials → "Writing Checkout.tsx · 3.2 KB".
+  - AI-22: plan card (checklist) for the CLI's `ExitPlanMode` and the new HTTP tool `studio_propose_plan`; HTTP plan mode refuses writes (`plan-not-approved`) until approved.
+  - AI-18: `conversations/compaction.ts` + `historyCompaction.ts` — haiku summary past 60% of the window, pinned; no-op without an Anthropic key. Heavy elision is per (tool, page).
+- **Tool added:** `studio_propose_plan` — server execution with a browser round trip; HTTP agent only, plan mode only; no capability (writes nothing); input `{ steps: string[1..20] }`. Missing precondition: "No Studio panel is connected to ask the user. Stop, and tell the user your plan in your reply."; no answer: "The user did not answer in time. Stop here… write nothing." Not in the MCP catalog.
+- **Landmines:**
+  - `denyControlPlaneWrite.ts` keeps its name on purpose: existing `.claude/settings.local.json` files point at it, and a renamed hook would silently drop the security gate.
+  - A write with no `conversationId` (external MCP, direct handler) takes no checkpoint and must still write — `turnCheckpointKey` guards it (`setTokensTool.test.ts` caught the throw).
+  - `ToolContext.bridge` now exists (server tools that must ask the user). `chat.ts` is at 688/700.
+  - Compaction pins are in memory: a restart re-summarises once.
+- **Next:** security-guard review; owner dogfood (below).
+- **Human action needed:** dogfood on `test4`: ask the agent to change two files → "Changed 2 files" → Diff → Revert turn restores both; repeat, edit one file on the canvas, Revert turn is refused naming it, per-file revert of the other works; select a layer → chip shows `name · File.tsx:line`; Plan mode → plan checklist.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
