@@ -1,6 +1,6 @@
 /**
  * AI tool capability gating — the fix for security finding #1
- * (docs/plans/2026-06-12-security-hardening.md): granting `ai.chat` must not
+ * (docs/reference/capabilities.md → "AI runtime"): granting `ai.chat` must not
  * hand the model a blanket read of users, documents, drafts, and media.
  *
  * Three layers under test:

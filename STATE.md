@@ -174,6 +174,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Security re-review APPROVED (`review-251`).** Non-blocking follow-up: the diff route still shows a credential checkpoint written before the fix (revert refuses it). Such checkpoints exist only on machines that ran this branch; the one-line fix is to treat them as withheld.
 - **Human action needed:** dogfood on `test4`: ask the agent to change two files → "Changed 2 files" → Diff → Revert turn restores both; repeat, edit one file on the canvas, Revert turn is refused naming it, per-file revert of the other works; select a layer → chip shows `name · File.tsx:line`; Plan mode → plan checklist.
 
+### docs-16 — clean stale references: the P0 leftovers, and the docs brought up to P1–P4
+- **Agent:** studio-scribe · **Branch:** `docs/clean-stale-references` off `25681dcb` · **PR:** #252 (draft), base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** no comment cites a doc that is not in the repo, no doc says two different things about one file, and the agent-refs describe the trunk as of P4-E.
+- **Done:**
+  - 29 code comments citing the gitignored `docs/plans/` and `docs/superpowers/` repointed to the doc that holds the content now, or dropped (comments only).
+  - Duplicated rows removed: 3 in `canvas-internals.md`'s bridge tables, 7 in `path-index.md`, 2 in `mcp-connectors.md`. A row for the structural `optimistic.*` calls added.
+  - `.claude/agents/studio-scribe.md:30` → `ROADMAP.md`; `CLAUDE.md`'s budget list names `canvas-feel-budgets` (so do `PROJECT-BRIEF.md` and `docs/e2e/README.md`). CLAUDE.md's roadmap row and `run-project` default were already right on the trunk.
+  - `studio-import.md` → Testing: test files are outside `tsc -b`.
+  - `inspector.md` §G12, §9.4, §9.4a: the ambient-selector surface as it is; a multi-selection has no composer; `StyleWriteLockContext` has no provider in the app.
+  - P1–P4 sweep: 27 new path-index rows (identity, rollback, hover, keys, snapping, refusals, write gate, selection digest, …), watcher limits, rollback's live-frame limit, load retry + `boardStale`, the keybinding modules + conflict register, the sweep-bench mirror, P3-A's toast rule and the 500 rule in `conventions-quickref.md`, glossary terms, `studio_list_tokens`, three moved rule-module paths.
+- **Decisions:** the two migration SQL comments citing `docs/plans/` are left as they are (a committed migration is never edited).
+- **Landmines:** `CLAUDE.md` → "UI error handling" still says `kind: 'error'` is the default for user-visible failures; P3-A's policy (in `error-boundaries.md`) is narrower. Owner call, not edited.
+- **Undocumented, knowingly:** nothing in the bundle's list. Headers keep `Verified: not yet`.
+- **Next:** orchestrator merges; move `parser-18`, `perf-12`, `canvas-27`, `mcp-30` (all merged) out of `## Now`.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
