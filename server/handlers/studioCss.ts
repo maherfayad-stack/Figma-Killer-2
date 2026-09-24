@@ -132,9 +132,16 @@ export interface StudioStyles {
    * the two stay reconciled once a user edits an imported rule mid-session.
    */
   authoredCss: string
+  /**
+   * P6-B — the absolute path of every stylesheet this load read (whether or
+   * not it parsed). The `/load` memo (`studio/studioLoadMemo.ts`) records
+   * them beside the parse's own dependencies, so an edited stylesheet is
+   * noticed by a `stat` rather than by walking the project.
+   */
+  stylesheetFiles: string[]
 }
 
-const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [], authoredCss: '' }
+const EMPTY_STYLES: StudioStyles = { styleRules: {}, conditions: [], classIdsByName: {}, sources: {}, warnings: [], authoredCss: '', stylesheetFiles: [] }
 
 /**
  * Deterministic rule id. Derived from the rule's identity so the same CSS
@@ -301,10 +308,11 @@ export async function loadStudioStyles(
       if (!sheets.has(sheet.absPath) && !COMPILED_ELSEWHERE_RE.test(sheet.relPath)) sheets.set(sheet.absPath, sheet)
     }
   }
+  const stylesheetFiles = [...sheets.keys()]
   if (sheets.size === 0 && !extraCss) return EMPTY_STYLES
 
   const SheetCtor = await loadSheetConstructor()
-  if (!SheetCtor) return EMPTY_STYLES
+  if (!SheetCtor) return { ...EMPTY_STYLES, stylesheetFiles }
 
   const styleRules: Record<string, StyleRule> = {}
   const conditionsById = new Map<string, ConditionDef>()
@@ -399,6 +407,7 @@ export async function loadStudioStyles(
     sources,
     warnings,
     authoredCss: authoredCssParts.join('\n\n'),
+    stylesheetFiles,
   }
 }
 

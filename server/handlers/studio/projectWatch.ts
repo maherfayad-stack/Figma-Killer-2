@@ -80,7 +80,7 @@
 import { existsSync, readdirSync, realpathSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { studioWriteSessionCovers } from './projectWriteLock'
+import { studioWriteSessionCovers, studioWroteSince } from './projectWriteLock'
 
 export type ProjectChangeOrigin = 'studio' | 'outside'
 
@@ -189,6 +189,8 @@ interface ProjectWatch {
   root: string
   listeners: Set<ProjectChangeListener>
   snapshot: Snapshot
+  /** Wall-clock ms at which {@link snapshot}'s walk BEGAN — anything written after it may be missing from it. */
+  scannedAt: number
   /** Reconcile the OS handles with the directories the last walk found (per-directory strategy only). */
   reconcile: (dirs: ReadonlySet<string>) => void
   close: () => void
@@ -228,9 +230,11 @@ function flush(pw: ProjectWatch): void {
   pw.timer = null
   const burstStartedAt = pw.burstStartedAt ?? Date.now()
   pw.burstStartedAt = null
+  const scannedAt = Date.now()
   const next = scan(pw.root)
   const changes = diff(pw, pw.snapshot, next, burstStartedAt)
   pw.snapshot = next
+  pw.scannedAt = scannedAt
   pw.reconcile(next.dirs)
   const overflow = pw.overflow || next.truncated
   pw.overflow = false
@@ -303,10 +307,12 @@ function watchPerDirectory(pw: ProjectWatch): void {
 }
 
 function startWatch(root: string, strategy: ProjectWatchStrategy): ProjectWatch {
+  const scannedAt = Date.now()
   const pw: ProjectWatch = {
     root,
     listeners: new Set(),
     snapshot: scan(root),
+    scannedAt,
     reconcile: () => {},
     close: () => {},
     overflow: false,
@@ -352,6 +358,37 @@ export function subscribeProjectChanges(
     owned.close()
     if (watches.get(root) === owned) watches.delete(root)
   }
+}
+
+/**
+ * Bring every subscriber of `dir`'s watcher up to date NOW, synchronously,
+ * when the snapshot may not reflect the disk — so a caller about to trust
+ * "no batch arrived, so nothing changed" (the `/load` memo, P6-B) is not
+ * trusting a debounce. The snapshot is re-walked, and the resulting batch
+ * delivered to every listener before this returns, when:
+ *
+ *   - a burst is pending (an event arrived and its {@link QUIET_MS} have not
+ *     run out), or the watch failed and has not reported it yet;
+ *   - Studio held a write session that ended after the last walk began
+ *     (`projectWriteLock.ts`'s `studioWroteSince`) — a save is followed by the
+ *     board's own resync sooner than the debounce would report the save;
+ *   - the last walk is older than `maxSnapshotAgeMs` — the backstop for an
+ *     event `fs.watch` dropped outright, which bounds how long such a change
+ *     can go unseen.
+ *
+ * Returns `false` when `dir` has no watcher at all, so the caller knows it
+ * has nothing to trust.
+ */
+export function settleProjectChanges(dir: string, options: { maxSnapshotAgeMs: number }): boolean {
+  const pw = watches.get(realRoot(dir))
+  if (!pw) return false
+  const stale =
+    pw.timer !== null ||
+    pw.overflow ||
+    studioWroteSince(pw.root, pw.scannedAt) ||
+    Date.now() - pw.scannedAt > options.maxSnapshotAgeMs
+  if (stale) flush(pw)
+  return true
 }
 
 /** Whether `dir` has a live watcher. Test/diagnostic only. */

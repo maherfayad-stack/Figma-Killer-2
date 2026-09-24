@@ -26,4 +26,11 @@ export interface RoutePageEntry {
    */
   relFile: string
   componentSources: Record<string, ComponentSource>
+  /**
+   * P6-B — the stamp of every file this route's parse depended on
+   * (`routeParse.ts`), or `null` when the parse could not be cached because a
+   * file moved while it ran. The `/load` memo (`studioLoadMemo.ts`) is only
+   * stored when every route has one: they are what it re-checks on a hit.
+   */
+  dependencies: ReadonlyMap<string, string> | null
 }

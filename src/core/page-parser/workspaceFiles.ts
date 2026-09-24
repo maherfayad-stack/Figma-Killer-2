@@ -115,5 +115,19 @@ const WORKSPACE_SOURCE_FILE_RE = /\.(tsx?|jsx?)$/i
  * which files exist.
  */
 export function listWorkspaceSourceFiles(dir: string): string[] {
-  return listWorkspaceFiles(dir).filter((relPath) => WORKSPACE_SOURCE_FILE_RE.test(relPath) && !isPrototypeShellPath(relPath))
+  return listWorkspaceFiles(dir).filter(isWorkspaceSourceFilePath)
+}
+
+/**
+ * The same rule for ONE workspace-relative POSIX path — whether
+ * `listWorkspaceSourceFiles` would list it (were it a real, non-symlinked
+ * file). `server/handlers/studio/workspaceProject.ts` asks it of each path the
+ * project watcher reports, so a kept `Project` synced from a change list
+ * contains exactly the files a full walk would have given it (P6-B).
+ */
+export function isWorkspaceSourceFilePath(relPath: string): boolean {
+  if (!WORKSPACE_SOURCE_FILE_RE.test(relPath) || isPrototypeShellPath(relPath)) return false
+  const segments = relPath.split('/')
+  return segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..') &&
+    !segments.slice(0, -1).some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))
 }

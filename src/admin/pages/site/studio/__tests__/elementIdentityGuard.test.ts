@@ -132,7 +132,7 @@ describe('the element identity guard, on the board', () => {
           styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '',
           trust: 'static', paletteHiddenModuleIds: [], pageCount: 1,
         }
-        return new Response(`${JSON.stringify(meta)}\n${JSON.stringify({ kind: 'page', page: disk.page })}\n`, { status: 200 })
+        return new Response(`${JSON.stringify(meta)}\n${JSON.stringify({ kind: 'page', page: disk.page, index: 0 })}\n`, { status: 200 })
       }
       if (path === '/admin/api/studio/framework') {
         return new Response(JSON.stringify({ framework: null, fonts: null }), { status: 200 })

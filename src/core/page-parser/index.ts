@@ -44,6 +44,7 @@ export {
   WORKSPACE_MAX_FILE_BYTES,
   WORKSPACE_MAX_FILES,
   isPrototypeShellPath,
+  isWorkspaceSourceFilePath,
   listWorkspaceFiles,
   listWorkspaceSourceFiles,
 } from './workspaceFiles'

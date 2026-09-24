@@ -56,7 +56,7 @@
  * `preferredKey` override — see its own doc.
  */
 import { existsSync } from 'node:fs'
-import { join, relative, sep } from 'node:path'
+import { join, relative, resolve, sep } from 'node:path'
 import {
   composeAppRouterRoute,
   createPageEvalBudget,
@@ -66,24 +66,21 @@ import {
   resolveComponentSources,
   type ComponentSource,
   type CssInJsTemplate,
-  type ParsedPage,
+
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
-import type { Project } from 'ts-morph'
-import type { WorkspaceProjectWarning } from '@core/page-parser'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
 import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
-import {
-  getCachedRouteParse,
-  hashWorkspaceConfig,
-  setCachedRouteParse,
-} from './studio/pageParseCache'
-import { getMemoizedStudioLoad, setMemoizedStudioLoad, workspaceLoadFingerprint } from './studio/studioLoadMemo'
-import { withWorkspaceProject, workspaceTsconfigStamp } from './studio/workspaceProject'
+import { consistentStamps, digestOf, fileContentDigest } from './studio/loadDigest'
+import { viewportPriorityOrder } from './studio/loadPriority'
+import type { RouteCacheScope } from './studio/pageParseCache'
+import { parseRouteThroughCache } from './studio/routeParse'
+import { memoizedStudioLoad, type ComputedStudioLoad } from './studio/studioLoadMemo'
+import { withWorkspaceProject, type WorkspaceProjectHandle } from './studio/workspaceProject'
 import { collectLoadWarnings } from './studio/loadWarnings'
 import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
@@ -135,34 +132,64 @@ function cssInJsTemplatesOf(entries: readonly RoutePageEntry[]): CssInJsTemplate
 }
 
 /**
- * One route's parse+inline (WS-5.5 caches the expensive step, keyed by the
- * route's own file plus every local component file it resolved —
- * `pageParseCache.ts`). Extracted from `buildStandardPageEntries` (its
- * per-page loop for every non-`next-app` project, WS-1.3) so
- * `loadStudioPageInLocale` (WS-10 §4.2/Phase 4) can parse ONE route with a
- * different `preferredKey` without duplicating this. Pure extraction —
- * `buildStandardPageEntries`'s own behavior is unchanged byte for byte.
+ * Everything one load's route parses share: the cache scope and the kept
+ * `Project` they parse against. Built once per load by {@link routeParseContext}.
  */
-function parseStandardRouteEntry(
-  relPath: string,
-  pageId: string,
-  pagesDir: string,
+interface RouteParseContext {
+  scope: RouteCacheScope
+  workspace: WorkspaceProjectHandle
+  cssModuleClassMaps: Record<string, Record<string, string>> | undefined
+}
+
+/**
+ * WS-5.5 — everything besides the files a parse read that feeds it: a changed
+ * framework classification, preview locale, or compiled CSS-Modules class map
+ * invalidates every route's cache entry at once (`pageParseCache.ts`'s doc
+ * explains why a per-file check alone can't catch this). The tsconfig's
+ * CONTENT joins them: its path aliases decide which file every aliased import
+ * resolves to (WB-23), and a content digest — not a stamp — is what the disk
+ * tier can compare across processes. The project directory joins them so an
+ * entry never outlives a move. SHA-256 throughout (P6-B): the 32-bit hash it
+ * replaced could be collided by two strings as short as `Aa` and `BB`.
+ */
+function routeParseContext(
   dir: string,
-  project: Project,
+  workspace: WorkspaceProjectHandle,
+  framework: string | undefined,
   preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
-): RoutePageEntry {
-  const file = join(pagesDir, ...relPath.split('/'))
-  const cacheKey = `${dir}::${relPath}`
+  startedAt: number,
+): RouteParseContext {
+  // A tsconfig being rewritten this instant has no digest; this load then
+  // gets a config hash nothing matches, and parses afresh.
+  const tsconfig = fileContentDigest(join(dir, 'tsconfig.json'))?.digest ?? `unsettled:${startedAt}`
+  const configHash = digestOf([resolve(dir), framework ?? null, preferredKey ?? null, cssModuleClassMaps ?? null, tsconfig])
+  return {
+    scope: { dir, configHash, preferredKey, startedAt, projectStamp: workspace.recordedStamp },
+    workspace,
+    cssModuleClassMaps,
+  }
+}
 
-  const cached = getCachedRouteParse(cacheKey, configHash)
-  let expanded: ParsedPage
-  let sources: Record<string, ComponentSource>
-  if (cached) {
-    expanded = cached.expanded
-    sources = cached.componentSources
-  } else {
+/** Lets other requests run between two route parses — a cold parse of a large project is seconds of synchronous work otherwise. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise((resolveYield) => setImmediate(resolveYield))
+}
+
+/**
+ * One route's parse+inline, through the WS-5.5/P6-B cache (`routeParse.ts`).
+ * Extracted from `buildStandardPageEntries` (its per-page loop for every
+ * non-`next-app` project, WS-1.3) so `loadStudioPageInLocale` (WS-10
+ * §4.2/Phase 4) can parse ONE route with a different `preferredKey` without
+ * duplicating this.
+ */
+function parseStandardRouteEntry(context: RouteParseContext, relPath: string, pageId: string, pagesDir: string): RoutePageEntry {
+  const { scope, workspace, cssModuleClassMaps } = context
+  const { dir, preferredKey } = scope
+  const { project } = workspace
+  const file = join(pagesDir, ...relPath.split('/'))
+
+  const outcome = parseRouteThroughCache(scope, workspace, relPath, () => {
     // §7 — one evaluator options bag PER PAGE, shared between this page's
     // own parse and every locally-inlined subtree's parse below, so the
     // page-wide step budget (and the module-namespace memo cache inside
@@ -181,43 +208,56 @@ function parseStandardRouteEntry(
     // Nested local components discovered while expanding a sub-tree are
     // resolved fresh, inside `inlineLocalComponents` itself, against that
     // sub-tree's own file.
-    sources = resolveComponentSources(project, file, dir, parsed)
+    const sources = resolveComponentSources(project, file, dir, parsed)
     // `dependencyFiles` collects the TRANSITIVE local-component set —
     // `inlineLocalComponents` populates it at every nesting level, not just
     // the direct call sites `sources` classified. See its own doc for why
     // this closes the "a component three levels deep changed and this route's
     // cache never noticed" gap `pageParseCache.ts` used to have.
     const dependencyFiles = new Set<string>()
-    expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
-    setCachedRouteParse(cacheKey, configHash, [file, ...dependencyFiles, ...readFiles], {
-      expanded,
-      componentSources: sources,
-    })
-  }
+    const expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
+    return { result: { expanded, componentSources: sources }, dependencyFiles: [file, ...dependencyFiles, ...readFiles] }
+  })!
 
   return {
-    expanded,
+    expanded: outcome.result.expanded,
     pageId,
     slug: pageId,
     title: relPath.split('/').pop()!.replace(/\.(tsx|jsx)$/, ''),
     relFile: relative(dir, file).split(sep).join('/'),
-    componentSources: sources,
+    componentSources: outcome.result.componentSources,
+    dependencies: outcome.dependencies,
   }
 }
 
-function buildStandardPageEntries(
-  pagesDir: string,
+/**
+ * Parses `routes` in the order a person sees them (`loadPriority.ts`),
+ * yielding between routes, and returns their entries in DISCOVERY order — the
+ * page order the rest of the load, and the Pages panel, is built on.
+ */
+async function parseRoutesInViewportOrder<TRoute>(
   dir: string,
-  project: Project,
-  preferredKey: string | undefined,
-  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
-): RoutePageEntry[] {
+  routes: readonly TRoute[],
+  pageIdOf: (route: TRoute) => string,
+  parse: (route: TRoute) => RoutePageEntry,
+): Promise<RoutePageEntry[]> {
+  const byPageId = new Map(routes.map((route) => [pageIdOf(route), route]))
+  const entries = new Map<string, RoutePageEntry>()
+  for (const pageId of viewportPriorityOrder(dir, [...byPageId.keys()])) {
+    if (entries.size > 0) await yieldToEventLoop()
+    entries.set(pageId, parse(byPageId.get(pageId)!))
+  }
+  return routes.map((route) => entries.get(pageIdOf(route))!)
+}
+
+function buildStandardPageEntries(context: RouteParseContext, pagesDir: string): Promise<RoutePageEntry[]> {
   const relPaths = discoverPageFiles(pagesDir)
   const pageIds = assignPageIds(relPaths)
-
-  return relPaths.map((relPath) =>
-    parseStandardRouteEntry(relPath, pageIds.get(relPath)!, pagesDir, dir, project, preferredKey, cssModuleClassMaps, configHash),
+  return parseRoutesInViewportOrder(
+    context.scope.dir,
+    relPaths,
+    (relPath) => pageIds.get(relPath)!,
+    (relPath) => parseStandardRouteEntry(context, relPath, pageIds.get(relPath)!, pagesDir),
   )
 }
 
@@ -230,30 +270,16 @@ function buildStandardPageEntries(
  * for the same reason `parseStandardRouteEntry` is (WS-10 §4.2/Phase 4) —
  * pure extraction, behavior unchanged byte for byte.
  */
-function parseAppRouterRouteEntry(
-  relPath: string,
-  route: string,
-  pageId: string,
-  pagesDir: string,
-  dir: string,
-  project: Project,
-  preferredKey: string | undefined,
-  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
-): RoutePageEntry {
+function parseAppRouterRouteEntry(context: RouteParseContext, relPath: string, route: string, pageId: string, pagesDir: string): RoutePageEntry {
+  const { scope, workspace, cssModuleClassMaps } = context
+  const { dir, preferredKey } = scope
+  const { project } = workspace
   const file = join(pagesDir, ...relPath.split('/'))
-  const cacheKey = `${dir}::${relPath}`
   const layoutAbsFiles = collectAppRouterLayoutChain(pagesDir, relPath).map((relLayoutPath) =>
     join(pagesDir, ...relLayoutPath.split('/')),
   )
 
-  const cached = getCachedRouteParse(cacheKey, configHash)
-  let expanded: ParsedPage
-  let sources: Record<string, ComponentSource>
-  if (cached) {
-    expanded = cached.expanded
-    sources = cached.componentSources
-  } else {
+  const outcome = parseRouteThroughCache(scope, workspace, relPath, () => {
     const readFiles = new Set<string>()
     const evalOptions: StaticEvalOptions = { preferredKey, pageBudget: createPageEvalBudget(), workspaceRoot: dir, cssModuleClassMaps, readFiles }
 
@@ -273,39 +299,31 @@ function parseAppRouterRouteEntry(
       workspaceRoot: dir,
       evalOptions,
     })
-    expanded = composed.page
-    sources = { ...pageSources, ...composed.componentSources }
-    setCachedRouteParse(
-      cacheKey,
-      configHash,
-      [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles, ...readFiles],
-      { expanded, componentSources: sources },
-    )
-  }
+    return {
+      result: { expanded: composed.page, componentSources: { ...pageSources, ...composed.componentSources } },
+      dependencyFiles: [file, ...layoutAbsFiles, ...pageDependencyFiles, ...composed.dependencyFiles, ...readFiles],
+    }
+  })!
 
   return {
-    expanded,
+    expanded: outcome.result.expanded,
     pageId,
     slug: slugFromAppRoute(route),
     title: route,
     relFile: relative(dir, file).split(sep).join('/'),
-    componentSources: sources,
+    componentSources: outcome.result.componentSources,
+    dependencies: outcome.dependencies,
   }
 }
 
-function buildAppRouterPageEntries(
-  pagesDir: string,
-  dir: string,
-  project: Project,
-  preferredKey: string | undefined,
-  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
-): RoutePageEntry[] {
+function buildAppRouterPageEntries(context: RouteParseContext, pagesDir: string): Promise<RoutePageEntry[]> {
   const routes = discoverAppRouterRoutes(pagesDir)
   const pageIds = assignAppRouterPageIds(routes)
-
-  return routes.map(({ relPath, route }) =>
-    parseAppRouterRouteEntry(relPath, route, pageIds.get(relPath)!, pagesDir, dir, project, preferredKey, cssModuleClassMaps, configHash),
+  return parseRoutesInViewportOrder(
+    context.scope.dir,
+    routes,
+    ({ relPath }) => pageIds.get(relPath)!,
+    ({ relPath, route }) => parseAppRouterRouteEntry(context, relPath, route, pageIds.get(relPath)!, pagesDir),
   )
 }
 
@@ -409,33 +427,80 @@ function discoverProjectStories(
  * merged classification for every page/route is returned as
  * `componentSources`, keyed by node id.
  *
+ * ## Parse order
+ *
+ * Routes are parsed in viewport order (`loadPriority.ts`) with a yield to the
+ * event loop between two, so a cold parse neither makes the visible frames
+ * wait on the rest nor blocks every other request while it runs; the result
+ * keeps discovery order.
+ *
  * ## The memo in front of this
  *
  * `loadStudioPages` is a thin wrapper: the real work below runs only when
- * `studioLoadMemo.ts` says the workspace changed since the last full load.
- * Read that module for what the fingerprint covers and why a narrowed load is
- * served-but-never-stored.
+ * `studioLoadMemo.ts` says something the last full load was built from moved.
+ * Read that module for what it checks and why a narrowed load is
+ * served-but-never-stored. What this returns beside the result is what the
+ * memo checks: every file the load read, as the stamps it read them at.
  */
-async function computeStudioPages(dir: string): Promise<StudioLoadResult> {
+async function computeStudioPages(dir: string): Promise<ComputedStudioLoad> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
-    return { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] }
+    return {
+      result: { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] },
+      dependencies: new Map(),
+    }
   }
 
+  // The moment this load begins bringing its `Project` in step with the
+  // disk — the parse cache's race rule measures "written while we worked"
+  // from here (`pageParseCache.ts`).
+  const startedAt = Date.now()
   // One shared, workspace-wide ts-morph Project so a page's local
   // component imports resolve to real files elsewhere in the tree —
   // a fresh per-file Project (parsePageFile's own default) can't see
   // across files at all. Kept across loads and synced to the disk by
   // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
-  return withWorkspaceProject(dir, (project, projectWarnings) => computeStudioPagesWith(dir, pagesDir, project, projectWarnings))
+  return withWorkspaceProject(dir, (workspace) => computeStudioPagesWith(dir, pagesDir, workspace, startedAt))
+}
+
+/**
+ * The load's own dependency set for the memo: every route's recorded stamps,
+ * plus the stylesheets the registry read and the two config files every load
+ * consults — or `null` when any of it cannot vouch for the result (a route
+ * that could not be cached, a file read at two different versions by two
+ * routes, a stylesheet that moved while it was read).
+ */
+function loadDependencies(
+  routeEntries: readonly RoutePageEntry[],
+  otherFiles: readonly string[],
+  scope: RouteCacheScope,
+): Map<string, string> | null {
+  const dependencies = new Map<string, string>()
+  for (const entry of routeEntries) {
+    if (!entry.dependencies) return null
+    for (const [file, stamp] of entry.dependencies) {
+      const seen = dependencies.get(file)
+      if (seen !== undefined && seen !== stamp) return null
+      dependencies.set(file, stamp)
+    }
+  }
+  const others = consistentStamps(otherFiles, { startedAtMs: scope.startedAt, knownStamp: scope.projectStamp })
+  if (!others) return null
+  for (const [file, stamp] of others) {
+    const seen = dependencies.get(file)
+    if (seen !== undefined && seen !== stamp) return null
+    dependencies.set(file, stamp)
+  }
+  return dependencies
 }
 
 async function computeStudioPagesWith(
   dir: string,
   pagesDir: string,
-  project: Project,
-  projectWarnings: readonly WorkspaceProjectWarning[],
-): Promise<StudioLoadResult> {
+  workspace: WorkspaceProjectHandle,
+  startedAt: number,
+): Promise<ComputedStudioLoad> {
+  const { project } = workspace
   // §7.4 — `preferredKey` for a dynamically-indexed dictionary (`translations[lang]`).
   const preferredKey = projectPreviewLocale(dir)
   const meta = readStudioMeta(dir)
@@ -449,20 +514,14 @@ async function computeStudioPagesWith(
   const profile = meta.profile ?? probeProject(dir)
   const { styles: compiledStyles } = await compileProjectStyles(dir, profile)
 
-  // WS-5.5 — everything besides per-file mtimes that feeds the parse/eval
-  // pass below: a changed framework classification, preview locale, or
-  // compiled CSS-Modules class map invalidates every route's cache entry at
-  // once (`pageParseCache.ts`'s own doc explains why a per-file mtime alone
-  // can't catch this). The tsconfig's stamp joins them: its path aliases
-  // decide which file every aliased import resolves to (WB-23).
-  const configHash = hashWorkspaceConfig([framework, preferredKey, compiledStyles.moduleClassMaps, workspaceTsconfigStamp(dir)])
+  const context = routeParseContext(dir, workspace, framework, preferredKey, compiledStyles.moduleClassMaps, startedAt)
 
   // Parse + inline EVERY route first, then resolve CSS, then convert. The CSS
   // registry is site-wide (pages routinely share a stylesheet), so it has to be
   // complete before any page can turn a `className` into `classIds`.
   const pageEntries = framework === 'next-app'
-    ? buildAppRouterPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
-    : buildStandardPageEntries(pagesDir, dir, project, preferredKey, compiledStyles.moduleClassMaps, configHash)
+    ? await buildAppRouterPageEntries(context, pagesDir)
+    : await buildStandardPageEntries(context, pagesDir)
 
   // W5-3 — Storybook stories, appended as ordinary route entries. Guarded by
   // the filename glob FIRST (`storyFilesIn`), so a project without stories
@@ -470,7 +529,7 @@ async function computeStudioPagesWith(
   // page ids are deduped against the page ids already in hand — the two
   // producers derive ids from different rules and could otherwise collide.
   const stories = discoverProjectStories(dir, project, pageEntries, meta.stories?.enabled !== false)
-  const storyEntries = buildStoryRouteEntries(dir, project, stories, preferredKey, compiledStyles.moduleClassMaps, configHash)
+  const storyEntries = buildStoryRouteEntries(context.scope, workspace, stories, compiledStyles.moduleClassMaps)
   const routeEntries = [...pageEntries, ...storyEntries]
 
   const componentSources: Record<string, ComponentSource> = {}
@@ -480,7 +539,7 @@ async function computeStudioPagesWith(
   // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules)
   // and W4-4's CSS-in-JS templates.
   const cssInJsTemplates = cssInJsTemplatesOf(routeEntries)
-  const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss } = await loadStudioStyles(
+  const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss, stylesheetFiles } = await loadStudioStyles(
     routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
@@ -524,40 +583,56 @@ async function computeStudioPagesWith(
     .map((story) => story.summary)
 
   return {
-    pages,
-    componentSources,
-    styleRules,
-    styleRuleSources,
-    // W4-4 Phase B — computed AFTER the registry, from the same templates the
-    // stylesheet was built out of, because it maps rule IDS and only
-    // `loadStudioStyles` has minted those.
-    styledStyleRuleSources: styledStyleRuleSources(styleRules, cssInJsTemplates),
-    conditions,
-    vendorCss: compiledStyles.vendorCss,
-    authoredCss,
-    stories: storySummaries,
-    warnings: collectLoadWarnings(dir, project, projectWarnings, routeEntries),
+    result: {
+      pages,
+      componentSources,
+      styleRules,
+      styleRuleSources,
+      // W4-4 Phase B — computed AFTER the registry, from the same templates the
+      // stylesheet was built out of, because it maps rule IDS and only
+      // `loadStudioStyles` has minted those.
+      styledStyleRuleSources: styledStyleRuleSources(styleRules, cssInJsTemplates),
+      conditions,
+      vendorCss: compiledStyles.vendorCss,
+      authoredCss,
+      stories: storySummaries,
+      warnings: collectLoadWarnings(dir, project, workspace.warnings, routeEntries),
+    },
+    dependencies: loadDependencies(
+      routeEntries,
+      [...stylesheetFiles, join(dir, 'tsconfig.json'), join(dir, 'package.json')],
+      context.scope,
+    ),
   }
 }
 
+/** The route files the load would discover now, joined — the memo's route-list check (`studioLoadMemo.ts`, rule 3). */
+function routeListing(dir: string): string {
+  const pagesDir = projectPagesDir(dir)
+  if (!existsSync(pagesDir)) return ''
+  return readStudioMeta(dir).profile?.framework === 'next-app'
+    ? discoverAppRouterRoutes(pagesDir).map(({ relPath }) => relPath).join('\n')
+    : discoverPageFiles(pagesDir).join('\n')
+}
+
 /**
- * The memoized entry point every caller uses — see `computeStudioPages` above
- * for what the load itself does, and `studio/studioLoadMemo.ts` for what makes
- * a memo hit valid.
+ * The memoized load, SHARED with every other caller — the `/load` route's
+ * entry point, which only serialises what it gets. Never mutate the result
+ * (or anything reachable from it): the next caller receives the same objects.
+ * Everyone else uses {@link loadStudioPages}, which hands out a private copy.
  *
- * W9-5 lever 1: one real load per turn. An agent turn calls this from the live
+ * W9-5 lever 1: one real load per turn. An agent turn loads from the live
  * digest, `studio_compare`, `studio_screenshot`, `studio_quality_check` and
  * the fidelity tools, all against a project that did not change between them.
- * `pageParseCache.ts` already answered the per-route parses from memory; this
- * answers everything around them (the workspace ts-morph project, the style
- * compile, the directory walks, the site-wide style registry, the per-page
- * convert) — measured 26 ms → 2.5 ms per repeat call on a 36-page project.
+ * `pageParseCache.ts` already answered the per-route parses; the memo answers
+ * everything around them (the workspace ts-morph project, the style compile,
+ * the directory walks, the site-wide style registry, the per-page convert).
  *
  * A narrowed load is SERVED from a stored full result (its `pages` filtered to
  * the requested ids — exactly what a narrowed compute returns) but never
  * STORED, because it never computed the routes it was not asked for.
  */
-export async function loadStudioPages(dir: string, options: StudioLoadOptions = {}): Promise<StudioLoadResult> {
+export async function loadStudioPagesShared(dir: string, options: StudioLoadOptions = {}): Promise<Readonly<StudioLoadResult>> {
   // Scaffold (or refresh) the runnable preview shell — `prototype/`,
   // `index.html`, `vite.config.js`. A workspace created before the shell
   // existed grows one the first time it is opened, and every later open brings
@@ -577,20 +652,30 @@ export async function loadStudioPages(dir: string, options: StudioLoadOptions = 
   // throws. See `./studio/designSystemFiles.ts`.
   ensureDesignSystemFiles(dir)
 
-  const fingerprint = workspaceLoadFingerprint(dir)
-  const memoized = getMemoizedStudioLoad(dir, fingerprint)
-  if (memoized) return narrowLoadResult(memoized, options.pageIds)
-
   // Always the full result, always memoized — a narrowed load is the SAME
   // compute with fewer pages returned, so storing it costs nothing extra and
   // means the full load that follows a canvas resync is a memo hit.
-  const result = await computeStudioPages(dir)
-  setMemoizedStudioLoad(dir, fingerprint, result)
+  const result = await memoizedStudioLoad(dir, {
+    compute: () => computeStudioPages(dir),
+    routeListing: () => routeListing(dir),
+  })
   return narrowLoadResult(result, options.pageIds)
 }
 
+/**
+ * The memoized entry point every caller but the `/load` route uses — see
+ * `computeStudioPages` above for what the load itself does, and
+ * `studio/studioLoadMemo.ts` for what makes a memo hit valid. Returns a
+ * private copy the caller may mutate freely (`loadStudioPages` itself
+ * rewrote asset sentinels in place once, and a tool's edit must never become
+ * the next tool's input).
+ */
+export async function loadStudioPages(dir: string, options: StudioLoadOptions = {}): Promise<StudioLoadResult> {
+  return structuredClone(await loadStudioPagesShared(dir, options))
+}
+
 /** The `options.pageIds` filter, applied to a computed FULL result. */
-function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] | undefined): StudioLoadResult {
+function narrowLoadResult(result: Readonly<StudioLoadResult>, pageIds: readonly string[] | undefined): Readonly<StudioLoadResult> {
   if (!pageIds) return result
   const wanted = new Set(pageIds)
   return { ...result, pages: result.pages.filter((page) => wanted.has(page.id)) }
@@ -630,27 +715,36 @@ function narrowLoadResult(result: StudioLoadResult, pageIds: readonly string[] |
 export async function loadStudioPageInLocale(dir: string, pageId: string, locale: string): Promise<Page | null> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return null
-  return withWorkspaceProject(dir, (project) => loadStudioPageInLocaleWith(dir, pagesDir, project, pageId, locale))
+  const startedAt = Date.now()
+  return withWorkspaceProject(dir, (workspace) => loadStudioPageInLocaleWith(dir, pagesDir, workspace, pageId, locale, startedAt))
 }
 
-async function loadStudioPageInLocaleWith(dir: string, pagesDir: string, project: Project, pageId: string, locale: string): Promise<Page | null> {
+async function loadStudioPageInLocaleWith(
+  dir: string,
+  pagesDir: string,
+  workspace: WorkspaceProjectHandle,
+  pageId: string,
+  locale: string,
+  startedAt: number,
+): Promise<Page | null> {
+  const { project } = workspace
   const meta = readStudioMeta(dir)
   const framework = meta.profile?.framework
   const profile = meta.profile ?? probeProject(dir)
   const { styles: compiledStyles } = await compileProjectStyles(dir, profile)
-  const configHash = hashWorkspaceConfig([framework, locale, compiledStyles.moduleClassMaps, workspaceTsconfigStamp(dir)])
+  const context = routeParseContext(dir, workspace, framework, locale, compiledStyles.moduleClassMaps, startedAt)
 
   let entry: RoutePageEntry | undefined
   if (framework === 'next-app') {
     const routes = discoverAppRouterRoutes(pagesDir)
     const pageIds = assignAppRouterPageIds(routes)
     const match = routes.find(({ relPath }) => pageIds.get(relPath) === pageId)
-    if (match) entry = parseAppRouterRouteEntry(match.relPath, match.route, pageId, pagesDir, dir, project, locale, compiledStyles.moduleClassMaps, configHash)
+    if (match) entry = parseAppRouterRouteEntry(context, match.relPath, match.route, pageId, pagesDir)
   } else {
     const relPaths = discoverPageFiles(pagesDir)
     const pageIds = assignPageIds(relPaths)
     const relPath = relPaths.find((rp) => pageIds.get(rp) === pageId)
-    if (relPath) entry = parseStandardRouteEntry(relPath, pageId, pagesDir, dir, project, locale, compiledStyles.moduleClassMaps, configHash)
+    if (relPath) entry = parseStandardRouteEntry(context, relPath, pageId, pagesDir)
   }
   if (!entry) return null
   const { expanded, componentSources } = entry

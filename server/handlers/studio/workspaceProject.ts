@@ -1,7 +1,7 @@
 /**
- * workspaceProject — ONE ts-morph `Project` per project directory, kept for
- * the life of the process and brought back in step with the disk before
- * every use.
+ * workspaceProject — ONE ts-morph `Project` per project directory, kept while
+ * the project is loaded and brought back in step with the disk before every
+ * use.
  *
  * ## Why
  *
@@ -21,94 +21,116 @@
  *
  * ## The contract: `withWorkspaceProject(dir, fn)`
  *
- * 1. **Synced before `fn` runs.** Every file `listWorkspaceSourceFiles(dir)`
- *    reports is compared against the `size:mtimeMs` stamp recorded when the
- *    `Project` last saw it. A moved stamp re-reads the file (remove + add, so
- *    every node the old text owned is genuinely gone), a new file is added,
- *    a file no longer on disk is removed — and so is any in-memory file
- *    somebody created on the shared `Project` (`project.createSourceFile`),
- *    which would otherwise collide with the next caller who creates it again.
- *    When anything at all changed, `resetParserCaches` empties the parser's
- *    cross-file memos, because a value cached against an unchanged file may
- *    have been read through the file that moved.
- * 2. **Serialized per directory.** Callers queue: a sync while another
+ * 1. **Synced before `fn` runs — from the change feed, not a walk (P6-B).**
+ *    The loaded project's `ProjectChangeFeed` (`loadedProjects.ts`) says
+ *    which files the project watcher saw change since the last sync, from
+ *    every origin; only those are re-stamped. A moved `size:mtimeMs` re-reads
+ *    the file (remove + add, so every node the old text owned is genuinely
+ *    gone), a new source file is added, a vanished one removed. When the feed
+ *    cannot say (the watch overflowed or failed, or this is the first use),
+ *    every file `listWorkspaceSourceFiles(dir)` reports is stamped instead —
+ *    the walk this used to do on every call, now the fallback. Any in-memory
+ *    file somebody created on the shared `Project` (`project.createSourceFile`)
+ *    is removed either way. When anything changed, `resetParserCaches`
+ *    empties the parser's cross-file memos, because a value cached against an
+ *    unchanged file may have been read through the file that moved.
+ * 2. **The feed is trusted for speed, never for a page.** A watcher reports
+ *    a moment late, and on Windows it drops events in bursts (P1-D). So the
+ *    handle `fn` receives carries {@link WorkspaceProjectHandle.resyncStale}:
+ *    after a parse, the load hands it every file the parse read, and it
+ *    re-stamps exactly those, re-reads any the feed has not caught up with,
+ *    and says so — the load then parses again rather than cache a page built
+ *    from text that is no longer on disk (`studioPageLoad.ts`).
+ * 3. **Serialized per directory.** Callers queue: a sync while another
  *    caller's parse is mid-flight would forget nodes under it (ts-morph
  *    throws "node was removed or forgotten"), so one `fn` finishes before the
- *    next sync starts. Loads are the only callers and a single client already
- *    issues them one at a time; the queue is what keeps an MCP tool's
- *    concurrent load honest.
- * 3. **Rebuilt when `tsconfig.json` moves.** The tsconfig is read once, in
+ *    next sync starts.
+ * 4. **Rebuilt when `tsconfig.json` moves.** The tsconfig is read once, in
  *    `createWorkspaceProject`, and decides path-alias resolution for every
- *    file — a sync cannot patch that in. So a moved `size:mtimeMs` on it
- *    (edited, created, deleted) rebuilds the whole `Project`. That is also
- *    how a tsconfig that stopped parsing (WB-23) becomes a
- *    `tsconfig-unreadable` warning mid-session, and how fixing it brings the
- *    aliases back without a restart. The warnings the current `Project` was
- *    built with are handed to `fn` beside it.
- * 4. **Not a lock against writes.** A codemod that lands while `fn` runs is
- *    picked up by the NEXT call's sync — the same staleness window a fresh
- *    `Project` had, since neither watches the disk. Writes go through their
- *    own `projectWriteLock.ts`.
+ *    file — a sync cannot patch that in. So a moved stamp on it (edited,
+ *    created, deleted) rebuilds the whole `Project`. That is also how a
+ *    tsconfig that stopped parsing (WB-23) becomes a `tsconfig-unreadable`
+ *    warning mid-session, and how fixing it brings the aliases back without a
+ *    restart. The warnings the current `Project` was built with ride on the
+ *    handle.
+ * 5. **Not a lock against writes.** Writes go through `projectWriteLock.ts`;
+ *    one that lands while `fn` runs is picked up by the next sync.
  *
- * Process-scoped, no eviction — the same posture as `pageParseCache.ts` and
- * `studioLoadMemo.ts`. A project whose files all disappear keeps an empty
- * `Project`; a `bun --watch` restart drops everything.
+ * Kept while the project is in `loadedProjects.ts`' least-recently-used list
+ * and forgotten with it, so a server that opened ten projects no longer keeps
+ * ten `Project`s.
  */
-import { statSync } from 'node:fs'
-import { join, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Project } from 'ts-morph'
 import {
   createWorkspaceProject,
+  isWorkspaceSourceFilePath,
   listWorkspaceSourceFiles,
   resetParserCaches,
   type WorkspaceProjectWarning,
 } from '@core/page-parser'
+import { fileStamp, MISSING } from './loadDigest'
+import { onLoadedProjectEvicted, retainLoadedProject, type LoadedProject } from './loadedProjects'
 
-interface WorkspaceProjectEntry {
+/** What `withWorkspaceProject` hands its callback. */
+export interface WorkspaceProjectHandle {
   project: Project
   /** What `createWorkspaceProject` had to give up building `project` — a `tsconfig-unreadable`, today. */
   warnings: readonly WorkspaceProjectWarning[]
-  /** `tsconfig.json`'s `size:mtimeMs` (`null` when absent) when `project` was built — see the module doc's rule 3. */
-  tsconfigStamp: string | null
   /**
-   * The `Project`'s own spelling of each workspace file → the `size:mtimeMs`
-   * it had when the `Project` last read it. Keyed by `projectPath`, never by a
+   * Re-stamps each of `absFiles` that is (or should be) one of the `Project`'s
+   * workspace source files, re-reading any whose text on disk moved since the
+   * `Project` read it. `true` when anything had to be re-read — the caller's
+   * result was built from text that is gone. See the module doc's rule 2.
+   */
+  resyncStale: (absFiles: Iterable<string>) => boolean
+  /**
+   * The stamp of the version of `absFile` the `Project` holds — `missing`
+   * for a source file it does not hold — or `undefined` when `absFile` is not
+   * a workspace source file at all (a JSON dictionary, an image, a file
+   * outside the project). The parse cache's race rule compares it with the
+   * disk (`pageParseCache.ts`).
+   */
+  recordedStamp: (absFile: string) => string | undefined
+}
+
+interface WorkspaceProjectState {
+  project: Project
+  warnings: readonly WorkspaceProjectWarning[]
+  /** `tsconfig.json`'s stamp when `project` was built — see the module doc's rule 4. */
+  tsconfigStamp: string
+  /**
+   * The `Project`'s own spelling of each workspace file → the stamp it had
+   * when the `Project` last read it. Keyed by `projectPath`, never by a
    * `join()`ed path: on Windows the two differ in separator, and a key the
    * `Project` cannot recognise made every in-memory file look like a stamped
    * workspace file's stranger — or, worse, a stamped file look foreign.
    */
   stamps: Map<string, string>
-  /** The tail of the per-directory queue — every `withWorkspaceProject` call chains behind it. */
+  /** The change-feed position this `Project` is in step with. */
+  cursor: number
+}
+
+/** One project's kept state, and the queue every `withWorkspaceProject` call on it chains behind. `state` is built by the first call to reach the front of the queue. */
+interface Slot {
+  state: WorkspaceProjectState | null
   queue: Promise<unknown>
 }
 
-const entries = new Map<string, WorkspaceProjectEntry>()
+const slots = new Map<string, Slot>()
+onLoadedProjectEvicted((key) => slots.delete(key))
 
 /**
  * The path as ts-morph spells it: forward slashes on every platform
  * (`C:/Users/…` on Windows). `SourceFile.getFilePath()` returns this form, so
- * it is the only key both halves of `syncWithDisk` can compare on.
+ * it is the only key both halves of a sync can compare on.
  */
 function projectPath(absFile: string): string {
   return absFile.split(sep).join('/')
 }
 
-/**
- * `tsconfig.json`'s `size:mtimeMs`, or `null` when there is none. Exported for
- * the parse cache's config hash: the tsconfig decides alias resolution, so a
- * route parsed under one tsconfig is not a valid answer under another.
- */
-export function workspaceTsconfigStamp(dir: string): string | null {
+function tsconfigStampOf(dir: string): string {
   return fileStamp(join(dir, 'tsconfig.json'))
-}
-
-function fileStamp(absFile: string): string | null {
-  try {
-    const stat = statSync(absFile)
-    return `${stat.size}:${stat.mtimeMs}`
-  } catch {
-    return null // gone between the walk and the stat — treated as absent
-  }
 }
 
 function stampAll(dir: string): Map<string, string> {
@@ -116,102 +138,151 @@ function stampAll(dir: string): Map<string, string> {
   for (const relPath of listWorkspaceSourceFiles(dir)) {
     const abs = join(dir, ...relPath.split('/'))
     const stamp = fileStamp(abs)
-    if (stamp !== null) stamps.set(projectPath(abs), stamp)
+    if (stamp !== MISSING) stamps.set(projectPath(abs), stamp)
   }
   return stamps
 }
 
-/** A freshly built `Project` and everything recorded about it — see `createEntry`/`rebuildEntry`. */
-function buildProject(dir: string): Omit<WorkspaceProjectEntry, 'queue'> {
+/** A freshly built `Project` and everything recorded about it. */
+function buildProject(dir: string, cursor: number): WorkspaceProjectState {
   // Stamp BEFORE the build reads the files: a write that lands during the
   // build then shows as a moved stamp on the next sync instead of being
   // recorded as the text the build never saw.
   const stamps = stampAll(dir)
-  const tsconfigStamp = workspaceTsconfigStamp(dir)
+  const tsconfigStamp = tsconfigStampOf(dir)
   const warnings: WorkspaceProjectWarning[] = []
-  return { project: createWorkspaceProject(dir, warnings), warnings, tsconfigStamp, stamps }
+  return { project: createWorkspaceProject(dir, warnings), warnings, tsconfigStamp, stamps, cursor }
 }
 
-function createEntry(dir: string): WorkspaceProjectEntry {
-  return { ...buildProject(dir), queue: Promise.resolve() }
+/**
+ * Brings ONE file in step with the disk: `abs` is the platform spelling,
+ * `stamp` its stamp now. Returns whether the `Project` changed.
+ */
+function syncFile(entry: WorkspaceProjectState, abs: string, stamp: string): boolean {
+  const key = projectPath(abs)
+  if (entry.stamps.get(key) === stamp) return false
+  const existing = entry.project.getSourceFile(key)
+  if (existing) entry.project.removeSourceFile(existing)
+  if (stamp === MISSING) {
+    const hadIt = entry.stamps.delete(key)
+    return hadIt || existing !== undefined
+  }
+  entry.project.addSourceFileAtPath(abs)
+  entry.stamps.set(key, stamp)
+  return true
 }
 
-/** Rule 3: `tsconfig.json` moved, so every file's resolution may have — start over. */
-function rebuildEntry(entry: WorkspaceProjectEntry, dir: string): void {
-  Object.assign(entry, buildProject(dir))
-  resetParserCaches()
+/** The workspace-relative POSIX path of `abs` when it is one of the `Project`'s source files by rule, else `null`. */
+function sourceRelPath(dir: string, abs: string): string | null {
+  const native = relative(dir, abs)
+  if (isAbsolute(native)) return null // another drive — not under `dir` at all
+  const rel = native.split(sep).join('/')
+  return isWorkspaceSourceFilePath(rel) ? rel : null
 }
 
-/** Brings `entry.project` in step with the disk. Returns whether anything changed. */
-function syncWithDisk(entry: WorkspaceProjectEntry, dir: string): boolean {
-  const { project, stamps } = entry
+/** Full sync: every source file stamped — the fallback when the change feed cannot say what moved. */
+function syncAll(entry: WorkspaceProjectState, dir: string): boolean {
   const current = stampAll(dir)
   let changed = false
-
-  for (const [abs, stamp] of current) {
-    if (stamps.get(abs) === stamp) continue
-    const existing = project.getSourceFile(abs)
-    if (existing) project.removeSourceFile(existing)
-    project.addSourceFileAtPath(abs)
-    stamps.set(abs, stamp)
-    changed = true
+  for (const [key, stamp] of current) {
+    if (syncFile(entry, key.split('/').join(sep), stamp)) changed = true
   }
-
-  for (const abs of [...stamps.keys()]) {
-    if (current.has(abs)) continue
-    const existing = project.getSourceFile(abs)
-    if (existing) project.removeSourceFile(existing)
-    stamps.delete(abs)
-    changed = true
+  for (const key of [...entry.stamps.keys()]) {
+    if (!current.has(key) && syncFile(entry, key.split('/').join(sep), MISSING)) changed = true
   }
-
-  // Anything else the `Project` holds that is not a stamped workspace file:
-  // an in-memory file a previous caller created on it. Files ts-morph pulled
-  // in through module resolution live outside the workspace (`node_modules`,
-  // a lib `.d.ts`) and are left alone — evicting them would only force the
-  // program to resolve them again.
-  const root = `${projectPath(resolve(dir))}/`
-  for (const sourceFile of project.getSourceFiles()) {
-    const filePath = sourceFile.getFilePath()
-    if (stamps.has(filePath)) continue
-    if (!filePath.startsWith(root) || filePath.includes('/node_modules/')) continue
-    project.removeSourceFile(sourceFile)
-    changed = true
-  }
-
-  if (changed) resetParserCaches()
   return changed
+}
+
+/** Incremental sync: only the paths the change feed reported. */
+function syncReported(entry: WorkspaceProjectState, dir: string, rels: ReadonlySet<string>): boolean {
+  let changed = false
+  for (const rel of rels) {
+    if (!isWorkspaceSourceFilePath(rel)) continue
+    const abs = join(dir, ...rel.split('/'))
+    if (syncFile(entry, abs, fileStamp(abs))) changed = true
+  }
+  return changed
+}
+
+/**
+ * Anything else the `Project` holds that is not a stamped workspace file: an
+ * in-memory file a previous caller created on it. Files ts-morph pulled in
+ * through module resolution live outside the workspace (`node_modules`, a lib
+ * `.d.ts`) and are left alone — evicting them would only force the program to
+ * resolve them again.
+ */
+function dropForeignFiles(entry: WorkspaceProjectState, dir: string): boolean {
+  const root = `${projectPath(resolve(dir))}/`
+  let changed = false
+  for (const sourceFile of entry.project.getSourceFiles()) {
+    const filePath = sourceFile.getFilePath()
+    if (entry.stamps.has(filePath)) continue
+    if (!filePath.startsWith(root) || filePath.includes('/node_modules/')) continue
+    entry.project.removeSourceFile(sourceFile)
+    changed = true
+  }
+  return changed
+}
+
+async function syncWithDisk(entry: WorkspaceProjectState, dir: string, loadedProject: LoadedProject): Promise<void> {
+  await loadedProject.changes.settle()
+  const cursor = loadedProject.changes.cursor()
+  if (tsconfigStampOf(dir) !== entry.tsconfigStamp) {
+    Object.assign(entry, buildProject(dir, cursor))
+    resetParserCaches()
+    return
+  }
+  const reported = loadedProject.changes.changesSince(entry.cursor)
+  let changed = reported === null ? syncAll(entry, dir) : syncReported(entry, dir, reported)
+  if (dropForeignFiles(entry, dir)) changed = true
+  entry.cursor = cursor
+  if (changed) resetParserCaches()
+}
+
+function handleFor(entry: WorkspaceProjectState, dir: string): WorkspaceProjectHandle {
+  return {
+    project: entry.project,
+    warnings: entry.warnings,
+    resyncStale: (absFiles) => {
+      let changed = false
+      for (const abs of absFiles) {
+        if (sourceRelPath(dir, abs) === null) continue
+        if (syncFile(entry, abs, fileStamp(abs))) changed = true
+      }
+      if (changed) resetParserCaches()
+      return changed
+    },
+    recordedStamp: (abs) => (sourceRelPath(dir, abs) === null ? undefined : entry.stamps.get(projectPath(abs)) ?? MISSING),
+  }
 }
 
 /**
  * Runs `fn` with `dir`'s kept `Project`, synced to the disk and exclusive to
  * `fn` until it settles. See the module doc for the contract.
  */
-export function withWorkspaceProject<T>(
-  dir: string,
-  fn: (project: Project, warnings: readonly WorkspaceProjectWarning[]) => Promise<T>,
-): Promise<T> {
+export function withWorkspaceProject<T>(dir: string, fn: (workspace: WorkspaceProjectHandle) => Promise<T>): Promise<T> {
   const key = resolve(dir)
-  let entry = entries.get(key)
-  if (!entry) {
-    entry = createEntry(key)
-    entries.set(key, entry)
-    // Freshly built: already in step with the disk, nothing to sync.
-    const run = entry.queue.then(() => fn(entry!.project, entry!.warnings))
-    entry.queue = run.catch(() => undefined)
-    return run
+  const { project: loadedProject, release } = retainLoadedProject(key)
+  let slot = slots.get(key)
+  if (!slot) {
+    slot = { state: null, queue: Promise.resolve() }
+    slots.set(key, slot)
   }
-  const kept = entry
-  const run = kept.queue.then(() => {
-    if (workspaceTsconfigStamp(key) !== kept.tsconfigStamp) rebuildEntry(kept, key)
-    else syncWithDisk(kept, key)
-    return fn(kept.project, kept.warnings)
+  const kept = slot
+  const run = kept.queue.then(async () => {
+    if (kept.state === null) {
+      await loadedProject.changes.settle()
+      kept.state = buildProject(key, loadedProject.changes.cursor())
+    } else {
+      await syncWithDisk(kept.state, key, loadedProject)
+    }
+    return fn(handleFor(kept.state, key))
   })
   kept.queue = run.catch(() => undefined)
-  return run
+  return run.finally(release)
 }
 
 /** Test-only: drop every kept `Project` so one test's workspace cannot leak into the next. */
 export function clearWorkspaceProjects(): void {
-  entries.clear()
+  slots.clear()
 }

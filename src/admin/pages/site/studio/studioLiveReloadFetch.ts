@@ -69,7 +69,7 @@
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
-import { StudioLoadStreamLineSchema, type StudioLoadStreamLine } from './studioLoadStreamSchema'
+import { orderStreamedPages, StudioLoadStreamLineSchema, type StudioLoadStreamLine } from './studioLoadStreamSchema'
 import { mergeLoadedValuesBaseline } from './loadedValuesBaseline'
 import { setStudioAuthoredCss, setStudioVendorCss } from './studioRawCssStores'
 import { setStudioLoadWarnings } from './studioLoadWarningsStore'
@@ -102,16 +102,18 @@ export async function fetchStudioPagesById(
 ): Promise<StudioPagesByIdResult> {
   const overrideDir = getStudioWorkspaceDir()
   let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
-  const pages: Page[] = []
+  const pageLines: Array<StudioLoadStreamLine & { kind: 'page' }> = []
   await ndjsonRequest('/admin/api/studio/load', {
     lineSchema: StudioLoadStreamLineSchema,
     query: { ...(overrideDir ? { dir: overrideDir } : {}), stream: 1, pageIds: pageIds.join(',') },
     onLine: (line: StudioLoadStreamLine) => {
       if (line.kind === 'meta') meta = line
-      else pages.push(line.page)
+      else pageLines.push(line)
     },
   })
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
+  // P6-B — lines arrive in viewport order; the reloaded pages keep page order.
+  const pages = orderStreamedPages(pageLines)
   const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust } = meta
 
   // The per-load leaves, in the same order and with the same calls
