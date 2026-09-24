@@ -72,7 +72,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
 
     const onPointerDown = (event: PointerEvent) => {
       if (event.button !== 0) return
-      const bandEl = (event.target as Element | null)?.closest?.(`[${SPACING_BAND_ATTR}]`)
+      const bandEl = (event.target as Element | null)?.closest?.<HTMLElement>(`[${SPACING_BAND_ATTR}]`)
       if (!bandEl || !layer.contains(bandEl)) return
       const read = readLatestBands()
       const band = read?.bands[Number(bandEl.getAttribute(SPACING_BAND_ATTR))]
@@ -91,7 +91,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
       let moved = false
       const gesture = beginCanvasGesture()
       try {
-        ;(bandEl as HTMLElement).setPointerCapture(event.pointerId)
+        bandEl.setPointerCapture(event.pointerId)
       } catch (_err) {
         // The document listeners below still drive the drag.
       }
@@ -142,7 +142,7 @@ export function useSpacingHandleDrag({ layer, iframeDoc, nodeId, readBands, onDr
           doc.removeEventListener('keyup', onKey, true)
         }
         try {
-          ;(bandEl as HTMLElement).releasePointerCapture(event.pointerId)
+          bandEl.releasePointerCapture(event.pointerId)
         } catch (_err) {
           // Already released with the pointer.
         }
