@@ -178,9 +178,12 @@ test.describe('P3-D — structural refusals become writes', () => {
     await expect(remoteRow).toHaveAttribute('aria-selected', 'true')
     await page.keyboard.press('Control+c')
 
-    const dRow = tree.getByTestId(`dom-tree-item-${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}`)
-    await dRow.click()
-    await expect(dRow).toHaveAttribute('aria-selected', 'true')
+    // The paste target is picked on the Home frame itself: that activates Home.
+    const home = await frameForPage(page, canvasRoot, 'home')
+    const d = home.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR).locator(`[data-node-id="${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}"]`).first()
+    await panIntoView(page, canvasRoot, d, 80)
+    await clickInFrame(page, d)
+    await expect(tree.getByTestId(`dom-tree-item-${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}`)).toHaveAttribute('aria-selected', 'true')
     await page.keyboard.press('Control+v')
 
     await expect
@@ -198,21 +201,18 @@ test.describe('P3-D — structural refusals become writes', () => {
   test('OD-7: Delete inside ONE instance of a shared component changes that instance only; ONE ⌘Z restores it', async ({ page }) => {
     const { canvasRoot, content } = await openHome(page)
     const firstCard = sourceNodeId(HOME_PAGE, HOME, 'Card', 1)
+    const section = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'section', 1)}`
     const rule = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'hr', 1)}`
-    // A click inside a component selects the outermost instance (P2-B).
     const title = content.getByText('One', { exact: true }).first()
     await panIntoView(page, canvasRoot, title, 80)
-    await clickInFrame(page, title)
 
-    // Into the instance and down to its rule: Enter goes to the first child,
-    // Tab to the next sibling — the keys Figma uses for the same walk.
+    // Down to the rule through the Layers tree: a plain row click selects the
+    // row and opens it, so instance → its markup → the rule.
     const tree = await openLayers(page)
+    await tree.getByTestId(`dom-tree-item-${firstCard}`).click()
+    await tree.getByTestId(`dom-tree-item-${section}`).click()
     const ruleRow = tree.getByTestId(`dom-tree-item-${rule}`)
-    const ruleSelected = async () => (await ruleRow.count()) > 0 && (await ruleRow.getAttribute('aria-selected')) === 'true'
-    for (let i = 0; i < 6 && !(await ruleSelected()); i += 1) {
-      await page.keyboard.press(i < 2 ? 'Enter' : 'Tab')
-      await page.waitForTimeout(300)
-    }
+    await ruleRow.click()
     await expect(ruleRow).toHaveAttribute('aria-selected', 'true')
 
     await page.keyboard.press('Delete')

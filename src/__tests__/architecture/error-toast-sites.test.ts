@@ -142,6 +142,9 @@ describe('red-toast policy (P3-A)', () => {
     const writePath = [
       'admin/pages/site/studio/refusalToasts.ts',
       'admin/pages/site/studio/studioStructuralCommits.ts',
+      // P3-D — the shared structural commit body moved here from the file above.
+      'admin/pages/site/studio/commitStructural.ts',
+      'admin/pages/site/store/slices/site/instanceOnlyGesture.ts',
       'admin/pages/site/studio/studioSaveRequests.ts',
       'admin/pages/site/studio/studioAssetEdit.ts',
       'admin/pages/site/studio/structuralCommitQueue.ts',
