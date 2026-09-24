@@ -153,7 +153,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### mcp-31 — P4-F: trust and panel (AI-7, AI-28, AI-18, AI-26, AI-22)
 - **Agent:** mcp-tooling · **Branch:** `feat/agent-turns-you-can-undo` off `30d046d5` · **PR:** #251 (draft, base `feat/canvas-excellence`; long form, threat list and dogfood script in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying — **needs security-guard review** (revert writes user files).
+- **Stage:** verifying — review `review-251` CHANGES-REQUIRED; F1–F5 fixed (store trusts none of its own files: no-follow capped reads, hash-verified images, turn bound to conversation, CAS at write; credential files refused by `agentWriteRefusal` on both paths and never copied; stored line counts; compaction framed as not-instructions). Needs security re-review.
 - **Goal:** every agent turn is undoable; the panel shows what the agent sees and does; long HTTP conversations compact.
 - **Done:**
   - AI-7: `server/handlers/studio/agentCheckpoints.ts` — per-turn pre/post images at `.studio/agent-checkpoints/<userKey>/<turnId>/` (gitignored here, excluded from Studio's commit staging). CLI: `PreToolUse` (`denyControlPlaneWrite.ts`, after the gate) + `PostToolUse` (`recordToolWrite.ts`), turn found via `STUDIO_AGENT_CONVERSATION_KEY` + `current-<key>.json`. HTTP: `agentWriteSupport.ts` brackets every write. Revert = compare-and-swap on the post-image hash, all-or-nothing for a turn, through `resolveAgentFilePath(…,'write')` + `withProjectWriteLock`.
@@ -168,6 +168,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - A write with no `conversationId` (external MCP, direct handler) takes no checkpoint and must still write — `turnCheckpointKey` guards it (`setTokensTool.test.ts` caught the throw).
   - `ToolContext.bridge` now exists (server tools that must ask the user). `chat.ts` is at 688/700.
   - Compaction pins are in memory: a restart re-summarises once.
+  - `agentWriteScope.ts` gained a credential-name rule (one loop at the end of `agentWriteRefusal`); `fix/security-hardening-followups` edits the same gate — merge with care.
+  - `revertAgentCheckpoint`/`readAgentCheckpointDiff` take `conversationId`; the diff route requires it.
 - **Next:** security-guard review; owner dogfood (below).
 - **Human action needed:** dogfood on `test4`: ask the agent to change two files → "Changed 2 files" → Diff → Revert turn restores both; repeat, edit one file on the canvas, Revert turn is refused naming it, per-file revert of the other works; select a layer → chip shows `name · File.tsx:line`; Plan mode → plan checklist.
 
