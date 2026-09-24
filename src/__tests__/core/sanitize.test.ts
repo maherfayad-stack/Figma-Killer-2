@@ -264,3 +264,24 @@ describe('isRichtextPropKey()', () => {
     expect(isRichtextPropKey('RichText')).toBe(true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// The skipped-node bypass (found by P5-D's SVG-2 review)
+// ---------------------------------------------------------------------------
+
+describe('sanitizeRichtext — a removed element does not shield the next one', () => {
+  // Under happy-dom (the DOM the Bun server hands DOMPurify), removing an
+  // element made DOMPurify's node iterator skip the NEXT node, so its
+  // attributes were never checked. A browser does not skip, so no browser test
+  // could see it; the server's richtext and publish paths could.
+  it.each([
+    '<p><foo></foo><a href="javascript:alert(1)" onclick="steal()">y</a></p>',
+    '<p><foo>t</foo><a href="javascript:alert(1)" onclick="steal()">y</a></p>',
+    '<p><x-a></x-a><x-b></x-b><a href="javascript:alert(1)" onclick="steal()">y</a></p>',
+  ])('strips the handler and the scheme after a removed element: %s', (input) => {
+    const out = sanitizeRichtext(input).toLowerCase()
+    expect(out).not.toContain('onclick')
+    expect(out).not.toContain('javascript:')
+    expect(out).toContain('>y</a>')
+  })
+})

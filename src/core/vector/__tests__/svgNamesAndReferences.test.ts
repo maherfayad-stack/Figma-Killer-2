@@ -50,14 +50,14 @@ describe('isSvgFragmentReference', () => {
     '#javascript:alert(1)',
     '#a/b',
     '#a?b',
-    ' #a',
+    String.fromCharCode(0x2028) + '#a',
   ])('refuses %j', (value) => {
     expect(isSvgFragmentReference(value)).toBe(false)
   })
 })
 
 describe('cssValueLoadsExternalResource', () => {
-  it.each(['url(#g)', 'url("#g")', " url( '#grad-1' ) ", '#fff', 'currentColor', 'none', 'rgb(0 0 0 / 50%)', 'var(--x)'])(
+  it.each(['url(#g)', 'url("#g")', " url( '#grad-1' ) ", 'url("data:image/png;base64,AA==")', '#fff', 'currentColor', 'none', 'rgb(0 0 0 / 50%)', 'var(--x)'])(
     'lets %j through',
     (value) => {
       expect(cssValueLoadsExternalResource(value)).toBe(false)
@@ -67,7 +67,7 @@ describe('cssValueLoadsExternalResource', () => {
   it.each([
     'url(https://evil.test/beacon)',
     'url("//evil.test/x")',
-    'url(data:image/png;base64,AA)',
+    'url(data:text/html,<script>alert(1)</script>)',
     'url(/local.png)',
     'URL(https://evil.test/x)',
     '\\75 rl(https://evil.test/x)',

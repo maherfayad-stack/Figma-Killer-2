@@ -79,11 +79,19 @@ function urlArguments(css: string): string[] | undefined {
 }
 
 /**
+ * An inline raster or vector IMAGE carried in the value itself. It loads
+ * nothing (the bytes are right there), and a `url()` in CSS is always fetched
+ * as an image, where an SVG cannot run script. Any other `data:` type
+ * (`text/html`) is refused with the rest.
+ */
+const INLINE_IMAGE = /^data:image\/(?:png|jpe?g|gif|webp|avif|svg\+xml)[;,]/
+
+/**
  * Whether a CSS value (a presentation attribute such as `fill`, or one
  * declaration's value) would load anything from outside the document: a
- * `url(…)` that is not a `#fragment`, or any other resource-loading function.
- * An unparseable `url(` counts as loading — refusing a broken value costs a
- * paint the browser would have dropped anyway.
+ * `url(…)` that is neither a `#fragment` nor an inline `data:image/…`, or any
+ * other resource-loading function. An unparseable `url(` counts as loading —
+ * refusing a broken value costs a paint the browser would have dropped anyway.
  */
 export function cssValueLoadsExternalResource(value: string): boolean {
   const css = unescapeCss(value).toLowerCase()
@@ -93,5 +101,5 @@ export function cssValueLoadsExternalResource(value: string): boolean {
   if (args === undefined) return true
   // `urlArguments` finds every `url(` the regex sees; a `url` that is not
   // followed by `(` (a class name, a word in a font family) is not a function.
-  return args.some((arg) => !FRAGMENT_REFERENCE.test(arg))
+  return args.some((arg) => !FRAGMENT_REFERENCE.test(arg) && !INLINE_IMAGE.test(arg))
 }

@@ -182,7 +182,7 @@ export function installResizeHandles(options: ResizeHandlesOptions): ResizeHandl
     target = next
     const own = next ? resolveTarget(next) : null
     const presented = own ? presentedElementOf(view, own) : null
-    element = presented && isSizeableDisplay(view.getComputedStyle(presented).display) ? presented : null
+    element = presented && isSizeableDisplay(view.getComputedStyle(presented).display, presented.localName) ? presented : null
     if (!element) {
       hide()
       return
