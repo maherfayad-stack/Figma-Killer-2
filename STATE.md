@@ -152,7 +152,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
 ### docs-16 — clean stale references: the P0 leftovers, and the docs brought up to P1–P4
-- **Agent:** studio-scribe · **Branch:** `docs/clean-stale-references` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-24
+- **Agent:** studio-scribe · **Branch:** `docs/clean-stale-references` off `25681dcb` · **PR:** #252 (draft), base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open)
 - **Goal:** no comment cites a doc that is not in the repo, no doc says two different things about one file, and the agent-refs describe the trunk as of P4-E.
 - **Done:**
