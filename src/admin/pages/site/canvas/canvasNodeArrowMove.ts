@@ -139,7 +139,7 @@ function insetSides(value: unknown): Record<'top' | 'right' | 'bottom' | 'left',
  */
 export function authoredOffsets(
   node: Pick<PageNode, 'classIds' | 'inlineStyles'>,
-  styleRules: Readonly<Record<string, StyleRule>>,
+  styleRules: Readonly<Record<string, StyleRule>> | undefined,
 ): Set<NudgeOffsetProperty> {
   const merged = new Map<string, unknown>()
   const apply = (bag: Readonly<Record<string, unknown>> | CSSPropertyBag | undefined) => {
@@ -152,7 +152,7 @@ export function authoredOffsets(
       if (property in record) merged.set(property, record[property])
     }
   }
-  for (const classId of node.classIds) apply(styleRules[classId]?.styles)
+  for (const classId of node.classIds) apply(styleRules?.[classId]?.styles)
   apply(node.inlineStyles)
 
   const authored = new Set<NudgeOffsetProperty>()

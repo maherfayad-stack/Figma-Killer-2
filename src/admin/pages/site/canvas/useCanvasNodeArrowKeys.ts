@@ -139,7 +139,7 @@ async function resolveSession(session: ArrowSession, current: () => ArrowSession
   const node = page?.nodes[session.nodeId]
   const measured = page && node ? await measureArrowTarget(page, session.nodeId, store.activeBreakpointId) : null
   const move = measured && node
-    ? resolveArrowMove(measured, authoredOffsets(node, useEditorStore.getState().site?.styleRules ?? {}))
+    ? resolveArrowMove(measured, authoredOffsets(node, useEditorStore.getState().site?.styleRules))
     : null
 
   if (move?.kind === 'reorder') {
