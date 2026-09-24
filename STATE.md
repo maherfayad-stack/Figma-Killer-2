@@ -151,6 +151,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
+### test-07 — Green baseline: the 16 pre-existing unit failures and the broken e2e specs
+- **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (per-failure table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** the baseline every bundle reports shows no pre-existing red, so a real regression is visible.
+- **Done (unit):**
+  - `structuralOptimisticBroadcast` ×4, `useBridgeComputedValues` ×4, `fillSection` ×1: their stub channels never said `ready`, and `BridgeFrameAdapter.post` queues every message until it does. The stubs now announce `ready`, like `optimisticStructuralBroadcast.test.ts`.
+  - `referenceRender` ×4: since `live-16` a dev server writes to `options.logPath` and the manager tails that file; the fake filled `stdout`, so every boot hit the 30 s race. The fake now writes to the log file; each test gets its own `STUDIO_DEV_SERVER_STATE_DIR` and stops its server.
+  - `liveOrigin` WebSocket: **product fix** in `server/liveOrigin.ts`. Bun's `upgrade` already echoes the first offered subprotocol; passing it in `headers` too sent the header twice on Bun 1.3.6 (1.3.13 de-duplicates), and a checking client refuses that (1002). Proven on both Bun versions; a raw-handshake test asserts one header.
+  - `withWorkspaceProject` Windows path: already fixed on the trunk by P1-C; passes.
+  - Bundle freshness: not regenerated (P0-I owns the Bun pin). The gate now names the running Bun and the first differing line, and says whether it is Bun's runtime helpers, a cwd-relative `// node_modules/` comment, or real drift.
+- **Done (e2e):** `tests/e2e/helpers/canvasIframe.ts` (`visibleCanvasIframe`, `canvasContentFrame`, `liveBridgeIframe`, `settleCanvasFrameMode`, `selectionRings`) replaces every bare `frameLocator` in 30 files. Fixed-name fixtures are emptied in place (`emptyFixtureDir`): EPERM reproduced with `--repeat-each=2`. `readBoardCounts` counts per board frame (`mountedFrames`). studio-feel ⌘D now asserts five copies in the file and zero toast cards (P3-A removed success toasts; the queue removed the refusal).
+- **Landmines:** in the e2e workspace a fixture's Vite resolves from this repo's `node_modules`, so Tier-2 frames really go live some seconds into a spec. A portal frame draws its selection ring inside its iframe, a live frame in the editor document: settle first.
+- **Verified:** chunked unit suite (16 chunks, `--parallel=1`, under the lock): 1 failure left, bundle freshness (P0-I). e2e: `structural-writeback` 5/5 with `--repeat-each=2` (failed on EPERM with the old helper); `studio-feel` 5 pass + 1 pre-existing conditional skip.
+- **Found, not fixed:** Tier-2 frames never get a poster (perf-06 Phase B), so `studio-board-perf`'s WS-5.3 poster criterion still fails on the default tier; its virtualization counts now pass. `studio-feel-phase0` still waits for success toasts P3-A removed (⌘D, Alt+drag, ⌘G, save chip). The runtime bundles were built by two different Bun versions and one from a different cwd.
+- **Next:** orchestrator review; P0-I regenerates the bundles on the pinned Bun.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
