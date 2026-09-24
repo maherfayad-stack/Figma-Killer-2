@@ -298,6 +298,7 @@ import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
+import { projectPublicRoot } from './studio/assetSiteUrl'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
@@ -409,9 +410,11 @@ export async function tryServeStudio(
       // interleaved server-side parsing — that would need `loadStudioStyles`'s
       // site-wide class-id registry to resolve per-page, which this change
       // does not attempt.
+      // A design canvas displays a site-root image through the asset route (display only).
+      const publicRoot = projectPublicRoot(dir)
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, publicRoot, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -420,6 +423,7 @@ export async function tryServeStudio(
         projectName,
         pages,
         canvasLayers,
+        publicRoot,
         componentSources,
         styleRules,
         styleRuleSources,

@@ -34,6 +34,7 @@
  * Paths live under /admin/api so the Vite dev proxy forwards them to the :3001
  * server (same-origin in prod behind Caddy).
  */
+import { setStudioPublicRoot } from './studioPublicAssets'
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
 import { type Page, type SiteDocument } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
@@ -229,6 +230,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
       canvasLayers: loadedCanvasLayers,
+      publicRoot,
     } = meta
     // ERR-14 — the automatic stylesheet choices are this project's; a load of
     // a DIFFERENT project starts without them (a resync keeps them).
@@ -239,6 +241,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
     setStudioVendorCss(loadedVendorCss)
     setStudioAuthoredCss(loadedAuthoredCss)
+    setStudioPublicRoot(publicRoot ?? null)
     setStudioLoadWarnings(loadWarnings)
     setStudioTrustTier(trust)
     setStudioProjectKey(projectKey ?? null)

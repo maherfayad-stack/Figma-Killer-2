@@ -13,7 +13,7 @@
  * Component-only file so React Fast Refresh can hot-patch edits without
  * re-running module registration.
  */
-import React from 'react'
+import React, { useSyncExternalStore } from 'react'
 import type { ModuleComponentProps } from '@core/module-engine'
 import {
   blurHashToDataUrl,
@@ -26,6 +26,7 @@ import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import type { ImageStoredProps } from './props'
 import { shouldUseBlurPlaceholder } from './placeholder'
+import { getStudioPublicRoot, studioCanvasImageUrl, subscribeStudioPublicRoot } from '@site/studio/studioPublicAssets'
 
 // Best-guess CSS width for the canvas preview tile. Triggers DPR-aware
 // variant pick: 1× → w320, 2× → w640. The browser still uses srcset to
@@ -39,6 +40,10 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
   // round trip. `null` until the cache is populated — render shows the
   // raw src in the meantime so there's no flash of "No image selected".
   const asset = useCmsMediaAssetByPath(props.src || null)
+  // A Studio project's site-root image (`/hero.png`, its `public/` file) is
+  // DISPLAYED through the asset route — the canvas iframe is on the admin
+  // origin, where that path names nothing. The prop itself is untouched.
+  const publicRoot = useSyncExternalStore(subscribeStudioPublicRoot, getStudioPublicRoot, getStudioPublicRoot)
 
   const responsive = !asset
     ? null
@@ -78,7 +83,7 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
       <img
         {...nodeWrapperProps}
         {...htmlAttrs}
-        src={props.src}
+        src={studioCanvasImageUrl(props.src, publicRoot)}
         alt={alt}
         className={mcClassName}
         loading={props.loading}

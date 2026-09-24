@@ -166,6 +166,13 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * fixture-lines reason `projectKey` gives.
      */
     canvasLayers: Type.Optional(Type.Array(CanvasLayerLoadSchema)),
+    /**
+     * The project-relative directory served at the site root (`public`, or
+     * `apps/web/public`), so a design canvas can DISPLAY `<img src="/x.png">`
+     * through the asset route (`studioPublicAssets.ts`). Optional for the
+     * fixture-lines reason `projectKey` gives.
+     */
+    publicRoot: Type.Optional(Type.String()),
   }),
   Type.Object({
     kind: Type.Literal('page'),

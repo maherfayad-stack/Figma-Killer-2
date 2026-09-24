@@ -131,6 +131,8 @@ export async function* studioLoadStreamLines(
   result: Omit<StudioLoadResult, 'stories'> & {
     dir: string
     projectName: string
+    /** A design canvas displays a site-root image through the asset route — see `studioPublicAssets.ts`. */
+    publicRoot: string
     trust: unknown
     /** L8 Phase A (`perf-06`, STATE.md) — the `/p/<projectKey>` live-origin routing key, `null` below Tier 2. See `studioLoadStreamSchema.ts`'s matching field doc. */
     projectKey: string | null

@@ -75,6 +75,7 @@ import { setStudioAuthoredCss, setStudioVendorCss } from './studioRawCssStores'
 import { setStudioLoadWarnings } from './studioLoadWarningsStore'
 import { setStudioStyleRuleSources } from './styleRuleWriteback'
 import { setStudioTrustTier } from './studioProjectTrust'
+import { setStudioPublicRoot } from './studioPublicAssets'
 
 export interface StudioPagesByIdResult {
   pages: Page[]
@@ -114,7 +115,7 @@ export async function fetchStudioPagesById(
     },
   })
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
-  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, canvasLayers } = meta
+  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, canvasLayers, publicRoot } = meta
 
   // The per-load leaves, in the same order and with the same calls
   // `fsCodemodAdapter.ts`'s `loadSite` makes. Each is its own tiny external
@@ -122,6 +123,7 @@ export async function fetchStudioPagesById(
   // touches the editor store, which is what keeps this module store-agnostic.
   setStudioVendorCss(vendorCss)
   setStudioAuthoredCss(authoredCss)
+  if (publicRoot !== undefined) setStudioPublicRoot(publicRoot)
   setStudioLoadWarnings(warnings)
   setStudioTrustTier(trust)
   // Ordered AFTER the raw CSS for no reason other than matching `loadSite`;

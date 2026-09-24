@@ -59,7 +59,7 @@ export interface AssetSiteUrl {
 export function assetSiteUrlResolver(dir: string): (relPath: string) => AssetSiteUrl | null {
   const appRootRel = relative(resolve(dir), resolveAppRoot(dir)).split(sep).join('/')
   const appPrefix = appRootRel === '' ? '' : `${appRootRel}/`
-  const publicPrefix = `${appPrefix}${PUBLIC_DIR}/`
+  const publicPrefix = `${projectPublicRootFrom(appRootRel)}/`
 
   return (relPath) => {
     if (relPath.startsWith(publicPrefix) && relPath.length > publicPrefix.length) {
@@ -72,6 +72,20 @@ export function assetSiteUrlResolver(dir: string): (relPath: string) => AssetSit
     }
     return null
   }
+}
+
+/**
+ * The project-relative POSIX path of the directory served at the site root —
+ * `public`, or `apps/web/public` in a monorepo. The `/load` response carries
+ * it so a design canvas can DISPLAY a site-root `<img src="/hero.png">` through
+ * the authenticated asset route (`studioPublicAssets.ts`); nothing writes it.
+ */
+export function projectPublicRoot(dir: string): string {
+  return projectPublicRootFrom(relative(resolve(dir), resolveAppRoot(dir)).split(sep).join('/'))
+}
+
+function projectPublicRootFrom(appRootRel: string): string {
+  return appRootRel === '' ? PUBLIC_DIR : `${appRootRel}/${PUBLIC_DIR}`
 }
 
 /**
