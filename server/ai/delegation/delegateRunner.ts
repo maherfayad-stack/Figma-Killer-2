@@ -45,7 +45,7 @@
  * so "Revert turn" undoes them too.
  */
 import { toolRefusal } from '@core/ai'
-import type { AiBrowserBridge, AiProviderId, AiStreamEvent, AiTool, AiToolOutput, ToolContext } from '../runtime/types'
+import type { AiBrowserBridge, AiProviderId, AiStreamEvent, AiTool, AiToolOutput, DelegateRunner, DelegateTask, DelegateTaskResult, ToolContext } from '../runtime/types'
 import type { AiProvider, AiResolvedCredential, AiStreamRequest, ToolContextBase } from '../drivers/types'
 import { resolveModelCapabilities } from '../drivers/modelCapabilities'
 import { routeModel, type ModelRoute, type ModelSource } from '../routing/modelRouting'
@@ -63,32 +63,6 @@ const MAX_REPORT_CHARS = 4_000
 const CHILD_WRITE_TOOLS = new Set(['studio_write_file', 'studio_edit_file', 'studio_edit_files'])
 /** Never offered to a child, whatever else is. */
 const NEVER_FOR_A_CHILD = new Set([DELEGATE_TOOL_NAME, 'studio_propose_plan'])
-
-export interface DelegateTask {
-  /** The page's component file, project-relative, as `resolveAgentFilePath` spelled it. */
-  readonly page: string
-  /** Every path this child may write: the page file and its `.module.css`. */
-  readonly owned: readonly string[]
-  readonly brief: string
-}
-
-export interface DelegateTaskResult {
-  readonly page: string
-  readonly ok: boolean
-  readonly model: string
-  /** The child's own final reply, capped. */
-  readonly report: string
-  readonly filesWritten: string[]
-  readonly toolCalls: number
-  readonly rounds: number
-  /** Present when the child did not finish cleanly. */
-  readonly stopped?: 'error' | 'aborted'
-  readonly error?: string
-}
-
-export interface DelegateRunner {
-  run(tasks: readonly DelegateTask[], ctx: ToolContext): Promise<DelegateTaskResult[]>
-}
 
 export interface DelegateUsage {
   readonly promptTokens: number

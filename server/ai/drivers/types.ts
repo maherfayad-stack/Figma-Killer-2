@@ -16,6 +16,7 @@ import type {
   AiProviderId,
   AiStreamEvent,
   AiTool,
+  DelegateRunner,
 } from '../runtime/types'
 
 // ---------------------------------------------------------------------------
@@ -260,7 +261,7 @@ export interface ToolContextBase {
    * credential, prompt and tools. `undefined` otherwise — for an external MCP
    * client, and inside a subagent, which therefore cannot delegate again.
    */
-  readonly delegate?: import('../delegation/delegateRunner').DelegateRunner
+  readonly delegate?: DelegateRunner
   /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's

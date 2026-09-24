@@ -26,9 +26,9 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { toolRefusal } from '@core/ai'
-import type { AiTool, ToolContext } from '../../../runtime/types'
+import type { AiTool, DelegateTask, ToolContext } from '../../../runtime/types'
 import { AGENT_PATH_MAX_CHARS, resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
-import { DELEGATE_TOOL_NAME, type DelegateTask } from '../../../delegation/delegateRunner'
+import { DELEGATE_TOOL_NAME } from '../../../delegation/delegateRunner'
 import { pathRefusal } from './fileReadTools'
 
 /** Children per call. Each is a full agent loop on the user's key. */

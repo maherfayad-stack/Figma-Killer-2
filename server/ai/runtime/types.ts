@@ -261,7 +261,39 @@ export interface ToolContext {
    * `ToolContextBase.delegate` — where it is set. `undefined` everywhere but
    * an HTTP-driver turn with a project open, and inside a subagent.
    */
-  readonly delegate?: import('../delegation/delegateRunner').DelegateRunner
+  readonly delegate?: DelegateRunner
+}
+
+// ---------------------------------------------------------------------------
+// Subagents (`studio_delegate`, AI-23) — the runner's contract lives here,
+// in the leaf, so `ToolContext` can carry it without importing the runner
+// (`server/ai/delegation/delegateRunner.ts`), which imports this file.
+// ---------------------------------------------------------------------------
+
+export interface DelegateTask {
+  /** The page's component file, project-relative, as `resolveAgentFilePath` spelled it. */
+  readonly page: string
+  /** Every path this child may write: the page file and its `.module.css`. */
+  readonly owned: readonly string[]
+  readonly brief: string
+}
+
+export interface DelegateTaskResult {
+  readonly page: string
+  readonly ok: boolean
+  readonly model: string
+  /** The child's own final reply, capped. */
+  readonly report: string
+  readonly filesWritten: string[]
+  readonly toolCalls: number
+  readonly rounds: number
+  /** Present when the child did not finish cleanly. */
+  readonly stopped?: 'error' | 'aborted'
+  readonly error?: string
+}
+
+export interface DelegateRunner {
+  run(tasks: readonly DelegateTask[], ctx: ToolContext): Promise<DelegateTaskResult[]>
 }
 
 // ---------------------------------------------------------------------------

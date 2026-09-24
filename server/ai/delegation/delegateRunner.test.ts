@@ -10,11 +10,11 @@ import * as path from 'node:path'
 import { projectsRootDir } from '../../handlers/studioProjects'
 import { readAgentTurnSummaries } from '../../handlers/studio/agentTurnLog'
 import type { AiProvider, AiResolvedCredential, AiStreamRequest } from '../drivers/types'
-import type { AiStreamEvent, AiTool, ToolContext } from '../runtime/types'
+import type { AiStreamEvent, AiTool, DelegateRunner, ToolContext } from '../runtime/types'
 import { studioAgentFileWriteTools } from '../mcp/tools/studio/fileWriteTools'
 import { studioDelegateTool } from '../mcp/tools/studio/delegateTool'
 import { studioHttpAgentTools } from '../tools/studio'
-import { childTools, createDelegateRunner, ownedWriteTool, type DelegateRunner, type DelegateUsage } from './delegateRunner'
+import { childTools, createDelegateRunner, ownedWriteTool, type DelegateUsage } from './delegateRunner'
 
 type Result = { ok: boolean; code?: string; [key: string]: unknown }
 
