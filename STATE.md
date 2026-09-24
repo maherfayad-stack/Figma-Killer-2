@@ -63,6 +63,24 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### panel-46 — "Found along the way": six small bugs other bundles recorded
+- **Agent:** panel-designer · **Branch:** `fix/found-along-the-way` off `65f5026d` · **PR:** draft, base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:**
+  1. `StyleWriteLockContext` now has a provider: `StyleSurface` wraps the mounted sections with `partialStyleWriteLock(model.inlineWriteReach)`. `SelectionModel.blockedPropertyCounts` → `inlineWriteReach` (built by `buildInlineStyleWriteReach`; `null` for one layer or a class target). A partial `ClassPropertyRow` underlines its label (dotted `--warning`). Dead `blockedStyleWriteLock` deleted.
+  2. Dark `--text-subtle` `#787878` → `#888888` (floating `--bg-surface` 3.9 → 4.9:1; docked 5.9:1).
+  3. `optimistic.text` deleted from `OptimisticDomOps` and both adapters.
+  4. `renderIconReference` (built-in DS): teaches `?raw` from `design-system/icons/…` for every icon (the load copies it in).
+  5. `CLAUDE.md` → "UI error handling" states the P3-A policy + `error-toast-sites.test.ts`.
+  6. `useLocalComponentCatalog()` returns `null` in flight; `ComponentSection` draws disabled skeleton rows per call-site prop; a settled catalog is read on first render.
+- **Tests (each failed with its fix disabled in place):** `styleSurfacePartialWrite.test.tsx` (new, 4), `measurement.test.ts` (+floating AA), `projectGuide.test.ts` (icon guide), `componentSection.test.tsx` (+2).
+- **Tokens:** changed dark `--text-subtle`; none added.
+- **Landmines:**
+  - Only `ClassPropertyRow` reads the lock. `ScrubInput` fields (W/H, X/Y, rotation angle) don't; `MultiSelectTargetBar` states their counts above the sections.
+  - The runtime half of `optimistic.text` (`messages.ts` schema, `runtime.ts` case, `applyOptimisticText`, the generated bundle) is left for `live`, which owns `runtime.ts`.
+  - Nothing in the app provides a `blocked` lock; the state stays for `classPropertyRowWriteLock.test.tsx`'s row contract.
+- **Human action needed:** dogfood on `test4`, `/admin/site`: (1) shift-select two `.map` rows whose `transform`/`style` comes from row data plus one static element, then hover a row the notice names: its label has a dotted amber underline and the tooltip reads "Writes to 1 of 3 selected layers — 2 are set from an expression in code."; (2) dark theme, floating inspector: captions/units readable; (3) reload, select a component instance with a union prop: grey placeholders, then a dropdown — never a text box first; (4) owner review of the `CLAUDE.md` diff.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
