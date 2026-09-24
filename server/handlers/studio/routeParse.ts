@@ -32,13 +32,23 @@
  * cache entry and, through `resyncStale`, puts the new file into the
  * `Project` before the re-parse.
  *
- * Only relative specifiers: a bare one names a package (`node_modules` is not
- * watched and changes only by install), and an aliased one is decided by the
- * tsconfig, whose change already rebuilds everything (`workspaceProject.ts`).
+ * Only relative MODULE specifiers, and only candidates that are missing now:
+ *
+ *   - a bare specifier names a package (`node_modules` is not watched and
+ *     changes only by install), and an aliased one is decided by the tsconfig,
+ *     whose change already rebuilds everything (`workspaceProject.ts`);
+ *   - an asset specifier (`./theme.css`, `./icon.svg?raw`) never resolves to a
+ *     module at all, and the evaluator already records the asset files it
+ *     reads (`evalReadFiles.ts`). Recording `./corpus.css` here made every
+ *     page that imports a shared stylesheet depend on it, so one CSS edit
+ *     re-parsed a 40-page board — measured, 170 ms → 1.9 s;
+ *   - a candidate that exists but did not resolve is not an ABSENCE, and the
+ *     parse did not read it either.
  */
 import { dirname, join } from 'node:path'
 import type { Project } from 'ts-morph'
 import { getCachedRouteParse, setCachedRouteParse, type CachedRouteParse, type RouteCacheScope } from './pageParseCache'
+import { fileStamp, MISSING } from './loadDigest'
 import type { WorkspaceProjectHandle } from './workspaceProject'
 
 /** How many times one route is re-parsed because the `Project` was behind the disk. */
@@ -82,18 +92,18 @@ export function parseRouteThroughCache(
 
 const SOURCE_EXTENSIONS = ['.tsx', '.ts', '.jsx', '.js']
 
-/** An asset or stylesheet specifier (`./theme.css`, `./icon.svg?raw`) names exactly one file — TypeScript never probes around it. */
+/** An asset or stylesheet specifier (`./theme.css`, `./icon.svg?raw`) — never a module; see this module's doc. */
 const ASSET_EXTENSION_RE = /\.(css|scss|sass|less|json|svg|png|jpe?g|gif|webp|avif|ico|bmp|md|txt|woff2?|ttf|otf|mp4|webm)$/i
 
 function candidatesFor(fromFile: string, specifier: string): string[] {
   const path = specifier.split('?')[0]!
+  if (ASSET_EXTENSION_RE.test(path)) return []
   const base = join(dirname(fromFile), path)
-  if (ASSET_EXTENSION_RE.test(path)) return [base]
   return [
     base,
     ...SOURCE_EXTENSIONS.map((extension) => `${base}${extension}`),
     ...SOURCE_EXTENSIONS.map((extension) => join(base, `index${extension}`)),
-  ]
+  ].filter((candidate) => fileStamp(candidate) === MISSING)
 }
 
 /**

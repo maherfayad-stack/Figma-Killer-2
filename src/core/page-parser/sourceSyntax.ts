@@ -11,13 +11,18 @@
  * So both halves ask here:
  *
  * - **Load** — `sourceFileSyntaxError(sourceFile)` on the page's own file,
- *   through the project's program (which a workspace load has already built
- *   for import resolution; syntactic diagnostics are the parse's own, cached
- *   per file). The load flags the page; it never throws.
+ *   already parsed by the kept `Project`. The load flags the page; it never
+ *   throws.
  * - **Write** — `fileSyntaxError(absPath)` on the file as it sits on disk,
- *   through a one-file compiler program with no lib and no module resolution,
  *   because the write path holds a path, not a `SourceFile`, and must see the
  *   bytes the codemod is about to touch.
+ *
+ * Both ask a ONE-FILE compiler program with no lib and no module resolution
+ * ({@link firstSyntacticDiagnostic}). The load used to ask the project's own
+ * program, assuming the parse had already built it — until the persistent
+ * parse cache (P6-B) made a load that parses nothing the common case, and this
+ * question alone then built the whole program: 1.3 s of a 2.0 s load on a
+ * 40-page board, measured, for an answer that depends on one file's text.
  *
  * Syntactic only, never semantic: an unresolved import or a type error is the
  * user's business and does not make a location ambiguous. A parse error does.
@@ -36,8 +41,7 @@ export interface SourceSyntaxError {
 /** The first syntactic diagnostic of `sourceFile`, or `undefined` when it parses cleanly. Never throws. */
 export function sourceFileSyntaxError(sourceFile: SourceFile): SourceSyntaxError | undefined {
   try {
-    const [first] = sourceFile.getProject().getProgram().compilerObject.getSyntacticDiagnostics(sourceFile.compilerNode)
-    return first ? toSyntaxError(first, sourceFile.compilerNode) : undefined
+    return firstSyntacticDiagnostic(sourceFile.compilerNode)
   } catch (err) {
     console.error('[sourceSyntax]', err)
     return undefined
@@ -65,29 +69,40 @@ export function fileSyntaxError(absPath: string): SourceSyntaxError | undefined 
     // The file's own extension decides the grammar: `.tsx` allows JSX and
     // types, `.ts` types but not JSX, `.jsx`/`.js` JSX but not types.
     const fileName = `syntax-check${path.extname(absPath) || '.tsx'}`
-    const sourceFile = ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, scriptKindOf(fileName))
-    const host: ts.CompilerHost = {
-      getSourceFile: (name) => (name === fileName ? sourceFile : undefined),
-      fileExists: (name) => name === fileName,
-      readFile: () => undefined,
-      writeFile: () => undefined,
-      getDefaultLibFileName: () => 'lib.d.ts',
-      getCurrentDirectory: () => '/',
-      getCanonicalFileName: (name) => name,
-      useCaseSensitiveFileNames: () => true,
-      getNewLine: () => ts.sys.newLine,
-    }
-    const program = ts.createProgram({
-      rootNames: [fileName],
-      options: { noLib: true, noResolve: true, allowJs: true, jsx: ts.JsxEmit.Preserve },
-      host,
-    })
-    const [first] = program.getSyntacticDiagnostics(sourceFile)
-    return first ? toSyntaxError(first, sourceFile) : undefined
+    return firstSyntacticDiagnostic(ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, false, scriptKindOf(fileName)))
   } catch (err) {
     console.error('[sourceSyntax]', err)
     return undefined
   }
+}
+
+/**
+ * The first syntactic diagnostic of an already-parsed `sourceFile`, through a
+ * program that holds only that file: no lib, no module resolution, so nothing
+ * but the file itself is read or bound. Syntactic diagnostics are the parse's
+ * own (plus the JS-only grammar checks a program adds for `.js`/`.jsx`), so
+ * the answer is the same one a whole-project program gives.
+ */
+function firstSyntacticDiagnostic(sourceFile: ts.SourceFile): SourceSyntaxError | undefined {
+  const fileName = sourceFile.fileName
+  const host: ts.CompilerHost = {
+    getSourceFile: (name) => (name === fileName ? sourceFile : undefined),
+    fileExists: (name) => name === fileName,
+    readFile: () => undefined,
+    writeFile: () => undefined,
+    getDefaultLibFileName: () => 'lib.d.ts',
+    getCurrentDirectory: () => '/',
+    getCanonicalFileName: (name) => name,
+    useCaseSensitiveFileNames: () => true,
+    getNewLine: () => ts.sys.newLine,
+  }
+  const program = ts.createProgram({
+    rootNames: [fileName],
+    options: { noLib: true, noResolve: true, allowJs: true, jsx: ts.JsxEmit.Preserve },
+    host,
+  })
+  const [first] = program.getSyntacticDiagnostics(sourceFile)
+  return first ? toSyntaxError(first, sourceFile) : undefined
 }
 
 function scriptKindOf(fileName: string): ts.ScriptKind {
