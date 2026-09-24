@@ -165,7 +165,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The sequence engine follows ids by document order among the elements a step did NOT act on (`actedOnBefore/After`); a new sequenced kind must declare what it acts on there or it will refuse.
   - A ternary-branch delete reports no `removed` bytes, so its ⌘Z is skipped with a notice.
   - Pre-existing fails seen: `structuralOptimisticBroadcast.test.ts` (4, same on `be5733fb`).
-- **Not done (next):** OD-8/WB-15 list rows edit the array literal (design in PR body); non-adjacent group (gather then group, one undo); multi cross-frame drop; OD-7 automatic component-copy fallback (the dialog still offers it); multi-file image drop is P5-B IMG-2.
+- **Round 2:** OD-7 copy fallback done (detach refused → `Card2` copy marked single-instance → replay → one ⌘Z swaps back; no dialog). Retry retargeting fixed by deleting the dialog's call-site guess. Trunk `25681dcb` merged.
+- **Blocking, open:** ⌘Z right after a cross-frame paste does nothing in the browser. The entry and inverse are right (unit test + live dump); the relayed ⌘Z reaches the parent document but no undo runs — a key scope ahead of `global` or a pre-`preventDefault` in that focus state. Next agent: log which `EDITOR_KEY_SCOPE_ORDER` scope claims it.
+- **Not done (next):** OD-8/WB-15 (design in PR body); non-adjacent group; multi cross-frame drop; OD-7 e2e row assertion; multi-file image drop is P5-B IMG-2.
 - **Human action needed:** dogfood on `test4`, `/admin/site`, static tier:
   1. Layers: click one row, Ctrl-click a non-adjacent one, drag onto a third: both land together; `git diff` shows only those lines moved; one ⌘Z restores the file.
   2. ⌥-drag two selected layers: two copies, one save, one ⌘Z removes both.
