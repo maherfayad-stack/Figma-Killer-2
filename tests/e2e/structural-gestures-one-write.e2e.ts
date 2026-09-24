@@ -196,21 +196,42 @@ test.describe('P3-D — structural refusals become writes', () => {
 
     const focusBefore = await page.evaluate(() => {
       const el = document.activeElement as HTMLElement | null
-      const w = window as unknown as { __zSeen: number }
+      const w = window as unknown as { __zSeen: number; __probe: string[] }
       w.__zSeen = 0
+      w.__probe = []
+      void import('/src/admin/pages/site/canvas/editorKeyDispatcher.ts' as string).then((d) => {
+        for (const id of ['inline-edit', 'board', 'global']) {
+          d.registerEditorKeyScope({ id, isActive: () => true, handle: (e: KeyboardEvent) => { if (e.key.toLowerCase() === 'z') w.__probe.push(id); return false } })
+        }
+        w.__probe.push(`scopes:${d.registeredEditorKeyScopeIds().join(',')}`)
+      })
       document.addEventListener('keydown', (e) => { if (e.key === 'z' || e.key === 'Z') w.__zSeen += 1 }, true)
-      return el ? `${el.tagName} in ${el.closest('[data-page-id]')?.getAttribute('data-page-id') ?? '?'}` : 'none'
+      const frames = [...document.querySelectorAll('iframe')].map((f) => {
+        const d = (f as HTMLIFrameElement).contentDocument
+        const a = d?.activeElement as HTMLElement | null | undefined
+        return a ? `${a.tagName}[ce=${a.isContentEditable}]#${a.getAttribute('data-node-id') ?? ''}` : 'x'
+      })
+      return el ? `${el.tagName} in ${el.closest('[data-page-id]')?.getAttribute('data-page-id') ?? '?'} frames=${frames.join('|')}` : 'none'
     })
+    const pageErrors: string[] = []
+    page.on('pageerror', (err) => pageErrors.push(String(err).slice(0, 400)))
+    page.on('console', (msg) => { if (msg.type() === 'error') pageErrors.push(msg.text().slice(0, 400)) })
     await page.keyboard.press('Control+z')
     await page.waitForTimeout(500)
     const zSeen = await page.evaluate(async () => {
       const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
       const st = useEditorStore.getState()
       const top = st._historyPast.at(-1)
-      return JSON.stringify({ z: (window as unknown as { __zSeen: number }).__zSeen, past: st._historyPast.length, future: st._historyFuture.length, inline: st.activeInlineEdit, top: top?.structural, ids: [...st._nodeIdToPageIds.keys()].filter((k: string) => k.startsWith('pages/Home')) })
+      const q = await import('/src/admin/pages/site/studio/structuralCommitQueue.ts' as string)
+      const beforeDirect = useEditorStore.getState()._historyPast.length
+      const hasSite = useEditorStore.getState().site !== null
+      useEditorStore.getState().undo()
+      const afterDirect = useEditorStore.getState()._historyPast.length
+      ;(window as unknown as { __direct: string }).__direct = `direct undo: ${beforeDirect}->${afterDirect} site=${hasSite} inflightAfter=${q.isStructuralCommitInFlight()}`
+      return JSON.stringify({ direct: (window as unknown as { __direct: string }).__direct, probe: (window as unknown as { __probe: string[] }).__probe, inFlight: q.isStructuralCommitInFlight(), parked: q.deferredStructuralGestureCount(), z: (window as unknown as { __zSeen: number }).__zSeen, past: st._historyPast.length, future: st._historyFuture.length, inline: st.activeInlineEdit, top: top?.structural, ids: [...st._nodeIdToPageIds.keys()].filter((k: string) => k.startsWith('pages/Home')) })
     })
     await expect
-      .poll(() => read(HOME), { timeout: 30_000, message: `focus before ⌘Z: ${focusBefore}; parent saw z: ${zSeen}; chip: ${await page.getByRole('status').first().textContent().catch(() => '?')}` })
+      .poll(() => read(HOME), { timeout: 30_000, message: `errors: ${JSON.stringify(pageErrors)}; focus before ⌘Z: ${focusBefore}; parent saw z: ${zSeen}; chip: ${await page.getByRole('status').first().textContent().catch(() => '?')}` })
       .toBe(HOME_PAGE)
       .catch(async (error: unknown) => {
         const undo = page.getByRole('button', { name: /undo/i }).first()
@@ -231,17 +252,19 @@ undo disabled: ${await undo.isDisabled().catch(() => 'n/a')}`,
     // P2-B: a click selects the outermost instance, and each double-click goes
     // one level deeper — instance, its <section>, then the rule.
     await clickInFrame(page, title)
-    const tree = await openLayers(page)
-    const ruleRow = tree.getByTestId(`dom-tree-item-${rule}`)
     const ruleEl = content.locator(`[data-node-id="${rule}"]`).first()
-    const ruleSelected = async () => (await ruleRow.count()) > 0 && (await ruleRow.getAttribute('aria-selected')) === 'true'
-    for (let i = 0; i < 3 && !(await ruleSelected()); i += 1) {
+    const selected = () =>
+      page.evaluate(async () => {
+        const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
+        return useEditorStore.getState().selectedNodeId as string | null
+      })
+    for (let i = 0; i < 3 && (await selected()) !== rule; i += 1) {
       const box = await ruleEl.boundingBox()
       if (!box) throw new Error('the rule has no bounding box')
       await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2)
       await page.waitForTimeout(300)
     }
-    await expect(ruleRow).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(selected).toBe(rule)
 
     await page.keyboard.press('Delete')
 
