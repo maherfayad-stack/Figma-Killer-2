@@ -226,14 +226,14 @@ undo disabled: ${await undo.isDisabled().catch(() => 'n/a')}`,
     const { canvasRoot, content } = await openHome(page)
     const firstCard = sourceNodeId(HOME_PAGE, HOME, 'Card', 1)
     const rule = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'hr', 1)}`
-    const title = content.getByText('One', { exact: true }).first()
+    const title = content.locator(`[data-node-id="${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'h3', 1)}"]`).first()
     await panIntoView(page, canvasRoot, title, 80)
     // P2-B: a click selects the outermost instance, and each double-click goes
     // one level deeper — instance, its <section>, then the rule.
     await clickInFrame(page, title)
     const tree = await openLayers(page)
     const ruleRow = tree.getByTestId(`dom-tree-item-${rule}`)
-    const ruleEl = content.locator('hr.rule').first()
+    const ruleEl = content.locator(`[data-node-id="${rule}"]`).first()
     const ruleSelected = async () => (await ruleRow.count()) > 0 && (await ruleRow.getAttribute('aria-selected')) === 'true'
     for (let i = 0; i < 3 && !(await ruleSelected()); i += 1) {
       const box = await ruleEl.boundingBox()
