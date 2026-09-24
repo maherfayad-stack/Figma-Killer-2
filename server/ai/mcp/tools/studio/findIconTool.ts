@@ -107,8 +107,13 @@ const SYNONYMS: ReadonlyMap<string, readonly string[]> = (() => {
   return new Map([...map].map(([word, set]) => [word, [...set]]))
 })()
 
+/** Lower-case words, split on separators AND camelCase boundaries: `arrowLeft-1` is `arrow`, `left`, `1`. */
 function words(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter((word) => word.length > 0)
+  return text
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((word) => word.length > 0)
 }
 
 /** Levenshtein distance, bounded: returns `max + 1` as soon as the answer exceeds `max`. */
@@ -242,7 +247,7 @@ export function findIcons(
     if (existsSync(join(dir, ...projectPath.split('/')))) {
       return { ...base, import: `import ${binding} from '${relativeSpecifier(from, projectPath)}?raw'` }
     }
-    const saveAs = `${LANDED_ICON_DIR}/${icon.name.toLowerCase().replace(/[^a-z0-9_-]+/g, '-')}.svg`
+    const saveAs = `${LANDED_ICON_DIR}/${words(icon.name).join('-') || 'icon'}.svg`
     const bytes = Buffer.byteLength(icon.markup, 'utf8')
     if (bytes > markupBudget) {
       truncatedMarkup = true

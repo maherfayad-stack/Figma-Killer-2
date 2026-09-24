@@ -108,11 +108,17 @@ const WRITE_GATED_BEFORE_THE_SPLIT: Readonly<Record<string, readonly CoreCapabil
  *     write gate. Both on both agent paths and in the registry, both
  *     `ai.tools.write` + `studio.write`, both `sideEffects: 'write'`.
  *     `studio_component_snippet` (AI-14) is a read and is NOT here.
+ *   - P4-E (AI-13): `studio_find_image` searches licensed stock and LANDS the
+ *     photos (and their credit line) in the project, through the agent write
+ *     gate — `ai.tools.write` + `studio.write`, `sideEffects: 'write'`, on
+ *     both agent paths and in the registry. Its siblings `studio_find_icon`,
+ *     `studio_list_assets` and `studio_list_fonts` are reads and are NOT here.
  */
 const WRITE_GATED_ADDED_SINCE: Readonly<Record<string, readonly CoreCapability[]>> = {
   studio_arrange_frames: ['studio.write'],
   studio_edit_file: ['studio.write'],
   studio_edit_files: ['studio.write'],
+  studio_find_image: ['studio.write'],
   studio_set_tokens: ['studio.write'],
   studio_write_file: ['studio.write'],
 }

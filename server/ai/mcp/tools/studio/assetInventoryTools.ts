@@ -169,7 +169,8 @@ export function searchGoogleFonts(query: string, limit: number): GoogleFontFamil
       else if (name.startsWith(needle)) score = 60
       else if (queryWords.every((word) => nameWords.some((candidate) => candidate.startsWith(word)))) score = 40
       else if (name.includes(needle)) score = 30
-      else if (family.category.toLowerCase().replace(/\s+/g, '') === needle.replace(/s$/, '') || family.category.toLowerCase().includes(query.toLowerCase().trim())) score = 10
+      else if (normalizeFamily(family.category) === needle || normalizeFamily(family.category) === needle.replace(/s$/, '')) score = 12
+      else if (family.category.toLowerCase().includes(query.toLowerCase().trim())) score = 8
       return { family, score }
     })
     .filter((entry) => entry.score > 0)

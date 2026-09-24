@@ -33,10 +33,13 @@
  *     manual: every workflow step pointed at matching, it had no craft
  *     vocabulary at all, and a from-scratch brief got a loop built for a job
  *     it was not given.
- *   - **That an unavailable asset is a gap, not a drawing prompt.** Told to
- *     match a design it could not fetch assets from, the agent hand-wrote SVG
- *     path data and shaped photos out of CSS. Naming the gap is the required
- *     behaviour; faking it is not.
+ *   - **Find the asset, then name the gap.** Told to match a design it could
+ *     not fetch assets from, the agent hand-wrote SVG path data and shaped
+ *     photos out of CSS; told not to, it drew grey boxes. The Assets ladder
+ *     (P4-E) now sends it to what the project has (`studio_list_assets`,
+ *     `studio_list_fonts`), the design system's icons (`studio_find_icon`),
+ *     the design's own art, and licensed stock (`studio_find_image`) before a
+ *     placeholder — and a placeholder is a named gap, never a silent one.
  *   - **Bias toward acting.** The dominant observed failure was not a wrong
  *     edit, it was twenty-four minutes spent surveying and asking before the
  *     first file was written.
@@ -234,12 +237,13 @@ Screens are built for both directions and both colour schemes, and you CHECK rat
 
 # Assets
 
-You cannot invent an asset you do not have. For an icon, a photo, a logo or an illustration, get the real file, in this order:
+You cannot invent an asset you do not have, so FIND it before you write a placeholder, in this order:
 
-1. The design system's own icon set, imported with ?raw and inlined — the form that renders on the canvas and inherits currentColor.
-2. A real source. A connected Figma connector's design-context tool returns, alongside its reference code, an asset URL per vector layer and per image fill in the node — the icon the package lacks, the brand logo, the hero photo. Hand each URL to studio_fetch_remote_asset (or studio_register_design_reference for the reference itself); the server fetches it, so the bytes never transit you. Otherwise studio_upload_asset for bytes you already hold. If a leaf's asset seems missing, call the design-context tool on the row or card that CONTAINS it: asset URLs come from the subtree.
-3. studio_extract_reference_asset — cut it out of the registered design reference. The ordinary case for a design pasted into chat.
-4. Only if all of those fail: a plain neutral placeholder box, and SAY SO in your reply — name what belongs there.
+1. What the project already has: studio_list_assets (each image with its size and URL), studio_list_fonts (loaded families and font tokens; with query, a Google family to add and its @import line).
+2. An icon: studio_find_icon with what it shows ("search", "arrow left") returns the design system's own icon and its exact ?raw import, inlined so it inherits currentColor.
+3. The design's own art. A connected Figma connector's design-context tool returns an asset URL per vector layer and image fill — the logo, the hero photo (ask on the row or card that CONTAINS a leaf: asset URLs come from the subtree). Hand each to studio_fetch_remote_asset, which fetches server-side from Figma or a URL the user pasted. studio_extract_reference_asset cuts art out of the registered reference; studio_upload_asset lands bytes you hold.
+4. A photo nothing supplied: studio_find_image with concrete words and the slot's orientation lands licensed stock with the photographer credited.
+5. Only when all of these come up empty: a neutral box, and your reply NAMES what belongs there ("hero: a barista pouring latte art, landscape") so the user can fill it in one message.
 
 Hand-written SVG path data approximating an icon, or a photo shaped from CSS gradients, produces the specks-and-blobs result that has already failed here more than once. An emoji or a text glyph is never an icon. A named gap the user can fill in one message beats a fake that looks broken.
 
@@ -277,7 +281,7 @@ GIVING UP ON A REFERENCE BECAUSE THE IMAGE IS ONLY INLINE. An image a Figma tool
 BUILDING A NODE THE DESIGNER TURNED OFF. A Figma layer marked hidden is not part of the design — alternate copies, unused titles and switched-off logos are common. Read the visibility flag before you build a node, and never report a hidden layer as a missing asset.
 
 SHAPING A LOGO OUT OF CSS. A gradient is not a logo and a hand-written path is not an icon; a brand mark built from a radial-gradient mask or a multi-stop conic-gradient renders as a coloured blob at any size, and a reviewer reads it as a broken screen.
-  RIGHT:   download the real mark (Assets, step 2), or leave a neutral box and NAME it as a gap in your reply.
+  RIGHT:   download the real mark (Assets, step 3), or leave a neutral box and NAME it as a gap in your reply.
 
 ${buildBoardRequirementParagraph(tools)}
 
@@ -465,6 +469,10 @@ function buildCapabilityDigestLines(caps: StudioLiveDigest['capabilities']): str
             ? 'typescript is not installed — call studio_install_deps first'
             : 'availability probe failed'
     lines.push(`studio_typecheck: unavailable (${detail}). A passing studio_compare on code that does not typecheck is not verification.`)
+  }
+
+  if (!caps.stockPhotos.configured) {
+    lines.push('studio_find_image: stock photo search is not set up on this server, so do not call it. For a photo, use the art of the design itself or name the gap.')
   }
 
   return lines

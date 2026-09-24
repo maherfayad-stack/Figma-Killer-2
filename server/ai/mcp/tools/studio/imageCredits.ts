@@ -57,9 +57,17 @@ export interface ImageCredit {
   readonly licenceUrl: string
 }
 
-/** A name from an API, made inert as markdown: no link/emphasis/code syntax, no HTML, one line, capped. */
+/**
+ * A name from an API, made inert as markdown: no link/emphasis/code syntax, no
+ * HTML, no bare URL (a git host autolinks one), one line, capped.
+ */
 function plainText(raw: string): string {
-  const cleaned = raw.replace(/[\r\n\t]+/g, ' ').replace(/[[\]()`*_<>|\\#]/g, '').replace(/\s{2,}/g, ' ').trim()
+  const cleaned = raw
+    .replace(/[\r\n\t]+/g, ' ')
+    .replace(/[[\]()`*_<>|\\#]/g, ' ')
+    .replace(/\b(?:[a-z][a-z0-9+.-]*:\/\/|www\.)\S*/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .trim()
   return (cleaned.length > 0 ? cleaned : 'Unknown').slice(0, 120)
 }
 

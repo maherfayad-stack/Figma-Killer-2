@@ -174,7 +174,7 @@ export async function findImageForAgent(input: FindImageInput, ctx: ToolContext,
     const asset = await landAgentAsset(dir, ctx, input.targetDir, fetched.bytes, fileHint(input.query, provider.id, photo.id))
     // A refused target folder refuses every photo the same way: stop here.
     if (isRefusal(asset)) return asset
-    const credit = `Photo by ${photo.photographer} on ${provider.label}`
+    const credit = `Photo by ${photo.photographer.slice(0, 120)} on ${provider.label}`
     landed.push({ ...asset, photoId: photo.id, alt: altText(photo), credit })
     credits.push({
       relPath: asset.relPath,
