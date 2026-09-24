@@ -74,6 +74,29 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** `actionlint` 1.7.12 clean on both workflows (they cannot run locally). Build and lint clean. The new gate fails 3/3 with the old pins. Suite in 11 locked chunks (bun 1.3.6): 15 fail, all baseline (freshness, optimistic broadcast ×4, bridge measurement ×5, render_reference ×4, liveOrigin WS). The freshness gate passes on 1.3.13 and 1.3.11. Shard 1/10 on 1.3.13 `--parallel=4`: 141 files, 5.2 GB peak, 127 s.
 - **Next:** orchestrator review.
 
+### sec-24 — security hardening follow-ups (mcp-28 / mcp-30 open items, P1-E2 found-not-fixed)
+- **Agent:** security-guard · **Branch:** `fix/security-hardening-followups` off `25681dcb` · **PR:** PR_PLACEHOLDER (draft, base `feat/canvas-excellence`; the item | threat | fix | test table and the adversarial inputs are in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; needs a security-guard re-review)
+- **Goal:** close the follow-ups that reviews #233 and #248 deferred, each with a test that failed with its fix disabled in place.
+- **Done:**
+  - `ssrfGuard.ts` parses addresses to bytes: NAT64, SIIT, IPv4-compatible, 6to4, Teredo, doc/benchmark ranges, multicast, broadcast; fails closed. The plugin gated fetch now PINS the connection to the validated address (it re-resolved before: DNS rebinding).
+  - CSP: `appendContentSecurityPolicy` adds each policy separately (a route's `frame-ancestors` can no longer win).
+  - `studio_upload_asset` is a server tool on `landAgentAsset` (agent gate, lock, turn log); browser half deleted.
+  - Scaffolds never write through a link: `isUnlinkedWorkspacePath` (Studio-owned files: shell, guide, design-system, `.studio`), lstat + `wx` for page/i18n/seed. The shell used to overwrite a linked `vite.config.js` target on first open.
+  - One read decoder `resolveWorkspaceReadPath` (asset route + edit targets), case-folded; git paths, archive entries, workspace walk fold case.
+  - R1 residuals in `hostConfigImports.ts` + a new CONTENT half of the one gate (`agentContentRefusal`: adding a Tailwind `@plugin`/`@config` needs the user).
+  - `devServer.ts` runs the project's own Vite bin (`viteLaunch.ts`); `predev`/`postdev` never run (measured on `__vite-live-fixture`: they did under `bun run dev` and `npm run dev`).
+  - Guide generator: prune only where Studio's manifest exists and the hash matches; nothing through a link.
+  - `writeFileAtomic` for agent overwrites (temp + fsync + rename; EPERM retry then in place; mode kept).
+- **Decisions:** exec Vite directly rather than `--ignore-scripts` (pnpm/yarn/bun differ; no shell at all now); Node runtime kept (fidelity), Bun only without Node. TEST-NET ranges are blocked, so tests that used 203.0.113.x as "public" now use 93.184.216.34.
+- **Landmines:**
+  - P4-F (#251) is in the trunk; the merge (`a5855b96`) kept both sides: the checkpoint pre-image is taken BEFORE `writeFileAtomic`, and the hook runs the content refusal beside `agentWriteRefusal` before its pre-image capture. Keep that order.
+  - Dev-server test fixtures need an installed stub Vite: `writeViteProject` (`viteLaunch.testHelpers.ts`).
+  - `checkContent` now takes `before` (the file's current text, `null` for new).
+- **Found, not fixed:** git clone keeps a repo's own `.studio/` (possibly a link) — every `.studio` store writes through it; Vite under Node binds `::1` for `localhost` while `devServerOutput` pins `127.0.0.1` (pre-existing; scaffolded configs pin the host). Details in the PR.
+- **Verification:** build + lint clean (before and after merging the trunk `c5dac965`+, which brought P4-F). Full suite in sequential locked chunks; every failure is pre-existing: studio-runtime bundle freshness; `module-size-budgets` (trunk's `agentCheckpoints.ts`, 789 lines, not touched here); 4 `studio_render_reference` dev-server timeouts (reproduced with this PR's spawn change reverted in place); bridge measurement (`useBridgeComputedValues` x4, `FillSection`); optimistic broadcast x4; liveOrigin WebSocket. Flaky under load, pass alone: `assetLanding` concurrent-process landing, `publicSdkExports`. No e2e: server-only change; the live dev-server path was run for real on `__vite-live-fixture` instead.
+- **Next:** security-guard re-review.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
