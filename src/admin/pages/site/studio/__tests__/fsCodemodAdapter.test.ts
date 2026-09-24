@@ -424,7 +424,12 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
         // names it (WB-12: every edit that does not write is named).
         '/admin/api/studio/save': {
           ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
-          refusals: [{ nodeId: 'pages/Home.tsx:3:1', kind: 'prop', prop: 'text', reason: 'write-failed', message: 'Studio could not write this change.' }],
+          // Named under both shapes the edit can take: `text` when the text
+          // module is registered (its inline-text prop), `prop` when not.
+          refusals: [
+            { nodeId: 'pages/Home.tsx:3:1', kind: 'text', reason: 'write-failed', message: 'Studio could not write this change.' },
+            { nodeId: 'pages/Home.tsx:3:1', kind: 'prop', prop: 'text', reason: 'write-failed', message: 'Studio could not write this change.' },
+          ],
         },
       })
       await loadThenResetCalls()
@@ -676,14 +681,14 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     const BINDING_REFUSAL = {
       nodeId: HEADLINE,
       kind: 'prop',
-      prop: 'text',
+      prop: 'title',
       reason: 'binding-overwrite',
-      message: '"text" is set from code here ({copy.title}), not a literal, so writing a value would replace that code.',
+      message: '"title" is set from code here ({copy.title}), not a literal, so writing a value would replace that code.',
     }
 
     it('WB-13 — a refused edit is ONE warning naming its reason, with "Open in code" — never a red card', async () => {
       stubFetch({
-        '/admin/api/studio/load': loadedHeadline({ text: 'Hi' }),
+        '/admin/api/studio/load': loadedHeadline({ title: 'Hi' }),
         '/admin/api/studio/save': {
           ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
           refusals: [BINDING_REFUSAL],
@@ -691,7 +696,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       })
       await loadThenResetCalls()
 
-      await fsCodemodAdapter.saveSite(editedHeadline({ text: 'Bye' }))
+      await fsCodemodAdapter.saveSite(editedHeadline({ title: 'Bye' }))
 
       const toasts = collectToasts()
       expect(toasts).toHaveLength(1)
@@ -703,39 +708,39 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
     it('WB-35 — a partly refused batch commits the edit that wrote; the next save re-sends only the refused one', async () => {
       stubFetch({
-        '/admin/api/studio/load': loadedHeadline({ text: 'Hi', title: 'old' }),
+        '/admin/api/studio/load': loadedHeadline({ alt: 'a', title: 'old' }),
         '/admin/api/studio/save': {
           ok: true, written: 1, skipped: 1, shifted: false, sharedComponents: false,
           refusals: [BINDING_REFUSAL],
         },
       })
       await loadThenResetCalls()
-      const site = editedHeadline({ text: 'Bye', title: 'new' })
+      const site = editedHeadline({ alt: 'b', title: 'new' })
 
       await fsCodemodAdapter.saveSite(site)
       const first = calls[0]!.body as { edits: Array<{ prop?: string }> }
-      expect(first.edits.map((edit) => edit.prop).sort()).toEqual(['text', 'title'])
+      expect(first.edits.map((edit) => edit.prop).sort()).toEqual(['alt', 'title'])
 
       calls = []
       await fsCodemodAdapter.saveSite(site)
 
-      // `title` landed, so its baseline advanced and it is not sent again.
-      // The refused `text` did NOT land, so its baseline held — it is still
+      // `alt` landed, so its baseline advanced and it is not sent again.
+      // The refused `title` did NOT land, so its baseline held — it is still
       // the user's pending change, and a later save tries it again. (Before
       // WB-35 the batch was all-or-nothing on an aggregate count, and a named
       // refusal's value was adopted as if it had been written.)
       expect(calls).toHaveLength(1)
       const second = calls[0]!.body as { edits: Array<{ prop?: string }> }
-      expect(second.edits.map((edit) => edit.prop)).toEqual(['text'])
+      expect(second.edits.map((edit) => edit.prop)).toEqual(['title'])
     })
 
     it('a batch the server fully wrote advances every baseline — nothing is re-sent', async () => {
       stubFetch({
-        '/admin/api/studio/load': loadedHeadline({ text: 'Hi', title: 'old' }),
+        '/admin/api/studio/load': loadedHeadline({ alt: 'a', title: 'old' }),
         '/admin/api/studio/save': { ok: true, written: 2, skipped: 0, shifted: false, sharedComponents: false, refusals: [] },
       })
       await loadThenResetCalls()
-      const site = editedHeadline({ text: 'Bye', title: 'new' })
+      const site = editedHeadline({ alt: 'b', title: 'new' })
 
       await fsCodemodAdapter.saveSite(site)
       calls = []

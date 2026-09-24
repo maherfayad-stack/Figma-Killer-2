@@ -76,9 +76,9 @@ export function findJsxElementAtLocation(
   // outcome, not a bug: node ids carry a `line:col` the board read earlier, and
   // an edit made after the file shrank names a position that no longer exists.
   // `ts.getPositionOfLineAndCharacter` asserts rather than returning, and a
-  // codemod that throws there reaches the user as an unexplained skip instead
-  // of the "no element is written there any more — reload" refusal every caller
-  // already has. Bounds-checked here so all of them get the honest answer.
+  // codemod that throws there would reach the user as an unnamed failure instead
+  // of the `element-moved` refusal the board recovers from by itself.
+  // Bounds-checked here so all of them get the honest answer.
   const lineStarts = sourceFile.compilerNode.getLineStarts()
   if (line < 1 || line > lineStarts.length || col < 1) return undefined
   const lineStart = lineStarts[line - 1]!

@@ -177,11 +177,9 @@ describe('structural commits queue instead of refusing (store-14)', () => {
     }
     expect(deferredStructuralGestureCount()).toBe(0)
 
-    // The refusal is gone, and Z1 collapses the five successes onto ONE card.
-    expect(toasts.some((t) => t.title === 'Still writing your last change')).toBe(false)
-    const duplicated = toasts.filter((t) => t.kind === 'success' && t.title === 'Duplicated')
-    expect(duplicated).toHaveLength(1)
-    expect(duplicated[0]!.repeatCount).toBe(5)
+    // The refusal is gone, and so is the success card (P3-A): the copies on
+    // the board are the answer to ⌘D.
+    expect(toasts).toEqual([])
   })
 
   it('ERR-25 — a burst past the ceiling (a held key) is dropped without a toast', async () => {

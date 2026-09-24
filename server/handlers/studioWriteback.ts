@@ -395,8 +395,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutco
 }
 
 /**
- * `StudioEditRefusal`, `isRefusingEditKind`, `StudioEditUnexplainedSkip`, and
- * `StudioEditBatchResult` (this function's own return shape, below) now live
+ * `StudioEditRefusal` and `StudioEditBatchResult` (this function's own return
+ * shape, below) live
  * in `studioEditSchemas.ts` alongside every other RESPONSE type this module
  * builds and returns — see that module's own doc for why.
  *
