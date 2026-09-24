@@ -597,10 +597,10 @@ those surfaces structurally cannot fail on the thing it is named after (WS-8.2
 shipped a real frame-height bug behind a green one). Assert on *computed*
 layout — measured rects, `scrollHeight`, computed styles after layout.
 
-The budget slice of that suite — `studio-board-perf`,
+The budget slice of that suite — `studio-board-perf`, `canvas-feel-budgets`,
 `inspector-panel-measurement`, `inspector-height`, `studio-feel` — also runs
 in CI as the `e2e-budgets` job (`.github/workflows/ci.yml`). Locally it is
-cheaper to run just those four by path than the whole suite.
+cheaper to run just those five by path than the whole suite.
 
 `bun run test:e2e` **starts its own stack**; do not hand-start one first. It
 resets a disposable database, copies `studio-workspace/` to `.tmp/e2e-workspace`

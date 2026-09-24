@@ -89,10 +89,20 @@ Icons: `import { FooIcon } from 'pixel-art-icons/icons/foo'` then `bun run icons
 ## 5. Errors
 
 - Async UI handlers wrap in `try/catch`; log `console.error('[<Component>] <desc>:', err)`.
-- **User-triggered failures go to the toast bus:**
-  `pushToast({ kind: 'error', title, body: getErrorMessage(err, '…') })`.
-  The only exception is field-local validation inside a form.
+- **A red toast is for an operation the user asked for that genuinely failed**
+  (after any retry): `pushToast({ kind: 'error', title, body: getErrorMessage(err, '…') })`.
+  Everything else is quieter: a request with no answer retries first
+  (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless);
+  a refusal is a `warning` with its remedy; a read nobody clicked for fails in
+  place; a no-op is silent or `info`; a canvas gesture's success is the canvas
+  changing. Field-local validation stays inline. The policy is in
+  [`error-boundaries.md`](../reference/error-boundaries.md) → "Async error inside a component".
+  **Gate:** `error-toast-sites.test.ts` (a reviewed per-file count of `kind: 'error'` sites).
 - Server failures return `{ error: string }`; logs use `console.error('[<module>]', err)`.
+- **An unexpected server failure never sends its exception text.** Answer it with
+  `server/http.ts`'s `internalServerError(label, err)`: the error is logged, the client
+  gets one plain sentence. A typed, user-facing failure keeps its own 4xx envelope.
+  **Gate:** `server-500-hides-exception-text.test.ts`.
 - **Never** `catch (err) {}`. Name it `catch (_err)` + one-line comment if truly safe.
 - **Never** `console.log` in production code.
 - Re-throw with cause: `new Error(msg, { cause: err })`.
