@@ -38,7 +38,7 @@ export interface AgentPermissionRequest {
    * `studio_propose_plan`. The steps render as a checklist the user can trim
    * before approving.
    */
-  readonly plan?: readonly string[]
+  readonly plan?: string[]
 }
 
 /** The HTTP agent's plan-mode tool (`server/ai/mcp/tools/studio/proposePlanTool.ts`) — relayed to the browser like a permission prompt. */
