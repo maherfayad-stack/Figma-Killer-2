@@ -9,6 +9,25 @@ import type { AiStreamRequest } from '../types'
 import { executeAiTool } from './execTool'
 import { duplicateCallOutput, priorWriteOutcome, recordWriteOutcome, type TurnWriteLedger } from './toolLoopBounds'
 import type { TurnToolCall } from './toolLoopTypes'
+import { toolRefusal } from '@core/ai'
+import { PROPOSE_PLAN_TOOL_NAME } from '../../mcp/tools/studio/proposePlanTool'
+
+/**
+ * Plan mode on an HTTP turn (AI-22): `required` when the turn was offered
+ * `studio_propose_plan`, `approved` once the user approved a plan in it.
+ * Until then every `sideEffects: 'write'` call is refused, so the composer's
+ * Plan mode is a rule the loop keeps, not a sentence the model may skip.
+ */
+export interface TurnPlanGate {
+  readonly required: boolean
+  approved: boolean
+}
+
+function planNotApproved(toolName: string): AiToolOutput {
+  return toolRefusal('plan-not-approved', `${toolName} was not run: this turn is in plan mode, and no plan has been approved yet.`, {
+    remedy: `Call ${PROPOSE_PLAN_TOOL_NAME} with your steps and wait for the user's approval, then make the changes.`,
+  }) as AiToolOutput
+}
 
 // ---------------------------------------------------------------------------
 // Tool dispatch — concurrent observers, serialised writes
@@ -81,9 +100,11 @@ export async function executeOneCall(
   toolsByName: ReadonlyMap<string, AiTool>,
   req: AiStreamRequest,
   writeLedger: TurnWriteLedger,
+  planGate: TurnPlanGate,
 ): Promise<ExecutedCall> {
   const tool = toolsByName.get(call.name)
   const ledgered = tool?.sideEffects === 'write'
+  if (ledgered && planGate.required && !planGate.approved) return { call, output: planNotApproved(call.name), error: '' }
   if (ledgered) {
     const prior = priorWriteOutcome(writeLedger, call.name, call.input)
     if (prior !== undefined) return { call, output: duplicateCallOutput(call.name, prior), error: '' }
@@ -97,6 +118,9 @@ export async function executeOneCall(
     // re-running it is exactly the loop this bound exists to stop. The ledger
     // decides whether the outcome also advances the epoch.
     if (ledgered) recordWriteOutcome(writeLedger, call.name, call.input, output)
+    if (call.name === PROPOSE_PLAN_TOOL_NAME && output.ok && (output.data as { approved?: unknown } | undefined)?.approved === true) {
+      planGate.approved = true
+    }
     return { call, output, error: '' }
   } catch (err) {
     return { call, output: null, error: err instanceof Error ? err.message : String(err) }

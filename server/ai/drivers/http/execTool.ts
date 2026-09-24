@@ -117,7 +117,7 @@ export async function executeAiTool(
       return { ok: false, error: `Tool ${aiTool.name} declares execution='${aiTool.execution}' but has no handler.` }
     }
     try {
-      const ctx: ToolContext = { ...toolContextBase, signal }
+      const ctx: ToolContext = { ...toolContextBase, signal, bridge }
       const result = await aiTool.handler(validated, ctx)
       return record(normaliseToolOutput(result))
     } catch (err) {
