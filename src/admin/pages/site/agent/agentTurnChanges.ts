@@ -10,41 +10,18 @@
  * refused by name, never overwritten, and that refusal is returned as data for
  * the card to show — it is an honest answer, not a failure to toast.
  */
-import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { ApiError, apiRequest, isAbortError } from '@core/http'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { agentProjectDir } from './agentProjectDir'
 import type { AgentSlice, AgentSliceGet, EditorStoreSet } from './agentSliceTypes'
+import {
+  DiffResponseSchema,
+  ListResponseSchema,
+  RevertResponseSchema,
+  type AgentTurnFileDiff,
+} from './agentTurnChangeTypes'
 
 const BASE = '/admin/api/ai/agent-checkpoints'
-
-const TurnFileSchema = Type.Object({
-  path: Type.String(),
-  change: Type.Union([Type.Literal('created'), Type.Literal('modified')]),
-  state: Type.Union([Type.Literal('current'), Type.Literal('changed-since'), Type.Literal('reverted')]),
-  revertable: Type.Boolean(),
-  reason: Type.Union([Type.String(), Type.Null()]),
-  added: Type.Union([Type.Number(), Type.Null()]),
-  removed: Type.Union([Type.Number(), Type.Null()]),
-})
-
-const TurnChangesSchema = Type.Object({
-  turnId: Type.String(),
-  startedAtMs: Type.Number(),
-  files: Type.Array(TurnFileSchema),
-})
-
-const ListResponseSchema = Type.Object({ turns: Type.Array(TurnChangesSchema) })
-const DiffResponseSchema = Type.Object({ path: Type.String(), diff: Type.String(), added: Type.Number(), removed: Type.Number() })
-const RevertResponseSchema = Type.Object({ reverted: Type.Array(Type.String()) })
-
-export type AgentTurnChanges = Static<typeof TurnChangesSchema>
-export type AgentTurnFileChange = Static<typeof TurnFileSchema>
-export type AgentTurnFileDiff = Static<typeof DiffResponseSchema>
-
-export type AgentRevertResult =
-  | { readonly ok: true; readonly reverted: string[] }
-  | { readonly ok: false; readonly message: string }
 
 export async function fetchAgentTurnFileDiff(turnId: string, path: string, signal?: AbortSignal): Promise<AgentTurnFileDiff> {
   const dir = agentProjectDir()

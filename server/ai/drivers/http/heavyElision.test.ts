@@ -26,7 +26,7 @@ describe('projectHeavyElision', () => {
     expect(elided(2)).toBe(false)
   })
 
-  it('reads the scope from pages (order-free), else pageId / page / path / nodeId', () => {
+  it('reads the scope off the pages list (order-free), else pageId / page / path / nodeId', () => {
     expect(heavyResultScope({ pages: ['B', 'A'] })).toBe(heavyResultScope({ pages: ['A', 'B'] }))
     expect(heavyResultScope({ path: 'pages/Home.tsx' })).toBe('pages/Home.tsx')
     expect(heavyResultScope({})).toBe('')

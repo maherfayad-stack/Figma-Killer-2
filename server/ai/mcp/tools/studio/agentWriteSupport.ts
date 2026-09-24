@@ -125,7 +125,17 @@ export function checkpointBeforeWrite(
   target: AgentFileTarget,
   options: CaptureOptions = {},
 ): void {
-  captureAgentPreImage(dir, studioAgentUserKey(ctx.userId), conversationCheckpointKey(ctx.conversationId), target.abs, options)
+  const conversationKey = turnCheckpointKey(ctx)
+  if (conversationKey !== null) captureAgentPreImage(dir, studioAgentUserKey(ctx.userId), conversationKey, target.abs, options)
+}
+
+/**
+ * The checkpoint key of the conversation this call belongs to, or `null` for a
+ * call with no conversation behind it (an external MCP client, a direct
+ * handler call) — which takes no checkpoint, and must still write.
+ */
+function turnCheckpointKey(ctx: ToolContext): string | null {
+  return typeof ctx.conversationId === 'string' && ctx.conversationId.length > 0 ? conversationCheckpointKey(ctx.conversationId) : null
 }
 
 /**
@@ -136,10 +146,10 @@ export function checkpointBeforeWrite(
 export function afterWrites(dir: string, ctx: ToolContext, written: readonly AgentFileTarget[]): void {
   if (written.length === 0) return
   const userKey = studioAgentUserKey(ctx.userId)
-  const conversationKey = conversationCheckpointKey(ctx.conversationId)
+  const conversationKey = turnCheckpointKey(ctx)
   for (const target of written) {
     appendTurnWrite(dir, userKey, target.abs)
-    recordAgentPostImage(dir, userKey, conversationKey, target.abs)
+    if (conversationKey !== null) recordAgentPostImage(dir, userKey, conversationKey, target.abs)
   }
   pushStudioDiskChange(dir, written.map((target) => target.rel))
 }
@@ -246,11 +256,13 @@ export async function landAgentAsset(
     if (!landed.deduped) {
       const abs = join(dir, ...landed.relPath.split('/'))
       const userKey = studioAgentUserKey(ctx.userId)
-      const conversationKey = conversationCheckpointKey(ctx.conversationId)
+      const conversationKey = turnCheckpointKey(ctx)
       appendTurnWrite(dir, userKey, abs)
       // A landing never overwrites (`wx` names), so the file did not exist before it.
-      captureAgentPreImage(dir, userKey, conversationKey, abs, { knownAbsent: true })
-      recordAgentPostImage(dir, userKey, conversationKey, abs)
+      if (conversationKey !== null) {
+        captureAgentPreImage(dir, userKey, conversationKey, abs, { knownAbsent: true })
+        recordAgentPostImage(dir, userKey, conversationKey, abs)
+      }
     }
     const url = assetSiteUrlResolver(dir)(landed.relPath)
     return {

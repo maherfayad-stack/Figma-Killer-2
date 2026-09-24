@@ -56,7 +56,7 @@ export { agentSelectionKey } from './studioAgentSnapshot'
 
 // AI-7 — a turn's changed files: the per-file diff request and the shapes the card renders.
 export { fetchAgentTurnFileDiff } from './agentTurnChanges'
-export type { AgentRevertResult, AgentTurnChanges, AgentTurnFileChange, AgentTurnFileDiff } from './agentTurnChanges'
+export type { AgentRevertResult, AgentTurnChanges, AgentTurnFileChange, AgentTurnFileDiff } from './agentTurnChangeTypes'
 
 // Session controls — the composer's permission-mode trigger reads the initial
 // state back so its project-switch reset can never drift from the initializer.

@@ -3,7 +3,7 @@ import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
 import type { AgentMessage, AgentRoutedTurn } from './types'
 import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
-import type { AgentRevertResult, AgentTurnChanges } from './agentTurnChanges'
+import type { AgentRevertResult, AgentTurnChanges } from './agentTurnChangeTypes'
 
 export interface AgentSliceConfig {
   /**
