@@ -370,7 +370,7 @@ bun test
 bun run lint
 ```
 
-**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those four by path than the whole suite.
+**Touched the canvas, a frame, an overlay, geometry, or a panel's height? Run `bun run test:e2e` too — it is the fourth gate, not an optional extra.** The reason: happy-dom has no layout engine, so a unit test on those surfaces structurally cannot fail on the thing it is named after (WS-8.2 shipped a real frame-height bug behind a green one). Assert on *computed* layout — measured rects, `scrollHeight`, computed styles after layout. The budget slice (`studio-board-perf`, `canvas-feel-budgets`, `inspector-panel-measurement`, `inspector-height`, `studio-feel`) also runs in CI as the `e2e-budgets` job; locally it is cheaper to run those five by path than the whole suite.
 
 ### When to run
 

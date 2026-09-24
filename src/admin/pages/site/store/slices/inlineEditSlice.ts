@@ -1,7 +1,7 @@
 /**
  * Inline text edit slice — ephemeral canvas UI state for the double-click
  * inline text editor.
- * Spec: docs/superpowers/specs/2026-06-10-inline-text-editing-design.md
+ * Contract: docs/agent-refs/canvas-internals.md → "Inline text editing"
  *
  * The session is UI-only state (never persisted, never itself part of undo
  * history). Live commits route through `updateNodeProps`, whose single-field

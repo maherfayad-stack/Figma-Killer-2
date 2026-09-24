@@ -17,7 +17,7 @@
  * 4. No `.tsx` file exists in `src/core/siteImport/` — JSX indicates React
  *    coupling that must not leak into the headless import pipeline.
  *
- * @see docs/plans/2026-05-29-super-import.md — Phase 1 spec
+ * @see docs/features/site-import.md
  */
 
 import { describe, it, expect } from 'bun:test'

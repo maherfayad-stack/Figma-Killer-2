@@ -1819,6 +1819,8 @@ here once it is genuinely detectable.
 
 ## Testing
 
+**Test files are outside `tsc -b`.** `tsconfig.app.json` excludes `src/__tests__` and every `*.test.ts(x)`, and `tsconfig.node.json` excludes `server/**/__tests__` and `server/**/*.test.ts(x)`, so `bun run build` never type-checks a unit test (only `tests/e2e`, which the root `tsconfig.json` references, is checked). A fixture with the wrong shape, or an import of a path another branch deleted, builds green and surfaces only when `bun test` runs that file. Run the tests you touched; the build is not a substitute.
+
 | Area | Test |
 |---|---|
 | Value evaluator, all tiers + guards | `src/core/page-parser/__tests__/staticEval.test.ts` |

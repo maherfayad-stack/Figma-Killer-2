@@ -37,6 +37,12 @@ import { DEFAULT_ASSET_TARGET_DIR, landAssetBytes } from '../../../../handlers/s
 import { assetSiteUrlResolver } from '../../../../handlers/studio/assetSiteUrl'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
+import {
+  captureAgentPreImage,
+  conversationCheckpointKey,
+  recordAgentPostImage,
+  type CaptureOptions,
+} from '../../../../handlers/studio/agentCheckpoints'
 
 /** The open project this turn writes into, or the refusal when there is none. */
 export function turnProject(ctx: ToolContext): string | ToolRefusal {
@@ -107,11 +113,44 @@ export function isRefusal(value: unknown): value is ToolRefusal {
   return typeof value === 'object' && value !== null && (value as { ok?: unknown }).ok === false
 }
 
-/** Record every written file in the turn log and push one reload naming all of them. Runs after the bytes landed. */
+/**
+ * AI-7 — the file's pre-image, into this turn's checkpoint
+ * (`agentCheckpoints.ts`). Call inside `withProjectWriteLock`, right before the
+ * bytes land, so nothing can change the file between the copy and the write.
+ * A no-op for a call with no chat turn behind it (an external MCP client).
+ */
+export function checkpointBeforeWrite(
+  dir: string,
+  ctx: ToolContext,
+  target: AgentFileTarget,
+  options: CaptureOptions = {},
+): void {
+  const conversationKey = turnCheckpointKey(ctx)
+  if (conversationKey !== null) captureAgentPreImage(dir, studioAgentUserKey(ctx.userId), conversationKey, target.abs, options)
+}
+
+/**
+ * The checkpoint key of the conversation this call belongs to, or `null` for a
+ * call with no conversation behind it (an external MCP client, a direct
+ * handler call) — which takes no checkpoint, and must still write.
+ */
+function turnCheckpointKey(ctx: ToolContext): string | null {
+  return typeof ctx.conversationId === 'string' && ctx.conversationId.length > 0 ? conversationCheckpointKey(ctx.conversationId) : null
+}
+
+/**
+ * Record every written file in the turn log and the turn's checkpoint (its
+ * post-image, AI-7), and push one reload naming all of them. Runs after the
+ * bytes landed.
+ */
 export function afterWrites(dir: string, ctx: ToolContext, written: readonly AgentFileTarget[]): void {
   if (written.length === 0) return
   const userKey = studioAgentUserKey(ctx.userId)
-  for (const target of written) appendTurnWrite(dir, userKey, target.abs)
+  const conversationKey = turnCheckpointKey(ctx)
+  for (const target of written) {
+    appendTurnWrite(dir, userKey, target.abs)
+    if (conversationKey !== null) recordAgentPostImage(dir, userKey, conversationKey, target.abs)
+  }
   pushStudioDiskChange(dir, written.map((target) => target.rel))
 }
 
@@ -138,6 +177,7 @@ export function commitPlannedWrites(
   try {
     for (const plan of plans) {
       if (plan.next === plan.original) continue
+      checkpointBeforeWrite(dir, ctx, plan.target)
       writeFileSync(plan.target.abs, plan.next, 'utf8')
       written.push(plan)
     }
@@ -215,7 +255,14 @@ export async function landAgentAsset(
     if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
     if (!landed.deduped) {
       const abs = join(dir, ...landed.relPath.split('/'))
-      appendTurnWrite(dir, studioAgentUserKey(ctx.userId), abs)
+      const userKey = studioAgentUserKey(ctx.userId)
+      const conversationKey = turnCheckpointKey(ctx)
+      appendTurnWrite(dir, userKey, abs)
+      // A landing never overwrites (`wx` names), so the file did not exist before it.
+      if (conversationKey !== null) {
+        captureAgentPreImage(dir, userKey, conversationKey, abs, { knownAbsent: true })
+        recordAgentPostImage(dir, userKey, conversationKey, abs)
+      }
     }
     const url = assetSiteUrlResolver(dir)(landed.relPath)
     return {
