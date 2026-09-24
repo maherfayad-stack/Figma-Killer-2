@@ -18,16 +18,17 @@
  * Each was confirmed to fail with its fix disabled in place (PR body).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import React from 'react'
+import React, { useEffect } from 'react'
 import { act, cleanup, render, screen, waitFor } from '@testing-library/react'
-import { usePersistence, type PersistenceSaveStatus } from '@site/hooks/usePersistence'
+import { usePersistence } from '@site/hooks/usePersistence'
+import type { PersistenceSaveStatus } from '@site/hooks/persistenceStatus'
 import { useEditorStore } from '@site/store/store'
 import type { IPersistenceAdapter } from '@core/persistence/types'
 import type { SiteDocument } from '@core/page-tree'
 import { setUnreachableRetrySleepForTests } from '@core/http'
 import { CMS_SITE_RELOAD_EVENT } from '@admin/state/adminEvents'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
-import { isChunkLoadError } from '@admin/lib/LazyChunkBoundary'
+import { isChunkLoadError } from '@admin/lib/chunkLoadError'
 import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { installEditorWindowDiagnostics } from '@site/canvas/editorWindowDiagnostics'
 import { readFrameDiagnostics } from '@site/canvas/canvasDiagnosticsBuffer'
@@ -88,10 +89,14 @@ function flakyAdapter(failures: number, site: SiteDocument): { adapter: IPersist
   }
 }
 
-let controller: ReturnType<typeof usePersistence> | null = null
+/** What the hook returned on its last commit — written from an effect, so the host stays a pure render. */
+const probe: { controller: ReturnType<typeof usePersistence> | null } = { controller: null }
 
 function HookHost({ adapter }: { adapter: IPersistenceAdapter }) {
-  controller = usePersistence('default', adapter, { enabled: true })
+  const controller = usePersistence('default', adapter, { enabled: true })
+  useEffect(() => {
+    probe.controller = controller
+  })
   return null
 }
 
@@ -101,7 +106,7 @@ function resetStore(): void {
 
 describe('ERR-18 — loads retry, and a failure has a way back', () => {
   beforeEach(() => {
-    controller = null
+    probe.controller = null
     resetStore()
   })
 
@@ -112,7 +117,7 @@ describe('ERR-18 — loads retry, and a failure has a way back', () => {
 
     await waitFor(() => expect(useEditorStore.getState().site?.pages[0]?.id).toBe('home'))
     expect(flaky.attempts()).toBe(3)
-    expect(controller!.saveStatus.state).toBe('saved')
+    expect(probe.controller!.saveStatus.state).toBe('saved')
     expect(toasts).toEqual([])
   })
 
@@ -122,13 +127,13 @@ describe('ERR-18 — loads retry, and a failure has a way back', () => {
     const flaky = flakyAdapter(4, site)
     render(React.createElement(HookHost, { adapter: flaky.adapter }))
 
-    await waitFor(() => expect(controller!.saveStatus.state).toBe('error'))
-    const status: PersistenceSaveStatus = controller!.saveStatus
+    await waitFor(() => expect(probe.controller!.saveStatus.state).toBe('error'))
+    const status: PersistenceSaveStatus = probe.controller!.saveStatus
     expect(status.retrying).toBe(false)
     expect(status.message).not.toContain('Failed to fetch')
     expect(useEditorStore.getState().site).toBeNull()
 
-    act(() => controller!.retryLoad())
+    act(() => probe.controller!.retryLoad())
     await waitFor(() => expect(useEditorStore.getState().site?.pages[0]?.id).toBe('home'))
     expect(toasts).toEqual([])
   })
@@ -145,20 +150,20 @@ describe('ERR-18 — loads retry, and a failure has a way back', () => {
       saveSite: async () => {},
     }
     render(React.createElement(HookHost, { adapter }))
-    await waitFor(() => expect(controller!.saveStatus.state).toBe('saved'))
+    await waitFor(() => expect(probe.controller!.saveStatus.state).toBe('saved'))
 
     reloadsFail = true
     act(() => {
       window.dispatchEvent(new Event(CMS_SITE_RELOAD_EVENT))
     })
-    await waitFor(() => expect(controller!.boardStale).toBe(true))
+    await waitFor(() => expect(probe.controller!.boardStale).toBe(true))
     expect(toasts).toEqual([])
 
     reloadsFail = false
     act(() => {
       window.dispatchEvent(new Event(CMS_SITE_RELOAD_EVENT))
     })
-    await waitFor(() => expect(controller!.boardStale).toBe(false))
+    await waitFor(() => expect(probe.controller!.boardStale).toBe(false))
   })
 })
 

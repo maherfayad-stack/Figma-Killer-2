@@ -266,7 +266,8 @@ describe('previewStructuralTransplant — refusals', () => {
       newIndex: 0,
     })
     expect(result.refusal.reason).toBe('reparent')
-    expect(result.refusal.message).toContain('left the board')
+    expect(result.refusal.message).toContain('no longer on the board')
+    expect(result.refusal.message).not.toContain('Reload')
   })
 })
 

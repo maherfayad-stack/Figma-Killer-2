@@ -48,7 +48,12 @@ import {
   StringLiteralTargetError,
 } from '@core/ast-codemods'
 import { ELEMENT_MOVED_REASON } from '@core/page-tree'
-import type { StudioEdit, StudioEditApplyOutcome, StudioEditRefusal } from './studioEditSchemas'
+import type {
+  StudioEdit,
+  StudioEditApplyOutcome,
+  StudioEditRefusal,
+  StudioEditUnwritableReason,
+} from './studioEditSchemas'
 
 /**
  * A codemod (or the dispatcher in front of it) DECLINED this edit on purpose,
@@ -66,9 +71,6 @@ export class StudioEditRefusalError extends Error {
 
 /** The reason for an exception no codemod named. See this module's doc. */
 export const WRITE_FAILED_REASON = 'write-failed'
-
-/** Why an `applied: false` outcome had nowhere to write — see {@link StudioEditApplyOutcome.unwritable}. */
-export type StudioEditUnwritableReason = 'no-source-location' | 'stylesheet-unavailable' | 'asset-unavailable'
 
 const ELEMENT_MOVED_SENTENCE =
   'The file changed since the board read it, and this element is no longer where it was, so nothing was written.'

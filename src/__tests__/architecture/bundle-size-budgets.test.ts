@@ -172,7 +172,14 @@ const BUDGETS: ChunkBudget[] = [
     // `studioStructuralCommits` import it adds does NOT move that module,
     // which already lives in the shared `store-*` chunk this route loads
     // ("Still writing your last change" occurs 0 times in `SitePage-*.js`).
-    maxBytes: 39_400,
+    //
+    // Raised 39.4 KB -> 40.6 KB for P3-A (ERR-13/ERR-18): the toolbar and
+    // `RefusalDialog` each gained their own silent `ChromeBoundary` (they sit
+    // outside the lazy editor body, so the boundary has to live in this shell
+    // or a crash in either still reaches `admin-route` and takes the editor
+    // down), the load ladder + Retry wiring, and the chip's "Out of date"
+    // state. Measured 40,224 B; no editor-body code entered the chunk.
+    maxBytes: 40_600,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

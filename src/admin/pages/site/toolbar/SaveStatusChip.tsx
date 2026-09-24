@@ -43,7 +43,7 @@ import { useSyncExternalStore } from 'react'
 import { Button } from '@ui/components/Button'
 import { requestCmsSiteReload } from '@admin/state/adminEvents'
 import { cn } from '@ui/cn'
-import type { PersistenceSaveStatus } from '@site/hooks/usePersistence'
+import type { PersistenceSaveStatus } from '@site/hooks/persistenceStatus'
 import {
   isStructuralCommitInFlight,
   subscribeStructuralCommitInFlight,

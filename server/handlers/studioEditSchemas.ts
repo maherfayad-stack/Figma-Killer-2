@@ -46,7 +46,6 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
-import type { StudioEditUnwritableReason } from './studioEditRefusals'
 import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -312,6 +311,9 @@ export interface StudioEditSwapDetail {
  * `addSlotPropDetail` (E2.2) is populated for EVERY `add-slot-prop` outcome,
  * preview or commit — see `StudioAddSlotPropDetail`.
  */
+/** Why an `applied: false` outcome had nowhere to write — see {@link StudioEditApplyOutcome.unwritable}. */
+export type StudioEditUnwritableReason = 'no-source-location' | 'stylesheet-unavailable' | 'asset-unavailable'
+
 export interface StudioEditApplyOutcome {
   applied: boolean
   /**
