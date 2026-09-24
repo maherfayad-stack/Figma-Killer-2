@@ -45,11 +45,16 @@
  * ## Snapping
  *
  * Free movement without alignment is worse than reordering, so the moved rect
- * snaps to its SIBLINGS' edges and centres through `computeSnap` — the same
- * pure resolver board furniture already uses, at the same "closest wins, at
- * most one snap per axis" contract. Peers are read once from the drag
- * session's candidate index, because siblings do not move while one element
- * is being positioned.
+ * snaps to its SIBLINGS' edges and centres, and to its PARENT's padding and
+ * content box (edges and centre — P2-E / IX-5b, `canvasSnapPeers.ts`), through
+ * `computeSnap` — the same pure resolver board furniture already uses, at the
+ * same "closest wins, at most one snap per axis" contract. Peers are read once
+ * from the drag session's candidate index (plus one computed-style read for
+ * the parent's insets), because nothing but the moved element changes while
+ * it is being positioned.
+ *
+ * The threshold is SCREEN px (IX-5a): `snapThresholdAtZoom` of the session's
+ * live zoom, re-read every frame, so the pull feels the same at 50% and 400%.
  *
  * Everything below is pure except `readFreeMoveBase` (which reads computed
  * style) and `previewFreeMove` / `clearFreeMovePreview` (which write one
@@ -71,14 +76,12 @@ import {
   presentStructuralRefusal,
   STRUCTURAL_REFUSAL_TITLE,
 } from '@site/store/slices/site/structuralSourceEdits'
-import { computeSnap, type SnapGuide, type SnapRect } from './boardSnapping'
+import { computeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { cssPropertyName } from './elementResizeSizing'
-
-/** Snap distance in FRAME-space pixels. Matches the board's own feel. */
-export const FREE_MOVE_SNAP_PX = 6
+import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
 
 export interface FreeMovePlan {
   /** The element whose own inline style the gesture writes. */
@@ -98,7 +101,7 @@ export interface FreeMovePlan {
    * alone would be a no-op.
    */
   needsAbsolute: boolean
-  /** Sibling rects to snap against, frame space, measured once. */
+  /** Sibling rects plus the parent's padding / content box, frame space, measured once. */
   peers: SnapRect[]
   /** The moved element's own frame-space rect at drag start. */
   rect: SnapRect
@@ -226,17 +229,26 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
   const rect = candidates.find((candidate) => candidate.nodeId === nodeId)?.rect
   if (!rect) return null
 
-  const siblingIds = new Set(getParent(tree, nodeId)?.children ?? [])
+  const parentNode = getParent(tree, nodeId)
+  const siblingIds = new Set(parentNode?.children ?? [])
   siblingIds.delete(nodeId)
   const peers: SnapRect[] = []
   for (const candidate of candidates) {
+    if (candidate.nodeId === parentNode?.id) {
+      // IX-5b — the parent's own edges and centre. Its rect is already in the
+      // index; only the border + padding widths are a read. The TREE parent's
+      // element, not `element.parentElement`: a module may render the child
+      // one wrapper-free level down, but the node the user sees as "the
+      // parent" is the tree's.
+      const parentElementForInsets = presentedElementForNode(doc, candidate.nodeId) ?? parentElement
+      const insets = parentElementForInsets
+        ? readBoxInsets(view, parentElementForInsets)
+        : { border: ZERO_INSETS, padding: ZERO_INSETS }
+      peers.push(...parentSnapRects(snapRectOf(candidate.rect), insets))
+      continue
+    }
     if (!siblingIds.has(candidate.nodeId)) continue
-    peers.push({
-      x: candidate.rect.left,
-      y: candidate.rect.top,
-      width: candidate.rect.width,
-      height: candidate.rect.height,
-    })
+    peers.push(snapRectOf(candidate.rect))
   }
 
   return {
@@ -246,9 +258,15 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
       ...properties,
       ...readFreeMoveBase(element, own, properties.inlineProperty),
       peers,
-      rect: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+      rect: snapRectOf(rect),
     },
   }
+}
+
+const ZERO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 }
+
+function snapRectOf(rect: CanvasRect): SnapRect {
+  return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
 }
 
 /** The property's current value in px, or `0` when it is `auto` / unreadable. */
@@ -282,21 +300,22 @@ export function readFreeMoveBase(
 }
 
 /**
- * One frame of the gesture: apply the pointer delta, snap to siblings, and
+ * One frame of the gesture: apply the pointer delta, snap to the peers, and
  * report the guides to draw.
  *
  * `dx`/`dy` are FRAME-space deltas (client pixels already divided by the
  * canvas scale). Snapping runs on the element's rect in the same space, so a
- * guide drawn at a peer's edge is drawn exactly where that edge is.
+ * guide drawn at a peer's edge is drawn exactly where that edge is. `zoom` is
+ * the live canvas zoom, which turns the screen-px threshold into frame px.
  */
-export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number): FreeMoveStep {
+export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number, zoom: number): FreeMoveStep {
   const moved: SnapRect = {
     x: plan.rect.x + dx,
     y: plan.rect.y + dy,
     width: plan.rect.width,
     height: plan.rect.height,
   }
-  const snapped = computeSnap(moved, plan.peers, FREE_MOVE_SNAP_PX)
+  const snapped = computeSnap(moved, plan.peers, snapThresholdAtZoom(zoom))
   // The snap is expressed as a correction to the rect; the same correction
   // applies to the offset, because the two differ only by the constant
   // distance between the containing block and the frame's origin.
@@ -370,9 +389,11 @@ export function paintFreeMoveFrame(input: {
   /** Pointer travel since the drag started, in frame space. */
   dx: number
   dy: number
+  /** Live canvas zoom — the snap threshold is screen px (IX-5a). */
+  zoom: number
   ghost: CanvasDragGhost
 }): FreeMoveStep | null {
-  const { layer, resolution, draggedId, rect, dx, dy, ghost } = input
+  const { layer, resolution, draggedId, rect, dx, dy, zoom, ghost } = input
   if (!resolution.ok) {
     const constraint = explainStaticParentConstraint(resolution.refusal.parentLabel)
     paintCanvasDrag(layer, {
@@ -383,7 +404,7 @@ export function paintFreeMoveFrame(input: {
     return null
   }
 
-  const step = stepFreeMove(resolution.plan, dx, dy)
+  const step = stepFreeMove(resolution.plan, dx, dy, zoom)
   previewFreeMove(resolution.plan, step)
   paintCanvasDrag(layer, { target: null, invalid: null, guides: step.guides, ghost })
   return step

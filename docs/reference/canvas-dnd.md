@@ -1,5 +1,5 @@
 # Canvas Drag-and-Drop
-> **Purpose:** drag and drop in the editor: mechanisms, drop resolution, the D2 target architecture · **Read when:** touching any drag, drop or insert-at-a-point gesture · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-23
+> **Purpose:** drag and drop in the editor: mechanisms, drop resolution, the D2 target architecture · **Read when:** touching any drag, drop or insert-at-a-point gesture · **Trust:** current · **Owner:** canvas-engineer · **Verified:** 2026-09-24
 
 How drag-and-drop works in the visual editor: dropping new modules from the picker / library, moving existing nodes around the page tree, wrap-to-container, multi-select moves, and the drop-zone overlay.
 
@@ -521,13 +521,19 @@ a drag to the right must DECREASE the distance from the inline start. The
 write is `inset-inline-start`, with the horizontal delta negated. `top` is
 unaffected — RTL mirrors the inline axis only, never the block axis.
 
-**Snapping.** The moved rect snaps to its SIBLINGS' edges and centres through
-`computeSnap` — the same pure resolver board furniture already uses, at the
-same "closest wins, at most one snap per axis" contract, at
-`FREE_MOVE_SNAP_PX` in frame space. Guides are painted by the same imperative
-painter as everything else the drag draws, from a pool of at most two
-elements. Peers are read once from the drag session's candidate index, because
-siblings do not move while one element is being positioned.
+**Snapping.** The moved rect snaps to its SIBLINGS' edges and centres, and to
+its PARENT's padding box and content box (edges and centre — P2-E / IX-5b,
+`canvasSnapPeers.ts`), through `computeSnap` — the same pure resolver board
+furniture already uses, at the same "closest wins, at most one snap per axis"
+contract. The threshold is **screen px** (IX-5a): `snapThresholdAtZoom(zoom)`,
+`SNAP_THRESHOLD_SCREEN_PX` (8) divided by the session's live zoom, so the pull
+is the same at 50% and 400%. Guides are painted by the same imperative painter
+as everything else the drag draws. Peers are read once from the drag
+session's candidate index (plus one computed-style read of the parent's
+border and padding), because nothing but the moved element changes while it
+is being positioned. A resize handle snaps its moving edge through the same
+resolver (`computeEdgeSnap`, IX-6e) — see `canvas-internals.md` → "Element
+resize".
 
 **Preview, then commit.** The step is written straight onto the element's own
 `style` during the drag — no store round trip, so it tracks the pointer at
@@ -561,7 +567,11 @@ one empty, click-through layer per frame (`CanvasDropIndicators`, in the
 breakpoint viewport — already inside `CanvasTransformLayer`, which is why the
 frame-space rects go in unconverted) and never gives it children.
 `canvasDragPainter.ts` creates, positions, and hides the drop line, the
-refused-position box, the refusal chip and the drag ghost inside it, through
+refused-position box, the refusal chip, the drag ghost and — for a before/after
+drop — a faint dashed outline of the container the drop lands IN (P2-E /
+IX-24: a line in nested rows is otherwise ambiguous; `canvasDropParentOutline.ts`
+looks the parent up in the same candidate index, so it costs no layout read;
+an "inside" drop needs none, its drop box already is the parent) inside it, through
 the `--canvas-drop-*` custom-property channel, skipping every write whose
 value is unchanged. Same division of labour as the selector-affinity ring
 pool (`syncSelectorHighlightRings`), for the same reason: a pointermove must
@@ -751,7 +761,7 @@ Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`Boar
 
 - **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/admin/pages/site/canvas/boardSnapping.ts`. For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
 - **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
-- **Threshold:** `SNAP_THRESHOLD_BOARD_UNITS = 8` — a fixed board-unit distance, not a screen-pixel feel divided by zoom. Simpler, and board furniture rarely sits near the threshold at extreme zoom in practice.
+- **Threshold:** `snapThresholdAtZoom(zoom)` — `SNAP_THRESHOLD_SCREEN_PX = 8` screen px divided by the canvas zoom (P2-E / IX-5a). It used to be a fixed 8 board units, which was 32 screen px of pull at 400% and 2 px at 25%. Every snapping gesture (furniture, free move, element resize) uses the same constant.
 - **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
 - **One store write per pointermove, not two (D2 G8).** A furniture drag calls `setBoardSnapGuides` alongside `setFramePosition` on every move, and on the overwhelming majority of those events the guide list is identical to the last one (usually empty). `setBoardSnapGuides` now no-ops when `snapGuidesEqual(current, next)` — so the second write costs nothing until the guides actually change.
 - **Escape cancels a frame drag (D2 G8).** Unlike the element drag (which writes nothing until `pointerup`), a frame drag writes its position live, so cancelling restores the position captured at `pointerdown` (`DragState.frameX/frameY`), clears the guides, and closes the `store-09` coalescing burst. The listener is on `window`, not the header: the pointer is captured but keyboard focus is not.

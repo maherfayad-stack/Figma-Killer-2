@@ -323,3 +323,118 @@ describe('the click that ends a drag stays on the handle', () => {
     expect(reached).toEqual(['body'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// P2-E / IX-6e — the moving edge snaps to its siblings and its parent
+// ---------------------------------------------------------------------------
+
+function rectOf(left: number, top: number, width: number, height: number): DOMRect {
+  return { left, top, width, height, right: left + width, bottom: top + height, x: left, y: top } as DOMRect
+}
+
+/**
+ * `box` and a sibling `peer` inside `root`. happy-dom has no layout, so every
+ * rect the snap reads is stubbed: the parent 0..300 × 0..200 with 20px
+ * padding, the sibling's right edge at 120.
+ */
+function mountWithPeer(targetStyle: string, targetRect: DOMRect, parentStyle = 'padding: 20px') {
+  useEditorStore.getState().loadSite(
+    makeSite({
+      pages: [
+        makePage({
+          id: 'home',
+          slug: 'index',
+          rootNodeId: 'root',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.container', children: ['box', 'peer'] }),
+            box: makeNode({ id: 'box', moduleId: 'base.container', parentId: 'root' }),
+            peer: makeNode({ id: 'peer', moduleId: 'base.container', parentId: 'root' }),
+          },
+        }),
+      ],
+    }),
+  )
+  commits = []
+  useEditorStore.setState({
+    setNodeInlineStyles: (_id: string, patch: Record<string, unknown>) => {
+      commits.push(patch)
+    },
+  } as Parameters<typeof useEditorStore.setState>[0])
+  harness = mount(targetStyle, parentStyle)
+  const parent = harness.target.parentElement!
+  parent.setAttribute('data-node-id', 'root')
+  parent.getBoundingClientRect = () => rectOf(0, 0, 300, 200)
+  const peer = harness.frameDoc.createElement('div')
+  peer.setAttribute('data-node-id', 'peer')
+  peer.getBoundingClientRect = () => rectOf(20, 100, 100, 40)
+  parent.appendChild(peer)
+  harness.target.getBoundingClientRect = () => targetRect
+}
+
+describe('IX-6e — a resize handle snaps its moving edge', () => {
+  it('E lands on a sibling edge within the threshold, and the source gets that width', () => {
+    // box: 20..116; the sibling's right edge is 120. A 0 → +2 drag leaves the
+    // edge at 118, 2px short — it snaps the last 2px.
+    mountWithPeer('box-sizing: border-box; width: 96px; height: 40px', rectOf(20, 20, 96, 40))
+    render()
+    press('e')
+    moveTo(2, 0)
+    release(2, 0)
+    expect(commits).toEqual([{ width: '100px' }])
+  })
+
+  it('E snaps to the parent content box edge (IX-5b for resize)', () => {
+    // The parent's content box ends at 300 - 20 = 280. From 116, +160 → 276.
+    mountWithPeer('box-sizing: border-box; width: 96px; height: 40px', rectOf(20, 20, 96, 40))
+    render()
+    press('e')
+    moveTo(160, 0)
+    release(160, 0)
+    expect(commits).toEqual([{ width: '260px' }])
+  })
+
+  it('beyond the threshold the pointer rules', () => {
+    mountWithPeer('box-sizing: border-box; width: 96px; height: 40px', rectOf(20, 20, 96, 40))
+    render()
+    press('e')
+    // Edge at 176: nothing within 8px (the parent's centre is 150, its
+    // content edge 280, the sibling's edges 20 / 70 / 120).
+    moveTo(60, 0)
+    release(60, 0)
+    expect(commits).toEqual([{ width: '156px' }])
+  })
+
+  it('an absolute element snaps its W edge, and `left` follows the snapped edge', () => {
+    // box: 150..250 inside a relative parent; the sibling's right edge is 120.
+    // A -27 drag puts the W edge at 123 — it snaps to 120.
+    mountWithPeer(
+      'position: absolute; left: 150px; top: 20px; box-sizing: border-box; width: 100px; height: 40px',
+      rectOf(150, 20, 100, 40),
+      'position: relative; padding: 20px',
+    )
+    render()
+    press('w')
+    moveTo(-27, 0)
+    release(-27, 0)
+    expect(commits).toEqual([{ width: '130px', left: '120px' }])
+  })
+
+  it('a flow element W handle does not snap — its W edge is not what moves', () => {
+    mountWithPeer('box-sizing: border-box; width: 96px; height: 40px', rectOf(150, 20, 96, 40))
+    render()
+    press('w')
+    moveTo(-27, 0)
+    release(-27, 0)
+    expect(commits).toEqual([{ width: '123px' }])
+  })
+
+  it('⌥ (from the centre) does not snap: both edges move', () => {
+    mountWithPeer('box-sizing: border-box; width: 96px; height: 40px', rectOf(20, 20, 96, 40))
+    render()
+    press('e')
+    // Snapped, the edge (117) would pull to 120 and the doubled delta make 104.
+    moveTo(1, 0, { altKey: true })
+    release(1, 0)
+    expect(commits).toEqual([{ width: '98px' }])
+  })
+})

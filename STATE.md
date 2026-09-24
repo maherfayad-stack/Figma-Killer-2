@@ -154,6 +154,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
   5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
 
+### canvas-26 — P2-E: snapping and measuring (IX-5a, IX-5b, IX-6e, IX-24, IX-19) + OD-15 (arrows after a Layers click)
+- **Agent:** canvas-engineer · **Branch:** `feat/snapping-and-measuring` off `a03f410a` · **PR:** #243 (draft, base `feat/canvas-excellence`; long form + gate triage in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** one threshold, `SNAP_THRESHOLD_SCREEN_PX` (8) ÷ zoom (`snapThresholdAtZoom`), for furniture, free move and resize (IX-5a). Free move also snaps to the parent's padding + content box, edges and centre (`canvasSnapPeers.ts`, IX-5b). A resize handle snaps its moving edge (`elementResizeSnap.ts`, `computeEdgeSnap`; IX-6e) — only an edge the drag really moves (every handle of an absolute element; E/S of a start-anchored flow element; never ⌥ or ⇧-corner). A before/after drop outlines its container (`canvasDropParentOutline.ts` + the painter, IX-24). Alt with nothing hovered measures the selection to its parent (`resolveMeasureTarget`, IX-19). OD-15: a pointer click on a Layers row focuses the canvas root (`returnKeyboardToCanvas`), keyboard entry keeps ↑/↓ as row navigation (`LayerRowList`).
+- **Canvas files touched:** `canvas/{boardSnapping, canvasSnapPeers (new), elementResizeSnap (new), canvasDropParentOutline (new), canvasKeyboardFocus (new), canvasDragPainter (+ .module.css new), canvasDragFrame, canvasFreeMove, useElementResizeDrag, useAnnotationInteraction, BoardFramesLayer/useBoardFrameMoveDrag, MeasureLayer, canvasMeasureGeometry, editorKeyGuards (export only)}`, `panels/DomPanel/{TreeNode, LayerRowList}`, `spotlight/{keybindings (OD-3 rows), keybindingGestures}`. None of P2-I's files; no runtime change, no bundle regen.
+- **Tests:** `snappingAndMeasuring.test.tsx` (20), `elementResizeDrag.test.tsx` (+6 IX-6e), `layersArrowKeys.test.tsx` (4, OD-15), `boardSnapping.test.ts` (+1). Each finding shown failing with its fix disabled in place. e2e `snapping-and-measuring.e2e.ts` 10/10 (ports 50574/30502); its 50% free-move case fails with the old 6 px threshold restored.
+- **Landmines:**
+  - **Events × focus (OD-15):** a Layers row click moves DOM focus to the canvas root, so `focusedPanel` becomes `canvas` after every row click. `event.detail > 0` is the pointer test; a keyboard-synthesised click keeps focus.
+  - **Events × Alt:** the IX-19 parent fallback stands down once ANY node was hovered in the current Alt hold — the tree ladder is anchored then, and the pointer leaving the frame is how its rows are reached.
+  - **Injectors:** none touched. Resize guides paint into the frame's PARENT-document drag layer (`resolveResizeGuideSurface`), converted by the iframe's offset in its viewport — never into the frame.
+  - **Height:** none touched.
+  - A resize reads its peers once at pointerdown (siblings + parent via the tree, `nodeVisualRect`); a sibling that reflows mid-drag (a flex row) keeps its pointerdown rect.
+- **Next:** live-frame (Tier 2) handles do not snap yet (`resizeHandles.ts` would need peers + zoom across the wire); ruler guides as element snap peers (IX-5c); spacing snap (IX-5d).
+- **Human action needed:** dogfood on `test4`, `/admin/site`, static tier, one frame, at 100% and again at 50%:
+  1. SMS: drag the content banner (absolute) slowly up towards the header: about 8 screen px from the header's bottom edge it clicks onto it with a guide — the same on-screen distance at 100% and 50%. ⌘-drag a code input inside the banner towards the banner's centre: it snaps to the centre line (the parent is a peer now).
+  2. Drag its E resize handle towards a sibling's right edge: the edge snaps, a guide shows, the file gets that width.
+  3. Drag a code input between its siblings: the drop line shows AND a faint dashed outline of the row it lands in.
+  4. Select a code input, move the pointer off the frame, hold Alt: four red distances to its row. Hover another node: distances to it, as before.
+  5. Click a layer in Layers, press →: it moves (nudge or reorder). Tab into Layers, press ↓: the next row is selected, nothing moves. Double-click a row to rename: arrows move the caret.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -195,6 +215,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-23` · `/admin/site` on `test4` · resize a border-box and a content-box element (the CSS width lands exactly), a `flex: 1` child (goes fixed; static frames only), ⇧/⌥ mid-drag, the W/N handles of an absolute element, the W×H badge; release outside the window ends the drag. Script: the `canvas-23` entry in the archive
 - `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry under `## Now`
 - `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry under `## Now`
+- `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row

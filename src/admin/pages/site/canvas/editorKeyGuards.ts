@@ -95,7 +95,7 @@ export function isSpaceOwningControlTarget(target: EventTarget | null): boolean 
   return tagName === 'INPUT' || tagName === 'TEXTAREA' || tagName === 'SELECT'
 }
 
-const CANVAS_ROOT_SELECTOR = '[data-studio-canvas-root="true"]'
+export const CANVAS_ROOT_SELECTOR = '[data-studio-canvas-root="true"]'
 
 /**
  * True when the keystroke belongs to the CANVAS as a surface — focus is on the

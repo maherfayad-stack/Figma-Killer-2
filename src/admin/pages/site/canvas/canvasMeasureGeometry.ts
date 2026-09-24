@@ -308,6 +308,10 @@ export function formatMeasureDistance(distance: number): string {
  * measurement owns the gesture, releasing Alt over another node commits
  * nothing — measuring must never change the selection out from under the
  * thing being measured.
+
+ * With NO hover at all the ladder has nothing to anchor on, and measurement
+ * takes that case too — against the selection's parent ({@link resolveMeasureTarget},
+ * P2-E / IX-19). This predicate stays the hovered-node rule both layers share.
  */
 export function measurementWinsOverTreeLadder(
   selectedNodeIds: readonly string[],
@@ -316,4 +320,55 @@ export function measurementWinsOverTreeLadder(
   if (!hoveredNodeId) return false
   if (selectedNodeIds.length === 0) return false
   return !selectedNodeIds.includes(hoveredNodeId)
+}
+
+/**
+ * What Alt measures the selection against (P2-E / IX-19), or `null` when
+ * measurement does not own this Alt hold.
+ *
+ *  - a hovered node outside the selection → that node
+ *    ({@link measurementWinsOverTreeLadder}, unchanged);
+ *  - NO hovered node → the selection's parent: Figma's and Penpot's "Alt with
+ *    nothing under the pointer measures to the container"
+ *    (`ui/measurements.cljs:370-381`). With several layers selected it is the
+ *    nearest ancestor they all share.
+ *
+ * The parent fallback only applies while no node has been hovered during this
+ * Alt hold (`hoverSeenDuringHold`). Once one has, the tree ladder is anchored
+ * on it, and the pointer leaving the frame is how the user REACHES the
+ * ladder's rows — measuring the parent there would pull the ladder out from
+ * under the pointer on its way to a row.
+ */
+export function resolveMeasureTarget(input: {
+  selectedNodeIds: readonly string[]
+  hoveredNodeId: string | null
+  hoverSeenDuringHold: boolean
+  parentOf: (nodeId: string) => string | null
+}): string | null {
+  const { selectedNodeIds, hoveredNodeId, hoverSeenDuringHold, parentOf } = input
+  if (measurementWinsOverTreeLadder(selectedNodeIds, hoveredNodeId)) return hoveredNodeId
+  if (hoveredNodeId !== null || hoverSeenDuringHold || selectedNodeIds.length === 0) return null
+  return sharedParent(selectedNodeIds, parentOf)
+}
+
+/** The nearest ancestor of every id in `ids` that is not itself one of them. */
+function sharedParent(ids: readonly string[], parentOf: (nodeId: string) => string | null): string | null {
+  const selected = new Set(ids)
+  const ancestorsOf = (id: string): string[] => {
+    const chain: string[] = []
+    const seen = new Set<string>()
+    for (let current = parentOf(id); current !== null && !seen.has(current); current = parentOf(current)) {
+      seen.add(current)
+      chain.push(current)
+    }
+    return chain
+  }
+  const [first, ...rest] = ids
+  if (first === undefined) return null
+  const restChains = rest.map((id) => new Set(ancestorsOf(id)))
+  for (const candidate of ancestorsOf(first)) {
+    if (selected.has(candidate)) continue
+    if (restChains.every((chain) => chain.has(candidate))) return candidate
+  }
+  return null
 }

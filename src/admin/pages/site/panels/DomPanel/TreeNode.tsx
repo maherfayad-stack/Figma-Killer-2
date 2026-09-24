@@ -51,6 +51,7 @@ import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
 import { LayerTreeNodeContent } from './LayerTreeNodeContent'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
+import { returnKeyboardToCanvas } from '@site/canvas/canvasKeyboardFocus'
 import type { LayerRowSpanPosition } from './layerRows'
 import styles from './TreeNode.module.css'
 
@@ -356,6 +357,11 @@ export const TreeNode = memo(function TreeNode({
         tabIndex={0}
         onClick={(e) => {
           e.stopPropagation()
+          // OD-15 — a POINTER pick hands the keyboard back to the canvas, as a
+          // canvas click would, so the arrows move the layer just picked.
+          // `detail` is 0 for a click synthesised from the keyboard, which
+          // keeps the tree's own keys (the a11y path).
+          if (e.detail > 0) returnKeyboardToCanvas()
           // Modifier-aware selection (multi-select): Cmd/Ctrl-click toggles,
           // Shift-click extends a range from the anchor. Modifier-clicks do
           // NOT toggle expansion — that's reserved for plain clicks so users

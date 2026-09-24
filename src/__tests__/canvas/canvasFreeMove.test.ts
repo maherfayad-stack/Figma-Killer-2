@@ -9,7 +9,6 @@
  */
 import { describe, expect, it } from 'bun:test'
 import {
-  FREE_MOVE_SNAP_PX,
   clearFreeMovePreview,
   previewFreeMove,
   freeMoveStylePatch,
@@ -20,6 +19,7 @@ import {
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
 import { isPositionedFreely } from '@core/studio-runtime'
+import { SNAP_THRESHOLD_SCREEN_PX } from '@site/canvas/boardSnapping'
 
 function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput {
   return {
@@ -109,7 +109,7 @@ function plan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
 
 describe('stepFreeMove — the delta, the snap, and the guides', () => {
   it('applies the pointer delta when nothing is near enough to snap to', () => {
-    const step = stepFreeMove(plan(), 30, -12)
+    const step = stepFreeMove(plan(), 30, -12, 1)
     expect(step.inline).toBe(130)
     expect(step.top).toBe(88)
     expect(step.guides).toEqual([])
@@ -117,7 +117,7 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
 
   it('reverses the horizontal delta for an RTL inline start', () => {
     // A drag to visual-right DECREASES the distance from an RTL inline start.
-    const step = stepFreeMove(plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 }), 30, 0)
+    const step = stepFreeMove(plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 }), 30, 0, 1)
     expect(step.inline).toBe(70)
   })
 
@@ -125,15 +125,15 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
     // The peer's left edge sits 2px past where the pointer put ours — inside
     // the threshold, so the element lands exactly on it.
     const peer = { x: 132, y: 400, width: 50, height: 20 }
-    const step = stepFreeMove(plan({ peers: [peer] }), 30, 0)
+    const step = stepFreeMove(plan({ peers: [peer] }), 30, 0, 1)
     expect(step.inline).toBe(132)
     expect(step.rect.x).toBe(132)
     expect(step.guides.some((guide) => guide.axis === 'x' && guide.position === 132)).toBe(true)
   })
 
   it('leaves an axis alone when the nearest peer edge is outside the threshold', () => {
-    const peer = { x: 130 + FREE_MOVE_SNAP_PX + 5, y: 400, width: 50, height: 20 }
-    const step = stepFreeMove(plan({ peers: [peer] }), 30, 0)
+    const peer = { x: 130 + SNAP_THRESHOLD_SCREEN_PX + 5, y: 400, width: 50, height: 20 }
+    const step = stepFreeMove(plan({ peers: [peer] }), 30, 0, 1)
     expect(step.inline).toBe(130)
     expect(step.guides.filter((guide) => guide.axis === 'x')).toEqual([])
   })
@@ -142,12 +142,12 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
 describe('freeMoveStylePatch — what reaches the user\'s source', () => {
   it('writes only the two offsets for an element that is already positioned', () => {
     const p = plan()
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 10))).toEqual({ left: '130px', top: '110px' })
+    expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 10, 1))).toEqual({ left: '130px', top: '110px' })
   })
 
   it('writes position: absolute alongside them when the element was in flow', () => {
     const p = plan({ needsAbsolute: true })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 0, 0))).toEqual({
+    expect(freeMoveStylePatch(p, stepFreeMove(p, 0, 0, 1))).toEqual({
       position: 'absolute',
       left: '100px',
       top: '100px',
@@ -156,7 +156,7 @@ describe('freeMoveStylePatch — what reaches the user\'s source', () => {
 
   it('writes the logical property name in RTL, so an RTL author reads their own CSS back', () => {
     const p = plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0))).toEqual({
+    expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0, 1))).toEqual({
       insetInlineStart: '80px',
       top: '100px',
     })
@@ -185,7 +185,7 @@ describe('free move writes a React style key to the source and a CSSOM name to t
   it('every key of an RTL free-move patch is camelCase', () => {
     const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
     const p = plan({ ...properties })
-    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 0))
+    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 0, 1))
     for (const key of Object.keys(patch)) expect(key).not.toContain('-')
     expect(patch).toEqual({ insetInlineStart: '88px', top: '100px' })
   })
@@ -194,7 +194,7 @@ describe('free move writes a React style key to the source and a CSSOM name to t
     const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
     const { element, set } = recordingElement()
     const p = plan({ ...properties, element })
-    previewFreeMove(p, stepFreeMove(p, 12, 0))
+    previewFreeMove(p, stepFreeMove(p, 12, 0, 1))
     expect([...set.keys()].sort()).toEqual(['inset-inline-start', 'top'])
     clearFreeMovePreview(p)
     expect(set.size).toBe(0)
