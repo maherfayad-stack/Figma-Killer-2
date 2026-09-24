@@ -180,6 +180,8 @@ test.describe('the free canvas', () => {
     expect(moduleText).toMatch(new RegExp(`<img src="/[^"]+\\.png" alt="free-canvas-cat" width=\\{${IMAGE_SIZE.width}\\} height=\\{${IMAGE_SIZE.height}\\} />`))
     // The placement reaches boards.json through the board autosave.
     await expect.poll(() => placements().map((layer) => layer.id), { timeout: 30_000 }).toEqual([layerId])
+    // Placed where it was dropped: right of the 900-unit-wide frame, centred on the pointer.
+    expect(placements()[0]!.x, 'the layer was not placed where it was dropped').toBeGreaterThan(900)
 
     // ── 2. Not part of any page, nor of anything the app builds from ───────
     expect(readPage(), 'dropping on the empty board wrote into a page').toBe(pageBefore)

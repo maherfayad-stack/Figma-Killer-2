@@ -62,6 +62,7 @@ import {
   type CanvasFileDragSession,
 } from './canvasFileDragPreview'
 import { planCanvasFileDrop } from './canvasFileDrop'
+import { findBoardOrigin } from './BoardCanvasLayer/canvasLayerGeometry'
 import type { DroppedFileFacts } from './canvasFileDrop'
 import type { CanvasTransform } from './math'
 
@@ -122,7 +123,7 @@ export function useCanvasFileDrop({
         readPage,
         hintLayer: hintLayerRef.current,
         hintOrigin: hintOriginRef.current,
-        freeCanvas: document.querySelector('[data-studio-board-origin]') !== null,
+        freeCanvas: findBoardOrigin() !== null,
       })
       // Only one layer ever carries chrome — the frame's or the board's. Clear
       // the one being left BEFORE writing the new one, the same discipline the
@@ -169,7 +170,7 @@ export function useCanvasFileDrop({
         point: { x: event.clientX, y: event.clientY },
         transform: transformRef?.current ?? null,
         readPage,
-        freeCanvas: freeCanvasAt(transformRef?.current ?? null),
+        freeCanvas: findBoardOrigin(),
       })
 
       if (!plan.ok) {
@@ -232,18 +233,6 @@ async function landAndInsert(file: File, pageId: string, parentId: string, index
     return
   }
   useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
-}
-
-/**
- * P5-G — the free canvas under a drop, when this is a Studio board: the element
- * `BoardCanvasLayer` keeps at board (0, 0) (`data-studio-board-origin`) and the
- * live zoom. Read at the moment of the drop, like the frame rects are.
- */
-function freeCanvasAt(transform: CanvasTransform | null): { origin: { left: number; top: number }; zoom: number } | null {
-  const origin = document.querySelector<HTMLElement>('[data-studio-board-origin]')
-  if (!origin) return null
-  const rect = origin.getBoundingClientRect()
-  return { origin: { left: rect.left, top: rect.top }, zoom: transform?.zoom ?? useEditorStore.getState().zoom }
 }
 
 /**

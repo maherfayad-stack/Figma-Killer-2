@@ -7,10 +7,16 @@
  *    `useCanvasLayerPointer` hit-tests the layers from the board instead.
  *  - `.chromeLayer` holds the selection and hover rings, ABOVE the frames.
  */
+/* The board-origin element: BOARD_ORIGIN_SPAN (1000) px wide and zero tall, so
+   its client rect gives the board origin AND the painted zoom in one read
+   (`readBoardOrigin`). Never a pointer target. */
 .layer {
     position: absolute;
     top: 0;
     left: 0;
+    width: 1000px;
+    height: 0;
+    pointer-events: none;
 }
 
 .surface {

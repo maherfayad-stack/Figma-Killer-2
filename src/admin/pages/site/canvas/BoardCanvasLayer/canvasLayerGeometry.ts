@@ -101,6 +101,34 @@ export function canvasLayerAtPoint(
 }
 
 /**
+ * The board-origin element's width in board units (`BoardCanvasLayer`'s
+ * `.layer`, `data-studio-board-origin`). It is `BOARD_ORIGIN_SPAN` CSS pixels
+ * wide and zero tall inside the transform layer, so ONE client rect gives both
+ * the board's client origin AND the zoom actually painted — no second source
+ * (a transform ref, the store's debounced zoom) that could disagree with what
+ * is on screen.
+ */
+export const BOARD_ORIGIN_SPAN = 1000
+
+export interface BoardOrigin {
+  left: number
+  top: number
+  zoom: number
+}
+
+/** The board's client origin and painted zoom, read from the board-origin element. */
+export function readBoardOrigin(element: Element): BoardOrigin {
+  const rect = element.getBoundingClientRect()
+  return { left: rect.left, top: rect.top, zoom: rect.width > 0 ? rect.width / BOARD_ORIGIN_SPAN : 1 }
+}
+
+/** The board-origin element of the canvas `root` (or the document), or `null` off a Studio board. */
+export function findBoardOrigin(root: ParentNode = document): BoardOrigin | null {
+  const element = root.querySelector('[data-studio-board-origin]')
+  return element ? readBoardOrigin(element) : null
+}
+
+/**
  * A parent-document client point in board units. `boardOrigin` is the client
  * rect of an element sitting at board (0, 0) inside the transform layer — it
  * already carries the pan and the transform layer's own offset — and `zoom`

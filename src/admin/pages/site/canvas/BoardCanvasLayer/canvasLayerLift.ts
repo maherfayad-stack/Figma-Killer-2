@@ -16,7 +16,7 @@
 import type { BoardDropSurfaces } from '../canvasDragBoard'
 import { canvasSurfaceAtPoint } from '../canvasDragBoard'
 import type { ClientPoint, FrameCandidateIndex } from '../canvasDragSession'
-import { clientToBoardPoint } from './canvasLayerGeometry'
+import { clientToBoardPoint, findBoardOrigin } from './canvasLayerGeometry'
 
 export interface CanvasLiftDrop {
   originPageId: string
@@ -40,11 +40,10 @@ export function resolveCanvasLiftDrop(input: {
   // Released outside the board (a panel, the toolbar): nothing to place it on.
   const root = input.canvasRoot.getBoundingClientRect()
   if (input.point.x < root.left || input.point.x > root.right || input.point.y < root.top || input.point.y > root.bottom) return null
-  const boardOrigin = input.canvasRoot.querySelector<HTMLElement>('[data-studio-board-origin]')
-  if (!boardOrigin) return null
+  const origin = findBoardOrigin(input.canvasRoot)
+  if (!origin) return null
 
-  const scale = input.index.scale > 0 ? input.index.scale : 1
-  const origin = boardOrigin.getBoundingClientRect()
+  const scale = origin.zoom
   const release = clientToBoardPoint(input.point, origin, scale)
   const element = input.index.candidates.find((candidate) => candidate.nodeId === input.draggedId)?.rect
   if (!element) return { originPageId: input.originPageId, at: release }

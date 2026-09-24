@@ -51,7 +51,7 @@ import { paintCanvasDrag } from '../canvasDragPainter'
 import type { ClientPoint } from '../canvasDragSession'
 import { isCanvasSpacePanActive } from '../canvasPanInput'
 import type { CanvasTransform } from '../math'
-import { canvasLayerAtPoint, canvasLayerRects, clientToBoardPoint, type CanvasLayerRect } from './canvasLayerGeometry'
+import { canvasLayerAtPoint, canvasLayerRects, clientToBoardPoint, readBoardOrigin, type CanvasLayerRect } from './canvasLayerGeometry'
 import { resolveCanvasLayerDrop, type CanvasLayerDropState, type CanvasLayerFrameTarget } from './canvasLayerDropPreview'
 import { setHoveredCanvasLayer } from './canvasLayerHover'
 
@@ -119,9 +119,10 @@ export function useCanvasLayerPointer({
       const layers = layerPaintOrder(boardLayers(board)).filter((layer) => canvasLayerPageId(layer.id) in state.canvasLayerPages)
       if (layers.length === 0) return null
       const locked = new Set(layers.filter((layer) => layer.locked).map((layer) => layer.id))
-      const origin = boardOriginRef.current?.getBoundingClientRect()
-      if (!origin) return null
-      return canvasLayerAtPoint(canvasLayerRects(layers), clientToBoardPoint(client, origin, liveTransform().zoom), locked)
+      const element = boardOriginRef.current
+      if (!element) return null
+      const origin = readBoardOrigin(element)
+      return canvasLayerAtPoint(canvasLayerRects(layers), clientToBoardPoint(client, origin, origin.zoom), locked)
     }
 
     /** Write positions into the surface hosts and the board rings — the ONLY per-frame DOM writes. */

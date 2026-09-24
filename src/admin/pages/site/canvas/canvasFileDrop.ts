@@ -177,12 +177,12 @@ export interface CanvasFileDropInput {
   /** The page tree a frame renders — the caller's one store read. */
   readPage: (pageId: string) => NodeTree<PageNode> | null
   /**
-   * P5-G — the free canvas, when this canvas is a Studio board: the client
-   * rect of the element at board (0, 0) and the live zoom, which is all it
-   * takes to turn the drop point into a board point. Absent (a CMS canvas),
+   * P5-G — the free canvas, when this canvas is a Studio board: the board's
+   * client origin and painted zoom (`readBoardOrigin`), which is all it takes
+   * to turn the drop point into a board point. Absent (a CMS canvas),
    * the empty board still refuses: there is nowhere to put the image.
    */
-  freeCanvas?: { origin: { left: number; top: number }; zoom: number } | null
+  freeCanvas?: { left: number; top: number; zoom: number } | null
 }
 
 /**
@@ -210,8 +210,8 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
       kind: 'canvas',
       file,
       at: {
-        x: (input.point.x - input.freeCanvas.origin.left) / zoom,
-        y: (input.point.y - input.freeCanvas.origin.top) / zoom,
+        x: (input.point.x - input.freeCanvas.left) / zoom,
+        y: (input.point.y - input.freeCanvas.top) / zoom,
       },
     }
   }

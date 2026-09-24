@@ -141,7 +141,7 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
       point: { x: 900, y: 400 },
       transform: null,
       readPage,
-      freeCanvas: { origin: { left: 100, top: 50 }, zoom: 0.5 },
+      freeCanvas: { left: 100, top: 50, zoom: 0.5 },
     })
 
     expect(plan.ok).toBe(true)
@@ -157,7 +157,7 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
       point: { x: 100, y: 100 },
       transform: null,
       readPage,
-      freeCanvas: { origin: { left: 0, top: 0 }, zoom: 1 },
+      freeCanvas: { left: 0, top: 0, zoom: 1 },
     })
     expect(plan.ok && plan.kind).toBe('frame')
   })
