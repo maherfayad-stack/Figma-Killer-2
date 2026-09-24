@@ -55,13 +55,8 @@ function runStructuralStep(
   structural: StructuralHistory,
   direction: 'undo' | 'redo',
 ): void {
-  // ERR-4 — a structural undo/redo is a WRITE (a move re-issued through
-  // `moveNodes`, or a source gesture's inverse posted), so it queues behind a
-  // structural write still in flight like every other structural writer. The
-  // whole step is parked, not just its write: when it runs it reads the top
-  // of the stack as the in-flight write's resync (and its history remap) left
-  // it, so ⌘Z pressed during a drag's commit undoes that drag.
-  if (deferWhileStructuralCommitInFlight(() => get()[direction]())) return
+  // ERR-4 — a structural undo/redo is a WRITE, so it queues behind a write
+  // still in flight: `undo`/`redo` defer the whole step before reaching here.
   const from = direction === 'undo' ? '_historyPast' : '_historyFuture'
   const to = direction === 'undo' ? '_historyFuture' : '_historyPast'
   // Both stacks are snapshotted BEFORE the re-issue and assigned wholesale
@@ -181,6 +176,11 @@ function runBoardStep(
 export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoActions {
   return {
     undo: () => {
+      // P3-D — a structural write still on the wire may not have pushed its
+      // entry yet (a source gesture's entry lands with its re-read), so the
+      // stack is read only once the write has settled: a ⌘Z pressed right
+      // after a paste used to find it empty and do nothing at all.
+      if (deferWhileStructuralCommitInFlight(() => get().undo())) return
       const { _historyPast, site } = get()
       if (_historyPast.length === 0) return
       const entry = _historyPast[_historyPast.length - 1]!
@@ -227,6 +227,7 @@ export function createUndoRedoActions({ get, set }: SiteSliceHelpers): UndoRedoA
     },
 
     redo: () => {
+      if (deferWhileStructuralCommitInFlight(() => get().redo())) return // see `undo`
       const { _historyFuture, site } = get()
       if (_historyFuture.length === 0) return
       const entry = _historyFuture[_historyFuture.length - 1]!

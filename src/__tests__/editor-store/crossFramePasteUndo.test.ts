@@ -102,6 +102,21 @@ function toasts(): Toast[] {
 }
 
 describe('ERR-8 — ⌘Z after a cross-frame paste', () => {
+  // The paste's undo entry is pushed when its write's re-read lands. A ⌘Z
+  // pressed while that write is still in flight used to find an EMPTY stack and
+  // do nothing at all — no write, no toast (P1-F: undo never silently fails).
+  it('a ⌘Z pressed while the paste is still being written undoes the paste once it lands', async () => {
+    store().setActivePage('about')
+    expect(store().copyNode(H2)).toBe(true)
+    store().setActivePage('home')
+    store().pasteNode(D, 'after')
+    expect(isStructuralCommitInFlight()).toBe(true)
+    store().undo()
+    await settle()
+    expect(posted[0]).toEqual([expect.objectContaining({ kind: 'transplant', nodeId: H2, copy: true })])
+    expect(posted[1]).toEqual([{ kind: 'delete', nodeId: COPY }])
+  })
+
   it('deletes the copy the paste made, in the file it landed in', async () => {
     store().setActivePage('about')
     expect(store().copyNode(H2)).toBe(true)
