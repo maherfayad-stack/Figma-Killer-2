@@ -77,7 +77,7 @@ describe('agentCheckpoints — capture', () => {
     beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'turn1' })
     agentWrite('a.css', 'v1')
     agentWrite('a.css', 'v2')
-    const diff = readAgentCheckpointDiff(dir, USER, 'turn1', 'a.css')
+    const diff = readAgentCheckpointDiff(dir, USER, CONVERSATION, 'turn1', 'a.css')
     expect(diff).toMatchObject({ ok: true, added: 1, removed: 1 })
     expect(diff.ok && diff.diff).toContain('-v0')
     expect(diff.ok && diff.diff).toContain('+v2')
@@ -136,7 +136,7 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
     agentWrite('pages/Home.tsx', 'rewritten\n')
     agentWrite('pages/Home.module.css', '.a{}\n')
 
-    const outcome = await revertAgentCheckpoint(dir, USER, 'turn1')
+    const outcome = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1')
     expect(outcome).toEqual({ ok: true, reverted: ['pages/Home.module.css', 'pages/Home.tsx'] })
     expect(read('pages/Home.tsx').equals(original)).toBe(true)
     expect(fs.existsSync(abs('pages/Home.module.css'))).toBe(false)
@@ -155,16 +155,16 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
     const listed = listAgentCheckpointTurns(dir, USER, CONVERSATION)[0]!.files
     expect(listed.find((f) => f.path === 'b.tsx')).toMatchObject({ state: 'changed-since', revertable: false })
 
-    const whole = await revertAgentCheckpoint(dir, USER, 'turn1')
+    const whole = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1')
     expect(whole.ok).toBe(false)
     expect(!whole.ok && whole.code).toBe('changed-since')
     expect(!whole.ok && whole.message).toContain('"b.tsx"')
     expect(read('a.tsx').toString()).toBe('A1')
     expect(read('b.tsx').toString()).toBe('B1 + the user\'s own edit')
 
-    expect(await revertAgentCheckpoint(dir, USER, 'turn1', ['a.tsx'])).toEqual({ ok: true, reverted: ['a.tsx'] })
+    expect(await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1', ['a.tsx'])).toEqual({ ok: true, reverted: ['a.tsx'] })
     expect(read('a.tsx').toString()).toBe('A0')
-    const perFile = await revertAgentCheckpoint(dir, USER, 'turn1', ['b.tsx'])
+    const perFile = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1', ['b.tsx'])
     expect(!perFile.ok && perFile.code).toBe('changed-since')
     expect(read('b.tsx').toString()).toBe('B1 + the user\'s own edit')
   })
@@ -173,8 +173,8 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
     write('a.tsx', 'A0')
     beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'turn1' })
     agentWrite('a.tsx', 'A1')
-    expect((await revertAgentCheckpoint(dir, USER, 'turn1')).ok).toBe(true)
-    const again = await revertAgentCheckpoint(dir, USER, 'turn1')
+    expect((await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1')).ok).toBe(true)
+    const again = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1')
     expect(!again.ok && again.code).toBe('already-reverted')
   })
 
@@ -183,13 +183,13 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
     beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'turn1' })
     agentWrite('a.tsx', 'A1')
     expect(listAgentCheckpointTurns(dir, OTHER_USER, CONVERSATION)).toEqual([])
-    const outcome = await revertAgentCheckpoint(dir, OTHER_USER, 'turn1')
+    const outcome = await revertAgentCheckpoint(dir, OTHER_USER, CONVERSATION, 'turn1')
     expect(!outcome.ok && outcome.code).toBe('not-found')
     expect(read('a.tsx').toString()).toBe('A1')
   })
 
   it('refuses a malformed turn id', async () => {
-    const outcome = await revertAgentCheckpoint(dir, USER, '../../etc')
+    const outcome = await revertAgentCheckpoint(dir, USER, CONVERSATION, '../../etc')
     expect(!outcome.ok && outcome.code).toBe('not-found')
   })
 
@@ -213,7 +213,7 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
         write(rel, 'agent-version')
         beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'forged' })
         forgeRecord('forged', rel, 'EVIL', 'agent-version')
-        const outcome = await revertAgentCheckpoint(dir, USER, 'forged')
+        const outcome = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'forged')
         expect(outcome.ok).toBe(false)
         expect(!outcome.ok && outcome.code).toBe(code)
         expect(read(rel).toString()).toBe('agent-version')
@@ -226,7 +226,7 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
       try {
         beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'forged' })
         forgeRecord('forged', `../${path.basename(victim)}`, 'EVIL', 'agent-version')
-        const outcome = await revertAgentCheckpoint(dir, USER, 'forged')
+        const outcome = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'forged')
         expect(!outcome.ok && outcome.code).toBe('path-outside-project')
         expect(fs.readFileSync(victim, 'utf8')).toBe('agent-version')
       } finally {
@@ -245,7 +245,7 @@ describe('agentCheckpoints — revert (compare-and-swap)', () => {
         }
         beginAgentCheckpointTurn(dir, USER, { conversationId: CONVERSATION, turnId: 'forged' })
         forgeRecord('forged', 'linked/secret.txt', 'EVIL', 'agent-version')
-        const outcome = await revertAgentCheckpoint(dir, USER, 'forged')
+        const outcome = await revertAgentCheckpoint(dir, USER, CONVERSATION, 'forged')
         expect(!outcome.ok && outcome.code).toBe('path-outside-project')
         expect(fs.readFileSync(path.join(outside, 'secret.txt'), 'utf8')).toBe('agent-version')
       } finally {
@@ -264,7 +264,7 @@ function forgeRecord(turnId: string, rel: string, pre: string, post: string): vo
   fs.writeFileSync(path.join(filesDir, `${key}.pre`), pre)
   fs.writeFileSync(path.join(filesDir, `${key}.json`), JSON.stringify({ path: rel, existed: true, hash: hash(pre), bytes: pre.length, tooLarge: false, atMs: 1 }))
   fs.writeFileSync(path.join(filesDir, `${key}.post`), post)
-  fs.writeFileSync(path.join(filesDir, `${key}.post.json`), JSON.stringify({ hash: hash(post), bytes: post.length, tooLarge: false, atMs: 2 }))
+  fs.writeFileSync(path.join(filesDir, `${key}.post.json`), JSON.stringify({ hash: hash(post), bytes: post.length, tooLarge: false, added: null, removed: null, atMs: 2 }))
 }
 
 describe('agentCheckpoints — kept out of git', () => {

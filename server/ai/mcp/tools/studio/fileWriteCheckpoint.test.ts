@@ -73,7 +73,7 @@ describe('HTTP file tools take a checkpoint', () => {
       ['pages/Home.tsx', 'modified', true],
     ])
 
-    expect((await revertAgentCheckpoint(dir, userKey, 'turnHttp')).ok).toBe(true)
+    expect((await revertAgentCheckpoint(dir, userKey, CONVERSATION, 'turnHttp')).ok).toBe(true)
     expect(fs.readFileSync(path.join(dir, 'pages', 'Home.tsx')).equals(before)).toBe(true)
     expect(fs.existsSync(path.join(dir, 'pages', 'Home.module.css'))).toBe(false)
   })

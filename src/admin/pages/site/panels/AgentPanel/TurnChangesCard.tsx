@@ -95,6 +95,7 @@ function TurnFileRow({
   disabled: boolean
   onRevert(): void
 }) {
+  const conversationId = useAgentStore((s) => s.agentConversationId)
   const [diff, setDiff] = useState<AgentTurnFileDiff | null>(null)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [open, setOpen] = useState(false)
@@ -107,7 +108,8 @@ function TurnFileRow({
     setOpen(next)
     if (!next || diff) return
     try {
-      setDiff(await fetchAgentTurnFileDiff(turnId, file.path))
+      if (!conversationId) throw new Error('This conversation is not saved yet.')
+      setDiff(await fetchAgentTurnFileDiff(conversationId, turnId, file.path))
       setDiffError(null)
     } catch (err) {
       // Shown where the diff would have been (a read nobody else needs to hear about).

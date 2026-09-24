@@ -58,7 +58,7 @@ describe('checkpoint hooks (spawned)', () => {
       expect(turns[0]!.files).toEqual([
         { path: 'pages/Home.tsx', change: 'modified', state: 'current', revertable: true, reason: null, added: 1, removed: 1 },
       ])
-      expect(await revertAgentCheckpoint(dir, USER, 'turn1')).toEqual({ ok: true, reverted: ['pages/Home.tsx'] })
+      expect(await revertAgentCheckpoint(dir, USER, CONVERSATION, 'turn1')).toEqual({ ok: true, reverted: ['pages/Home.tsx'] })
       expect(fs.readFileSync(file, 'utf8')).toBe('before\n')
     } finally {
       fs.rmSync(dir, { recursive: true, force: true })

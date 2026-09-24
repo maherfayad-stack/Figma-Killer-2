@@ -23,10 +23,10 @@ import {
 
 const BASE = '/admin/api/ai/agent-checkpoints'
 
-export async function fetchAgentTurnFileDiff(turnId: string, path: string, signal?: AbortSignal): Promise<AgentTurnFileDiff> {
+export async function fetchAgentTurnFileDiff(conversationId: string, turnId: string, path: string, signal?: AbortSignal): Promise<AgentTurnFileDiff> {
   const dir = agentProjectDir()
   if (!dir) throw new Error('No Studio project is open.')
-  return apiRequest(`${BASE}/diff`, { query: { dir, turnId, path }, schema: DiffResponseSchema, signal })
+  return apiRequest(`${BASE}/diff`, { query: { dir, conversationId, turnId, path }, schema: DiffResponseSchema, signal })
 }
 
 export function agentTurnChangesInitialState(): Pick<AgentSlice, 'agentTurnChanges'> {

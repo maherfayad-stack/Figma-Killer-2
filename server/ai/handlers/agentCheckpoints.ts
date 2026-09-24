@@ -4,7 +4,7 @@
  *
  *   GET  /admin/api/ai/agent-checkpoints?dir=&conversationId=
  *        → { turns: [{ turnId, startedAtMs, files: [...] }] }
- *   GET  /admin/api/ai/agent-checkpoints/diff?dir=&turnId=&path=
+ *   GET  /admin/api/ai/agent-checkpoints/diff?dir=&conversationId=&turnId=&path=
  *        → { path, diff, added, removed } — a unified diff
  *   POST /admin/api/ai/agent-checkpoints/revert { dir, conversationId, turnId, paths? }
  *        → { reverted: [...] } | 409 { error, code, files }
@@ -100,10 +100,15 @@ async function handleDiff(req: Request, db: DbClient, url: URL): Promise<Respons
   if (user instanceof Response) return user
   const turnId = url.searchParams.get('turnId') ?? ''
   const path = url.searchParams.get('path') ?? ''
+  const conversationId = url.searchParams.get('conversationId')
+  if (!conversationId) return badRequest('missing conversationId')
   if (!isCheckpointTurnId(turnId) || path.length === 0 || path.length > PATH_MAX_CHARS) return badRequest('invalid turnId or path')
   const dir = projectDir(url.searchParams.get('dir'))
   if (dir instanceof Response) return dir
-  const diff = readAgentCheckpointDiff(dir, studioAgentUserKey(user.id), turnId, path)
+  const refusal = await ownConversation(db, user.id, conversationId, dir)
+  if (refusal) return refusal
+  // The turn must belong to THAT conversation (`agentCheckpoints.ts` checks its turn.json).
+  const diff = readAgentCheckpointDiff(dir, studioAgentUserKey(user.id), conversationId, turnId, path)
   if (!diff.ok) return jsonResponse({ error: diff.message, code: diff.code }, { status: diff.code === 'not-found' ? 404 : 422 })
   return jsonResponse({ path: diff.path, diff: diff.diff, added: diff.added, removed: diff.removed })
 }
@@ -125,7 +130,9 @@ async function handleRevert(req: Request, db: DbClient): Promise<Response> {
     return jsonResponse({ error: 'The assistant is still working in this conversation. Wait for the turn to finish, then revert.', code: 'turn-running' }, { status: 409 })
   }
 
-  const outcome = await revertAgentCheckpoint(dir, studioAgentUserKey(user.id), body.turnId, body.paths)
+  // Bound to `body.conversationId`: a turn of another conversation is not found,
+  // so the streaming check above is the check for the turn's own conversation.
+  const outcome = await revertAgentCheckpoint(dir, studioAgentUserKey(user.id), body.conversationId, body.turnId, body.paths)
   if (!outcome.ok) {
     return jsonResponse({ error: outcome.message, code: outcome.code, files: outcome.files }, { status: outcome.code === 'not-found' ? 404 : 409 })
   }
