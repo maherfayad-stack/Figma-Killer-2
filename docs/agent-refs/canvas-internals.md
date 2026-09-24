@@ -612,6 +612,12 @@ can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
 a drop between those two is an ordinary same-file reparent that must keep going
 through `moveNodes`.
 
+**Released over no frame at all** (the empty board of a Studio board), the drag
+is a LIFT (P5-G): the element leaves its page and becomes a loose layer on the
+free canvas, keeping the grab offset (`BoardCanvasLayer/canvasLayerLift.ts`,
+`canvasDragCommit.ts`'s lift branch; ⌥ lifts a copy). See
+[`free-canvas.md`](../features/free-canvas.md).
+
 The write is one `transplant` edit (`transplantJsxElement`), not a delete plus
 an insert: two edits are two writes the batch could land half of, and the second
 has no markup to insert — the element's source text only exists in the file the
@@ -667,15 +673,19 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 - The relay re-dispatches both events on the iframe ELEMENT and cancels them
   inside the frame, so the browser does not navigate that frame's document to
   the dropped file.
-- Every refusal is decided before the network is touched: the empty board
-  ("Drop the image onto a frame"), several files at once, a declared
-  non-image. One toast, no write.
+- Every refusal is decided before the network is touched: several files at
+  once, a declared non-image, and — on a canvas with no free canvas (the CMS
+  editor) — the empty board ("Drop the image onto a frame"). One toast, no write.
+- **On a Studio board the empty board is the free canvas** (P5-G): an image
+  released there becomes a loose layer (`plan.kind === 'canvas'`), centred on
+  the drop point at its intrinsic size — see [`free-canvas.md`](../features/free-canvas.md).
 - **And decided before RELEASE, too.** `canvasFileDragPreview.ts` runs the same
   refusal functions on every `dragover`, through one rAF and zero React
   commits, and paints the answer: over a frame, the element drag's own drop
   line plus a cursor chip naming the format, in that frame's own drag layer;
-  over the empty board, "Drop onto a frame" in `CanvasFileDropHint`, a
-  board-level layer that exists because there is no frame layer to use there.
+  over the empty board, "Place on canvas" (a Studio board) or "Drop onto a
+  frame" (no free canvas) in `CanvasFileDropHint`, a board-level layer that
+  exists because there is no frame layer to use there.
   A `CanvasFileDropRefusal` carries a one-line `headline` for the chip and the
   whole `message` for the toast, so the two cannot drift.
 - **The chip names the TYPE, never the file.** Before `drop` the drag data

@@ -84,7 +84,7 @@ function requirePath(dir: string, id: string): string {
   if (!file) {
     throw new CanvasLayerFileError(
       'layer-unsafe-path',
-      "This project's .studio/canvas folder is a link to somewhere else, so Studio will not write canvas layers into it. Replace the link with an ordinary folder.",
+      "This project's canvas-layer folder is a link to somewhere else, so Studio will not write canvas layers into it. Replace the link with an ordinary folder.",
     )
   }
   return file
@@ -114,18 +114,6 @@ export function listCanvasLayerIds(dir: string): CanvasLayerId[] {
   return ids
 }
 
-/** The module's text, or `null` when it does not exist (or is not a safe path). */
-export function readCanvasLayerFile(dir: string, id: string): string | null {
-  const file = canvasLayerFilePath(dir, id)
-  if (!file) return null
-  try {
-    if (!lstatSync(file).isFile()) return null
-    return readFileSync(file, 'utf8')
-  } catch {
-    return null
-  }
-}
-
 /** Write a NEW layer module. Refuses when the name is taken — a create never overwrites. */
 export function writeNewCanvasLayerFile(dir: string, id: string, text: string): string {
   const file = requirePath(dir, id)
@@ -139,7 +127,7 @@ export function writeNewCanvasLayerFile(dir: string, id: string, text: string): 
   // Re-checked after the mkdir: creating the folder cannot have produced a
   // link, but a racing writer could have, and this is the cheap moment to see it.
   if (!canvasLayerFilePath(dir, id)) {
-    throw new CanvasLayerFileError('layer-unsafe-path', "This project's .studio/canvas folder is not an ordinary folder, so nothing was written.")
+    throw new CanvasLayerFileError('layer-unsafe-path', "This project's canvas-layer folder is not an ordinary folder, so nothing was written.")
   }
   writeFileSync(file, text, { encoding: 'utf8', flag: 'wx' })
   return file

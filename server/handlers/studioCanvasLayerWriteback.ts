@@ -243,7 +243,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       }
       const moduleFile = canvasLayerFilePath(dir, edit.layerId)
       if (!moduleFile) {
-        throw new StudioEditRefusalError('layer-unsafe-path', "This project's .studio/canvas folder is not an ordinary folder, so Studio will not write canvas layers into it.")
+        throw new StudioEditRefusalError('layer-unsafe-path', "This project's canvas-layer folder is not an ordinary folder, so Studio will not write canvas layers into it.")
       }
       const result = liftJsxElementToCanvasModule({
         file: join(dir, origin.rel),

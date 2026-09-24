@@ -66,6 +66,10 @@ substituted with the call site's arguments. The Figma verb.
 **`fromComponent`** — set on an inlined node, naming the component whose file
 backs it. Drives `SharedComponentNotice` and its instance count.
 
+**Free canvas** — the empty board around the frames, where loose layers live
+(P5-G, [`free-canvas.md`](../features/free-canvas.md)). Never part of a page,
+the live preview, a publish, a share or a download.
+
 **Frame virtualization** — mounting only frames intersecting the viewport plus a
 margin. `frameVirtualization.ts`, pure board→screen math.
 
@@ -89,6 +93,14 @@ Keeps box-less nodes selectable and droppable.
 **literal a resolved value physically came from**. Attached at the single place a
 literal is read, so passing a value along carries it for free and computing a
 value cannot. `textOrigin` is the text-scoped one.
+
+**Loose layer** — one item on the free canvas: a **layer module**
+(`.studio/canvas/<id>.tsx`, one default-exported component returning one root
+element, written only by Studio) plus its **placement** (`Board.layers[]` in
+`boards.json`: x, y, optional host width, z, name, lock, hide). **Lift** = a
+page element dragged out onto the board; **place** = a loose layer dropped into
+a frame. Its parsed tree is the `canvas:<id>` page in `canvasLayerPages`, never
+in `site.pages`.
 
 **Package component** — a JSX component imported from a bare specifier. It
 becomes a `pkg.<sanitized-package>.<ComponentName>` module

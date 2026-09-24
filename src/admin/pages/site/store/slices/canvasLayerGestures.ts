@@ -88,36 +88,41 @@ export function canvasLayerRootNodeId(page: Page): string | null {
   return page.nodes[page.rootNodeId]?.children[0] ?? null
 }
 
-/**
- * A rollback that takes the placement half back and clears the pending marks,
- * and a settle that only clears them — see this module's doc.
- */
-function placementRollback(get: Get, changes: readonly CanvasLayerPlacementChange[], layerIds: readonly string[]): StructuralCommitRollback {
+/** A rollback that takes the placement half back if the write does not land. Idempotent with `settle`. */
+function placementRollback(get: Get, changes: readonly CanvasLayerPlacementChange[]): StructuralCommitRollback {
   let done = false
-  const release = () => {
-    for (const id of layerIds) clearCanvasLayerPending(id)
-  }
   return {
     id: mintPendingCommitId(),
     settle: () => {
-      if (done) return
       done = true
-      release()
     },
     rollback: () => {
       if (done) return
       done = true
       get().applyCanvasLayerPlacements(changes, 'before')
-      release()
     },
   }
 }
 
-/** Apply a gesture's placement half and mark its layers pending. Returns the rollback the commit carries. */
-function beginPlacementGesture(get: Get, changes: CanvasLayerPlacementChange[], layerIds: readonly string[]): StructuralCommitRollback {
+/**
+ * Run one gesture: apply its placement half, mark its layers pending, post it,
+ * and release the pending marks only once the whole commit — the write AND the
+ * re-read that brings the module back — has finished. Releasing at `settle`
+ * (the write landing) would leave a window where the board holds a placement
+ * whose module the store has not read yet, and a heal in that window would
+ * drop it.
+ */
+function runPlacementGesture(
+  get: Get,
+  changes: CanvasLayerPlacementChange[],
+  layerIds: readonly string[],
+  post: (rollback: StructuralCommitRollback) => Promise<void>,
+): void {
   for (const id of layerIds) markCanvasLayerPending(id)
   get().applyCanvasLayerPlacements(changes, 'after')
-  return placementRollback(get, changes, layerIds)
+  void post(placementRollback(get, changes)).finally(() => {
+    for (const id of layerIds) clearCanvasLayerPending(id)
+  })
 }
 
 /** The slot `nodeId` occupies in `page` — `transplantActions.ts`'s `originSlot`, for a lift's undo. */
@@ -151,8 +156,9 @@ export function createCanvasLayerGestures(set: Set, get: Get): CanvasLayerGestur
       const target = placementAt(get, layerId, at)
       if (!target) return null
       const changes: CanvasLayerPlacementChange[] = [{ boardId: target.boardId, layerId, before: null, after: target.placement }]
-      const rollback = beginPlacementGesture(get, changes, [layerId])
-      void commitCanvasLayerCreate({ layerId, element, placements: changes, rollback })
+      runPlacementGesture(get, changes, [layerId], (rollback) =>
+        commitCanvasLayerCreate({ layerId, element, placements: changes, rollback }),
+      )
       return layerId
     },
 
@@ -192,18 +198,19 @@ export function createCanvasLayerGestures(set: Set, get: Get): CanvasLayerGestur
       // A move takes the layer off the board with the write; a copy leaves it.
       const changes: CanvasLayerPlacementChange[] =
         destination.copy || !current ? [] : [{ boardId: current.boardId, layerId, before: current.placement, after: null }]
-      const rollback = beginPlacementGesture(get, changes, [layerId])
       if (!destination.copy) get().clearCanvasLayerSelection()
-      void commitCanvasLayerPlace({
-        layerId,
-        rootNodeId,
-        parentNodeId: preview.commit.destinationParentNodeId,
-        anchorNodeId: preview.commit.anchorNodeId,
-        position: preview.commit.position,
-        copy: destination.copy,
-        placements: changes,
-        rollback,
-      })
+      runPlacementGesture(get, changes, [layerId], (rollback) =>
+        commitCanvasLayerPlace({
+          layerId,
+          rootNodeId,
+          parentNodeId: preview.commit.destinationParentNodeId,
+          anchorNodeId: preview.commit.anchorNodeId,
+          position: preview.commit.position,
+          copy: destination.copy,
+          placements: changes,
+          rollback,
+        }),
+      )
     },
 
     liftNodeToCanvas: (nodeId, originPageId, at, copy) => {
@@ -230,15 +237,16 @@ export function createCanvasLayerGestures(set: Set, get: Get): CanvasLayerGestur
       const target = placementAt(get, layerId, at)
       if (!target) return
       const changes: CanvasLayerPlacementChange[] = [{ boardId: target.boardId, layerId, before: null, after: target.placement }]
-      const rollback = beginPlacementGesture(get, changes, [layerId])
-      void commitCanvasLayerLift({
-        layerId,
-        nodeId: preview.nodeId,
-        copy,
-        origin: originSlot(originPage, preview.nodeId),
-        placements: changes,
-        rollback,
-      })
+      runPlacementGesture(get, changes, [layerId], (rollback) =>
+        commitCanvasLayerLift({
+          layerId,
+          nodeId: preview.nodeId,
+          copy,
+          origin: originSlot(originPage, preview.nodeId),
+          placements: changes,
+          rollback,
+        }),
+      )
     },
 
     removeCanvasLayers: (layerIds) => {
@@ -252,9 +260,8 @@ export function createCanvasLayerGestures(set: Set, get: Get): CanvasLayerGestur
         const current = findLayerPlacement(state.boards, id)
         if (current) changes.push({ boardId: current.boardId, layerId: id, before: current.placement, after: null })
       }
-      const rollback = beginPlacementGesture(get, changes, ids)
       get().clearCanvasLayerSelection()
-      void commitCanvasLayerDelete({ layerIds: ids, placements: changes, rollback })
+      runPlacementGesture(get, changes, ids, (rollback) => commitCanvasLayerDelete({ layerIds: ids, placements: changes, rollback }))
     },
   }
   return gestures
