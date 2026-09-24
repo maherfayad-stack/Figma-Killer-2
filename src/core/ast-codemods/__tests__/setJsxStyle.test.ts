@@ -222,3 +222,59 @@ describe('setJsxStyle — remove', () => {
     expect(written).not.toContain('color')
   })
 })
+
+describe('setJsxStyle — WB-10, the file keeps its formatting', () => {
+  it("writes in the object's own quote and keeps a one-line object on one line (the audit's probe)", () => {
+    const source = "export const A = () => <div style={{ color: 'red' }}>x</div>\n"
+    const file = writeFixture('probe.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: { color: 'blue', marginTop: '4px' } })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe("export const A = () => <div style={{ color: 'blue', marginTop: '4px' }}>x</div>\n")
+  })
+
+  it('appends to a multi-line object on its own line, indented like its siblings, keeping the trailing comma', () => {
+    const source = [
+      'export const A = () => (',
+      '  <div',
+      '    style={{',
+      "      color: 'red',",
+      '      padding: 4,',
+      '    }}',
+      '  >',
+      '    x',
+      '  </div>',
+      ')',
+      '',
+    ].join('\n')
+    const file = writeFixture('multi-comma.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: { color: 'blue', margin: '2px' } })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(
+      source.replace("color: 'red'", "color: 'blue'").replace('      padding: 4,\n', "      padding: 4,\n      margin: '2px',\n"),
+    )
+  })
+
+  it('appends to a multi-line object without a trailing comma the same way', () => {
+    const source = ['export const A = () => (', '  <div style={{', "    color: 'red'", '  }} />', ')', ''].join('\n')
+    const file = writeFixture('multi-bare.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: { margin: 0 } })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace("    color: 'red'\n", "    color: 'red',\n    margin: 0\n"))
+  })
+
+  it("writes a new style attribute in the file's own quote", () => {
+    const source = ["import { x } from './x'", 'export const A = () => <div>x</div>', ''].join('\n')
+    const file = writeFixture('new-attr.tsx', source)
+    const { line, col } = locateTag(source, 'div')
+
+    setJsxStyle({ file, line, col, style: { color: 'blue' } })
+
+    expect(fs.readFileSync(file, 'utf8')).toContain("<div style={{ color: 'blue' }}>x</div>")
+  })
+})
