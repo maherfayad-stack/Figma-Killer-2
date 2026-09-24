@@ -247,6 +247,14 @@ export interface ToolContextBase {
    */
   readonly userSuppliedUrls?: readonly string[]
   /**
+   * The persisted id of the user message that opened this turn — the key the
+   * turn's file checkpoint is stored under (AI-7, `agentCheckpoints.ts`) and
+   * the id the panel shows "Changed N files" against. `undefined` for a call
+   * with no chat turn behind it (an external MCP client), which takes no
+   * checkpoint.
+   */
+  readonly turnId?: string
+  /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's
    * onSnapshot) so later server read tools see post-mutation state.

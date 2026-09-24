@@ -24,6 +24,9 @@
 import { Type, parseValue, type Static } from '@core/utils/typeboxHelpers'
 import type { AiStreamEvent } from '../runtime/types'
 import type { ClaudeCliRawEvent } from './claudeCliSpawn'
+import { ToolInputProgress } from './toolInputProgress'
+import { wirePreviewImages } from '../runtime/toolPreviewImages'
+import type { AiToolImage } from '@core/ai'
 
 // ---------------------------------------------------------------------------
 // Schemas
@@ -123,9 +126,22 @@ const ClaudeCliAssistantMessageSchema = Type.Object(
 const ClaudeCliInnerStreamEventSchema = Type.Object(
   {
     type: Type.Optional(Type.String()),
+    index: Type.Optional(Type.Number()),
+    /** `content_block_start` — for a `tool_use` block, its id and name (AI-26). */
+    content_block: Type.Optional(
+      Type.Object(
+        { type: Type.Optional(Type.String()), id: Type.Optional(Type.String()), name: Type.Optional(Type.String()) },
+        { additionalProperties: true },
+      ),
+    ),
     delta: Type.Optional(
       Type.Object(
-        { type: Type.Optional(Type.String()), thinking: Type.Optional(Type.String()) },
+        {
+          type: Type.Optional(Type.String()),
+          thinking: Type.Optional(Type.String()),
+          /** `input_json_delta` — a fragment of a tool call's arguments (AI-26). */
+          partial_json: Type.Optional(Type.String()),
+        },
         { additionalProperties: true },
       ),
     ),
@@ -246,10 +262,18 @@ export interface ClaudeCliTurnState {
    * goes rather than reconstructing it.
    */
   lastToolName: string | null
+  /**
+   * AI-26 — the `tool_use` blocks currently streaming their arguments, by
+   * block index (`content_block_start` names them; the `input_json_delta`
+   * fragments after it carry only the index), and the byte counter that turns
+   * those fragments into `toolInputProgress` events.
+   */
+  readonly streamingTools: Map<number, { id: string; name: string }>
+  readonly inputProgress: ToolInputProgress
 }
 
 export function createClaudeCliTurnState(): ClaudeCliTurnState {
-  return { toolNames: new Map(), lastToolName: null }
+  return { toolNames: new Map(), lastToolName: null, streamingTools: new Map(), inputProgress: new ToolInputProgress() }
 }
 
 /**
@@ -339,6 +363,7 @@ export function translateClaudeCliLine(
           toolName: state.toolNames.get(result.tool_use_id) ?? result.tool_use_id,
           ok: !result.is_error,
           error: result.is_error ? toolResultErrorText(result.content) : undefined,
+          ...wirePreviewImages(toolResultImages(result.content)),
         })
       }
       return { events, turnComplete: false }
@@ -377,9 +402,22 @@ export function translateClaudeCliLine(
     }
 
     case 'stream_event': {
-      const thinking = line.event?.delta
-      if (line.event?.type === 'content_block_delta' && thinking?.type === 'thinking_delta' && thinking.thinking) {
-        return { events: [{ type: 'reasoning', text: thinking.thinking }], turnComplete: false }
+      const inner = line.event
+      const delta = inner?.delta
+      if (inner?.type === 'content_block_delta' && delta?.type === 'thinking_delta' && delta.thinking) {
+        return { events: [{ type: 'reasoning', text: delta.thinking }], turnComplete: false }
+      }
+      // AI-26 — a native Write's arguments ARE the file, streamed for tens of
+      // seconds before the tool_use arrives whole on the `assistant` line.
+      const block = inner?.content_block
+      if (inner?.type === 'content_block_start' && block?.type === 'tool_use' && block.id && typeof inner.index === 'number') {
+        state.streamingTools.set(inner.index, { id: block.id, name: block.name ?? 'tool' })
+        return { events: [], turnComplete: false }
+      }
+      if (inner?.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json && typeof inner.index === 'number') {
+        const tool = state.streamingTools.get(inner.index)
+        const progress = tool ? state.inputProgress.append(tool.id, tool.name, delta.partial_json) : null
+        return { events: progress ? [progress] : [], turnComplete: false }
       }
       return { events: [], turnComplete: false }
     }
@@ -396,6 +434,23 @@ export function translateClaudeCliLine(
  * block array. Anything else (or nothing) gets a generic line rather than
  * `[object Object]`.
  */
+/**
+ * The image blocks of a `tool_result` — what a Studio MCP tool such as
+ * `studio_screenshot` returned — in the wire's `{ mimeType, data }` shape.
+ */
+function toolResultImages(content: unknown): AiToolImage[] {
+  if (!Array.isArray(content)) return []
+  const images: AiToolImage[] = []
+  for (const block of content) {
+    if (typeof block !== 'object' || block === null || (block as { type?: unknown }).type !== 'image') continue
+    const source = (block as { source?: { type?: unknown; media_type?: unknown; data?: unknown } }).source
+    if (source?.type === 'base64' && typeof source.media_type === 'string' && typeof source.data === 'string') {
+      images.push({ mimeType: source.media_type, data: source.data })
+    }
+  }
+  return images
+}
+
 function toolResultErrorText(content: unknown): string {
   if (typeof content === 'string' && content.trim()) return content.trim()
   if (Array.isArray(content)) {

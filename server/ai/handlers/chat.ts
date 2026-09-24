@@ -89,8 +89,8 @@ import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../cha
 import { collectUserSuppliedUrls } from '../mcp/tools/studio/remoteFetchPolicy'
 import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
+import { acquireConversationStream } from '../conversations/activeStreams'
 
-const activeChatConversations = new Set<string>()
 const REQUEST_ABORTED = Symbol('request-aborted')
 
 
@@ -414,13 +414,13 @@ async function handleAiChat(
           modelId: conversation.modelId,
         },
       })
-      return { messages, systemPrompt, tokensAtStart }
+      return { messages, systemPrompt, tokensAtStart, turnId: appendedMessage.id }
     } catch (err) {
       releaseConversation()
       throw err
     }
   })()
-  const { messages, systemPrompt, tokensAtStart } = prepared
+  const { messages, systemPrompt, tokensAtStart, turnId } = prepared
 
   // `req.signal` covers request-side aborts, but a streaming response consumer
   // can disappear independently (tab reload, dev-server hot restart, proxy
@@ -492,6 +492,8 @@ async function handleAiChat(
           designPolicy: resolvedDesignPolicy,
           // The user's own pasted URLs: what an agent may fetch beyond the fixed hosts (`remoteFetchPolicy.ts`).
           userSuppliedUrls: collectUserSuppliedUrls(messages),
+          // The persisted user message that opened this turn: its checkpoint key (AI-7).
+          turnId,
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(
@@ -502,6 +504,8 @@ async function handleAiChat(
         )
         destroyBridge = destroy
         emit({ type: 'bridgeReady', bridgeId })
+        // Which turn this is, so the panel can list and revert what it changes (AI-7).
+        emit({ type: 'turn', turnId })
 
         const request: AiStreamRequest = {
           systemPrompt,
@@ -525,7 +529,9 @@ async function handleAiChat(
         }
 
         // What `claudeCli.ts` does before its spawn (guide + fresh turn-write log) — only for a caller who may write (review of #233, F7).
-        if (validatedWorkspaceDir && tools.some((t) => t.name === 'studio_write_file')) prepareStudioHttpTurn(validatedWorkspaceDir, user.id)
+        if (validatedWorkspaceDir && tools.some((t) => t.name === 'studio_write_file')) {
+          prepareStudioHttpTurn(validatedWorkspaceDir, { userId: user.id, conversationId: conversation.id, turnId })
+        }
 
         const persister = createConversationsPersister(db, conversation.id, {
           providerId: credential.providerId,
@@ -596,27 +602,6 @@ async function handleAiChat(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Whether a chat stream is currently in flight for this conversation. Read by
- * the "Restart agent session" endpoint (`conversations.ts`'s `handleRestartSession`)
- * so a restart can't race a live turn server-side — defense in depth on top
- * of the AgentPanel's own disabled-while-streaming control.
- */
-export function isConversationStreaming(conversationId: string): boolean {
-  return activeChatConversations.has(conversationId)
-}
-
-function acquireConversationStream(conversationId: string): (() => void) | null {
-  if (activeChatConversations.has(conversationId)) return null
-  activeChatConversations.add(conversationId)
-  let released = false
-  return () => {
-    if (released) return
-    released = true
-    activeChatConversations.delete(conversationId)
-  }
-}
 
 /**
  * Guarantees that `release` runs the moment `signal` aborts, independently of

@@ -97,6 +97,8 @@ export function rehydrateMessages(
     const msg: AgentMessage = {
       id: rec.id,
       role: rec.role === 'user' ? 'user' : 'assistant',
+      // A user message's own persisted id is the turn it opened (AI-7).
+      ...(rec.role === 'user' ? { turnId: rec.id } : {}),
       blocks: [],
       timestamp: Date.parse(rec.createdAt) || Date.now(),
     }

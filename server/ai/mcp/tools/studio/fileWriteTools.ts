@@ -55,6 +55,7 @@ import { AGENT_FILE_MAX_BYTES, pathRefusal } from './fileReadTools'
 import {
   afterWrites,
   checkContent,
+  checkpointBeforeWrite,
   commitPlannedWrites,
   currentText,
   isRefusal,
@@ -128,7 +129,11 @@ const writeFileTool: AiTool = {
       // editor, a git checkout) created it since the check above, this
       // refuses instead of overwriting work the model never saw.
       try {
+        if (current.content !== null) checkpointBeforeWrite(dir, ctx, target)
         writeFileSync(target.abs, content, { encoding: 'utf8', flag: current.content === null ? 'wx' : 'w' })
+        // `wx` succeeded, so the file did not exist: its pre-image is "absent",
+        // recorded only now so a creation that lost the race claims nothing.
+        if (current.content === null) checkpointBeforeWrite(dir, ctx, target, { knownAbsent: true })
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
         return toolRefusal('stale-source', `"${target.rel}" was created by something else a moment ago, so it was not overwritten.`, {
@@ -249,6 +254,7 @@ const editFileTool: AiTool = {
       if (isRefusal(next)) return next
       const contentProblem = checkContent(next.content, target.rel)
       if (contentProblem) return contentProblem
+      checkpointBeforeWrite(dir, ctx, target)
       writeFileSync(target.abs, next.content, 'utf8')
       afterWrites(dir, ctx, [target])
       return { ok: true as const, path: target.rel, replacements: next.replacements, hash: contentHash(next.content) }

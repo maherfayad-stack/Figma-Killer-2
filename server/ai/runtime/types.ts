@@ -16,7 +16,7 @@
  */
 
 import type { TSchema } from '@sinclair/typebox'
-import type { AiContentBlock, AiToolOutput } from '@core/ai'
+import type { AiContentBlock, AiToolImage, AiToolOutput } from '@core/ai'
 import type { CoreCapability } from '@core/capabilities'
 export type { AiContentBlock, AiToolImage, AiToolOutput } from '@core/ai'
 
@@ -258,12 +258,30 @@ export interface ToolContext {
 export type AiStreamEvent =
   /** First event of every stream — carries the bridge id for tool-result POSTs. */
   | { type: 'bridgeReady'; bridgeId: string }
+  /**
+   * Which turn this stream is: the persisted id of the user message that
+   * opened it (AI-7). The panel keys "Changed N files" and "Revert turn" by
+   * it, and a reloaded conversation finds the same id on the user message.
+   * Emitted by the chat handler right after `bridgeReady`; never persisted.
+   */
+  | { type: 'turn'; turnId: string }
   /** Streaming text delta from the assistant. */
   | { type: 'text'; text: string }
+  /**
+   * A tool call's arguments are still streaming (AI-26): how many bytes so
+   * far, and the file it targets once its `path` has arrived. Display only —
+   * never persisted, never fed back to a model. See
+   * `drivers/toolInputProgress.ts`.
+   */
+  | { type: 'toolInputProgress'; toolCallId: string; toolName: string; bytes: number; target?: string }
   /** A tool call has been issued by the model. `status: 'pending'` until completion. */
   | { type: 'toolCall'; toolCallId: string; toolName: string; input: unknown; status: 'pending' }
-  /** A tool call has completed (server-resolved or browser-bridged). */
-  | { type: 'toolResult'; toolCallId: string; toolName: string; ok: boolean; error?: string }
+  /**
+   * A tool call has completed (server-resolved or browser-bridged).
+   * `previewImages` carries a SERVER-run tool's images for the panel to show
+   * (`toolPreviewImages.ts`) — display only, never persisted.
+   */
+  | { type: 'toolResult'; toolCallId: string; toolName: string; ok: boolean; error?: string; previewImages?: AiToolImage[] }
   /** Server asks the browser to apply a write tool against its store. */
   | { type: 'toolRequest'; requestId: string; toolName: string; input: unknown }
   /**

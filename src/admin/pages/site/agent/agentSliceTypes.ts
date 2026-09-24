@@ -3,6 +3,7 @@ import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
 import type { AgentMessage, AgentRoutedTurn } from './types'
 import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
+import type { AgentRevertResult, AgentTurnChanges } from './agentTurnChanges'
 
 export interface AgentSliceConfig {
   /**
@@ -119,6 +120,17 @@ export interface AgentSlice {
   setAgentPermissionMode(mode: AgentSlice['agentPermissionMode']): void
   setAgentFidelityMode(mode: AgentSlice['agentFidelityMode']): void
   setAgentDesignPolicy(policy: AgentSlice['agentDesignPolicy']): void
+
+  /**
+   * AI-7 — what each agent turn of this conversation changed on disk, keyed by
+   * turn id (the persisted id of the user message that opened it). Filled from
+   * the server's checkpoint store after every turn and on conversation load;
+   * see `agentTurnChanges.ts`.
+   */
+  agentTurnChanges: Record<string, AgentTurnChanges>
+  refreshAgentTurnChanges(): Promise<void>
+  /** Put back what a turn changed — all of it, or just `paths`. A refusal comes back as data, never thrown. */
+  revertAgentTurn(turnId: string, paths?: readonly string[]): Promise<AgentRevertResult>
 
   openAgent(): void
   closeAgent(): void

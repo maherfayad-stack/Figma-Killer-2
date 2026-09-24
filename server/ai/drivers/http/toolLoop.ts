@@ -94,6 +94,7 @@ import {
 } from './toolLoopBounds'
 import { executeOneCall, groupToolCalls } from './toolDispatch'
 import { isHeavyResult, projectHeavyElision } from './heavyElision'
+import { wirePreviewImages } from '../../runtime/toolPreviewImages'
 import {
   MAX_TRANSIENT_RETRIES,
   providerRetryTiming,
@@ -373,6 +374,8 @@ export async function* runToolLoop<TMessage>(
           toolName: entry.call.name,
           ok: entry.output.ok,
           error: entry.output.ok ? undefined : entry.output.error ?? 'Tool call failed.',
+          // A bridged tool's images came FROM the browser, which already has them.
+          ...(toolsByName.get(entry.call.name)?.execution === 'bridge' ? {} : wirePreviewImages(entry.output.images)),
         }
         results.push({ id: entry.call.id, name: entry.call.name, output: entry.output })
       }
