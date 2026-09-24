@@ -8,23 +8,37 @@
  * element snaps back on release — exactly the failure `resizeOffer.ts` exists
  * to prevent. Figma answers this by flipping the item's sizing to Fixed, and
  * so does this module: every axis a drag writes goes through the inspector's
- * own Fixed switch, `sizingPatch('fixed', …)` in `elementSizing.ts`. That is
- * one resolver for "make this axis Fixed" whether the user clicked the W
+ * own Fixed switch, `sizingPatch('fixed', …)` in `elementSizingRules.ts`. That
+ * is one resolver for "make this axis Fixed" whether the user clicked the W
  * field's mode menu or dragged an edge — the companion writes (dropping a
  * Fill marker, `align-self: stretch`, overriding a cascade `flex`) cannot
  * drift between the two.
+ *
+ * ## Two hosts, one plan
+ *
+ * Both resize hosts plan through here: the portal drag
+ * (`useElementResizeDrag.ts`, same document) and the live frame's own handles
+ * (`resizeHandles.ts`, inside the cross-origin frame). The plan needs three
+ * facts — the node's STORED inline markers, the parent's computed layout and
+ * the element's cascade — and only the stored markers live on the parent's
+ * side of a live frame's wire. So the parent sends those markers with
+ * `setResizeTarget` (`resizeMessages.ts`) and the frame plans for itself;
+ * without them a live frame's flex item snapped back on release (canvas-23).
  *
  * The one thing the canvas knows that the panel does not is the element's
  * CASCADE: a `flex: 1` in a class survives clearing every inline marker. The
  * drag reads it once, at pointerdown (`probeFlexCascade`), and hands it to the
  * resolver.
  *
- * The preview applies the SAME patch the commit writes (`createInlineStylePreview`),
- * because a preview that only moved `width` would lie for the whole drag on a
- * flex item. It snapshots every property it touches and restores the
- * originals before the store commit, so React's re-render is the last thing
- * to write them — the preview-then-commit contract `useElementResizeDrag`
- * documents.
+ * ## Previewing a clear
+ *
+ * The portal previews on the element's own `style` and can simply remove a
+ * cleared property (`elementResizeInlinePreview.ts`). A live frame previews
+ * through a runtime-owned stylesheet (`resizeHandles.ts`' module doc says
+ * why), and a stylesheet can SET a property but never remove an inline
+ * declaration. {@link readClearedValues} answers what each cleared property
+ * renders at once the inline declaration is gone, so the stylesheet can say
+ * exactly that.
  */
 import {
   sizingAxisRole,
@@ -33,8 +47,8 @@ import {
   type SizingFlexCascade,
   type SizingParentLayout,
   type SizingPatch,
-} from '@site/panels/PropertiesPanel/elementSizing'
-import { resizeStylePatch, type ResizeBoxStart, type ResizeStep } from '@core/studio-runtime'
+} from './elementSizingRules'
+import { resizeStylePatch, type ResizeBoxStart, type ResizeStep } from './elementResizeRules'
 
 /** One inline-style write: a value sets the property, `undefined` clears it. */
 export type ResizeInlinePatch = Record<string, string | undefined>
@@ -71,24 +85,27 @@ export function readSizingParentLayout(view: Window, element: Element): SizingPa
 }
 
 /**
- * The element's cascade `flex-grow` / `flex-basis` with `clears` removed from
- * its inline style — the value the resolver needs to know whether a width
- * alone would render. The clears are put back before returning, in the same
- * task, so nothing is painted in between; `getComputedStyle` here costs a
- * style recalc of one element, not a layout.
+ * Read `read` from the element's computed style with the inline declarations
+ * named in `clears` removed, then put them back — in the same task, so nothing
+ * is painted in between; `getComputedStyle` here costs a style recalc of one
+ * element, not a layout.
  */
-function probeFlexCascade(view: Window, element: HTMLElement, clears: readonly string[]): SizingFlexCascade {
+function withInlineCleared<T>(view: Window, element: HTMLElement, clears: readonly string[], read: (style: CSSStyleDeclaration) => T): T {
   const saved = clears.map((key) => {
     const name = cssPropertyName(key)
     return { name, value: element.style.getPropertyValue(name), priority: element.style.getPropertyPriority(name) }
   })
   for (const { name } of saved) element.style.removeProperty(name)
-  const style = view.getComputedStyle(element)
-  const cascade = { flexGrow: style.flexGrow, flexBasis: style.flexBasis }
+  const result = read(view.getComputedStyle(element))
   for (const { name, value, priority } of saved) {
     if (value !== '') element.style.setProperty(name, value, priority)
   }
-  return cascade
+  return result
+}
+
+/** The element's cascade `flex-grow` / `flex-basis` with `clears` removed from its inline style. */
+function probeFlexCascade(view: Window, element: HTMLElement, clears: readonly string[]): SizingFlexCascade {
+  return withInlineCleared(view, element, clears, (style) => ({ flexGrow: style.flexGrow, flexBasis: style.flexBasis }))
 }
 
 function companionsFor(
@@ -151,53 +168,55 @@ export function resizeInlinePatch(
   return Object.assign(patch, size)
 }
 
-export interface InlineStylePreview {
-  /** Show `patch` on the element; a property a previous call touched and this one does not is restored. */
-  apply(patch: ResizeInlinePatch): void
-  /** Restore every touched property to what React last wrote. */
-  clear(): void
+/** The longhands a cleared shorthand has to be spelled as — a stylesheet cannot say "whatever the cascade says" for `flex` in one value. */
+const CLEARED_LONGHANDS: Readonly<Record<string, readonly string[]>> = {
+  flex: ['flex-grow', 'flex-shrink', 'flex-basis'],
+}
+
+/** CSS initial values of every property a Fixed switch can clear — what an engine that reports no computed value for one (a headless DOM) means by it. */
+const INITIAL_VALUES: Readonly<Record<string, string>> = {
+  'flex-grow': '0',
+  'flex-shrink': '1',
+  'flex-basis': 'auto',
+  'align-self': 'auto',
+  'justify-self': 'auto',
 }
 
 /**
- * A preview written straight onto the element's own `style`, restorable to the
- * exact inline values it found. Clears run before sets, because clearing a
- * longhand (`flex-grow`) after setting its shorthand (`flex`) would unset
- * part of the value just written.
+ * What every property `plan` may CLEAR renders at once the element's own
+ * inline declaration of it is gone: CSS property name → computed value, with
+ * a cleared shorthand spelled as its longhands. Read once, at pointerdown, for
+ * a stylesheet preview (see the module doc) — the portal's inline preview
+ * never needs it.
  */
-export function createInlineStylePreview(element: HTMLElement): InlineStylePreview {
-  const originals = new Map<string, { value: string; priority: string }>()
+export function readClearedValues(view: Window, element: HTMLElement, plan: ResizeSizingPlan): Record<string, string> {
+  const clears = [...new Set(
+    [plan.width, plan.height].flatMap((axis) => Object.entries(axis).filter(([, value]) => value === undefined).map(([key]) => key)),
+  )]
+  if (clears.length === 0) return {}
+  const names = clears.flatMap((key) => CLEARED_LONGHANDS[key] ?? [cssPropertyName(key)])
+  return withInlineCleared(view, element, [...clears, ...names], (style) =>
+    Object.fromEntries(names.map((name) => [name, style.getPropertyValue(name) || (INITIAL_VALUES[name] ?? '')])),
+  )
+}
 
-  const remember = (name: string) => {
-    if (originals.has(name)) return
-    originals.set(name, { value: element.style.getPropertyValue(name), priority: element.style.getPropertyPriority(name) })
-  }
-  const restore = (names: Iterable<string>) => {
-    // The `flex` shorthand first, so a restored longhand is not reset by it.
-    const ordered = [...names].sort((a, b) => Number(b === 'flex') - Number(a === 'flex'))
-    for (const name of ordered) {
-      const original = originals.get(name)
-      if (!original) continue
-      if (original.value === '') element.style.removeProperty(name)
-      else element.style.setProperty(name, original.value, original.priority)
-      originals.delete(name)
+/**
+ * The CSS declarations that PREVIEW `patch` from a stylesheet: every set
+ * property as itself, every cleared one as the value `cleared`
+ * ({@link readClearedValues}) says it renders at without its inline
+ * declaration. Name → value pairs; the caller adds its own priority.
+ */
+export function stylesheetPreviewDeclarations(patch: ResizeInlinePatch, cleared: Readonly<Record<string, string>>): Array<[string, string]> {
+  const declarations: Array<[string, string]> = []
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) {
+      declarations.push([cssPropertyName(key), value])
+      continue
+    }
+    for (const name of CLEARED_LONGHANDS[key] ?? [cssPropertyName(key)]) {
+      const renders = cleared[name]
+      if (renders) declarations.push([name, renders])
     }
   }
-
-  return {
-    apply(patch) {
-      const entries = Object.entries(patch).map(([key, value]) => [cssPropertyName(key), value] as const)
-      const touched = new Set(entries.map(([name]) => name))
-      restore([...originals.keys()].filter((name) => !touched.has(name)))
-      for (const [name, value] of entries) {
-        remember(name)
-        if (value === undefined) element.style.removeProperty(name)
-      }
-      for (const [name, value] of entries) {
-        if (value !== undefined) element.style.setProperty(name, value)
-      }
-    },
-    clear() {
-      restore([...originals.keys()])
-    },
-  }
+  return declarations
 }

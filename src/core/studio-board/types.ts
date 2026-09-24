@@ -89,7 +89,7 @@ export interface DocBlock extends BoardStacked {
 
 /**
  * D1 — a PERSISTED ruler guide (dragged out from `CanvasRulers`, saved to
- * `boards.json`). NOT the same thing as `SnapGuide` (`canvas/boardSnapping.ts`)
+ * `boards.json`). NOT the same thing as `SnapGuide` (`@core/studio-runtime`'s `snapRules.ts`)
  * / `boardSnapGuides` (`boardSlice.ts`) — those are transient, computed-on-
  * every-drag alignment lines that never persist. Schema-first (TypeBox) per
  * this field's own contract, unlike its `BoardFrame`/`StickyNote`/`DocBlock`

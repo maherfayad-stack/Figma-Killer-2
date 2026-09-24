@@ -1,7 +1,11 @@
 /**
- * elementResizeSnap — a resize handle's moving edge snaps to its siblings'
- * and its parent's edges and centres (P2-E / IX-6e), the same pull a free
- * move has, through the same resolver (`computeEdgeSnap`, `boardSnapping.ts`).
+ * elementResizeSnapRules — a resize handle's moving edge snaps to its
+ * siblings' and its parent's edges and centres (P2-E / IX-6e), the same pull
+ * a free move has, through the same resolver (`computeEdgeSnap`,
+ * `snapRules.ts`). Shared by both resize hosts: the portal drag
+ * (`useElementResizeDrag.ts`) and the live frame's own handles
+ * (`resizeHandles.ts`) — before this lived in `@core/studio-runtime`, a live
+ * frame's resize did not snap at all (canvas-26).
  *
  * ## Snap the edge that actually moves — and only that one
  *
@@ -31,16 +35,16 @@
  * Everything here is in the frame document's own CSS px — the space a pointer
  * event inside the iframe reports (`useElementResizeDrag`'s docblock: the
  * zoom is un-projected before the event arrives). The threshold is the
- * screen-px one (IX-5a) divided by the canvas zoom, read once at pointerdown.
- * The guides are painted into the frame's parent-document drag layer
- * (`canvasDragPainter`), never into the frame: canvas DOM is the user's DOM.
+ * screen-px one (IX-5a) divided by the canvas zoom, read once at pointerdown;
+ * a live frame cannot see the zoom, so the parent sends it with
+ * `setResizeTarget` (`resizeMessages.ts`). The guides are painted into the
+ * frame's parent-document drag layer (`elementResizeGuides.ts`), never into
+ * the frame: canvas DOM is the user's DOM. A live frame posts its guides
+ * (`resize:guides`) and the parent paints them the same way.
  */
-import { resizeAxes, type ResizeHandle, type ResizeModifiers } from '@core/studio-runtime'
-import { computeEdgeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
-import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
-import { clientRectToViewportRect, getViewportZoom } from './canvasDomGeometry'
-import { paintCanvasDrag } from './canvasDragPainter'
-import { listCanvasDropSurfaces } from './canvasDropSurfaceRegistry'
+import { resizeAxes, type ResizeHandle, type ResizeModifiers } from './elementResizeRules'
+import { parentSnapRects, readBoxInsets } from './snapPeerRules'
+import { computeEdgeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './snapRules'
 
 /** Which edge of each axis follows the pointer: the start (W/N), the end (E/S), or none. */
 export interface ResizeSnapEdges {
@@ -163,7 +167,7 @@ export function snapResizeDelta(
 // ---------------------------------------------------------------------------
 
 /** Anything with a border-box rect — an element, or a test double. */
-interface RectSource {
+export interface RectSource {
   getBoundingClientRect(): { left: number; top: number; width: number; height: number }
 }
 
@@ -179,7 +183,8 @@ export interface ResizeSnapInput {
   anchored: { x: boolean; y: boolean }
 }
 
-function snapRectOf(source: RectSource | null): SnapRect | null {
+/** A border-box rect as a snap rect; `null` for a box-less (zero-sized) source. */
+export function snapRectOf(source: RectSource | null): SnapRect | null {
   if (!source) return null
   const rect = source.getBoundingClientRect()
   if (rect.width === 0 && rect.height === 0) return null
@@ -194,30 +199,33 @@ function layoutParentOf(view: Window, element: Element): Element | null {
 }
 
 /**
- * Read the snap peers for a resize of `element`. `resolveRect` maps a node id
- * to its visual box (the caller's `nodeVisualRect` over the node's presented
- * element), so box-less hosts measure as the union of their children.
+ * Read the snap peers for a resize of `element`. `siblings` and `parent` are
+ * whatever the host names nodes by — canonical ids in a portal frame, stamp
+ * refs in a live one — and `resolveElement` finds each one's presented
+ * element. `resolveRect` maps that element to its visual box: the portal's
+ * `nodeVisualRect`, so a box-less host measures as the union of its children;
+ * a live frame uses {@link snapRectOf} and skips a box-less peer.
  */
-export function readResizeSnapInput(input: {
+export function readResizeSnapInput<K>(input: {
   view: Window
   element: HTMLElement
-  siblingIds: readonly string[]
-  parentId: string | null
-  resolveElement: (nodeId: string) => Element | null
+  siblings: readonly K[]
+  parent: K | null
+  resolveElement: (key: K) => Element | null
   resolveRect: (element: Element) => SnapRect | null
   zoom: number
 }): ResizeSnapInput | null {
-  const { view, element, siblingIds, parentId, resolveElement, resolveRect, zoom } = input
+  const { view, element, siblings, parent, resolveElement, resolveRect, zoom } = input
   const rect = snapRectOf(element)
   if (!rect) return null
 
   const peers: SnapRect[] = []
-  for (const id of siblingIds) {
-    const sibling = resolveElement(id)
+  for (const key of siblings) {
+    const sibling = resolveElement(key)
     const siblingRect = sibling ? resolveRect(sibling) : null
     if (siblingRect) peers.push(siblingRect)
   }
-  const parentElement = parentId ? resolveElement(parentId) : null
+  const parentElement = parent !== null ? resolveElement(parent) : null
   const parentRect = parentElement ? resolveRect(parentElement) : null
   if (parentElement && parentRect) peers.push(...parentSnapRects(parentRect, readBoxInsets(view, parentElement)))
 
@@ -242,54 +250,3 @@ export function readResizeSnapInput(input: {
   }
 }
 
-/**
- * Where a resize's guides are painted: the frame's own parent-document drag
- * layer, plus the offset that turns a frame-document point into that layer's
- * space and the canvas zoom — all three from ONE read of two rects, at
- * pointerdown. The layer sits inside `CanvasTransformLayer` with the iframe,
- * so frame-document px and layer px differ only by the iframe's offset in its
- * viewport (the same conversion `measureCanvasDropCandidates` applies).
- *
- * `null` for a frame with no registered drop surface (a Viewer, a test): the
- * resize still snaps, it just draws no guide.
- */
-export interface ResizeGuideSurface {
-  layer: HTMLElement
-  originX: number
-  originY: number
-  zoom: number
-}
-
-export function resolveResizeGuideSurface(iframe: Element | null): ResizeGuideSurface | null {
-  if (!iframe) return null
-  const surface = listCanvasDropSurfaces().find((candidate) => candidate.iframe === iframe)
-  const layer = surface?.dropLayer() ?? null
-  if (!surface || !layer) return null
-  const origin = clientRectToViewportRect(surface.viewport, iframe.getBoundingClientRect())
-  return { layer, originX: origin.left, originY: origin.top, zoom: getViewportZoom(surface.viewport) }
-}
-
-/** The canvas zoom a frame is drawn at, from its iframe element alone (no drop surface). */
-export function iframeZoom(iframe: Element | null): number {
-  if (!iframe || !(iframe instanceof HTMLElement) || iframe.offsetWidth <= 0) return 1
-  return iframe.getBoundingClientRect().width / iframe.offsetWidth
-}
-
-/** Paint (or, with an empty list, clear) the guides of one resize step. */
-export function paintResizeGuides(surface: ResizeGuideSurface | null, guides: readonly SnapGuide[]): void {
-  if (!surface) return
-  if (guides.length === 0) {
-    paintCanvasDrag(surface.layer, null)
-    return
-  }
-  paintCanvasDrag(surface.layer, {
-    target: null,
-    invalid: null,
-    ghost: null,
-    guides: guides.map((guide) => {
-      const along = guide.axis === 'x' ? surface.originX : surface.originY
-      const across = guide.axis === 'x' ? surface.originY : surface.originX
-      return { ...guide, position: guide.position + along, start: guide.start + across, end: guide.end + across }
-    }),
-  })
-}

@@ -40,6 +40,7 @@ import type {
   NodeRect,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -160,6 +161,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     // for skipping portal adapters on insert/delete/move.
     style: () => {},
     clearStyle: () => {},
+    // store-17 — a documented no-op: a portal frame's DOM is React's render of
+    // the tree, and the rollback that calls this already replayed the tree.
+    revert: () => {},
   }
 
   constructor(doc: Document) {
@@ -357,7 +361,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * in-frame handles this call drives exist for the cross-origin bridge; a
    * second set here would be two sets of handles on one element.
    */
-  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+  setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits

@@ -19,7 +19,7 @@ import {
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
 import { isPositionedFreely } from '@core/studio-runtime'
-import { SNAP_THRESHOLD_SCREEN_PX } from '@site/canvas/boardSnapping'
+import { SNAP_THRESHOLD_SCREEN_PX } from '@core/studio-runtime'
 
 function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput {
   return {

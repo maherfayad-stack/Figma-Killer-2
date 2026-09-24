@@ -32,7 +32,7 @@ import {
   resizeSnapEdges,
   snapResizeDelta,
   type FlowLayoutInput,
-} from '@site/canvas/elementResizeSnap'
+} from '@core/studio-runtime'
 import {
   registerFrameAdapter,
   unregisterFrameAdapter,

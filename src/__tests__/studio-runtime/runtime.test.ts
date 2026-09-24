@@ -1081,7 +1081,7 @@ describe('createStudioRuntimeBridge — inline text edit', () => {
     el.dispatchEvent(dbl)
     expect(dbl.defaultPrevented).toBe(true)
     expect(messages(posted).filter((m) => m.type === 'text:editStart')).toEqual([
-      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, ancestors: [{ nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 }] },
     ])
     // Not yet contentEditable — the parent hasn't replied.
     expect(el.getAttribute('contenteditable')).toBeNull()

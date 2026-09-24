@@ -3,7 +3,7 @@
  * `SizeSection`'s Fixed / Hug / Fill model (W8-4).
  *
  * Hug and Fill are only honest once you know how the parent lays the element
- * out (`elementSizing.ts`'s module doc explains why `100%` overflows a gapped
+ * out (`elementSizingRules.ts`'s module doc explains why `100%` overflows a gapped
  * flex row). This hook is where that fact comes from, and it comes from the
  * same place `AlignSection` gets it: a live `getComputedStyle` read of
  * the parent's rendered element inside a canvas frame — never the parent's
@@ -32,7 +32,7 @@
 import { getParent } from '@core/page-tree'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { useFrameComputedStyleValues } from '@site/panels/InspectPanel/useInspectComputedStyle'
-import type { SizingParentLayout } from './elementSizing'
+import type { SizingParentLayout } from '@core/studio-runtime'
 
 export interface SizingParentResolution {
   /** The parent's computed layout, or `null` when it can't be read. */

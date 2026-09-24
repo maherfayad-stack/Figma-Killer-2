@@ -11,7 +11,7 @@
 import type { EditorStore } from '@site/store/types'
 import type { Board, BoardFrame, BoardGuide, DocBlock, StickyNote } from '@core/studio-board'
 import { getActiveBoard } from '@core/studio-board'
-import type { SnapGuide } from '@site/canvas/boardSnapping'
+import type { SnapGuide } from '@core/studio-runtime'
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */
 export const selectActiveBoard = (s: EditorStore): Board | null =>

@@ -350,7 +350,9 @@ popover, not the Layout `⚙`.
 #### Hug/Fill is resolved against the real parent (W8-4)
 
 `Fixed`/`Hug`/`Fill` are **intents**, and the CSS that expresses an intent
-depends entirely on how the element's parent lays it out. `elementSizing.ts`
+depends entirely on how the element's parent lays it out. `elementSizingRules.ts`
+(`@core/studio-runtime` — the canvas resize, in a portal frame and inside a
+live frame's runtime, reads the same model)
 classifies each axis against the parent's *computed* `display`/`flex-direction`
 (`sizingAxisRole`) and writes accordingly:
 

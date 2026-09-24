@@ -141,6 +141,32 @@ export function revertOptimisticDom(doc: Document): void {
   doc.querySelectorAll(`[${OPTIMISTIC_HIDDEN_ATTR}]`).forEach((el) => el.removeAttribute(OPTIMISTIC_HIDDEN_ATTR))
 }
 
+/**
+ * store-17 — take back the optimistic hide and move of exactly these nodes:
+ * a structural write the server refused, or never answered, produces no HMR,
+ * so {@link revertOptimisticDom} never runs for it. Every other node's
+ * optimistic state is left alone — a second gesture whose write is still in
+ * flight keeps its preview. A node's moves are undone latest first. A moved
+ * element is found in the ledger by its stamp when only one element with that
+ * stamp was moved — the move changed its document order, so its occurrence
+ * index may no longer point at it — and by the ref otherwise.
+ */
+export function revertOptimisticNodes(doc: Document, refs: readonly { nodeId: string; occurrenceIndex: number }[]): void {
+  const ledger = moveLedgers.get(doc) ?? []
+  for (const ref of refs) {
+    const movedElements = new Set(ledger.filter((record) => record.el.getAttribute(NODE_ID_ATTR) === ref.nodeId).map((record) => record.el))
+    const own = movedElements.size === 1 ? [...movedElements][0]! : findNthNodeById(doc, ref.nodeId, ref.occurrenceIndex)
+    if (!own) continue
+    for (const record of ledger.filter((entry) => entry.el === own).reverse()) {
+      ledger.splice(ledger.indexOf(record), 1)
+      if (!record.parent.isConnected) continue
+      const next = record.next && record.next.parentNode === record.parent ? record.next : null
+      record.parent.insertBefore(record.el, next)
+    }
+    own.removeAttribute(OPTIMISTIC_HIDDEN_ATTR)
+  }
+}
+
 export function applyOptimisticText(doc: Document, nodeId: string, occurrenceIndex: number, text: string): void {
   const el = findNthNodeById(doc, nodeId, occurrenceIndex)
   if (el) el.textContent = text

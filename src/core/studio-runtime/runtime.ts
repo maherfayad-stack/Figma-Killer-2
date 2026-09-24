@@ -70,6 +70,7 @@ import {
   applyOptimisticMove,
   applyOptimisticText,
   revertOptimisticDom,
+  revertOptimisticNodes,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
 import { applyOptimisticStyle, clearOptimisticStyle, revertAllOptimisticStyle } from './optimisticStyle'
@@ -364,12 +365,19 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   }
 
   // ---- resize handles (`live-13`) — drawn and dragged here, committed by the parent ----
+  let resizeGestureActive = false
   const resize = installResizeHandles({
     doc,
     view,
     ensureOverlayRoot,
     resolveTarget: (target) => findByNodeId(doc, target.nodeId, target.occurrenceIndex),
     onCommit: (target, patch) => postOutbound({ type: 'resize:commit', nodeId: target.nodeId, occurrenceIndex: target.occurrenceIndex, patch }),
+    onGuides: (guides) => postOutbound({ type: 'resize:guides', guides: [...guides] }),
+    // No height report while the badge hangs under the element (canvas-23) — one after.
+    onGestureChange: (active) => {
+      resizeGestureActive = active
+      if (!active) scheduleFrameResize()
+    },
     onPreview: scheduleReposition,
   })
 
@@ -498,7 +506,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   let frameFitPassesUsed = 0
   let lastReportedHeight: number | null = null
   function reportFrameHeight(): void {
-    if (!doc.body || mode !== 'design') return
+    if (!doc.body || mode !== 'design' || resizeGestureActive) return
     const fitted = resolveFrameFitHeight({
       pinnedHeight,
       scrollDeficits: collectScrollDeficits(doc),
@@ -569,7 +577,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyMode(message.mode)
         return
       case 'setResizeTarget':
-        resize.setTarget(message.ref, message.proportional)
+        resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null })
         return
       case 'text:edit':
         textEdit.handleReply(message)
@@ -582,6 +590,10 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         return
       case 'optimistic.move':
         applyOptimisticMove(doc, message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
+        return
+      case 'optimistic.revert':
+        revertOptimisticNodes(doc, message.refs)
+        scheduleReposition()
         return
       case 'optimistic.text':
         applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)

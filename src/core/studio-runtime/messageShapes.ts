@@ -1,7 +1,7 @@
 /**
  * messageShapes — the wire shapes several message families share. A leaf:
- * `messages.ts`, `dropCandidateMessages.ts` and `keyMessages.ts` import from
- * here, and none of them imports another.
+ * `messages.ts`, `dropCandidateMessages.ts`, `keyMessages.ts` and
+ * `resizeMessages.ts` import from here, and none of them imports another.
  */
 import { Type, type Static } from '@sinclair/typebox'
 
@@ -19,4 +19,10 @@ export const PointerModifiersSchema = Type.Object({
   altKey: Type.Boolean(),
   ctrlKey: Type.Boolean(),
   metaKey: Type.Boolean(),
+})
+
+/** A stamp id paired with which same-stamp DOM occurrence it addresses — see "occurrenceIndex" in `messages.ts`' module doc. */
+export const NodeRefSchema = Type.Object({
+  nodeId: Type.String({ minLength: 1 }),
+  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
 })

@@ -42,6 +42,14 @@ const inboundSamples: InboundRuntimeMessage[] = [
   { type: 'setMode', mode: 'design' },
   { type: 'setResizeTarget', ref: { nodeId: 'n1', occurrenceIndex: 0 }, proportional: false },
   { type: 'setResizeTarget', ref: null, proportional: true },
+  {
+    type: 'setResizeTarget',
+    ref: { nodeId: 'n1', occurrenceIndex: 0 },
+    proportional: false,
+    sizing: { flex: '1', alignSelf: 'stretch' },
+    snap: { siblings: [{ nodeId: 'n2', occurrenceIndex: 0 }], parent: { nodeId: 'p1', occurrenceIndex: 0 }, zoom: 0.25 },
+  },
+  { type: 'optimistic.revert', refs: [{ nodeId: 'n1', occurrenceIndex: 0 }] },
   { type: 'setMode', mode: 'live' },
   { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: true, text: 'current text' },
   { type: 'text:edit', nodeId: 'n1', occurrenceIndex: 0, allowed: false },
@@ -126,11 +134,15 @@ const outboundSamples: OutboundRuntimeMessage[] = [
     pointerType: 'mouse',
     ancestors: [],
   },
-  { type: 'text:editStart', nodeId: 'n1', occurrenceIndex: 0 },
+  { type: 'text:editStart', nodeId: 'n1', occurrenceIndex: 0, ancestors: [{ nodeId: 'n1', occurrenceIndex: 0 }] },
   { type: 'text:commit', nodeId: 'n1', occurrenceIndex: 0, text: 'typed text' },
   { type: 'text:cancel', nodeId: 'n1', occurrenceIndex: 0 },
   { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width: '240px' } },
   { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 2, patch: { width: '240px', height: '96px' } },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width: '240px', flex: '0 1 auto', alignSelf: null, justifySelf: null } },
+  { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { height: '40px', flex: null } },
+  { type: 'resize:guides', guides: [{ axis: 'x', position: 210, start: 0, end: 50 }] },
+  { type: 'resize:guides', guides: [] },
   {
     type: 'measure:result',
     requestId: 'r1',
@@ -316,6 +328,32 @@ describe('occurrenceIndex (L5) — adversarial shape coverage on every node-nami
       expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: { width } })).toBe(false)
     }
     expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch: {} })).toBe(true)
+  })
+
+  // canvas-23 — the patch goes into the user's source: only the Fixed
+  // switch's own words, and no key it never writes.
+  it('rejects a resize:commit companion the Fixed switch never writes, and any unknown key', () => {
+    const commit = (patch: Record<string, unknown>) => ({ type: 'resize:commit', nodeId: 'n1', occurrenceIndex: 0, patch })
+    for (const patch of [{ flex: '1' }, { flex: '0 1 auto; color: red' }, { alignSelf: 'stretch' }, { justifySelf: 'center' }, { onClick: 'x' }, { color: 'red' }]) {
+      expect(Value.Check(OutboundRuntimeMessageSchema, commit(patch))).toBe(false)
+    }
+  })
+
+  it('bounds what setResizeTarget carries (canvas-23 / canvas-26)', () => {
+    const target = (extra: Record<string, unknown>) => ({ type: 'setResizeTarget', ref: null, proportional: false, ...extra })
+    expect(Value.Check(InboundRuntimeMessageSchema, target({ sizing: { flex: 'x'.repeat(65) } }))).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, target({ sizing: { width: '1px' } }))).toBe(false)
+    expect(Value.Check(InboundRuntimeMessageSchema, target({ snap: { siblings: [], parent: null, zoom: 0 } }))).toBe(false)
+    const siblings = Array.from({ length: 257 }, () => ({ nodeId: 'n', occurrenceIndex: 0 }))
+    expect(Value.Check(InboundRuntimeMessageSchema, target({ snap: { siblings, parent: null, zoom: 1 } }))).toBe(false)
+  })
+
+  it('bounds resize:guides and optimistic.revert', () => {
+    const guide = { axis: 'x', position: 1, start: 0, end: 1 }
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:guides', guides: [guide, guide, guide] })).toBe(false)
+    expect(Value.Check(OutboundRuntimeMessageSchema, { type: 'resize:guides', guides: [{ ...guide, position: 1e9 }] })).toBe(false)
+    const refs = Array.from({ length: 513 }, () => ({ nodeId: 'n', occurrenceIndex: 0 }))
+    expect(Value.Check(InboundRuntimeMessageSchema, { type: 'optimistic.revert', refs })).toBe(false)
   })
 
   it('rejects a pointer message with an unknown pointer type or an out-of-range button', () => {
