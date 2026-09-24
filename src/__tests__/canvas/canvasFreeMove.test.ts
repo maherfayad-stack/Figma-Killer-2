@@ -2,22 +2,25 @@
  * K6 — free movement that stays honest.
  *
  * The decision this file pins is the one the feel plan's §6 decision 6
- * deliberately narrowed: a gesture may write `left`/`top` inline, but only
- * where that declaration will actually do what the user pointed at. The three
- * cases are asserted independently, plus the RTL axis and the snapping, all
- * against plain objects — no DOM, no layout, no browser.
+ * deliberately narrowed: a gesture may write offsets inline, but only where
+ * that declaration will actually do what the user pointed at. The three
+ * cases are asserted independently, plus the RTL axis, the snapping, and
+ * (P5-E, IX-21) which OFFSETS it writes — the ones the source anchors the
+ * layer by — all against plain objects: no DOM, no layout, no browser.
  */
 import { describe, expect, it } from 'bun:test'
 import {
   clearFreeMovePreview,
   previewFreeMove,
   freeMoveStylePatch,
+  planFreeMoveOffsets,
   planFreeMoveProperties,
-  readFreeMoveBase,
   stepFreeMove,
+  type FreeMoveElementBox,
   type FreeMovePlan,
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
+import { authoredOffsets, type NudgeOffsetProperty } from '@site/canvas/canvasNodeArrowMove'
 import { isPositionedFreely } from '@core/studio-runtime'
 import { SNAP_THRESHOLD_SCREEN_PX } from '@site/canvas/boardSnapping'
 
@@ -26,16 +29,19 @@ function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput 
     position: 'static',
     direction: 'ltr',
     left: 'auto',
+    right: 'auto',
     top: 'auto',
-    insetInlineStart: 'auto',
+    bottom: 'auto',
     ...overrides,
   }
 }
 
+const NOTHING_AUTHORED: ReadonlySet<NudgeOffsetProperty> = new Set()
+const BOX: FreeMoveElementBox = { offsetLeft: 40, offsetTop: 12, offsetWidth: 50, containerWidth: 300 }
+
 describe('planFreeMoveProperties — when a coordinate write is honest', () => {
-  it('an already-absolute element writes left/top, and changes no position', () => {
-    const plan = planFreeMoveProperties(style({ position: 'absolute', left: '10px', top: '4px' }), 'static')
-    expect(plan).toEqual({ inlineProperty: 'left', inlineSign: 1, needsAbsolute: false })
+  it('an already-absolute element moves, and changes no position', () => {
+    expect(planFreeMoveProperties(style({ position: 'absolute' }), 'static')).toEqual({ needsAbsolute: false })
   })
 
   it('a fixed element does not care what its parent is — the viewport contains it', () => {
@@ -43,21 +49,15 @@ describe('planFreeMoveProperties — when a coordinate write is honest', () => {
   })
 
   it('a flow element inside a RELATIVE parent also writes position: absolute', () => {
-    // Writing `left`/`top` alone on a static element does nothing at all, and
-    // a declaration with no effect is the silent no-op this codebase refuses.
-    const plan = planFreeMoveProperties(style(), 'relative')
-    expect(plan).toEqual({ inlineProperty: 'left', inlineSign: 1, needsAbsolute: true })
+    // Writing offsets alone on a static element does nothing at all, and a
+    // declaration with no effect is the silent no-op this codebase refuses.
+    expect(planFreeMoveProperties(style(), 'relative')).toEqual({ needsAbsolute: true })
   })
 
   it('REFUSES a flow element inside a STATIC parent', () => {
     // Absolutely positioning here hands the element to some other ancestor, or
     // to the viewport — not to the container the user dropped it in.
     expect(planFreeMoveProperties(style(), 'static')).toBeNull()
-  })
-
-  it('writes the LOGICAL property under direction: rtl, with the axis reversed', () => {
-    const plan = planFreeMoveProperties(style({ direction: 'rtl' }), 'relative')
-    expect(plan).toEqual({ inlineProperty: 'insetInlineStart', inlineSign: -1, needsAbsolute: true })
   })
 })
 
@@ -71,35 +71,79 @@ describe('isPositionedFreely', () => {
   })
 })
 
-describe('readFreeMoveBase — where the drag starts from', () => {
-  const element = { offsetLeft: 40, offsetTop: 12 } as HTMLElement
-
-  it('prefers the property the write will target, so a drag continues from the source', () => {
-    expect(readFreeMoveBase(element, style({ left: '120px', top: '60px' }), 'left')).toEqual({
-      baseInline: 120,
-      baseTop: 60,
+describe('planFreeMoveOffsets — where the drag starts from, and what it writes', () => {
+  it('an element becoming absolute starts from where layout put it (left / top)', () => {
+    // Otherwise an element positioned only by flow would jump to the
+    // container's corner on the first pixel of the drag.
+    expect(planFreeMoveOffsets(BOX, style(), NOTHING_AUTHORED, true)).toEqual({
+      horizontal: [{ property: 'left', sign: 1, base: 40 }],
+      vertical: [{ property: 'top', sign: 1, base: 12 }],
     })
   })
 
-  it('falls back to the offset inside the containing block when the property is auto', () => {
-    // Otherwise an element positioned only by flow would jump to the
-    // container's corner on the first pixel of the drag.
-    expect(readFreeMoveBase(element, style(), 'left')).toEqual({ baseInline: 40, baseTop: 12 })
+  it('under RTL it writes the LOGICAL inline start, measured from the right edge', () => {
+    // 300 wide container, 50 wide element at offsetLeft 40 → 210 from the right.
+    expect(planFreeMoveOffsets(BOX, style({ direction: 'rtl' }), NOTHING_AUTHORED, true).horizontal).toEqual([
+      { property: 'insetInlineStart', sign: -1, base: 210 },
+    ])
   })
 
-  it('reads the LOGICAL property when that is what the write targets', () => {
-    const rtl = style({ direction: 'rtl', insetInlineStart: '30px', top: '5px' })
-    expect(readFreeMoveBase(element, rtl, 'insetInlineStart')).toEqual({ baseInline: 30, baseTop: 5 })
+  it('an already-positioned element with nothing authored moves left / top from their used values', () => {
+    const plan = planFreeMoveOffsets(BOX, style({ position: 'absolute', left: '120px', top: '60px' }), NOTHING_AUTHORED, false)
+    expect(plan.horizontal).toEqual([{ property: 'left', sign: 1, base: 120 }])
+    expect(plan.vertical).toEqual([{ property: 'top', sign: 1, base: 60 }])
+  })
+})
+
+/**
+ * IX-21 — CONFIRMED (P2-C, P2-D): a free move always wrote `left` + `top`, so a
+ * layer the source anchors with `right` / `bottom` gained a second, conflicting
+ * inset — the next width change moved the wrong edge, or `width: auto`
+ * stretched it. The move now writes the offsets the source AUTHORED.
+ */
+describe('IX-21 — a free move keeps the layer anchored the way its source anchors it', () => {
+  function planFor(own: Partial<FreeMoveStyleInput>, inlineStyles: Record<string, string>): FreeMovePlan {
+    const authored = authoredOffsets({ classIds: [], inlineStyles }, undefined)
+    return {
+      element: {} as HTMLElement,
+      offsets: planFreeMoveOffsets(BOX, style({ position: 'absolute', ...own }), authored, false),
+      needsAbsolute: false,
+      peers: [],
+      rect: { x: 100, y: 100, width: 50, height: 20 },
+    }
+  }
+
+  it('a right-anchored layer moved right writes a SMALLER right, and no left', () => {
+    const plan = planFor({ left: '226px', right: '24px', top: '10px' }, { right: '24px', top: '10px' })
+    const patch = freeMoveStylePatch(plan, stepFreeMove(plan, 30, 0, 1))
+    expect(patch).toEqual({ right: '-6px' })
+    expect(patch).not.toHaveProperty('left')
+  })
+
+  it('a bottom-anchored layer moved down writes a smaller bottom, and no top', () => {
+    const plan = planFor({ left: '10px', top: '150px', bottom: '40px' }, { left: '10px', bottom: '40px' })
+    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 0, 15, 1))).toEqual({ bottom: '25px' })
+  })
+
+  it('a stretched layer (left AND right) moves both, keeping its width', () => {
+    const plan = planFor({ left: '20px', right: '30px', top: '0px' }, { left: '20px', right: '30px', top: '0px' })
+    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 5, 0, 1))).toEqual({ left: '25px', right: '25px' })
+  })
+
+  it('a left: 50% + translate(-50%) centring moves as left, from its USED px value', () => {
+    // The translate stays authored; moving the used left by 10 moves the box by 10.
+    const plan = planFor({ left: '150px', top: '0px' }, { left: '50%', transform: 'translateX(-50%)', top: '0px' })
+    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 10, 0, 1))).toEqual({ left: '160px' })
   })
 })
 
 function plan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
   return {
     element: {} as HTMLElement,
-    inlineProperty: 'left',
-    inlineSign: 1,
-    baseInline: 100,
-    baseTop: 100,
+    offsets: {
+      horizontal: [{ property: 'left', sign: 1, base: 100 }],
+      vertical: [{ property: 'top', sign: 1, base: 100 }],
+    },
     needsAbsolute: false,
     peers: [],
     rect: { x: 100, y: 100, width: 50, height: 20 },
@@ -107,18 +151,17 @@ function plan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
   }
 }
 
+const RTL_OFFSETS: FreeMovePlan['offsets'] = {
+  horizontal: [{ property: 'insetInlineStart', sign: -1, base: 100 }],
+  vertical: [{ property: 'top', sign: 1, base: 100 }],
+}
+
 describe('stepFreeMove — the delta, the snap, and the guides', () => {
   it('applies the pointer delta when nothing is near enough to snap to', () => {
     const step = stepFreeMove(plan(), 30, -12, 1)
-    expect(step.inline).toBe(130)
-    expect(step.top).toBe(88)
+    expect(step.dx).toBe(30)
+    expect(step.dy).toBe(-12)
     expect(step.guides).toEqual([])
-  })
-
-  it('reverses the horizontal delta for an RTL inline start', () => {
-    // A drag to visual-right DECREASES the distance from an RTL inline start.
-    const step = stepFreeMove(plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 }), 30, 0, 1)
-    expect(step.inline).toBe(70)
   })
 
   it('snaps to a sibling edge and reports the guide to draw', () => {
@@ -126,7 +169,7 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
     // the threshold, so the element lands exactly on it.
     const peer = { x: 132, y: 400, width: 50, height: 20 }
     const step = stepFreeMove(plan({ peers: [peer] }), 30, 0, 1)
-    expect(step.inline).toBe(132)
+    expect(step.dx).toBe(32)
     expect(step.rect.x).toBe(132)
     expect(step.guides.some((guide) => guide.axis === 'x' && guide.position === 132)).toBe(true)
   })
@@ -134,18 +177,19 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
   it('leaves an axis alone when the nearest peer edge is outside the threshold', () => {
     const peer = { x: 130 + SNAP_THRESHOLD_SCREEN_PX + 5, y: 400, width: 50, height: 20 }
     const step = stepFreeMove(plan({ peers: [peer] }), 30, 0, 1)
-    expect(step.inline).toBe(130)
+    expect(step.dx).toBe(30)
     expect(step.guides.filter((guide) => guide.axis === 'x')).toEqual([])
   })
 })
 
 describe('freeMoveStylePatch — what reaches the user\'s source', () => {
-  it('writes only the two offsets for an element that is already positioned', () => {
+  it('writes only the offsets that moved for an element that is already positioned', () => {
     const p = plan()
     expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 10, 1))).toEqual({ left: '130px', top: '110px' })
+    expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 0, 1))).toEqual({ left: '130px' })
   })
 
-  it('writes position: absolute alongside them when the element was in flow', () => {
+  it('writes position: absolute and BOTH offsets when the element was in flow', () => {
     const p = plan({ needsAbsolute: true })
     expect(freeMoveStylePatch(p, stepFreeMove(p, 0, 0, 1))).toEqual({
       position: 'absolute',
@@ -154,12 +198,10 @@ describe('freeMoveStylePatch — what reaches the user\'s source', () => {
     })
   })
 
-  it('writes the logical property name in RTL, so an RTL author reads their own CSS back', () => {
-    const p = plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0, 1))).toEqual({
-      insetInlineStart: '80px',
-      top: '100px',
-    })
+  it('reverses the horizontal delta for an RTL inline start, and keeps the logical name', () => {
+    // A drag to visual-right DECREASES the distance from an RTL inline start.
+    const p = plan({ offsets: RTL_OFFSETS })
+    expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0, 1))).toEqual({ insetInlineStart: '80px' })
   })
 })
 
@@ -183,18 +225,16 @@ describe('free move writes a React style key to the source and a CSSOM name to t
   }
 
   it('every key of an RTL free-move patch is camelCase', () => {
-    const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
-    const p = plan({ ...properties })
-    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 0, 1))
+    const p = plan({ offsets: RTL_OFFSETS })
+    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 3, 1))
     for (const key of Object.keys(patch)) expect(key).not.toContain('-')
-    expect(patch).toEqual({ insetInlineStart: '88px', top: '100px' })
+    expect(patch).toEqual({ insetInlineStart: '88px', top: '103px' })
   })
 
   it('the preview sets and clears the CSSOM name, never the source key', () => {
-    const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
     const { element, set } = recordingElement()
-    const p = plan({ ...properties, element })
-    previewFreeMove(p, stepFreeMove(p, 12, 0, 1))
+    const p = plan({ offsets: RTL_OFFSETS, element })
+    previewFreeMove(p, stepFreeMove(p, 12, 3, 1))
     expect([...set.keys()].sort()).toEqual(['inset-inline-start', 'top'])
     clearFreeMovePreview(p)
     expect(set.size).toBe(0)

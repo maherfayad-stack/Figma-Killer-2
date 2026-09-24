@@ -22,6 +22,7 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { Button } from '@ui/components/Button'
+import { shortcutLabelFor } from '@admin/spotlight/keybindings'
 import { cn } from '@ui/cn'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
 import { TrashSolidIcon } from 'pixel-art-icons/icons/trash-solid'
@@ -122,6 +123,7 @@ export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown }: Select
         iconOnly
         aria-label="Duplicate selected layers"
         tooltip="Duplicate selected layers"
+        tooltipShortcut={shortcutLabelFor('layers.duplicate')}
         className={styles.selectionToolbarButton}
         onClick={duplicateSelectedLayers}
       >
@@ -134,6 +136,7 @@ export function SelectionToolbar({ toolbarRef, mode, onDragPointerDown }: Select
         tone="danger"
         aria-label="Delete selected layers"
         tooltip="Delete selected layers"
+        tooltipShortcut={shortcutLabelFor('layers.delete')}
         className={styles.selectionToolbarButton}
         onClick={deleteSelectedLayers}
       >

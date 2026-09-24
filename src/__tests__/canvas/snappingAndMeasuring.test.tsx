@@ -57,15 +57,21 @@ function rectOf(left: number, top: number, width: number, height: number): DOMRe
 function freePlan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
   return {
     element: {} as HTMLElement,
-    inlineProperty: 'left',
-    inlineSign: 1,
-    baseInline: 100,
-    baseTop: 100,
+    offsets: {
+      horizontal: [{ property: 'left', sign: 1, base: 100 }],
+      vertical: [{ property: 'top', sign: 1, base: 100 }],
+    },
     needsAbsolute: false,
     peers: [],
     rect: { x: 100, y: 100, width: 50, height: 20 },
     ...overrides,
   }
+}
+
+/** The `left` a step lands on — the plan's first horizontal offset moved by the snapped delta. */
+function leftAt(plan: FreeMovePlan, step: { dx: number }): number {
+  const [term] = plan.offsets.horizontal
+  return term!.base + term!.sign * step.dx
 }
 
 describe('IX-5a — a free move pulls by the same SCREEN distance at every zoom', () => {
@@ -74,21 +80,24 @@ describe('IX-5a — a free move pulls by the same SCREEN distance at every zoom'
   const peer = { x: 140, y: 900, width: 50, height: 20 }
 
   it('at 50%, a peer 10 frame px (5 screen px) away snaps', () => {
-    const step = stepFreeMove(freePlan({ peers: [peer] }), 30, 0, 0.5)
-    expect(step.inline).toBe(140)
+    const plan = freePlan({ peers: [peer] })
+    const step = stepFreeMove(plan, 30, 0, 0.5)
+    expect(leftAt(plan, step)).toBe(140)
     expect(step.guides.some((guide) => guide.axis === 'x' && guide.position === 140)).toBe(true)
   })
 
   it('at 100%, the same 10 px is too far', () => {
-    const step = stepFreeMove(freePlan({ peers: [peer] }), 30, 0, 1)
-    expect(step.inline).toBe(130)
+    const plan = freePlan({ peers: [peer] })
+    const step = stepFreeMove(plan, 30, 0, 1)
+    expect(leftAt(plan, step)).toBe(130)
     expect(step.guides).toEqual([])
   })
 
   it('at 200%, a peer 5 frame px (10 screen px) away does NOT snap', () => {
     const near = { x: 135, y: 900, width: 50, height: 20 }
-    const step = stepFreeMove(freePlan({ peers: [near] }), 30, 0, 2)
-    expect(step.inline).toBe(130)
+    const plan = freePlan({ peers: [near] })
+    const step = stepFreeMove(plan, 30, 0, 2)
+    expect(leftAt(plan, step)).toBe(130)
   })
 })
 
@@ -178,11 +187,13 @@ describe('IX-5b — a free move snaps to its parent padding and content box', ()
 
   it('dragged near the content edge, it lands flush with the content: left 20px', () => {
     // -27 puts the left edge at 23, three px from the content edge.
-    expect(stepFreeMove(seedFreeMove(), -27, 0, 1).inline).toBe(20)
+    const plan = seedFreeMove()
+    expect(leftAt(plan, stepFreeMove(plan, -27, 0, 1))).toBe(20)
   })
 
   it('dragged near the padding edge, it lands at left 0', () => {
-    expect(stepFreeMove(seedFreeMove(), -47, 0, 1).inline).toBe(0)
+    const plan = seedFreeMove()
+    expect(leftAt(plan, stepFreeMove(plan, -47, 0, 1))).toBe(0)
   })
 
   it('centred in the parent: the parent centre is a peer', () => {

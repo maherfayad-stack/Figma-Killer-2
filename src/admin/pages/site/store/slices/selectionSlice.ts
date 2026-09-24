@@ -126,18 +126,20 @@ interface SelectionSlice {
   enterSelectedInstance: () => boolean
 
   /**
-   * viewport-01 — move the selection to the anchor's PARENT (⇧Enter, and the
-   * `layers.selectParent` palette command). Returns `false` when nothing is
-   * selected or the anchor is already the tree root, so a keyboard handler can
-   * fall through. Implemented in `selectionTraversalActions.ts`.
+   * viewport-01, P5-E (IX-7) — ⇧Enter and the `layers.selectParent` palette
+   * command: the PARENT of every selected layer, de-duplicated (Penpot).
+   * Returns `false` when nothing is selected or every selected layer is a
+   * tree root, so a keyboard handler can fall through. Implemented in
+   * `selectionTraversalActions.ts`.
    */
   selectParentNode: () => boolean
   /**
-   * viewport-01 — move the selection to the anchor's FIRST CHILD (Enter, and
-   * the `layers.selectFirstChild` palette command). Returns `false` when
-   * nothing is selected or the anchor is a leaf.
+   * viewport-01, P5-E (IX-7) — Enter and the `layers.selectChildren` palette
+   * command: EVERY reachable child of every selected layer (Penpot and
+   * Figma; it used to be the anchor's first child only). Returns `false`
+   * when no selected layer has a child the keyboard may select.
    */
-  selectFirstChildNode: () => boolean
+  selectChildNodes: () => boolean
   /**
    * P2-B (IX-3) — Tab / ⇧Tab: the anchor's next / previous sibling in source
    * order, wrapping, skipping hidden and locked siblings. A multi-selection
