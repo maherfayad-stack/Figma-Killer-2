@@ -39,7 +39,9 @@ import {
 const IMAGE_SIZE = { width: 64, height: 48 }
 const DROPPED_FILE_NAME = 'free-canvas-cat.png'
 
-const FIXTURE_PAGE = `export default function Home() {
+const FIXTURE_PAGE = `import './home.css'
+
+export default function Home() {
   return (
     <main className="home">
       <h1 className="home__title">Free canvas</h1>
