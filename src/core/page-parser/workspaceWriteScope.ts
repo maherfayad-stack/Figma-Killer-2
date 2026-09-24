@@ -305,6 +305,46 @@ export function realWorkspaceRel(root: string, target: string): string | null {
 }
 
 /**
+ * The READ-side decoder for a client-supplied, project-relative path to an
+ * EXISTING file — the one every route that serves or points at a project file
+ * shares (`studioAsset.ts`'s asset route, `studioEditTargets.ts`'s referenced
+ * files). `null` for any refusal, never a reason: the callers answer 404 and
+ * echo nothing.
+ *
+ * Refuses an absolute, drive-letter or UNC path, a NUL, a `.`/`..` segment on
+ * either separator, and any segment naming an excluded directory compared the
+ * way the filesystem resolves it ({@link excludedWorkspaceSegment}: `.GIT`,
+ * `.studio.`, `node_modules::$INDEX_ALLOCATION` all open the directory they
+ * spell on Windows). Then the path must EXIST and its real path — symlinks and
+ * junctions resolved — must sit strictly inside the project's real path, with
+ * no excluded directory on it either: a link named like source
+ * (`assets -> ../.git`) is refused by where it lands, not by what it is
+ * called.
+ */
+export function resolveWorkspaceReadPath(root: string, rawRel: string): { rel: string; abs: string } | null {
+  if (rawRel.length === 0 || rawRel.includes('\0')) return null
+  if (isAbsolute(rawRel) || /^[a-zA-Z]:/.test(rawRel) || rawRel.startsWith('\\\\') || rawRel.startsWith('//')) return null
+  const segments = rawRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
+  if (segments.length === 0 || segments.some((segment) => segment === '..' || segment === '.')) return null
+  const rel = segments.join('/')
+  if (excludedWorkspaceSegment(rel) !== null) return null
+
+  const abs = join(resolve(root), ...segments)
+  let realRoot: string
+  let realTarget: string
+  try {
+    realRoot = realpathSync.native(root)
+    realTarget = realpathSync.native(abs)
+  } catch {
+    return null // missing, or a dangling link: nothing honest to serve or point at
+  }
+  const realRel = relative(realRoot, realTarget)
+  if (realRel === '' || isAbsolute(realRel) || realRel === '..' || realRel.startsWith(`..${sep}`)) return null
+  if (excludedWorkspaceSegment(realRel) !== null) return null
+  return { rel, abs }
+}
+
+/**
  * Whether `target` is reached from `root` through plain directory entries
  * only — strictly inside it, with no symlink or junction anywhere on the way
  * and none at `target` itself (dangling or not).

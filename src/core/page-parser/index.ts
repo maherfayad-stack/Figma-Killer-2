@@ -55,6 +55,7 @@ export {
   isHostConfigFileName,
   isSecretBearingFileName,
   isUnlinkedWorkspacePath,
+  resolveWorkspaceReadPath,
   isWorkspaceWritablePath,
   pathEntryExists,
   realWorkspaceRel,
