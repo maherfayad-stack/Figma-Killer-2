@@ -110,7 +110,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** dogfood `/admin/site` on a repo with `memo`/barrels and a `lazy()` page (script in the PR body).
 
 ### canvas-25 — P2-C: arrow keys move the selected layer (IX-1) + free move's camelCase key (canvas-23)
-- **Agent:** canvas-engineer · **Branch:** `feat/arrow-keys-reorder-and-nudge` off `77115367` · **PR:** draft, base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-24
+- **Agent:** canvas-engineer · **Branch:** `feat/arrow-keys-reorder-and-nudge` off `77115367` · **PR:** #242 (draft, base `feat/canvas-excellence`; long form and gate triage in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Done:** with ONE layer selected, a bare arrow moves it. `absolute|fixed` → nudge 1 px / ⇧ 10 px; anything else → reorder ±1 along the parent's axis (`moveNode`; reversed for `*-reverse` / RTL row; a cross-axis arrow does nothing). One layout read decides (`measureArrowTarget`, one adapter `measure` for the node + ancestor chain — live frames too). A held nudge previews each repeat (`setPreviewNodeStyles` + optimistic broadcast) and writes ONE `setNodeInlineStyles` on the arrow keyup, then `flushAutosave` → one undo entry, one source write. A held reorder is one step per press.
 - **Also fixed:** `canvasFreeMove` wrote `'inset-inline-start'` into JSX `style={{}}`; it now writes `insetInlineStart` (shared `inlineOffsetProperty`), and only the CSSOM preview spells it kebab. A nudge writes the offsets the source AUTHORED (`authoredOffsets`: inline over class base styles, `inset` read per side) — a right-anchored layer moves `right` and never gains `left`; a stretched one moves both.
