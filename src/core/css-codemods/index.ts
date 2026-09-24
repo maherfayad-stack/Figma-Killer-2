@@ -8,15 +8,29 @@
  *
  * `panel-02` (WS-6.3) wired these to disk: `server/handlers/studioCssWriteback.ts`
  * is the consumer, reached from a `kind: 'css'` `StudioEdit` through
- * `POST /admin/api/studio/save`. Three checks compose, in this order, before
- * a single byte is written — `classifyStylesheetEditability` (is this file
- * hand-authored at all?), `analyzeDeclarationTarget` (would the write land on
- * exactly one honest target?), then `setDeclaration`/`removeDeclaration` (do
- * it). `style-03` added the removal half: a cleared declaration used to reach
- * no code path at all, so it was silently restored on the next reload.
+ * `POST /admin/api/studio/save`. `classifyStylesheetEditability` (is this file
+ * hand-authored at all?) runs first; then `setDeclaration`/`removeDeclaration`
+ * write the declaration the cascade reads (P3-C, WB-16) — they used to write
+ * the first match behind `analyzeDeclarationTarget`'s refusals, which now
+ * guards only a styled-component template. `style-03` added the removal half:
+ * a cleared declaration used to reach no code path at all, so it was silently
+ * restored on the next reload. `cssAtRuleScope.ts` (WB-31) names the
+ * `@media`/`@container`/`@supports` block a declaration is written inside.
  */
-export { setDeclaration, setDeclarationAtMedia, type SetDeclarationResult } from './setDeclaration'
-export { removeDeclaration, type RemoveDeclarationResult } from './removeDeclaration'
+export {
+  setDeclaration,
+  type DeclarationWriteOptions,
+  type DeclarationWriteRefusal,
+  type DeclarationWriteResult,
+} from './setDeclaration'
+export { removeDeclaration } from './removeDeclaration'
+export {
+  AT_RULE_SCOPE_PATTERN,
+  formatAtRuleScope,
+  parseAtRuleScope,
+  type AtRuleScope,
+  type WritableAtRuleName,
+} from './cssAtRuleScope'
 export { insertRule, type InsertRuleResult, type InsertRuleOptions } from './insertRule'
 export {
   analyzeKeyframesTarget,

@@ -21,7 +21,14 @@
  * shapes and why loop-bearing transforms stay unresolved.
  */
 import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type SourceFile } from 'ts-morph'
-import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
+import {
+  extractInlineStyles,
+  extractProps,
+  extractSingleText,
+  rawHtmlValueExpression,
+  resolveRawSvgMarkup,
+  templateHeadClassNames,
+} from './jsxAttributeReaders'
 import { shortenSource, tryResolveExpression, type PageEvalContext, type Resolution } from './nodeResolution'
 import { createEvalScope, type LocalBinding, type StaticValue, type ValueOrigin } from './staticEval'
 import type { ReturnedJsx } from './branchSelection'
@@ -312,8 +319,8 @@ export function applySubstitutions(
             patchedProps ??= { ...existing.props }
             patchedProps.className = resolved.trim()
           } else if (expr && Node.isTemplateExpression(expr)) {
-            const head = expr.getHead().getLiteralText().trim()
-            if (head.length > 0) {
+            const head = templateHeadClassNames(expr)
+            if (head !== undefined) {
               patchedProps ??= { ...existing.props }
               patchedProps.className = head
             }

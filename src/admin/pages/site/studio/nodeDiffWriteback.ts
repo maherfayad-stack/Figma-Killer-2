@@ -18,6 +18,7 @@ import {
   canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isPropWritableToSource,
+  loopTemplateNodeId,
   styleValueKey,
 } from '@core/page-tree'
 import type { SaveSiteOptions } from '@core/persistence/types'
@@ -32,12 +33,15 @@ import {
 } from './loadedValuesBaseline'
 import type { StudioEditPayload } from './studioEditPayload'
 import { editOutcomeKey } from './editOutcomes'
+import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 
 export interface NodeDiffResult {
   edits: StudioEditPayload[]
   bumps: NodeValueBump[]
   drops: NodeValueDrop[]
   inlineStyleRefusals: InlineStyleModuleRefusal[]
+  /** P3-C (OD-8) — the edits a `.map` row sent to its row template. See {@link RowTemplateWrite}. */
+  rowTemplateWrites: RowTemplateWrite[]
 }
 
 /**
@@ -115,10 +119,56 @@ export function collectNodeDiffEdits(
   // `style=""` target (`pkg.*`, `studio.instance`). Collected rather than
   // dropped, and toasted below: see `inlineStyleUnsavedNotice.ts`.
   const inlineStyleRefusals: InlineStyleModuleRefusal[] = []
+  const rowTemplateWrites: RowTemplateWrite[] = []
   /** Push one edit and answer the outcome key its bumps and drops carry. */
   const emit = (edit: StudioEditPayload): string => {
     edits.push(edit)
     return editOutcomeKey(edit)
+  }
+
+  /**
+   * The node's inline-style drift, written to `targetId` — its own location,
+   * or (OD-8) its row template. Answers the edit's outcome key, or `undefined`
+   * when there was nothing to write or the module has no `style=""` target.
+   */
+  const writeInlineStyles = (
+    node: PageNode,
+    baseline: ReturnType<typeof getLoadedNodeValues>,
+    targetId: string,
+  ): string | undefined => {
+    // Inline style edits (a colour, a shadow, a width dragged off a resize
+    // handle) write a `style={{}}` attribute onto the source element.
+    // `canWriteInlineStyleForModule` rather than a second inline copy of
+    // the rule: it is the one predicate every OFFER has to agree with
+    // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
+    // is what happens when a copy drifts. See it for which modules qualify.
+    const { changed, removed } = diffInlineStyles(node, baseline)
+    if (Object.keys(changed).length === 0 && removed.length === 0) return undefined
+    if (!canWriteInlineStyleForModule(node.moduleId)) {
+      // `font-revert` — this used to be an `if` around the write, so a
+      // `pkg.*` / `studio.instance` node's style drift was dropped in
+      // SILENCE: the canvas showed it, the save reported success, and the
+      // next reload put the old value back. Refused out loud now, at the one
+      // chokepoint every write path (single composer, multi composer, canvas
+      // handles, agent) already passes through.
+      inlineStyleRefusals.push({
+        nodeLabel: node.label ?? node.id,
+        moduleId: node.moduleId,
+        properties: [...Object.keys(changed), ...removed],
+      })
+      return undefined
+    }
+    const editKey = emit({
+      kind: 'style',
+      nodeId: targetId,
+      style: changed,
+      ...(removed.length > 0 ? { remove: removed } : {}),
+    })
+    for (const [k, v] of Object.entries(changed)) {
+      bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })
+    }
+    for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property), editKey })
+    return editKey
   }
 
   // C4 — this loop used to scan every node of every page on every autosave
@@ -181,7 +231,18 @@ export function collectNodeDiffEdits(
       // No single source location to write to (a synthetic `index:body` root, a
       // `.map` iteration). Reached only after the two origin branches above,
       // which is why a `.map` row can still have its own copy edited.
-      if (!hasWritableSourceLocation(node.id)) continue
+      //
+      // P3-C (OD-8) — a row's inline STYLE goes to its row template, the one
+      // JSX site that renders every row; the caller tells the user it restyled
+      // all of them. Nothing else about a row is written there: its literal
+      // attributes stay read-only, and its tag is the template's tag.
+      if (!hasWritableSourceLocation(node.id)) {
+        const templateId = loopTemplateNodeId(node.id)
+        if (templateId === null) continue
+        const editKey = writeInlineStyles(node, baseline, templateId)
+        if (editKey !== undefined) rowTemplateWrites.push({ editKey, nodeId: node.id, templateId, rowCount: rowsOfTemplate(page, templateId) })
+        continue
+      }
 
       // The element's own name, not an attribute — see `effectiveTag`. Diffed
       // against the loaded baseline the same way, then routed to the rename
@@ -256,41 +317,9 @@ export function collectNodeDiffEdits(
         }
       }
 
-      // Inline style edits (a colour, a shadow, a width dragged off a resize
-      // handle) write a `style={{}}` attribute onto the source element.
-      // `canWriteInlineStyleForModule` rather than a second inline copy of
-      // the rule: it is the one predicate every OFFER has to agree with
-      // (`StyleSurface`'s composer, `CanvasResizeHandles`'s handles), and S4
-      // is what happens when a copy drifts. See it for which modules qualify.
-      const { changed, removed } = diffInlineStyles(node, baseline)
-      if (Object.keys(changed).length > 0 || removed.length > 0) {
-        if (canWriteInlineStyleForModule(node.moduleId)) {
-          const editKey = emit({
-            kind: 'style',
-            nodeId: node.id,
-            style: changed,
-            ...(removed.length > 0 ? { remove: removed } : {}),
-          })
-          for (const [k, v] of Object.entries(changed)) {
-            bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })
-          }
-          for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property), editKey })
-        } else {
-          // `font-revert` — this used to be an `if` around the block above,
-          // so a `pkg.*` / `studio.instance` node's style drift was dropped
-          // in SILENCE: the canvas showed it, the save reported success, and
-          // the next reload put the old value back. Refused out loud now,
-          // at the one chokepoint every write path (single composer, multi
-          // composer, canvas handles, agent) already passes through.
-          inlineStyleRefusals.push({
-            nodeLabel: node.label ?? node.id,
-            moduleId: node.moduleId,
-            properties: [...Object.keys(changed), ...removed],
-          })
-        }
-      }
+      writeInlineStyles(node, baseline, node.id)
     }
   }
 
-  return { edits, bumps, drops, inlineStyleRefusals }
+  return { edits, bumps, drops, inlineStyleRefusals, rowTemplateWrites }
 }

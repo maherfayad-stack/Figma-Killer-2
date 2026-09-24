@@ -14,12 +14,12 @@
  * ## Not every drift is writable
  *
  * `hasWritableSourceLocation` is the exact per-node gate every other edit
- * kind asks before emitting a `prop`/`style`/`text` edit — a `.map` row or a
- * synthetic root (`index:body`) has no single JSX location a class token
- * could land on. Those drifts go into `unwritable`: the direct replacement
- * for Phase 0.6's blanket "class changes can't be written yet" toast, now
- * scoped to the genuinely unwritable subset instead of firing for every
- * class change in the project.
+ * kind asks before emitting a `prop`/`style`/`text` edit. A `.map` row has no
+ * JSX location of its own, but since P3-C (OD-8) its class change is written
+ * to the row TEMPLATE, restyling every row (`rowTemplateWrites.ts`). A
+ * synthetic root (`index:body`) has neither, so its drift goes into
+ * `unwritable`: the direct replacement for Phase 0.6's blanket "class changes
+ * can't be written yet" toast, scoped to the genuinely unwritable subset.
  *
  * An INLINED (shared-component) node id IS writable — the write lands on the
  * component's own file, exactly like any other prop/style edit on that node
@@ -37,8 +37,8 @@
  * change to lose. `sourceNodeId.ts` says this in as many words — "callers
  * must not treat it as unwritable, only as 'not our business'" — and names
  * `isSourceDerivedNodeId` as the second question. Both get asked here now:
- * a `.map` row and an imported page's synthetic `<pageId>:body` root still
- * warn, everything else is skipped in silence.
+ * an imported page's synthetic `<pageId>:body` root still warns (a `.map` row
+ * writes its template), everything else is skipped in silence.
  *
  * ## A pure reorder writes nothing
  *
@@ -70,12 +70,15 @@ import {
   isImportedStyleRuleId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  loopTemplateNodeId,
   type Page,
   type SiteDocument,
   type StyleRule,
 } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { collectClassIdsDrift } from './loadedValuesBaseline'
+import { editOutcomeKey } from './editOutcomes'
+import { rowsOfTemplate, type RowTemplateWrite } from './rowTemplateWrites'
 import { buildClassPageIndex, getStudioStyleRuleSources, resolveCssInsertDestination } from './styleRuleWriteback'
 import { getStudioStyledRuleSources, styledClassRefusal } from './styledRuleSources'
 import type { ClassAssignmentDriftDetail } from '@site/panels/classAssignmentUnsavedNotice'
@@ -124,6 +127,8 @@ export interface ClassNameEditPlan {
    * lands the caller saves again at once, and the class attaches.
    */
   awaitingCreatedStylesheet: boolean
+  /** P3-C (OD-8) — the class edits a `.map` row sent to its row template. */
+  rowTemplateWrites: RowTemplateWrite[]
 }
 
 type ClassTokenResult =
@@ -238,6 +243,7 @@ export function collectClassNameEdits(
   const tokenRefusals: ClassTokenRefusal[] = []
   const refusedNodeIds: string[] = []
   let awaitingCreatedStylesheet = false
+  const rowTemplateWrites: RowTemplateWrite[] = []
   const pageIndex = buildClassPageIndex(pages)
 
   /** Plain class NAMES, for the honesty toast — which is about what the user sees, not what gets written. */
@@ -255,7 +261,11 @@ export function collectClassNameEdits(
 
     const nodeLabel = getNodeDisplayName(drift.node, registry.get(drift.node.moduleId), visualComponents)
 
-    if (!hasWritableSourceLocation(drift.nodeId)) {
+    // P3-C (OD-8) — a `.map` row's class change is written to its row
+    // template, restyling every row (`rowTemplateWrites.ts`). Only a node with
+    // neither a location nor a template is still unwritable.
+    const templateId = hasWritableSourceLocation(drift.nodeId) ? null : loopTemplateNodeId(drift.nodeId)
+    if (!hasWritableSourceLocation(drift.nodeId) && templateId === null) {
       unwritable.push({
         nodeLabel,
         addedClassNames: displayNames(drift.addedClassIds),
@@ -304,8 +314,18 @@ export function collectClassNameEdits(
     }
     if (add.length === 0 && remove.length === 0) continue
 
-    edits.push({ kind: 'class', nodeId: drift.nodeId, add, remove })
+    const edit: ClassNameEditPayload = { kind: 'class', nodeId: templateId ?? drift.nodeId, add, remove }
+    edits.push(edit)
+    if (templateId !== null) {
+      const page = pages.find((candidate) => drift.nodeId in candidate.nodes)
+      rowTemplateWrites.push({
+        editKey: editOutcomeKey(edit),
+        nodeId: drift.nodeId,
+        templateId,
+        rowCount: page ? rowsOfTemplate(page, templateId) : 0,
+      })
+    }
   }
 
-  return { edits, unwritable, tokenRefusals, refusedNodeIds, awaitingCreatedStylesheet }
+  return { edits, unwritable, tokenRefusals, refusedNodeIds, awaitingCreatedStylesheet, rowTemplateWrites }
 }

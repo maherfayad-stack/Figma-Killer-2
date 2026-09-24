@@ -20,10 +20,12 @@
  * binds its tag name. That is not a violation of "exactly one honest target" —
  * they are two halves of one indivisible statement (a `<Button/>` with no
  * `Button` in scope is not valid code), and both are computed and spliced in
- * the same pass so the file is never left in the half-written state. What the
- * codemod refuses to do is guess: if the name is ALREADY bound in this file to
- * something that is not this import, it refuses (`binding-conflict`) rather
- * than shadowing the user's own symbol.
+ * the same pass so the file is never left in the half-written state. It never
+ * shadows the user's own symbol: if the name is ALREADY bound in this file to
+ * something that is not this import, the component is imported under an alias
+ * (`{ Button as Button2 }`, P3-C WB-19 — `planImportBindings`) and written
+ * as `<Button2 />`. That used to refuse `binding-conflict`; the name is only a
+ * spelling, and the alias renders the same component.
  *
  * COMPONENTS AND INTRINSIC TAGS
  * -----------------------------
@@ -32,7 +34,7 @@
  * `"div"` and `<Button>` as the in-scope identifier `Button`.
  *
  *   - **With** an `importSpecifier`, `name` is a COMPONENT — the import above
- *     is written, and the binding-conflict check applies.
+ *     is written, under an alias when the name is taken.
  *   - **Without** one, `name` is an INTRINSIC tag (`div`, `span`, `button`).
  *     There is nothing to import and no binding to conflict with, so both of
  *     those steps are skipped.
@@ -65,11 +67,12 @@ import { createProject, findJsxElementAtLocation, loadSourceFile } from './locat
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { resolveChildPlacement } from './jsxChildPlacement'
-import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
 import {
   collectSubtreeImports,
   indentBlock,
   refuse,
+  renameSubtreeComponents,
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
@@ -151,18 +154,10 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
 
   // Only a component name can collide: an intrinsic tag is a string to JSX,
   // never a reference to a binding, so a local `const div = …` is irrelevant
-  // to `<div />` and refusing on it would be a false positive. Checked for
-  // every component in the subtree, not just the root.
-  const imports = collectSubtreeImports({ name, props: params.props, importSpecifier, children })
-  for (const [componentName, requirement] of imports) {
-    const binding = conflictingBinding(sourceFile, componentName, requirement.specifier)
-    if (binding) {
-      return refuse(
-        'binding-conflict',
-        `This file already uses the name "${componentName}" for something else (${binding}), so adding the component here would shadow it. Rename one of them in the file first.`,
-      )
-    }
-  }
+  // to `<div />`. Every component in the subtree, not just the root, is bound
+  // to a local name that shadows nothing (WB-19), and written by that name.
+  const bindings = planImportBindings(sourceFile, collectSubtreeImports({ name, props: params.props, importSpecifier, children }))
+  const subtree = renameSubtreeComponents({ name, props: params.props, importSpecifier, children }, bindings.localName)
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -183,11 +178,11 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
           : null,
       ...(params.position ? { position: params.position } : {}),
     },
-    (indent, unit) => indentBlock(renderJsxNode({ name, props: params.props, importSpecifier, children }, unit), indent),
+    (indent, unit) => indentBlock(renderJsxNode(subtree, unit), indent),
   )
   if (!placement.ok) return placement
 
-  const importEdits = resolveImportEdits(sourceFile, verbatim, imports)
+  const importEdits = resolveImportEdits(sourceFile, verbatim, bindings.required)
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
   // Only the IMPORT edits move the splice point: they sit above the JSX, and

@@ -89,7 +89,7 @@ describe('setJsxStyle', () => {
     expect(written).toContain('color: "var(--editor-danger)"')
   })
 
-  it('throws JsxStyleTargetError when style is an identifier expression', () => {
+  it('P3-C (WB-17) — wraps an identifier style so the binding stays and the new key sits on top', () => {
     const source = [
       'export function App() {',
       '  const s = { color: "red" }',
@@ -100,15 +100,13 @@ describe('setJsxStyle', () => {
     const file = writeFixture('identifier-style.tsx', source)
     const { line, col } = locateTag(source, 'div')
 
-    expect(() => setJsxStyle({ file, line, col, style: { color: 'blue' } })).toThrow(
-      JsxStyleTargetError,
-    )
+    setJsxStyle({ file, line, col, style: { color: 'blue' } })
 
     const written = fs.readFileSync(file, 'utf8')
-    expect(written).toBe(source)
+    expect(written).toBe(source.replace('style={s}', 'style={{ ...s, color: "blue" }}'))
   })
 
-  it('throws JsxStyleTargetError when the style object literal contains a spread', () => {
+  it('P3-C (WB-17) — writes after a spread inside the style object, where the key wins', () => {
     const source = [
       'export function App() {',
       '  const extra = { color: "red" }',
@@ -119,9 +117,9 @@ describe('setJsxStyle', () => {
     const file = writeFixture('spread-style.tsx', source)
     const { line, col } = locateTag(source, 'div')
 
-    expect(() => setJsxStyle({ file, line, col, style: { color: 'blue' } })).toThrow(
-      JsxStyleTargetError,
-    )
+    setJsxStyle({ file, line, col, style: { color: 'blue' } })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('{{ ...extra }}', '{{ ...extra, color: "blue" }}'))
   })
 
   it('is idempotent: setting the same style twice yields identical file content', () => {

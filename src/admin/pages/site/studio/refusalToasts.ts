@@ -48,6 +48,7 @@
 import { decodeSourceNodeId } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
+import { useEditorStore } from '@site/store/store'
 import type { ClassTokenRefusal } from './classNameWriteback'
 import type { StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
 
@@ -180,6 +181,11 @@ function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[]): void 
         : `${entry.label} has no hand-editable CSS file in this project (a generated utility class, a compiled ` +
           'build artefact, or a stylesheet syntax Studio does not write), so this change stays on the canvas ' +
           'only and will be lost on reload. Style the element instead to write it to source.',
+      // WB-30 (P3-C, partial) — the remedy the sentence names, one click away:
+      // the same inline-style target `ClassCssLockedNotice`'s button and the
+      // Element chip switch to. It does not MOVE the declarations already typed
+      // into the class; that is still the user's next edit.
+      action: { label: 'Style the element instead', onSelect: () => useEditorStore.getState().setInlineStyleEditing(true) },
     })
   }
 }
@@ -218,10 +224,11 @@ export function styleRulePlanTouchedSomething(plan: StyleRuleEditPlan): boolean 
 }
 
 /**
- * `style-03` — a context Studio genuinely cannot write. A breakpoint or a
- * `kind: 'media'` condition now goes to disk through `setDeclarationAtMedia`;
- * what is left is `@container` / `@supports`, which are a different at-rule
- * entirely. Writing one as `@media` would put the declaration under a
+ * `style-03` — a context Studio genuinely cannot write. Every breakpoint and
+ * every `media`/`container`/`supports` condition goes to disk inside its own
+ * block (P3-C, WB-31 — `@container`/`@supports` used to land here). What is
+ * left is an override under a context the document no longer defines: there
+ * is no block to name, and guessing one would put the declaration under a
  * condition the user did not ask for — worse than saying so.
  */
 function reportUnwritableContexts(labels: readonly string[]): void {
@@ -230,9 +237,8 @@ function reportUnwritableContexts(labels: readonly string[]): void {
       kind: 'warning',
       title: 'Override not saved to source',
       body:
-        `${label} changed under a container or feature query. Studio writes breakpoint overrides as @media ` +
-        'blocks, and cannot yet write @container or @supports, so this override stays on the canvas only and ' +
-        'will be lost on reload.',
+        `${label} changed under a breakpoint or condition this project no longer defines, so there is no block ` +
+        'to write it into and it stays on the canvas only.',
     })
   }
 }

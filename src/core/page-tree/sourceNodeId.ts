@@ -139,6 +139,29 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
   return decodeSourceNodeId(nodeId) !== null
 }
 
+/**
+ * The row TEMPLATE a `.map` row was rendered from — the row id with its
+ * iteration suffixes removed (`…:14:9#2` → `…:14:9`, `…:14:9#0#3` → `…:14:9`),
+ * keeping any call-site prefix — or `null` when `nodeId` is not a row.
+ *
+ * The template is one JSX site that renders EVERY row, which is exactly why a
+ * row has no writable location of its own. OD-8 (P3-C) makes it the target of
+ * a row's STYLE and CLASS edits anyway, on the owner's call — changing every
+ * row is what a designer means by restyling a list item, and the editor says
+ * so before and after the write. Nothing else may use this to reach a row's
+ * source: a row's TEXT and props are per-row values with their own origins,
+ * and a structural edit on a row is the array literal's business.
+ */
+export function loopTemplateNodeId(nodeId: string): string | null {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const tail = segments[segments.length - 1]!
+  const match = /^(.+:\d+:\d+)(?:#\d+)+$/.exec(tail)
+  if (!match) return null
+  segments[segments.length - 1] = match[1]!
+  const template = segments.join(INLINE_ID_SEPARATOR)
+  return hasWritableSourceLocation(template) ? template : null
+}
+
 /** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
 export function isInlinedNodeId(nodeId: string): boolean {
   return nodeId.includes(INLINE_ID_SEPARATOR)
