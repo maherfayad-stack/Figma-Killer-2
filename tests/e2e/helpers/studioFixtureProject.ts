@@ -69,15 +69,24 @@ function isHeldByAnotherProcess(err: unknown): boolean {
  * `dir` itself, measured with `--repeat-each=2` (which re-runs `beforeAll`
  * right after `afterAll`, the same sequence). The spec then died in setup, not
  * on anything it measures. Only `dir` itself is held, so its CHILDREN delete
- * fine: empty it in place. A delete-pending `dir` (a watcher closing late) is
- * waited out, bounded by {@link HELD_DIR_WAIT_MS}, rather than failed on.
+ * fine: empty it in place (all but the dev server's own `node_modules`, see
+ * below). A delete-pending `dir` (a watcher closing late) is waited out,
+ * bounded by {@link HELD_DIR_WAIT_MS}, rather than failed on.
  */
 function emptyFixtureDir(dir: string): void {
   const deadline = Date.now() + HELD_DIR_WAIT_MS
   for (;;) {
     try {
       if (fs.existsSync(dir)) {
-        for (const entry of fs.readdirSync(dir)) fs.rmSync(path.join(dir, entry), { recursive: true, force: true })
+        for (const entry of fs.readdirSync(dir)) {
+          // The fixture's still-running dev server keeps its dependency cache
+          // (`node_modules/.vite`) here. Deleting it under a live Vite leaves
+          // that server serving modules it no longer has, and the next case's
+          // live frame never boots. No fixture source carries `node_modules`,
+          // so keeping it changes nothing the copy below writes.
+          if (entry === 'node_modules') continue
+          fs.rmSync(path.join(dir, entry), { recursive: true, force: true })
+        }
       } else {
         fs.mkdirSync(dir, { recursive: true })
       }
