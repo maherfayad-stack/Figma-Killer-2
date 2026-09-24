@@ -75,4 +75,20 @@ describe('framePosterQueue — input inside a canvas frame holds the queue', () 
     await wait(PAST_QUIET_MS)
     expect(ran).toEqual(['poster'])
   })
+
+  it('stops listening to frames once nothing is pending (no standing registry subscriber)', async () => {
+    requestFramePoster({}, async () => {})
+    await wait(PAST_QUIET_MS)
+    // The queue drained, so a frame registering now must not reach it — a
+    // registry listener that outlives its purpose runs for every frame of
+    // every later board (and for every test file after this one).
+    const other = document.createElement('iframe')
+    document.body.appendChild(other)
+    let reached = false
+    const probe = { on: () => { reached = true; return () => {} } } as unknown as PortalFrameAdapter
+    registerFrameAdapter(other, probe, 'studio')
+    unregisterFrameAdapter(other)
+    other.remove()
+    expect(reached).toBe(false)
+  })
 })

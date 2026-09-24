@@ -76,6 +76,8 @@ let quietTimer: ReturnType<typeof setTimeout> | null = null
 let draining = false
 let pointerHeld = false
 let listening = false
+/** Detaches the per-frame listeners; non-null exactly while any request is pending. */
+let stopFrameListening: (() => void) | null = null
 
 /** Any of these means the user is working; a poster can wait. */
 const BUSY_EVENTS = ['wheel', 'pointerdown', 'pointerup', 'pointercancel', 'keydown'] as const
@@ -137,19 +139,36 @@ function syncFrameListeners(): void {
 }
 
 /**
- * Attached to the editor document, and to every mounted canvas frame, on the
- * first request and left attached: the board is open for the whole session,
- * the listeners are passive and capture-phase (so nothing in the canvas can
- * hide a gesture from them), and a teardown hook would need an owner
- * component this module deliberately does not have. Frames come and go with
- * the mount pool, so their listeners follow the adapter registry.
+ * The editor document is listened to from the first request on and left
+ * attached: the board is open for the whole session, the listeners are
+ * passive and capture-phase (so nothing in the canvas can hide a gesture from
+ * them), and a teardown hook would need an owner component this module
+ * deliberately does not have.
+ *
+ * The frames are listened to only while a request is PENDING — that is the
+ * only time their input can hold anything back. Frames come and go with the
+ * mount pool, so those listeners follow the adapter registry, and they are
+ * detached (registry subscription included) the moment the queue is empty.
  */
 function listenForInput(): void {
-  if (listening || typeof document === 'undefined') return
-  listening = true
-  listenOnDocument(document)
+  if (typeof document === 'undefined') return
+  if (!listening) {
+    listening = true
+    listenOnDocument(document)
+  }
+  if (stopFrameListening) return
   syncFrameListeners()
-  onFrameAdapterRegistryChange(syncFrameListeners)
+  const unsubscribeRegistry = onFrameAdapterRegistryChange(syncFrameListeners)
+  stopFrameListening = () => {
+    unsubscribeRegistry()
+    for (const detach of frameListeners.values()) detach()
+    frameListeners.clear()
+    stopFrameListening = null
+  }
+}
+
+function stopFrameListeningIfIdle(): void {
+  if (pending.size === 0 && !draining) stopFrameListening?.()
 }
 
 function armQuietTimer(): void {
@@ -181,6 +200,7 @@ async function drain(): Promise<void> {
     }
   } finally {
     draining = false
+    stopFrameListeningIfIdle()
   }
 }
 
@@ -199,11 +219,13 @@ export function requestFramePoster(token: object, capture: Capture): void {
 /** Withdraw a request that has not run yet. A capture already in flight finishes. */
 export function cancelFramePoster(token: object): void {
   pending.delete(token)
+  stopFrameListeningIfIdle()
 }
 
 /** Test seam: drop every queued request and disarm the timer. */
 export function resetFramePosterQueue(): void {
   pending.clear()
+  stopFrameListening?.()
   if (quietTimer !== null) clearTimeout(quietTimer)
   quietTimer = null
   pointerHeld = false
