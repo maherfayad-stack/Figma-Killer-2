@@ -86,7 +86,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Decisions:** no new resolution: nothing new locks, joins `codeProps`, or carries an `origin`; the parse only spells `xlinkHref`/`xmlSpace`/`tabIndex` correctly now. A remote `url()` in an import is refused, not dropped (never write less than the file drew without saying so). `data:image/*` in `url()` is allowed (loads nothing).
 - **Landmines:**
   - **Found, fixed in scope (security):** under happy-dom (the Bun server's DOMPurify DOM) a removed element made DOMPurify skip the NEXT node's attributes: `<foo></foo><a href="javascript:…" onclick>` survived `sanitizeRichtext`. `sanitize.ts` now repeats until a pass removes nothing (clean input = 1 pass).
-  - `runtimeBridgeBundle.ts` was patched with the pristine→modified source diff (CRLF/Bun-1.3.6 tree). Re-run `studio-runtime:sync` on an LF tree, and expect a textual conflict with any other bundle that touched it (it is one line).
+  - `runtimeBridgeBundle.ts` regenerated with Bun 1.3.13 on an LF export (diff = exactly the two `isSizeableDisplay` hunks). The shared `regen-runtime.sh` runs `bun run studio-runtime:sync`, whose inner `bun` resolves from PATH (1.3.6) and emits old helpers; invoke `<bun 1.3.13> scripts/sync-studio-runtime.ts` directly. The file is one line: any other branch touching it conflicts textually.
   - **Height:** none new; an svg's box is now the app's box. **Injectors:** none. **Events:** none.
   - Not yet in `docs/features/studio-import.md` → studio-scribe: the happy-dom skipped-node rule (every server-side DOMPurify call must go through `sanitizeToFixpoint`).
 - **Next:** SVG-3 (part stamps) can start; it reuses `@core/vector`'s name table.
