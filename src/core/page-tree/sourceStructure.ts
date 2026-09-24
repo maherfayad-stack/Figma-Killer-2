@@ -65,7 +65,7 @@
  * becomes the page's returned root element) before asking here.
  *
  * The refusals only a PARSE can answer stay with the codemods and arrive at
- * save time: `not-siblings`, `expression-child`, `mixed-indentation`,
+ * save time: `not-siblings`, `expression-child`,
  * `no-jsx-parent`, `into-own-descendant`, and — the one W4-1 added —
  * `out-of-scope`, a reparent whose markup reads a binding that does not exist
  * where it would land. See `src/core/ast-codemods/moveJsxElement.ts`.
@@ -74,7 +74,7 @@
  * consult it BEFORE mutating, `applyTreeOperation` consults it so a plugin or
  * an agent rides the same gate, and the server's codemods re-derive the same
  * facts from the AST. See `src/core/ast-codemods/moveJsxElement.ts` for the
- * residual refusals only the AST can answer (`not-siblings`, `mixed-indentation`).
+ * residual refusals only the AST can answer (`not-siblings`, `expression-child`).
  */
 import {
   decodeSourceNodeId,

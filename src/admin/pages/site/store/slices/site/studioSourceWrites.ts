@@ -1,7 +1,8 @@
 /**
  * The structural gestures that, on a studio-imported tree, are a SOURCE WRITE
  * rather than a tree mutation: insert, duplicate, wrap, (K3) group and
- * ungroup, and (`store-13`) paste.
+ * ungroup. Paste (`store-13`) is the same shape and lives next door, in
+ * `studioPasteWrites.ts`.
  *
  * `struct-02` shipped the first one and W4-1 added the other two, at which
  * point they stopped being a detail of `nodeActions.ts` and became a thing of
