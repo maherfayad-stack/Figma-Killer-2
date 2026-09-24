@@ -349,14 +349,12 @@ project now starts at Tier 2, a fresh import clears that gate before the
 banner would ever have a reason to show; the banner is reachable today only
 for a project explicitly demoted to `static`.
 
-- **A style change scoped to a real `@media` breakpoint does not reach disk.**
-  The codemod and the wire both support it — `insertRule`/`setDeclaration`
-  take an `atMedia` query, and the `insert`/`create` payload schemas carry the
-  field — but **nothing in the editor ever sets it.** A change made in a real
-  user breakpoint context is reported through `collectStyleRuleEdits`'s
-  `unwritableContexts` and toasted, never dropped silently. Only the board's
-  own synthetic `studio` viewport context writes. Wiring a producer for
-  `atMedia` is the whole remaining gap.
+- **A breakpoint or condition override writes into its own at-rule block** —
+  `@media`, and since P3-C (WB-31) `@container` and `@supports` too
+  (`atRuleForContext` → the `atRule` field). Only an override under a context
+  the document no longer defines is reported (`unwritableContexts`), never
+  dropped silently. Every declaration lands where the cascade reads it (WB-16);
+  a covering `!important` shorthand is the one cascade refusal left.
 - **A style edit on a rule with no honest destination still refuses.** An
   imported rule the parser could not map back to a hand-authored `.css` file
   (Tailwind/Sass/PostCSS output, a non-`.css` module) goes to `unmapped` and is
