@@ -64,8 +64,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### parser-18 — P3-C: value refusals become writes (PR 1 of 2)
-- **Agent:** parser-surgeon · **Branch:** `feat/value-refusals-become-writes` off `01f3d9c2` · **PR:** __PR1__ (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
-- **Stage:** PR 1 verifying/open; PR 2 (`feat/style-edits-land-anywhere`) next.
+- **Agent:** parser-surgeon · **Branch:** `feat/value-refusals-become-writes` off `01f3d9c2` · **PR:** #247 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** PR 1 verifying (draft open, gates green); PR 2 (`feat/style-edits-land-anywhere`, stacked on this branch) in progress.
 - **Goal:** ROADMAP P3-C (1): WB-6, WB-8, ERR-14, ERR-15. Never refuse what the editor could have written itself.
 - **Scope (parser files):** `page-parser/{types,jsxAttributeReaders,nodeResolution,parsePageFile,componentSubstitution,inlineLocalComponents,nextAppLayout}.ts`, `ast-codemods/setStringLiteral.ts`. Client: `studio/{nodeDiffWriteback,cssInsertDestination,styleRuleWriteback,styleRuleBaseline,classNameWriteback,keyframesWriteback,refusalToasts,fsCodemodAdapter,studioSaveRequests,studioEditPayload}.ts`, `panels/PropertiesPanel/{classCssWritability,StyleTargetChip,SharedComponentNotice,PropertiesPanelBody}`, `store/constraintActions.ts`, `page-tree/editConstraint.ts`. Server: `studio{CssWriteback,SyntaxGuard,Writeback}.ts`, `studio/storyPages.ts` (comment).
 - **Done:**
