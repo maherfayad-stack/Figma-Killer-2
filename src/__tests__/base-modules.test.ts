@@ -957,13 +957,15 @@ describe('base.svg — render() specifics', () => {
       } as never),
     )
 
-    const wrapper = container.querySelector('span')
-    expect(wrapper?.getAttribute('role')).toBe('img')
-    expect(wrapper?.getAttribute('aria-label')).toBe('Preview mark')
-    expect(wrapper?.classList.contains('ist-svg')).toBe(true)
-    expect(wrapper?.querySelector('svg')).not.toBeNull()
-    expect(wrapper?.innerHTML.toLowerCase()).not.toContain('<script')
-    expect(wrapper?.innerHTML.toLowerCase()).not.toContain('onload')
+    // A literal `<svg>` renders AS the node (P5-D SVG-0): the label, the
+    // class and the editor wiring are on the `<svg>` itself.
+    const node = container.querySelector('[data-node-id="svg-node"]')
+    expect(node?.localName).toBe('svg')
+    expect(node?.getAttribute('role')).toBe('img')
+    expect(node?.getAttribute('aria-label')).toBe('Preview mark')
+    expect(node?.classList.contains('ist-svg')).toBe(true)
+    expect(container.innerHTML.toLowerCase()).not.toContain('<script')
+    expect(container.innerHTML.toLowerCase()).not.toContain('onload')
   })
 
   it('does not access DOM globals during publish render', () => {
