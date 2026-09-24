@@ -53,8 +53,10 @@ export class ProjectChangeFeed {
   /** Set once the watch has failed or overflowed; never cleared — see this module's doc. */
   private untrustedSince: number | null = null
   private readonly unsubscribe: () => void
+  private readonly dir: string
 
-  constructor(private readonly dir: string) {
+  constructor(dir: string) {
+    this.dir = dir
     this.unsubscribe = subscribeProjectChanges(dir, (batch) => this.record(batch))
   }
 

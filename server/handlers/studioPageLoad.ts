@@ -66,10 +66,10 @@ import {
   resolveComponentSources,
   type ComponentSource,
   type CssInJsTemplate,
-
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
+import type { Project } from 'ts-morph'
 import { parsedPageToSitePage } from '@core/studio-sync/parsedPageToSitePage'
 import { classIdsForClassName, loadStudioStyles } from './studioCss'
 import { probeProject } from './studio/projectProbe'
@@ -162,7 +162,9 @@ function routeParseContext(
 ): RouteParseContext {
   // A tsconfig being rewritten this instant has no digest; this load then
   // gets a config hash nothing matches, and parses afresh.
-  const tsconfig = fileContentDigest(join(dir, 'tsconfig.json'))?.digest ?? `unsettled:${startedAt}`
+  // A missing tsconfig is an ordinary answer (`null`), distinct from one mid-write (`undefined`).
+  const tsconfigDigest = fileContentDigest(join(dir, 'tsconfig.json'))
+  const tsconfig = tsconfigDigest === undefined ? `unsettled:${startedAt}` : tsconfigDigest.digest
   const configHash = digestOf([resolve(dir), framework ?? null, preferredKey ?? null, cssModuleClassMaps ?? null, tsconfig])
   return {
     scope: { dir, configHash, preferredKey, startedAt, projectStamp: workspace.recordedStamp },
