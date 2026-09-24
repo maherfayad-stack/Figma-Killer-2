@@ -445,6 +445,15 @@ Three defences, in order of where they act:
 2. **The budgets in `src/__tests__/setup.ts`** — `asyncUtilTimeout: 5000` for `waitFor`/`findBy*`, `setDefaultTimeout(20000)` for bun's per-test budget — are sized for a slow shared CI runner, and keep a comfortable multiple between the two so a bad `waitFor` reports itself instead of tripping the outer timeout. Raise them there, never per test.
 3. **The act-scope repair in `src/__tests__/setup.ts`** resolves any still-pending `act()` wrapper in the global `afterEach`, driving React's own unwind path. Gated by `src/__tests__/harness/actScopeLeakRecovery.test.tsx`, which reproduces the leak and asserts the next render still commits.
 
+### Bun is pinned to one exact version
+
+`package.json` → `engines.bun` is an exact version (`1.3.13`), not a range, and it is the only place a Bun version is written: every `setup-bun` step in `.github/workflows/` reads it with `bun-version-file: package.json`, and the Dockerfile's `FROM oven/bun:<tag>` lines must match it. `src/__tests__/architecture/bun-version-pinned.test.ts` gates all three. Two measured facts make a range wrong:
+
+- **`--parallel` does not exist before 1.3.13.** Bun 1.3.6 and 1.3.11 accept `--parallel=4` and `--shard` and silently ignore both, so on those versions `bun run test` *is* bare `bun test`, and defence 1 above is absent. Check with `bun --version` before trusting a local run.
+- **`Bun.build` output changes between patch releases.** 1.3.6 emits different `__export` helpers than 1.3.11/1.3.13, so `studio-runtime-bundle-fresh.test.ts` fails on 1.3.6 against a correct bundle.
+
+**In CI** the `test` job runs `bun run test --shard=N/10` as a ten-runner matrix, because a worker's memory accumulates across the files it runs (on Windows, one `--parallel=4` run over `server/handlers` peaked above 10 GB). The `generated-fresh` job runs `studio-runtime:sync` and `bootstrap:sync` on Linux and fails if the committed bundles differ; on failure it uploads a `regenerated-bundles` artifact. That artifact is the canonical output. Commit it rather than regenerating on a Windows checkout.
+
 `files/` holds standalone scaffolds copied out by an external `pnpm create-file` workflow (e.g. `files/demo/`) — independent projects with their own toolchain (Vitest, not `bun test`) and their own dependency graph. `bunfig.toml` sets `[test] pathIgnorePatterns = ["files/**"]` so `bun test` never discovers them; test a scaffold from inside its own folder (`cd files/<name> && bun run test`).
 
 ---
