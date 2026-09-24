@@ -4,7 +4,7 @@
  * The runtime owns the agent loop and the bridge; drivers own one SDK each
  * and one or more `AiAuthMode`s.
  *
- * @see docs/plans/2026-05-26-ai-runtime-rewrite.md → "Drivers"
+ * @see docs/features/agent.md → "Providers"
  */
 
 import type { CoreCapability } from '@core/capabilities'

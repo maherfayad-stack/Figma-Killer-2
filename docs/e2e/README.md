@@ -63,11 +63,11 @@ on those surfaces structurally cannot fail on the thing it is named after
 *computed* layout — measured rects, `scrollHeight`, computed styles after
 layout.
 
-Running the four budget specs by path is usually enough and takes a few
+Running the five budget specs by path is usually enough and takes a few
 minutes:
 
 ```sh
-npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
+npx playwright test tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
 ```
 
 ### In CI
@@ -86,8 +86,8 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 "The full-suite baseline" below for what those 64 turned out to be.
 
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
-`inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
-those four measure **computed layout and frame time**, the one class of
+`canvas-feel-budgets`, `inspector-panel-measurement`, `inspector-height`,
+`studio-feel` — because those five measure **computed layout and frame time**, the one class of
 question happy-dom structurally cannot answer. It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
