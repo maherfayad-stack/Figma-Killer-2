@@ -194,9 +194,23 @@ test.describe('P3-D — structural refusals become writes', () => {
       })
     expect(read(ABOUT), 'the frame it was copied from is untouched').toBe(ABOUT_PAGE)
 
+    const focusBefore = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement | null
+      const w = window as unknown as { __zSeen: number }
+      w.__zSeen = 0
+      document.addEventListener('keydown', (e) => { if (e.key === 'z' || e.key === 'Z') w.__zSeen += 1 }, true)
+      return el ? `${el.tagName} in ${el.closest('[data-page-id]')?.getAttribute('data-page-id') ?? '?'}` : 'none'
+    })
     await page.keyboard.press('Control+z')
+    await page.waitForTimeout(500)
+    const zSeen = await page.evaluate(async () => {
+      const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
+      const st = useEditorStore.getState()
+      const top = st._historyPast.at(-1)
+      return JSON.stringify({ z: (window as unknown as { __zSeen: number }).__zSeen, past: st._historyPast.length, future: st._historyFuture.length, inline: st.activeInlineEdit, top: top?.structural, ids: [...st._nodeIdToPageIds.keys()].filter((k: string) => k.startsWith('pages/Home')) })
+    })
     await expect
-      .poll(() => read(HOME), { timeout: 30_000 })
+      .poll(() => read(HOME), { timeout: 30_000, message: `focus before ⌘Z: ${focusBefore}; parent saw z: ${zSeen}; chip: ${await page.getByRole('status').first().textContent().catch(() => '?')}` })
       .toBe(HOME_PAGE)
       .catch(async (error: unknown) => {
         const undo = page.getByRole('button', { name: /undo/i }).first()
@@ -211,18 +225,22 @@ undo disabled: ${await undo.isDisabled().catch(() => 'n/a')}`,
   test('OD-7: Delete inside ONE instance of a shared component changes that instance only; ONE ⌘Z restores it', async ({ page }) => {
     const { canvasRoot, content } = await openHome(page)
     const firstCard = sourceNodeId(HOME_PAGE, HOME, 'Card', 1)
-    const section = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'section', 1)}`
     const rule = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'hr', 1)}`
     const title = content.getByText('One', { exact: true }).first()
     await panIntoView(page, canvasRoot, title, 80)
-
-    // Down to the rule through the Layers tree: a plain row click selects the
-    // row and opens it, so instance → its markup → the rule.
+    // P2-B: a click selects the outermost instance, and each double-click goes
+    // one level deeper — instance, its <section>, then the rule.
+    await clickInFrame(page, title)
     const tree = await openLayers(page)
-    await tree.getByTestId(`dom-tree-item-${firstCard}`).click()
-    await tree.getByTestId(`dom-tree-item-${section}`).click()
     const ruleRow = tree.getByTestId(`dom-tree-item-${rule}`)
-    await ruleRow.click()
+    const ruleEl = content.locator('hr.rule').first()
+    const ruleSelected = async () => (await ruleRow.count()) > 0 && (await ruleRow.getAttribute('aria-selected')) === 'true'
+    for (let i = 0; i < 3 && !(await ruleSelected()); i += 1) {
+      const box = await ruleEl.boundingBox()
+      if (!box) throw new Error('the rule has no bounding box')
+      await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2)
+      await page.waitForTimeout(300)
+    }
     await expect(ruleRow).toHaveAttribute('aria-selected', 'true')
 
     await page.keyboard.press('Delete')
