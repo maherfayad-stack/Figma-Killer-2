@@ -122,7 +122,11 @@ same files already have, not a new failure mode.
 `ProjectProfile` + probe warnings), `studio_list_pages`, `studio_get_node_source`
 (node id → `{ file, line, col, snippet, hash }`, decoding `@core/page-tree`'s
 `sourceNodeId` grammar), `studio_find_nodes` (query by moduleId/tag/class/text/
-lock state/codeProps presence), and the file reads `studio_read_file`,
+lock state/codeProps presence), `studio_list_tokens` (P4-A: every CSS custom
+property declared at the document root of a stylesheet the canvas loads,
+assembled by `server/handlers/studio/projectTokenSources.ts`, grouped by family,
+each with its resolved value and the `file:line` of the winning declaration;
+only `origin: "project"` sources are the user's to edit), and the file reads `studio_read_file`,
 `studio_list_files` and `studio_grep` (a literal search, capped and
 byte-budgeted). Every path any of them names — a node id's file part included
 — goes through one containment rule, `server/handlers/studio/agentFileAccess.ts`

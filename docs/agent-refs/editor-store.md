@@ -310,6 +310,14 @@ request the older one did (`latestCmsSiteReloadRequest` /
 request resolves at once, and unmounting the last editor settles whatever is
 still waiting, so a structural commit can never hang on a board that is gone.
 
+**A read that gets no answer retries, then says so in place (P3-A, ERR-18).**
+The initial load runs through `@core/http`'s `retryWhileUnreachable` on
+`LOAD_RETRY_BACKOFF_MS` (`hooks/persistenceStatus.ts`), reporting `retrying`
+meanwhile; `retryLoad` runs it again by hand. A background re-read (after a
+write, an agent push or an outside edit) that still fails sets `boardStale`,
+which the save chip shows as "Out of date — reload", never as a toast; the
+next successful read clears it.
+
 **`patchPages(input)`** merges a freshly-re-parsed SUBSET of pages into
 `site.pages` — the targeted-reload path for **every** write, the agent's and
 the user's alike. Four callers reach it: the MCP live-reload push, a file
@@ -424,8 +432,11 @@ and rolls it back — patches replayed unless a re-read replaced the page since
 (`pageReadEpoch.ts`), entry removed — when it is refused or still unreachable
 after `structuralWriteRetry.ts`'s ladder (ERR-6). An undo/redo's re-issued write
 carries the same handle for its entry: refused → skipped, unreachable → put
-back. Full contract: `editor-history.md` → "A write that does not land is taken
-back".
+back. The rollback reverts the store's tree only: a Tier 2 bridge frame that
+already painted the move or delete through `optimisticStructuralBroadcast.ts`
+keeps that paint: no runtime message undoes an optimistic DOM op, and a write
+that did not land sends no HMR update. Full contract: `editor-history.md` → "A write that does
+not land is taken back".
 
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
 (D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —

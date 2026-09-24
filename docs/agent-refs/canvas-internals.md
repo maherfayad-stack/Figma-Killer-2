@@ -886,6 +886,14 @@ the generic dispatcher runs it (that is how ⌘⇧H → `layers.toggleVisibility
 ⌘⇧L → `layers.toggleLock` work). Anything the canvas must own itself goes in
 `COMPONENT_OWNED_SHORTCUTS` so it can't double-fire.
 
+The registry spans three files: `keybindings.ts` (the chords the dispatcher
+routes), `keybindingViewport.ts` (the view keys `useCanvasViewportKeys` handles)
+and `keybindingGestures.ts` (modifier gestures read off pointer or drag events,
+whose `match` is constant-false; they are there for the `?` sheet). A key that
+Figma and Penpot give different meanings gets a row in the **conflict register**
+at the top of `keybindings.ts` (OD-3, `docs/decisions.md`) before it gets a
+binding.
+
 ### The latched tools (`K4`)
 
 `canvasTool: 'move' | 'hand' | 'scale'` on the canvas slice is what a plain drag
@@ -1214,7 +1222,10 @@ a component in a live frame selected the element inside it.
 `set()`. So each `useEditorStore(...)` in it is paid ~3,600 times per
 keystroke, click and pan commit. The rules, gated by
 `per-node-selector-budget.test.ts` (budget 7, no `useShallow`) and timed by
-`bench:editor-store`'s subscriber sweep:
+`bench:editor-store`'s subscriber sweep, a gate there (a breach fails the
+bench). The sweep (`scripts/bench/lib/canvasSubscriberSweep.ts`) runs a COPY of
+`NodeRenderer.tsx`'s selectors, so a change to one changes the other in the
+same PR:
 
 - **Hover is not store state.** `canvas/canvasHover.ts` holds it: keyed
   listeners (`useIsNodeHovered`, a Layers row) wake only the two ids a
