@@ -33,29 +33,31 @@ import { summarize, type LatencySummary } from './stats'
 /**
  * Per-scenario median budgets, in ms, for the full-size sweep (40 × 300 × 12).
  *
- * Calibrated on the first committed run (P2-A, 2026-09-23, this Windows box,
- * Bun/JSC — numbers in the P2-A `STATE.md` entry and PR body) at about 1.5×
- * the observed median, so a real regression fails and machine noise does not.
- * They are a RATCHET on today's selector shape, not the target: P2-I moves
- * hover off the global store and replaces the two `useShallow` selectors,
- * and its exit gate is `hoverEdge` under 1.5 ms (`01-perf.md` §3 item 1).
- * Tighten these in that PR — never loosen them to make a run pass.
+ * Tightened by P2-I (2026-09-24, this Windows box, Bun/JSC) to about 1.5× the
+ * worst observed median of three runs, so a real regression fails and machine
+ * noise does not. Before → after P2-I, medians of three runs:
  *
- * `annotationMarqueeNoop` is the exception: it is a no-op by construction
- * after PERF-11 (the marquee writes the same annotation selection on every
- * pointermove), so its budget is "the guard returned before `set()`".
+ * | scenario | before (P2-A shape) | after (P2-I) |
+ * |---|---|---|
+ * | hoverEdge | 8.1 / 16.1 / 14.8 | 0.000 / 0.000 / 0.000 |
+ * | selectNode | 20.7 / 21.3 / 20.7 | 5.9 / 10.5 / 10.2 |
+ * | keystroke | 23.0 / 23.1 / 22.6 | 6.6 / 11.7 / 11.7 |
+ * | panCommit | 16.1 / 15.6 / 15.6 | 4.8 / 4.7 / 4.6 |
+ *
+ * A hover crossing is no longer a store write at all (`canvasHover.ts`), so
+ * its budget is "no sweep ran" — the audit's exit gate was 1.5 ms. Never
+ * loosen these to make a run pass.
+ *
+ * `hoverNoop` and `annotationMarqueeNoop` are no-ops by construction (a
+ * same-value guard returns before any listener runs).
  */
 export const SUBSCRIBER_SWEEP_BUDGETS_MS = {
-  /** Observed medians 16.1 / 9.5 / 11.0 ms (loaded machine; the audit's quieter run read 6.4). */
-  hoverEdge: 24,
-  /** `hoverNode`'s same-value guard (`speed-03`) returns before `set()`: observed 0.000-0.001 ms. */
-  hoverNoop: 0.5,
-  /** Observed 22.3 / 24.4 / 22.5 ms. */
-  selectNode: 36,
-  /** Observed 23.5 / 25.3 / 25.3 ms. */
-  keystroke: 38,
-  /** Observed 15.6 / 17.9 / 16.0 ms. */
-  panCommit: 27,
+  /** No store write: two keyed wake-ups plus the per-frame overlay listeners. */
+  hoverEdge: 0.1,
+  hoverNoop: 0.1,
+  selectNode: 16,
+  keystroke: 18,
+  panCommit: 8,
   /** Observed 20.9 / 23.3 / 22.5 ms BEFORE the PERF-11 guard — a full sweep for a no-op. */
   annotationMarqueeNoop: 0.5,
 } as const

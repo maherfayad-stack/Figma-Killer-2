@@ -250,7 +250,7 @@ function findWholePagesSelectorLines(content: string): number[] {
 const PAGES_DERIVATION_RE = /\.pages\??\.(?:filter|map|flatMap|reduce)\(/
 
 /** The argument text of every `useEditorStore(` call in `content`, with its 1-based line. */
-function useEditorStoreArguments(content: string): Array<{ line: number; text: string }> {
+function editorStoreCallArguments(content: string): Array<{ line: number; text: string }> {
   const out: Array<{ line: number; text: string }> = []
   const re = /useEditorStore\(/g
   for (let match = re.exec(content); match !== null; match = re.exec(content)) {
@@ -274,7 +274,7 @@ function findPagesDerivationSelectorLines(content: string): number[] {
     .split('\n')
     .map((line) => (/^\s*(\/\/|\*|\/\*)/.test(line) ? '' : line))
     .join('\n')
-  return useEditorStoreArguments(code)
+  return editorStoreCallArguments(code)
     .filter(({ text }) => PAGES_DERIVATION_RE.test(text))
     .map(({ line }) => line)
 }

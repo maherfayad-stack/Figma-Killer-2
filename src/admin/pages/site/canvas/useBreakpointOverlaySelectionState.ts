@@ -25,7 +25,7 @@ const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
 /**
  * PERF-13 — the ids of `ids` this frame's page can render. A selection or
  * hover made WITHOUT a frame (a Layers-panel row: `selectedNodeFrameId` /
- * `hoveredFrameId` null) used to arm the rings, the in-place inspector
+ * the hover's `frameId` null) used to arm the rings, the in-place inspector
  * wrapper and a measure scheduler in EVERY mounted board frame, each of which
  * then queried its document for a node it does not contain, on every pass.
  * `_nodeIdToPageIds` (WS-5.2) answers "which pages contain this id" in O(1).

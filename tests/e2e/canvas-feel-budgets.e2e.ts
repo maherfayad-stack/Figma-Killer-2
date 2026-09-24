@@ -16,50 +16,50 @@ import {
  * items 5, 6 and 7, on the 40-frame × ~300-element corpus of item 2
  * (`helpers/largeBoardCorpus.ts`).
  *
- * Four tests, all against the same board at the same zoom:
+ * Six tests, all against the same board at the same zoom:
  *
  *   - **hover sweep** — a pointer crossing 50 elements in a frame, with nine
- *     frames mounted. Every crossing is a store write that sweeps every
- *     mounted node's selectors (PERF-1) and used to re-run the frame's two
- *     full-document layout passes because the hover ring mounted inside the
- *     observed `<body>` (PERF-2).
+ *     frames mounted. Every crossing used to be a store write that swept every
+ *     mounted node's selectors (PERF-1, fixed in P2-I) and to re-run the
+ *     frame's two full-document layout passes because the hover ring mounted
+ *     inside the observed `<body>` (PERF-2, fixed in P2-A).
  *   - **Layers-panel hover sweep** — the same, from the Layers panel, whose
  *     hover carries no frame id and so used to arm chrome in EVERY mounted
  *     frame (PERF-13 × PERF-2).
  *   - **pan with a selection** — the selection toolbar must stay on the ring
  *     WHILE the board moves, not freeze and jump ~100 ms after (PERF-3).
+ *   - **warm click -> ring** — WS-5.6's "selection -> ring paint" (P2-I).
+ *   - **post-edit pause** — the frame being edited is never rasterized into a
+ *     poster under the user (PERF-5, P2-I).
  *   - **idle** — a board with a selection that nobody touches must let the
  *     main thread sleep: zero `requestAnimationFrame` calls from the app
  *     (PERF-4's ruler loops were two permanent 60 Hz loops).
  *
- * Every budget below was calibrated on this spec's own first runs; the
- * before/after numbers are in the P2-A `STATE.md` entry and PR. Read-only
- * against the corpus: nothing here writes a file.
+ * Every budget below was calibrated on this spec's own runs; the before/after
+ * numbers are in the P2-A and P2-I PRs. Nothing here writes a file: the board
+ * opens with autosave off, so the post-edit case's edit stays in memory.
  */
 
 /**
- * **Hover sweeps: no animation frame over this — a RATCHET, not the target.**
- * The roadmap's target is 20 ms (one missed vsync at most). P2-A measured,
- * on this Windows box under other agents' load (the PR table has every run):
+ * **Hover sweeps: no animation frame over this.** The roadmap's target is
+ * 20 ms (one missed vsync at most). Measured on this Windows box, dev build:
  *
- * | | before P2-A | after P2-A |
- * |---|---|---|
- * | canvas hover, worst frame | 195.2 / 148.5 / 198.3 ms | 132.7 / 150.4 ms |
- * | Layers hover, worst frame | 185.7 ms | 149.7 ms |
+ * | | before P2-A | after P2-A | after P2-I |
+ * |---|---|---|---|
+ * | canvas hover, worst frame | 148–198 ms | 124–183 ms | 20.9–30.3 ms |
+ * | canvas hover, frames > 20 ms | ~49/195 | 48–49/~196 | 3–19/~137 |
+ * | Layers hover, worst frame | 185.7 ms | 111–150 ms | 20.4–25.6 ms |
  *
- * What P2-A removed is asserted EXACTLY, below, as a count: selection chrome
- * no longer mounts anything inside a frame on hover (4 → 0 tree mutations on
- * the canvas sweep, 14 → 0 on the Layers sweep, each of which used to re-run
- * a frame's two full-document layout passes). What is left in the frame time
- * is PERF-1 — every hover crossing is still two global store writes that each
- * sweep ~40k per-node selectors — and it is P2-I's bundle. P2-I ratchets this
- * number toward 20; set at ~1.5× the worst "after" run so a regression of the
- * size PERF-2 was fails, and machine noise does not.
+ * P2-A took the chrome's tree mutations out of a hover (asserted exactly
+ * below, as a count). P2-I took hover out of the editor store
+ * (`canvasHover.ts`), so a crossing no longer sweeps ~40k per-node selectors.
+ * Set at ~1.5× the worst P2-I run: a regression of PERF-1's size (a store
+ * write per crossing) fails by a factor of four.
  */
-const BUDGET_HOVER_SWEEP_WORST_FRAME_MS = 225
+const BUDGET_HOVER_SWEEP_WORST_FRAME_MS = 45
 
-/** **Layers-panel hover sweep** — same ratchet, same reasoning as the canvas sweep above. */
-const BUDGET_LAYERS_HOVER_WORST_FRAME_MS = 225
+/** **Layers-panel hover sweep** — same reasoning; ~1.5× the worst P2-I run. */
+const BUDGET_LAYERS_HOVER_WORST_FRAME_MS = 40
 
 /**
  * **Pan with a selection: the toolbar's worst distance from where the ring
@@ -81,7 +81,10 @@ const BUDGET_IDLE_RAF_PER_SECOND = 0
 
 /**
  * **Warm click -> selection ring painted, mean over the samples.** WS-5.6's
- * target is 32 ms. Calibration: P2-I PR table.
+ * target is 32 ms in a production build; this runs the dev build. Measured
+ * (P2-I): trunk 292–440 ms, because every click re-rendered all ~2,800
+ * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext` value;
+ * after P2-I 78–85 ms. Set at ~1.4× the worst P2-I mean.
  */
 const WARM_CLICK_SAMPLES = 8
 const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = 120
@@ -393,12 +396,17 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     const scale = iframeBox.width / probe.width
     const targets = probe.targets
       .map((t) => ({ id: t.id, x: iframeBox.x + t.x * scale, y: iframeBox.y + t.y * scale }))
-      .filter((t) => t.y > 40 && t.y < 1080 - 40)
-      .slice(0, WARM_CLICK_SAMPLES)
-    expect(targets.length, 'too few click targets on screen').toBe(WARM_CLICK_SAMPLES)
+    // Only points where the frame itself is the top-most element — never under
+    // a ruler, the floating toolbar or a panel.
+    const hittable = await page.evaluate(
+      (points) => points.map((p) => document.elementFromPoint(p.x, p.y)?.tagName === 'IFRAME'),
+      targets,
+    )
+    const clickable = targets.filter((_, index) => hittable[index]).slice(0, WARM_CLICK_SAMPLES)
+    expect(clickable.length, 'too few click targets on screen').toBe(WARM_CLICK_SAMPLES)
 
     const samples: number[] = []
-    for (const [i, target] of targets.entries()) {
+    for (const [i, target] of clickable.entries()) {
       const nodeId = target.id
       await content.evaluate((id) => {
         const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }

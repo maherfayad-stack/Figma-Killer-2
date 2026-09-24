@@ -154,6 +154,29 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
   5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
 
+### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
+- **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `a03f410a` merged in) · **PR:** draft, base `feat/canvas-excellence`; full tables in its body · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:**
+  - Hover is off the editor store: `canvas/canvasHover.ts` (keyed + per-frame reads). `hoverNode`/`hovered*` are gone; store actions call `clearCanvasHover`/`followCanvasHover`. The dead `isHovered`/`data-hovered` is deleted.
+  - Selection is a keyed read in `NodeRenderer` (`canvas/canvasNodeSelection.ts`, one store listener). Both `useShallow` selectors are primitives; actions/session constants read via `getState()`. Budget 11 → 7, and `useShallow` is banned there.
+  - **Found by measuring:** `CanvasSelectionContext` got a new value on every `CanvasRoot` render, so every click re-rendered all ~2,800 mounted `NodeRenderer`s. `useCanvasNodeInteraction` now returns a once-created facade over a ref.
+  - PERF-12: `selectPageDirectory`/`selectTemplatePages` (`store/slices/pageDirectory.ts`). Nine always-mounted readers narrowed. The gate now also fails bare `s.site` in layouts/hooks/Explorer, whole `site.pages` in chrome, and `.pages.filter/map` in any selector.
+  - PERF-5: posters are captured only while a frame is off screen and pooled (`framePosterNeeded`). The busy listeners run in every frame document (portal DOM; bridge adapter events). Each capture records a `studio:poster-capture` measure.
+- **Numbers (dev build, 40 × 300 corpus):** hover worst frame 169–183 → 21–30 ms · Layers hover 111–125 → 20–26 ms · warm click → ring 292–440 → 78–85 ms · post-edit pause worst frame 1,140 → 19 ms · sweep medians: hover 8–16 → 0.000 ms, selectNode ~21 → 5–10, keystroke ~23 → 6–12, pan commit ~16 → 2–5.
+- **Cold-click A/B (10 each, interleaved, quiet box):** means `53c2746f` 162.5 · `ecfa57d6` 167.1 / 162.6 · branch 158.0 / 159.2 ms. P2-A caused no regression; the old 432 → 485 was load.
+- **Landmines:**
+  - Diagnostics that mutate a global during render make the React Compiler bail out of that component, which fakes an unstable context. Count renders from a `useLayoutEffect`.
+  - PERF-14: stubbing out the Properties AND Layers panels left click → ring at 315–330 ms. The inspector is not on that path, so no deferral was added.
+  - A capture of a 310-element frame is 880–1,160 ms (`getFontEmbedCSS` ~0 ms, so font caching buys nothing). An evicted frame whose poster is stale shows the plain title card.
+  - `studio-board-perf` "virtualization bounds live iframes" fails on trunk too (live + fallback iframes: 16 ≥ 12 frames). Pre-existing.
+- **Next:** the orchestrator merges. Found-not-fixed items are in the PR body.
+- **Human action needed:** dogfood on a large board (40 frames, 25–40% zoom):
+  1. Sweep the pointer across a frame: the hover ring tracks with no stutter.
+  2. Click element after element: each ring appears at once and the inspector follows.
+  3. Edit a text in the inspector, pause 2 s, then click: no hitch.
+  4. Pan an edited frame off screen and back: it comes back as a picture, then live.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

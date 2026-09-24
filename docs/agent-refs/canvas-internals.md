@@ -1189,10 +1189,22 @@ keystroke, click and pan commit. The rules, gated by
   `initialValue`/`multiline`) and store actions are read through `getState()`
   where they are used.
 
+- **The `CanvasSelectionContext` value never changes identity.** Every
+  `NodeRenderer` consumes it, and `CanvasRoot` re-renders on every selection.
+  `useCanvasNodeInteraction` returns a facade created once that calls the
+  latest handlers through a ref. Before P2-I the object was rebuilt per render
+  (the React Compiler cannot keep closures over changing options stable), so
+  EVERY click re-rendered all ~2,800 mounted nodes. A new context read in
+  `NodeRenderer` has to meet the same bar.
+
 Measured (40 × 300 × 12, medians): a hover crossing 8–16 ms → 0.000 ms of
 store work; `selectNode` ~21 → 6–10 ms; a keystroke ~23 → 7–12 ms; a pan
-commit ~16 → 4.7 ms. In a browser (`canvas-feel-budgets.e2e.ts`) the hover
-sweep's worst frame went 169–183 → 32–48 ms.
+commit ~16 → 4.7 ms. In a browser (`canvas-feel-budgets.e2e.ts`, dev build):
+the hover sweep's worst frame went 169–183 → 21–30 ms, and a warm click to a
+painted ring 292–440 → 78–85 ms (`NodeRenderer` renders per click: 2,799 → 2).
+Stubbing out the Properties and Layers panels moved click-to-ring by nothing
+measurable, so the inspector is NOT on that path (PERF-14's hypothesis) — do
+not defer it for the ring's sake.
 
 `frameVirtualization.ts` already exists and is used by `BoardFramesLayer`:
 `isFrameOnScreen(frameRect, viewportState, marginPx)` — pure board→screen math,
