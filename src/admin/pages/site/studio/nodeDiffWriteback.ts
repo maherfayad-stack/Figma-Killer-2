@@ -30,6 +30,7 @@ import {
   type NodeValueDrop,
 } from './loadedValuesBaseline'
 import type { StudioEditPayload } from './studioEditPayload'
+import { editOutcomeKey } from './editOutcomes'
 
 export interface NodeDiffResult {
   edits: StudioEditPayload[]
@@ -69,11 +70,10 @@ export function collectNodeDiffEdits(
   // `index:body`) are skipped server-side.
   const edits: StudioEditPayload[] = []
   // Parallel to `edits` — one `(nodeId, baseline key, value)` entry per
-  // node-value edit pushed below, so `loadedValues` can be advanced to
-  // exactly what this batch wrote once the POST confirms it landed. See
-  // `commitNodeValuesBaseline`'s doc for why this is E1's fix and why it is
-  // gated on `unexplainedSkips === 0` below rather than committed
-  // unconditionally.
+  // node-value edit pushed below, each tagged with the outcome key of the edit
+  // that carries it, so `loadedValues` can be advanced to exactly what this
+  // batch wrote once the response names what it refused (WB-35). See
+  // `commitNodeValuesBaseline`'s doc for why this is E1's fix.
   const bumps: NodeValueBump[] = []
   // `style-03`'s counterpart: the `(nodeId, key)` pairs this batch REMOVES
   // from source, which have no value to record — see `dropNodeValuesBaseline`.
@@ -82,6 +82,11 @@ export function collectNodeDiffEdits(
   // `style=""` target (`pkg.*`, `studio.instance`). Collected rather than
   // dropped, and toasted below: see `inlineStyleUnsavedNotice.ts`.
   const inlineStyleRefusals: InlineStyleModuleRefusal[] = []
+  /** Push one edit and answer the outcome key its bumps and drops carry. */
+  const emit = (edit: StudioEditPayload): string => {
+    edits.push(edit)
+    return editOutcomeKey(edit)
+  }
 
   // C4 — this loop used to scan every node of every page on every autosave
   // tick, ignoring `opts.dirty` (fed correctly by every `mutateSite`/
@@ -115,8 +120,8 @@ export function collectNodeDiffEdits(
         const value = node.props?.[textProp]
         if (typeof value === 'string' && !(baseline && Object.is(baseline[textProp], value))) {
           const { rel, line, col } = node.textOrigin
-          edits.push({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
-          bumps.push({ nodeId: node.id, key: textProp, value })
+          const editKey = emit({ kind: 'literal', nodeId: `${rel}:${line}:${col}`, text: value })
+          bumps.push({ nodeId: node.id, key: textProp, value, editKey })
         }
       }
 
@@ -135,14 +140,16 @@ export function collectNodeDiffEdits(
         const tag = effectiveTag(node.props)
         const baselineTag = effectiveTag(baseline)
         if (tag !== undefined && tag !== baselineTag) {
-          edits.push({ kind: 'tag', nodeId: node.id, tag })
+          const editKey = emit({ kind: 'tag', nodeId: node.id, tag })
           // `effectiveTag(baseline)` reads BOTH raw keys — bump both so a
           // later save's `baselineTag` recomputes from what's now on disk,
           // not from the as-loaded pair.
           const rawTag = node.props?.tag
-          if (typeof rawTag === 'string') bumps.push({ nodeId: node.id, key: 'tag', value: rawTag })
+          if (typeof rawTag === 'string') bumps.push({ nodeId: node.id, key: 'tag', value: rawTag, editKey })
           const rawCustomTag = node.props?.customTag
-          if (typeof rawCustomTag === 'string') bumps.push({ nodeId: node.id, key: 'customTag', value: rawCustomTag })
+          if (typeof rawCustomTag === 'string') {
+            bumps.push({ nodeId: node.id, key: 'customTag', value: rawCustomTag, editKey })
+          }
         }
       }
 
@@ -168,12 +175,12 @@ export function collectNodeDiffEdits(
         // to prevent. Same shape as the `textOrigin` branch above.
         const propOrigin = node.resolvedProps?.[prop]?.origin
         if (propOrigin) {
-          edits.push({
+          const editKey = emit({
             kind: 'literal',
             nodeId: `${propOrigin.rel}:${propOrigin.line}:${propOrigin.col}`,
             text: String(value),
           })
-          bumps.push({ nodeId: node.id, key: prop, value })
+          bumps.push({ nodeId: node.id, key: prop, value, editKey })
           continue
         }
         // Second gate on the same rule the store applies, here because THIS is
@@ -183,12 +190,11 @@ export function collectNodeDiffEdits(
         if (!isPropWritableToSource(node, prop)) continue
         // Already emitted as a `literal` edit aimed at its origin, above.
         if (prop === textProp && node.textOrigin) continue
-        if (prop === textProp) {
-          edits.push({ kind: 'text', nodeId: node.id, text: String(value) })
-        } else {
-          edits.push({ kind: 'prop', nodeId: node.id, prop, value })
-        }
-        bumps.push({ nodeId: node.id, key: prop, value })
+        const editKey =
+          prop === textProp
+            ? emit({ kind: 'text', nodeId: node.id, text: String(value) })
+            : emit({ kind: 'prop', nodeId: node.id, prop, value })
+        bumps.push({ nodeId: node.id, key: prop, value, editKey })
       }
 
       // instance-ui-01 — a `studio.instance`'s call-site props are a
@@ -206,8 +212,8 @@ export function collectNodeDiffEdits(
           const codeKey = `callSiteProps:${name}`
           if (baseline && Object.is(baseline[codeKey], value)) continue
           if (!isPropWritableToSource(node, codeKey)) continue
-          edits.push({ kind: 'prop', nodeId: node.id, prop: codeKey, value })
-          bumps.push({ nodeId: node.id, key: codeKey, value })
+          const editKey = emit({ kind: 'prop', nodeId: node.id, prop: codeKey, value })
+          bumps.push({ nodeId: node.id, key: codeKey, value, editKey })
         }
       }
 
@@ -220,14 +226,16 @@ export function collectNodeDiffEdits(
       const { changed, removed } = diffInlineStyles(node, baseline)
       if (Object.keys(changed).length > 0 || removed.length > 0) {
         if (canWriteInlineStyleForModule(node.moduleId)) {
-          edits.push({
+          const editKey = emit({
             kind: 'style',
             nodeId: node.id,
             style: changed,
             ...(removed.length > 0 ? { remove: removed } : {}),
           })
-          for (const [k, v] of Object.entries(changed)) bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v })
-          for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property) })
+          for (const [k, v] of Object.entries(changed)) {
+            bumps.push({ nodeId: node.id, key: styleValueKey(k), value: v, editKey })
+          }
+          for (const property of removed) drops.push({ nodeId: node.id, key: styleValueKey(property), editKey })
         } else {
           // `font-revert` — this used to be an `if` around the block above,
           // so a `pkg.*` / `studio.instance` node's style drift was dropped

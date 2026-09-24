@@ -42,11 +42,19 @@ export interface SetStringLiteralParams {
  */
 export class StringLiteralTargetError extends Error {
   readonly path: string
+  /**
+   * The stable refusal code the writeback batch reports (WB-12):
+   * `element-moved` — nothing is at that position any more (the file changed
+   * since it was read); `not-a-literal` — something is, and it is not a
+   * literal this codemod may rewrite.
+   */
+  readonly reason: 'element-moved' | 'not-a-literal'
 
-  constructor(message: string, path: string) {
+  constructor(message: string, path: string, reason: 'element-moved' | 'not-a-literal' = 'not-a-literal') {
     super(`[ast-codemods/setStringLiteral] ${path}: ${message}`)
     this.name = 'StringLiteralTargetError'
     this.path = path
+    this.reason = reason
   }
 }
 
@@ -60,11 +68,11 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
   try {
     pos = sourceFile.compilerNode.getPositionOfLineAndCharacter(line - 1, col - 1)
   } catch {
-    throw new StringLiteralTargetError('line/column is outside the file', path)
+    throw new StringLiteralTargetError('line/column is outside the file', path, 'element-moved')
   }
 
   const token = sourceFile.getDescendantAtPos(pos)
-  if (!token) throw new StringLiteralTargetError('no node at this position', path)
+  if (!token) throw new StringLiteralTargetError('no node at this position', path, 'element-moved')
 
   // The position addresses the literal's own start. Accept the token itself or
   // its immediate parent (`getDescendantAtPos` can land on the token inside a

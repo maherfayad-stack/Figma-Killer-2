@@ -17,7 +17,7 @@
  * here only because `collectStyleRuleEdits`'s return type includes all
  * three. `create`'s "which file was created" surfacing is wired: `saveSite`
  * calls `notifyCreatedStylesheets` (`studioSaveRequests.ts`) once the save
- * response arrives, alongside the `unexplainedSkips` handling.
+ * response arrives, alongside the refusal handling.
  *
  * Track B2 — `class` (`server/handlers/studioEditSchemas.ts`'s
  * `ClassEditSchema`, matching `classNameWriteback.ts`'s `ClassNameEditPayload`)

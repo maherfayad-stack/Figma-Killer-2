@@ -16,6 +16,7 @@
  */
 import { join } from 'node:path'
 import { fileSyntaxError, type SourceSyntaxError } from '@core/page-parser'
+import { refusalFor } from './studioEditRefusals'
 import { canonicalSourceRel, studioEditLocation } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
 
@@ -60,14 +61,12 @@ export function createSyntaxGuard(dir: string): (edit: StudioEdit) => StudioEdit
     for (const rel of filesWrittenBy(dir, edit)) {
       const error = errorIn(rel)
       if (!error) continue
-      return {
-        nodeId: edit.nodeId,
-        kind: edit.kind,
-        reason: 'syntax-error',
-        message:
-          `${rel} does not parse — line ${error.line}: ${error.message} Studio will not write into a file ` +
+      return refusalFor(
+        edit,
+        'syntax-error',
+        `${rel} does not parse — line ${error.line}: ${error.message} Studio will not write into a file ` +
           'it cannot read reliably. Fix that line in code, and the edit can be made again.',
-      }
+      )
     }
     return null
   }

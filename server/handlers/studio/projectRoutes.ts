@@ -100,7 +100,7 @@ import { designSystemImportSpecifier } from '@core/page-parser'
 import { Type } from '@core/utils/typeboxHelpers'
 import { DEFAULT_PAGE_KIND, DEFAULT_PROJECT_PLATFORM, frameDefaultsForPlatform, PageKindSchema } from '@core/studio-board'
 import type { StudioSessionRuntime } from './routeGate'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { ProjectTrashError, trashStudioProject } from './projectTrash'
 import { ProjectDuplicateError, duplicateStudioProject } from './projectDuplicate'
 import { SampleProjectError, createSampleProject } from './sampleProject'
@@ -255,8 +255,7 @@ export async function tryServeStudioProjectRoutes(
       if (err instanceof ProjectTrashError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'not-found' ? 404 : 400 })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -276,8 +275,7 @@ export async function tryServeStudioProjectRoutes(
         const status = err.reason === 'not-found' ? 404 : err.reason === 'name-taken' ? 409 : 400
         return jsonResponse({ error: err.message }, { status })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -291,8 +289,7 @@ export async function tryServeStudioProjectRoutes(
       if (err instanceof SampleProjectError) {
         return jsonResponse({ error: err.message }, { status: err.reason === 'missing-source' ? 500 : 409 })
       }
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -321,8 +318,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ projects })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -378,8 +374,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -399,8 +394,7 @@ export async function tryServeStudioProjectRoutes(
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -426,8 +420,7 @@ export async function tryServeStudioProjectRoutes(
       // actually yields — the number the summary step was asking about.
       return jsonResponse({ project: studioProjectSummary(dir) })
     } catch (err) {
-      console.error('[studio]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -448,8 +441,7 @@ export async function tryServeStudioProjectRoutes(
         return jsonResponse(result)
       } catch (err) {
         rethrowProjectDirRefusal(err)
-        console.error('[studio]', err)
-        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+        return internalServerError('[studio]', err)
       }
     })
   }
@@ -472,8 +464,7 @@ export async function tryServeStudioProjectRoutes(
         return jsonResponse(result)
       } catch (err) {
         rethrowProjectDirRefusal(err)
-        console.error('[studio]', err)
-        return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+        return internalServerError('[studio]', err)
       }
     })
   }

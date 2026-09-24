@@ -12,6 +12,9 @@ The codebase uses **one** error boundary primitive — `src/ui/components/ErrorB
 - Primitive: `<ErrorBoundary location="...">` from `@ui/components/ErrorBoundary`.
 - Required placements (gated): admin shell, per-route, canvas, per-node renderer, plugin page, plugin editor panel, plugin canvas overlay.
 - Plus the **per-panel and per-section** seams in the Studio editor, all mounted through one component: `PanelBoundary` (`src/admin/pages/site/ui/PanelBoundary/`). See "Editor panels and inspector sections" below.
+- Plus the **chrome** seams (toolbar, rulers, context menu, dialogs, sidebar shells): `ChromeBoundary` (`src/admin/pages/site/ui/ChromeBoundary/`) — renders nothing, logs once, comes back on the next store change (ERR-13). See "Editor chrome" below.
+- `LazyChunkBoundary` says "Editor chunk failed to load" only for a real chunk-load failure (`isChunkLoadError`); any other error that reaches it says "The editor stopped responding".
+- The editor window's own `error` / `unhandledrejection` feed the diagnostics buffer (`canvas/editorWindowDiagnostics.ts`, ERR-26) — logged, never toasted.
 - React 19 root callbacks (`onCaughtError`, `onUncaughtError`, `onRecoverableError`) wired in `src/admin/main.tsx`.
 - Caught errors log with `[<module>]` prefix and render the fallback **in place** — they do not toast. Only `admin-shell` opts back in (`silentToast={false}`), because its catch leaves nothing else on screen to read.
 - `flattenErrorChain(err)` walks `error.cause` so domain-typed errors surface their full provenance.
@@ -98,6 +101,8 @@ Wraps every `<Route>`. `resetKeys={[pathname]}` means navigating away from a bro
 ```
 
 A bad render inside the canvas (e.g. a module render throws) doesn't break the editor chrome. The user can switch to a different page, fix the bad node in the DOM panel, or reload.
+
+`autoRetry={1}` (ERR-13): the boundary resets itself once before its fallback is ever shown. The commonest canvas crash is a render racing a resync that is about to replace the page it read, and the retry renders the settled page. `autoRetry` is a prop of the shared primitive; the count starts over whenever `resetKeys` change.
 
 ### 4. `node-renderer` — per-module isolation
 
@@ -211,6 +216,14 @@ boundary has to name it.
 Gated by the `panel-40` block in `error-boundary-coverage.test.ts`, which
 checks the mount sites (the `location` is composed at runtime, so there is no
 literal string to scan for).
+
+---
+
+## Editor chrome — `ChromeBoundary` (ERR-13)
+
+Chrome outside a panel used to fall back to `LazyChunkBoundary location="site-editor-body"` (the canvas and every panel, captioned "Editor chunk failed to load" — untrue) or, for the toolbar and `RefusalDialog`, to `admin-route` (the whole editor). Each chrome seam is its own boundary now: `<ChromeBoundary id="…">`, location `chrome:<id>`. Its fallback is **nothing** — a ruler or a context menu has no room for a card, and the user cannot act on "the ruler crashed" — and it resets on the next editor-store change (at most 3 times per mount, so a deterministic bug logs a handful of times, not per keystroke).
+
+Mounted at: `toolbar` (`AdminCanvasLayout`), `refusal-dialog` (`SitePage`), `left-sidebar` / `right-sidebar` / `code-editor` / `layout-name-dialog` / `import-html` (`AdminCanvasEditorBody`), `canvas-context-selector` / `canvas-rulers` / `studio-canvas-chrome` / `canvas-context-menu` (`CanvasRoot`). Gated by the ERR-13 block in `error-boundary-coverage.test.ts`.
 
 ---
 
@@ -335,6 +348,8 @@ const handler = useCallback(async () => {
 ```
 
 Pattern: `try/catch` in async handlers, log with `[<module>]` prefix, surface via toast + component state. See [docs/reference/typebox-patterns.md](typebox-patterns.md) and CLAUDE.md's "Error handling" rules.
+
+Which kind of toast (P3-A, `error-toast-sites.test.ts`): a request that got no answer is retried first (`@core/http`'s `retryWhileUnreachable`, only where running it twice is harmless); a refusal is a `warning` with its one-click remedy; a read nobody clicked for fails in place (an empty state, the save chip); a no-op is silent or `info`. `kind: 'error'` is left for an operation the user asked for that genuinely failed — and a new site has to be added to the gate's reviewed list.
 
 ### Use the error boundary's fallback to hide a feature
 

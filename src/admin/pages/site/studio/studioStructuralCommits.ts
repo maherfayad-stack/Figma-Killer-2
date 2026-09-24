@@ -24,7 +24,6 @@
  *  - `structuralUndoPlan.ts` — what each gesture's ⌘Z is, expressed in the edit
  *    kinds the writeback protocol already has.
  */
-import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
@@ -41,22 +40,21 @@ import {
 } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import type { InsertPropValue } from './studioSaveRequests'
-import { isUnreachableWriteFailure, postEditsRetryingUnreachable } from './structuralWriteRetry'
+import { isUnreachableFailure } from '@core/http'
+import { postEditsRetryingUnreachable } from './structuralWriteRetry'
 import { captureIdentities, type IdentityCapture } from './sourceIdentity'
 import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 
 /**
- * What a structural commit does beyond posting: what it says when it lands,
- * and what it means for the undo stack.
+ * What a structural commit does beyond posting: what it means for the undo
+ * stack, and what it takes back if it does not land.
+ *
+ * P3-A — no commit announces a success. The canvas already shows the result
+ * (an optimistic preview, or the moved/deleted tree), and the resync selects
+ * what the gesture made; a "Duplicated" card on top of the duplicate is noise
+ * that says the same thing twice (02 §2a "Inserted / Placed").
  */
 interface StructuralCommitOptions {
-  /**
-   * Passed only by commits with no optimistic canvas change to stand in for
-   * the result — an insert shows nothing at all until the reload, so silence
-   * would be indistinguishable from a no-op. A move or a delete has already
-   * updated the tree, so it stays quiet on success.
-   */
-  success?: { title: string; body: string }
   /**
    * `store-14` — this gesture's ⌘Z, as a template the write's own answer fills
    * in (`structuralUndoPlan.ts`). Omitted by `move`/`reparent`, whose undo
@@ -188,9 +186,6 @@ export async function commitStudioReparent(reparent: {
  * covers both files (the batch reports both as touched), so the two frames
  * update together.
  *
- * The success toast is pushed here for the same reason the duplicate's is:
- * until the write lands there is nothing on screen to report.
- *
  * `origin` is where the element came from, which is the whole of this
  * gesture's undo: a MOVE is taken back by transplanting it home, and a COPY by
  * deleting what it made.
@@ -201,8 +196,6 @@ export async function commitStudioTransplant(transplant: {
   anchorNodeId: string | null
   position: 'before' | 'after'
   copy: boolean
-  /** What the toast says the element landed in — the destination page's own title. */
-  destinationLabel: string
   /** Where it was written before this gesture: the container it left, and which of that container's children it was. */
   origin: { parentNodeId: string; index: number }
 }): Promise<void> {
@@ -220,10 +213,6 @@ export async function commitStudioTransplant(transplant: {
     ],
     'Cannot move this between frames',
     {
-      success: {
-        title: transplant.copy ? 'Copied into another frame' : 'Moved into another frame',
-        body: `Written to ${transplant.destinationLabel}.`,
-      },
       undo: {
         label: transplant.copy ? 'Copy into another frame' : 'Move into another frame',
         template: transplant.copy
@@ -241,9 +230,7 @@ export async function commitStudioTransplant(transplant: {
  * spells out: a node created in the editor carries a nanoid id that could never
  * be written back. `duplicateJsxElement` writes the element's own source text in
  * again as its next sibling, and the reload below brings the copy in as an
- * ordinary parsed node with a real `rel:line:col`. That is also why the success
- * toast is pushed here — until the write lands there is nothing on screen to
- * report.
+ * ordinary parsed node with a real `rel:line:col`.
  *
  * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch
  * bottom-to-top, so a copy written lower in the file cannot move the line of one
@@ -286,10 +273,6 @@ export async function commitStudioDuplicate(
     })),
     'Duplicate refused',
     {
-      success: {
-        title: nodeIds.length === 1 ? 'Duplicated' : `Duplicated ${nodeIds.length} elements`,
-        body: 'Written to your project source.',
-      },
       undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
       ...(optimistic ? { optimistic } : {}),
     },
@@ -325,7 +308,6 @@ export async function commitStudioWrap(wrap: {
     ],
     'Wrap refused',
     {
-      success: { title: `Wrapped in <${wrap.name}>`, body: 'Written to your project source.' },
       undo: { label: `Wrap in <${wrap.name}>`, template: dissolveWrapperTemplate(wrap) },
       ...(wrap.optimistic ? { optimistic: wrap.optimistic } : {}),
     },
@@ -347,7 +329,7 @@ export async function commitStudioWrap(wrap: {
  * W4-1.
  *
  * Nothing is minted on the canvas first, for the reason `commitStudioInsert`
- * spells out — which is also why the success toast is pushed here.
+ * spells out.
  */
 export async function commitStudioGroup(group: {
   nodeIds: readonly string[]
@@ -371,7 +353,6 @@ export async function commitStudioGroup(group: {
     ],
     'Group refused',
     {
-      success: { title: `Grouped ${group.nodeIds.length} elements`, body: 'Written to your project source.' },
       undo: { label: 'Group', template: dissolveWrapperTemplate(group) },
       ...(group.optimistic ? { optimistic: group.optimistic } : {}),
     },
@@ -399,7 +380,6 @@ export async function commitStudioUngroup(
   container: { name: string; importSpecifier?: string; designSystemImport?: true } | null,
 ): Promise<void> {
   await commitStructural([{ kind: 'ungroup', nodeId }], 'Ungroup refused', {
-    success: { title: 'Ungrouped', body: 'Written to your project source.' },
     undo: {
       label: 'Ungroup',
       template: container
@@ -443,9 +423,7 @@ export async function commitStudioDelete(nodeIds: readonly string[], rollback?: 
  * nanoid id that could never be written back, which is exactly why `insert`
  * used to be refused outright; instead the SOURCE grows the element (plus the
  * `import` that names it) and the reload below brings it in as an ordinary
- * parsed node with a real `rel:line:col`. That is why the success toast is
- * pushed HERE rather than by the inserter: until the write lands there is
- * nothing to report, and the inserter has no way to know whether it did.
+ * parsed node with a real `rel:line:col`.
  */
 export async function commitStudioInsert(insert: {
   parentNodeId: string
@@ -489,7 +467,6 @@ export async function commitStudioInsert(insert: {
     ],
     'Add refused',
     {
-      success: { title: `Added ${insert.name}`, body: 'Written to your project source.' },
       undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
@@ -506,8 +483,8 @@ export async function commitStudioInsert(insert: {
  * against what THIS write reported, so the next step in the same direction
  * addresses the elements that exist now rather than the ones that did.
  *
- * The status toast is the gesture's own name, not the edit kinds behind it:
- * "Undone — Group" reads as one step, which is what a ⌘Z is.
+ * Silent when it lands, like every structural commit: the board changing back
+ * IS the answer to a ⌘Z.
  */
 export async function commitStudioStructuralReissue(
   edits: readonly StructuralEditPayload[],
@@ -515,8 +492,7 @@ export async function commitStudioStructuralReissue(
   label: string,
   rollback: StructuralCommitRollback,
 ): Promise<void> {
-  await commitStructural(edits, direction === 'undo' ? 'Undo refused' : 'Redo refused', {
-    success: { title: direction === 'undo' ? 'Undone' : 'Redone', body: `${label} — written to your project source.` },
+  await commitStructural(edits, direction === 'undo' ? `Could not undo ${label}` : `Could not redo ${label}`, {
     reissue: direction,
     rollback,
   })
@@ -589,38 +565,25 @@ async function commitStructuralBody(
     // `element-moved` is never toasted here — it is recovered from below.
     const moved = elementMovedNodeIds(result.refusals)
     const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))
-    // A skip with no refusal means the location decoded to nothing writable at
-    // all — the id was stale against disk.
-    const unexplained = result.skipped - (result.refusals ?? []).length
     const willReload = result.written > 0
     // P1-A — an `element-moved` miss is re-planned below, and the re-plan owns
     // the rollback when nothing else landed; every other outcome is known now.
     const replanning = moved.size > 0 && !options.replanned && !willReload
-    settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback') // `perf-10`
+    // `perf-10`; ERR-22 — what the write created is what a Delete queued on
+    // the preview acts on once this commit ends.
+    settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback', result.createdNodeIds ?? [])
     if (willReload) options.rollback?.settle()
     else if (!replanning) options.rollback?.rollback('refused')
     // ERR-6 — one gesture, one toast: the first reason, however many edits the
     // batch held. A partial refusal still says so; the resync shows the rest.
+    // WB-13 — a warning: the gesture was taken back and the file is exactly
+    // as it was. Nothing broke; the editor declined a write it could not make
+    // honestly. (WB-12 made every refusal named, so there is no "skip with no
+    // reason" left to report here.)
     const [firstRefusal] = refusals
     if (firstRefusal) {
       const more = refusals.length > 1 ? ` (${refusals.length - 1} more like this.)` : ''
-      pushToast({ kind: 'error', title: refusalTitle, body: `${firstRefusal.message}${more}` })
-    } else if (unexplained > 0) {
-      pushToast({
-        kind: 'error',
-        title: refusalTitle,
-        body: willReload
-          ? 'The code no longer has an element at the position the canvas was showing. The board has been reloaded from the files on disk.'
-          : 'The code no longer has an element at the position the canvas was showing.',
-      })
-    }
-    if (options.success && result.written > 0) {
-      pushToast({
-        kind: 'success',
-        title: options.success.title,
-        body: options.success.body,
-        location: 'module-inserter',
-      })
+      pushToast({ kind: 'warning', title: refusalTitle, body: `${firstRefusal.message}${more}`, location: 'site-editor' })
     }
     // trap #5 — reload only when a write actually landed (`rollback` above
     // takes a refused one back). Track C5: `resyncBoardAfterWrite` is narrow
@@ -666,12 +629,18 @@ async function commitStructuralBody(
     // are no-ops if the write had already settled before something later
     // (the resync) threw.
     settleOrRollbackOptimistic(options.optimistic, 'rollback') // `perf-10`
-    options.rollback?.rollback(isUnreachableWriteFailure(err) ? 'unreachable' : 'refused')
+    options.rollback?.rollback(isUnreachableFailure(err) ? 'unreachable' : 'refused')
     console.error('[studioSaveRequests] structural edit failed:', err)
+    // A warning, for the same reason as a refusal: the retry ladder has run
+    // out (`structuralWriteRetry.ts`), the gesture is taken back, and the
+    // files are unchanged — the board and disk agree again.
     pushToast({
-      kind: 'error',
+      kind: 'warning',
       title: refusalTitle,
-      body: getErrorMessage(err, 'The change could not be written to the project source.'),
+      body: isUnreachableFailure(err)
+        ? 'Studio could not reach your project, so the change was taken back. Nothing was written.'
+        : 'The change could not be written to your project, so it was taken back. Nothing was written.',
+      location: 'site-editor',
     })
   }
 }

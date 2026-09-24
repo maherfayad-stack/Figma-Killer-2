@@ -23,7 +23,7 @@
  * does the user see anything — exactly one warning, which says what happened
  * and that nothing was written ({@link warnElementMoved}).
  */
-import { ELEMENT_MOVED_REASON, sourceLocationKey } from '@core/page-tree'
+import { isStaleTargetRefusalReason, sourceLocationKey } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import { relocateCapturedIds, waitForBoardRead, type IdentityCapture, type SourceIdentity } from './sourceIdentity'
@@ -32,9 +32,13 @@ import { fileOfNodeId, remapStructuralEditIds, structuralEditNodeIds, type Struc
 /** How long a recovery waits for the board to re-read the changed files before giving up honestly. */
 const BOARD_READ_TIMEOUT_MS = 10_000
 
-/** The node ids of the edits the server refused `element-moved`. */
+/**
+ * The node ids of the edits the server refused because their id was stale:
+ * `element-moved`, and (ERR-29) a codemod's own `stale-source` / `not-found` —
+ * see `isStaleTargetRefusalReason`. Every one is recovered the same way.
+ */
 export function elementMovedNodeIds(refusals: readonly { nodeId: string; reason: string }[] | undefined): Set<string> {
-  return new Set((refusals ?? []).filter((refusal) => refusal.reason === ELEMENT_MOVED_REASON).map((r) => r.nodeId))
+  return new Set((refusals ?? []).filter((refusal) => isStaleTargetRefusalReason(refusal.reason)).map((r) => r.nodeId))
 }
 
 /**

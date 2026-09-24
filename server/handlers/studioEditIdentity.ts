@@ -52,6 +52,7 @@ import {
   withSourceLocation,
   type SourceFingerprintExpectations,
 } from '@core/page-tree'
+import { refusalFor } from './studioEditRefusals'
 import { relocateSourcePosition } from './studioEditRelocate'
 import { studioEditLocation } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
@@ -160,7 +161,7 @@ export function resolveEditIdentities(
       if (answer !== nodeId) renames.set(nodeId, answer)
     }
     if (refusal !== null) {
-      moved.push({ edit, refusal: { nodeId: edit.nodeId, kind: edit.kind, reason: ELEMENT_MOVED_REASON, message: refusal } })
+      moved.push({ edit, refusal: refusalFor(edit, ELEMENT_MOVED_REASON, refusal) })
       continue
     }
     for (const [from, to] of renames) renamed.set(from, to)

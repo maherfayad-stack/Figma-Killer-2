@@ -18,7 +18,7 @@ import { useEditorStore } from '@site/store/store'
 import { makePage, makeSite } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
 import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
-import { setStructuralWriteRetrySleepForTests } from '@site/studio/structuralWriteRetry'
+import { setUnreachableRetrySleepForTests } from '@core/http'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 
 const FILE_A = 'app/a.tsx'
@@ -69,7 +69,7 @@ function reply(json: unknown): Response {
 beforeEach(() => {
   resetStructuralCommitQueue()
   __resetToastBusForTests()
-  setStructuralWriteRetrySleepForTests(async () => {})
+  setUnreachableRetrySleepForTests(async () => {})
   toasts = []
   unsubscribeToasts = subscribeToasts((next) => {
     toasts = next
@@ -122,7 +122,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
-  setStructuralWriteRetrySleepForTests(null)
+  setUnreachableRetrySleepForTests(null)
   unsubscribeToasts()
   resetStructuralCommitQueue()
 })
@@ -135,7 +135,10 @@ async function settle() {
   await new Promise((r) => setTimeout(r, 0))
 }
 
-const errorToasts = () => toasts.filter((toast) => toast.kind === 'error')
+// P3-A (WB-13) — a write that does not land is taken back and said ONCE, as a
+// warning: the board and disk agree again, so nothing is broken. No red card.
+const refusalCards = () => toasts.filter((toast) => toast.kind === 'warning')
+const redCards = () => toasts.filter((toast) => toast.kind === 'error')
 
 describe('ERR-3 — structural undo finds the page that owns the element', () => {
   it('undoes a move made in frame A after the user clicked into frame B', async () => {
@@ -185,8 +188,8 @@ describe('ERR-6 — a move or delete that does not land is taken back', () => {
     // really moving something on disk. The value edit before it survives.
     expect(store()._historyPast.length).toBe(1)
     expect(store()._historyPast[0]!.structural).toBeUndefined()
-    expect(errorToasts()).toHaveLength(1)
-    expect(errorToasts()[0]!.body).toContain('behaviour')
+    expect(refusalCards()).toHaveLength(1)
+    expect(refusalCards()[0]!.body).toContain('behaviour')
 
     store().undo()
     expect(store().site!.pages[0]!.nodes[a(5)]!.props.text).toBe(a(5))
@@ -203,8 +206,8 @@ describe('ERR-6 — a move or delete that does not land is taken back', () => {
     expect(store().site!.pages[0]!.nodes[a(5)]).toBeDefined()
     expect(store()._nodeIdToPageIds.get(a(5))).toEqual(['page-a'])
     expect(store()._historyPast.length).toBe(0)
-    expect(errorToasts()).toHaveLength(1)
-    expect(errorToasts()[0]!.body).toBe('Refused.')
+    expect(refusalCards()).toHaveLength(1)
+    expect(refusalCards()[0]!.body).toBe('Refused.')
   })
 
   it('an unreachable server is retried with ONE idempotency key, and a later success keeps the move', async () => {
@@ -219,7 +222,7 @@ describe('ERR-6 — a move or delete that does not land is taken back', () => {
     expect(childrenOf(0, ROOT_A)).toEqual([a(4), a(5), a(3)])
     expect(store()._historyPast.length).toBe(1)
     expect(store()._historyPast[0]!.pendingCommit).toBeUndefined()
-    expect(errorToasts()).toHaveLength(0)
+    expect(refusalCards()).toHaveLength(0)
   })
 
   it('a server that never answers is rolled back once the retries run out', async () => {
@@ -230,7 +233,7 @@ describe('ERR-6 — a move or delete that does not land is taken back', () => {
     expect(posted).toHaveLength(4) // the first attempt and three retries
     expect(childrenOf(0, ROOT_A)).toEqual([a(3), a(4), a(5)])
     expect(store()._historyPast.length).toBe(0)
-    expect(errorToasts()).toHaveLength(1)
+    expect(refusalCards()).toHaveLength(1)
   })
 
   it('does not replay the inverse over a page a re-read already replaced', async () => {
@@ -264,7 +267,7 @@ describe('ERR-6 — an undo whose re-issued write does not land', () => {
     expect(childrenOf(0, ROOT_A)).toEqual([a(4), a(5), a(3)])
     expect(store()._historyPast.length).toBe(0)
     expect(store()._historyFuture.length).toBe(0)
-    expect(errorToasts()).toHaveLength(1)
+    expect(refusalCards()).toHaveLength(1)
   })
 
   it('goes back on the stack when the server never answered, so the next ⌘Z can try again', async () => {

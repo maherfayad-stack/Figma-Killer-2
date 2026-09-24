@@ -35,7 +35,7 @@ import { pushToast } from '@ui/components/Toast'
 import { studioWriteDir } from './studioWorkspaceDir'
 import { captureIdentities, expectationsFor, recordOwnWrites, type IdentityCapture } from './sourceIdentity'
 import { structuralEditNodeIds, type StructuralEditPayload } from './structuralUndoPlan'
-import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
+import { elementMovedNodeIds, retryAfterElementMoved } from './elementMovedRecovery'
 import { recordCreatedStylesheet, ruleIdFromCssCreateNodeId } from './styleRuleWriteback'
 
 /**
@@ -67,6 +67,8 @@ export const StudioSaveResponseSchema = Type.Object({
   refusals: Type.Optional(Type.Array(Type.Object({
     nodeId: Type.String(),
     kind: Type.String(),
+    /** WB-35 — present for a `prop` edit: which of the element's props this outcome answers (`editOutcomes.ts`). */
+    prop: Type.Optional(Type.String()),
     reason: Type.String(),
     message: Type.String(),
   }))),
@@ -79,19 +81,6 @@ export const StudioSaveResponseSchema = Type.Object({
     nodeId: Type.String(),
     removedProps: Type.Array(Type.String()),
     unfilledRequiredProps: Type.Array(Type.String()),
-  }))),
-  /**
-   * `STUDIO-FIGMA-PARITY-PLAN.md` item 0.7 — every edit that skipped with no
-   * matching `refusals` entry (`StudioEditUnexplainedSkip` on the server —
-   * `server/handlers/studioWriteback.ts`), i.e. exactly the set the
-   * `unexplainedSkips` toast in `fsCodemodAdapter.ts` currently reports only
-   * as a bare count. `Type.Optional`, same tolerant-rollout reasoning as
-   * `refusals`/`swapDetails` above — an older server build simply omits it,
-   * and the client falls back to `result.skipped - refusals.length`.
-   */
-  unexplainedSkips: Type.Optional(Type.Array(Type.Object({
-    nodeId: Type.String(),
-    kind: Type.String(),
   }))),
   /**
    * Track B1 — every `css`/`create` edit in the batch that SUCCEEDED, with
@@ -165,6 +154,9 @@ export const StudioSaveResponseSchema = Type.Object({
 
 export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
 
+/** The projects already told, this session, that Studio creates stylesheets — see `notifyCreatedStylesheets`. */
+const projectsToldAboutCreatedStylesheets = new Set<string>()
+
 /**
  * Track B1's create branch, the user-visible half: turns
  * `StudioSaveResponse.createdStylesheets` into (1) a toast naming the
@@ -178,7 +170,12 @@ export type StudioSaveResponse = Static<typeof StudioSaveResponseSchema>
  * Called once per save response that may carry edits from
  * `collectStyleRuleEdits`: `fsCodemodAdapter.ts`'s `saveSite` invokes it as
  * `notifyCreatedStylesheets(result, site.styleRules)`, right alongside its
- * existing `unexplainedSkips`/`shifted` handling.
+ * refusal and `shifted` handling.
+ *
+ * P3-A — an `info` note, and once per project per session: the first file
+ * Studio invents in a project is worth naming, and every later one is the same
+ * behaviour the person has already been told about. It used to be a success
+ * card on every created file, in the middle of typing a class name.
  */
 export function notifyCreatedStylesheets(
   result: StudioSaveResponse,
@@ -189,8 +186,11 @@ export function notifyCreatedStylesheets(
     if (!ruleId) continue
     const rule = styleRules[ruleId]
     recordCreatedStylesheet(ruleId, created.file, rule?.selector ?? '')
+    const project = studioWriteDir() ?? ''
+    if (projectsToldAboutCreatedStylesheets.has(project)) continue
+    projectsToldAboutCreatedStylesheets.add(project)
     pushToast({
-      kind: 'success',
+      kind: 'info',
       title: 'Stylesheet created',
       body: rule
         ? `Studio created ${created.file} and wired it into your page for “${rule.name}”.`
@@ -210,7 +210,7 @@ export function notifyCreatedStylesheets(
  * when there is nothing honest to retry against, the ORIGINAL refusal comes
  * back, and the caller's own refusal surface is the one message the user sees.
  */
-async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSaveResponse> {
+export async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSaveResponse> {
   const identities = captureIdentities(structuralEditNodeIds(edit))
   const result = await postEdits([edit], identities)
   if (elementMovedNodeIds(result.refusals).size === 0) return result
@@ -246,46 +246,6 @@ export async function postEdits(
   })
   recordOwnWrites(identities, result.fingerprints ?? [])
   return result
-}
-
-/**
- * Commits ONE `kind: 'asset'` edit immediately — WS-8.3's "replace this
- * image" action — instead of letting the ordinary optimistic prop-diff loop
- * in `saveSite` pick it up:
- *
- *   - An image swap is a discrete, deliberate commit (pick a file, confirm),
- *     not a value the user is continuously typing — nothing to debounce.
- *   - The edit's target is `PageNode.assetOrigin` (the import declaration),
- *     never the node's own `src` prop — writing it as an ordinary prop diff
- *     would need `updateNodeProps`'s codeProps guard to special-case this one
- *     prop, which the store slices do not currently know how to do.
- *   - The save route ALWAYS reports an asset edit as shared
- *     (`isSharedSourceNodeId`'s `kind === 'asset'` branch) because the import
- *     it rewrites can back more than one node — so this always reloads on a
- *     successful write, the same remedy `saveSite` uses for `shifted`/
- *     `sharedComponents`, without waiting for the next autosave tick.
- *
- * `nodeId` is the ORIGIN's own `rel:line:col` (`PageNode.assetOrigin`), not
- * the editing node's id — same convention the `literal` edit kind uses for
- * resolved text. `assetPath` is the new file's workspace-relative POSIX path.
- */
-export async function saveStudioAssetEdit(nodeId: string, assetPath: string): Promise<void> {
-  const result = await postOneEdit({ kind: 'asset', nodeId, assetPath })
-
-  const moved = elementMovedNodeIds(result.refusals)
-  if (moved.size > 0) {
-    warnElementMoved(moved)
-    return
-  }
-  if (result.skipped > 0) {
-    pushToast({
-      kind: 'error',
-      title: 'Image was not saved to source',
-      body: 'The import naming this image could not be rewritten — it may no longer exist at the location the canvas last saw.',
-    })
-    return
-  }
-  if (result.written > 0) requestCmsSiteReload()
 }
 
 /**

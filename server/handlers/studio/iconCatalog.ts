@@ -57,7 +57,7 @@
  */
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
-import { jsonResponse } from '../../http'
+import { jsonResponse, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { BUILTIN_DESIGN_SYSTEM_DIR, isDesignSystemBacked } from './builtinDesignSystem'
 import { resolveProjectProfile } from './projectProbe'
@@ -194,7 +194,6 @@ export async function tryServeStudioIcons(req: Request, url: URL, pathname: stri
     return jsonResponse({ icons: collectStudioIcons(dir) })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:icons]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:icons]', err)
   }
 }

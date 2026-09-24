@@ -25,7 +25,7 @@ import type { StructuralInverseTemplate } from '@site/studio/structuralUndoPlan'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
-import { excludePendingOptimisticTargets } from './structuralOptimism'
+import { resolvePreviewTargets } from './structuralOptimism'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, tagStructuralGesture, type StructuralHistoryDeleteOrigin } from './structuralHistory'
@@ -105,16 +105,20 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
 
   return (rawNodeIds) => {
     if (rawNodeIds.length === 0) return
-    // `perf-10` — same guard `nodeActions.ts`'s single-node `deleteNode`
-    // applies, for a multi-selection: strip any id still a pending
-    // insert/duplicate/wrap preview before planning against it.
-    const nodeIds = excludePendingOptimisticTargets(rawNodeIds)
-    if (nodeIds.length === 0) return
     // ERR-4 — a delete pressed while another structural write is in flight
     // (a drag's move, a ⌘D) used to post at once with ids from before that
     // write, and delete whatever it had moved into their lines. It now runs
     // after it, against the elements it was pressed on, re-found by identity.
-    if (deferWhileStructuralCommitInFlight((relocate) => get().deleteNodes(nodeIds.map(relocate)), nodeIds)) return
+    // ERR-22 — and a Delete on the preview a still-writing ⌘D/insert/wrap just
+    // showed is queued the same way, then aimed at the element that write
+    // created (`resolvePreviewTargets`), instead of being refused.
+    const deferred = deferWhileStructuralCommitInFlight(
+      (relocate) => get().deleteNodes(resolvePreviewTargets(rawNodeIds.map(relocate))),
+      rawNodeIds,
+    )
+    if (deferred) return
+    const nodeIds = resolvePreviewTargets(rawNodeIds)
+    if (nodeIds.length === 0) return
     const cur = get()
     const target = resolveActiveTreeTarget(cur)
     if (!target) return

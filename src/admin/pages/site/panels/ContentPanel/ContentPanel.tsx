@@ -67,6 +67,7 @@ import { Button } from '@ui/components/Button'
 import { SearchBar } from '@ui/components/SearchBar'
 import { Input } from '@ui/components/Input'
 import { pushToast } from '@ui/components/Toast'
+import { retryWhileUnreachable } from '@core/http'
 import styles from './ContentPanel.module.css'
 
 /** The locale a project is being translated INTO by the AI action. Arabic is the ask; a project declaring more locales still edits all of them by hand. */
@@ -77,13 +78,17 @@ const RTL_LOCALES: ReadonlySet<string> = new Set(['ar', 'he', 'fa', 'ur'])
 
 const EMPTY_SNAPSHOT: ContentSnapshot = { catalog: null, hardcoded: [] }
 
-/** Fetches the content snapshot, turning a failure into the empty one plus a toast — the panel never shows a blank screen. */
+/**
+ * Fetches the content snapshot, turning a failure into the empty one — the
+ * panel never shows a blank screen. P3-A — a read nobody clicked for: retried
+ * quietly while the server is unreachable, and a failure is the panel's own
+ * empty state, never a toast.
+ */
 async function readSnapshot(): Promise<ContentSnapshot> {
   try {
-    return await fetchContentSnapshot()
+    return await retryWhileUnreachable(() => fetchContentSnapshot())
   } catch (err) {
     console.error('[ContentPanel] content fetch failed:', err)
-    pushToast({ kind: 'error', title: 'Could not read content', body: getErrorMessage(err, 'Unknown error') })
     return EMPTY_SNAPSHOT
   }
 }

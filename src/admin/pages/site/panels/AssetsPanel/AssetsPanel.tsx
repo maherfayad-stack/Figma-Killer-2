@@ -171,11 +171,11 @@ export function AssetsPanel() {
   // preview overlay is drawn once for the whole panel (`CanvasInsertionDragOverlay`
   // below), exactly the shape the notch's own primitives already use.
   const canvasDrag = useCanvasInsertionDrag<AssetItem>({
-    onDrop: (item, location) => handleInsert(item, location, 'drop'),
+    onDrop: (item, location) => handleInsert(item, location),
   })
 
-  function handleInsert(item: AssetItem, target?: InsertLocation, mode: 'click' | 'drop' = 'click') {
-    if (!insertItem(item, target, mode)) return false
+  function handleInsert(item: AssetItem, target?: InsertLocation) {
+    if (!insertItem(item, target)) return false
     trackAssetInsert(refForAssetItem(item))
     setRecentRefs(readAssetPrefs().recent)
     return true
