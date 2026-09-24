@@ -40,13 +40,15 @@ export const CANVAS_LAYER_MAX_BYTES = 512 * 1024
 const LAYER_FILE_NAME = /^(cl[a-z0-9]{10})\.tsx$/
 
 /** Why a layer file operation did not happen, in words for the person who asked. */
+export type CanvasLayerFileErrorReason = 'invalid-layer' | 'layer-exists' | 'layer-missing' | 'layer-unsafe-path' | 'layer-too-large'
+
 export class CanvasLayerFileError extends Error {
-  constructor(
-    readonly reason: 'invalid-layer' | 'layer-exists' | 'layer-missing' | 'layer-unsafe-path' | 'layer-too-large',
-    message: string,
-  ) {
+  readonly reason: CanvasLayerFileErrorReason
+
+  constructor(reason: CanvasLayerFileErrorReason, message: string) {
     super(message)
     this.name = 'CanvasLayerFileError'
+    this.reason = reason
   }
 }
 

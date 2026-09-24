@@ -28,12 +28,26 @@
     z-index: 1;
 }
 
-.surfaceFrame {
+/* The surface is a WINDOW over the board, not a frame: no paper, no shadow, no
+   viewport-tall floor. Out-specifies `IframeFrameSurface`'s own `.iframe`
+   (and its dark-scheme variant) with a descendant selector plus the surface's
+   own data attribute, rather than `!important`. */
+.surface > .surfaceFrame[data-studio-canvas-surface-frame] {
     display: block;
     height: 100%;
+    min-height: 0;
     border: 0;
     background: transparent;
+    box-shadow: none;
     pointer-events: none;
+    color-scheme: light;
+}
+
+/* A browser paints an OPAQUE backdrop behind an iframe whose document's
+   color-scheme differs from the iframe element's own (design §4.1). The
+   document follows the board's previewed scheme, so the element does too. */
+.surface > .surfaceFrame[data-preview-scheme='dark'] {
+    color-scheme: dark;
 }
 
 .chromeLayer {

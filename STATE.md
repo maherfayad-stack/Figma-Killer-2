@@ -174,6 +174,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Security re-review APPROVED (`review-251`).** Non-blocking follow-up: the diff route still shows a credential checkpoint written before the fix (revert refuses it). Such checkpoints exist only on machines that ran this branch; the one-line fix is to treat them as withheld.
 - **Human action needed:** dogfood on `test4`: ask the agent to change two files → "Changed 2 files" → Diff → Revert turn restores both; repeat, edit one file on the canvas, Revert turn is refused naming it, per-file revert of the other works; select a layer → chip shows `name · File.tsx:line`; Plan mode → plan checklist.
 
+### canvas-33 — P5-G: the free canvas (OD-14) — loose layers on the empty board
+- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk `a92df2d3` merged in) · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, gesture table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying. **Needs security-guard review (FC-1/FC-2)** before merge.
+- **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board). Doc: `docs/features/free-canvas.md`.
+- **Decisions:**
+  - Agent: native Write/Edit into `.studio/` stay refused; `studio_apply_edits` refuses every canvas-layer kind and every layer-module target (`canvas-layer-agent`) — only `/save` passes `canvasLayers: 'allow'`.
+  - The surface takes NO input: `pointer-events: none`; layers are hit-tested from the board (`useCanvasLayerPointer`), so no gap forwarding exists to go wrong.
+  - A loose layer is selected as a whole (a 4th selection list). Inspector editing of its content is FC-7.
+  - `canvas-layer-restore` accepts client text (undo), exclusive-create, ≤ 512 KB — same trust as `reinsert-source`.
+- **Canvas files touched:** `canvas/BoardCanvasLayer/*` (new), `StudioBoardLayers`, `IframeFrameSurface` + contract (`sizing`), `useIframeFrameAutoHeight` (`isLive` → `fitToContent`), `canvasFileDrop`, `canvasFileDragPreview`, `useCanvasFileDrop`, `canvasDragCommit`, `useCanvasReorderDrag`, `boardSnapping`.
+- **Landmines (height × injectors × events):**
+  - The surface uses `sizing: 'fixed'`: auto-height is OFF there, and its body gets inline `margin: 0`/transparent background. A change to `applyIframeBodyReset` that pins body size must not assume every canvas iframe fits to content.
+  - The surface must stay `pointer-events: none`. If anyone makes it receive input, `useCanvasLayerPointer`'s capture-phase claim on the canvas root stops seeing presses over layers AND the marquee breaks over the surface's gaps.
+  - `useCanvasLayerPointer` claims a root press with `stopImmediatePropagation` in CAPTURE; the marquee (`useMarqueeSelection`) must stay a non-capture listener or it will start under a layer press.
+  - Pending marks are released after the RESYNC, not at `settle` — otherwise a heal between write and re-read drops a fresh placement.
+  - A full `CMS_SITE_RELOAD_EVENT` re-reads `boards.json` over an unsaved placement (pre-existing for every board edit); layer writes resync narrowly (`reloadScope` maps layer files), and the heal re-places a module that lost its placement.
+- **Next:** FC-7 panels/inspector, FC-8 MCP tools, FC-9 group, FC-10 budgets; FC-6 pieces ride P5-A/P5-D/P5-E (`createCanvasLayer`).
+- **Human action needed:** dogfood (PR body checklist).
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
