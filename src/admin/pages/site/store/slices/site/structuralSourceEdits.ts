@@ -43,6 +43,7 @@
  */
 import { startTransition } from 'react'
 import {
+  decodeSourceNodeId,
   describeStructuralRefusal,
   isSourceDerivedNodeId,
   previewStructuralGroup,
@@ -221,7 +222,7 @@ export function planSourceDuplicate(
   return { ok: true, commit: commit.length > 0 ? commit : null }
 }
 
-/** Where an Alt-dragged COPY is written: inside which container, beside which existing child. */
+/** Where one Alt-dragged or pasted COPY is written: inside which container, beside which existing child. */
 export interface SourceDuplicateToCommit {
   /** The element being copied. */
   nodeId: string
@@ -230,93 +231,106 @@ export interface SourceDuplicateToCommit {
   /** The existing child the copy is written next to, or `null` to append as the last child. */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * ERR-16 — the container is written in ANOTHER file than the element, so the
+   * copy is a `transplant` with `copy: true`: it carries the imports the markup
+   * needs there, and refuses by name when a local it reads cannot travel.
+   */
+  crossFile?: true
 }
 
 /**
- * K2 — whether ONE element may be copied into `newParentId` at `newIndex`
- * (Alt+drag), and if so where the copy is written.
+ * K2 — whether `nodeIds` may be copied into `newParentId` at `newIndex`
+ * (Alt+drag, ⌘V), and if so where each copy is written.
  *
- * **Two questions, each answered by the function that already owns it**, so
- * Alt+drag cannot disagree with either of the gestures it is made of:
+ * **Two questions per element, each answered by the function that already
+ * owns it**, so Alt+drag cannot disagree with either of the gestures it is
+ * made of:
  *
  *  1. *May this element be copied at all?* — `refuseStructuralEdit`'s
  *     `duplicate`, the identical question ⌘D asks.
  *  2. *May it land THERE?* — `previewStructuralMove`, the identical question a
  *     plain drag asks. This is what makes an Alt+drag refuse with the same
- *     sentence (`list-row`, `shared-component`, `cross-file`, a container that
- *     is not an ordinary element) the same drag without Alt would have.
+ *     sentence (`list-row`, `shared-component`, a container that is not an
+ *     ordinary element) the same drag without Alt would have. A container in
+ *     another file is not a refusal (ERR-16): the copy is written as a
+ *     transplant (`crossFile`).
  *
- * The COMMIT, though, is an insert's, not a move's. `previewStructuralMove`
- * resolves its anchor from the child list with the dragged node REMOVED,
- * because that is what a move does to it; a copy removes nothing, so the same
- * `newIndex` names a different neighbour. `resolveContainerAnchor` — the
- * function `planSourceInsert` uses, for exactly the question "where in this
- * container does a NEW element go" — is the honest resolver here, and a
- * duplicate-to is precisely an insert of markup that already exists.
+ * The anchor, though, is an insert's, not a move's: `resolveContainerAnchor`,
+ * the function `planSourceInsert` uses, because a duplicate-to is precisely an
+ * insert of markup that already exists.
  *
- * ONE NODE ONLY. The drag session resolves one drop target; N copies dropped
- * at one position would have to be ordered against each other inside a child
- * list each of them is shifting, which is the same reason a multi-node
- * reorder refuses. Refused as `multi-select`, with the remedy that is actually
- * true — drag them one at a time.
+ * SEVERAL ELEMENTS (ERR-7) land as one run, in the order given, all against
+ * the SAME anchor — an element that is not moving, so every step of the
+ * sequence the store posts names something that is there. "After X" is
+ * written last-first (each copy lands right after X, pushing the ones already
+ * written down); "before Y" and an append are written first-first. The commits
+ * come back in that WRITE order. All or nothing: one refused element refuses
+ * the gesture.
  */
 export function planSourceDuplicateTo(
   tree: NodeTree<PageNode>,
   nodeIds: readonly string[],
   newParentId: string,
   newIndex: number,
-): StructuralPlan<SourceDuplicateToCommit> {
-  const nodeId = nodeIds[0]
-  if (nodeId === undefined) return { ok: true, commit: null }
-  const node = tree.nodes[nodeId]
+  /**
+   * ERR-8 — a copied element that is not in `tree`: a paste of something
+   * copied in ANOTHER frame. It is asked the same per-element questions; its
+   * landing is judged against the container alone, because it has no place in
+   * this tree to move from.
+   */
+  elsewhere: (nodeId: string) => PageNode | undefined = () => undefined,
+): StructuralPlan<SourceDuplicateToCommit[]> {
+  const nodeOf = (id: string): PageNode | undefined => tree.nodes[id] ?? elsewhere(id)
   // A stale drop source — the mutation itself already no-ops on this;
   // inventing a refusal for it would explain the wrong thing.
-  if (!node) return { ok: true, commit: null }
+  const ids = nodeIds.filter((id) => nodeOf(id) !== undefined)
+  const first = ids[0]
+  if (first === undefined) return { ok: true, commit: null }
 
-  if (nodeIds.length > 1) {
-    return {
-      ok: false,
-      constraint: describeStructuralRefusal({
-        refusal: {
-          reason: 'multi-select',
-          message:
-            'Studio copies one element at a time: each copy changes the line numbers the next one would be written against, and several copies dropped at one position have no single order in the code. Alt-drag them one by one.',
-        },
-        node,
-      }),
-      nodeId,
+  for (const nodeId of ids) {
+    const node = nodeOf(nodeId)!
+    const copyRefusal = refuseStructuralEdit({ kind: 'duplicate', node })
+    if (copyRefusal) {
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: copyRefusal, node }), nodeId }
+    }
+    if (!tree.nodes[nodeId]) continue
+    const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
+    if (!landing.ok) {
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
     }
   }
 
-  const copyRefusal = refuseStructuralEdit({ kind: 'duplicate', node })
-  if (copyRefusal) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: copyRefusal, node }), nodeId }
-  }
-
-  const landing = previewStructuralMove(tree, [nodeId], newParentId, newIndex)
-  if (!landing.ok) {
-    return { ok: false, constraint: describeStructuralRefusal({ refusal: landing.refusal, node }), nodeId }
-  }
-
-  if (!isSourceDerivedNodeId(nodeId)) return { ok: true, commit: null }
+  if (!isSourceDerivedNodeId(first)) return { ok: true, commit: null }
 
   const container = resolveSourceContainer(tree, newParentId)
   if (!container.ok) {
     return { ok: false, constraint: describeStructuralRefusal({ refusal: container.refusal }) }
   }
-
+  for (const nodeId of ids) {
+    if (tree.nodes[nodeId]) continue
+    const node = nodeOf(nodeId)!
+    const landing = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })
+    if (landing && landing.reason !== 'cross-file') {
+      return { ok: false, constraint: describeStructuralRefusal({ refusal: landing, node }), nodeId }
+    }
+  }
+  // `newIndex` counts the DROP PARENT's children. When the container had to be
+  // re-resolved (the page root became the page's root element), that index
+  // names a position in a different list, so it is dropped rather than applied
+  // to the wrong one — appending is an honest position. Identical reasoning to
+  // `previewStructuralMove`'s reparent branch.
+  const anchor = resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined)
+  const intoFile = decodeSourceNodeId(container.node.id)?.rel
+  const writeOrder = anchor.anchorNodeId !== null && anchor.position === 'after' ? [...ids].reverse() : ids
   return {
     ok: true,
-    commit: {
+    commit: writeOrder.map((nodeId) => ({
       nodeId,
       parentNodeId: container.node.id,
-      // `newIndex` counts the DROP PARENT's children. When the container had
-      // to be re-resolved (the page root became the page's root element), that
-      // index names a position in a different list, so it is dropped rather
-      // than applied to the wrong one — appending is an honest position.
-      // Identical reasoning to `previewStructuralMove`'s reparent branch.
-      ...resolveContainerAnchor(tree, container.node, container.node.id === newParentId ? newIndex : undefined),
-    },
+      ...anchor,
+      ...(decodeSourceNodeId(nodeId)?.rel !== intoFile ? { crossFile: true as const } : {}),
+    })),
   }
 }
 

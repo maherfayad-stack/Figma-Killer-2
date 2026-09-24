@@ -12,9 +12,9 @@
  * asset/detach/swap/slot commits next door post one edit and read one answer;
  * they share this module's wire shape, not its reload contract.
  *
- * `commitStructural` at the bottom is the shared body, and its doc comment is
- * the authoritative account of the reload gate — read that before changing when
- * a commit reloads. What a landed write does to the board is
+ * `commitStructural` (`commitStructural.ts`) is the shared body, and its doc
+ * comment is the authoritative account of the reload gate — read that before
+ * changing when a commit reloads. What a landed write does to the board is
  * `studioBoardResync.ts`'s call, not this module's.
  *
  * Two neighbours own the halves that used to live here:
@@ -24,69 +24,31 @@
  *  - `structuralUndoPlan.ts` — what each gesture's ⌘Z is, expressed in the edit
  *    kinds the writeback protocol already has.
  */
-import { pushToast } from '@ui/components/Toast'
-import { flushEditorSave } from '@site/hooks/editorSaveRef'
-import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
+import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import type { PendingStructuralHistory } from './pendingStructuralOutcome'
-import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
-import {
-  dissolveWrapperTemplate,
-  resolveStructuralInverse,
-  structuralEditNodeIds,
-  type StructuralEditPayload,
-  type StructuralInverseTemplate,
-  type StructuralWriteOutcome,
-} from './structuralUndoPlan'
-import { resyncBoardAfterWrite } from './studioBoardResync'
+import { commitStructural, type StructuralCommitOptions } from './commitStructural'
+import { dissolveWrapperTemplate, type StructuralEditPayload } from './structuralUndoPlan'
 import type { InsertPropValue } from './studioSaveRequests'
-import { isUnreachableFailure } from '@core/http'
-import { postEditsRetryingUnreachable } from './structuralWriteRetry'
-import { captureIdentities, type IdentityCapture } from './sourceIdentity'
-import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 
 /**
- * What a structural commit does beyond posting: what it means for the undo
- * stack, and what it takes back if it does not land.
+ * P3-D — ONE gesture written as several edits applied IN ORDER, each against
+ * the file the previous ones left, all or nothing: a multi-selection drag, the
+ * arrow-key step of a selection, a non-adjacent group ("bring them together,
+ * then wrap"), several copies dropped at one place. The server's
+ * `studioEditSequence.ts` re-addresses every step and restores every file when
+ * any step is refused, so the board's one rollback (and one toast) is the
+ * whole story — the same contract as a single write.
  *
- * P3-A — no commit announces a success. The canvas already shows the result
- * (an optimistic preview, or the moved/deleted tree), and the resync selects
- * what the gesture made; a "Duplicated" card on top of the duplicate is noise
- * that says the same thing twice (02 §2a "Inserted / Placed").
+ * `undo`/`rollback`/`optimistic`/`select` mean what they mean for every other
+ * commit (`StructuralCommitOptions`).
  */
-interface StructuralCommitOptions {
-  /**
-   * `store-14` — this gesture's ⌘Z, as a template the write's own answer fills
-   * in (`structuralUndoPlan.ts`). Omitted by `move`/`reparent`, whose undo
-   * already rides the tree-mutation stack (`structuralHistory.ts`), and by
-   * `delete`, which uses `fill` below instead — its own tree mutation already
-   * pushed an entry, and TAGGED it with this same template, before the commit
-   * that reveals the answer even started.
-   */
-  undo?: { label: string; template: StructuralInverseTemplate }
-  /**
-   * `store-15` — set only by `delete`. Its tree mutation (and history entry)
-   * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
-   * tagged it with the gesture's `label`/`forward`/`inverseTemplate` already
-   * filled in. This asks the resync to fill in just `inverse`, the one field
-   * that answer could not know yet, on that SAME entry.
-   */
-  fill?: boolean
-  /**
-   * Set when this commit IS an undo or a redo re-issuing a stored entry. The
-   * stack bookkeeping happened in `undoRedoActions.ts`; this only asks the
-   * resync to re-resolve that entry's inverse against the ids the re-issue
-   * reported.
-   */
-  reissue?: 'undo' | 'redo'
-  optimistic?: OptimisticPreviewHandle // `perf-10` — local preview, settled/rolled back in `commitStructuralBody`.
-  /**
-   * ERR-6 — what a move/delete already did to the tree, or what an undo/redo
-   * already did to the stack, taken back if this write does not land
-   * (`structuralCommitRollback.ts`). Settled or rolled back exactly once.
-   */
-  rollback?: StructuralCommitRollback
-  replanned?: true // P1-A — this post IS the one silent re-plan after `element-moved`; a second one warns instead.
+export async function commitStudioSequence(
+  edits: readonly StructuralEditPayload[],
+  refusalTitle: string,
+  options: Pick<StructuralCommitOptions, 'undo' | 'rollback' | 'optimistic' | 'select'> = {},
+): Promise<void> {
+  if (edits.length === 0) return
+  await commitStructural(edits, refusalTitle, { ...options, sequence: true })
 }
 
 /**
@@ -115,21 +77,14 @@ interface StructuralCommitOptions {
  * No `undo` template: a move mutates the tree, so it already has a history
  * entry that `structuralHistory.ts` re-issues in either direction.
  *
- * Several moves in one request only when they are INDEPENDENT — P2-C2's
- * `moveSiblings`, whose `planSiblingSteps` guarantees no move's region
- * overlaps another's. `applyStudioEditBatch` then applies them bottom-to-top,
- * so no write shifts a pending one's line, exactly as for a multi-delete.
+ * ONE element. Several are a {@link commitStudioSequence} (P3-D): each move is
+ * written against the file the previous one left.
  */
-export async function commitStudioMoves(
-  moves: readonly { nodeId: string; anchorNodeId: string; position: 'before' | 'after' }[],
+export async function commitStudioMove(
+  move: { nodeId: string; anchorNodeId: string; position: 'before' | 'after' },
   rollback?: StructuralCommitRollback,
 ): Promise<void> {
-  if (moves.length === 0) return
-  await commitStructural(
-    moves.map(({ nodeId, anchorNodeId, position }) => ({ kind: 'move', nodeId, anchorNodeId, position })),
-    'Move refused',
-    rollback ? { rollback } : {},
-  )
+  await commitStructural([{ kind: 'move', ...move }], 'Move refused', rollback ? { rollback } : {})
 }
 
 /**
@@ -234,49 +189,45 @@ export async function commitStudioTransplant(transplant: {
  *
  * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch
  * bottom-to-top, so a copy written lower in the file cannot move the line of one
- * still pending above it.
+ * still pending above it. In place only (⌘D, the toolbar button); a copy that
+ * lands somewhere else is {@link commitStudioDuplicateTo}.
  */
 export async function commitStudioDuplicate(
   nodeIds: readonly string[],
-  /**
-   * K2 — Alt+drag. Where the copy lands, when it is not beside the original:
-   * the container, and optionally the existing child to write it next to
-   * (`null` appends, which is a real position). Omitted entirely for ⌘D and
-   * the toolbar button, which copy in place.
-   *
-   * Single-node only by construction: the Alt+drag session resolves ONE drop
-   * target, and a multi-selection Alt-dragged to one place would need N copies
-   * ordered against each other inside a container whose child list is shifting
-   * under them. `planSourceDuplicateTo` refuses that as `multi-select` rather
-   * than copying the first and pretending.
-   */
-  destination?: {
-    parentNodeId: string
-    anchorNodeId: string | null
-    position: 'before' | 'after'
-  },
   optimistic?: OptimisticPreviewHandle, // `perf-10` — see `StructuralCommitOptions.optimistic`.
 ): Promise<void> {
   if (nodeIds.length === 0) return
-  await commitStructural(
-    nodeIds.map((nodeId) => ({
-      kind: 'duplicate',
-      nodeId,
-      ...(destination
-        ? {
-            parentNodeId: destination.parentNodeId,
-            ...(destination.anchorNodeId
-              ? { anchorNodeId: destination.anchorNodeId, position: destination.position }
-              : {}),
-          }
-        : {}),
-    })),
-    'Duplicate refused',
-    {
-      undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
-      ...(optimistic ? { optimistic } : {}),
-    },
-  )
+  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'duplicate', nodeId })), 'Duplicate refused', {
+    undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
+    ...(optimistic ? { optimistic } : {}),
+  })
+}
+
+/**
+ * K2 / ⌘V — copies written INTO a container rather than beside their
+ * originals (Alt+drag, a paste). Each names the container and, optionally, the
+ * existing child to write it next to (`null` appends, which is a real
+ * position). A copy into a container in ANOTHER file (`crossFile`, ERR-16) is
+ * a `transplant` with `copy: true`, which carries the imports it needs there.
+ *
+ * Several copies (ERR-7) are one SEQUENCE: they land as a run at one place, so
+ * each is written against the file the one before it left, in the order
+ * `planSourceDuplicateTo` returned them. One write, one entry, and its undo
+ * deletes every copy.
+ */
+export async function commitStudioDuplicateTo(
+  copies: readonly { nodeId: string; parentNodeId: string; anchorNodeId: string | null; position: 'before' | 'after'; crossFile?: true }[],
+): Promise<void> {
+  const edits: StructuralEditPayload[] = copies.map((copy) => ({
+    kind: copy.crossFile ? 'transplant' : 'duplicate',
+    nodeId: copy.nodeId,
+    parentNodeId: copy.parentNodeId,
+    ...(copy.anchorNodeId ? { anchorNodeId: copy.anchorNodeId, position: copy.position } : {}),
+    ...(copy.crossFile ? { copy: true } : {}),
+  }))
+  const options = { undo: { label: 'Duplicate', template: { kind: 'delete-created' as const } } }
+  if (edits.length > 1) await commitStudioSequence(edits, 'Duplicate refused', options)
+  else if (edits.length === 1) await commitStructural(edits, 'Duplicate refused', options)
 }
 
 /**
@@ -491,185 +442,12 @@ export async function commitStudioStructuralReissue(
   direction: 'undo' | 'redo',
   label: string,
   rollback: StructuralCommitRollback,
+  /** P3-D — post `edits` as an ordered sequence (a redo of a sequence gesture). */
+  sequence?: true,
 ): Promise<void> {
   await commitStructural(edits, direction === 'undo' ? `Could not undo ${label}` : `Could not redo ${label}`, {
     reissue: direction,
     rollback,
+    ...(sequence ? { sequence } : {}),
   })
 }
-
-/**
- * Shared body of the structural commits: flush any pending debounced save,
- * post, report what the source refused, and re-sync the board with disk when
- * (and only when) a write actually landed.
- *
- * `STUDIO-FIGMA-PARITY-PLAN.md` 0.2 (audit E2) — two fixes, both applied here:
- *
- *   1. Reload only when a write landed (trap #5, the same `written > 0` gate
- *      `fsCodemodAdapter.saveSite` uses). It used to fire from a `finally` on
- *      every outcome, and reloading an unchanged disk replaced the user's
- *      optimistic edit with the pre-edit source. A move/delete that did NOT
- *      land is taken back instead, through `options.rollback` (ERR-6,
- *      `structuralCommitRollback.ts`).
- *   2. Before posting, flush and AWAIT any edit still inside the autosave
- *      debounce, so a value edit made moments before this gesture is written
- *      (and its diff baseline advanced) before a re-parse could discard it
- *      or aim it at now-stale ids. A flush failure is logged and the commit
- *      proceeds — the save chip already surfaces that failure.
- *
- * Track C5 changed only what a "reload" does once the gate above says one
- * should happen (`studioBoardResync.ts`); every gate here is unchanged.
- *
- * P1-A: every commit posts the identity of each id it names, captured when the
- * gesture was made, and an `element-moved` refusal is re-planned once, silently.
- *
- * ERR-6: a write that gets no answer is retried on a short ladder first
- * (`structuralWriteRetry.ts`). A write that does not land in the end — refused
- * outright, re-plan exhausted, or still unreachable — settles nothing: its
- * `rollback` takes back what the gesture already did, and the user sees ONE
- * toast for it however many edits the batch held.
- */
-async function commitStructural(
-  edits: readonly StructuralEditPayload[],
-  refusalTitle: string,
-  options: StructuralCommitOptions = {},
-): Promise<void> {
-  // Held for the whole body, including the resync at the bottom — see
-  // `structuralCommitQueue.ts` for why the window has to extend past the POST
-  // itself, and what happens to a gesture that arrives inside it.
-  // P1-A — who every id names, captured at the gesture's own moment: before the
-  // flush below, or a commit ahead in the queue, can renumber the file.
-  const identities = captureIdentities(edits.flatMap((edit) => structuralEditNodeIds(edit)))
-  beginStructuralCommit()
-  try {
-    await commitStructuralBody(edits, refusalTitle, options, identities)
-  } finally {
-    endStructuralCommit()
-  }
-}
-
-async function commitStructuralBody(
-  edits: readonly StructuralEditPayload[],
-  refusalTitle: string,
-  options: StructuralCommitOptions,
-  identities: IdentityCapture,
-): Promise<void> {
-  try {
-    await flushEditorSave()
-  } catch (err) {
-    console.error('[studioSaveRequests] pre-structural-edit save flush failed:', err)
-  }
-
-  try {
-    const result = await postEditsRetryingUnreachable(edits, identities)
-    // `element-moved` is never toasted here — it is recovered from below.
-    const moved = elementMovedNodeIds(result.refusals)
-    const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))
-    const willReload = result.written > 0
-    // P1-A — an `element-moved` miss is re-planned below, and the re-plan owns
-    // the rollback when nothing else landed; every other outcome is known now.
-    const replanning = moved.size > 0 && !options.replanned && !willReload
-    // `perf-10`; ERR-22 — what the write created is what a Delete queued on
-    // the preview acts on once this commit ends.
-    settleOrRollbackOptimistic(options.optimistic, willReload ? 'settle' : 'rollback', result.createdNodeIds ?? [])
-    if (willReload) options.rollback?.settle()
-    else if (!replanning) options.rollback?.rollback('refused')
-    // ERR-6 — one gesture, one toast: the first reason, however many edits the
-    // batch held. A partial refusal still says so; the resync shows the rest.
-    // WB-13 — a warning: the gesture was taken back and the file is exactly
-    // as it was. Nothing broke; the editor declined a write it could not make
-    // honestly. (WB-12 made every refusal named, so there is no "skip with no
-    // reason" left to report here.)
-    const [firstRefusal] = refusals
-    if (firstRefusal) {
-      const more = refusals.length > 1 ? ` (${refusals.length - 1} more like this.)` : ''
-      pushToast({ kind: 'warning', title: refusalTitle, body: `${firstRefusal.message}${more}`, location: 'site-editor' })
-    }
-    // trap #5 — reload only when a write actually landed (`rollback` above
-    // takes a refused one back). Track C5: `resyncBoardAfterWrite` is narrow
-    // when it can prove it. `store-13`/`store-14`: what this write CREATED and
-    // MOVED rides the resync itself (ERR-10, `pendingStructuralOutcome.ts`),
-    // applied by the re-read this write triggers and no other; the await
-    // covers a full reload too, so the queue re-plans against these ids.
-    if (willReload) {
-      const outcome: StructuralWriteOutcome = {
-        createdNodeIds: result.createdNodeIds ?? [],
-        relocatedNodeIds: result.relocatedNodeIds ?? [],
-        removed: result.removed ?? [],
-        prunedImports: result.prunedImports ?? [],
-      }
-      await resyncBoardAfterWrite(result.touchedFiles ?? [], {
-        structuralOutcome: {
-          selectNodeIds: [...outcome.createdNodeIds, ...outcome.relocatedNodeIds],
-          history: resolvePendingHistory(edits, options, outcome),
-        },
-      })
-    }
-    // P1-A — the file changed under the board. Re-read it and re-plan ONCE,
-    // silently (`elementMovedRecovery.ts`); only a second miss says anything.
-    // The re-plan inherits `rollback` only when this pass settled nothing.
-    if (moved.size > 0) {
-      const movedEdits = edits.filter((edit) => moved.has(edit.nodeId))
-      const replan = options.replanned ? null : await replanAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [])
-      const carried = replanning ? options.rollback : undefined
-      if (replan) {
-        await commitStructuralBody(replan.edits, refusalTitle, { ...options, optimistic: undefined, rollback: carried, replanned: true }, replan.identities)
-      } else {
-        carried?.rollback('refused')
-        warnElementMoved(moved)
-      }
-    }
-  } catch (err) {
-    // Fire-and-forget from the store's mutation guard, so this is the only
-    // place the failure can be reported. No response was ever obtained, so
-    // there is no `written` count to check — the safe assumption after a
-    // failed request is "disk is unchanged," which means no reload either
-    // (see this function's doc for why an unconditional reload here was the
-    // bug, not the fix) — and the gesture is taken back (ERR-6). Both calls
-    // are no-ops if the write had already settled before something later
-    // (the resync) threw.
-    settleOrRollbackOptimistic(options.optimistic, 'rollback') // `perf-10`
-    options.rollback?.rollback(isUnreachableFailure(err) ? 'unreachable' : 'refused')
-    console.error('[studioSaveRequests] structural edit failed:', err)
-    // A warning, for the same reason as a refusal: the retry ladder has run
-    // out (`structuralWriteRetry.ts`), the gesture is taken back, and the
-    // files are unchanged — the board and disk agree again.
-    pushToast({
-      kind: 'warning',
-      title: refusalTitle,
-      body: isUnreachableFailure(err)
-        ? 'Studio could not reach your project, so the change was taken back. Nothing was written.'
-        : 'The change could not be written to your project, so it was taken back. Nothing was written.',
-      location: 'site-editor',
-    })
-  }
-}
-
-/**
- * What this landed write means for the undo stack: a new entry, a FILL of the
- * entry `delete`'s own tree mutation already tagged, a refresh of the one an
- * undo/redo just moved, or nothing at all for the gestures (`move`/`reparent`)
- * whose undo lives entirely on the tree-mutation stack.
- */
-function resolvePendingHistory(
-  edits: readonly StructuralEditPayload[],
-  options: StructuralCommitOptions,
-  outcome: StructuralWriteOutcome,
-): PendingStructuralHistory | null {
-  if (options.reissue) return { kind: 'refresh', direction: options.reissue, outcome }
-  if (options.fill) return { kind: 'fill', outcome }
-  if (!options.undo) return null
-  return {
-    kind: 'push',
-    gesture: {
-      label: options.undo.label,
-      // Copied, not aliased: the entry outlives this call, and the array it
-      // holds has to be a plain mutable one the store's Mutative draft can
-      // carry (see `StructuralSourceGesture`).
-      forward: [...edits],
-      inverseTemplate: options.undo.template,
-      inverse: resolveStructuralInverse(options.undo.template, outcome),
-    },
-  }
-}
-

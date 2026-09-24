@@ -32,10 +32,11 @@
  * so a project with its own component library writes its own components.
  */
 import { registry } from '@core/module-engine'
-import { describeStructuralRefusal, isSourceDerivedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import { describeStructuralRefusal, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticInsert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import {
   commitStudioDuplicate,
+  commitStudioDuplicateTo,
   commitStudioGroup,
   commitStudioInsert,
   commitStudioUngroup,
@@ -97,13 +98,8 @@ export interface StudioSourceWrites extends StudioSourceRefusals {
   ) => boolean
   /** K3 - Cmd+Shift+G: a container dissolved, its children taking its place. */
   writeUngroupToSource: (nodeId: string) => boolean
-  /**
-   * `store-13` — ⌘V. True when the caller must stop: the paste was written to
-   * source, or refused out loud. `false` only for an ordinary CMS tree, which
-   * takes the clipboard-snapshot path unchanged.
-   */
-  writePasteToSource: (clipboardRootIds: readonly string[], parentId: string, index?: number) => boolean
 }
+
 
 /**
  * `readTree` is passed in rather than re-derived: `nodeActions.ts` already has
@@ -307,8 +303,7 @@ export function createStudioSourceWrites(
         return true
       }
       if (!plan.commit) return false // an ordinary CMS tree — nothing to write
-      const { nodeId, ...where } = plan.commit
-      void commitStudioDuplicate([nodeId], where)
+      void commitStudioDuplicateTo(plan.commit)
       return true
     }
 
@@ -328,7 +323,7 @@ export function createStudioSourceWrites(
     // so the canvas shows the duplicate the instant ⌘D fires rather than
     // after the write's own resync.
     const optimistic = previewOptimisticDuplicate(helpers, plan.commit) ?? undefined
-    void commitStudioDuplicate(plan.commit, undefined, optimistic)
+    void commitStudioDuplicate(plan.commit, optimistic)
     return true
   }
 
@@ -502,103 +497,6 @@ export function createStudioSourceWrites(
     return true
   }
 
-  /**
-   * `store-13` — ⌘V on a studio-imported tree is a SOURCE write, for the same
-   * reason every other gesture in this module is.
-   *
-   * Paste was the one structural gesture that never asked. It restored the
-   * clipboard SNAPSHOT — a set of nodes carrying nanoid ids — straight into
-   * the tree, and `saveSite` diffs values only, so nothing about the new
-   * elements ever reached the `.tsx`. The board showed them until the next
-   * parse and then silently did not, which is precisely the failure
-   * `struct-01` removed for move and delete and `struct-02` for insert.
-   *
-   * The honest write is a DUPLICATE-TO: the clipboard's roots are elements
-   * that exist (or existed) in this project's code, and `duplicateJsxElement`
-   * can copy their own source text into the destination container. So this
-   * asks the same two questions in the same order every other writer here
-   * asks, then commits through the identical path — which is also how a
-   * pasted element ends up selected after the resync
-   * (`pendingCreatedSelection.ts`).
-   *
-   * What it will NOT do is fall back to the snapshot path on a studio tree.
-   * A clipboard entry whose roots are no longer elements in this file — copied
-   * from another project, from another page, or from a session before the file
-   * changed — has no source text to copy, and restoring the snapshot anyway is
-   * the orphan this function exists to stop. That refuses, by name.
-   */
-  const writePasteToSource = (
-    clipboardRootIds: readonly string[],
-    parentId: string,
-    index?: number,
-  ): boolean => {
-    if (clipboardRootIds.length === 0) return false
-    const tree = readTree()
-    if (!tree) return false
-
-    // Is this a studio-imported tree at all? `planSourceInsert` answers with
-    // `commit: null` for an ordinary CMS container, and that is the ONLY
-    // outcome that may take the snapshot path.
-    const container = planSourceInsert(tree, parentId, index)
-    if (container.ok && !container.commit) return false
-
-    // `store-14` — a paste is as much a real write as a duplicate is, and two
-    // in flight would plan against the same unshifted source. Queued, not
-    // refused: ⌘V held down pastes N times.
-    if (
-      deferWhileStructuralCommitInFlight((relocate) => {
-        writePasteToSource(clipboardRootIds, relocate(parentId), index)
-      }, [parentId])
-    ) {
-      return true
-    }
-
-    if (!container.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, container.constraint, {
-        nodeId: container.nodeId,
-        retry: (newParentId) => { writePasteToSource(clipboardRootIds, newParentId, index) },
-        getState: get,
-        set,
-      })
-      return true
-    }
-
-    const orphaned = clipboardRootIds.filter((id) => !isSourceDerivedNodeId(id) || !tree.nodes[id])
-    if (orphaned.length > 0) {
-      // Always `actions: []` — always the toast, never the dialog: there is no
-      // node left to offer a remedy against.
-      presentStructuralRefusal(
-        STRUCTURAL_REFUSAL_TITLE.insert,
-        describeStructuralRefusal({
-          refusal: {
-            reason: 'insert',
-            message:
-              'What you copied is not part of this page’s code any more, so Studio has no source to copy from — pasting it would put elements on the canvas that the files do not contain. Copy the element again from this page and paste it.',
-          },
-        }),
-        { getState: get, set },
-      )
-      return true
-    }
-
-    const plan = planSourceDuplicateTo(tree, clipboardRootIds, parentId, index ?? Number.MAX_SAFE_INTEGER)
-    if (!plan.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
-        nodeId: plan.nodeId,
-        getState: get,
-        set,
-      })
-      return true
-    }
-    // `commit: null` here would mean "not a source-derived tree", which the
-    // container check above already ruled out — but a stale root is also
-    // reported that way, and there is nothing to write either way.
-    if (!plan.commit) return true
-    const { nodeId, ...where } = plan.commit
-    void commitStudioDuplicate([nodeId], where)
-    return true
-  }
-
   return {
     ...refusals,
     writeInsertToSource,
@@ -606,7 +504,6 @@ export function createStudioSourceWrites(
     writeWrapToSource,
     writeGroupToSource,
     writeUngroupToSource,
-    writePasteToSource,
   }
 }
 

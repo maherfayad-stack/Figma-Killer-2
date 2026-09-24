@@ -14,7 +14,7 @@
  */
 import type { Patches } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
-import type { SiblingMove } from '@core/page-tree'
+import type { SequencedMove } from '@core/page-tree'
 import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 
 /**
@@ -124,20 +124,21 @@ export interface StructuralHistoryMove {
  */
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | StructuralHistorySiblings
+  | StructuralHistoryMoves
   | StructuralSourceHistory
 
 /**
- * P2-C2 — a multi-selection stepped among its siblings (`moveSiblings`): a
- * batch of INDEPENDENT single-element moves (`@core/page-tree`'s
- * `planSiblingSteps` guarantees their regions never overlap), written in one
- * save batch. Undo re-issues the inverse batch through the same action, so it
- * is one write and one entry in both directions.
+ * P2-C2 / P3-D — several elements moved as ONE gesture (`moveNodesInSequence`:
+ * a multi-selection drag, an arrow step of a selection, the first half of a
+ * non-adjacent group): single-element moves applied IN ORDER, each against the
+ * tree the previous one left, written as one `/save` sequence. `undo` is the
+ * reversed list of where each element came from (`invertMoveSequence`), so
+ * both directions re-issue through the same action: one write, one entry.
  */
-export interface StructuralHistorySiblings {
-  gesture: 'siblings'
-  undo: SiblingMove[]
-  redo: SiblingMove[]
+export interface StructuralHistoryMoves {
+  gesture: 'moves'
+  undo: SequencedMove[]
+  redo: SequencedMove[]
 }
 
 /**

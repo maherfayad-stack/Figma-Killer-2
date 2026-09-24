@@ -45,6 +45,14 @@ export interface StructuralMoveCommit {
   /** The existing child to land beside, or `null` to append as the last child (reparent only). */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * ERR-16 — the new container is written in ANOTHER file than the element.
+   * A same-file reparent cannot say that honestly (the markup would land where
+   * the names it reads do not exist), so the write is a `transplant`, which
+   * carries the imports the markup needs and refuses by name when a local it
+   * reads cannot travel.
+   */
+  crossFile?: true
 }
 
 /**
@@ -133,11 +141,14 @@ export function previewStructuralMove(
     if (!container.ok) return { ok: false, refusal: container.refusal }
 
     const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node, multi })
-    if (refusal) return { ok: false, refusal }
+    // ERR-16 — across files the move is a transplant (see `crossFile`), which
+    // is its own honest write; every other refusal stands.
+    if (refusal && refusal.reason !== 'cross-file') return { ok: false, refusal }
     return {
       ok: true,
       commit: {
         nodeId,
+        ...(refusal ? { crossFile: true as const } : {}),
         destinationParentNodeId: container.node.id,
         // `newIndex` counts the DROP PARENT's children. When the container had
         // to be re-resolved (the page root became the page's root element), that

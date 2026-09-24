@@ -370,6 +370,14 @@ export interface StructuralSourceGesture {
    * the store copies before posting.
    */
   forward: StructuralEditPayload[]
+  /**
+   * P3-D — `forward` is a SEQUENCE: its edits were written in order, each
+   * against the file the previous one left (several copies dropped at one
+   * place, a paste of several roots). A redo re-posts it the same way; posted
+   * as an ordinary batch the steps would be applied bottom-to-top against ids
+   * the earlier steps move.
+   */
+  sequence?: true
   inverseTemplate: StructuralInverseTemplate
   inverse: StructuralEditPayload[] | null
 }

@@ -9,7 +9,8 @@
  */
 import { describe, expect, it } from 'bun:test'
 import { moveNode } from '../mutations'
-import { invertSiblingMoves, planSiblingSteps, topLevelSelection, type SiblingMove } from '../siblingSteps'
+import { planSiblingSteps, topLevelSelection, type SiblingMove } from '../siblingSteps'
+import { invertMoveSequence } from '../moveSequence'
 import type { NodeTree } from '../treeSchema'
 import type { PageNode } from '../pageNode'
 
@@ -47,7 +48,7 @@ describe('planSiblingSteps', () => {
   it('a run of two steps one place as ONE move: the neighbour jumps over it', () => {
     const t = tree()
     const moves = plan(t, ['c', 'd'], every(1))
-    expect(moves).toEqual([{ nodeId: 'e', parentId: 'root', index: 2, fromIndex: 4 }])
+    expect(moves).toEqual([{ nodeId: 'e', parentId: 'root', index: 2 }])
     expect(apply(t, moves).nodes.root!.children).toEqual(['a', 'b', 'e', 'c', 'd', 'f'])
     expect(apply(t, plan(t, ['c', 'd'], every(-1))).nodes.root!.children).toEqual(['a', 'c', 'd', 'b', 'e', 'f'])
   })
@@ -105,13 +106,13 @@ describe('planSiblingSteps', () => {
   it('a parent with no step (an arrow across its axis) moves nothing', () => {
     const t = tree()
     const moves = plan(t, ['b1', 'e'], (parentId) => (parentId === 'b' ? 1 : null))
-    expect(moves).toEqual([{ nodeId: 'b1', parentId: 'b', index: 1, fromIndex: 0 }])
+    expect(moves).toEqual([{ nodeId: 'b1', parentId: 'b', index: 1 }])
   })
 
   it('the inverse batch restores the original order', () => {
     const t = tree()
     const moves = plan(t, ['a', 'c', 'd'], every(1))
-    const back = apply(apply(t, moves), invertSiblingMoves(moves))
+    const back = apply(apply(t, moves), invertMoveSequence(t, moves))
     expect(back.nodes.root!.children).toEqual(t.nodes.root!.children)
   })
 })

@@ -179,7 +179,7 @@ export function reissueStructuralSourceEdits(
     }
   }
 
-  void commitStudioStructuralReissue(edits, direction, label, rollback)
+  void commitStudioStructuralReissue(edits, direction, label, rollback, direction === 'redo' ? entry.source.sequence : undefined)
   return { kind: 'posted', pendingCommitId: rollback.id }
 }
 
