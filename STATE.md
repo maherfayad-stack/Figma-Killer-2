@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### parser-18 — P3-C: value refusals become writes (two PRs)
-- **Agent:** parser-surgeon · **Branches:** PR 1 `feat/value-refusals-become-writes` off `01f3d9c2` (#247); PR 2 `feat/style-edits-land-anywhere`, stacked on PR 1 (#PR2) · both draft, base `feat/canvas-excellence`, long form in the bodies · **Updated:** 2026-09-24
+- **Agent:** parser-surgeon · **Branches:** PR 1 `feat/value-refusals-become-writes` off `01f3d9c2` (#247); PR 2 `feat/style-edits-land-anywhere`, stacked on PR 1 (#249) · both draft, base `feat/canvas-excellence`, long form in the bodies · **Updated:** 2026-09-24
 - **Stage:** verifying — both drafts open, gates green (pre-existing failures listed in the PR bodies).
 - **Goal:** ROADMAP P3-C: WB-6, WB-8, ERR-14, ERR-15 (PR 1); WB-16, WB-17, WB-18, WB-19, WB-30, WB-31, OD-8 (PR 2).
 - **Scope (parser files):** `page-parser/{types,jsxAttributeReaders,nodeResolution,parsePageFile,componentSubstitution,inlineLocalComponents,nextAppLayout}.ts`; `ast-codemods/{setStringLiteral,setJsxStyle,setJsxClassName,classNameWrap(new),cssModuleImportPlan(new),jsxImportEdits,jsxSubtree,insertJsxElement,insertJsxIntoSlotProp,wrapJsxElement,wrapJsxElements,swapComponentInstance,setStyledDeclaration}.ts`; `css-codemods/{setDeclaration,removeDeclaration,insertRule,analyzeDeclarationTarget,cssAtRuleScope(new),keyframes,cssPropertyCase}.ts`; `page-tree/{sourceNodeId,editConstraint}.ts`; `studio-sync/parsedPageToSitePage.ts`. Client/server files: see the PR bodies.
