@@ -88,7 +88,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The ghost rollback checks its ids are still on the page first: a page replaced by an outside resync mid-upload is settled, never patched.
   - Portal (design) frames render a literal `src="/x.png"` against the ADMIN origin, so a dropped image shows broken there until something serves the project's `public/` to design frames (Found, not fixed — PR body). Live (Tier 2) frames are fine.
 - **Next:** ⇧K binding → `insert.image` (P5-E owns `keybindings.ts`); IMG-4 paste (after P5-A), IMG-5 URL drag (OD-13, security review), IMG-6 Assets images section, IMG-10 import convention, IMG-11 ledger.
-- **Human action needed:** dogfood on a Vite project (live frames), `/admin/site`, 100% zoom, one frame:
+- **Human action needed:** dogfood in the **Design** view (live frames take no file drops yet — PR body), `/admin/site` on `test4`, 100% zoom, one frame; dropped images show broken-but-correctly-sized in design frames (the `public/` gap):
   1. Drag three PNGs from the desktop onto the frame: three ghosts appear at once and fill left to right while uploading; one save; `public/` gets three files; one ⌘Z removes all three `<img>`s.
   2. Drag a 4000 px photo into a 390 px-wide container: the written `width` is ≤ the container, aspect kept.
   3. Drag one PNG onto an existing `<img>`: it is outlined and the chip says "Replace image"; release swaps the image; ⌘Z restores the old one. Hold ⌥: it inserts beside instead.
@@ -111,7 +111,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
 
 **Images (P5)**
-- `canvas-28` · `/admin/site` on a Vite project, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
+- `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
