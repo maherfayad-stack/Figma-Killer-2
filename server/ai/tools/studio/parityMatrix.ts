@@ -95,6 +95,8 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   { action: 'Install dependencies', status: { kind: 'tool', toolNames: ['studio_install_deps'] } },
   { action: 'Poll an install job', status: { kind: 'tool', toolNames: ['studio_install_status'] } },
   { action: 'Confirm the code just written actually compiles', status: { kind: 'tool', toolNames: ['studio_typecheck'] } },
+  // AI-21 — the Problems view a developer reads next to the canvas.
+  { action: "Check the code just written against the project's own lint rules (Tier 2)", status: { kind: 'tool', toolNames: ['studio_lint'] } },
   { action: 'Read a project profile (framework/styling/deps)', status: { kind: 'tool', toolNames: ['studio_project_profile'] } },
   { action: 'List pages / board frames', status: { kind: 'tool', toolNames: ['studio_list_pages'] } },
   { action: 'See what a screen actually looks like', status: { kind: 'tool', toolNames: ['studio_screenshot'] } },

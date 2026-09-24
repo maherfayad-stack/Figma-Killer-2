@@ -302,6 +302,22 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'tsc itself could not run — a broken toolchain or tsconfig, not a code error. The refusal carries a capped output excerpt.',
   },
+  'eslint-not-installed': {
+    retryable: false,
+    meaning: 'The project has no ESLint of its own to lint with. Studio never substitutes its own or downloads one; install the project\'s dependencies, or rely on the typecheck when the project does not use ESLint.',
+  },
+  'no-eslint-config': {
+    retryable: false,
+    meaning: 'ESLint is installed but the project has no ESLint config inside it, so there are no project rules. Never write a config to make the lint pass.',
+  },
+  'lint-timed-out': {
+    retryable: false,
+    meaning: 'ESLint was killed before it finished; nothing it found is known. Lint fewer paths at a time.',
+  },
+  'lint-invocation-error': {
+    retryable: false,
+    meaning: 'ESLint itself could not run or produced no readable report — a broken config or plugin, not a code error, or a report too large to read (lint fewer paths). The refusal carries a capped output excerpt.',
+  },
   'io-error': {
     retryable: true,
     meaning: 'An unexpected filesystem or subprocess error. The message carries the underlying cause.',
