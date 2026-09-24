@@ -191,7 +191,7 @@ describe('planCanvasFileDrop — onto an image (IMG-3)', () => {
     expect(result.ok).toBe(false)
     if (result.ok) return
     expect(result.refusal.reason).toBe('locked-image')
-    expect(result.refusal.message).toContain('Hold ⌥')
+    expect(result.refusal.message).toMatch(/Hold (⌥|Alt)/)
   })
 })
 

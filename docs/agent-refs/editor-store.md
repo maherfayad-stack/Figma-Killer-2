@@ -428,9 +428,10 @@ back. Full contract: `editor-history.md` → "A write that does not land is take
 back".
 
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
-(D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —
-an image file dropped from the OS) both take their page id as an argument
-instead of using `activePageId`, and neither goes through `mutateActiveTree`.
+(D2 G3 — a drag that crossed a board frame) and the image-drop actions
+(`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
++ P5-B — image files dropped from the OS) take their page id as an argument
+instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
 active page is the wrong end of the gesture; a dropped file was never preceded
@@ -438,11 +439,22 @@ by a pointerdown at all, so the frame under it was never activated. They are
 therefore NOT among the named tree-mutation actions the
 `no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
 
-Both still show **nothing optimistically** — unlike `insert`/`duplicate`/`wrap`
-(below), the node that appears afterwards is a freshly parsed one whose id is
-the `rel:line:col` the write produced, and previewing it locally would need a
-tree on the OTHER end of the transplant/drop too. Both ride the same
-`structuralCommitQueue.ts` the rest of that family does.
+The transplant still shows **nothing optimistically** — the node that appears
+afterwards is a freshly parsed one in the OTHER file, and previewing it locally
+would need a tree on the other end of the gesture. The image drop (P5-B) does
+the opposite of guessing an id: it ACTIVATES the dropped-on page first
+(`openPageInCanvas`, a drop is a user gesture on that frame), then previews one
+ghost `<img>` per file through `previewOptimisticInsertRun` (N siblings, one
+preview mutation, ids in the same order as the write's `createdNodeIds`). It
+holds `structuralCommitQueue.ts` from BEFORE the upload (`beginStructuralCommit`)
+until the commit's own end, so the page cannot be resynced under the ghost
+while the bytes go up; a drop whose every file fails rolls the ghost back and
+releases the queue itself. N images are ONE `insert` edit (`siblings`) — one
+write, one undo step whose `delete-created` inverse deletes them all. A replace
+of a LITERAL `src` is an ordinary `updateNodeProps` (ordinary undo); a replace
+of an IMPORT-BOUND one posts `kind: 'asset'` through `commitStudioAssetReplace`
+with the undo template `known` (its inverse is fixed at gesture time: point the
+import back). A ⇧-drop background is one `setNodeInlineStyles`.
 
 **`insert`/`duplicate`/`wrap`/`group` DO paint optimistically now (`perf-10`).**
 `structuralOptimism.ts`'s `previewOptimisticInsert`/`Duplicate`/`Wrap`/`Group`
@@ -458,7 +470,8 @@ replaces the touched PAGE object wholesale, erasing the preview regardless of
 whether its guessed id matches the real one; `commitStructuralBody` explicitly
 rolls it back only on the two paths where no resync follows (a full refusal,
 or the POST never reaching disk). `ungroup`/paste/K2 Alt-drag-duplicate/
-transplant/image-drop are unchanged — still nothing shown until the resync.
+transplant are unchanged — still nothing shown until the resync. The image drop
+previews through the same module (`previewOptimisticInsertRun`, above).
 A Delete on a pending preview id is QUEUED behind the write that made it and
 then aimed at the element that write created (ERR-22, `resolvePreviewTargets`,
 fed by `settle(createdNodeIds)` — wired into `deleteNode`/`deleteNodes`); it

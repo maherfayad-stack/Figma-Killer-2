@@ -46,6 +46,7 @@
  * the only safe direction for a client-side pre-check. A drop that mixes
  * images with other files adds the images and names what it left out.
  */
+import { isPlatformMac } from '@admin/spotlight/keybindings'
 import { registry } from '@core/module-engine'
 import {
   getNodeHtmlTag,
@@ -207,6 +208,9 @@ function describeFileType(type: string, name: string | undefined): string {
   return `a ${name.slice(dot + 1).toLowerCase()} file`
 }
 
+/** The held keys as this platform spells them, for the sentences below. */
+const KEY = isPlatformMac() ? { alt: '⌥', shift: '⇧', absolute: '⌘' } : { alt: 'Alt', shift: 'Shift', absolute: 'Ctrl' }
+
 /** The refusals that need geometry, so they read the same from both halves. */
 export const CANVAS_FILE_DROP_REFUSAL = {
   noFrame: {
@@ -229,13 +233,13 @@ export const CANVAS_FILE_DROP_REFUSAL = {
   oneBackground: {
     reason: 'one-background',
     headline: 'A background takes one image',
-    message: 'Hold ⇧ with ONE image to make it the background of the element under the pointer. Drop several images without ⇧ to add them all.',
+    message: `Hold ${KEY.shift} with ONE image to make it the background of the element under the pointer. Drop several images without ${KEY.shift} to add them all.`,
   },
   lockedImage: {
     reason: 'locked-image',
     headline: 'This image comes from code',
     message:
-      "This image's src is computed in code, so there is no file path Studio could rewrite. Hold ⌥ to add the new image beside it instead, or change the expression in your editor.",
+      `This image's src is computed in code, so there is no file path Studio could rewrite. Hold ${KEY.alt} to add the new image beside it instead, or change the expression in your editor.`,
   },
 } as const satisfies Record<string, CanvasFileDropRefusal>
 
@@ -244,7 +248,7 @@ function staticParentRefusal(parent: PageNode | null): CanvasFileDropRefusal {
   return {
     reason: 'static-parent',
     headline: `Make this ${parentLabel} position: relative first`,
-    message: `⌘-drop places the image at the pointer, which needs a positioned container — this ${parentLabel} is position: static, so the image would be placed against some other element. Make it position: relative, or drop without ⌘ to add the image in the flow.`,
+    message: `${KEY.absolute}-drop places the image at the pointer, which needs a positioned container — this ${parentLabel} is position: static, so the image would be placed against some other element. Make it position: relative, or drop without ${KEY.absolute} to add the image in the flow.`,
     staticParent: { parentNodeId: parent?.id ?? null, parentLabel },
   }
 }

@@ -151,6 +151,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
+### canvas-28 — P5-B: drop images onto the canvas (IMG-2, 3, 7, 8, 9; IX-img)
+- **Agent:** canvas-engineer · **Branch:** `feat/drop-images-onto-the-canvas` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, dogfood script and "Found, not fixed" in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** N dropped images are ONE `insert` edit (`InsertEditSchema.siblings`, `insertJsxElement` writes a run in one splice and reports every created id, all or none): one write, one resync, one ⌘Z. Drop ON an `<img>` replaces it (⌥ inserts): literal `src` → `asset-drop` + `updateNodeProps`; import-bound → `asset-upload` beside the old file + `kind:'asset'` via `commitStudioAssetReplace` with the new undo template `known`. Ghost per file from its object URL (`previewOptimisticInsertRun`) + XHR progress into `--studio-upload-progress`. `width`/`height` = intrinsic, clamped to the container content box. ⌘-drop = K6 absolute (static parent refuses with K6's dialog). ⇧-drop = top background layer, inline; refused when a class owns the background. "Insert image…" command (`insert.image`) = picker, images land beside the selection.
+- **Decisions:** one XHR upload client, `@core/http`'s `apiUploadRequest` (reuses `retryPlanFor`/replay key/envelope/schema); `dropStudioAsset`, `uploadStudioAsset`, `uploadDesignReference` moved onto it. `commitStructural` + options moved to `studio/studioStructuralCommitEngine.ts` (size gate). Server `created` is a list end to end (`StructuralEditOutcome`, `StudioEditApplyOutcome`).
+- **Files touched (canvas):** `canvas/{canvasFileDrop, canvasFileDragPreview, useCanvasFileDrop, canvasFrameDragRelay, EditorChromeInjector, canvasImageDropPlacement (new), canvasImagePicker (new)}`. Also `store/slices/site/{imageDropActions, structuralOptimism, structuralSourceHistory, types, nodeActions}`, `studio/{studioStructuralCommits, studioStructuralCommitEngine (new), structuralUndoPlan, dropStudioAsset, uploadStudioAsset, uploadDesignReference, projectAssets}`, `core/http/{uploadRequest (new), apiClient, index}`, `core/ast-codemods/insertJsxElement`, `server/handlers/{studioStructuralWriteback, studioEditSchemas, studioWriteback}`, `spotlight/{commands/images (new), builtinCommands}`.
+- **Landmines:**
+  - **Events × history:** the drop HOLDS the structural queue (`beginStructuralCommit`) from before the upload until `commitStructural`'s own end; a drop where nothing lands releases it itself. Any new early return in `dropImagesIntoPage` after the begin must call `endStructuralCommit()` or every later structural gesture queues forever.
+  - **Injectors × events:** the ghost's uploading look is an UNLAYERED `EditorChromeInjector` rule on `img[data-studio-uploading]`; the progress property is written imperatively on the element (React does not own it). The relay now copies `altKey/shiftKey/metaKey/ctrlKey` — a relay that drops them silently changes what a drop means.
+  - **Height:** none — but the ghost carries an inline `max-width: 100%` so a large photo cannot stretch the frame before its clamped size is written.
+  - The ghost rollback checks its ids are still on the page first: a page replaced by an outside resync mid-upload is settled, never patched.
+  - Portal (design) frames render a literal `src="/x.png"` against the ADMIN origin, so a dropped image shows broken there until something serves the project's `public/` to design frames (Found, not fixed — PR body). Live (Tier 2) frames are fine.
+- **Next:** ⇧K binding → `insert.image` (P5-E owns `keybindings.ts`); IMG-4 paste (after P5-A), IMG-5 URL drag (OD-13, security review), IMG-6 Assets images section, IMG-10 import convention, IMG-11 ledger.
+- **Human action needed:** dogfood on a Vite project (live frames), `/admin/site`, 100% zoom, one frame:
+  1. Drag three PNGs from the desktop onto the frame: three ghosts appear at once and fill left to right while uploading; one save; `public/` gets three files; one ⌘Z removes all three `<img>`s.
+  2. Drag a 4000 px photo into a 390 px-wide container: the written `width` is ≤ the container, aspect kept.
+  3. Drag one PNG onto an existing `<img>`: it is outlined and the chip says "Replace image"; release swaps the image; ⌘Z restores the old one. Hold ⌥: it inserts beside instead.
+  4. Hold ⇧ over a container: "Set as background"; release adds a background layer (Fill section shows it). Hold ⌘ over a `position: relative` container: the image lands at the pointer; over a static one, the "make it relative" dialog.
+  5. ⌘K → "Insert image…": pick two files; they land right after the selected layer.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -165,6 +185,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry in the archive
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry in the archive
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
+
+**Images (P5)**
+- `canvas-28` · `/admin/site` on a Vite project, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body

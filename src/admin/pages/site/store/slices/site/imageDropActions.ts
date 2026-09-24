@@ -57,7 +57,7 @@ import { commitStudioAssetReplace, commitStudioInsert } from '@site/studio/studi
 import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
 import type { InsertPropValue } from '@site/studio/studioSaveRequests'
 import { previewOptimisticInsertRun, type OptimisticPreviewHandle } from './structuralOptimism'
-import { STRUCTURAL_REFUSAL_TITLE, planSourceInsert, presentStructuralRefusal } from './structuralSourceEdits'
+import { STRUCTURAL_REFUSAL_TITLE, planSourceInsert, presentStructuralRefusal, type SourceInsertCommit } from './structuralSourceEdits'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type ImageDropActions = Pick<SiteSlice, 'dropImagesIntoPage' | 'replaceImageInPage' | 'setBackgroundImageInPage'>
@@ -113,17 +113,28 @@ function paintUploadProgress(nodeId: string, fraction: number | null): void {
   }
 }
 
-/** One toast for every file a drop left out or could not land, however many. */
+/**
+ * One toast for every file a gesture could not land, however many.
+ *
+ * An error only when NOTHING landed — the gesture failed as a whole, in the
+ * server's own words. When the rest were written, the canvas already shows
+ * the result, so the files left behind are a warning naming them.
+ */
 function reportUnlanded(failures: readonly { name: string; message: string }[], landedCount: number): void {
   const [first] = failures
   if (!first) return
   const names = failures.map((failure) => `"${failure.name}"`).join(', ')
-  pushToast({
-    kind: landedCount > 0 ? 'warning' : 'error',
-    title: landedCount > 0 ? `${failures.length} image${failures.length === 1 ? '' : 's'} not added` : IMAGE_DROP_TITLE,
-    body: failures.length === 1 ? `${names}: ${first.message}` : `${names} — ${first.message}`,
-    location: 'site-editor',
-  })
+  const body = failures.length === 1 ? `${names}: ${first.message}` : `${names} — ${first.message}`
+  if (landedCount > 0) {
+    pushToast({
+      kind: 'warning',
+      title: `${failures.length} image${failures.length === 1 ? '' : 's'} not added`,
+      body,
+      location: 'site-editor',
+    })
+    return
+  }
+  pushToast({ kind: 'error', title: IMAGE_DROP_TITLE, body, location: 'site-editor' })
 }
 
 function findPage(get: SiteSliceHelpers['get'], pageId: string): NodeTree<PageNode> | null {
@@ -185,70 +196,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
 
       // Held until the commit below releases it — see this module's doc.
       beginStructuralCommit()
-
-      const previewUrls = drop.files.map((file) => URL.createObjectURL(file))
-      const ghostIds = drop.files.map(() => `optimistic:${crypto.randomUUID()}`)
-      const optimistic = previewOptimisticInsertRun(
-        helpers,
-        commit.parentNodeId,
-        drop.index,
-        drop.files.map((file, i) => ({
-          moduleId: 'base.image',
-          ghostId: ghostIds[i]!,
-          props: { src: previewUrls[i]!, alt: altTextFor(file), htmlAttributes: { [UPLOADING_ATTRIBUTE]: '' } },
-          // A ghost never overflows its frame while the real size is unknown;
-          // a ⌘-drop ghost already sits where the image will.
-          inlineStyles: {
-            maxWidth: '100%',
-            ...(drop.absolute ? absolutePlacementStyle(drop.absolute, i) : {}),
-          },
-        })),
-      )
-      const release = () => {
-        for (const url of previewUrls) URL.revokeObjectURL(url)
-      }
-
-      void (async () => {
-        const settled = await Promise.allSettled(
-          drop.files.map((file, i) =>
-            dropStudioAsset(file, { onProgress: (fraction) => paintUploadProgress(ghostIds[i]!, fraction) }),
-          ),
-        )
-        const landed: { file: File; asset: DroppedStudioAsset; order: number }[] = []
-        const failures: { name: string; message: string }[] = []
-        settled.forEach((result, i) => {
-          const file = drop.files[i]!
-          if (result.status === 'fulfilled') landed.push({ file, asset: result.value, order: i })
-          else {
-            console.error('[image-drop] landing a dropped image failed:', result.reason)
-            failures.push({ name: file.name, message: getErrorMessage(result.reason, 'The image could not be saved to your project.') })
-          }
-        })
-
-        if (landed.length === 0) {
-          rollbackGhosts(get, drop.pageId, optimistic)
-          release()
-          endStructuralCommit()
-          reportUnlanded(failures, 0)
-          return
-        }
-
-        const elements = landed.map(({ file, asset, order }) => insertedImageProps(file, asset, drop, order))
-        const [first, ...rest] = elements
-        try {
-          await commitStudioInsert({
-            ...commit,
-            name: 'img',
-            props: first!,
-            ...(rest.length > 0 ? { siblings: rest.map((props) => ({ name: 'img', props })) } : {}),
-            undoLabel: elements.length > 1 ? `Add ${elements.length} images` : 'Add image',
-            ...(optimistic ? { optimistic } : {}),
-          })
-        } finally {
-          release()
-        }
-        reportUnlanded(failures, landed.length)
-      })()
+      void landAndInsert(helpers, drop, commit)
     },
 
     replaceImageInPage: (pageId, nodeId, file) => {
@@ -325,6 +273,84 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
   }
 
   return actions
+}
+
+/**
+ * The half of an insert drop that happens AFTER the structural queue was
+ * reserved: paint the ghosts (synchronously — before the first await, so they
+ * share the drop's frame), land every file, then ONE commit. Every path that
+ * does not reach the commit releases the queue itself; the commit releases it
+ * on its own once its resync has finished.
+ */
+async function landAndInsert(
+  helpers: SiteSliceHelpers,
+  drop: ImageDropRequest,
+  commit: SourceInsertCommit,
+): Promise<void> {
+  const previewUrls: string[] = []
+  let optimistic: OptimisticPreviewHandle | null = null
+  let committing = false
+  try {
+    for (const file of drop.files) previewUrls.push(URL.createObjectURL(file))
+    const ghostIds = drop.files.map(() => `optimistic:${crypto.randomUUID()}`)
+    optimistic = previewOptimisticInsertRun(
+      helpers,
+      commit.parentNodeId,
+      drop.index,
+      drop.files.map((file, i) => ({
+        moduleId: 'base.image',
+        ghostId: ghostIds[i]!,
+        props: { src: previewUrls[i]!, alt: altTextFor(file), htmlAttributes: { [UPLOADING_ATTRIBUTE]: '' } },
+        // A ghost never overflows its frame while the real size is unknown;
+        // a ⌘-drop ghost already sits where the image will.
+        inlineStyles: {
+          maxWidth: '100%',
+          ...(drop.absolute ? absolutePlacementStyle(drop.absolute, i) : {}),
+        },
+      })),
+    )
+
+    const settled = await Promise.allSettled(
+      drop.files.map((file, i) =>
+        dropStudioAsset(file, { onProgress: (fraction) => paintUploadProgress(ghostIds[i]!, fraction) }),
+      ),
+    )
+    const landed: { file: File; asset: DroppedStudioAsset; order: number }[] = []
+    const failures: { name: string; message: string }[] = []
+    settled.forEach((result, i) => {
+      const file = drop.files[i]!
+      if (result.status === 'fulfilled') landed.push({ file, asset: result.value, order: i })
+      else {
+        console.error('[image-drop] landing a dropped image failed:', result.reason)
+        failures.push({ name: file.name, message: getErrorMessage(result.reason, 'The image could not be saved to your project.') })
+      }
+    })
+
+    if (landed.length === 0) {
+      rollbackGhosts(helpers.get, drop.pageId, optimistic)
+      reportUnlanded(failures, 0)
+      return
+    }
+
+    const elements = landed.map(({ file, asset, order }) => insertedImageProps(file, asset, drop, order))
+    const [first, ...rest] = elements
+    committing = true
+    await commitStudioInsert({
+      ...commit,
+      name: 'img',
+      props: first!,
+      ...(rest.length > 0 ? { siblings: rest.map((props) => ({ name: 'img', props })) } : {}),
+      undoLabel: elements.length > 1 ? `Add ${elements.length} images` : 'Add image',
+      ...(optimistic ? { optimistic } : {}),
+    })
+    reportUnlanded(failures, landed.length)
+  } catch (err) {
+    console.error('[image-drop] the image drop failed:', err)
+    if (!committing) rollbackGhosts(helpers.get, drop.pageId, optimistic)
+  } finally {
+    for (const url of previewUrls) URL.revokeObjectURL(url)
+    if (!committing) endStructuralCommit()
+  }
 }
 
 /**
