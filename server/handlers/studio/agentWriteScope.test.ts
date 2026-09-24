@@ -14,7 +14,8 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, utimesSync, writeFileSync 
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { UNWRITABLE_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { agentWriteRefusal } from './agentWriteScope'
+import { agentContentRefusal, agentToolInputContentRefusal, agentWriteRefusal } from './agentWriteScope'
+import { writeStudioMeta } from './studioMeta'
 import { ensurePrototypeShell } from './prototypeShell'
 
 const created: string[] = []
@@ -247,5 +248,126 @@ describe('agentWriteRefusal — the re-review bypass (R1): what a host config LO
     const later = new Date(Date.now() + 5_000)
     utimesSync(join(dir, 'postcss.config.cjs'), later, later)
     expect(agentWriteRefusal(join(dir, 'plugins', 'extra.cjs'), dir)?.code).toBe('needs-user')
+  })
+})
+
+// Security re-review 2 of #233, R1 residuals: each needs a loading edge the
+// project already has — and Studio runs a nested app's config itself.
+describe('agentWriteRefusal — the R1 residuals: every edge that loads a module in Node', () => {
+  function write(dir: string, rel: string, contents: string): void {
+    const abs = join(dir, ...rel.split('/'))
+    mkdirSync(join(abs, '..'), { recursive: true })
+    writeFileSync(abs, contents)
+  }
+  const refusalCode = (dir: string, rel: string): string | undefined => agentWriteRefusal(join(dir, ...rel.split('/')), dir)?.code
+
+  it("a nested app's config — the one devServer.ts actually runs — protects what it imports", () => {
+    const dir = tmpProject()
+    writeStudioMeta(dir, {
+      profile: {
+        probeVersion: 2,
+        appRoot: 'apps/web',
+        framework: 'vite',
+        pagesDir: 'apps/web/pages',
+        routeStyle: 'flat',
+        entryFiles: [],
+        packageManager: 'npm',
+        styleToolchain: { tailwind: null, cssModules: true, sass: false, postcssConfigPath: null, cssInJs: null },
+        componentPackages: [],
+        aliases: {},
+        warnings: [],
+      },
+    })
+    write(dir, 'apps/web/package.json', JSON.stringify({ name: 'web', scripts: { dev: 'vite' } }))
+    write(dir, 'apps/web/vite.config.ts', "import { p } from './plugins/p'\nexport default { plugins: [p()] }\n")
+    write(dir, 'apps/web/plugins/p.ts', 'export const p = () => ({})\n')
+    expect(refusalCode(dir, 'apps/web/plugins/p.ts')).toBe('needs-user')
+    expect(refusalCode(dir, 'apps/web/pages/Home.tsx')).toBeUndefined()
+  })
+
+  it('a chain three and more imports deep', () => {
+    const dir = tmpProject()
+    write(dir, 'vite.config.ts', "import './vite/one'\n")
+    write(dir, 'vite/one.ts', "import './two'\n")
+    write(dir, 'vite/two.ts', "import './three'\n")
+    write(dir, 'vite/three.ts', "import './four'\n")
+    write(dir, 'vite/four.ts', 'export {}\n')
+    expect(refusalCode(dir, 'vite/three.ts')).toBe('needs-user')
+    expect(refusalCode(dir, 'vite/four.ts')).toBe('needs-user')
+  })
+
+  it('a backtick import() with no substitution', () => {
+    const dir = tmpProject()
+    write(dir, 'vite.config.ts', 'export default async () => (await import(`./vite/template.js`)).default\n')
+    expect(refusalCode(dir, 'vite/template.js')).toBe('needs-user')
+    expect(refusalCode(dir, 'vite/template.ts')).toBe('needs-user')
+  })
+
+  it('a local plugin named as a key of a PostCSS plugin map, in both config forms', () => {
+    const dir = tmpProject()
+    write(dir, 'postcss.config.js', "export default { plugins: { './postcss/local-plugin.js': {}, autoprefixer: {} } }\n")
+    write(dir, 'postcss/local-plugin.js', 'export default () => ({})\n')
+    expect(refusalCode(dir, 'postcss/local-plugin.js')).toBe('needs-user')
+    const other = tmpProject()
+    write(other, '.postcssrc.json', JSON.stringify({ plugins: { './tools/rc-plugin.cjs': {} } }))
+    expect(refusalCode(other, 'tools/rc-plugin.cjs')).toBe('needs-user')
+  })
+
+  it('a symlinked root config: the file it points at and what THAT imports, resolved from its own folder', () => {
+    const dir = tmpProject()
+    write(dir, 'build/real-config.ts', "import dep from './real-dep'\nexport default dep\n")
+    write(dir, 'build/real-dep.ts', 'export default {}\n')
+    try {
+      symlinkSync(join(dir, 'build', 'real-config.ts'), join(dir, 'tailwind.config.ts'), 'file')
+    } catch {
+      return // unprivileged file symlinks are not always available on Windows
+    }
+    expect(refusalCode(dir, 'build/real-dep.ts')).toBe('needs-user')
+    expect(refusalCode(dir, 'build/real-config.ts')).toBe('needs-user')
+  })
+
+  it('the file a dev script names with --config, and its imports', () => {
+    const dir = tmpProject()
+    write(dir, 'package.json', JSON.stringify({ name: 'p', scripts: { dev: 'vite --config config/vite.ts --port 4000' } }))
+    write(dir, 'config/vite.ts', "import { plug } from './plug'\nexport default { plugins: [plug()] }\n")
+    write(dir, 'config/plug.ts', 'export const plug = () => ({})\n')
+    expect(refusalCode(dir, 'config/vite.ts')).toBe('needs-user')
+    expect(refusalCode(dir, 'config/plug.ts')).toBe('needs-user')
+  })
+
+  it("Tailwind v4: what a stylesheet's @plugin / @config loads", () => {
+    const dir = tmpProject()
+    write(dir, 'package.json', JSON.stringify({ name: 'p', devDependencies: { tailwindcss: '^4.0.0', '@tailwindcss/vite': '^4.0.0' } }))
+    write(dir, 'src/app.css', '@import "tailwindcss";\n@plugin "./tw/plugin.js";\n@config "../tailwind.legacy.js";\n')
+    write(dir, 'src/tw/plugin.js', "import './helper.js'\nexport default {}\n")
+    write(dir, 'src/tw/helper.js', 'export {}\n')
+    expect(refusalCode(dir, 'src/tw/plugin.js')).toBe('needs-user')
+    expect(refusalCode(dir, 'src/tw/helper.js')).toBe('needs-user')
+    expect(refusalCode(dir, 'tailwind.legacy.js')).toBe('needs-user')
+    // The stylesheet itself stays the agent's to write.
+    expect(refusalCode(dir, 'src/app.css')).toBeUndefined()
+  })
+})
+
+describe('agentContentRefusal — a stylesheet write may not ADD what loads a module in Node', () => {
+  it('adding @plugin or @config needs the user, relative or a package name', () => {
+    expect(agentContentRefusal('src/app.css', '@import "tailwindcss";\n', '@import "tailwindcss";\n@plugin "./evil.js";\n')?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/app.css', null, '@config "./evil.config.js";\n')?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/app.css', '', '@plugin "evil-package";\n')?.code).toBe('needs-user')
+  })
+
+  it("keeping the directives a file already has, and editing the rest, is the agent's", () => {
+    const before = '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n@theme { --color-brand: red; }\n'
+    const after = '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n@theme { --color-brand: coral; }\n'
+    expect(agentContentRefusal('src/app.css', before, after)).toBeNull()
+    expect(agentContentRefusal('src/Home.tsx', '', '@plugin "./x.js"')).toBeNull()
+  })
+
+  it('the CLI hook input: an Edit is judged by old_string/new_string, a Write against the file on disk', () => {
+    const dir = tmpProject()
+    writeFileSync(join(dir, 'src', 'app.css'), '@plugin "./kept.js";\n')
+    expect(agentToolInputContentRefusal('src/app.css', dir, { old_string: '/* x */', new_string: '@plugin "./evil.js";' })?.code).toBe('needs-user')
+    expect(agentToolInputContentRefusal('src/app.css', dir, { content: '@plugin "./kept.js";\nbody { margin: 0 }\n' })).toBeNull()
+    expect(agentToolInputContentRefusal('src/app.css', dir, { content: '@plugin "./kept.js";\n@plugin "./evil.js";\n' })?.code).toBe('needs-user')
   })
 })

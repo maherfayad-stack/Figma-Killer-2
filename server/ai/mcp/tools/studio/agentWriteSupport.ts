@@ -26,6 +26,7 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { AGENT_FILE_MAX_BYTES } from './fileReadTools'
 import { pushStudioDiskChange } from './liveReloadPush'
 import {
+  agentWriteContentRefusal,
   hasOtherHardLinks,
   readTextFile,
   resolveAgentFilePath,
@@ -48,8 +49,13 @@ export function turnProject(ctx: ToolContext): string | ToolRefusal {
   return resolveToolProjectDir(undefined, ctx)
 }
 
-/** Text content a write may land, or the refusal. */
-export function checkContent(content: string, rel: string): ToolRefusal | null {
+/**
+ * Text content a write may land, or the refusal. `before` is what the file
+ * holds now (`null` for a new file): the content half of the agent write gate
+ * (`agentContentRefusal`) refuses a change that ADDS a Tailwind directive
+ * loading a module in Node.
+ */
+export function checkContent(content: string, rel: string, before: string | null): ToolRefusal | null {
   if (content.includes('\0')) {
     return toolRefusal('not-text', `The content for "${rel}" contains a NUL character, so it is not text.`, {
       remedy: 'Images, fonts and other binary files go through studio_upload_asset or studio_fetch_remote_asset.',
@@ -61,6 +67,8 @@ export function checkContent(content: string, rel: string): ToolRefusal | null {
       remedy: 'Split it: move a large section into its own component file, or its styles into their own stylesheet.',
     })
   }
+  const hostLoad = agentWriteContentRefusal(rel, before, content)
+  if (hostLoad) return toolRefusal(hostLoad.code, hostLoad.message, { remedy: hostLoad.remedy })
   return null
 }
 

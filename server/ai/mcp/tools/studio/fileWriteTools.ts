@@ -110,10 +110,10 @@ const writeFileTool: AiTool = {
       // but it shrinks it to this call (security review of #233, F6).
       const target = resolveAgentFilePath(dir, rawPath, 'write')
       if (!target.ok) return pathRefusal(target)
-      const contentProblem = checkContent(content, target.rel)
-      if (contentProblem) return contentProblem
       const current = currentText(target, expectedHash)
       if (isRefusal(current)) return current
+      const contentProblem = checkContent(content, target.rel, current.content)
+      if (contentProblem) return contentProblem
       if (current.content !== null && expectedHash === undefined) {
         return toolRefusal('stale-source', `"${target.rel}" already exists, and replacing it whole without having read it would discard whatever it holds now.`, {
           remedy: 'Read it with studio_read_file and pass its hash as expectedHash — or change just the part you mean with studio_edit_file.',
@@ -247,7 +247,7 @@ const editFileTool: AiTool = {
       }
       const next = applyEdit(current.content, edit, target.rel)
       if (isRefusal(next)) return next
-      const contentProblem = checkContent(next.content, target.rel)
+      const contentProblem = checkContent(next.content, target.rel, current.content)
       if (contentProblem) return contentProblem
       writeFileSync(target.abs, next.content, 'utf8')
       afterWrites(dir, ctx, [target])
@@ -314,7 +314,7 @@ const editFilesTool: AiTool = {
         }
         const next = applyEdit(plan.next, edit, target.rel)
         if (isRefusal(next)) return withEditIndex(next, index)
-        const contentProblem = checkContent(next.content, target.rel)
+        const contentProblem = checkContent(next.content, target.rel, plan.original)
         if (contentProblem) return withEditIndex(contentProblem, index)
         plan.next = next.content
       }

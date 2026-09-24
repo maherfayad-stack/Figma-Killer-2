@@ -72,12 +72,13 @@ function appRootToProjectDir(appRoot: string, projectDir: string): string[] {
 export function resolveProjectViteBin(appRoot: string, projectDir: string): string | null {
   for (const dir of appRootToProjectDir(appRoot, projectDir)) {
     const pkgDir = join(dir, 'node_modules', 'vite')
-    let bin: unknown
+    let manifest: unknown
     try {
-      bin = (JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8')) as { bin?: unknown }).bin
+      manifest = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'))
     } catch {
       continue
     }
+    const bin: unknown = typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>).bin : undefined
     const rel = typeof bin === 'string' ? bin : typeof bin === 'object' && bin !== null ? (bin as Record<string, unknown>).vite : undefined
     if (typeof rel !== 'string' || rel.length === 0) return null
     const script = resolve(pkgDir, rel)
