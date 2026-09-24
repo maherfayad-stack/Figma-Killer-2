@@ -88,6 +88,7 @@ export function useCanvasFileDrop({
   const hintLayerRef = useRef<HTMLDivElement | null>(null)
   const sessionRef = useRef<CanvasFileDragSession | null>(null)
   const pointRef = useRef<ClientPoint>({ x: 0, y: 0 })
+  const targetRef = useRef<EventTarget | null>(null)
   const factsRef = useRef<DroppedFileFacts>({ count: 0, type: '' })
   const hintOriginRef = useRef<ClientPoint | null>(null)
   const frameRef = useRef<number | null>(null)
@@ -123,7 +124,7 @@ export function useCanvasFileDrop({
         readPage,
         hintLayer: hintLayerRef.current,
         hintOrigin: hintOriginRef.current,
-        freeCanvas: findBoardOrigin() !== null,
+        freeCanvas: isEmptyBoardTarget(targetRef.current) && findBoardOrigin() !== null,
       })
       // Only one layer ever carries chrome — the frame's or the board's. Clear
       // the one being left BEFORE writing the new one, the same discipline the
@@ -144,6 +145,7 @@ export function useCanvasFileDrop({
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 
       pointRef.current = { x: event.clientX, y: event.clientY }
+      targetRef.current = event.target
       factsRef.current = facts
       if (!sessionRef.current) {
         sessionRef.current = beginCanvasFileDragSession(
@@ -170,7 +172,11 @@ export function useCanvasFileDrop({
         point: { x: event.clientX, y: event.clientY },
         transform: transformRef?.current ?? null,
         readPage,
-        freeCanvas: findBoardOrigin(),
+        // P5-G — only a drop on the empty board itself is a free-canvas drop. A
+        // drop relayed out of a frame arrives targeted at that frame's iframe,
+        // and must never fall through to the canvas even if the frame's drop
+        // surface is not registered (a frame mid-mount).
+        freeCanvas: isEmptyBoardTarget(event.target) ? findBoardOrigin() : null,
       })
 
       if (!plan.ok) {
@@ -233,6 +239,11 @@ async function landAndInsert(file: File, pageId: string, parentId: string, index
     return
   }
   useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
+}
+
+/** Whether a drop landed on the empty board — the canvas root or the transform layer — rather than on anything on it. */
+function isEmptyBoardTarget(target: EventTarget | null): boolean {
+  return target instanceof HTMLElement && (target.dataset.studioCanvasRoot === 'true' || target.dataset.testid === 'canvas-transform-layer')
 }
 
 /**

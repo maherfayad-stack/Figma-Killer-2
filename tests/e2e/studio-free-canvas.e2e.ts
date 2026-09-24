@@ -7,6 +7,7 @@ import {
   frameForPage,
   openFixtureBoard,
   removeFixtureProject,
+  zoomToPercent,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 
@@ -152,6 +153,28 @@ async function drag(page: Page, from: { x: number; y: number }, to: { x: number;
 /** An `import … from '….studio/…'` or `import('….studio/…')` — how app code could reach a layer module. */
 const IMPORTS_FROM_STUDIO_DIR = new RegExp(String.raw`(from|import)\s*\(?\s*['"][^'"]*\.studio/`)
 
+/**
+ * A client point over EMPTY board next to `frame`: tries right, below, left and
+ * above it, and keeps the first one where the canvas root itself is the hit
+ * target (so no frame, note or chrome is under it), with 60 px of room for the
+ * image. A fixed offset is not enough: where the frame sits depends on the view.
+ */
+async function emptyBoardPoint(page: Page, canvasRoot: Locator, frame: Locator): Promise<{ x: number; y: number }> {
+  const f = (await frame.boundingBox())!
+  const r = (await canvasRoot.boundingBox())!
+  const candidates = [
+    { x: f.x + f.width + 90, y: f.y + 120 },
+    { x: f.x + 120, y: f.y + f.height + 90 },
+    { x: f.x - 90, y: f.y + 120 },
+    { x: f.x + 120, y: f.y - 90 },
+  ].filter((p) => p.x > r.x + 60 && p.x < r.x + r.width - 60 && p.y > r.y + 60 && p.y < r.y + r.height - 60)
+  for (const point of candidates) {
+    const onBoard = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.getAttribute('data-testid') === 'canvas-root', point)
+    if (onBoard) return point
+  }
+  throw new Error('emptyBoardPoint: no empty board next to the frame in the current view')
+}
+
 const centre = (box: { x: number; y: number; width: number; height: number }) => ({ x: box.x + box.width / 2, y: box.y + box.height / 2 })
 
 test.describe('the free canvas', () => {
@@ -162,15 +185,14 @@ test.describe('the free canvas', () => {
 
     // ── 1. Drop an image on the empty board ────────────────────────────────
     let canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    // 50%: a 900-wide frame leaves empty board around it (Ctrl+0 opens at 100%).
+    await zoomToPercent(page, canvasRoot, 50)
     const frame = await frameForPage(page, canvasRoot, 'home')
     // Snapshot AFTER the board opened: opening scaffolds the preview shell
     // (`index.html`, `vite.config.js`, `package.json` scripts), which is
     // Studio's own doing and not this feature's.
     const appBefore = appFiles()
-    const frameBox = (await frame.boundingBox())!
-    const rootBox = (await canvasRoot.boundingBox())!
-    // Right of the frame, inside the canvas: empty board.
-    const dropPoint = { x: Math.min(frameBox.x + frameBox.width + 160, rootBox.x + rootBox.width - 80), y: frameBox.y + 120 }
+    const dropPoint = await emptyBoardPoint(page, canvasRoot, frame)
     await dropImageAt(page, dropPoint)
 
     await expect.poll(layerModules, { timeout: 60_000, message: 'no layer module was written to .studio/canvas' }).toHaveLength(1)
@@ -180,8 +202,10 @@ test.describe('the free canvas', () => {
     expect(moduleText).toMatch(new RegExp(`<img src="/[^"]+\\.png" alt="free-canvas-cat" width=\\{${IMAGE_SIZE.width}\\} height=\\{${IMAGE_SIZE.height}\\} />`))
     // The placement reaches boards.json through the board autosave.
     await expect.poll(() => placements().map((layer) => layer.id), { timeout: 30_000 }).toEqual([layerId])
-    // Placed where it was dropped: right of the 900-unit-wide frame, centred on the pointer.
-    expect(placements()[0]!.x, 'the layer was not placed where it was dropped').toBeGreaterThan(900)
+    // Placed where it was dropped — on empty board, clear of the frame (board 0..900 × 0..~630).
+    const placed = placements()[0]!
+    const clear = placed.x >= 900 || placed.x + IMAGE_SIZE.width <= 0 || placed.y >= 640 || placed.y + IMAGE_SIZE.height <= 0
+    expect(clear, `the layer was placed over the frame at ${placed.x},${placed.y}`).toBe(true)
 
     // ── 2. Not part of any page, nor of anything the app builds from ───────
     expect(readPage(), 'dropping on the empty board wrote into a page').toBe(pageBefore)
@@ -206,6 +230,7 @@ test.describe('the free canvas', () => {
     expect(naturalSize).toEqual(IMAGE_SIZE)
 
     // ── 3. Drag it into the frame ──────────────────────────────────────────
+    await zoomToPercent(page, canvasRoot, 50)
     const homeFrame = await frameForPage(page, canvasRoot, 'home')
     const content = homeFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
     const target = content.locator('.home__body')
@@ -227,9 +252,7 @@ test.describe('the free canvas', () => {
 
     // ── 4. Drag it back out onto the empty board ───────────────────────────
     const outBox = (await placedImage.boundingBox())!
-    const freshRoot = (await canvasRoot.boundingBox())!
-    const freshFrame = (await homeFrame.boundingBox())!
-    const outPoint = { x: Math.min(freshFrame.x + freshFrame.width + 200, freshRoot.x + freshRoot.width - 60), y: freshFrame.y + 160 }
+    const outPoint = await emptyBoardPoint(page, canvasRoot, homeFrame)
     await drag(page, centre(outBox), outPoint)
 
     await expect.poll(layerModules, { timeout: 60_000, message: 'the element never left the frame for the canvas' }).toHaveLength(1)
