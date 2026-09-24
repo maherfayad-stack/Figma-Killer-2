@@ -14,6 +14,7 @@
  */
 import type { Patches } from 'mutative'
 import type { BoardsFile } from '@core/studio-board'
+import type { SiblingMove } from '@core/page-tree'
 import type { StructuralSourceGesture } from '@site/studio/structuralUndoPlan'
 
 /**
@@ -123,7 +124,21 @@ export interface StructuralHistoryMove {
  */
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
+  | StructuralHistorySiblings
   | StructuralSourceHistory
+
+/**
+ * P2-C2 — a multi-selection stepped among its siblings (`moveSiblings`): a
+ * batch of INDEPENDENT single-element moves (`@core/page-tree`'s
+ * `planSiblingSteps` guarantees their regions never overlap), written in one
+ * save batch. Undo re-issues the inverse batch through the same action, so it
+ * is one write and one entry in both directions.
+ */
+export interface StructuralHistorySiblings {
+  gesture: 'siblings'
+  undo: SiblingMove[]
+  redo: SiblingMove[]
+}
 
 /**
  * `store-14` — a gesture that wrote the user's markup and mutated NO tree:

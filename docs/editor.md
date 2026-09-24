@@ -325,7 +325,7 @@ The store is composed of **12 slices**, each created by a factory in `store/slic
 | Slice                  | Owns                                                                       |
 |------------------------|----------------------------------------------------------------------------|
 | `siteSlice`            | `SiteDocument` (pages, nodes, breakpoints, settings, classes, files). The page tree itself. |
-| `selectionSlice`       | `selectedNodeId`, `hoveredNodeId`                                          |
+| `selectionSlice`       | `selectedNodeIds`, `selectedNodeId` (hover is off the store: `canvas/canvasHover.ts`) |
 | `canvasSlice`          | Zoom, pan, `activeBreakpointId`, `activeConditionId`, `canvasMode` ('select'|'pan'|'insert'), `canvasView` ('design'|'live'), `runScripts` |
 | `uiSlice`              | Site editor panel visibility, unsaved-changes flag, insert picker, `componentizeEditorRequest` |
 | `classSlice`           | Style-rule CRUD, node ↔ class assignment, ambient selector creation         |

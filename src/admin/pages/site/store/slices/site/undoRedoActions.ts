@@ -24,7 +24,7 @@ import { collectDirtyFromSitePatches, mergeDirtyMarks } from './dirtyTracking'
 import { applyNodeIndexPatch, nodeIndexesOf } from './nodeIndex'
 import { isBoardOnlyEntry, restoreBoardSnapshot } from '../boardHistory'
 import { pushToast } from '@ui/components/Toast'
-import { reissueStructuralMove, type StructuralStepOutcome } from './structuralHistory'
+import { reissueStructuralMove, reissueStructuralSiblings, type StructuralStepOutcome } from './structuralHistory'
 import { reissueStructuralSourceEdits } from './structuralSourceHistory'
 import { mintPendingCommitId, trackStructuralStackCommit } from './structuralCommitRollback'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
@@ -77,10 +77,13 @@ function runStructuralStep(
   // through a store action: its inverse is a WRITE, posted through the same
   // `/save` route the gesture used. A move re-issues `moveNodes`, whose own
   // entry (and rollback) the bookkeeping below folds into this one.
+  // P2-C2 — a sibling batch re-issues `moveSiblings`, the same way.
   const outcome: StructuralStepOutcome =
     structural.gesture === 'source'
       ? reissueStructuralSourceEdits(get, structural, direction, trackStructuralStackCommit({ get, set }, mintPendingCommitId()))
-      : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
+      : structural.gesture === 'siblings'
+        ? reissueStructuralSiblings(get, direction === 'undo' ? structural.undo : structural.redo)
+        : reissueStructuralMove(get, direction === 'undo' ? structural.undo : structural.redo)
   if (outcome.kind === 'skipped') {
     skipStructuralStep({ get, set }, entry, direction, outcome.notice)
     return

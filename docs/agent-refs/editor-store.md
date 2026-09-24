@@ -18,6 +18,13 @@ Zustand + Mutative, composed from slices. Source:
    Precompute an index in the slice instead.
 4. **Selectors must return stable references** or a primitive. Returning a fresh
    object/array literal re-renders on every store change.
+5. **Not everything the editor knows is store state.** Every `set()` runs every
+   mounted selector — ~3,600 `NodeRenderer` instances on a 40 × 300 board with
+   12 frames mounted. State that changes on every pointer move and that no
+   mutation, save or undo reads does not belong here: hover lives in
+   `canvas/canvasHover.ts` (P2-I). A per-node fact the store must own (the
+   selection) is read KEYED (`canvas/canvasNodeSelection.ts`), not with a
+   per-node selector.
 
 ---
 
@@ -53,6 +60,18 @@ shipped defects (`buildSelectorUsageMap`, `buildSlotOwners`) were exactly this.
 **Gate:** `no-full-site-scan-in-selectors.test.ts` — checks every file that
 calls `useEditorStore(` **and every module it value-imports, one hop out**,
 for a `for (const page of X.pages)` loop.
+
+**The page LIST is not the pages array (P2-I, PERF-12).** Chrome that lists
+pages (Explorer, document switcher, template picker, add-page picker, the
+live-path hook) reads `selectPageDirectory` (`slices/pageDirectory.ts`): id,
+title, slug, root id and template flag, recomputed once per `pages` change and
+handed back with the SAME identity while those facts are unchanged, so a
+keystroke re-renders none of it. `selectTemplatePages` does the same for the
+composed tree's template wrappers. That single-slot memo is fine because the
+work is O(pages) and shared by every subscriber — it is not a licence to cache
+a walk of every NODE on `site` identity (above). The same gate now also fails a
+selector that filters/maps `site.pages`, and an always-mounted file that
+subscribes to the whole array or to bare `s.site`.
 
 ---
 
@@ -114,7 +133,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMoves` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
@@ -262,7 +281,7 @@ the selected "Body" moves to line 5, `a.tsx:4:5` still resolves, and the ring,
 the inspector and the next Delete all land on the banner. `loadSite` did not
 touch held ids at all. Now `loadSite` and `patchPages` both build a follower
 (`site/reparseNodeFollow.ts`) and map `selectedNodeIds`/`selectedNodeId`,
-`hoveredNodeId`, `activeInlineEdit.nodeId` and `enteredInstanceIds` through it
+the hover (`followCanvasHover` — hover is off the store since P2-I), `activeInlineEdit.nodeId` and `enteredInstanceIds` through it
 (`followCanvasStateThroughReparse`, `lifecycleActions.ts`). The follower aligns
 each touched page's old tree against its new one by CONTENT — a deep subtree
 fingerprint, then the node's own module/tag/label/text, then position only when
@@ -367,7 +386,7 @@ multi-property gesture one property at a time turns one click into N undo
 steps. The Properties panel's single multi-property write channel is
 `onChangeMany(patch)` (`StyleSectionsEditor`). A HELD key is one gesture too:
 the canvas arrow nudge (P2-C) previews every auto-repeat through
-`setPreviewNodeStyles` and commits ONE `setNodeInlineStyles` on the keyup, so
+`setPreviewNodeStyles` (one bag per layer for a multi-selection) and commits ONE `setNodesInlineStylesPerNode` on the keyup, so
 a hold is one entry and — with `flushAutosave` — one source write
 (`canvas/useCanvasNodeArrowKeys.ts`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
@@ -387,6 +406,11 @@ back to it — on the page that OWNS the element, found through
 `deleteNodes` tags its entry as a `source` gesture whose undo is a
 `reinsert-source` write (`store-15`). Tagging happens only when a source write
 was actually issued — a CMS or Visual Component tree keeps plain patch replay.
+A multi-selection step (`stepSiblings` → `moveSiblings`, P2-C2) is tagged
+`siblings` with the whole batch of independent single-element moves; its undo
+re-issues the inverse batch through `moveSiblings` — again one write and one
+entry (`siblingStepActions.ts`; the independence rule is `@core/page-tree`'s
+`planSiblingSteps`). A batch of one is an ordinary `move` entry.
 
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a
@@ -604,5 +628,6 @@ frame clears the node selection and vice versa (mutual exclusivity), so
 - [ ] Does it need to survive a reload? If so it belongs in `.studio/` on disk
       (project data) or in editor preferences — not in transient store state.
 - [ ] Is the selector O(1)? If it walks the tree, precompute an index.
+- [ ] Does it change on every pointer move (hover-like)? Then it is not store state — see Non-negotiable 5.
 - [ ] Does a tree mutation need a history entry and a coalesce key?
 - [ ] Does a new action need to consult `isPropWritableToSource`?

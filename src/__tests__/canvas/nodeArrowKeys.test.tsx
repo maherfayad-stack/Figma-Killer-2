@@ -26,6 +26,7 @@ import {
   nudgeStylePatch,
   planNudge,
   reorderStep,
+  type ArrowParentLayout,
   type ArrowTargetStyle,
 } from '@site/canvas/canvasNodeArrowMove'
 import {
@@ -99,13 +100,29 @@ describe('which offsets a nudge writes', () => {
   })
 })
 
+function layout(overrides: Partial<ArrowParentLayout> = {}): ArrowParentLayout {
+  return { display: 'block', flexDirection: 'row', gridAutoFlow: 'row', direction: 'ltr', gridColumns: 1, gridRows: 1, ...overrides }
+}
+
 describe('which way a reorder goes', () => {
   it('moves along the axis, reversed for *-reverse, and not at all across it', () => {
-    expect(reorderStep({ axis: 'vertical', reversed: false }, { dx: 0, dy: 1 })).toBe(1)
-    expect(reorderStep({ axis: 'vertical', reversed: false }, { dx: 0, dy: -3 })).toBe(-1)
-    expect(reorderStep({ axis: 'vertical', reversed: false }, { dx: 1, dy: 0 })).toBeNull()
-    expect(reorderStep({ axis: 'horizontal', reversed: false }, { dx: 1, dy: 0 })).toBe(1)
-    expect(reorderStep({ axis: 'horizontal', reversed: true }, { dx: 1, dy: 0 })).toBe(-1)
+    expect(reorderStep(layout(), { dx: 0, dy: 1 })).toBe(1)
+    expect(reorderStep(layout(), { dx: 0, dy: -3 })).toBe(-1)
+    expect(reorderStep(layout(), { dx: 1, dy: 0 })).toBeNull()
+    expect(reorderStep(layout({ display: 'flex' }), { dx: 1, dy: 0 })).toBe(1)
+    expect(reorderStep(layout({ display: 'flex', flexDirection: 'row-reverse' }), { dx: 1, dy: 0 })).toBe(-1)
+  })
+
+  it('a grid: ←/→ step one cell, ↑/↓ a whole row of the resolved column count (P2-C2)', () => {
+    const grid = layout({ display: 'grid', gridColumns: 3, gridRows: 2 })
+    expect(reorderStep(grid, { dx: 1, dy: 0 })).toBe(1)
+    expect(reorderStep(grid, { dx: -10, dy: 0 })).toBe(-1)
+    expect(reorderStep(grid, { dx: 0, dy: 1 })).toBe(3)
+    expect(reorderStep(grid, { dx: 0, dy: -1 })).toBe(-3)
+    // Column flow swaps the axes; RTL mirrors ← / →.
+    expect(reorderStep({ ...grid, gridAutoFlow: 'column' }, { dx: 1, dy: 0 })).toBe(2)
+    expect(reorderStep({ ...grid, gridAutoFlow: 'column' }, { dx: 0, dy: 1 })).toBe(1)
+    expect(reorderStep({ ...grid, direction: 'rtl' }, { dx: 1, dy: 0 })).toBe(-1)
   })
 })
 
@@ -116,6 +133,8 @@ describe('which way a reorder goes', () => {
 const ROW = { display: 'flex', 'flex-direction': 'row', 'grid-auto-flow': 'row', direction: 'ltr' }
 const COLUMN = { display: 'block', 'flex-direction': 'row', 'grid-auto-flow': 'row', direction: 'ltr' }
 const ABSOLUTE = { position: 'absolute', direction: 'ltr', left: '100px', right: '180px', top: '40px', bottom: '60px' }
+const GRID = { display: 'grid', 'flex-direction': 'row', 'grid-auto-flow': 'row', 'grid-template-columns': '80px 80px 80px', 'grid-template-rows': '40px 40px', direction: 'ltr', position: 'static' }
+const GRID_CELLS = ['g0', 'g1', 'g2', 'g3', 'g4', 'g5']
 const STATIC = { position: 'static', direction: 'ltr', left: 'auto', right: 'auto', top: 'auto', bottom: 'auto' }
 
 /** Answers `measure` from a table — the computed style each node id has. */
@@ -132,14 +151,16 @@ function tableAdapter(table: Record<string, Record<string, string>>): FrameDocum
 
 /**
  * root (column) → [row, stage]; row (flex row) → [a, b, c];
- * stage → [abs, right] where both are absolute.
+ * stage → [abs, right] where both are absolute; grid (3 columns) → g0 … g5.
  */
 function seed(overrides: { abs?: Partial<PageNode>; right?: Partial<PageNode> } = {}) {
   const page = makePage({
     id: 'page-1',
     rootNodeId: 'root',
     nodes: {
-      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['row', 'stage'] }),
+      root: makeNode({ id: 'root', moduleId: 'base.body', children: ['row', 'stage', 'grid'] }),
+      grid: makeNode({ id: 'grid', moduleId: 'base.container', children: GRID_CELLS }),
+      ...Object.fromEntries(GRID_CELLS.map((id) => [id, makeNode({ id, moduleId: 'base.container' })])),
       row: makeNode({ id: 'row', moduleId: 'base.container', children: ['a', 'b', 'c'] }),
       a: makeNode({ id: 'a', moduleId: 'base.container' }),
       b: makeNode({ id: 'b', moduleId: 'base.container' }),
@@ -217,7 +238,10 @@ beforeEach(() => {
   document.body.appendChild(frame)
   registerFrameAdapter(
     frame,
-    tableAdapter({ root: COLUMN, row: ROW, a: STATIC, b: STATIC, c: STATIC, stage: { ...COLUMN, position: 'relative' }, abs: ABSOLUTE, right: ABSOLUTE }),
+    tableAdapter({
+      root: COLUMN, row: ROW, a: STATIC, b: STATIC, c: STATIC, stage: { ...COLUMN, position: 'relative' }, abs: ABSOLUTE, right: ABSOLUTE,
+      grid: GRID, ...Object.fromEntries(GRID_CELLS.map((id) => [id, STATIC])),
+    }),
     'desktop',
   )
   saveRequests = 0
@@ -240,7 +264,7 @@ describe('an absolute layer nudges (IX-1)', () => {
     for (let i = 0; i < 4; i++) press(document, { key: 'ArrowRight', repeat: true })
 
     // Mid-hold: the canvas shows the move, the document does not have it yet.
-    expect(useEditorStore.getState().previewNodeStyles?.styles).toEqual({ left: '105px' })
+    expect(useEditorStore.getState().previewNodeStyles?.stylesByNode).toEqual({ abs: { left: '105px' } })
     expect(node('abs').inlineStyles?.left).toBe('100px')
     expect(historyLength()).toBe(0)
     expect(saveRequests).toBe(0)
@@ -343,7 +367,100 @@ describe('a layout child reorders (IX-1)', () => {
     press(document, { key: 'ArrowDown' })
     await settle()
     release(document, 'ArrowDown')
-    expect(childOrder('root')).toEqual(['stage', 'row'])
+    expect(childOrder('root')).toEqual(['stage', 'row', 'grid'])
+  })
+})
+
+function selectMany(...ids: string[]) {
+  useEditorStore.setState({ selectedNodeId: ids.at(-1)!, selectedNodeIds: ids } as Parameters<typeof useEditorStore.setState>[0])
+}
+
+describe('a multi-selection moves as one gesture (P2-C2, OD-16)', () => {
+  it('two absolute layers nudge by the same delta: one preview per layer, ONE entry, ONE save', async () => {
+    mount()
+    selectMany('abs', 'right')
+    press(document, { key: 'ArrowRight' })
+    await settle()
+    press(document, { key: 'ArrowRight', repeat: true })
+    expect(useEditorStore.getState().previewNodeStyles?.stylesByNode).toEqual({
+      abs: { left: '102px' },
+      right: { right: '178px' },
+    })
+    expect(historyLength()).toBe(0)
+    release(document, 'ArrowRight')
+    expect(node('abs').inlineStyles?.left).toBe('102px')
+    expect(node('right').inlineStyles?.right).toBe('178px')
+    expect(historyLength()).toBe(1)
+    expect(saveRequests).toBe(1)
+    useEditorStore.getState().undo()
+    expect(node('abs').inlineStyles?.left).toBe('100px')
+    expect(node('right').inlineStyles?.right).toBe('180px')
+  })
+
+  it('a mixed selection nudges its absolute layers and leaves the flow child where its row puts it', async () => {
+    mount()
+    selectMany('abs', 'a')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    expect(node('abs').inlineStyles?.top).toBe('41px')
+    expect(childOrder('row')).toEqual(['a', 'b', 'c'])
+    expect(historyLength()).toBe(1)
+  })
+
+  it('flow siblings reorder together along their row, keeping their order', async () => {
+    mount()
+    selectMany('a', 'b')
+    press(document, { key: 'ArrowRight' })
+    await settle()
+    release(document, 'ArrowRight')
+    expect(childOrder('row')).toEqual(['c', 'a', 'b'])
+    expect(historyLength()).toBe(1)
+  })
+
+  it('a layer inside a selected layer rides with it — nothing moves twice', async () => {
+    mount()
+    selectMany('row', 'b')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    expect(childOrder('root')).toEqual(['stage', 'row', 'grid'])
+    expect(childOrder('row')).toEqual(['a', 'b', 'c'])
+  })
+
+  it('⌥↓ steps the whole selection one place in its order', async () => {
+    mount()
+    selectMany('a', 'b')
+    press(document, { key: 'ArrowDown', altKey: true })
+    await settle()
+    expect(childOrder('row')).toEqual(['c', 'a', 'b'])
+  })
+})
+
+describe('a grid item moves a whole row on ↑ / ↓ (P2-C2)', () => {
+  it('↓ moves it by the resolved column count; ← / → still step one cell', async () => {
+    mount()
+    select('g1')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    expect(childOrder('grid')).toEqual(['g0', 'g2', 'g3', 'g4', 'g1', 'g5'])
+
+    press(document, { key: 'ArrowRight' })
+    await settle()
+    release(document, 'ArrowRight')
+    expect(childOrder('grid')).toEqual(['g0', 'g2', 'g3', 'g4', 'g5', 'g1'])
+    expect(historyLength()).toBe(2)
+  })
+
+  it('↓ on the last row does not move it', async () => {
+    mount()
+    select('g4')
+    press(document, { key: 'ArrowDown' })
+    await settle()
+    release(document, 'ArrowDown')
+    expect(childOrder('grid')).toEqual(GRID_CELLS)
+    expect(historyLength()).toBe(0)
   })
 })
 

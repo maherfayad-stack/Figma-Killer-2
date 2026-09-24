@@ -9,12 +9,12 @@ The product calls the owner has made, in one place, newest first. A decision rec
 
 - **The standing authorization holds** (2026-07-31, re-confirmed 2026-09-23): agents finish their bundle without stopping to ask, inside fixed limits (no push to `main`, draft PRs, no merges, security review where the plan says so).
 - **Every project is Tier 2 (`run-project`) by default** (2026-09-20). How the tiers work: [`docs/features/trust-tiers.md`](features/trust-tiers.md).
-- **The canvas excellence program's fifteen decisions** (OD-1…OD-15, OD-FC-1/2) are below; `ROADMAP.md` bundles cite them by id.
+- **The canvas excellence program's sixteen decisions** (OD-1…OD-16, OD-FC-1/2) are below; `ROADMAP.md` bundles cite them by id.
 - Older decision sets are kept with their original ids (FEEL §6.n, BUILTIN §0.n, NEXT-WS Dn) because code comments and archived plans cite those ids. A superseded row says what replaced it.
 
 | Id | Date | Topic |
 |---|---|---|
-| OD-1 … OD-15, OD-FC-1/2 | 2026-09-23 (OD-15: 2026-09-24) | The canvas excellence program ([below](#the-canvas-excellence-program-2026-09-23)) |
+| OD-1 … OD-16, OD-FC-1/2 | 2026-09-23 (OD-15, OD-16: 2026-09-24) | The canvas excellence program ([below](#the-canvas-excellence-program-2026-09-23)) |
 | Standing authorization | 2026-07-31, re-confirmed 2026-09-23 | [below](#the-standing-authorization) |
 | Trust default | 2026-09-20 | [below](#every-project-starts-at-tier-2-2026-09-20) |
 | FEEL §6.1 … §6.7 | 2026-09-17 | Figma-feel plan ([below](#figma-feel-plan-decisions-2026-09-17)) |
@@ -48,6 +48,7 @@ Source: [`ROADMAP.md`](../ROADMAP.md) §2, answered by the owner on 2026-09-23. 
 | OD-FC-1 | Loose layers do not sync through git, the same as `boards.json` | recommendation |
 | OD-FC-2 | Loose layers paint below frames and lift above them while dragged | recommendation |
 | OD-15 | Arrows after a **Layers** pick: a pointer click on a Layers row hands the keyboard to the canvas, so the arrows nudge / reorder the layer (P2-C's `canvas.moveSelection`) and every canvas shortcut acts on it; keyboard entry into the tree (Tab) keeps ↑/↓ as row navigation; text fields keep their caret | **owner:** 2026-09-24, "like Figma" |
+| OD-16 | **Bulk actions on a multi-selection.** The owner, answering P2-C's "multi-select nudge / reorder do nothing": *"it should allow bulk actions yes also"*. Every canvas action that makes sense on many layers acts on the whole selection as ONE gesture and ONE undo entry: arrows nudge every absolute layer by one delta and step flow children along their own parents (a mixed selection nudges its absolute layers and leaves flow children put); ⌥↑/⌥↓ and ⌘[/⌘] step the whole selection; ↑/↓ on a grid child move one row (the resolved column count). A step the source cannot write as independent single-element moves (a grid-row step of 2+ layers, one moving layer inside another's path) refuses by name. Multi-select drag, paste and wrap stay with P3-D | **owner:** 2026-09-24 |
 
 ## The standing authorization
 

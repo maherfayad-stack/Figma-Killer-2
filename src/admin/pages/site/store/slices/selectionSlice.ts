@@ -5,6 +5,7 @@ import type { BaseNode } from '@core/page-tree'
 import type { NodeTree } from '@core/page-tree'
 import type { PageNode } from '@core/page-tree'
 import { flattenSubtree, getParent } from '@core/page-tree'
+import { clearCanvasHover, getCanvasHover } from '@site/canvas/canvasHover'
 import { filterMultiSelectableIds, getActiveTree, resolveSelectableNode } from './selectionResolve'
 import { createSelectionTraversalActions } from './selectionTraversalActions'
 
@@ -50,24 +51,14 @@ interface SelectionSlice {
    * by `NodeRenderer.tsx`/`BreakpointSelectionOverlay.tsx` so selecting a
    * node in one variant frame does not also ring it in a sibling frame of
    * the same page (trap #2 — the two frames legitimately share the node id).
-   * One value for the whole multi-selection, mirroring `hoveredBreakpointId`'s
-   * "single origin" shape — multi-select happens within one frame.
+   * One value for the whole multi-selection — multi-select happens within one
+   * frame.
+   *
+   * Hover is NOT in this slice: it lives in `canvas/canvasHover.ts` (P2-I,
+   * PERF-1). Every store `set()` sweeps every mounted per-node selector, and
+   * hover is the most frequent event the editor has.
    */
   selectedNodeFrameId: string | null
-  /** Hovered node ID — null if no hover */
-  hoveredNodeId: string | null
-  /** Breakpoint frame that owns the current canvas hover; null means global hover */
-  hoveredBreakpointId: string | null
-  /**
-   * WS-10 Phase 2 — the `BoardFrame.id` that owns the current canvas hover;
-   * `null` means global (every CMS/VC frame, and every board frame before
-   * "duplicate as variant" ever produces a second frame of the same page).
-   * A SEPARATE dimension from `hoveredBreakpointId` — every board frame
-   * shares the synthetic `'studio'` breakpoint id (CSS write-back needs that
-   * literal), so breakpoint-scoping alone can't tell two variant frames of
-   * the same page apart. See `CanvasFrameContext`'s doc.
-   */
-  hoveredFrameId: string | null
 
   /**
    * instance-ui-01 — Figma's nesting model for `studio.instance` fragment
@@ -106,7 +97,7 @@ interface SelectionSlice {
   addToSelection: (id: string) => void
   /** Remove a node from the selection set (no-op if absent). */
   removeFromSelection: (id: string) => void
-  hoverNode: (id: string | null, breakpointId?: string | null, frameId?: string | null) => void
+  /** Drops the selection, the hover, the active class and every entered instance. */
   clearSelection: () => void
 
   /**
@@ -175,9 +166,6 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
   selectedNodeIds: [],
   selectedNodeId: null,
   selectedNodeFrameId: null,
-  hoveredNodeId: null,
-  hoveredBreakpointId: null,
-  hoveredFrameId: null,
   enteredInstanceIds: [],
 
   selectNode: (id, mode = 'replace', options) => {
@@ -267,37 +255,18 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     applySelection(set, current, next)
   },
 
-  // `speed-03` — a bridge frame's coalesced `move` still fires once per
-  // animation frame while the pointer sits over the SAME node (its rect can
-  // legitimately keep changing under a pan without the hover target moving),
-  // and a portal frame's native pointermove is uncoalesced entirely. An
-  // unconditional `set()` here fanned that straight out to every mounted
-  // selector (overlays × frames, panel sections, layer rows) — read current
-  // state first and no-op when nothing this slice owns actually changed.
-  hoverNode: (id, breakpointId = null, frameId = null) => {
-    const current = get()
-    const nextBreakpointId = id ? breakpointId : null
-    const nextFrameId = id ? frameId : null
-    if (current.hoveredNodeId === id && current.hoveredBreakpointId === nextBreakpointId && current.hoveredFrameId === nextFrameId) return
+  clearSelection: () => {
+    clearCanvasHover()
     set({
-      hoveredNodeId: id,
-      hoveredBreakpointId: nextBreakpointId,
-      hoveredFrameId: nextFrameId,
+      selectedNodeIds: [],
+      selectedNodeId: null,
+      selectedNodeFrameId: null,
+      activeClassId: null,
+      inlineStyleEditing: false,
+      componentizeEditorRequest: null,
+      enteredInstanceIds: [],
     })
   },
-
-  clearSelection: () => set({
-    selectedNodeIds: [],
-    selectedNodeId: null,
-    selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
-    activeClassId: null,
-    inlineStyleEditing: false,
-    componentizeEditorRequest: null,
-    enteredInstanceIds: [],
-  }),
 
   enterInstance: (nodeId) => {
     const state = get()
@@ -328,7 +297,7 @@ export const createSelectionSlice: EditorStoreSliceCreator<SelectionSlice> = (se
     if (state.enteredInstanceIds.includes(selectedId)) return false
 
     const { node, tree } = resolved
-    const hovered = state.hoveredNodeId
+    const hovered = getCanvasHover()?.nodeId ?? null
     const target =
       hovered && hovered !== selectedId && isDescendantInTree(tree, selectedId, hovered)
         ? hovered
@@ -365,9 +334,9 @@ export function clearCanvasSelectionDraft(state: EditorStore): void {
   state.selectedNodeIds = []
   state.selectedNodeId = null
   state.selectedNodeFrameId = null
-  state.hoveredNodeId = null
-  state.hoveredBreakpointId = null
-  state.hoveredFrameId = null
+  // Hover lives off the store (`canvasHover.ts`). Clearing it from inside a
+  // recipe is safe: its listeners only schedule React updates.
+  clearCanvasHover()
   state.activeClassId = null
   // A document/page switch invalidates any inline text-edit session — the
   // node it points at is no longer on the canvas. Live keystrokes already
@@ -416,9 +385,7 @@ export function pruneCanvasSelectionDraft(state: EditorStore): void {
   state.selectedNodeId = surviving.length > 0 ? surviving[surviving.length - 1] : null
   if (surviving.length === 0) {
     state.selectedNodeFrameId = null
-    state.hoveredNodeId = null
-    state.hoveredBreakpointId = null
-    state.hoveredFrameId = null
+    clearCanvasHover()
     state.activeClassId = null
   }
 }

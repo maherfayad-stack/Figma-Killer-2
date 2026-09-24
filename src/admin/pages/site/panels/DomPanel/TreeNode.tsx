@@ -11,11 +11,13 @@
  * root, class names, VC names, prefs, drop state) as a prop. What is left here
  * is the one fact that is genuinely per-row and changes independently:
  *
- *     const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
+ *     const isHovered = useIsNodeHovered(nodeId)
  *
- * Everything else reaches the store through `getState()` inside an event
- * handler, which costs no subscription at all (the pattern `BoardFrameView`
- * adopted in `perf-02`).
+ * — a KEYED read of `canvas/canvasHover.ts`, not a store subscription (P2-I):
+ * a crossing wakes exactly the two rows involved, and no row pays anything on
+ * an unrelated store change. Everything else reaches the store through
+ * `getState()` inside an event handler, which costs no subscription at all
+ * (the pattern `BoardFrameView` adopted in `perf-02`).
  *
  * Drag-and-drop:
  * - Each row is a @dnd-kit draggable item with DOMPanel-owned targets.
@@ -36,6 +38,7 @@
 import { memo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
+import { setCanvasHover, useIsNodeHovered } from '@site/canvas/canvasHover'
 import type { PageNode } from '@core/page-tree'
 import { useDraggable } from '@dnd-kit/core'
 import { useExpansionStore } from './DomTreeContext'
@@ -127,10 +130,10 @@ export const TreeNode = memo(function TreeNode({
 }: TreeNodeProps) {
   const nodeId = node.id
 
-  // The ONLY per-row store subscription. Hover flips on every pointer move
-  // across the tree and affects exactly two rows, so it stays per-row rather
+  // The ONLY per-row reactive read. Hover flips on every pointer move across
+  // the tree and affects exactly two rows, so it stays per-row (keyed) rather
   // than becoming a prop that would re-render the whole mounted window.
-  const isHovered = useEditorStore((s) => s.hoveredNodeId === nodeId)
+  const isHovered = useIsNodeHovered(nodeId)
 
   // Delete confirmation — gated by `confirmBeforeDelete` preference. The
   // hook returns a function that either runs `commit` immediately (pref off)
@@ -395,8 +398,8 @@ export const TreeNode = memo(function TreeNode({
           }
           setContextMenu({ x: e.clientX, y: e.clientY })
         }}
-        onMouseEnter={() => useEditorStore.getState().hoverNode(nodeId)}
-        onMouseLeave={() => useEditorStore.getState().hoverNode(null)}
+        onMouseEnter={() => setCanvasHover(nodeId)}
+        onMouseLeave={() => setCanvasHover(null)}
       >
         <LayerTreeNodeContent
           moduleId={node.moduleId}

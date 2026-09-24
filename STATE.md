@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
-- **Next:** Phase 2 is merged except P2-I (running; owes the cold-click A/B). Also running: P2-C2 bulk actions (OD-16). Merged since the exit gate: P2-F #234, P2-A #235, P2-G #236, P2-D #237, P2-B #238, P2-H #239, P2-C #242, P2-E #243 (+ OD-15); P3-B #240, P3-A #244; P4-C #233, P4-D #241. Then P4-E, P3-C/D/E/F, P0-I. Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
+- **Next:** Phase 2 is merged (P2-I #245: hover worst frame 169–183 → 21–33 ms, warm click → ring 292–440 → 78–85 ms; cold-click A/B showed no P2-A regression). Phase 2 exit gate: budgets pass; the owner dogfoods P2-F spacing and the P2-B/C/D/E gestures on `test4`. Running: P2-C2 bulk actions (OD-16), P3-C. Merged since the exit gate: P2-F #234, P2-A #235, P2-G #236, P2-D #237, P2-B #238, P2-H #239, P2-C #242, P2-E #243 (+ OD-15); P3-B #240, P3-A #244; P4-C #233, P4-D #241. Then P4-E, P3-C/D/E/F, P0-I. Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -78,6 +78,51 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Found, not fixed:** Storybook args-only story args still have no origin: the save side is ready now, but `storyDiscovery` keeps no literal positions. ERR-14's "→ file · change" chip affordance and per-project `.studio/` memory are not built (the tooltip names the chosen file and the alternatives).
 - **Next:** PR 2 — WB-16, WB-17, WB-18, WB-19, WB-30, WB-31, OD-8.
 
+### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
+- **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `01f3d9c2` merged in) · **PR:** #245 (draft, base `feat/canvas-excellence`; full tables in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:**
+  - Hover is off the editor store: `canvas/canvasHover.ts` (keyed + per-frame reads). `hoverNode`/`hovered*` are gone; store actions call `clearCanvasHover`/`followCanvasHover`. The dead `isHovered`/`data-hovered` is deleted.
+  - Selection is a keyed read in `NodeRenderer` (`canvas/canvasNodeSelection.ts`, one store listener). Both `useShallow` selectors are primitives; actions/session constants read via `getState()`. Budget 11 → 7, and `useShallow` is banned there.
+  - **Found by measuring:** `CanvasSelectionContext` got a new value on every `CanvasRoot` render, so every click re-rendered all ~2,800 mounted `NodeRenderer`s. `useCanvasNodeInteraction` now returns a once-created facade over a ref.
+  - PERF-12: `selectPageDirectory`/`selectTemplatePages` (`store/slices/pageDirectory.ts`). Nine always-mounted readers narrowed. The gate now also fails bare `s.site` in layouts/hooks/Explorer, whole `site.pages` in chrome, and `.pages.filter/map` in any selector.
+  - PERF-5: posters are captured only while a frame is off screen and pooled (`framePosterNeeded`). The busy listeners run in every frame document (portal DOM; bridge adapter events). Each capture records a `studio:poster-capture` measure.
+- **Numbers (dev build, 40 × 300 corpus):** hover worst frame 169–183 → 21–30 ms · Layers hover 111–125 → 20–26 ms · warm click → ring 292–440 → 78–85 ms · post-edit pause worst frame 1,140 → 19 ms · sweep medians: hover 8–16 → 0.000 ms, selectNode ~21 → 5–10, keystroke ~23 → 6–12, pan commit ~16 → 2–5.
+- **Cold-click A/B (10 each, interleaved, quiet box):** means `53c2746f` 162.5 · `ecfa57d6` 167.1 / 162.6 · branch 158.0 / 159.2 ms. P2-A caused no regression; the old 432 → 485 was load.
+- **Landmines:**
+  - Diagnostics that mutate a global during render make the React Compiler bail out of that component, which fakes an unstable context. Count renders from a `useLayoutEffect`.
+  - PERF-14: stubbing out the Properties AND Layers panels left click → ring at 315–330 ms. The inspector is not on that path, so no deferral was added.
+  - A capture of a 310-element frame is 880–1,160 ms (`getFontEmbedCSS` ~0 ms, so font caching buys nothing). An evicted frame whose poster is stale shows the plain title card.
+  - `studio-board-perf` "virtualization bounds live iframes" fails on trunk too (live + fallback iframes: 16 ≥ 12 frames). Pre-existing.
+- **Next:** the orchestrator merges. Found-not-fixed items are in the PR body.
+- **Human action needed:** dogfood on a large board (40 frames, 25–40% zoom):
+  1. Sweep the pointer across a frame: the hover ring tracks with no stutter.
+  2. Click element after element: each ring appears at once and the inspector follows.
+  3. Edit a text in the inspector, pause 2 s, then click: no hitch.
+  4. Pan an edited frame off screen and back: it comes back as a picture, then live.
+
+### canvas-27 — P2-C2: bulk actions on a multi-selection (OD-16)
+- **Agent:** canvas-engineer · **Branch:** `feat/bulk-actions-on-multi-selection` off `bee865f1` (trunk `01f3d9c2` merged in) · **PR:** #246 (draft), base `feat/canvas-excellence` (long form + the per-action audit table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** arrows, ⌥↑/⌥↓, ⌘[/⌘] and the palette's Move up/down act on the WHOLE selection, one undo entry + one source write per gesture.
+  - Nudge: every absolute layer moves by one delta from its own authored offsets (per-layer preview bag `NodeStylesPreview.stylesByNode`, one `setNodesInlineStylesPerNode` on keyup). Mixed selection: absolute members nudge, flow members stay put.
+  - Reorder: `@core/page-tree`'s new `planSiblingSteps` reduces a step to INDEPENDENT single-element moves (a run's neighbour jumps over it; a single layer moves itself); new store actions `stepSiblings`/`moveSiblings` (`siblingStepActions.ts`) write them as ONE `/save` batch (`commitStudioMove` → `commitStudioMoves`) and tag ONE `gesture: 'siblings'` entry whose undo is the inverse batch. Each parent steps along its own axis. Refused by name: a grid-row step of 2+ layers, a nested pair, a locked member.
+  - Grid: ↑/↓ move a child one row (resolved `grid-template-columns` count), ←/→ one cell; past the last row nothing moves.
+  - Audit: delete, duplicate, copy/cut, hide, lock, group, style edits and align-self were already bulk (table in the PR). Ungroup and copy-as-PNG stay anchor-only (reasons in the PR).
+- **Files touched:** `core/page-tree/{siblingSteps (new), index}`; `store/slices/site/{siblingStepActions (new), nodeActions, types, historyTypes, historyNodeIdRemap, structuralHistory, undoRedoActions}`, `store/slices/styleRule/{types, uiStateActions}`; `studio/studioStructuralCommits`; `canvas/{canvasNodeArrowMove, useCanvasNodeArrowKeys, useCanvasNodeShortcuts, canvasNodeInlineStyle}`; `spotlight/{keybindings (OD-3 rows), commands/layers}`. None of P2-I's files (NodeRenderer untouched: the per-node preview rides its existing selector).
+- **Tests:** `siblingSteps.test.ts` (11), `siblingStepsBatch.test.ts` (4: one request each way, never half), `nodeArrowKeys.test.tsx` (+8). Each shown failing with its fix disabled in place. e2e `node-arrow-keys.e2e.ts` 8/8 (ports 50374/30302): two absolute layers held → = one save + one ⌘Z; A and C step → in ONE `/save` batch (and one undo batch); grid ↓ = one row.
+- **Landmines:**
+  - **Events × history:** a batch of 2+ moves is `gesture: 'siblings'`; a batch of one is still a plain `move` entry (`moveSiblings` delegates). Undo of a partially refused batch replays the whole inverse — the same pre-existing hazard a multi-delete has.
+  - **Injectors:** none. **Height:** none.
+  - The batch is honest only because regions are disjoint AND applied bottom-to-top by the server (`orderStudioEditsForApply`). Anything that reorders a batch client-side, or adds a non-move edit to it, breaks that.
+- **Next:** P3-D can reuse `planSiblingSteps`/`moveSiblings` for multi-select drag; multi-ungroup needs a per-container undo template.
+- **Human action needed:** dogfood on `test4`, `/admin/site`, static tier, SMS frame, 100%:
+  1. Click the SheetHeader, press ⇧Enter (its absolute `.header` wrapper is selected), then ⇧-click empty space in the content banner. Hold ↓ three times: both slide together; release → ONE save; both `<div>`s gain a `top` style; ⌘Z once restores both.
+  2. Click the 2nd code input, ⇧-click the 4th, press →: they become 3rd and 5th in `SMS.tsx` in one save; ⌘Z once puts both back.
+  3. Select the 2nd and 3rd code inputs, press ⌥↓ (or ⌘]): both move one place right together.
+  4. Select a code input and the banner (mixed), press ↓: the banner moves, the input stays.
+  5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -120,6 +165,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry in the archive
 - `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry in the archive
 - `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry in the archive
+- `canvas-27` · `/admin/site` on `test4`, SMS · two absolute layers nudge together (one save, one ⌘Z), two code inputs step together, ⌥↓ on a pair, a mixed selection nudges only the absolute one. Script: the `canvas-27` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row

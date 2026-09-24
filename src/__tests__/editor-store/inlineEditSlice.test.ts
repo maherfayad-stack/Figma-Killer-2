@@ -44,7 +44,6 @@ beforeEach(() => {
     canRedo: false,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     hasUnsavedChanges: false,
   })
 })

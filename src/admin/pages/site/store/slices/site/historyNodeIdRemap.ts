@@ -146,12 +146,16 @@ function remapStructural(
     }
     return { gesture: 'source', source: { ...source, forward, inverse, inverseTemplate } }
   }
-  if (structural.gesture !== 'move') return structural
-  const step = (s: { nodeId: string; parentId: string; index: number }) => ({
+  const step = <T extends { nodeId: string; parentId: string }>(s: T): T => ({
     ...s,
     nodeId: remap.get(s.nodeId) ?? s.nodeId,
     parentId: remap.get(s.parentId) ?? s.parentId,
   })
+  // P2-C2 — a sibling batch names one element and one parent per move, the
+  // same two ids a single move does.
+  if (structural.gesture === 'siblings') {
+    return { ...structural, undo: structural.undo.map(step), redo: structural.redo.map(step) }
+  }
   return { ...structural, undo: step(structural.undo), redo: step(structural.redo) }
 }
 

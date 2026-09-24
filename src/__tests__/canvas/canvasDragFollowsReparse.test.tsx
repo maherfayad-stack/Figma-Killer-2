@@ -101,7 +101,6 @@ beforeEach(() => {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeInlineEdit: null,
     enteredInstanceIds: [],
     _historyPast: [],

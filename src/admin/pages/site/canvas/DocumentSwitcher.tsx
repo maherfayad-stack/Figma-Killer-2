@@ -13,7 +13,7 @@
 
 import { type CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
-import { isTemplatePage } from '@core/templates'
+import { selectPageDirectory } from '@site/store/slices/pageDirectory'
 import { Select } from '@ui/components/Select'
 import { measureToolbarValueWidth } from './measureToolbarText'
 import styles from './DocumentSwitcher.module.css'
@@ -29,7 +29,7 @@ interface DocumentSwitcherCurrent {
  * reference each time, which both churns derived work and trips the
  * Zustand-stability gate; this module-level constant keeps the identity stable.
  */
-const EMPTY_PAGES: never[] = []
+const EMPTY_COMPONENTS: never[] = []
 
 /** Cap the trigger width (px) so a long document title can't blow out the toolbar. */
 const MAX_SWITCHER_PX = 180
@@ -37,7 +37,8 @@ const MAX_SWITCHER_PX = 180
 const CHEVRON_ALLOWANCE_PX = 20
 
 export function DocumentSwitcher({ current }: { current: DocumentSwitcherCurrent }) {
-  const pages = useEditorStore((s) => s.site?.pages ?? null)
+  // The page LIST, not `site.pages` (replaced on every edit — P2-I, PERF-12).
+  const pages = useEditorStore(selectPageDirectory)
   const components = useEditorStore((s) => s.site?.visualComponents ?? null)
   const openPageInCanvas = useEditorStore((s) => s.openPageInCanvas)
   const setActiveDocument = useEditorStore((s) => s.setActiveDocument)
@@ -45,9 +46,9 @@ export function DocumentSwitcher({ current }: { current: DocumentSwitcherCurrent
   const isCurrentPage = (id: string) => current.kind === 'page' && current.id === id
   const isCurrentVc = (id: string) => current.kind === 'component' && current.id === id
 
-  const regularPages = (pages ?? EMPTY_PAGES).filter((p) => !isTemplatePage(p) && !isCurrentPage(p.id))
-  const templates = (pages ?? EMPTY_PAGES).filter((p) => isTemplatePage(p) && !isCurrentPage(p.id))
-  const vcs = (components ?? EMPTY_PAGES).filter((c) => !isCurrentVc(c.id))
+  const regularPages = pages.filter((p) => !p.isTemplate && !isCurrentPage(p.id))
+  const templates = pages.filter((p) => p.isTemplate && !isCurrentPage(p.id))
+  const vcs = (components ?? EMPTY_COMPONENTS).filter((c) => !isCurrentVc(c.id))
 
   function handleChange(rawValue: string) {
     const sep = rawValue.indexOf(':')

@@ -35,19 +35,20 @@
  *
  * The only part of `site` this component needs is the TEMPLATE-marked pages
  * (`isTemplatePage`) — ordinary content pages never participate in template
- * matching or wrapper-chrome rendering. `templatePages` below is selected with
- * `useShallow`, so its identity survives an edit to any non-template page
+ * matching or wrapper-chrome rendering. `templatePages` below is
+ * `selectTemplatePages` — one filter per `pages` change shared by every mounted
+ * frame, not a filter plus a fresh array per frame per store `set()` (P2-I,
+ * PERF-12) — and its identity survives an edit to any non-template page
  * (the overwhelming majority): only editing an actual template's own content,
  * toggling a page's template config, or adding/removing a page changes it.
  * `styleRules` was already narrowly selected.
  */
 
 import { use, useEffect, type ReactNode } from 'react'
-import { useShallow } from 'zustand/react/shallow'
 import type { BaseNode, Page } from '@core/page-tree'
 import { classNamesForClassIds } from '@core/page-tree'
-import { isTemplatePage } from '@core/templates'
 import { useEditorStore } from '@site/store/store'
+import { selectTemplatePages } from '@site/store/slices/pageDirectory'
 import { ReadOnlyNodeTree } from '@modules/base/utils/ReadOnlyNodeTree'
 import { htmlAttributesForReact } from '@modules/base/shared/htmlAttributes'
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
@@ -58,8 +59,6 @@ import { isPortalFrameAdapter } from './frameAdapter/PortalFrameAdapter'
 import { applyIframeBodyPresentation } from './iframeBodyPresentation'
 
 const NO_WRAPPERS: Page[] = []
-/** Stable empty fallback for the template-pages selector (Guideline #239). */
-const EMPTY_TEMPLATE_PAGES: Page[] = []
 
 interface CanvasComposedTreeProps {
   /** The active document being edited (the editable page / template). */
@@ -69,9 +68,7 @@ interface CanvasComposedTreeProps {
 export function CanvasComposedTree({ page }: CanvasComposedTreeProps) {
   const isVcMode = useEditorStore((s) => s.activeDocument?.kind === 'visualComponent')
   const styleRules = useEditorStore((s) => s.site?.styleRules ?? null)
-  const templatePages = useEditorStore(
-    useShallow((s) => s.site?.pages.filter(isTemplatePage) ?? EMPTY_TEMPLATE_PAGES),
-  )
+  const templatePages = useEditorStore(selectTemplatePages)
   const templateContext = use(CanvasTemplateContext)
 
   // Templates wrapping the active document (outermost-first). A Visual

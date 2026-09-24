@@ -315,10 +315,11 @@ dimension, not by touching the id grammar:
   (The three contexts a MOUNTED frame publishes — its `<iframe>`, its
   `Document`, and its effective `PreviewAxes` — are provided together by
   `CanvasFrameContexts.tsx`, not inline in `IframeFrameSurface`.)
-- `selectedNodeFrameId`/`hoveredFrameId` (`selectionSlice.ts`) — the frame a
-  selection/hover currently belongs to. `null` means "board-wide" (used
-  outside Studio board mode, where frame identity doesn't exist).
-- `BreakpointSelectionOverlay.tsx` reads `selectedNodeIds`/`hoveredNodeId`
+- `selectedNodeFrameId` (`selectionSlice.ts`) and `canvasHover.ts`'s
+  `frameId` — the frame a selection/hover currently belongs to. `null` means
+  "board-wide" (used outside Studio board mode, where frame identity doesn't
+  exist).
+- `BreakpointSelectionOverlay.tsx` reads the selection and the hover
   scoped to ITS `frameId` — a node selected in a different frame renders as
   if nothing were selected in this one, even though the DOM element with
   that same `data-node-id` exists here too.
@@ -825,14 +826,27 @@ The rules the ladder replaced prose with:
   (notes AND frames) nudges the notes, because `annotation` outranks `board`.
   Sibling selection went to Tab / ⇧Tab, not the arrows.
 - **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
-  offsets 1 px / ⇧ 10 px; any other layer reorders one place along its
-  parent's axis (`reorderStep`: reversed for `*-reverse` and an RTL row; a
-  cross-axis arrow does nothing) through `moveNode`. The decision needs ONE
-  layout read — `measureArrowTarget` asks the frame adapters for the node and
-  its ancestor chain in one `measure`, so a live frame answers it too. Rules in
-  `canvas/canvasNodeArrowMove.ts`, the gesture in `useCanvasNodeArrowKeys.ts`.
-  Canvas-scoped like Tab (`isCanvasKeyboardSurface`): in a panel the arrows
-  stay the panel's. Single selection only.
+  offsets 1 px / ⇧ 10 px; any other layer reorders along its parent's axis
+  (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
+  does nothing; in a GRID ↑ / ↓ move a whole row — the resolved
+  `grid-template-columns` count — and ← / → one cell, P2-C2). The decision
+  needs ONE layout read — `measureArrowTargets` asks the frame adapters for
+  every selected layer and its ancestor chain in one `measure`, so a live
+  frame answers it too. Rules in `canvas/canvasNodeArrowMove.ts`, the gesture
+  in `useCanvasNodeArrowKeys.ts`. Canvas-scoped like Tab
+  (`isCanvasKeyboardSurface`): in a panel the arrows stay the panel's.
+- **A multi-selection moves as one gesture (P2-C2, OD-16).** Any positioned
+  member → every positioned member nudges by the same delta (one preview bag
+  per layer, `NodeStylesPreview.stylesByNode`; one
+  `setNodesInlineStylesPerNode` on release); the flow members of a MIXED
+  selection stay put. All flow → `stepSiblings`: `@core/page-tree`'s
+  `planSiblingSteps` turns the step into INDEPENDENT single-element moves (a
+  run of 2+ is its one neighbour jumping over it; a single layer moves
+  itself), written as ONE `/save` batch (`commitStudioMoves`, applied
+  bottom-to-top) and ONE history entry (`gesture: 'siblings'`, undone by
+  the inverse batch through `moveSiblings`). A grid-row step of 2+ layers
+  and a nested pair are not independent and refuse by name. ⌥↑ / ⌥↓, ⌘[ /
+  ⌘] and the palette's Move up / down share `stepSelectionAmongSiblings`.
 - **A pointer pick in Layers hands the keyboard to the canvas (OD-15).** A
   click on a Layers row (`event.detail > 0`) calls `returnKeyboardToCanvas`
   (`canvas/canvasKeyboardFocus.ts`), which focuses the canvas root exactly as
@@ -847,7 +861,7 @@ The rules the ladder replaced prose with:
 - **A held arrow is one undo entry and one source write.** A nudge previews
   every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
   + the optimistic style broadcast for live frames), then writes ONE
-  `setNodeInlineStyles` on the arrow's keyup (the dispatcher's release
+  inline-style transaction on the arrow's keyup (the dispatcher's release
   broadcast — P2-B routes frame keyups there) and flushes the autosave. A
   focus loss (`handleKeyUp(null)`) commits where the preview was. A reorder is
   one step per PRESS: the repeats are claimed and dropped, because a
@@ -1190,6 +1204,49 @@ a component in a live frame selected the element inside it.
 | A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
 | Frames mount all iframes once the doc is in the store | `CanvasTransformLayer.tsx` | virtualize iframe mounting; frozen poster for offscreen frames |
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |
+| Every store `set()` runs every mounted `NodeRenderer`'s selectors; hover was a `set()` per crossing | `NodeRenderer.tsx`, `selectionSlice.ts` | **fixed (P2-I)** — hover is off the store, selection is a keyed read, see "Per-node reads" below |
+| A poster rasterized under the user after every edit | `useFramePosterCapture.ts` | **fixed (P2-I)** — refresh only once the frame leaves the screen; the busy listeners run in every frame |
+
+### Per-node reads (P2-I) — what a `NodeRenderer` may subscribe to
+
+`NodeRenderer` is mounted once per node per mounted frame (40 × 300 × 12 is
+~3,600 instances), and Zustand runs every subscribed selector on every
+`set()`. So each `useEditorStore(...)` in it is paid ~3,600 times per
+keystroke, click and pan commit. The rules, gated by
+`per-node-selector-budget.test.ts` (budget 7, no `useShallow`) and timed by
+`bench:editor-store`'s subscriber sweep:
+
+- **Hover is not store state.** `canvas/canvasHover.ts` holds it: keyed
+  listeners (`useIsNodeHovered`, a Layers row) wake only the two ids a
+  crossing involves; per-FRAME consumers (`useBreakpointOverlaySelectionState`,
+  the tree ladder) use `useCanvasHoverSelect` with a primitive result. Store
+  actions that drop the selection (`clearCanvasSelectionDraft`, a reparse's
+  follow, arming Play) call `clearCanvasHover`/`followCanvasHover`.
+  `NodeRenderer` never reads hover — the ring is the overlay's.
+- **Selection is a keyed read.** `useIsNodeSelected` (`canvasNodeSelection.ts`)
+  — one store listener diffs old vs new `selectedNodeIds`/`selectedNodeFrameId`
+  and wakes only the ids whose answer changed.
+- **Every selector returns a primitive or an existing reference.** No
+  object literals; values constant for a session (`activeInlineEdit`'s
+  `initialValue`/`multiline`) and store actions are read through `getState()`
+  where they are used.
+
+- **The `CanvasSelectionContext` value never changes identity.** Every
+  `NodeRenderer` consumes it, and `CanvasRoot` re-renders on every selection.
+  `useCanvasNodeInteraction` returns a facade created once that calls the
+  latest handlers through a ref. Before P2-I the object was rebuilt per render
+  (the React Compiler cannot keep closures over changing options stable), so
+  EVERY click re-rendered all ~2,800 mounted nodes. A new context read in
+  `NodeRenderer` has to meet the same bar.
+
+Measured (40 × 300 × 12, medians): a hover crossing 8–16 ms → 0.000 ms of
+store work; `selectNode` ~21 → 6–10 ms; a keystroke ~23 → 7–12 ms; a pan
+commit ~16 → 4.7 ms. In a browser (`canvas-feel-budgets.e2e.ts`, dev build):
+the hover sweep's worst frame went 169–183 → 21–30 ms, and a warm click to a
+painted ring 292–440 → 78–85 ms (`NodeRenderer` renders per click: 2,799 → 2).
+Stubbing out the Properties and Layers panels moved click-to-ring by nothing
+measurable, so the inspector is NOT on that path (PERF-14's hypothesis) — do
+not defer it for the ring's sake.
 
 `frameVirtualization.ts` already exists and is used by `BoardFramesLayer`:
 `isFrameOnScreen(frameRect, viewportState, marginPx)` — pure board→screen math,
@@ -1210,7 +1267,7 @@ it exists, and two of the three biggest items were not the node tree at all:
 
 | Cost, per mounting frame | Where | What it is now |
 |---|---|---|
-| ~85–350 ms per **poster**, in a burst | `useFramePosterCapture` → `html-to-image` | queued: `framePosterQueue.ts` holds every capture until the board is quiet, then runs them one per macrotask |
+| ~85–350 ms per **poster** (880–1,160 ms on a 310-element frame), in a burst | `useFramePosterCapture` → `html-to-image` | queued: `framePosterQueue.ts` holds every capture until the board is quiet, then runs them one per macrotask; since P2-I only off-screen pooled frames are captured |
 | ~10 ms | `CanvasHoverSuppressionInjector` walking all four content sheets' CSSOM | a per-sheet-text rewrite **plan**, built once and applied by index in every other frame |
 | ~7 ms | `ProjectCssInjector` assigning `textContent` — the browser parsing vendor CSS into a new document | unchanged; only an iframe **pool** can avoid it, see below |
 | ~5 ms | `collectScrollDeficits` (`resolveFrameFitHeight.ts`) forced layout | unchanged |
@@ -1283,9 +1340,17 @@ must stay that way: a caller outside `BoardFramesLayer` means "mounted exactly
 while visible", and making it required silently renders nothing at all for
 every such caller with no `tsc` error (`meta-14` landmine 1;
 `boardFrameViewTierFork.test.tsx` is the gate). `isOnScreen` stays a separate
-prop because it drives poster CAPTURE — the picture has to be taken while the
-frame is genuinely visible, which is a different question from whether it holds
-an iframe.
+prop because it drives poster CAPTURE — since P2-I (PERF-5) the picture is
+taken only while the frame is OFF screen and still pooled (`framePosterNeeded`
+in `useFramePosterCapture.ts`), never while the user is looking at it. A capture
+was measured at 880–1,160 ms of main thread per 310-element frame; the old rule
+("on screen, no poster for this `Page` object") rasterized every visible frame
+the first time the board went quiet and the edited frame after every edit. A
+frame evicted before the board went quiet shows the plain title placeholder.
+`framePosterQueue`'s busy listeners run in every mounted frame document too
+(portal: DOM listeners; bridge: the adapter's `pointer`/`wheel`/`key` events),
+so a press inside a frame holds the queue. Each capture records a
+`studio:poster-capture` User Timing measure.
 
 Measured, 18-frame stand-in board, dev build, same Playwright runner
 `tests/e2e/studio-board-perf.e2e.ts` uses:
@@ -1677,8 +1742,8 @@ plus an unconditional store write). `gestureForwarding.ts` now buffers `move`
 and posts at most one per animation frame, carrying the LAST event of the
 batch, and skips the post entirely when it would repeat the SAME resolved
 node + rect as the last move actually posted — the idle-hover case
-`hoverNode` (`selectionSlice.ts`) exists to guard against, and now itself
-no-ops (reads `get()` first) when the id/breakpoint/frame triple is unchanged,
+`setCanvasHover` (`canvas/canvasHover.ts`; a store action until P2-I) exists
+to guard against, and itself no-ops when the id/breakpoint/frame triple is unchanged,
 so a coalesced-but-repeated `move` costs nothing even if one still arrives.
 The skip only applies while **no pointer button is held**: a held button is
 an active drag — a pan replay in particular, whose parent-side replay reads

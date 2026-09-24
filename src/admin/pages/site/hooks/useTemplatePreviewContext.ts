@@ -27,8 +27,12 @@ interface TemplatePreviewContextState {
 }
 
 export function useTemplatePreviewContext(page: Page | null): TemplatePreviewContextState {
-  // Read site once; the page argument is already reactive via the caller.
-  const site = useEditorStore((s) => s.site)
+  // The site frame is the document's id and name only (`buildSiteFrame`) —
+  // read those, never `s.site` itself: this hook runs in `CanvasRoot`, and a
+  // whole-site read re-rendered the canvas root on every keystroke (P2-I,
+  // PERF-12). The page argument is already reactive via the caller.
+  const siteId = useEditorStore((s) => s.site?.id ?? null)
+  const siteName = useEditorStore((s) => s.site?.name ?? null)
 
   // ── Template-page entry-stack seed ───────────────────────────────────
   // A `postTypes` template previews against the FIRST REAL published row of
@@ -77,7 +81,7 @@ export function useTemplatePreviewContext(page: Page | null): TemplatePreviewCon
   // currentEntry stay empty until the loop interceptor pushes a real
   // iteration on top.
   const previewEntryLoading = Boolean(tableSlug) && loading
-  if (!page || !site) return { context: undefined, loading: previewEntryLoading }
+  if (!page || siteId === null || siteName === null) return { context: undefined, loading: previewEntryLoading }
   let entryStack: TemplateRenderDataContext['entryStack'] = []
   if (tableSlug && previewState?.tableSlug === tableSlug) {
     // Selected row → first published row → synthetic sample (empty table).
@@ -93,7 +97,7 @@ export function useTemplatePreviewContext(page: Page | null): TemplatePreviewCon
     context: {
       entryStack,
       page: pageFrame,
-      site: buildSiteFrame(site),
+      site: buildSiteFrame({ id: siteId, name: siteName }),
       // Route frame mirrors what the published page will see. Editor
       // doesn't have the real request URL, so we derive from the page's
       // permalink — same shape, same fields.

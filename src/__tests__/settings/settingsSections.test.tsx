@@ -28,7 +28,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     isSettingsOpen: false,
     activeSection: 'general',
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 280 },

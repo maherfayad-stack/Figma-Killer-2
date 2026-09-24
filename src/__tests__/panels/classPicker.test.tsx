@@ -43,7 +43,6 @@ function resetStore() {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeBreakpointId: 'desktop',
     activeClassId: null,
     previewClassAssignment: null,

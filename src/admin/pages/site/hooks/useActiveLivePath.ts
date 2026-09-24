@@ -28,6 +28,7 @@ import { useEffect } from 'react'
 import { useAdminUi } from '@admin/state/adminUi'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { selectActivePage, useEditorStore } from '@site/store/store'
+import { selectPageDirectory, type PageDirectoryEntry } from '@site/store/slices/pageDirectory'
 import { isTemplatePage, primaryTemplateTableSlug } from '@core/templates'
 import { pagePublicPath, type TemplateTarget } from '@core/page-tree'
 import { getCmsDataTableBySlug, previewCmsDataLoopItems } from '@core/persistence/cmsData'
@@ -38,7 +39,9 @@ const EMPTY_ITEMS: LoopItem[] = []
 export function useActiveLivePath(): void {
   const publish = useAdminUi((s) => s.setActiveLivePath)
   const activePage = useEditorStore(selectActivePage)
-  const sitePages = useEditorStore((s) => s.site?.pages ?? null)
+  // The page LIST, not `site.pages` — this hook is mounted for the whole
+  // session, and the array is replaced on every edit (P2-I, PERF-12).
+  const sitePages = useEditorStore(selectPageDirectory)
   const selection = useEditorStore((s) =>
     activePage ? s.templatePreviewSelection[activePage.id] ?? null : null,
   )
@@ -91,7 +94,7 @@ interface ResolveArgs {
   isTemplate: boolean
   targetKind: TemplateTarget['kind'] | null
   selection: string | null
-  sitePages: ReturnType<typeof selectActivePage>[] | null
+  sitePages: readonly Pick<PageDirectoryEntry, 'id' | 'slug' | 'isTemplate'>[] | null
   rows: LoopItem[]
 }
 
@@ -116,9 +119,7 @@ export function resolveLivePath({
   if (!isTemplate) return pagePublicPath(activePage.slug)
 
   if (targetKind === 'everywhere') {
-    const candidates = (sitePages ?? []).filter(
-      (page): page is NonNullable<typeof page> => page != null && !isTemplatePage(page),
-    )
+    const candidates = (sitePages ?? []).filter((page) => !page.isTemplate)
     const previewed = candidates.find((page) => page.id === selection) ?? candidates[0] ?? null
     return previewed ? pagePublicPath(previewed.slug) : null
   }

@@ -103,7 +103,11 @@ export function BoardPrototypeLayer() {
   // selector that builds a fresh array is an infinite render loop, because
   // zustand compares with `Object.is` and a new array is never equal to the
   // last one. See `prototypeSelectors`' module doc.
-  const pages = useEditorStore((s) => s.site?.pages)
+  //
+  // The pages only while connectors are drawn: Mutative replaces `site.pages`
+  // on every edit, and in design mode this layer reads nothing from it, so a
+  // design-mode keystroke must not re-render it (P2-I, PERF-12).
+  const pages = useEditorStore((s) => (boardMode === 'prototype' ? s.site?.pages : undefined))
 
   // Resolve each link's source element against the live tree BEFORE measuring:
   // a stored node id is a guess about a line number, and the id that actually
