@@ -39,10 +39,19 @@ const FIXTURE_PAGE = `export default function Home() {
         <div className="a" style={{ width: "60px", height: "40px", background: "#c33" }}>A</div>
         <div className="b" style={{ width: "60px", height: "40px", background: "#3c3" }}>B</div>
         <div className="c" style={{ width: "60px", height: "40px", background: "#33c" }}>C</div>
+        <div className="d" style={{ width: "60px", height: "40px", background: "#cc3" }}>D</div>
       </div>
       <div className="stage" style={{ position: "relative", width: "320px", height: "200px", background: "#eee" }}>
         <div className="abs" style={{ position: "absolute", left: "100px", top: "60px", width: "120px", height: "50px", background: "#999" }}>abs</div>
         <div className="anchored" style={{ position: "absolute", right: "20px", bottom: "20px", width: "40px", height: "30px", background: "#555" }}>R</div>
+      </div>
+      <div className="grid" style={{ display: "grid", gridTemplateColumns: "40px 40px 40px", gap: "4px", marginTop: "40px" }}>
+        <div className="g0" style={{ height: "30px", background: "#ddd" }}>G0</div>
+        <div className="g1" style={{ height: "30px", background: "#ddd" }}>G1</div>
+        <div className="g2" style={{ height: "30px", background: "#ddd" }}>G2</div>
+        <div className="g3" style={{ height: "30px", background: "#ddd" }}>G3</div>
+        <div className="g4" style={{ height: "30px", background: "#ddd" }}>G4</div>
+        <div className="g5" style={{ height: "30px", background: "#ddd" }}>G5</div>
       </div>
     </main>
   )
@@ -51,7 +60,7 @@ const FIXTURE_PAGE = `export default function Home() {
 
 const REL = 'pages/Home.tsx'
 /** `<div>` occurrences in FIXTURE_PAGE, in source order. */
-const DIV = { row: 1, a: 2, b: 3, c: 4, stage: 5, abs: 6, anchored: 7 } as const
+const DIV = { row: 1, a: 2, b: 3, c: 4, d: 5, stage: 6, abs: 7, anchored: 8, grid: 9, g0: 10, g1: 11 } as const
 
 let fixture: FixtureProject
 const readPage = () => fs.readFileSync(path.join(fixture.dir, 'pages', 'Home.tsx'), 'utf8')
@@ -192,5 +201,84 @@ test.describe('P2-C — arrow keys move the selected layer', () => {
     await page.waitForTimeout(QUIET_MS)
     expect(readPage()).toBe(written)
     expect(saves).toHaveLength(1)
+  })
+})
+
+/** ⇧-click adds to the canvas selection (P2-B, OD-3). */
+async function shiftClickInFrame(page: Page, target: Locator): Promise<void> {
+  await page.keyboard.down('Shift')
+  await clickInFrame(page, target)
+  await page.keyboard.up('Shift')
+}
+
+/** The source order of the elements whose `className` is one of `names`. */
+function sourceOrder(names: readonly string[]): string[] {
+  const text = readPage()
+  return [...names].sort((x, y) => text.indexOf(`className="${x}"`) - text.indexOf(`className="${y}"`))
+}
+
+test.describe('P2-C2 (OD-16) — arrows move a whole multi-selection as one gesture', () => {
+  test.setTimeout(180_000)
+
+  test('two absolute layers: a held → nudges both, ONE source write, ONE ⌘Z', async ({ page }) => {
+    const { content, element: abs } = await openAndSelect(page, DIV.abs)
+    const anchored = content.getByText('R', { exact: true })
+    await shiftClickInFrame(page, anchored)
+    const saves = recordSaves(page)
+    const beforeAbs = await position(abs)
+    const beforeAnchored = await position(anchored)
+
+    await holdKey(page, 'ArrowRight', 4)
+    await page.keyboard.up('ArrowRight')
+    await expect.poll(readPage, { timeout: 30_000 }).toContain('left: "104px"')
+    expect(readPage()).toContain('right: "16px"')
+    await page.waitForTimeout(QUIET_MS)
+    expect(saves, 'a held arrow over two layers must be exactly one source write').toHaveLength(1)
+    near((await position(abs)).left, beforeAbs.left + 4)
+    near((await position(anchored)).left, beforeAnchored.left + 4)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(readPage, { timeout: 30_000 }).toBe(FIXTURE_PAGE)
+  })
+
+  test('two separated row children step → together in ONE write, keeping their order', async ({ page }) => {
+    const { content } = await openAndSelect(page, DIV.a)
+    await shiftClickInFrame(page, content.getByText('C', { exact: true }))
+    const saves = recordSaves(page)
+    const beforeB = await content.getByText('B', { exact: true }).boundingBox()
+    const beforeD = await content.getByText('D', { exact: true }).boundingBox()
+
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => sourceOrder(['a', 'b', 'c', 'd']), { timeout: 30_000 }).toEqual(['b', 'a', 'd', 'c'])
+    await page.waitForTimeout(QUIET_MS)
+    expect(saves, 'both moves ride one /save batch').toHaveLength(1)
+    // A renders where B was, C where D was.
+    await expect.poll(async () => Math.abs((await content.getByText('A', { exact: true }).boundingBox())!.x - beforeB!.x)).toBeLessThanOrEqual(2)
+    await expect.poll(async () => Math.abs((await content.getByText('C', { exact: true }).boundingBox())!.x - beforeD!.x)).toBeLessThanOrEqual(2)
+
+    await page.keyboard.press('Control+z')
+    await expect.poll(readPage, { timeout: 30_000 }).toBe(FIXTURE_PAGE)
+    expect(saves).toHaveLength(2)
+  })
+
+  test('a grid child: ↓ moves it one whole row (the column count), ← / → one cell', async ({ page }) => {
+    const { content } = await openAndSelect(page, DIV.g1)
+    const saves = recordSaves(page)
+    const cellG4 = await content.getByText('G4', { exact: true }).boundingBox()
+
+    await page.keyboard.press('ArrowDown')
+    const names = ['g0', 'g1', 'g2', 'g3', 'g4', 'g5']
+    await expect.poll(() => sourceOrder(names), { timeout: 30_000 }).toEqual(['g0', 'g2', 'g3', 'g4', 'g1', 'g5'])
+    await page.waitForTimeout(QUIET_MS)
+    expect(saves).toHaveLength(1)
+    // G1 now renders in the cell below where it was: G4's old cell.
+    const moved = content.getByText('G1', { exact: true })
+    await expect.poll(async () => {
+      const box = (await moved.boundingBox())!
+      return Math.max(Math.abs(box.x - cellG4!.x), Math.abs(box.y - cellG4!.y))
+    }).toBeLessThanOrEqual(2)
+
+    await page.keyboard.press('ArrowRight')
+    await expect.poll(() => sourceOrder(names), { timeout: 30_000 }).toEqual(['g0', 'g2', 'g3', 'g4', 'g5', 'g1'])
   })
 })

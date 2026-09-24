@@ -10,8 +10,12 @@
  *     axis REORDERS it one place (`moveNode`, a STRUCTURAL edit). An arrow
  *     across the axis does nothing.
  *
+ * A multi-selection (P2-C2, OD-16) follows the same rule per layer —
+ * `resolveArrowSelectionMove` below says what a MIXED selection does — and a
+ * grid child steps a whole row on ↑ / ↓ (`reorderStep`).
+ *
  * This module holds the rules (pure) and the one layout read they need
- * (`measureArrowTarget`, through the frame adapters, so a live bridge frame
+ * (`measureArrowTargets`, through the frame adapters, so a live bridge frame
  * answers the same question a portal frame does). The key handling — the hold,
  * the preview, the one write on release — is `useCanvasNodeArrowKeys`.
  *
@@ -38,7 +42,7 @@
  */
 import {
   getAncestors,
-  getParent,
+  topLevelSelection,
   type CSSPropertyBag,
   type NodeTree,
   type PageNode,
@@ -48,7 +52,6 @@ import {
   inlineOffsetProperty,
   isPositionedFreely,
   resolveCanvasAxisFromStyle,
-  type CanvasAxisResolution,
 } from '@core/studio-runtime'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { listFrameAdapterRegistrations } from './frameAdapter/canvasFrameAdapterRegistry'
@@ -70,10 +73,6 @@ export interface NudgePlan {
   vertical: NudgeTerm[]
 }
 
-export type ArrowMove =
-  | { kind: 'nudge'; plan: NudgePlan }
-  | { kind: 'reorder'; layout: CanvasAxisResolution }
-
 /** The computed-style facts the rules read — plain strings, so the rules are testable without a DOM. */
 export interface ArrowTargetStyle {
   position: string
@@ -84,10 +83,21 @@ export interface ArrowTargetStyle {
   bottom: string
 }
 
+/** The computed layout of a layer's nearest boxed ancestor — what decides which way a reorder goes. */
+export interface ArrowParentLayout {
+  display: string
+  flexDirection: string
+  gridAutoFlow: string
+  direction: string
+  /** Resolved track counts of a grid (`1` for anything else) — a grid row step (P2-C2). */
+  gridColumns: number
+  gridRows: number
+}
+
 export interface ArrowTargetMeasurement {
   own: ArrowTargetStyle
-  /** The computed layout of the node's nearest boxed ancestor, or `null` when none could be read. */
-  layout: { display: string; flexDirection: string; gridAutoFlow: string; direction: string } | null
+  /** `null` when no boxed ancestor could be read. */
+  layout: ArrowParentLayout | null
 }
 
 const HORIZONTAL_OFFSETS = ['left', 'right', 'insetInlineStart', 'insetInlineEnd'] as const
@@ -214,52 +224,113 @@ export function nudgeStylePatch(plan: NudgePlan, dx: number, dy: number): Record
   return patch
 }
 
-/** Nudge or reorder, from the measured layer. `authored` is only read for a nudge. */
-export function resolveArrowMove(
-  measured: ArrowTargetMeasurement,
-  authored: ReadonlySet<NudgeOffsetProperty>,
-): ArrowMove | null {
-  if (isPositionedFreely(measured.own.position)) {
-    return { kind: 'nudge', plan: planNudge(measured.own, authored) }
+
+/**
+ * What an arrow does to the whole selection (P2-C2, OD-16):
+ *
+ *   - any member is `absolute | fixed` → `nudge`: EVERY positioned member
+ *     moves by the same delta, each through its own authored offsets. A flow
+ *     member of a MIXED selection stays where its parent lays it out — it has
+ *     no pixel position to move (Penpot's `move-selected` rule);
+ *   - every member is a layout child → `reorder`: each moves along ITS
+ *     parent's axis (`reorderStep`), so a selection spanning a row and a
+ *     column moves only the members the arrow points along.
+ */
+export type ArrowSelectionMove =
+  | { kind: 'nudge'; plans: ReadonlyMap<string, NudgePlan> }
+  | { kind: 'reorder'; layouts: ReadonlyMap<string, ArrowParentLayout> }
+
+/** `null` when nothing was measured. `measured` is keyed by node id; `layouts` by TREE parent id. */
+export function resolveArrowSelectionMove(
+  tree: NodeTree<PageNode>,
+  measured: ReadonlyMap<string, ArrowTargetMeasurement>,
+  styleRules: Readonly<Record<string, StyleRule>> | undefined,
+): ArrowSelectionMove | null {
+  if (measured.size === 0) return null
+  const plans = new Map<string, NudgePlan>()
+  for (const [nodeId, measurement] of measured) {
+    const node = tree.nodes[nodeId]
+    if (!node || !isPositionedFreely(measurement.own.position)) continue
+    plans.set(nodeId, planNudge(measurement.own, authoredOffsets(node, styleRules)))
   }
-  if (!measured.layout) return null
-  return { kind: 'reorder', layout: resolveCanvasAxisFromStyle(measured.layout) }
+  if (plans.size > 0) return { kind: 'nudge', plans }
+  const layouts = new Map<string, ArrowParentLayout>()
+  for (const [nodeId, measurement] of measured) {
+    const parentId = tree.nodes[nodeId]?.parentId
+    if (parentId && measurement.layout) layouts.set(parentId, measurement.layout)
+  }
+  return { kind: 'reorder', layouts }
+}
+
+/** How many tracks a resolved `grid-template-*` names — `none` (an implicit grid) is one. */
+function trackCount(resolved: string): number {
+  const trimmed = resolved.trim()
+  if (trimmed === '' || trimmed === 'none') return 1
+  // A resolved template is a plain list of sizes; `[line names]` are dropped first.
+  return Math.max(1, splitCssValues(trimmed.replace(/\[[^\]]*\]/g, ' ')).length)
 }
 
 /**
- * How many places an arrow moves a layout child among its siblings: `±1`
- * along the parent's axis (reversed for `*-reverse` and an RTL row, so the
- * layer moves the way the arrow points), `null` across it.
+ * How many places an arrow moves a layout child among its siblings, or
+ * `null` when the arrow is across the axis.
+ *
+ *   - flex / block: `±1` along the axis — reversed for `*-reverse` and an RTL
+ *     row, so the layer moves the way the arrow points
+ *     (`resolveCanvasAxisFromStyle`);
+ *   - grid (P2-C2): the flow axis steps `±1`, and the other axis steps a
+ *     whole track — ↑ / ↓ move a row-flow item by the resolved column count,
+ *     ← / → move a column-flow item by the row count. Under RTL the columns
+ *     run right to left, so ← / → are mirrored.
  */
-export function reorderStep(layout: CanvasAxisResolution, delta: { dx: number; dy: number }): -1 | 1 | null {
-  const along = layout.axis === 'horizontal' ? delta.dx : delta.dy
+export function reorderStep(layout: ArrowParentLayout, delta: { dx: number; dy: number }): number | null {
+  const sign = (value: number) => (value > 0 ? 1 : -1)
+  if (layout.display.includes('grid')) {
+    const mirror = layout.direction === 'rtl' ? -1 : 1
+    const columnFlow = layout.gridAutoFlow.includes('column')
+    if (delta.dx !== 0) return sign(delta.dx) * mirror * (columnFlow ? layout.gridRows : 1)
+    if (delta.dy !== 0) return sign(delta.dy) * (columnFlow ? 1 : layout.gridColumns)
+    return null
+  }
+  const axis = resolveCanvasAxisFromStyle(layout)
+  const along = axis.axis === 'horizontal' ? delta.dx : delta.dy
   if (along === 0) return null
-  const forward = along > 0 ? 1 : -1
-  return layout.reversed ? (-forward as -1 | 1) : forward
+  return axis.reversed ? -sign(along) : sign(along)
+}
+
+/** The per-parent steps of a reorder, keyed by tree parent id — what `stepSiblings` takes. */
+export function reorderSteps(
+  layouts: ReadonlyMap<string, ArrowParentLayout>,
+  delta: { dx: number; dy: number },
+): Record<string, number> {
+  const steps: Record<string, number> = {}
+  for (const [parentId, layout] of layouts) {
+    const step = reorderStep(layout, delta)
+    if (step !== null) steps[parentId] = step
+  }
+  return steps
 }
 
 /**
- * Move a node one place among its siblings, through `moveNode` — the same
- * structural write-back gate every other reorder surface runs (`struct-01`),
- * so a refused move says the same sentence here as from a drag. Shared by the
- * arrows and by ⌥↑ / ⌥↓ / ⌘[ / ⌘] (`layers.moveUp` / `layers.moveDown`), so
- * the keyboard can never disagree with itself about what "one place" means.
+ * Move the selection one place earlier / later in its parents' child order —
+ * ⌥↑ / ⌥↓, ⌘[ / ⌘] and the palette's Move up / down. Order, not geometry:
+ * "up" is one place earlier, whatever the layout. Every layer of a
+ * multi-selection moves (P2-C2), through the same `stepSiblings` the arrows
+ * use, so the keyboard can never disagree with itself about "one place".
  */
-export function moveNodeAmongSiblings(nodeId: string, step: -1 | 1): void {
+export function stepSelectionAmongSiblings(nodeIds: readonly string[], step: -1 | 1): void {
   const store = useEditorStore.getState()
   const page = selectActiveCanvasPage(store)
   if (!page) return
-  const parent = getParent(page, nodeId)
-  if (!parent) return
-  const index = parent.children.indexOf(nodeId)
-  if (index === -1) return
-  const next = index + step
-  if (next < 0 || next > parent.children.length - 1) return
-  store.moveNode(nodeId, parent.id, next)
+  const steps: Record<string, number> = {}
+  for (const id of topLevelSelection(page, nodeIds)) {
+    const parentId = page.nodes[id]?.parentId
+    if (parentId) steps[parentId] = step
+  }
+  store.stepSiblings([...nodeIds], steps)
 }
 
 const OWN_PROPERTIES = ['position', 'direction', 'left', 'right', 'top', 'bottom']
-const LAYOUT_PROPERTIES = ['display', 'flex-direction', 'grid-auto-flow', 'direction']
+const LAYOUT_PROPERTIES = ['display', 'flex-direction', 'grid-auto-flow', 'grid-template-columns', 'grid-template-rows', 'direction']
 const MEASURED_PROPERTIES = [...new Set([...OWN_PROPERTIES, ...LAYOUT_PROPERTIES])]
 
 function readOwn(measurement: NodeMeasurement | undefined): ArrowTargetStyle {
@@ -276,23 +347,44 @@ function readOwn(measurement: NodeMeasurement | undefined): ArrowTargetStyle {
   }
 }
 
+function readLayout(chain: readonly (NodeMeasurement | undefined)[]): ArrowParentLayout | null {
+  for (const ancestor of chain) {
+    const style = ancestor?.computedStyle
+    if (!ancestor?.rect || !style || style.display === 'contents') continue
+    return {
+      display: style.display ?? '',
+      flexDirection: style['flex-direction'] ?? '',
+      gridAutoFlow: style['grid-auto-flow'] ?? '',
+      direction: style.direction ?? 'ltr',
+      gridColumns: trackCount(style['grid-template-columns'] ?? ''),
+      gridRows: trackCount(style['grid-template-rows'] ?? ''),
+    }
+  }
+  return null
+}
+
 /**
- * The one layout read an arrow press makes: the node's position and insets,
- * and the layout of its nearest BOXED ancestor (a `display: contents` host
- * lays nothing out — `dropAxisRules.ts`'s `findLayoutParent` skips it for the
- * same reason). One `measure` per frame for the node and its whole ancestor
- * chain, so a bridge frame pays one round trip.
+ * The one layout read an arrow press makes, for every selected layer: its
+ * position and insets, and the layout of its nearest BOXED ancestor (a
+ * `display: contents` host lays nothing out — `dropAxisRules.ts`'s
+ * `findLayoutParent` skips it for the same reason). ONE `measure` per frame
+ * for the layers and their ancestor chains together, so a bridge frame pays
+ * one round trip however large the selection.
  *
- * The frame is the one rendering the node at the active breakpoint when there
- * is one, else the first that renders it. `null` when no frame does.
+ * The frame is the one rendering the first layer at the active breakpoint
+ * when there is one, else the first that renders it. `null` when no frame
+ * does. Keyed by node id.
  */
-export async function measureArrowTarget(
+export async function measureArrowTargets(
   tree: NodeTree<PageNode>,
-  nodeId: string,
+  nodeIds: readonly string[],
   preferredBreakpointId: string,
-): Promise<ArrowTargetMeasurement | null> {
-  const ancestorIds = getAncestors(tree, nodeId).map((ancestor) => ancestor.id).reverse()
-  const refs = [{ nodeId }, ...ancestorIds.map((id) => ({ nodeId: id }))]
+): Promise<Map<string, ArrowTargetMeasurement> | null> {
+  const chains = new Map(
+    nodeIds.map((nodeId) => [nodeId, getAncestors(tree, nodeId).map((ancestor) => ancestor.id).reverse()] as const),
+  )
+  const refIds = [...new Set(nodeIds.flatMap((nodeId) => [nodeId, ...(chains.get(nodeId) ?? [])]))]
+  const refs = refIds.map((nodeId) => ({ nodeId }))
   const registrations = [...listFrameAdapterRegistrations().values()].sort(
     (a, b) => Number(b.breakpointId === preferredBreakpointId) - Number(a.breakpointId === preferredBreakpointId),
   )
@@ -305,22 +397,19 @@ export async function measureArrowTarget(
       }),
     ),
   )
-  // The frame that renders the node — or, for a node with no element of its
-  // own, its parent — is the frame showing this page.
-  const measurements = answers.find((answer) => answer?.[0]?.rect || answer?.[1]?.rect)
-  if (!measurements) return null
-
-  let layout: ArrowTargetMeasurement['layout'] = null
-  for (const ancestor of measurements.slice(1)) {
-    const style = ancestor.computedStyle
-    if (!ancestor.rect || style.display === 'contents') continue
-    layout = {
-      display: style.display ?? '',
-      flexDirection: style['flex-direction'] ?? '',
-      gridAutoFlow: style['grid-auto-flow'] ?? '',
-      direction: style.direction ?? 'ltr',
-    }
-    break
+  const [firstId] = nodeIds
+  const firstParentId = firstId ? chains.get(firstId)?.[0] : undefined
+  // The frame that renders the first layer — or, for a layer with no element
+  // of its own, its parent — is the frame showing this page.
+  const answer = answers.find((candidate) =>
+    candidate?.some((measurement) => measurement.rect && (measurement.nodeId === firstId || measurement.nodeId === firstParentId)),
+  )
+  if (!answer) return null
+  const byId = new Map(answer.map((measurement) => [measurement.nodeId, measurement]))
+  const measured = new Map<string, ArrowTargetMeasurement>()
+  for (const nodeId of nodeIds) {
+    const chain = (chains.get(nodeId) ?? []).map((id) => byId.get(id))
+    measured.set(nodeId, { own: readOwn(byId.get(nodeId)), layout: readLayout(chain) })
   }
-  return { own: readOwn(measurements[0]), layout }
+  return measured
 }

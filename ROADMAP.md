@@ -68,7 +68,7 @@ may start before the previous one ends only where §11 (collision map) says the 
 
 ## 2. Owner decisions (answered 2026-09-23)
 
-All fifteen program decisions are settled (OD-15 added by the owner on 2026-09-24). Their full text, with how each was answered, is in
+All sixteen program decisions are settled (OD-15 and OD-16 added by the owner on 2026-09-24). Their full text, with how each was answered, is in
 [`docs/decisions.md`](docs/decisions.md) → "The canvas excellence program". Bundles below cite them by id:
 
 | # | Short name | Affects |
@@ -88,6 +88,7 @@ All fifteen program decisions are settled (OD-15 added by the owner on 2026-09-2
 | OD-13 | URL drag gets an SSRF-guarded fetch route | P5-B |
 | OD-14 (+ OD-FC-1/2) | Free canvas: loose layers on the board | P5-G |
 | OD-15 | Arrows move the layer after a Layers click; Tab into the tree keeps its own arrows (owner, 2026-09-24) | P2-E |
+| OD-16 | Bulk actions on a multi-selection: every action that makes sense on many layers acts on all of them as one gesture and one undo (owner, 2026-09-24) | P2-C2 |
 
 Questions still open for the owner are listed at the end of §13.
 
