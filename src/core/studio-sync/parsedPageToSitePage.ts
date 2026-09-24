@@ -9,7 +9,7 @@
  */
 import { CUSTOM_HTML_TAG_VALUE, TEXT_HTML_TAG_SET, htmlTagControl } from '@modules/base/utils/htmlTag'
 import type { ParsedPage, ParsedNode, ParsedPropValue } from '../page-parser'
-import { hasWritableSourceLocation, styleValueKey } from '../page-tree'
+import { hasWritableSourceLocation, loopTemplateNodeId, styleValueKey } from '../page-tree'
 import type { Page, PageNode } from '../page-tree'
 
 export interface ParsedPageToSitePageOptions {
@@ -242,13 +242,22 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
     // JSX produced every row, so a prop write there would rewrite all of them.
     // Its resolved TEXT is the exception: that came from its own array element,
     // and `textOrigin` says which literal, so it keeps its one editable field.
+    //
+    // Its literal inline STYLES are the other (P3-C, OD-8): a row's style edit
+    // is written to the row template (`loopTemplateNodeId`), restyling every
+    // row, which is what restyling a list item means. A style value the row
+    // read out of its own element (`color: item.tone`) is already in
+    // `codeProps` from the parser and stays locked. A node with no row
+    // template — a synthetic root — keeps every style locked.
     if (!hasWritableSourceLocation(id)) {
       for (const name of Object.keys(props)) {
         if (name !== originTextProp && !codeProps.includes(name)) codeProps.push(name)
       }
-      for (const property of Object.keys(node.inlineStyles ?? {})) {
-        const key = styleValueKey(property)
-        if (!codeProps.includes(key)) codeProps.push(key)
+      if (loopTemplateNodeId(id) === null) {
+        for (const property of Object.keys(node.inlineStyles ?? {})) {
+          const key = styleValueKey(property)
+          if (!codeProps.includes(key)) codeProps.push(key)
+        }
       }
       // WS-4.2 — an instance whose OWN id has no writable source location
       // (its call site sits inside a `.map`) must ALSO lock every

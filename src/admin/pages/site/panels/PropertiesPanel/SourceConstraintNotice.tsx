@@ -186,8 +186,9 @@ export function SourceConstraintNotice({
                 </>
               ) : (
                 <>
-                  One piece of source renders every row of this list, so a change here would apply to
-                  all of them — the values stay read-only.
+                  One piece of source renders every row of this list, so a style or class change here
+                  is written to that source and applies to all of them. Its other values stay
+                  read-only.
                 </>
               )}
             </>

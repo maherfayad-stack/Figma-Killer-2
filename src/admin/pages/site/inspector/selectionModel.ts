@@ -98,6 +98,7 @@ import {
   hasWritableSourceLocation,
   isGeneratedClassLocked,
   isStudioPageRootId,
+  loopTemplateNodeId,
   styleRuleSelector,
   styleValueKey,
   type CSSPropertyBag,
@@ -387,8 +388,14 @@ export function useSelectionModel(): SelectionModel {
     ? inlineWritableNodeIds.length === 0
     : nodeModuleId !== undefined && !canWriteInlineStyleForModule(nodeModuleId)
   const canToggleElement = canEditStyleHere && selectedNodeId != null && !inlineModuleUnwritable
+  // P3-C (OD-8) — a `.map` row's inline style is written to the row
+  // template, so a row is not locked here; the notice says it restyles every
+  // row. Only a node with neither a location nor a template is.
   const sourceLockReason =
-    !isMultiSelect && selectedNode && !hasWritableSourceLocation(selectedNode.id)
+    !isMultiSelect &&
+    selectedNode &&
+    !hasWritableSourceLocation(selectedNode.id) &&
+    loopTemplateNodeId(selectedNode.id) === null
       ? selectedNode.lockReason
       : undefined
   // Element is the default multi target; picking the class turns inline OFF

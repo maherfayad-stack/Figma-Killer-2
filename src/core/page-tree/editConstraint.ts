@@ -43,7 +43,7 @@ import {
   refusePlacement,
   type StructuralRefusalReason,
 } from './sourceStructure'
-import { bestEffortRowLocation, hasWritableSourceLocation } from './sourceNodeId'
+import { bestEffortRowLocation, hasWritableSourceLocation, loopTemplateNodeId } from './sourceNodeId'
 
 
 // ---------------------------------------------------------------------------
@@ -303,12 +303,15 @@ export function explainPropConstraint(
 export function explainStyleConstraint(node: ConstraintPropSource, property: string): EditConstraint | null {
   if (isStyleWritableToSource(node, property)) return null
 
-  if (node.id !== undefined && !hasWritableSourceLocation(node.id)) {
+  // A `.map` row's literal style is writable — to the row template (P3-C,
+  // OD-8), so it never reaches here. What does is a node with no source
+  // location and no template either (a synthetic root).
+  if (node.id !== undefined && !hasWritableSourceLocation(node.id) && loopTemplateNodeId(node.id) === null) {
     return {
       reason: 'no-inline-style-target',
       scope: 'style-property',
       explanation:
-        'One piece of source renders every row of this list, so a style change here would apply to all of them. Assign a class instead.',
+        'This element has no place in the source to hold an inline style. Assign a class instead.',
       actions: [],
     }
   }

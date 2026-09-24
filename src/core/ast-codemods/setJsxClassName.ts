@@ -95,16 +95,15 @@ import {
   Project,
   SyntaxKind,
   type CallExpression,
-  type Expression,
   type JsxAttribute,
   type PropertyAccessExpression,
   type SourceFile,
   type TemplateExpression,
 } from 'ts-morph'
 import { CLASS_NAME_JOIN_BUILTIN_NAMES } from '@core/page-parser'
+import { isWrappableClassExpression, wrapExpressionWithTokens } from './classNameWrap'
 import type { PendingModuleImports } from './cssModuleImportPlan'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
-import { topLevelBindingNames } from './importReconcile'
 
 /**
  * One class this edit attaches to (or detaches from) an element.
@@ -637,66 +636,4 @@ export function setJsxClassName(params: SetJsxClassNameParams): SetJsxClassNameR
   if (addCount === 0) return { ok: true }
   expr.replaceWithText(wrapExpressionWithTokens(expr, add, sourceFile))
   return commit()
-}
-
-/** Shapes that can evaluate to a class string — the only ones an ADD wraps. */
-function isWrappableClassExpression(expr: Expression): boolean {
-  if (
-    Node.isIdentifier(expr) ||
-    Node.isPropertyAccessExpression(expr) ||
-    Node.isElementAccessExpression(expr) ||
-    Node.isCallExpression(expr) ||
-    Node.isConditionalExpression(expr) ||
-    Node.isNonNullExpression(expr) ||
-    Node.isAsExpression(expr)
-  ) {
-    return true
-  }
-  if (Node.isParenthesizedExpression(expr)) return isWrappableClassExpression(expr.getExpression())
-  if (Node.isBinaryExpression(expr)) {
-    const operator = expr.getOperatorToken().getKind()
-    return (
-      operator === SyntaxKind.BarBarToken ||
-      operator === SyntaxKind.AmpersandAmpersandToken ||
-      operator === SyntaxKind.QuestionQuestionToken
-    )
-  }
-  return false
-}
-
-/** The class-join helper this file already has in scope, if any — its own idiom wins over a template. */
-function joinerInScope(sourceFile: SourceFile): string | undefined {
-  const names = topLevelBindingNames(sourceFile)
-  return [...CLASS_NAME_JOIN_BUILTIN_NAMES].find((name) => names.has(name))
-}
-
-function isPlainStringBranch(node: Node): boolean {
-  const inner = Node.isParenthesizedExpression(node) ? node.getExpression() : node
-  return Node.isStringLiteral(inner) || Node.isNoSubstitutionTemplateLiteral(inner)
-}
-
-/**
- * `cn(expr, "a")` with a join helper in scope, else `` `a ${expr || ''}` `` —
- * the new tokens FIRST, so the parser's partial-template prefix keeps them.
- * See "Wrapping an expression" in this file's doc.
- */
-function wrapExpressionWithTokens(expr: Expression, add: ResolvedTokens, sourceFile: SourceFile): string {
-  const text = expr.getText()
-  const joiner = joinerInScope(sourceFile)
-  if (joiner) {
-    const args = [text, ...(add.literals.length > 0 ? [JSON.stringify(add.literals.join(' '))] : []), ...add.expressions]
-    return `${joiner}(${args.join(', ')})`
-  }
-  const alwaysString =
-    Node.isConditionalExpression(expr) && isPlainStringBranch(expr.getWhenTrue()) && isPlainStringBranch(expr.getWhenFalse())
-  const bare =
-    Node.isIdentifier(expr) ||
-    Node.isPropertyAccessExpression(expr) ||
-    Node.isElementAccessExpression(expr) ||
-    Node.isCallExpression(expr) ||
-    Node.isParenthesizedExpression(expr) ||
-    Node.isNonNullExpression(expr)
-  const tail = alwaysString ? text : bare ? `${text} || ''` : `(${text}) || ''`
-  const parts = [...add.literals, ...add.expressions.map((expression) => '${' + expression + '}'), '${' + tail + '}']
-  return '`' + parts.join(' ') + '`'
 }

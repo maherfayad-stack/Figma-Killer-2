@@ -121,12 +121,27 @@ describe('explainPropConstraint', () => {
 // ---------------------------------------------------------------------------
 
 describe('explainStyleConstraint', () => {
-  it('row 6 — whole node has no writable location at all', () => {
-    const node = { id: 'src/screens/Home.jsx:70:21#2', codeProps: ['style:color'] }
+  it('row 6 — whole node has no writable location and no row template at all', () => {
+    const node = { id: 'home:body', codeProps: ['style:color'] }
     const constraint = explainStyleConstraint(node, 'color')
     assertWellFormed(constraint)
     expect(constraint.reason).toBe('no-inline-style-target')
     expect(constraint.explanation).toContain('Assign a class instead')
+  })
+
+  it('P3-C (OD-8) — a .map row’s literal style is writable (to the template); a per-row value explains its source', () => {
+    expect(explainStyleConstraint({ id: 'src/screens/Home.jsx:70:21#2', codeProps: [] }, 'color')).toBeNull()
+    const perRow = explainStyleConstraint(
+      {
+        id: 'src/screens/Home.jsx:70:21#2',
+        codeProps: ['style:color'],
+        resolvedProps: { 'style:color': { source: 'item.tone' } },
+      },
+      'color',
+    )
+    assertWellFormed(perRow)
+    expect(perRow.reason).toBe('resolved-style-expression')
+    expect(perRow.explanation).toContain('item.tone')
   })
 
   it('row 5 — a resolved style expression names its source', () => {

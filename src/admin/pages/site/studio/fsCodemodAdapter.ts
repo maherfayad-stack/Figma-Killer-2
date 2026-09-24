@@ -81,6 +81,7 @@ import {
 import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
 import { setStudioLoadWarnings } from './studioLoadWarningsStore'
 import { collectNodeDiffEdits } from './nodeDiffWriteback'
+import { notifyRowTemplateWrites } from './rowTemplateWrites'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
@@ -325,17 +326,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // filtered — `collectClassIdsDrift`/`commitClassIdsBaseline`/
     // `collectStyleRuleEdits` below stay unfiltered (cheaper per-node checks,
     // lower risk to touch alongside the 0.6 seam than the payoff is worth).
-    const { edits, bumps, drops, inlineStyleRefusals } = collectNodeDiffEdits(site.pages, opts.dirty)
+    const { edits, bumps, drops, inlineStyleRefusals, rowTemplateWrites } = collectNodeDiffEdits(site.pages, opts.dirty)
 
     // Track B2 — Studio (filesystem) mode now has a real `class` edit kind
     // (`setJsxClassName`): `collectClassNameEdits` diffs `node.classIds`
     // against the load-time baseline right here — the same place
     // `collectStyleRuleEdits` (just below) diffs `site.styleRules` — and
     // turns most of the drift into `kind: 'class'` edits sent in the same
-    // batch as everything else. The residual `unwritable` subset (a `.map`
-    // row, a synthetic root — no single JSX location a class token could
-    // land on) still gets Phase 0.6's honesty toast, now scoped to exactly
-    // that subset instead of every class change in the project. Fires
+    // batch as everything else (a `.map` row's goes to its row template,
+    // OD-8). The residual `unwritable` subset (a synthetic root — no JSX
+    // location a class token could land on) still gets Phase 0.6's honesty
+    // toast, scoped to exactly that subset instead of every class change in
+    // the project. Fires
     // exactly when the write is attempted, catches every entry point
     // (including a future AI-agent-driven class edit), and never re-fires
     // for a node whose classes are unchanged since the last save.
@@ -443,7 +445,13 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         if (refusal.kind === 'css' || refusal.kind === 'styled') {
           for (const ruleId of cssPlan.ruleIdsByNodeId[refusal.nodeId] ?? []) refusedRuleIds.add(ruleId)
         }
-        if (refusal.kind === 'class') refusedClassNodeIds.push(refusal.nodeId)
+        if (refusal.kind === 'class') {
+          refusedClassNodeIds.push(refusal.nodeId)
+          // OD-8 — a refused row-TEMPLATE write holds back the rows that sent it.
+          for (const write of classPlan.rowTemplateWrites) {
+            if (write.templateId === refusal.nodeId) refusedClassNodeIds.push(write.nodeId)
+          }
+        }
       }
 
       // Track B1 create branch — name the file Studio invented and register it
@@ -496,6 +504,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       // bug: an unwritable text edit reverted itself on a timer.
       if (result.written > 0 && (result.shifted || result.sharedComponents)) {
         resyncTouchedFiles = result.touchedFiles ?? []
+      }
+
+      // P3-C (OD-8) — a `.map` row's style or class edit went to its row
+      // template: every row changed on disk, but only the one the user touched
+      // changed on the canvas. Re-read the page so all of them show it, and say
+      // that the change landed on every row (`rowTemplateWrites.ts`).
+      const landedRowWrites = [...rowTemplateWrites, ...classPlan.rowTemplateWrites].filter(
+        (write) => !refused.has(write.editKey),
+      )
+      if (result.written > 0 && landedRowWrites.length > 0) {
+        resyncTouchedFiles = result.touchedFiles ?? []
+        notifyRowTemplateWrites(landedRowWrites)
       }
     }
 
