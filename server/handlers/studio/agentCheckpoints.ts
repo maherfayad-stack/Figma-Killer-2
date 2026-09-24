@@ -104,6 +104,7 @@ import {
   rmSync,
   unlinkSync,
   writeFileSync,
+  type Stats,
 } from 'node:fs'
 import { isAbsolute, join, resolve } from 'node:path'
 import { isSecretBearingFileName, realWorkspaceRel } from '@core/page-parser'
@@ -235,7 +236,7 @@ function storeDir(dir: string, segments: readonly string[], create: boolean): st
   return current
 }
 
-function lstatOrNull(path: string): ReturnType<typeof lstatSync> | null {
+function lstatOrNull(path: string): Stats | null {
   try {
     return lstatSync(path)
   } catch {
@@ -774,9 +775,12 @@ export async function revertAgentCheckpoint(
 
 /** A file that changed between the checks and its write. */
 class ChangedSinceError extends Error {
-  constructor(readonly path: string) {
+  readonly path: string
+
+  constructor(path: string) {
     super(`"${path}" changed since the revert was checked.`)
     this.name = 'ChangedSinceError'
+    this.path = path
   }
 }
 
