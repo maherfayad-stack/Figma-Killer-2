@@ -35,4 +35,10 @@ export {
   type DeclarationTargetRefusal,
 } from './analyzeDeclarationTarget'
 export { classifyStylesheetEditability, type StylesheetEditability } from './classifyStylesheetEditability'
+export {
+  listCustomPropertyDeclarations,
+  setCustomPropertyValueAtLine,
+  type CustomPropertyDeclaration,
+  type CustomPropertyEditResult,
+} from './customProperty'
 export { camelToKebabCssProperty } from './cssPropertyCase'

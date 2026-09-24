@@ -606,7 +606,7 @@ function BoardFrameViewImpl({
             as "it did not load". Only for a frame that is actually drawing its
             iframe: an offscreen frame is showing a poster, and a caption over
             that would be about a page nobody can see. */}
-        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint />}
+        {mounted && pageHasNoContent(page) && <CanvasEmptyPageHint pageId={page.id} />}
       </div>
       {/* Resize handles — SELECTED frames only, not merely active.
           `activePageId` is the edit target: it is set by a capture-phase click

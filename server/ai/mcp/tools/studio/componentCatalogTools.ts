@@ -98,7 +98,7 @@ interface FigmaBindingSummary {
 }
 
 /** One catalog entry: the wire shape the insert palette already uses, plus whether the palette hides it, which source produced it, and (when known) its Figma binding. */
-type CatalogEntry = BundledComponentSpec & {
+export type CatalogEntry = BundledComponentSpec & {
   hiddenFromPalette: boolean
   apiSource: 'types' | 'code-connect' | 'builtin'
   /**
@@ -172,7 +172,7 @@ function figmaBindingSummary(spec: FigmaCodeConnectComponent): FigmaBindingSumma
 // studio_find_component search" can never silently diverge.
 // ---------------------------------------------------------------------------
 
-interface Catalog {
+export interface Catalog {
   packages: string[]
   designSystems: DesignSystemRef[]
   components: CatalogEntry[]
@@ -266,7 +266,7 @@ function builtinDesignSystemEntries(hiddenIds: ReadonlySet<string>): BuiltinCata
   }))
 }
 
-function collectCatalog(dir: string): Catalog {
+export function collectCatalog(dir: string): Catalog {
   const profile = resolveProjectProfile(dir)
   const appRootAbs = resolveAppRoot(dir)
   // Mirrors `projectProbe.ts`'s own `prefixAppRoot` closure exactly — see

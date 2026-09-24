@@ -109,11 +109,9 @@ function tryAddSourceFile(project: Project, abs: string): SourceFile | undefined
 function findNamedOrDefaultDeclaration(sourceFile: SourceFile, name: string) {
   const direct = sourceFile.getFunction(name) ?? sourceFile.getVariableDeclaration(name)
   if (direct) return direct
-  const declaring = resolveExportedDeclaration(sourceFile, name)
-  if (declaring) {
-    return declaring.sourceFile.getFunction(declaring.name) ?? declaring.sourceFile.getVariableDeclaration(declaring.name)
-  }
-  return undefined
+  // The declaration node itself, not a second lookup by name: a re-exported
+  // default (`export { default as Card } from './Card'`) has no name to find.
+  return resolveExportedDeclaration(sourceFile, name)?.node
 }
 
 /**

@@ -6,7 +6,7 @@
  * identifier start — the character immediately after `<`.
  */
 import type { ValueOrigin } from './staticEvalTypes'
-import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-morph'
+import type { ArrowFunction, FunctionDeclaration, FunctionExpression, MethodDeclaration } from 'ts-morph'
 
 /**
  * A component's own function node — a `function Foo() {}` declaration, an
@@ -19,6 +19,19 @@ import type { ArrowFunction, FunctionDeclaration, FunctionExpression } from 'ts-
  * barrel).
  */
 export type FunctionLike = ArrowFunction | FunctionDeclaration | FunctionExpression
+
+/**
+ * The function whose `return`s ARE a component's JSX: a function component
+ * (`FunctionLike`), or a class component's `render()` method (P3-B, WB-5).
+ *
+ * Only the tree walk and the evaluator's scope accept the wider type
+ * (`parseJsxTree`, `getReturnedJsxRoots`, `createEvalScope`). Everything that
+ * reads a component's PROPS signature — substitution, detach, swap, slot
+ * codemods — keeps `FunctionLike`, because a class has no parameter list to
+ * substitute into: a class page renders, a class component used from another
+ * file is not inlined.
+ */
+export type ComponentBody = FunctionLike | MethodDeclaration
 
 /**
  * A value a prop can hold. Scalars are the whole story for an HTML element —
@@ -524,4 +537,23 @@ export interface ParsedPage {
    * part of what the page renders as its own.
    */
   cssInJs?: CssInJsExtraction
+  /**
+   * P3-B (WB-5) — set by `parsePageFile` when the file has a default export
+   * the parser could not read a component out of (`lazy(…)`, a component
+   * imported from another file, a class with no JSX `render()`, …), so the
+   * page has no nodes for a reason other than "the component renders
+   * nothing". The load turns it into an `unreadable-page-export` warning and
+   * the frame names the shape instead of claiming the page is empty. Absent
+   * whenever a component WAS found, including one whose JSX is empty.
+   */
+  unreadableExport?: UnreadableExport
+}
+
+/** Where a page's unreadable default export is, and one sentence naming its shape. See `ParsedPage.unreadableExport`. */
+export interface UnreadableExport {
+  /** 1-based line and column of the default export's expression (or declaration). */
+  line: number
+  col: number
+  /** Names the shape, for a person: "its default export is a call to lazy(), which Studio would have to run to see". */
+  message: string
 }

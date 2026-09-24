@@ -382,7 +382,11 @@ one undo wipes unrelated work, or every keystroke is its own entry.
 takes a whole patch and records ONE entry, so a UI that commits a
 multi-property gesture one property at a time turns one click into N undo
 steps. The Properties panel's single multi-property write channel is
-`onChangeMany(patch)` (`StyleSectionsEditor`). And a field must compare before
+`onChangeMany(patch)` (`StyleSectionsEditor`). A HELD key is one gesture too:
+the canvas arrow nudge (P2-C) previews every auto-repeat through
+`setPreviewNodeStyles` and commits ONE `setNodeInlineStyles` on the keyup, so
+a hold is one entry and — with `flushAutosave` — one source write
+(`canvas/useCanvasNodeArrowKeys.ts`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
 pushes an entry that reverts nothing visible. Both rules:
 [`docs/features/inspector.md`](../features/inspector.md)

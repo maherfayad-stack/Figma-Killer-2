@@ -86,16 +86,18 @@
  * `parseJsxTree` produced.
  */
 import * as path from 'node:path'
-import { Node, type Project, type SourceFile } from 'ts-morph'
+import { type ImportDeclaration, type Node, type Project, type SourceFile } from 'ts-morph'
 import { INLINE_ID_SEPARATOR } from '@core/page-tree'
-import {
-  findComponentDeclaration,
-  getFunctionLikeNode,
-  getReturnedJsxRoots,
-  parseJsxTree,
-} from './parsePageFile'
+import { parseJsxTree } from './parsePageFile'
+import { getReturnedJsxRoots } from './branchSelection'
+import { findNamedComponentDeclaration, getFunctionLikeNode } from './componentDeclaration'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
-import { resolveComponentSources, resolveExportedDeclaration, type ComponentSource } from './componentSources'
+import {
+  reexportChainFiles,
+  resolveComponentSources,
+  resolveExportedDeclaration,
+  type ComponentSource,
+} from './componentSources'
 import { mergeCssInJs } from './cssInJsExtract'
 import type { ParsedNode, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
@@ -211,6 +213,7 @@ export function inlineLocalComponents(
       rootIds: [...parsed.rootIds],
       nodes: { ...parsed.nodes },
       ...(parsed.cssInJs ? { cssInJs: parsed.cssInJs } : {}),
+      ...(parsed.unreadableExport ? { unreadableExport: parsed.unreadableExport } : {}),
     }
     // Iterate a SNAPSHOT of the original node ids — `expandCallSite` mutates
     // `page` (removing the call site, adding its expansion) as it goes, and we
@@ -229,7 +232,7 @@ export function inlineLocalComponents(
     return page
   } catch {
     // Never throw — degrade to the unmodified input page.
-    return { rootIds: [...parsed.rootIds], nodes: { ...parsed.nodes } }
+    return { ...parsed, rootIds: [...parsed.rootIds], nodes: { ...parsed.nodes } }
   }
 }
 
@@ -262,24 +265,23 @@ function expandCallSite(
 
   try {
     const targetAbsPath = path.resolve(state.workspaceRoot, targetRelFile)
-    const identifier = callSiteNode.name.split('.')[0]!
-    // The call site's OWN file — needed to tell whether `identifier` is a
-    // default import, a named import (honouring a rename), or declared
-    // directly in that same file (see `resolveCallTarget`).
+    // The call site's OWN file — needed to tell whether the tag is a default
+    // import, a named import (honouring a rename), a namespace member, or
+    // declared directly in that same file (see `resolveCallTarget`).
     const callerAbsPath = path.resolve(state.workspaceRoot, callSiteNode.loc.file)
     const callerSourceFile = state.project.getSourceFile(callerAbsPath)
-    const target = callerSourceFile
-      ? resolveCallTarget(callerSourceFile, identifier, targetAbsPath, state.project)
-      : defaultExportTarget(targetAbsPath, state.project)
+    if (!callerSourceFile) return false
+    const target = resolveCallTarget(callerSourceFile, callSiteNode.name, targetAbsPath, state.project)
     if (!target) return false
+    // The barrels this import passed through decide WHICH component renders
+    // here as much as the component's own file does — a re-pointed barrel
+    // must invalidate the route's cached parse (`pageParseCache.ts`).
+    for (const hop of target.via) state.dependencyFiles.add(path.resolve(hop.getFilePath()))
 
     const cycleKey = `${target.sourceFile.getFilePath()}#${target.exportedName ?? 'default'}`
     if (cyclePath.has(cycleKey)) return false
 
-    const declaration = target.exportedName === undefined
-      ? findComponentDeclaration(target.sourceFile)
-      : findNamedComponentDeclaration(target.sourceFile, target.exportedName, !target.sameFile)
-    const fn = declaration ? getFunctionLikeNode(declaration) : undefined
+    const fn = getFunctionLikeNode(target.declaration)
     const roots = fn ? getReturnedJsxRoots(fn) : []
     if (roots.length === 0 || !fn) return false
 
@@ -394,8 +396,13 @@ function expandCallSite(
  * second, drifting copy.
  */
 export interface CallTarget {
+  /** The file that DECLARES the component — its node ids, and every write aimed at them, land here. */
   sourceFile: SourceFile
-  /** `undefined` = resolve the target file's DEFAULT export. */
+  /**
+   * The component's own name in `sourceFile` (what `extractComponentCopy`
+   * renames in its copy); `undefined` when the call site imports the file's
+   * default export by a name the declaration itself need not have.
+   */
   exportedName: string | undefined
   /**
    * `true` when the call site's identifier is declared directly in its OWN
@@ -408,80 +415,87 @@ export interface CallTarget {
    * `local` in the first place); it says nothing about same-file visibility.
    */
   sameFile: boolean
+  /**
+   * P3-B — the declaration itself, as the export graph handed it back (a
+   * function, a `const`, or a default-exported expression such as
+   * `memo(Card)`). Read with `getFunctionLikeNode`. Carried rather than
+   * re-found by name: a default export may have no name, and a
+   * `const Card = …; export default Card` has one that is not `export`ed.
+   */
+  declaration: Node
+  /** `true` when `declaration` is `sourceFile`'s DEFAULT export — how an import of the component must be spelled. */
+  isDefaultExport: boolean
+  /** Every file the import passed THROUGH to reach `sourceFile` (the importing module, then each barrel) — see `reexportChainFiles`. */
+  via: SourceFile[]
 }
 
 /**
- * Resolves which declaration inside `targetSourceFile` the JSX tag
- * `identifier` (used in `callerSourceFile`) actually refers to — a default
- * import, a named import (honouring a rename, `import { Foo as Bar }`), or a
- * same-file declaration (a small helper component defined directly in the
- * page/component file that calls it, never imported at all).
+ * Resolves which declaration the JSX tag `tagName` (used in
+ * `callerSourceFile`) actually refers to — a default import, a named import
+ * (honouring a rename, `import { Foo as Bar }`), a member of a namespace
+ * import (`<UI.Card/>` off `import * as UI from '../ui'`), or a same-file
+ * declaration (a small helper component defined directly in the page/component
+ * file that calls it, never imported at all). Every import is followed through
+ * any barrels to the file that declares it.
+ *
+ * `targetAbsPath` is where `componentSources` classified the component; an
+ * answer that lands anywhere else is refused rather than trusted.
+ *
+ * Declines — `undefined`, the call site stays an opaque node — for a member
+ * tag on anything but a namespace import (`<Card.Header/>` off
+ * `import Card from './Card'` is a property of `Card`, not `Card`, and
+ * rendering `Card`'s JSX there would put the wrong component on the canvas),
+ * and for a tag nested deeper than one member.
  */
 export function resolveCallTarget(
   callerSourceFile: SourceFile,
-  identifier: string,
+  tagName: string,
   targetAbsPath: string,
   project: Project,
 ): CallTarget | undefined {
   const targetSourceFile = project.getSourceFile(targetAbsPath)
   if (!targetSourceFile) return undefined
+  const [identifier, member, ...deeper] = tagName.split('.')
+  if (!identifier || deeper.length > 0) return undefined
 
-  if (path.resolve(callerSourceFile.getFilePath()) === path.resolve(targetAbsPath)) {
-    return { sourceFile: targetSourceFile, exportedName: identifier, sameFile: true }
+  if (member === undefined && path.resolve(callerSourceFile.getFilePath()) === path.resolve(targetAbsPath)) {
+    const declaration = findNamedComponentDeclaration(targetSourceFile, identifier, false)
+    return declaration
+      ? { sourceFile: targetSourceFile, exportedName: identifier, sameFile: true, declaration, isDefaultExport: false, via: [] }
+      : undefined
   }
 
   for (const decl of callerSourceFile.getImportDeclarations()) {
-    const defaultImport = decl.getDefaultImport()
-    if (defaultImport?.getText() === identifier) {
-      return { sourceFile: targetSourceFile, exportedName: undefined, sameFile: false }
-    }
-    for (const named of decl.getNamedImports()) {
-      const importedName = named.getNameNode().getText()
-      const localName = named.getAliasNode()?.getText() ?? importedName
-      if (localName !== identifier) continue
-      // The import's own module may only RE-EXPORT the name (a barrel). Ask
-      // where it is declared, under whichever name it is declared as — a
-      // renaming barrel (`export { Card as PlanCard }`) means the page's local
-      // name does not exist in the declaring file at all. `componentSources`
-      // already pointed `targetAbsPath` at that file; this supplies the name to
-      // look for inside it.
-      const declaring = resolveExportedDeclaration(decl.getModuleSpecifierSourceFile(), importedName)
-      if (declaring && path.resolve(declaring.sourceFile.getFilePath()) === path.resolve(targetAbsPath)) {
-        return { sourceFile: declaring.sourceFile, exportedName: declaring.name, sameFile: false }
-      }
-      return { sourceFile: targetSourceFile, exportedName: importedName, sameFile: false }
+    const exported = importedExportName(decl, identifier, member)
+    if (exported === undefined) continue
+    const moduleFile = decl.getModuleSpecifierSourceFile()
+    const declaring = resolveExportedDeclaration(moduleFile, exported)
+    if (!declaring || path.resolve(declaring.sourceFile.getFilePath()) !== path.resolve(targetAbsPath)) return undefined
+    const isDefaultExport = declaring.sourceFile.getExportedDeclarations().get('default')?.[0] === declaring.node
+    return {
+      sourceFile: declaring.sourceFile,
+      exportedName: exported === 'default' ? undefined : (declaring.name ?? exported),
+      sameFile: false,
+      declaration: declaring.node,
+      isDefaultExport,
+      via: reexportChainFiles(moduleFile, exported),
     }
   }
   return undefined
 }
 
-/** Fallback for the (unexpected) case the caller's own SourceFile couldn't be found — resolve the target's default export. */
-function defaultExportTarget(targetAbsPath: string, project: Project): CallTarget | undefined {
-  const targetSourceFile = project.getSourceFile(targetAbsPath)
-  if (!targetSourceFile) return undefined
-  return { sourceFile: targetSourceFile, exportedName: undefined, sameFile: false }
-}
-
 /**
- * Finds a specific NAMED (non-default) declaration — a function declaration
- * or a `const` with a function/arrow initializer. `requireExport` is `false`
- * only for a same-file declaration (see `CallTarget.sameFile`'s doc comment)
- * — a cross-file named import can only exist if the target IS exported
- * (`componentSources.ts` already verified that via ts-morph's own import
- * resolution), so `requireExport` stays `true` there as a defence-in-depth
- * check, not a guess.
+ * The export `decl` binds `identifier` to — `'default'` for a default import,
+ * the imported name for a named one (`Foo` for `import { Foo as Bar }` seen as
+ * `Bar`), the member for `<NS.Member/>` off a namespace import — or `undefined`
+ * when `decl` does not bind it in a form the tag can use.
  */
-export function findNamedComponentDeclaration(sourceFile: SourceFile, name: string, requireExport: boolean): Node | undefined {
-  const fn = sourceFile.getFunction(name)
-  if (fn && (!requireExport || fn.isExported())) return fn
-
-  const variableDecl = sourceFile.getVariableDeclaration(name)
-  if (variableDecl) {
-    const statement = variableDecl.getVariableStatement()
-    const init = variableDecl.getInitializer()
-    if ((!requireExport || statement?.isExported()) && init && (Node.isArrowFunction(init) || Node.isFunctionExpression(init))) {
-      return variableDecl
-    }
+function importedExportName(decl: ImportDeclaration, identifier: string, member: string | undefined): string | undefined {
+  if (member !== undefined) return decl.getNamespaceImport()?.getText() === identifier ? member : undefined
+  if (decl.getDefaultImport()?.getText() === identifier) return 'default'
+  for (const named of decl.getNamedImports()) {
+    const importedName = named.getNameNode().getText()
+    if ((named.getAliasNode()?.getText() ?? importedName) === identifier) return importedName
   }
   return undefined
 }

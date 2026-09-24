@@ -28,7 +28,7 @@
  * each has its own function below saying why it resolves the way it does.
  */
 import { Node, SyntaxKind, type BinaryExpression, type ConditionalExpression, type ReturnStatement } from 'ts-morph'
-import type { FunctionLike } from './types'
+import type { ComponentBody } from './types'
 import type { ParseContext } from './jsxAttributeReaders'
 import { evaluateStaticTruthiness, evaluateStaticNullish } from './staticEval'
 import { shortenSource } from './nodeResolution'
@@ -105,7 +105,7 @@ export interface ReturnedJsx {
  * editor surface can still point a user at "the loading state" without ever
  * rendering it by default.
  */
-export function getReturnedJsxRoots(fn: FunctionLike): ReturnedJsx[] {
+export function getReturnedJsxRoots(fn: ComponentBody): ReturnedJsx[] {
   const body = fn.getBody()
   if (!body) return []
 

@@ -58,7 +58,7 @@ describe('buildStudioLiveDigest — cost discipline (trap #11)', () => {
       activeBoardId: 'board-1',
       frames: [{ pageId: 'small', x: 0, y: 0 }, { pageId: 'big', x: 400, y: 0 }],
       activePageId: 'small',
-      selectedNodeId: null,
+      selection: [],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const digest = await buildStudioLiveDigest(dir, snapshot, 'conv-1', { staleness: createStalenessTracker() })
@@ -78,11 +78,14 @@ describe('buildStudioLiveDigest — cost discipline (trap #11)', () => {
       frames: [{ pageId: 'small', x: 0, y: 0 }],
       activePageId: 'small',
       // A node id shaped like it belongs to the OTHER page — must not resolve.
-      selectedNodeId: 'pages/Big.tsx:1:1',
+      selection: [{ nodeId: 'pages/Big.tsx:1:1' }],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const digest = await buildStudioLiveDigest(dir, snapshot, 'conv-2', { staleness: createStalenessTracker() })
-    expect(digest.selection).toBeNull()
+    // Its node facts are NOT looked up on the other page (no module, no
+    // writable props); only its own id is decoded to where it lives.
+    expect(digest.selection.nodes).toHaveLength(1)
+    expect(digest.selection.nodes[0]).toMatchObject({ moduleId: null, tag: null, writableProps: [], source: { file: 'pages/Big.tsx', line: 1, col: 1, mapRow: false } })
   })
 
   it('never throws when the active page id names a page that does not exist', async () => {
@@ -91,7 +94,7 @@ describe('buildStudioLiveDigest — cost discipline (trap #11)', () => {
       activeBoardId: null,
       frames: [],
       activePageId: 'does-not-exist',
-      selectedNodeId: null,
+      selection: [],
       axes: { direction: 'ltr', colorScheme: 'light' },
     }
     const digest = await buildStudioLiveDigest(dir, snapshot, 'conv-3', { staleness: createStalenessTracker() })
@@ -114,7 +117,7 @@ describe('buildStudioLiveDigest — capabilities', () => {
     activeBoardId: null,
     frames: [],
     activePageId: null,
-    selectedNodeId: null,
+    selection: [],
     axes: { direction: 'ltr', colorScheme: 'light' },
   }
   // Hermetic against the developer's own shell/`.env` — same concern
@@ -244,7 +247,7 @@ describe('buildStudioLiveDigest — page write verification + Figma nudge', () =
     activeBoardId: 'board-1',
     frames: [],
     activePageId: null,
-    selectedNodeId: null,
+    selection: [],
     axes: { direction: 'ltr', colorScheme: 'light' },
   }
 

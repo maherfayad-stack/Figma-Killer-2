@@ -54,6 +54,7 @@ import { useCanvasRenameDialog } from './useCanvasRenameDialog'
 import { CanvasLayerContextMenu } from './CanvasLayerContextMenu'
 import { useCanvasLayerContextMenu } from './useCanvasLayerContextMenu'
 import { useCanvasNodeShortcuts } from './useCanvasNodeShortcuts'
+import { useCanvasNodeArrowKeys } from './useCanvasNodeArrowKeys'
 import { useEditorHistoryShortcuts } from './useEditorHistoryShortcuts'
 import { useCanvasSelectionKeyboard } from './useCanvasSelectionKeyboard'
 import { useBoardAnnotationKeyboard } from './useBoardAnnotationKeyboard'
@@ -360,6 +361,11 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
 
   // `node`, second handler — Delete / ⌘D / ⌘C / ⌘X / ⌘V / ⌥↑ / ⌥↓.
   useCanvasNodeShortcuts({ editable, isLive, requestDeleteNode })
+
+  // `node`, third handler — bare arrows move the selected layer (P2-C): an
+  // absolute one nudges, a layout child reorders. Above `board`, so a node
+  // selection never nudges a frame.
+  useCanvasNodeArrowKeys(editable, isLive)
 
   // `board` — ⌘/Ctrl+A selects every frame on the active board (board-02).
   useBoardSelectAllShortcut(editable, isLive)

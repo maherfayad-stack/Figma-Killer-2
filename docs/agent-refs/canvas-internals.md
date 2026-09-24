@@ -771,7 +771,7 @@ by **mount order**. There is now exactly one:
   `useEditorKeyScope(id, isActive, handle, handleKeyUp?)` and owns **no
   listener of its own**: `usePrototypeLinkKeyboard` (prototype-link),
   `useBoardAnnotationKeyboard` (annotation), `useCanvasSelectionKeyboard` +
-  `useCanvasNodeShortcuts` (node), `useBoardSelectAllShortcut` /
+  `useCanvasNodeShortcuts` + `useCanvasNodeArrowKeys` (node), `useBoardSelectAllShortcut` /
   `useCopyAsPngShortcut` / `useBoardFrameNudge` / `useCanvasToolShortcuts`
   (board), `useEditorHistoryShortcuts` (global).
 - Shared guards live in `canvas/editorKeyGuards.ts` (`isTextInputTarget`,
@@ -819,11 +819,37 @@ The rules the ladder replaced prose with:
 - **V is home (IX-11)** — the move tool, and it disarms the comment tool too.
 - **Escape is "deselect", not "select parent"** — traversal took Figma's own
   Enter/⇧Enter, because re-pointing Escape re-opens the bug `select-01` fixed.
-- `board.nudgeFrames` is the only bare-arrow binding in the registry and it is
-  scoped by **what is selected**, never globally: with a node selected the
-  arrows stay unclaimed for P2-C's node nudge (IX-1). Sibling selection went to
-  Tab / ⇧Tab, not the arrows. A mixed marquee (notes AND frames)
-  nudges the notes, because `annotation` outranks `board`.
+- `canvas.moveSelection` is the only bare-arrow binding in the registry and it
+  is scoped by **what is selected**, never globally. Three rungs read it:
+  notes/docs (`annotation`), the selected layer (`node`,
+  `useCanvasNodeArrowKeys`, P2-C / IX-1), frames (`board`). A mixed marquee
+  (notes AND frames) nudges the notes, because `annotation` outranks `board`.
+  Sibling selection went to Tab / ⇧Tab, not the arrows.
+- **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
+  offsets 1 px / ⇧ 10 px; any other layer reorders one place along its
+  parent's axis (`reorderStep`: reversed for `*-reverse` and an RTL row; a
+  cross-axis arrow does nothing) through `moveNode`. The decision needs ONE
+  layout read — `measureArrowTarget` asks the frame adapters for the node and
+  its ancestor chain in one `measure`, so a live frame answers it too. Rules in
+  `canvas/canvasNodeArrowMove.ts`, the gesture in `useCanvasNodeArrowKeys.ts`.
+  Canvas-scoped like Tab (`isCanvasKeyboardSurface`): in a panel the arrows
+  stay the panel's. Single selection only.
+- **A held arrow is one undo entry and one source write.** A nudge previews
+  every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
+  + the optimistic style broadcast for live frames), then writes ONE
+  `setNodeInlineStyles` on the arrow's keyup (the dispatcher's release
+  broadcast — P2-B routes frame keyups there) and flushes the autosave. A
+  focus loss (`handleKeyUp(null)`) commits where the preview was. A reorder is
+  one step per PRESS: the repeats are claimed and dropped, because a
+  structural write per repeat would queue thirty a second.
+- **A nudge writes the offsets the source authored**, not always `left`/`top`
+  (`authoredOffsets`: inline over class base styles, `inset` read side by side, so `inset: 124px 0 auto 0` never gains a `bottom`). A
+  computed inset on a positioned element is its used px value, so the DOM
+  cannot tell `right: 20px` from `left: auto`; writing `left` there
+  over-constrains the element. Nothing authored → `left` (`insetInlineStart`
+  under RTL) and `top`, the same keys a free move and a resize write — always
+  **camelCase**, because they are keys of a JSX `style={{…}}` object. Only a
+  CSSOM preview spells them kebab (`cssPropertyName`).
 - Delete with a prototype connector AND an element selected removes the
   connector, because `prototype-link` outranks `node`. This used to be a
   capture-phase listener plus `stopPropagation`.

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test'
-import { auditCompositionQuality, COMPOSITION_RULES, LAYOUT_ARCHETYPES } from './compositionAudit'
+import { APP_CHROME_RULE, archetypesFor, auditCompositionQuality, COMPOSITION_RULES, LAYOUT_ARCHETYPES } from './compositionAudit'
 import { buildProjectTokenIndex } from './projectTokenIndex'
 
 const COMPOSITION_TOKENS_CSS = `:root {
@@ -222,6 +222,18 @@ describe('LAYOUT_ARCHETYPES', () => {
   it('offers enough distinct shapes for three variants to differ structurally', () => {
     expect(LAYOUT_ARCHETYPES.length).toBeGreaterThanOrEqual(6)
     expect(new Set(LAYOUT_ARCHETYPES.map((a) => a.id)).size).toBe(LAYOUT_ARCHETYPES.length)
+  })
+
+  it('offers a mobile-app pool as well as a web one, each big enough for three distinct sequences (AI-12)', () => {
+    const web = archetypesFor('web').map((a) => a.id)
+    const app = archetypesFor('app').map((a) => a.id)
+    expect(web.length).toBeGreaterThanOrEqual(6)
+    expect(app.length).toBeGreaterThanOrEqual(6)
+    // The app pool is app screens, not the marketing bands a 393px frame used to get.
+    for (const id of ['hero', 'pricing', 'footer', 'testimonial-band']) expect(app).not.toContain(id)
+    for (const id of ['list-rows', 'form-step', 'order-summary', 'empty-state', 'stats-chart']) expect(app).toContain(id)
+    expect(APP_CHROME_RULE).toContain('tab bar')
+    expect(APP_CHROME_RULE).toContain('safe areas')
   })
 
   it('every archetype brief stands alone — a subagent sees only the text it is handed', () => {

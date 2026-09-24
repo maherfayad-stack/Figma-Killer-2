@@ -99,10 +99,16 @@ export interface StudioLoadResult {
  *   tree anyway, so the page still renders, but that tree is a guess: every
  *   write to the file is refused, naming this line, until it parses again
  *   (`studioSyntaxGuard.ts`).
+ * - `unreadable-page-export` — P3-B (WB-5): a page's default export is a shape
+ *   the parser cannot read a component out of without running it (`lazy(…)`,
+ *   a component imported from another file, a class with no JSX `render()`).
+ *   The page has no nodes for THAT reason, not because it is empty; the frame
+ *   shows `message` instead of "This page is empty".
  */
 export type StudioLoadWarning =
   | { code: 'tsconfig-unreadable'; file: 'tsconfig.json'; message: string }
   | { code: 'syntax-error'; pageId: string; file: string; line: number; col: number; message: string }
+  | { code: 'unreadable-page-export'; pageId: string; file: string; line: number; col: number; message: string }
 
 /** `loadStudioPages` options — today only the targeted-reload page filter. */
 export interface StudioLoadOptions {

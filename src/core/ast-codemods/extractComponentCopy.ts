@@ -125,7 +125,7 @@ export function extractComponentCopy(params: ExtractComponentCopyParams): Extrac
   // add a fresh one) at the new file instead of the original.
   const relSpecifier = relativeSpecifier(file, newPath)
   retagCallSite(opening, newName)
-  repointImport(sourceFile, identifier, newName, relSpecifier)
+  repointImport(sourceFile, identifier, newName, relSpecifier, target.isDefaultExport)
   sourceFile.saveSync()
 
   const newFileRel = path.relative(workspaceRoot, newPath).split(path.sep).join('/')
@@ -154,8 +154,18 @@ function retagCallSite(opening: ReturnType<typeof findJsxElementAtLocationOrThro
   }
 }
 
-/** Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it — `removeImportIfLastUsage` (`./importReconcile`), the same reconciliation `detachComponent.ts`/`extractSubtreeToComponent.ts` use for the identical question. */
-function repointImport(sourceFile: SourceFile, oldName: string, newName: string, specifier: string): void {
-  sourceFile.addImportDeclaration({ moduleSpecifier: specifier, namedImports: [newName] })
+/**
+ * Adds an import for `newName` from `specifier`, and drops `oldName`'s import if nothing else in the page file still references it — `removeImportIfLastUsage` (`./importReconcile`), the same reconciliation `detachComponent.ts`/`extractSubtreeToComponent.ts` use for the identical question.
+ *
+ * Spelled the way the copy exports it: the copy is the original's bytes with
+ * one name changed, so a DEFAULT-exported component is still its file's
+ * default export. A named import of it would bind nothing (P3-B found this
+ * while widening what reaches here — a component reached through
+ * `export { default as Card } from './Card'`).
+ */
+function repointImport(sourceFile: SourceFile, oldName: string, newName: string, specifier: string, isDefaultExport: boolean): void {
+  sourceFile.addImportDeclaration(
+    isDefaultExport ? { moduleSpecifier: specifier, defaultImport: newName } : { moduleSpecifier: specifier, namedImports: [newName] },
+  )
   removeImportIfLastUsage(sourceFile, oldName)
 }

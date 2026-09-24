@@ -102,10 +102,18 @@ const WRITE_GATED_BEFORE_THE_SPLIT: Readonly<Record<string, readonly CoreCapabil
  *   - P4-C (AI-2): the API-key path's file authoring. Offered only on the HTTP
  *     drivers' surface (`studioHttpAgentTools`), write-gated exactly like
  *     every other Studio write (`ai.tools.write` + `studio.write`).
+ *   - P4-D (AI-17, AI-15): `studio_arrange_frames` writes board geometry
+ *     (`.studio/boards.json`, like `studio_set_frames`) and
+ *     `studio_set_tokens` rewrites a project stylesheet through the agent
+ *     write gate. Both on both agent paths and in the registry, both
+ *     `ai.tools.write` + `studio.write`, both `sideEffects: 'write'`.
+ *     `studio_component_snippet` (AI-14) is a read and is NOT here.
  */
 const WRITE_GATED_ADDED_SINCE: Readonly<Record<string, readonly CoreCapability[]>> = {
+  studio_arrange_frames: ['studio.write'],
   studio_edit_file: ['studio.write'],
   studio_edit_files: ['studio.write'],
+  studio_set_tokens: ['studio.write'],
   studio_write_file: ['studio.write'],
 }
 

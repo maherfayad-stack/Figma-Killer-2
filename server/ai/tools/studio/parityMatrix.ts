@@ -79,7 +79,19 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
   },
 
   // ── Studio tools: what the filesystem cannot do.
-  { action: 'Resize / move a board frame (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
+  { action: 'Resize board frames (bulk)', status: { kind: 'tool', toolNames: ['studio_set_frames'] } },
+  {
+    // AI-17 — the canvas drags frames and the agent could not: `set_frames`
+    // sizes only, so "put the variants side by side" had no tool behind it.
+    action: 'Move board frames — explicit x/y, a row, a column or a grid — with a note on each',
+    status: { kind: 'tool', toolNames: ['studio_arrange_frames'] },
+  },
+  {
+    // AI-15 — the Framework/token panel edits a token's value in place; the
+    // agent's equivalent is one CST edit on the declaration that wins.
+    action: "Change a design token's value (light or dark)",
+    status: { kind: 'tool', toolNames: ['studio_set_tokens'] },
+  },
   { action: 'Install dependencies', status: { kind: 'tool', toolNames: ['studio_install_deps'] } },
   { action: 'Poll an install job', status: { kind: 'tool', toolNames: ['studio_install_status'] } },
   { action: 'Confirm the code just written actually compiles', status: { kind: 'tool', toolNames: ['studio_typecheck'] } },

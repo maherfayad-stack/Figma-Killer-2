@@ -90,6 +90,70 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   7. Click the status-bar clock on SMS: SheetHeader is selected ("SheetHeader · Local"). Double-click: IOSStatusBar is selected. Double-click again: the clock is selected.
   8. Pick a value in an inspector dropdown, then press Delete: the selected element is deleted.
 
+### parser-17 — P3-B: ordinary React renders (WB-3, WB-4, WB-26, WB-5)
+- **Agent:** parser-surgeon · **Branch:** `feat/ordinary-react-renders` · **PR:** #240 (draft; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** text in container tags, `memo`/`forwardRef`/`React.memo`, `export { default as X }` barrels, `import * as UI`, `React.Fragment`, and class/HOC pages all render — or the frame names the shape. Never a blank frame.
+- **Scope (parser files):** `src/core/page-parser/{componentDeclaration,reactImports}.ts` (new), `parsePageFile.ts`, `inlineLocalComponents.ts`, `componentSources.ts`, `types.ts`, `branchSelection.ts`, `staticEval.ts`, `staticEvalCore.ts`, `componentSubstitution.ts`, `cssInJsExtract.ts`, `nextAppLayout.ts`, `index.ts`; `src/core/ast-codemods/{resolveComponentCallSite,extractComponentCopy,swapComponentInstance}.ts`; `src/core/studio-sync/parsedPageToSitePage.ts`. Also: `server/handlers/studio/{moduleMapping,loadWarnings,studioLoadContract}.ts`, `src/modules/base/{text/*,utils/htmlTag.ts}` (`text/tags.ts` deleted), `src/admin/pages/site/studio/{studioLoadWarningsStore,studioLoadStreamSchema,fsCodemodAdapter,studioLiveReloadFetch}.ts`, `canvas/CanvasEmptyPageHint.tsx` + one prop in `BoardFrameView.tsx`.
+- **Done:**
+  - WB-4: `getFunctionLikeNode` unwraps React's own `memo`/`forwardRef` (import provenance, same-file args only). `resolveExportedDeclaration` returns the declaration NODE; `CallTarget` carries `declaration`, `isDefaultExport`, `via`. Namespace members resolve; `<Card.Header/>` on a default import is declined (it used to render `Card`'s whole JSX — proven).
+  - WB-26: React's `Fragment` flattens like `<>`. WB-3: text-only elements → `base.text` + `customTag` (`isTextHostTag`). WB-5: class `render()` and unknown-HOC pages render (HOC with a note); anything else → `unreadable-page-export` warning → named in the frame.
+- **Decisions (per new resolution):**
+  - memo/forwardRef unwrap — locks: no · codeProps: no · origin: n/a (structure, not a value). Nodes write to the wrapped function's JSX, the one honest target.
+  - HOC page read — locks: no · codeProps: no · origin: none; a `resolution.note` names the wrapper. Page-only: `getFunctionLikeNode` does NOT read through unknown HOCs (detach would drop the HOC silently).
+  - Class `render()` — locks: no · `this.props`/`this.state` text is code-valued via the existing trace, never guessed · origin only where a literal is read, as everywhere.
+  - Custom-tag text node — locks: no · codeProps: unchanged rules · text writes via `setJsxText`, tag via `setJsxTagName`. Cost: `base.text` is a leaf, so nothing drops INTO an imported `<li>`.
+  - Barrel hops go into `dependencyFiles` (ONE name's route, `reexportChainFiles`), so a re-pointed barrel invalidates the route parse.
+- **Landmines (not in studio-import.md before this PR; added there in this PR):** `extractComponentCopy` wrote `import { X2 }` for a DEFAULT-exported component (fixed: `CallTarget.isDefaultExport`). A literal `className` with no rule never reaches the DOM (board-27f), so e2e specs must locate nodes by `data-node-id`, not class. `setJsxText` always writes `{"…"}` (WB-9/10's bundle).
+- **Next:** orchestrator merge; `studio-scribe` has nothing extra to fold (the doc changes ship in this PR).
+- **Verification:** see the PR body. Every CONFIRMED finding's test failed before the fix (pre-fix trunk run, plus in-place disables).
+- **Human action needed:** dogfood `/admin/site` on a repo with `memo`/barrels and a `lazy()` page (script in the PR body).
+
+### mcp-29 — P4-D: the assistant designs with craft (AI-19, AI-12, AI-14, AI-16, AI-17, AI-15, AI-9)
+- **Agent:** mcp-tooling (+ parser-surgeon for the token codemod) · **Branch:** `feat/agent-designs-with-craft` off `6efc088a` · **PR:** #241 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open)
+- **Goal:** a creative, tool-packed assistant: one prompt for both paths that teaches design, not only matching; tools to place frames, change tokens, write component usages and check breakpoints; the selection in the digest.
+- **Prompt (AI-19):** "done" first and mode-specific; decide before drawing, real content, one critique pass against a craft rubric, Initiative; the eSIM facts are gone; "keep the screen a static composition" (dropped from CLAUDE.md by P4-B) now lives under Canvas invariants; "specification, not inspiration" moved into BALANCED. The largest prefix went from ~36.9K to ~32.5K characters. Gate: `agent-prompt-craft.test.ts` checks the CLI file and both HTTP wires (sections, mode block, no project facts, a 34,000-char budget).
+- **Tools added** (all `execution: server`, in the registry AND on both agent paths):
+  - `studio_set_tokens`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, set: [{ name, value, scheme? }] ≤40 }`. It makes a CST edit (`@core/css-codemods` `setCustomPropertyValueAtLine`) through `resolveAgentFilePath(…,'write')`, under the write lock, and it is all-or-nothing. Refusals: `no-such-token` ("--x is not declared at the document root of any stylesheet the canvas loads"), `read-only-source`, `ambiguous-declaration` (lists every file:line), and `stale-source`.
+  - `studio_arrange_frames`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, pageIds+layout(row|column|grid)+columns?+gap?+origin? | positions[{pageId,x,y}], notes?[{pageId,text}], boardId? }`. When a page has no frame it refuses `no-board-frame`: "No frame on board … for: X" with the remedy "call studio_screenshot first".
+  - `studio_component_snippet`: a read, ungated. Input `{ dir?, name, forFile, props?, children?, package? }`. Refusals: `no-such-component` (gives the nearest names) and `invalid-prop-value` (lists the accepted values).
+  - `studio_screenshot` gains `widths[]` (≤4, 240–2560). It is headless-only and never writes the board. When headless cannot run, the error says: "capture-unavailable: the Npx capture needs the headless browser… no other width was substituted".
+- **Other changes:**
+  - AI-12: the app archetype pool plus `APP_CHROME_RULE`, a `surface` taken from the platform or the frame widths, and a colour-strategy axis. The axis is drawn last, so old rngSeeds reproduce.
+  - AI-9: `StudioAgentSnapshot.selection[{nodeId, box?}]` replaces `selectedNodeId`. The box is measured client-side (`selectionBoxes.ts`, leaf imports only, fail-soft). `selectionDigest.ts` adds file:line:col, an excerpt read under containment, and the box.
+  - The shared write steps moved to `agentWriteSupport.ts`, and five refusal codes were added.
+- **Decisions:**
+  - No new quality_check findings (touch target, line length, edge alignment). Every non-DS finding is a Stop-gate error, and a CSS-only heuristic would block turns on false positives. This needs a layout-measured grader.
+  - `studio_set_tokens` never creates a token.
+- **Landmines:**
+  - The snapshot wire shape changed (`selection`). Anything that builds a `StudioAgentSnapshot` must send the array.
+  - `WRITE_GATED_ADDED_SINCE` now lists `studio_arrange_frames` and `studio_set_tokens`.
+  - Prefix budget: raise `STATIC_PREFIX_BUDGET_CHARS` deliberately, never silently.
+- **Next:** the owner runs a creative and a match brief (bench:agent-turn) on both paths. The HTTP-path dogfood is in the PR body.
+
+### canvas-25 — P2-C: arrow keys move the selected layer (IX-1) + free move's camelCase key (canvas-23)
+- **Agent:** canvas-engineer · **Branch:** `feat/arrow-keys-reorder-and-nudge` off `77115367` · **PR:** #242 (draft, base `feat/canvas-excellence`; long form and gate triage in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** with ONE layer selected, a bare arrow moves it. `absolute|fixed` → nudge 1 px / ⇧ 10 px; anything else → reorder ±1 along the parent's axis (`moveNode`; reversed for `*-reverse` / RTL row; a cross-axis arrow does nothing). One layout read decides (`measureArrowTarget`, one adapter `measure` for the node + ancestor chain — live frames too). A held nudge previews each repeat (`setPreviewNodeStyles` + optimistic broadcast) and writes ONE `setNodeInlineStyles` on the arrow keyup, then `flushAutosave` → one undo entry, one source write. A held reorder is one step per press.
+- **Also fixed:** `canvasFreeMove` wrote `'inset-inline-start'` into JSX `style={{}}`; it now writes `insetInlineStart` (shared `inlineOffsetProperty`), and only the CSSOM preview spells it kebab. A nudge writes the offsets the source AUTHORED (`authoredOffsets`: inline over class base styles, `inset` read per side) — a right-anchored layer moves `right` and never gains `left`; a stretched one moves both.
+- **Registry:** `board.nudgeFrames` → `canvas.moveSelection` (one arrow binding, three rungs: annotation / node / board); `frameNudgeDelta` → `nudgeDelta`; the annotation hook's private arrow table is gone. OD-3 register rows for ← ↑ → ↓ and "held arrow".
+- **Canvas files touched:** `canvas/{canvasNodeArrowMove (new), useCanvasNodeArrowKeys (new), canvasFreeMove, useCanvasNodeShortcuts, useBoardFrameNudge, useBoardAnnotationKeyboard, CanvasRoot}.ts(x)`, `spotlight/keybindings.ts`. No runtime change (no bundle regen).
+- **Tests:** `nodeArrowKeys.test.tsx` (19; the IX-1 and anchoring cases shown failing with the hook / `authoredOffsets` disabled in place), `canvasFreeMove.test.ts` (+2, shown failing with the kebab key restored). New e2e `node-arrow-keys.e2e.ts` 4/4 green: file bytes, save-request count, computed position, one ⌘Z.
+- **Landmines:**
+  - **Events × keyboard:** the hold ends on the ARROW's keyup only (releasing ⇧ mid-hold does not end it), from the dispatcher's release broadcast. `handleKeyUp(null)` (focus left) COMMITS at the last preview — same as a lost pointerup.
+  - **Events × focus:** arrows are canvas-scoped (`isCanvasKeyboardSurface`) like Tab — with focus on a panel button or the Layers tree they are NOT claimed. Click the canvas first.
+  - **Injectors:** the live-frame preview is the optimistic style rule (`!important`); it stays until Vite's update lands. Portal preview is the store's `previewNodeStyles` slot — single slot, shared with the inspector's scrub.
+  - **Height:** none touched; a nudge of an absolute child cannot change the frame's fit height (absolute is out of flow) unless it pokes past the body's bottom.
+  - The first keydown awaits one measure; keydowns during it accumulate and a release during it is honoured when it lands.
+- **Next:** multi-select nudge / reorder (P5-F); grid Up/Down by column count (audit P2).
+- **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, SMS frame (static tier):
+  1. Click empty space in the SMS content banner (below the header), press ↓ five times holding it: the banner slides down live; release — ONE save, `SMS.tsx`'s banner `<div>` gains `style={{ top: "129px" }}` and no `bottom`. ⌘Z once: back to 124.
+  2. Same banner, ⇧→ once: `left: "10px", right: "-10px"` (it moves, keeps its width).
+  3. Click the 2nd code input, press →: it swaps with the 3rd in `SMS.tsx`. Hold →: still one place. Press ↓: nothing.
+  4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
+  5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -107,6 +171,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
+- `mcp-29` · a mobile project, CLI and API-key paths · "design a checkout screen, 3 directions": variants use app bands, sit side by side with a note each; select two elements and ask "what are these": the reply names both file:lines; "make the brand colour coral" edits one `--brand` declaration. Script: the PR body
 
 **Element identity (P1)**
 - `store-16` · a studio-imported page · select an element, have the agent insert a line above it: the ring stays on the same element; drag while an agent write lands: the drop moves what you grabbed. Spec: `tests/e2e/selection-follows-element.e2e.ts`
@@ -129,6 +194,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-18` · 2+ frames at 100 % and 50 % · Alt-hover measures distances and padding
 - `canvas-23` · `/admin/site` on `test4` · resize a border-box and a content-box element (the CSS width lands exactly), a `flex: 1` child (goes fixed; static frames only), ⇧/⌥ mid-drag, the W/N handles of an absolute element, the W×H badge; release outside the window ends the drag. Script: the `canvas-23` entry in the archive
 - `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry under `## Now`
+- `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row
