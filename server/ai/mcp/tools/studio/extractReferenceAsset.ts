@@ -48,7 +48,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import { aiToolOk, toolRefusal } from '@core/ai'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import { loadStudioPages } from '../../../../handlers/studioPageLoad'
-import { landAssetBytes } from '../../../../handlers/studio/assetLanding'
+import { isRefusal, landAgentAsset } from './agentWriteSupport'
 import { readDesignReferenceBytes } from '../../../../handlers/studio/designReferenceStore'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { resolvePageByName } from './pageNameMatch'
@@ -153,13 +153,18 @@ export const studioExtractReferenceAssetTool: AiTool = {
       return toolRefusal('image-decode-failed', `Could not crop the reference: ${err instanceof Error ? err.message : String(err)}`)
     }
 
-    const landed = landAssetBytes(dir, targetDir, png, name)
-    if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
+    // Through the agent write gate and the project lock, like every agent
+    // image landing (`landAgentAsset`, P4-E): `assetLanding.ts`' own guard is
+    // built for the user's drops and lets `prototype/` through.
+    const landed = await landAgentAsset(dir, ctx, targetDir, png, name)
+    if (isRefusal(landed)) return landed
 
     return aiToolOk({
       ok: true,
       dir,
       relPath: landed.relPath,
+      src: landed.src,
+      buildSafe: landed.buildSafe,
       width,
       height,
       deduped: landed.deduped,

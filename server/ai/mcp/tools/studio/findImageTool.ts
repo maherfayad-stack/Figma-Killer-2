@@ -154,13 +154,8 @@ export async function findImageForAgent(input: FindImageInput, ctx: ToolContext,
 
   for (const photo of chosen) {
     const rendition = renditionUrl(photo, size)
-    let renditionHost: URL | null = null
-    try {
-      renditionHost = new URL(rendition)
-    } catch {
-      renditionHost = null
-    }
-    if (renditionHost === null || !provider.isProviderImageUrl(renditionHost)) {
+    const renditionUrlParsed = URL.canParse(rendition) ? new URL(rendition) : null
+    if (renditionUrlParsed === null || !provider.isProviderImageUrl(renditionUrlParsed)) {
       // The API response named somewhere else to download from. It is not
       // trusted to: only the provider's own image host is.
       skipped.push(`photo ${photo.id}: its image URL is not on ${provider.label}'s image host, so it was not downloaded`)
