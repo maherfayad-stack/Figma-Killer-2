@@ -15,6 +15,8 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { createStudioRouteTestHarness, type StudioRouteTestHarness } from './helpers/studioRouteHarness'
+import { INERT_FILE_CSP } from '../../static'
+import { applySecurityHeaders } from '../../securityHeaders'
 
 /**
  * Every Studio route is capability-gated at dispatch, so these tests drive the
@@ -66,6 +68,27 @@ async function requestAsset(dir: string, rawPathQuery: string): Promise<Response
   expect(res).not.toBeNull()
   return res!
 }
+
+describe('GET /admin/api/studio/asset — a project file never acts as a document on the admin origin (review of #248, F1)', () => {
+  const SCRIPTED_SVG = '<svg xmlns="http://www.w3.org/2000/svg"><x:script xmlns:x="http://www.w3.org/2000/svg">alert(1)</x:script></svg>'
+
+  it('serves a project SVG with the inert CSP and nosniff', async () => {
+    write(tmpDir, 'src/assets/logo.svg', SCRIPTED_SVG)
+    const res = await requestAsset(tmpDir, `path=${encodeURIComponent('src/assets/logo.svg')}`)
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
+    expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+  })
+
+  it('the admin security layer keeps that policy and appends its own, never replacing it', async () => {
+    write(tmpDir, 'page.html', '<script>alert(1)</script>')
+    const res = applySecurityHeaders(await requestAsset(tmpDir, 'path=page.html'), '/admin/api/studio/asset')
+    const csp = res.headers.get('content-security-policy') ?? ''
+    expect(csp).toContain("default-src 'none'")
+    expect(csp).toContain('sandbox')
+    expect(csp).toContain("frame-ancestors 'none'")
+  })
+})
 
 describe('GET /admin/api/studio/asset', () => {
   it('serves a real fixture file with the right bytes and content-type', async () => {

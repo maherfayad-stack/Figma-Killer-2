@@ -33,7 +33,11 @@
  *      it was shown.
  *   3. **The Figma Dev Mode server on loopback**, only while the operator has
  *      set `STUDIO_ALLOW_LOOPBACK_ASSET_FETCH` — the same switch the transport
- *      reads; with it off, the transport refuses loopback anyway.
+ *      reads; with it off, the transport refuses loopback anyway. And only
+ *      that server's asset path: port {@link FIGMA_DEV_MODE_PORT}, under
+ *      `/assets/`. With the switch on, the transport can reach every service
+ *      on the host — Studio's own API, every project's dev server — and none
+ *      of those is an asset source (review of #248, finding 3).
  *   4. **A URL the user pasted into this conversation**, exactly (fragment
  *      ignored). The user naming a URL is the consent; a URL that merely
  *      appeared in something the agent read is not. Exact, not same-origin:
@@ -64,6 +68,11 @@ const FIGMA_ROOT_DOMAIN = 'figma.com'
 /** The S3 bucket Figma's REST `/v1/images` export hands out URLs on. An exact host: other buckets on amazonaws.com belong to anyone. */
 const FIGMA_EXPORT_BUCKET_HOSTS: ReadonlySet<string> = new Set(['figma-alpha-api.s3.us-west-2.amazonaws.com'])
 
+/** The port Figma's Dev Mode MCP server listens on, on the user's own machine. */
+export const FIGMA_DEV_MODE_PORT = '3845'
+/** The path Figma's Dev Mode server serves design assets under. */
+const FIGMA_DEV_MODE_ASSET_PATH = '/assets/'
+
 /** At most this many user URLs are carried per turn — a conversation that pasted more is not the common case, and the set rides every tool call. */
 export const MAX_USER_SUPPLIED_URLS = 200
 
@@ -86,7 +95,8 @@ export function normalizeFetchUrl(raw: string): string | null {
 /**
  * Every http(s) URL the USER typed or pasted in `messages` — their own text
  * blocks only. Assistant text, tool calls and tool results are not the user,
- * and neither is an image. Most recent last, deduplicated, capped at
+ * neither is an image, and neither is a user-role block Studio composed
+ * (`origin: 'studio'`). Most recent last, deduplicated, capped at
  * {@link MAX_USER_SUPPLIED_URLS} (the most recent win).
  */
 export function collectUserSuppliedUrls(messages: readonly AiMessage[]): string[] {
@@ -94,7 +104,10 @@ export function collectUserSuppliedUrls(messages: readonly AiMessage[]): string[
   for (const message of messages) {
     if (message.role !== 'user') continue
     for (const block of message.content) {
-      if (block.kind !== 'text') continue
+      // Only what the user typed. A block Studio composed (the "Address with
+      // AI" digest quotes comments, the AI's own included) names nothing on
+      // the user's behalf — review of #248, F2.
+      if (block.kind !== 'text' || block.origin === 'studio') continue
       for (const match of block.text.matchAll(URL_IN_TEXT_RE)) {
         // A sentence's own punctuation is not part of the URL it ends with.
         const normalized = normalizeFetchUrl(match[0].replace(/[.,;:!?]+$/, ''))
@@ -115,6 +128,11 @@ function isLoopbackHost(hostname: string): boolean {
   const host = stripHostnameBrackets(hostname)
   if (host === 'localhost') return true
   return isIP(host) !== 0 && isLoopbackAddress(host)
+}
+
+/** The Figma Dev Mode server's asset path on loopback, and nothing else there. */
+function isFigmaDevModeAsset(url: URL): boolean {
+  return url.protocol === 'http:' && isLoopbackHost(url.hostname) && url.port === FIGMA_DEV_MODE_PORT && url.pathname.startsWith(FIGMA_DEV_MODE_ASSET_PATH)
 }
 
 export interface RemoteFetchPolicyContext {
@@ -148,7 +166,7 @@ export function remoteFetchRefusal(
 
   if (url.protocol === 'https:' && isFigmaHost(url.hostname)) return null
   if ((deps.stockProvider ?? PEXELS).isProviderImageUrl(url)) return null
-  if ((deps.allowLoopback ?? loopbackAssetFetchEnabled()) && isLoopbackHost(url.hostname)) return null
+  if ((deps.allowLoopback ?? loopbackAssetFetchEnabled()) && isFigmaDevModeAsset(url)) return null
   const normalized = normalizeFetchUrl(rawUrl)
   if (normalized !== null && (ctx.userSuppliedUrls ?? []).includes(normalized)) return null
 

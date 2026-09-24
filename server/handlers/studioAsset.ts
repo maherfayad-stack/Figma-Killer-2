@@ -41,13 +41,16 @@
  *
  * Serving itself is delegated to `serveStaticFile` (`server/static.ts`),
  * which already owns MIME typing, compression, and range handling — this
- * function's only job is deciding whether `path` is allowed to reach it.
+ * function decides whether `path` is allowed to reach it, and stamps the
+ * response with `INERT_FILE_CSP` (`default-src 'none'; sandbox`, `nosniff`):
+ * the file is the project's, not Studio's, and must never act as a document
+ * on this origin.
  */
 import { isAbsolute, join, resolve, sep } from 'node:path'
 import { realpathSync } from 'node:fs'
 import { EXCLUDED_WORKSPACE_DIR_NAMES, STUDIO_ASSET_SENTINEL } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
-import { serveStaticFile } from '../static'
+import { inertFileResponse, serveStaticFile } from '../static'
 
 export async function resolveStudioAssetResponse(dir: string, rawPath: string, req: Request): Promise<Response | null> {
   if (isAbsolute(rawPath)) return null
@@ -83,7 +86,11 @@ export async function resolveStudioAssetResponse(dir: string, rawPath: string, r
   // decode reconstructs exactly the literal segment text instead of applying
   // a SECOND decode pass (which would corrupt a segment containing a literal
   // `%`, or worse, reinterpret an already-decoded `..`-shaped byte sequence).
-  return serveStaticFile(dir, `/${segments.map(encodeURIComponent).join('/')}`, req)
+  const served = await serveStaticFile(dir, `/${segments.map(encodeURIComponent).join('/')}`, req)
+  // A project file is untrusted content served on the admin origin: an SVG or
+  // HTML file opened directly would otherwise run its script with the admin
+  // session. `INERT_FILE_CSP` is the boundary (review of #248, F1).
+  return served ? inertFileResponse(served) : null
 }
 
 /**

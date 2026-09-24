@@ -199,6 +199,12 @@ export async function landAgentAsset(
   return withProjectWriteLock(dir, () => {
     const target = resolveAgentFilePath(dir, requested, 'write')
     if (!target.ok) return toolRefusal(target.code, target.message, { remedy: target.remedy })
+    // Judged again as a FILE inside the folder: the gate's directory rules
+    // (`.husky/`, `.vscode/`, `.github/workflows/`) apply to a path's parent
+    // segments, so the folder alone reads as a file named `.husky` and passes
+    // (review of #248, finding 7).
+    const inside = resolveAgentFilePath(dir, `${target.rel}/asset.png`, 'write')
+    if (!inside.ok) return toolRefusal(inside.code, inside.message, { remedy: inside.remedy })
     const existing = statIfPresent(target.abs)
     if (existing && !existing.isDirectory()) {
       return toolRefusal('not-a-file', `"${target.rel}" is a file, not a folder to land an image in.`, {

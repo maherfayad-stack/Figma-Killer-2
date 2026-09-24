@@ -115,6 +115,13 @@ describe('studio_fetch_remote_asset — the landing goes through the agent write
     expect(fs.existsSync(path.join(dir, 'prototype'))).toBe(false)
   })
 
+  it.each(['.husky', '.vscode', '.github/workflows'])('refuses a host-executed folder as a target: %s (review of #248, finding 7)', async (targetDir) => {
+    const url = 'https://brand.example/logo.png'
+    const result = await fetchRemoteAssetForAgent({ dir, url, targetDir }, ctx({ userSuppliedUrls: [url] }), recordingDeps([]))
+    expect(result.ok).toBe(false)
+    expect(fs.existsSync(path.join(dir, ...targetDir.split('/')))).toBe(false)
+  })
+
   it('refuses .studio/ as a target folder', async () => {
     const url = 'https://brand.example/logo.png'
     const result = await fetchRemoteAssetForAgent({ dir, url, targetDir: '.studio/x' }, ctx({ userSuppliedUrls: [url] }), recordingDeps([]))

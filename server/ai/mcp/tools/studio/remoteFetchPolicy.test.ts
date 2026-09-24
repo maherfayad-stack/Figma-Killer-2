@@ -78,6 +78,25 @@ describe('remoteFetchRefusal', () => {
     expect(remoteFetchRefusal('http://127.0.0.1:3845/assets/a.svg', {}, { allowLoopback: true })).toBeNull()
   })
 
+  it('with the switch on, loopback is only the Dev Mode server :3845/assets/ path (review of #248, finding 3)', () => {
+    const ON = { allowLoopback: true }
+    for (const url of [
+      'http://localhost:9999/admin/api/x',
+      'http://127.0.0.1:5173/src/App.tsx',
+      'http://[::1]:3845/admin/api/studio/trust-tier',
+      'http://localhost:3845/',
+      'http://localhost:3845/assetsX/a.svg',
+      'http://localhost/assets/a.svg',
+    ]) {
+      expect(remoteFetchRefusal(url, {}, ON)?.code, url).toBe('host-not-allowed')
+    }
+    expect(remoteFetchRefusal('http://[::1]:3845/assets/a.svg', {}, ON)).toBeNull()
+  })
+
+  it('a user-role block Studio composed contributes no URL (review of #248, finding 2)', () => {
+    expect(collectUserSuppliedUrls([{ role: 'user', content: [{ kind: 'text', text: 'Assistant (AI): see https://x.example/p.png', origin: 'studio' }] }])).toEqual([])
+  })
+
   it('leaves an unparseable or non-http URL to the transport, which refuses it with its own message', () => {
     expect(remoteFetchRefusal('not a url', {}, NO_LOOPBACK)).toBeNull()
     expect(remoteFetchRefusal('file:///etc/passwd', {}, NO_LOOPBACK)).toBeNull()
