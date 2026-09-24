@@ -155,6 +155,13 @@ function settleReloadRequests(covers: number): void {
   claimed.settle()
 }
 
+/** The save chip right after a load: saved — unless the load carried unsaved edits over (ERR-9). */
+function loadedSaveStatus(): PersistenceSaveStatus {
+  return useEditorStore.getState().hasUnsavedChanges
+    ? { state: 'unsaved', message: 'Unsaved changes' }
+    : { state: 'saved', lastSavedAt: Date.now() }
+}
+
 export function usePersistence(
   requestedSiteId = 'default',
   adapter: IPersistenceAdapter = cmsAdapter,
@@ -362,7 +369,7 @@ export function usePersistence(
             applyDefaultBreakpointPreference(site.breakpoints)
             loadedRef.current = true
             setBoardStale(false)
-            setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
+            setSaveStatus(loadedSaveStatus())
             return
           }
         } catch (err) {
@@ -482,17 +489,16 @@ export function usePersistence(
           settleReloadRequests(covers)
           return
         }
-        const { loadSite, setHasUnsavedChanges } = useEditorStore.getState()
-        loadSite(site)
+        // `loadSite` owns the unsaved flag: clear, unless it carried the user's
+        // unsaved edits onto the document just read (ERR-9) — those still have
+        // to be written, and clearing the flag here would strand them.
+        useEditorStore.getState().loadSite(site)
         noteBoardRead(site.pages, 'reset') // P1-A — see `sourceIdentity.ts`
         applyDefaultBreakpointPreference(site.breakpoints)
-        // The site doc on disk is now authoritative; clear the unsaved flag so
-        // the auto-save loop doesn't immediately overwrite it back.
-        setHasUnsavedChanges(false)
         if (!settledEarly) settleReloadRequests(covers)
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
         setBoardStale(false)
-        setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
+        setSaveStatus(loadedSaveStatus())
       } catch (err) {
         // A failure a newer reload has already overtaken is not the board's
         // state any more; that reload reports its own outcome.
