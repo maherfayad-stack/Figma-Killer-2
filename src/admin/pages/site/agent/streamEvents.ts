@@ -41,6 +41,7 @@ import type {
 import { getErrorMessage } from '@core/utils/errorMessage'
 import {
   PERMISSION_REQUEST_TOOL,
+  PROPOSE_PLAN_TOOL,
   awaitPermissionDecision,
   describePermissionRequest,
   parsePermissionRequestInput,
@@ -64,6 +65,7 @@ export const ServerStreamEventSchema = Type.Union([
     type: Type.Literal('bridgeReady'),
     bridgeId: Type.String(),
   }),
+  Type.Object({ type: Type.Literal('turn'), turnId: Type.String() }),
   Type.Object({
     type: Type.Literal('toolRequest'),
     requestId: Type.String(),
@@ -83,6 +85,14 @@ export const ServerStreamEventSchema = Type.Union([
     toolName: Type.String(),
     ok: Type.Boolean(),
     error: Type.Optional(Type.String()),
+    previewImages: Type.Optional(Type.Array(Type.Object({ mimeType: Type.String({ pattern: '^image/(png|jpeg|webp|gif)$' }), data: Type.String({ pattern: '^[A-Za-z0-9+/=]*$' }) }), { maxItems: 8 })),
+  }),
+  Type.Object({
+    type: Type.Literal('toolInputProgress'),
+    toolCallId: Type.String(),
+    toolName: Type.String(),
+    bytes: Type.Number(),
+    target: Type.Optional(Type.String()),
   }),
   Type.Object({
     type: Type.Literal('usage'),
@@ -153,7 +163,7 @@ export async function processStreamEvent(
 ): Promise<void> {
   // Anything the turn produces means the provider is answering again, and a
   // turn that ended (done or error) is no longer retrying either.
-  if (event.type !== 'retrying' && event.type !== 'context' && event.type !== 'bridgeReady') clearRetrying(set, assistantId)
+  if (event.type !== 'retrying' && event.type !== 'context' && event.type !== 'bridgeReady' && event.type !== 'turn') clearRetrying(set, assistantId)
 
   switch (event.type) {
     case 'retrying': {
@@ -209,6 +219,17 @@ export async function processStreamEvent(
       break
     }
 
+    case 'turn': {
+      // The user message this turn answers is the one right before its
+      // assistant placeholder — both were pushed together on send.
+      set((state) => {
+        const index = state.agentMessages.findIndex((m) => m.id === assistantId)
+        const userMsg = index > 0 ? state.agentMessages[index - 1] : undefined
+        if (userMsg?.role === 'user') userMsg.turnId = event.turnId
+      })
+      break
+    }
+
     case 'toolRequest': {
       // A permission prompt is a question for the USER, not work for the tool
       // dispatcher — intercepted before dispatch so it never looks for a tool
@@ -226,6 +247,23 @@ export async function processStreamEvent(
           break
         }
         await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: decision }, signal)
+        break
+      }
+
+      // AI-22 — the HTTP agent's plan, in plan mode: the same card as the
+      // CLI's ExitPlanMode prompt, and the answer goes back as the tool's
+      // result, which is what lets the agent proceed (or revise).
+      if (event.toolName === PROPOSE_PLAN_TOOL) {
+        const decision = await promptForPermission(set, PROPOSE_PLAN_TOOL, event.input)
+        if (!bridge.bridgeId) {
+          console.error('[AgentSlice] plan toolRequest received before bridgeReady')
+          break
+        }
+        const answer = {
+          approved: decision.behavior === 'allow',
+          ...(decision.message ? { feedback: decision.message } : {}),
+        }
+        await postToolResult(bridge.bridgeId, event.requestId, { ok: true, data: answer }, signal)
         break
       }
 
@@ -274,6 +312,15 @@ export async function processStreamEvent(
       break
     }
 
+    case 'toolInputProgress': {
+      // AI-26 — throttled server-side (one per KB), so a plain store write.
+      set((state) => {
+        const msg = state.agentMessages.find((m) => m.id === assistantId)
+        if (msg) msg.inputProgress = { toolCallId: event.toolCallId, toolName: event.toolName, bytes: event.bytes, ...(event.target ? { target: event.target } : {}) }
+      })
+      break
+    }
+
     case 'toolCall': {
       // Driver issued a tool call (status: pending). Drain any pending text
       // deltas BEFORE adding the block so the chronological order
@@ -282,6 +329,8 @@ export async function processStreamEvent(
       set((state) => {
         const msg = state.agentMessages.find((m) => m.id === assistantId)
         if (!msg) return
+        // The call arrived whole: its argument progress is over.
+        if (msg.inputProgress) delete msg.inputProgress
         const inputAsRecord = event.input && typeof event.input === 'object'
           ? (event.input as Record<string, unknown>)
           : null
@@ -327,6 +376,11 @@ export async function processStreamEvent(
         block.toolCall.result = {
           ok: event.ok,
           error: event.ok ? undefined : event.error ?? 'Tool call failed.',
+        }
+        // A server-run tool's images (a headless screenshot) — what the agent
+        // looked at, and the variants card's thumbnails.
+        if (event.previewImages?.length) {
+          block.toolCall.previewImages = event.previewImages.map((image) => `data:${image.mimeType};base64,${image.data}`)
         }
       })
       break

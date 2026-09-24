@@ -92,8 +92,10 @@ import {
   roundCapSummaryNote,
   windDownNote,
 } from './toolLoopBounds'
-import { executeOneCall, groupToolCalls } from './toolDispatch'
-import { isHeavyResult, projectHeavyElision } from './heavyElision'
+import { executeOneCall, groupToolCalls, type TurnPlanGate } from './toolDispatch'
+import { PROPOSE_PLAN_TOOL_NAME } from '../../mcp/tools/studio/proposePlanTool'
+import { heavyResultScope, isHeavyResult, projectHeavyElision } from './heavyElision'
+import { wirePreviewImages } from '../../runtime/toolPreviewImages'
 import {
   MAX_TRANSIENT_RETRIES,
   providerRetryTiming,
@@ -171,6 +173,8 @@ export async function* runToolLoop<TMessage>(
   // is a new instruction and must run.
   const maxRounds = req.maxToolRounds ?? MAX_TOOL_ROUNDS
   const writeLedger = createTurnWriteLedger()
+  // AI-22 — Plan mode is enforced for a turn that was offered the plan tool.
+  const planGate: TurnPlanGate = { required: toolsByName.has(PROPOSE_PLAN_TOOL_NAME), approved: false }
   let round = 0
   let summaryRound = false
   let continuations = 0
@@ -338,7 +342,7 @@ export async function* runToolLoop<TMessage>(
     const runnable = turn.toolCalls.filter((call) => !call.incomplete)
     for (const group of groupToolCalls(runnable, toolsByName)) {
       const settled = await Promise.all(
-        group.map((call) => executeOneCall(call, toolsByName, req, writeLedger)),
+        group.map((call) => executeOneCall(call, toolsByName, req, writeLedger, planGate)),
       )
       if (req.signal.aborted) return
 
@@ -373,8 +377,10 @@ export async function* runToolLoop<TMessage>(
           toolName: entry.call.name,
           ok: entry.output.ok,
           error: entry.output.ok ? undefined : entry.output.error ?? 'Tool call failed.',
+          // A bridged tool's images came FROM the browser, which already has them.
+          ...(toolsByName.get(entry.call.name)?.execution === 'bridge' ? {} : wirePreviewImages(entry.output.images)),
         }
-        results.push({ id: entry.call.id, name: entry.call.name, output: entry.output })
+        results.push({ id: entry.call.id, name: entry.call.name, output: entry.output, scope: heavyResultScope(entry.call.input) })
       }
     }
     for (const call of turn.toolCalls.filter((c) => c.incomplete)) {

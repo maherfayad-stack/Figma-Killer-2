@@ -55,6 +55,7 @@ import { AGENT_FILE_MAX_BYTES, pathRefusal } from './fileReadTools'
 import {
   afterWrites,
   checkContent,
+  checkpointBeforeWrite,
   commitPlannedWrites,
   currentText,
   isRefusal,
@@ -130,9 +131,17 @@ const writeFileTool: AiTool = {
       // refuses instead of overwriting work the model never saw.
       try {
         // An existing file is replaced in one step (`writeFileAtomic`): a
-        // reader never sees it half-written.
-        if (current.content === null) writeFileSync(target.abs, content, { encoding: 'utf8', flag: 'wx' })
-        else writeFileAtomic(target.abs, content)
+        // reader never sees it half-written. Its pre-image goes into the
+        // turn's checkpoint first.
+        if (current.content === null) {
+          writeFileSync(target.abs, content, { encoding: 'utf8', flag: 'wx' })
+          // `wx` succeeded, so the file did not exist: its pre-image is "absent",
+          // recorded only now so a creation that lost the race claims nothing.
+          checkpointBeforeWrite(dir, ctx, target, { knownAbsent: true })
+        } else {
+          checkpointBeforeWrite(dir, ctx, target)
+          writeFileAtomic(target.abs, content)
+        }
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
         return toolRefusal('stale-source', `"${target.rel}" was created by something else a moment ago, so it was not overwritten.`, {
@@ -253,6 +262,7 @@ const editFileTool: AiTool = {
       if (isRefusal(next)) return next
       const contentProblem = checkContent(next.content, target.rel, current.content)
       if (contentProblem) return contentProblem
+      checkpointBeforeWrite(dir, ctx, target)
       writeFileAtomic(target.abs, next.content)
       afterWrites(dir, ctx, [target])
       return { ok: true as const, path: target.rel, replacements: next.replacements, hash: contentHash(next.content) }

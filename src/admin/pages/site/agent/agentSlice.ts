@@ -63,6 +63,7 @@ import { failPendingToolCalls } from './toolCallLifecycle'
 import { abandonPermissionPrompts, settlePermissionDecision } from './permissionPrompt'
 import { loadStudioDefaultInto, resolveStudioCredentials } from './agentDefaultProvider'
 import { agentSessionControlsInitialState, createAgentSessionControlsActions, buildChatRequestBody } from './agentSessionControls'
+import { agentTurnChangesInitialState, createAgentTurnChangesActions } from './agentTurnChanges'
 
 // Session-id is in-memory only. While the editor stays open, follow-up
 // messages reuse the SDK session id (Claude has continuity across the
@@ -225,7 +226,9 @@ export function createAgentSlice(
     agentComposerEpoch: 0,
     agentPermissionRequest: null,
     agentQueuedMessage: null,
+    agentSelectionDismissed: null,
     ...agentSessionControlsInitialState(),
+    ...agentTurnChangesInitialState(),
 
     // ── UI actions ───────────────────────────────────────────────────────────
     openAgent() {
@@ -243,6 +246,11 @@ export function createAgentSlice(
     },
 
     ...createAgentSessionControlsActions(set),
+    ...createAgentTurnChangesActions(set, get),
+
+    dismissAgentSelection(key) {
+      set({ agentSelectionDismissed: key })
+    },
 
     queueAgentMessage(content) {
       // Replaces rather than appends: the composer sends one draft at a time,
@@ -265,12 +273,12 @@ export function createAgentSlice(
       else set({ isAgentStreaming: false })
     },
 
-    resolveAgentPermission(id, behavior) {
+    resolveAgentPermission(id, behavior, message) {
       // The card clears in `promptForPermission`'s finally, keyed by id, so a
       // stale click (already answered, already abandoned) is a no-op.
       settlePermissionDecision(id, {
         behavior,
-        ...(behavior === 'deny' ? { message: 'You declined this action.' } : {}),
+        ...(behavior === 'deny' ? { message: message ?? 'You declined this action.' } : message ? { message } : {}),
       })
     },
 
@@ -348,7 +356,9 @@ export function createAgentSlice(
             costUsd: conv.costUsdTotal,
           }
           state.agentComposerEpoch += 1
+          state.agentTurnChanges = {}
         })
+        void get().refreshAgentTurnChanges()
       } catch (err) {
         if (loadEpoch !== _conversationLoadEpoch) return
         console.error('[AgentSlice] Failed to load conversation:', err)
@@ -639,6 +649,8 @@ export function createAgentSlice(
         if (_abortController === controller) {
           _abortController = null
           set({ isAgentStreaming: false })
+          // What the turn changed on disk (AI-7) — its "Changed N files" card.
+          if (accepted) void get().refreshAgentTurnChanges()
           flushQueuedMessage()
         }
       }

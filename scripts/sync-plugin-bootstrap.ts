@@ -25,13 +25,16 @@
  * committed artifact drifts from its source — mirroring `icons:sync` /
  * `vendor-icons-fresh.test.ts`.
  *
- * Bundler determinism: `Bun.build` output is stable within a Bun minor but is
- * NOT guaranteed bit-identical across minors, so a Bun upgrade can legitimately
- * change the bytes. The expected Bun is pinned by `engines.bun` in package.json
- * (`>=1.3.0 <1.4.0`) and by the `oven/bun:1.3` base image in the Dockerfile. On
- * a deliberate Bun-minor bump, regenerate (`bun run bootstrap:sync`) in the same
- * change so the gate fails only on real source drift, never on a routine
- * upgrade.
+ * Bundler determinism: `Bun.build` output is NOT guaranteed bit-identical
+ * across Bun releases — not even patch releases (the studio-runtime bundles
+ * differ between 1.3.6 and 1.3.11) — so a Bun upgrade can legitimately change
+ * the bytes. The expected Bun is pinned EXACTLY by `engines.bun` in
+ * package.json, which CI's `setup-bun` steps read and the Dockerfile's
+ * `oven/bun:<version>` tags match (gated by `dockerConfig.test.ts`). CI's
+ * `generated-fresh` job regenerates on Linux and uploads the result when it
+ * differs. On a deliberate Bun bump, regenerate (`bun run bootstrap:sync`) in
+ * the same change so the gate fails only on real source drift, never on a
+ * routine upgrade.
  */
 
 import { writeFileSync } from 'node:fs'

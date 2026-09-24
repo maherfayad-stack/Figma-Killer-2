@@ -72,8 +72,6 @@ repositories (headless reads) / live editor store (`bridge` tools)
 | `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; `bridge` tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site&dir=<project>` — the capability-gated NDJSON stream the workspace holds open. The bridge registers under `site:${projectKey}` (W10), and the server derives that key from the VALIDATED `dir` — a client that could name its own key could name another project's. A missing or uncontained `dir` yields 400, never a bridge on a guessed project. |
-| `capture/` | **Headless agent capture (W4-2A).** `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the driver), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`; `prewarmCaptureBrowser` launches it on project open, W9-5), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
-| `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site` — the capability-gated NDJSON stream the workspace holds open. |
 | `capture/` | **Headless agent capture (W4-2A, extended by W9-6).** `captureSession.ts` (open + settle + validate one capture page — the five steps both drivers share), `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the rasterising driver), `headlessFrameInspect.ts` (the QUESTION-asking driver behind `studio_computed_styles` / `studio_measure_element`), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`; `prewarmCaptureBrowser` launches it on project open, W9-5), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
 | `connectors/` | `types.ts` (server-only record), `token.ts` (generate + SHA-256 hash), `store.ts` (CRUD + `toConnectorView`). |
 | `handlers/connectors.ts` | `/admin/api/ai/mcp/connectors` CRUD, gated by `ai.providers.manage`. |
@@ -124,7 +122,11 @@ same files already have, not a new failure mode.
 `ProjectProfile` + probe warnings), `studio_list_pages`, `studio_get_node_source`
 (node id → `{ file, line, col, snippet, hash }`, decoding `@core/page-tree`'s
 `sourceNodeId` grammar), `studio_find_nodes` (query by moduleId/tag/class/text/
-lock state/codeProps presence), and the file reads `studio_read_file`,
+lock state/codeProps presence), `studio_list_tokens` (P4-A: every CSS custom
+property declared at the document root of a stylesheet the canvas loads,
+assembled by `server/handlers/studio/projectTokenSources.ts`, grouped by family,
+each with its resolved value and the `file:line` of the winning declaration;
+only `origin: "project"` sources are the user's to edit), and the file reads `studio_read_file`,
 `studio_list_files` and `studio_grep` (a literal search, capped and
 byte-budgeted). Every path any of them names — a node id's file part included
 — goes through one containment rule, `server/handlers/studio/agentFileAccess.ts`

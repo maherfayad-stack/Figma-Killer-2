@@ -37,6 +37,7 @@ import type { ProviderAdapter, TurnResult, TurnToolCall, TurnToolResult, TurnTra
 import type { SseFrame } from './http/sse'
 import { parseToolArguments, toolArgumentsParse } from './http/toolArgs'
 import { anthropicModelProfile, anthropicReasoningFields } from './anthropicModelProfile'
+import { ToolInputProgress } from './toolInputProgress'
 import {
   buildToolDefinitions,
   withMessageCacheBreakpoints,
@@ -519,6 +520,8 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
    */
   private readonly thinkingByIndex = new Map<number, AnthropicThinkingBlock>()
   private readonly toolCalls: TurnToolCall[] = []
+  /** AI-26 — "writing Checkout.tsx · 3.2 KB" while a call's arguments stream. */
+  private readonly inputProgress = new ToolInputProgress()
   private usage: MutableUsage = {}
   private stopReason: string | null = null
   private transientFailure = false
@@ -570,7 +573,10 @@ export class AnthropicTurnTranslator implements TurnTranslator<AnthropicMessage>
         }
         if (delta?.type === 'input_json_delta' && typeof delta.partial_json === 'string') {
           const tool = this.toolByIndex.get(index)
-          if (tool) tool.json += delta.partial_json
+          if (!tool) return []
+          tool.json += delta.partial_json
+          const progress = this.inputProgress.append(tool.id, tool.name, delta.partial_json)
+          return progress ? [progress] : []
         }
         const thinking = this.thinkingByIndex.get(index)
         if (thinking?.type === 'thinking') {

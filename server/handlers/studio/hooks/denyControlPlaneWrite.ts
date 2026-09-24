@@ -25,8 +25,24 @@
  * wedge the product, so this logs and allows, matching `recordToolWrite.ts`
  * and `stopGateCheck.ts`. This is defence in depth on one surface (the only
  * one that grants native file writes), not the last line anywhere.
+ *
+ * ## Then the checkpoint (AI-7)
+ *
+ * A write the gate ALLOWS is about to happen, so this is the last moment the
+ * file still holds what it held before the turn: `captureAgentPreImage` copies
+ * it into the turn's checkpoint (`agentCheckpoints.ts`), which is what the
+ * panel's "Revert turn" restores. Only after the gate — a refused write
+ * changes nothing and needs no pre-image. Fail-soft like everything else
+ * here: a checkpoint that cannot be taken leaves the file un-revertable, never
+ * blocks the write. The file keeps its name because the generated
+ * `.claude/settings.local.json` of every existing project points at it, and a
+ * hand-edited settings file is never regenerated — renaming it would silently
+ * drop the security gate from those projects.
  */
+import { resolve } from 'node:path'
 import { agentToolInputContentRefusal, agentWriteRefusal, type AgentToolWriteInput } from '../agentWriteScope'
+import { captureAgentPreImage, conversationCheckpointKeyFromEnv } from '../agentCheckpoints'
+import { studioAgentUserKeyFromEnv } from '../agentUserScope'
 
 interface PreToolUseInput {
   readonly tool_input?: { readonly file_path?: string } & AgentToolWriteInput
@@ -48,7 +64,13 @@ async function main(): Promise<number> {
 
   const cwd = input.cwd ?? process.cwd()
   const refusal = agentWriteRefusal(filePath, cwd) ?? agentToolInputContentRefusal(filePath, cwd, input.tool_input)
-  if (refusal === null) return 0
+  if (refusal === null) {
+    const conversationKey = conversationCheckpointKeyFromEnv()
+    if (conversationKey !== null) {
+      captureAgentPreImage(cwd, studioAgentUserKeyFromEnv(), conversationKey, resolve(cwd, filePath))
+    }
+    return 0
+  }
 
   console.error(refusal.message)
   return 2

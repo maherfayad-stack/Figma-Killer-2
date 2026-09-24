@@ -37,7 +37,7 @@ import {
   updateConversationForUser,
 } from '../conversations/store'
 import { conversationProjectKey } from '../conversations/projectScope'
-import { isConversationStreaming } from './chat'
+import { isConversationStreaming } from '../conversations/activeStreams'
 import { endClaudeCliConversation } from '../drivers/claudeCliWarmTurn'
 
 const CreateBodySchema = Type.Object({
