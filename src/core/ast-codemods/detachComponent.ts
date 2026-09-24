@@ -84,6 +84,9 @@ import { analyzeFreeVariables, bindingKindAt, freeVariablesOutOfScopeAt } from '
 import { introducesSyntaxErrors } from './reinsertJsxSource'
 import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
 import { DetachPlanner, type DetachPlan } from './detachPlanner'
+import { ownedTextRange } from './jsxChildRange'
+import type { CreatedJsxLocation } from './createdJsxLocation'
+import type { DeletedJsxText } from './deleteJsxElement'
 
 export type { DetachRefusalReason } from './detachSource'
 
@@ -96,6 +99,13 @@ export interface DetachComponentParams {
   workspaceRoot: string
   /** Optional pre-existing project to reuse (e.g. across multiple edits, or shared with the caller's own project). */
   project?: Project
+  /**
+   * Remove the component's import when this was its last use (the default).
+   * `false` (P3-D) leaves it to the caller — the save batch's own prune pass,
+   * which retires it AND reports the declaration it removed, which is what
+   * lets ⌘Z put `<Card/>` back with its import (`reinsert-detached`).
+   */
+  retireImport?: boolean
 }
 
 
@@ -109,6 +119,18 @@ export interface DetachSuccess {
   ok: true
   /** Set when the component had more than one JSX-bearing return/branch — which one got inlined. */
   branchNote?: string
+  /**
+   * P3-D (OD-7) — the inlined root's own tag-name `line:col` in the page after
+   * the write: the id the parser mints for what replaced the call site.
+   * `null` when the inlined root is a fragment (it has no tag, so no id).
+   */
+  created: CreatedJsxLocation | null
+  /**
+   * P3-D (OD-7) — the call site's own bytes as they were, with the
+   * indentation and newline it owned: what ⌘Z writes back
+   * (`reinsert-source`) once the detached markup is removed again.
+   */
+  removed: DeletedJsxText
 }
 
 export interface DetachFailure {
@@ -320,6 +342,9 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
 
   const original = sourceFile.getFullText()
+  const siteBeforeDetach = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
+  const removed = ownedTextRange(original, siteBeforeDetach.getStart(), siteBeforeDetach.getEnd())
+  let inserted: Node
   try {
     const plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier).plan()
     // Everything below writes the page IN MEMORY only; any refusal restores
@@ -327,12 +352,12 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     const site = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
     for (const pending of plan.imports) applyImportBinding(sourceFile, pending.request, pending.local)
     if (target.sourceFile !== sourceFile) mirrorSideEffectImports(sourceFile, target.sourceFile)
-    const inserted = site.replaceWithText(plan.siteText)
+    inserted = site.replaceWithText(plan.siteText)
     gateInsertedMarkup(inserted, sourceFile, plan)
     // Only now — after the call site's own tag reference is actually gone
     // from the tree — is "does anything else in the file still reference
     // Card" decidable.
-    removeImportIfLastUsage(sourceFile, identifier)
+    if (params.retireImport !== false) removeImportIfLastUsage(sourceFile, identifier)
     if (introducesSyntaxErrors(file, original, sourceFile.getFullText())) {
       throw new Error(`[detachComponent] the detached source for <${identifier}> does not parse — nothing was written.`)
     }
@@ -344,8 +369,17 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
 
   sourceFile.saveSync()
 
+  const tagName = Node.isJsxElement(inserted)
+    ? inserted.getOpeningElement().getTagNameNode()
+    : Node.isJsxSelfClosingElement(inserted)
+      ? inserted.getTagNameNode()
+      : null
+  const at = tagName ? sourceFile.getLineAndColumnAtPos(tagName.getStart()) : null
+
   return {
     ok: true,
+    created: at ? { line: at.line, col: at.column } : null,
+    removed: { text: original.slice(removed.start, removed.end), wholeLine: removed.wholeLine },
     ...(hadAlternatives
       ? { branchNote: `${identifier} has more than one rendered state — the currently-shown one was inlined.` }
       : {}),

@@ -87,7 +87,7 @@ export function createStudioPasteWrite(
     if (!container.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, container.constraint, {
         nodeId: container.nodeId,
-        retry: (newParentId) => { writePasteToSource(clipboard, newParentId, index) },
+        retry: (mapId) => { writePasteToSource(clipboard, mapId(parentId), index) },
         getState: get,
         set,
       })

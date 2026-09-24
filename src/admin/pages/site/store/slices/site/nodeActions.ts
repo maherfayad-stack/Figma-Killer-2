@@ -282,7 +282,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
           // Only `detach`/`extract` ever fire this (see `presentStructuralRefusal`'s
           // doc) — a re-issued delete just calls this same action again, against
           // whatever node replaced the shared-component instance.
-          retry: (newNodeId) => actions.deleteNode(newNodeId),
+          retry: (mapId) => actions.deleteNode(mapId(nodeId)),
           getState: get,
           set,
         })
@@ -466,10 +466,9 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       if (plan && !plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, {
           nodeId: plan.nodeId,
-          // The refused node in a move plan is always `nodeIds[0]`
-          // (`previewStructuralMove` resolves the commit off it) — re-issue
-          // the same move with that one id swapped for its replacement.
-          retry: (newNodeId) => actions.moveNodes([newNodeId, ...nodeIds.slice(1)], newParentId, newIndex),
+          // Every id the move names — the element and its new parent — goes
+          // through the map: after a detach both may live at new addresses.
+          retry: (mapId) => actions.moveNodes(nodeIds.map(mapId), mapId(newParentId), newIndex),
           getState: get,
           set,
         })

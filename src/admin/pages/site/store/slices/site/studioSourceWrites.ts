@@ -153,7 +153,7 @@ export function createStudioSourceWrites(
         nodeId: plan.nodeId,
         // The refused node here is the CONTAINER (`parentId`) — re-issue the
         // same insert against whatever replaces it once detach/extract lands.
-        retry: (newParentId) => writeInsertToSource(moduleId, defaults, newParentId, index, inlineStyles),
+        retry: (mapId) => writeInsertToSource(moduleId, defaults, mapId(parentId), index, inlineStyles),
         getState: get,
         set,
       })
@@ -277,15 +277,9 @@ export function createStudioSourceWrites(
     const tree = readTree()
     if (!tree) return false
 
-    const retryOn = (refusedNodeId: string | undefined) =>
-      refusedNodeId
-        ? (newNodeId: string) => {
-            void writeDuplicateToSource(
-              nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-              destination,
-            )
-          }
-        : undefined
+    const retryWithMap = (mapId: (nodeId: string) => string): void => {
+      void writeDuplicateToSource(nodeIds.map(mapId), destination ? { ...destination, parentId: mapId(destination.parentId) } : undefined)
+    }
 
     // K2 — Alt+drag: the copy lands INSIDE a container the user pointed at,
     // which is a second question (`planSourceDuplicateTo`) rather than a flag
@@ -296,7 +290,7 @@ export function createStudioSourceWrites(
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
           nodeId: plan.nodeId,
-          retry: retryOn(plan.nodeId),
+          retry: retryWithMap,
           getState: get,
           set,
         })
@@ -311,7 +305,7 @@ export function createStudioSourceWrites(
     if (!plan.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.duplicate, plan.constraint, {
         nodeId: plan.nodeId,
-        retry: retryOn(plan.nodeId),
+        retry: retryWithMap,
         getState: get,
         set,
       })
@@ -335,6 +329,9 @@ export function createStudioSourceWrites(
    * block with no form in a user's repo, which refuses by saying exactly that.
    */
   const writeWrapToSource = (nodeIds: readonly string[], containerModuleId: string, defaults: Record<string, unknown>): boolean => {
+    // ERR-7 — one container around SEVERAL elements is a group: one wrapper
+    // around their run, one write, one undo. It used to refuse `multi-select`.
+    if (nodeIds.length > 1) return writeGroupToSource(nodeIds, containerModuleId, defaults)
     // `store-14` — same queue as `writeDuplicateToSource`.
     if (
       deferWhileStructuralCommitInFlight((relocate) => {
@@ -350,15 +347,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.wrap, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              void writeWrapToSource(
-                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-                containerModuleId,
-                defaults,
-              )
-            }
-          : undefined,
+        retry: (mapId) => { void writeWrapToSource(nodeIds.map(mapId), containerModuleId, defaults) },
         getState: get,
         set,
       })
@@ -425,15 +414,7 @@ export function createStudioSourceWrites(
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.group, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              void writeGroupToSource(
-                nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)),
-                containerModuleId,
-                defaults,
-              )
-            }
-          : undefined,
+        retry: (mapId) => { void writeGroupToSource(nodeIds.map(mapId), containerModuleId, defaults) },
         getState: get,
         set,
       })
@@ -486,7 +467,7 @@ export function createStudioSourceWrites(
     if (!plan.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.ungroup, plan.constraint, {
         nodeId: plan.nodeId,
-        retry: plan.nodeId ? (newNodeId) => { void writeUngroupToSource(newNodeId) } : undefined,
+        retry: (mapId) => { void writeUngroupToSource(mapId(nodeId)) },
         getState: get,
         set,
       })

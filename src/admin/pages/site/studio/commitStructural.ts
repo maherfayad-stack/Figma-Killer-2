@@ -80,6 +80,15 @@ export interface StructuralCommitOptions {
    * the members the first steps moved.
    */
   select?: 'created'
+  /**
+   * P3-D (OD-7) — told what the write made once the board has re-read it
+   * (after the resync, before the queue moves on). Not called when nothing
+   * landed. `instanceOnlyGesture.ts` uses it to find the markup a detach put
+   * where the call site was.
+   */
+  onLanded?: (outcome: StructuralWriteOutcome) => void
+  /** P3-D (OD-7) — say nothing when the write is refused: the caller has its own answer (the refusal dialog). */
+  quiet?: true
 }
 
 /**
@@ -165,7 +174,7 @@ async function commitStructuralBody(
     // honestly. (WB-12 made every refusal named, so there is no "skip with no
     // reason" left to report here.)
     const [firstRefusal] = refusals
-    if (firstRefusal) {
+    if (firstRefusal && !options.quiet) {
       const more = refusals.length > 1 ? ` (${refusals.length - 1} more like this.)` : ''
       pushToast({ kind: 'warning', title: refusalTitle, body: `${firstRefusal.message}${more}`, location: 'site-editor' })
     }
@@ -189,6 +198,7 @@ async function commitStructuralBody(
           history: resolvePendingHistory(edits, options, outcome),
         },
       })
+      options.onLanded?.(outcome)
     }
     // P1-A — the file changed under the board. Re-read it and re-plan ONCE,
     // silently (`elementMovedRecovery.ts`); only a second miss says anything.

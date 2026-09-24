@@ -74,7 +74,7 @@ beforeEach(() => {
 
 describe('RefusalDialog', () => {
   it('re-issues the retry closure once a replacement node lands at the same call site', async () => {
-    const retry = mock((_newNodeId: string) => {})
+    const retry = mock((_mapId: (nodeId: string) => string) => {})
     act(() => {
       useEditorStore.setState({
         structuralRefusalDialog: {
@@ -101,14 +101,18 @@ describe('RefusalDialog', () => {
       useEditorStore.setState({ site: siteWithNode(REPLACEMENT_NODE_ID) })
     })
 
-    expect(retry).toHaveBeenCalledWith(REPLACEMENT_NODE_ID)
+    // P3-D — the retry gets an id MAP: the refused node goes to its
+    // replacement, every other id is left as it was.
     expect(retry).toHaveBeenCalledTimes(1)
+    const mapId = retry.mock.calls[0]![0]
+    expect(mapId(ORIGINAL_NODE_ID)).toBe(REPLACEMENT_NODE_ID)
+    expect(mapId('some/other.tsx:1:1')).toBe('some/other.tsx:1:1')
     // The dialog dismisses itself once the retry has fired.
     expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
   })
 
   it('does not fire the retry if the dialog is dismissed before the reload lands', async () => {
-    const retry = mock((_newNodeId: string) => {})
+    const retry = mock((_mapId: (nodeId: string) => string) => {})
     act(() => {
       useEditorStore.setState({
         structuralRefusalDialog: {

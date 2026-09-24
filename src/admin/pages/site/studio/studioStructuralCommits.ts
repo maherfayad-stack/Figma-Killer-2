@@ -27,7 +27,7 @@
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural, type StructuralCommitOptions } from './commitStructural'
-import { dissolveWrapperTemplate, type StructuralEditPayload } from './structuralUndoPlan'
+import { dissolveWrapperTemplate, type StructuralEditPayload, type StructuralWriteOutcome } from './structuralUndoPlan'
 import type { InsertPropValue } from './studioSaveRequests'
 
 /**
@@ -342,6 +342,42 @@ export async function commitStudioUngroup(
           },
     },
   })
+}
+
+/**
+ * P3-D (OD-7) — detach ONE call site so that a structural gesture on the
+ * markup inside a shared component applies to this instance only. Resolves
+ * with what the write reported once the board has re-read it, or `null` when
+ * it did not land — refused quietly, because the caller answers a refusal
+ * with the one dialog the gesture would have shown anyway.
+ *
+ * Its undo (`reinsert-detached`) removes the detached markup and writes the
+ * call site's own bytes back at the slot it held (`parentNodeId`/`index`,
+ * captured before the write), with the import the detach retired.
+ */
+export async function commitStudioDetachForInstance(detach: {
+  callSiteNodeId: string
+  parentNodeId: string
+  index: number
+  label: string
+}): Promise<StructuralWriteOutcome | null> {
+  let landed: StructuralWriteOutcome | null = null
+  await commitStructural([{ kind: 'detach', nodeId: detach.callSiteNodeId }], 'Detach refused', {
+    undo: {
+      label: detach.label,
+      template: {
+        kind: 'reinsert-detached',
+        callSiteNodeId: detach.callSiteNodeId,
+        parentNodeId: detach.parentNodeId,
+        index: detach.index,
+      },
+    },
+    onLanded: (outcome) => {
+      landed = outcome
+    },
+    quiet: true,
+  })
+  return landed
 }
 
 /**

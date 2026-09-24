@@ -140,6 +140,9 @@ export function createMoveSequenceActions(
         if (!plan.ok) {
           presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.move, plan.constraint, {
             ...(plan.nodeId ? { nodeId: plan.nodeId } : {}),
+            // OD-7 — every id the sequence names goes through the map.
+            retry: (mapId) =>
+              actions.moveNodesInSequence(moves.map((step) => ({ ...step, nodeId: mapId(step.nodeId), parentId: mapId(step.parentId) }))),
             getState: get,
             set,
           })

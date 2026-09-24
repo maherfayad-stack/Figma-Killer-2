@@ -97,6 +97,12 @@ function runStructuralStep(
     state.canUndo = state._historyPast.length > 0
     state.canRedo = state._historyFuture.length > 0
   })
+  // P3-D (OD-7) — a gesture made on one instance of a shared component is two
+  // entries (the detach below, the gesture above) and ONE keystroke: undoing
+  // the gesture carries on to the detach, redoing the detach carries on to
+  // the gesture. Each step queues behind the write before it.
+  if (direction === 'undo' && get()._historyPast.at(-1)?.linkedToNext) get().undo()
+  if (direction === 'redo' && entry.linkedToNext) get().redo()
 }
 
 /**

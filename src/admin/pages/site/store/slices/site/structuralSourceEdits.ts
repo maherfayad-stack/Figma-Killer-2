@@ -61,7 +61,9 @@ import {
 } from '@core/page-tree'
 import { pushToast } from '@ui/components/Toast'
 import { constraintPrimaryAction, constraintToastBody } from '../../constraintActions'
-import { openSourceFile, type SourceFileOpener } from '../../openSourceFile'
+import { openSourceFile } from '../../openSourceFile'
+import type { EditorStore } from '@site/store/types'
+import { applyToThisInstanceOnly } from './instanceOnlyGesture'
 import { nodeHtmlTag } from './nodeHtmlTag'
 import type { EditorStoreSetter } from './types'
 
@@ -335,24 +337,22 @@ export function planSourceDuplicateTo(
 }
 
 /**
- * Whether `nodeIds` may be wrapped in a new container, and if so which node the
+ * Whether ONE node may be wrapped in a new container, and if so which node the
  * SOURCE writes the wrapper around (W4-1).
  *
- * One node only: `wrapJsxElement` replaces ONE element's own range with that
- * element inside a container. A single wrapper around several elements is one
- * write spanning all of their ranges — and in the code they may not even be
- * neighbours — so a multi-selection refuses (`multi-select`) rather than
- * wrapping the first and pretending.
+ * One node: `wrapJsxElement` replaces one element's own range with that
+ * element inside a container. Several are a GROUP (ERR-7) — one container
+ * around their run — and `writeWrapToSource` sends them to `planSourceGroup`
+ * before this is asked.
  */
 export function planSourceWrap(
   tree: NodeTree<PageNode>,
   nodeIds: readonly string[],
 ): StructuralPlan<string> {
-  const multi = nodeIds.length > 1
   for (const id of nodeIds) {
     const node = tree.nodes[id]
     if (!node) continue
-    const refusal = refuseStructuralEdit({ kind: 'wrap', node, multi })
+    const refusal = refuseStructuralEdit({ kind: 'wrap', node })
     if (refusal) {
       return { ok: false, constraint: describeStructuralRefusal({ refusal, node }), nodeId: node.id }
     }
@@ -605,7 +605,7 @@ export function presentStructuralRefusal(
      * `RefusalDialog` (Phase B) after a `detach`/`extract` action settles —
      * every other path through this function ignores it.
      */
-    retry?: (newNodeId: string) => void
+    retry?: (mapId: (nodeId: string) => string) => void
     /**
      * D2 G3 — the `duplicate-into-frame` remedy's handler, when the refusing
      * gesture had one to offer. Travels to the dialog on its state, because
@@ -617,10 +617,10 @@ export function presentStructuralRefusal(
      * The store's own `get`. Supplied by every real call site; what makes the
      * toast's/dialog's jump-to-source button possible from inside a store
      * action without importing the composed store (see `openSourceFile`'s
-     * doc). Omitted only in tests that assert the sentence rather than the
-     * jump.
+     * doc), and what OD-7's detach-and-replay reads the board through.
+     * Omitted only in tests that assert the sentence rather than the jump.
      */
-    getState?: () => SourceFileOpener
+    getState?: () => EditorStore
     /** The store's own `set` — opens `structuralRefusalDialog` when the constraint has a runnable remedy. */
     set: EditorStoreSetter
   },
@@ -629,7 +629,7 @@ export function presentStructuralRefusal(
     ? { openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin) }
     : {}
 
-  if (constraint.actions.length > 0) {
+  const openDialog = (): void => {
     // `speed-05` — deferred so the keydown/gesture task that refused this
     // edit ends immediately; see this function's own doc comment.
     startTransition(() => {
@@ -643,6 +643,24 @@ export function presentStructuralRefusal(
         }
       })
     })
+  }
+
+  // OD-7 — a gesture inside a shared component applies to THIS instance:
+  // detach it, replay the gesture, one undo. The dialog is the answer only
+  // when that cannot happen. See `instanceOnlyGesture.ts`.
+  if (constraint.reason === 'shared-component' && context.nodeId && context.retry && context.getState) {
+    const tookOver = applyToThisInstanceOnly({
+      get: context.getState,
+      set: context.set,
+      refusedNodeId: context.nodeId,
+      retry: context.retry,
+      onRefused: openDialog,
+    })
+    if (tookOver) return
+  }
+
+  if (constraint.actions.length > 0) {
+    openDialog()
     return
   }
 

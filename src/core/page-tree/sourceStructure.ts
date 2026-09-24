@@ -37,11 +37,10 @@
  *     spread, a dynamic child, a branch the source chooses at runtime. The
  *     source does not place this element at a fixed position, so neither can
  *     we.
- *   - **`multi-select`** — several elements REORDERED (or WRAPPED) at once.
- *     Each write shifts the others' line numbers, and the anchor a reorder
- *     writes against is resolved per element; one gesture, N interdependent
- *     targets. (A multi DELETE or DUPLICATE is fine — the save route orders a
- *     batch bottom-to-top, so no write can move a pending one's line.)
+ *   - several elements at once are NOT refused here any more (P3-D). A
+ *     multi-element move is planned as single-element moves applied in order
+ *     (`moveSequence.ts`) and written as one `/save` sequence; a multi-element
+ *     wrap is a group. Each single element is asked this question on its own.
  *   - **`cross-file`** / **`no-sibling-anchor`** — a reorder is written as
  *     "put this element before/after that one", so it needs a sibling that is
  *     itself a plain element in the same file to write against. A reparent
@@ -177,35 +176,11 @@ export function refuseStructuralEdit(input: {
   anchor?: SourceStructureNode | null
   /** The new parent, for `reparent`. */
   destination?: SourceStructureNode | null
-  /** True when this gesture moves or wraps more than one node at once. */
-  multi?: boolean
 }): StructuralRefusal | null {
-  const { kind, node, anchor, destination, multi } = input
+  const { kind, node, anchor, destination } = input
   if (!isSourceDerivedNodeId(node.id)) return null
 
   const gesture = GESTURE[kind]
-
-  // A multi-DELETE or multi-DUPLICATE is safe: the save route orders a batch
-  // bottom-to-top, so a write cannot move the line of one still pending above
-  // it. A multi-REORDER is not — each element is written against an anchor
-  // whose position the previous write may already have changed, and the
-  // gesture's meaning ("all of these, in this order, there") has no single
-  // source target. A multi-WRAP is not either, for a nearer reason: one
-  // wrapper around several elements is one write spanning all of them, and
-  // Studio writes a wrapper around one element's own range.
-  if (multi && (kind === 'reorder' || kind === 'reparent')) {
-    return {
-      reason: 'multi-select',
-      message: `${gesture} several elements at once — Studio writes a move one element at a time, because each write moves the others' line numbers. Drag them one by one.`,
-    }
-  }
-  if (multi && kind === 'wrap') {
-    return {
-      reason: 'multi-select',
-      message:
-        'Studio wraps one element at a time: a single wrapper around several elements is one write spanning all of them, and in the code they may not even be neighbours. Wrap them one by one, or wrap a container they already share.',
-    }
-  }
 
   const placement = refusePlacement(node, gesture)
   if (placement) return placement
@@ -364,6 +339,18 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
     }
   }
   return null
+}
+
+/**
+ * OD-7 — a `shared-component` refusal is not the end of a gesture in the
+ * editor: the store detaches THIS instance and replays the gesture on the
+ * markup that replaced it (`instanceOnlyGesture.ts`), as one undo. A surface
+ * that PREVIEWS a gesture — a drop line, a context-menu item — asks this so it
+ * does not grey out what the commit will do. (When the detach itself refuses,
+ * the commit shows the refusal dialog, exactly as before.)
+ */
+export function isResolvedByInstanceDetach(reason: string): boolean {
+  return reason === 'shared-component'
 }
 
 /**

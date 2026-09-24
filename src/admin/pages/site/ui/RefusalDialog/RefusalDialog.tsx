@@ -61,7 +61,7 @@ export function RefusalDialog() {
 
   const { title, constraint, nodeId, retry, duplicateIntoFrame } = dialogState
 
-  function waitForReloadThenRetry(originalNodeId: string, retryFn: (newNodeId: string) => void) {
+  function waitForReloadThenRetry(originalNodeId: string, retryFn: (mapId: (nodeId: string) => string) => void) {
     const position = callSitePosition(originalNodeId)
     let settled = false
     setRetrying(true)
@@ -90,7 +90,7 @@ export function RefusalDialog() {
       // refused node still occupies its own call site) — keep waiting.
       if (!found || found === originalNodeId) return
       finish()
-      retryFn(found)
+      retryFn((nodeId) => (nodeId === originalNodeId ? found : nodeId))
       dismiss()
     })
 

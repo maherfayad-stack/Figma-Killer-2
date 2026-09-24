@@ -132,11 +132,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
         nodeId: refusedNodeId,
-        retry: refusedNodeId
-          ? (newNodeId) => {
-              get().deleteNodes(nodeIds.map((id) => (id === refusedNodeId ? newNodeId : id)))
-            }
-          : undefined,
+        retry: (mapId) => get().deleteNodes(nodeIds.map(mapId)),
         getState: get,
         set,
       })

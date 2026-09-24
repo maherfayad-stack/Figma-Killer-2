@@ -58,6 +58,15 @@ export interface HistoryEntry {
    * write lands or is taken back.
    */
   pendingCommit?: PendingStructuralCommit
+  /**
+   * P3-D (OD-7) — this entry and the one directly ABOVE it are one gesture: a
+   * `detach` made so a structural gesture inside a shared component applies
+   * to this instance only, and that gesture. ⌘Z on the one above carries on
+   * to this one; ⌘⇧Z on this one carries on to the one above
+   * (`undoRedoActions.ts`). Set only once the gesture above has landed
+   * (`instanceOnlyGesture.ts`), so an unrelated entry is never pulled in.
+   */
+  linkedToNext?: true
 }
 
 /** See `HistoryEntry.pendingCommit`. */

@@ -352,9 +352,13 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutco
       }
     }
     case 'detach': {
-      const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
+      // P3-D (OD-7) — the import is retired by this batch's prune pass (see
+      // `removesMarkup` below), which also REPORTS it; with the call site's
+      // own bytes (`removed`) and what replaced it (`created`) that is the
+      // whole of ⌘Z (`reinsert-detached`).
+      const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true }
+      return { applied: true, created: result.created, removed: result.removed }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -474,8 +478,9 @@ export function applyStudioEditBatch(
   //
   // Scoped to batches that actually delete something, and to the files those
   // deletes name. Every other kind either cannot drop the last reference to a
-  // binding or already retires its own (`swap`/`detach`, and
-  // `insertJsxIntoSlotProp` for a slot replace), and this pass costs two extra
+  // binding or already retires its own (`swap`, and `insertJsxIntoSlotProp`
+  // for a slot replace; `detach` hands its import to this pass since P3-D, so
+  // the declaration is reported for its undo), and this pass costs two extra
   // parses per file — not something to spend on every keystroke-driven save.
   const importPrune = createImportPruneSession()
   const referencedBefore = new Map<string, ReadonlySet<string>>()
@@ -495,9 +500,12 @@ export function applyStudioEditBatch(
     // behind is a `noUnusedLocals` build failure in the user's repo. It is
     // also what makes ⌘G → ⌘Z byte-exact: the group wrote the import, so its
     // undo has to take it back out.
+    // P3-D — a `detach` replaces the call site, so it can orphan the
+    // component's own import the way a delete orphans an element's.
     const removesMarkup =
       edit.kind === 'delete' ||
       edit.kind === 'ungroup' ||
+      edit.kind === 'detach' ||
       (edit.kind === 'transplant' && edit.copy !== true)
     if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)

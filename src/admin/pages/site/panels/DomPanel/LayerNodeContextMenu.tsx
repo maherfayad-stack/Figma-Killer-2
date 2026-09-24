@@ -67,7 +67,7 @@ import { resolveInsertLocation } from '@site/store/insertLocation'
 import { ModulePicker } from '@site/panels/AssetsPanel'
 import { canComponentizeNode } from '@site/componentization'
 import { useConfirmDelete } from '@admin/shared/dialogs/ConfirmDeleteDialog'
-import { explainStructuralConstraint, type EditConstraint } from '@core/page-tree'
+import { explainStructuralConstraint, isResolvedByInstanceDetach, type EditConstraint } from '@core/page-tree'
 import type { AnyModuleDefinition } from '@core/module-engine'
 import { PenSquareSolidIcon } from 'pixel-art-icons/icons/pen-square-solid'
 import { CopyPlusSolidIcon } from 'pixel-art-icons/icons/copy-plus-solid'
@@ -205,15 +205,13 @@ export function LayerNodeContextMenu({
   const structuralConstraints = ((): { duplicate: EditConstraint | null; wrap: EditConstraint | null; delete: EditConstraint | null } => {
     if (!activePage || targetIds.length === 0) return { duplicate: null, wrap: null, delete: null }
     const nodes = targetIds.map((id) => activePage.nodes[id]).filter((n) => n !== undefined)
-    // `multi` is what tells the rule a WRAP is being asked of several elements
-    // at once — one wrapper spanning N ranges, which W4-1's `wrapJsxElement`
-    // does not write. Duplicate and delete are safe in bulk (the save batch is
-    // ordered bottom-to-top), so they pass it through unchanged and are
-    // enabled for a multi-selection.
+    // P3-D — a multi-selection wrap is a group (one container around the
+    // run), and a gesture inside a shared component is written to THIS
+    // instance (OD-7): neither greys an item out any more.
     const firstRefusal = (kind: 'duplicate' | 'wrap' | 'delete'): EditConstraint | null => {
       for (const node of nodes) {
-        const constraint = explainStructuralConstraint({ kind, node, multi: nodes.length > 1 })
-        if (constraint) return constraint
+        const constraint = explainStructuralConstraint({ kind, node })
+        if (constraint && !isResolvedByInstanceDetach(constraint.reason)) return constraint
       }
       return null
     }

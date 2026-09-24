@@ -115,6 +115,22 @@ export type StructuralInverseTemplate =
       // `StructuralSourceGesture.forward`/`.inverse` just below.
       nodes: { nodeId: string; parentNodeId: string; index: number }[]
     }
+  | {
+      /**
+       * P3-D (OD-7) — the inverse of a `detach`: the markup that replaced the
+       * call site goes (`delete` of what the detach CREATED — the batch's
+       * prune pass takes the imports it added with it), and the call site's
+       * own bytes go back where they were (`reinsert-source` at the slot
+       * captured before the detach, with the component import the detach's
+       * prune pass reported). One batch: the delete is below the parent's own
+       * tag, so the batch's bottom-to-top order applies it first.
+       */
+      kind: 'reinsert-detached'
+      /** The call site's id when the detach was made — the key its `removed` bytes are reported under. */
+      callSiteNodeId: string
+      parentNodeId: string
+      index: number
+    }
   | { kind: 'unsupported'; message: string }
 
 /** One `delete` edit's own discarded bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
@@ -187,6 +203,22 @@ export function resolveStructuralInverse(
       // tree as it is when ⌘Z is pressed. Appending is the honest fallback the
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
+    }
+    case 'reinsert-detached': {
+      const [inlined] = outcome.createdNodeIds
+      const callSite = outcome.removed.find((entry) => entry.nodeId === template.callSiteNodeId)
+      if (inlined === undefined || !callSite) return null
+      const imports = outcome.prunedImports.find((entry) => entry.file === fileOfNodeId(template.parentNodeId))?.declarations ?? []
+      return [
+        { kind: 'delete', nodeId: inlined },
+        {
+          kind: 'reinsert-source',
+          nodeId: template.parentNodeId,
+          index: template.index,
+          text: callSite.text,
+          ...(imports.length > 0 ? { imports: [...imports] } : {}),
+        },
+      ]
     }
     case 'reinsert-deleted': {
       // `null` — not "skip the ones we can" — the moment ANY deleted node's
@@ -302,6 +334,13 @@ export function remapInverseTemplate(
 ): StructuralInverseTemplate {
   if (template.kind === 'transplant-back') {
     return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
+  }
+  if (template.kind === 'reinsert-detached') {
+    return {
+      ...template,
+      callSiteNodeId: remap.get(template.callSiteNodeId) ?? template.callSiteNodeId,
+      parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId,
+    }
   }
   if (template.kind === 'reinsert-deleted') {
     // Both ids, not just `parentNodeId`: `nodeId` is the key `resolveStructuralInverse`

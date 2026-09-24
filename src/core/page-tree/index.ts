@@ -58,6 +58,7 @@ export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
 export {
   SourceStructureError,
+  isResolvedByInstanceDetach,
   refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,

@@ -64,7 +64,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
           nodeId: plan.nodeId,
-          retry: (newParentId) => actions.insertImageIntoPage(pageId, newParentId, index, image),
+          retry: (mapId) => actions.insertImageIntoPage(pageId, mapId(parentId), index, image),
           getState: get,
           set,
         })
