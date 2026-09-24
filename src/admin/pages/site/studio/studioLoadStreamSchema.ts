@@ -50,9 +50,11 @@ export type ComponentSource = Static<typeof ComponentSourceSchema>
  * WB-23/WB-24 — one thing the load degraded instead of failing. Mirrors
  * `StudioLoadWarning` in `server/handlers/studio/studioLoadContract.ts`:
  * `tsconfig-unreadable` (the project loaded without its tsconfig, so path
- * aliases do not resolve) and `syntax-error` (a page's own file does not
+ * aliases do not resolve), `syntax-error` (a page's own file does not
  * parse; it renders from a recovered tree and every write to the file is
- * refused, naming the line, until it parses).
+ * refused, naming the line, until it parses) and `unreadable-page-export`
+ * (P3-B WB-5: the page's default export is a shape Studio cannot read a
+ * component out of; its frame names the shape instead of "This page is empty").
  */
 const StudioLoadWarningSchema = Type.Union([
   Type.Object({ code: Type.Literal('tsconfig-unreadable'), file: Type.Literal('tsconfig.json'), message: Type.String() }),
@@ -64,7 +66,17 @@ const StudioLoadWarningSchema = Type.Union([
     col: Type.Number(),
     message: Type.String(),
   }),
+  Type.Object({
+    code: Type.Literal('unreadable-page-export'),
+    pageId: Type.String(),
+    file: Type.String(),
+    line: Type.Number(),
+    col: Type.Number(),
+    message: Type.String(),
+  }),
 ])
+
+export type StudioLoadWarning = Static<typeof StudioLoadWarningSchema>
 
 export const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
@@ -98,8 +110,9 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * WB-23/WB-24 — see `StudioLoadWarningSchema`. `Type.Optional` for the
      * reason `projectKey` below is: the real route always sends it, but the
      * hand-written fixture lines across this codebase's tests predate it.
-     * Nothing renders these yet — the in-frame badge is canvas work left for
-     * a later pass; the write refusal already names the line on its own.
+     * `unreadable-page-export` reaches the frame (`studioLoadWarningsStore.ts`
+     * → `CanvasEmptyPageHint`); the in-frame `syntax-error` badge is canvas
+     * work left for a later pass — the write refusal already names the line.
      */
     warnings: Type.Optional(Type.Array(StudioLoadWarningSchema)),
     trust: TrustTierSchema,

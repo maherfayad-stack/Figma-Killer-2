@@ -229,9 +229,35 @@ describe('base.text — unified text module', () => {
     expect(baseIndex).not.toContain("import './paragraph'")
   })
 
-  it('has only content, tag, and HTML attribute module settings', async () => {
+  it('has only content, tag (with its custom escape hatch), and HTML attribute module settings', async () => {
     expect(TextModule.id).toBe('base.text')
-    expect(Object.keys(TextModule.schema).sort()).toEqual(['htmlAttributes', 'tag', 'text'])
+    expect(Object.keys(TextModule.schema).sort()).toEqual(['customTag', 'htmlAttributes', 'tag', 'text'])
+  })
+
+  // P3-B (WB-3) — an imported `<li>Item</li>` is text in an `<li>`. The text
+  // module keeps the element through the same `custom` + `customTag` escape
+  // hatch `base.container` has, on the canvas and in published HTML alike.
+  it('renders a custom tag that holds text, on both render paths', () => {
+    const { html } = renderModule(TextModule, { tag: 'custom', customTag: 'li', text: 'Item' })
+    expect(html).toBe('<li>Item</li>')
+
+    const { container } = renderReact(
+      React.createElement(TextModule.component, {
+        props: { text: 'Item', tag: 'custom', customTag: 'li', htmlAttributes: {} },
+        nodeId: 'n1',
+        isSelected: false,
+        mcClassName: 'ist-x',
+        nodeWrapperProps: { 'data-node-id': 'n1', 'data-module-id': 'base.text', tabIndex: 0 },
+      } as never),
+    )
+    expect(container.querySelector('li')?.textContent).toBe('Item')
+  })
+
+  it('falls back to <p> for a custom tag that is unsafe, void, or not text content', () => {
+    for (const customTag of ['script', 'style', 'br', 'textarea', 'option', 'x"y', '']) {
+      const { html } = renderModule(TextModule, { tag: 'custom', customTag, text: 'Item' })
+      expect(html).toBe('<p>Item</p>')
+    }
   })
 
   it('renders the selected semantic tag', async () => {

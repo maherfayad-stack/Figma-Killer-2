@@ -24,7 +24,7 @@ import { Node, SyntaxKind, type JsxElement, type JsxSelfClosingElement, type Sou
 import { extractInlineStyles, extractProps, extractSingleText, rawHtmlValueExpression, resolveRawSvgMarkup } from './jsxAttributeReaders'
 import { tryResolveExpression, type PageEvalContext } from './nodeResolution'
 import { createEvalScope, type LocalBinding, type StaticValue } from './staticEval'
-import type { ReturnedJsx } from './parsePageFile'
+import type { ReturnedJsx } from './branchSelection'
 import type { FunctionLike, ParsedPage, ParsedPropValue } from './types'
 import type { StaticEvalOptions } from './staticEval'
 

@@ -587,7 +587,10 @@ function buildImportTargets(
       const importedName = named.getNameNode().getText()
       const localName = named.getAliasNode()?.getText() ?? importedName
       const declaring = resolveExportedDeclaration(target, importedName)
-      map.set(localName, declaring ? { target: declaring.sourceFile, exportedName: declaring.name } : { target, exportedName: importedName })
+      map.set(
+        localName,
+        declaring?.name !== undefined ? { target: declaring.sourceFile, exportedName: declaring.name } : { target, exportedName: importedName },
+      )
     }
   }
   return map

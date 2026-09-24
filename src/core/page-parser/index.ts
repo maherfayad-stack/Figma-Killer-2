@@ -1,11 +1,13 @@
+export { parseJsxTree, parsePageFile } from './parsePageFile'
+export { getReturnedJsxRoots } from './branchSelection'
+export type { ReturnedJsx } from './branchSelection'
 export {
   findComponentDeclaration,
+  findNamedComponentDeclaration,
   getFunctionLikeNode,
-  getReturnedJsxRoots,
-  parseJsxTree,
-  parsePageFile,
-} from './parsePageFile'
-export type { ReturnedJsx } from './parsePageFile'
+  readPageComponent,
+} from './componentDeclaration'
+export type { PageComponent } from './componentDeclaration'
 export { IMAGE_SPECIFIER_RE, STUDIO_ASSET_SENTINEL, unresolvedRawTextImports } from './assetImports'
 export type { ImportSpecifierLocation, UnresolvedAssetImport } from './assetImports'
 export type {
@@ -15,11 +17,13 @@ export type {
   CssInJsFinding,
   CssInJsLibrary,
   CssInJsTemplate,
+  ComponentBody,
   FunctionLike,
   NodeLoc,
   ParsedNode,
   ParsedPage,
   ParsedPropValue,
+  UnreadableExport,
 } from './types'
 export { cssInJsStylesheet, extractCssInJs, mergeCssInJs } from './cssInJsExtract'
 export type { CssInJsFile, StyledBinding } from './cssInJsExtract'
@@ -68,14 +72,14 @@ export {
 } from './designSystemDir'
 export {
   createWorkspaceProject,
+  reexportChainFiles,
   resolveComponentSources,
   resolveExportedDeclaration,
 } from './componentSources'
-export type { ComponentSource, WorkspaceProjectWarning } from './componentSources'
+export type { ComponentSource, ExportedDeclaration, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
 export {
-  findNamedComponentDeclaration,
   inlineLocalComponents,
   resolveCallTarget,
   INLINE_ID_SEPARATOR,

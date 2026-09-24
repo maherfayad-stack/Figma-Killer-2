@@ -10,8 +10,6 @@
 import * as path from 'node:path'
 import type { Project, SourceFile } from 'ts-morph'
 import {
-  findComponentDeclaration,
-  findNamedComponentDeclaration,
   getFunctionLikeNode,
   resolveCallTarget,
   resolveComponentSources,
@@ -115,10 +113,9 @@ export function resolveComponentCallSite(
     return { ok: false, failure: { reason: 'unresolvable', message: `Could not resolve <${identifier}>'s declaration in ${source.file}.` } }
   }
 
-  const declaration = target.exportedName === undefined
-    ? findComponentDeclaration(target.sourceFile)
-    : findNamedComponentDeclaration(target.sourceFile, target.exportedName, !target.sameFile)
-  const fn = declaration ? getFunctionLikeNode(declaration) : undefined
+  // `memo(…)`/`forwardRef(…)` read as the function they wrap (P3-B), so every
+  // codemod built on this sees the component's real signature and JSX.
+  const fn = getFunctionLikeNode(target.declaration)
   if (!fn) {
     return {
       ok: false,

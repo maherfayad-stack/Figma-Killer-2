@@ -591,8 +591,21 @@ and swap (`swapComponentInstance.ts`) act on the instance node — see
 contract and refusal reasons.
 
 **Imports are followed through barrels.** `resolveExportedDeclaration` walks
-`export { X } from './X'` and `export * from './X'` and returns the declaring
-name, so `export { Card as PlanCard }` resolves.
+`export { X } from './X'`, `export { default as X } from './X'` and
+`export * from './X'` and returns the declaration NODE (P3-B — a default export
+may have no name to re-find it by), so `export { Card as PlanCard }` and an
+anonymous `export default memo(…)` both resolve. A namespace member
+(`<UI.Card/>`) follows the same graph; a member tag on a default/named import
+(`<Card.Header/>`) is declined, never rendered as `Card`. The barrels on the
+route are recorded as the route's dependencies (`CallTarget.via`).
+
+**`memo`/`forwardRef` are the function they wrap** (`getFunctionLikeNode`,
+`componentDeclaration.ts`) — only React's own, by import provenance
+(`reactImports.ts`). **`<Fragment>`/`<React.Fragment>` is a fragment.** A PAGE
+also renders from a class's `render()` or through an unknown HOC (with a note);
+any other default export is named in an `unreadable-page-export` load warning
+that the frame shows instead of "This page is empty". Full contract:
+`studio-import.md` § "A page's default export".
 
 **The parser SELECTS one JSX-bearing `return`** — the last one, unlocked
 (parser-06). Guard clauses (loading/empty/error) return early; the return
@@ -625,13 +638,12 @@ does **not** lock the node.
 | `kind: 'component'`, source `design-system` (resolves inside `<root>/design-system/`) | `alm.<ExportName>` — the built-in design system, a **black box**: never inlined, its CSS never enters `site.styleRules`, its folder never searched for pages/components/assets. See `studio-import.md` §"Local-component inlining". |
 | `kind: 'component'`, source `package` | `pkg.<sanitized-package>.<Name>` — every package, no carve-out for any specifier |
 | `kind: 'component'`, unclassified (no import, no same-file declaration) | `alm.<Name>` — renders "Unknown module", the honest outcome |
-| `div/section/main/header/footer/nav/article/aside` | `base.container` |
 | `img` / `a` | `base.image` / `base.link` |
 | anything carrying resolved SVG markup, or `svg` | `base.svg` |
 | any tag **with element children** or **with no text** | `base.container` |
 | `button` with text, no children | `base.button` |
-| a `TEXT_HTML_TAGS` tag with text, no children | `base.text` |
-| anything else | `base.container` |
+| any `isTextHostTag` tag with text, no children (`div`, `li`, `label`, `td`, `section`, …) | `base.text` on its own tag — `tag: 'custom'` + `customTag` outside the named list (P3-B, WB-3) |
+| anything else (`textarea`, `option`, `title`, `style`, …) | `base.container` |
 
 `base.text` and `base.button` are **leaves** (`canHaveChildren: false`) and render
 a hardcoded "Text"/"Button" placeholder when empty — right for hand-authored

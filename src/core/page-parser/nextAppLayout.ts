@@ -34,7 +34,9 @@ import { Node, type Project, type SourceFile } from 'ts-morph'
 import { applySubstitutions, buildSubstitutionEnv } from './componentSubstitution'
 import { resolveComponentSources, type ComponentSource } from './componentSources'
 import { inlineLocalComponents } from './inlineLocalComponents'
-import { findComponentDeclaration, getFunctionLikeNode, getReturnedJsxRoots, parseJsxTree } from './parsePageFile'
+import { parseJsxTree } from './parsePageFile'
+import { getReturnedJsxRoots } from './branchSelection'
+import { findComponentDeclaration, getFunctionLikeNode } from './componentDeclaration'
 import { mergeCssInJs } from './cssInJsExtract'
 import type { FunctionLike, ParsedPage } from './types'
 import type { StaticEvalOptions } from './staticEval'
@@ -274,5 +276,10 @@ export function composeAppRouterRoute(opts: ComposeAppRouterRouteOptions): Compo
   }
 
   const chromeNodeIds = Object.keys(composed.nodes).filter((id) => !pageOwnNodeIds.has(id))
+  // P3-B (WB-5) — the layouts still render around a page whose own export
+  // could not be read; the route keeps saying why its content is missing.
+  if (opts.page.unreadableExport && !composed.unreadableExport) {
+    composed = { ...composed, unreadableExport: opts.page.unreadableExport }
+  }
   return { page: composed, chromeNodeIds, composedLayoutFiles, componentSources, dependencyFiles: [...dependencyFiles] }
 }

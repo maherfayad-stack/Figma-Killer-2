@@ -49,7 +49,7 @@ import {
   unwrapParens,
   withNote,
 } from './staticEvalValues'
-import type { FunctionLike } from './types'
+import type { ComponentBody } from './types'
 
 // ---------------------------------------------------------------------------
 // Public shapes (§7.2)
@@ -161,11 +161,11 @@ export function trackTruncation(budget: Budget, evaluate: () => StaticValue): { 
  * module scope / imports. `componentFn` is omitted when evaluating
  * module-scope code itself (no component body to see).
  */
-export function createEvalScope(sourceFile: SourceFile, componentFn?: FunctionLike): EvalScope {
+export function createEvalScope(sourceFile: SourceFile, componentFn?: ComponentBody): EvalScope {
   return { sourceFile, locals: buildComponentLocals(componentFn) }
 }
 
-function buildComponentLocals(fn: FunctionLike | undefined): ReadonlyMap<string, LocalBinding> {
+function buildComponentLocals(fn: ComponentBody | undefined): ReadonlyMap<string, LocalBinding> {
   if (!fn) return EMPTY_LOCALS
   const body = fn.getBody()
   if (!body || !Node.isBlock(body)) return EMPTY_LOCALS // concise-body components have no top-level statements

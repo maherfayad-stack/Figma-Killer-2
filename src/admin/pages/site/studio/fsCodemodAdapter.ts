@@ -76,6 +76,7 @@ import {
   watchLocalizedPagesForBaseline,
 } from './localizedPageWriteback'
 import { setStudioVendorCss, setStudioAuthoredCss } from './studioRawCssStores'
+import { setStudioLoadWarnings } from './studioLoadWarningsStore'
 import { collectNodeDiffEdits } from './nodeDiffWriteback'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
@@ -216,6 +217,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       conditions,
       vendorCss: loadedVendorCss,
       authoredCss: loadedAuthoredCss,
+      warnings: loadWarnings,
       trust,
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
@@ -225,6 +227,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     paletteHiddenModuleIds = loadedPaletteHiddenModuleIds
     setStudioVendorCss(loadedVendorCss)
     setStudioAuthoredCss(loadedAuthoredCss)
+    setStudioLoadWarnings(loadWarnings)
     setStudioTrustTier(trust)
     setStudioProjectKey(projectKey ?? null)
     // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
