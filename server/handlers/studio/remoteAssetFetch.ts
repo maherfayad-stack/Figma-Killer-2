@@ -56,20 +56,32 @@
  *      `Error#message` from a failed connection/DNS lookup, which can carry
  *      resolved IPs, ports, or errno detail. The real cause is logged
  *      server-side (`console.error`) only.
+ *   7. **The response must say it is an image, and the bytes must agree**
+ *      (P4-E, security review of #233 F8). A `content-type` outside
+ *      {@link ALLOWED_REMOTE_CONTENT_TYPES} is refused BEFORE the body is
+ *      read, so an HTML error page or a JSON blob never costs a download. The
+ *      read bytes are then sniffed against real image magic numbers
+ *      (`sniffImageExtension`, the landing pipeline's own sniff) and must
+ *      match the declared type: a response calling itself `image/png` whose
+ *      bytes are an SVG document is refused rather than landed as SVG.
+ *      `application/octet-stream` (what an unlabelled S3 object is served
+ *      as) is accepted, and the sniff alone decides.
+ *   8. **A deadline** ({@link REMOTE_FETCH_TIMEOUT_MS}) covers the whole
+ *      exchange — connect, headers AND body. The byte cap stops a HUGE body;
+ *      it does nothing about a body that trickles one byte a second forever,
+ *      which would otherwise hold a connection (and the turn) open
+ *      indefinitely. On expiry the request is aborted, which tears the
+ *      connection down.
  *
- * Blocklist, not allowlist, and why: the tool's own contract is generic
- * ("another tool... already returned as a URL"), not Figma-specific, and its
- * most predictable real caller (a Figma MCP server's export/download
- * response) still resolves to a shifting, versioned set of S3/CDN hosts
- * (region-sharded buckets, signed-URL subdomains) with no single stable
- * name to allowlist. A hardcoded hostname allowlist would either need
- * constant maintenance against Figma's own infrastructure changes, or be
- * loose enough to be meaningless — and it would silently break every OTHER
- * design-tool MCP server's export/download URL, which is precisely the kind
- * of unhelpful, unexplained lockout this tool must not produce for a
- * legitimate caller. The address-range blocklist plus connection pinning
- * closes the concrete threats in scope (loopback, cloud metadata, RFC1918,
- * rebinding) without coupling a generic tool to one vendor's hosting.
+ * Address blocklist here; WHICH HOSTS an agent may name is decided one layer
+ * up. This module is transport safety — it answers "is it safe to connect to
+ * this address and keep these bytes" for any caller. Whether an agent should
+ * be fetching from a given host at all is a policy about the agent, with the
+ * turn's context in hand (what the user pasted, which stock provider is
+ * configured), and it lives with the agent's tools:
+ * `server/ai/mcp/tools/studio/remoteFetchPolicy.ts`. Keeping it out of here
+ * is what lets a Studio-internal caller with a server-derived URL reuse the
+ * transport without inheriting an agent's allowlist.
  *
  * Residual risk — stated plainly, not implied away: Bun's global `fetch` has
  * no per-request DNS/connect hook (unlike Node's `http.Agent({ lookup })`),
@@ -88,11 +100,44 @@ import { isIP } from 'node:net'
 import { lookup } from 'node:dns/promises'
 import { basename } from 'node:path'
 import { ArchiveIngestError, readBytesWithLimit } from './archiveIngest'
-import { landAssetBytes, type LandAssetResult } from './assetLanding'
+import { landAssetBytes, sniffImageExtension, type LandAssetResult } from './assetLanding'
 import { isBlockedAddress, stripHostnameBrackets } from '../../util/ssrfGuard'
 
 /** Same order of magnitude as `MAX_ASSET_UPLOAD_BYTES` (`assetUpload.ts`) — a single image has no business exceeding this regardless of transport. */
 export const MAX_REMOTE_ASSET_BYTES = 25 * 1024 * 1024 // 25 MB
+
+/**
+ * The whole exchange — connect, headers and body — must finish inside this.
+ * 30 s moves 25 MB at under 7 Mbit/s, so a real image on a slow link still
+ * lands; a body that trickles forever does not hold the turn open (protection 8).
+ */
+export const REMOTE_FETCH_TIMEOUT_MS = 30_000
+
+/**
+ * The `content-type` values a response may carry (protection 7), each mapped
+ * to the sniffed extensions its bytes may turn out to be. `null` means "the
+ * header makes no claim; the sniff alone decides": an S3 object uploaded
+ * without a type is served as `binary/octet-stream`, and refusing it would
+ * refuse real export URLs for a missing label.
+ */
+const ALLOWED_REMOTE_CONTENT_TYPES: ReadonlyMap<string, readonly string[] | null> = new Map<string, readonly string[] | null>([
+  ['image/png', ['png']],
+  ['image/apng', ['png']],
+  ['image/jpeg', ['jpg']],
+  ['image/jpg', ['jpg']],
+  ['image/pjpeg', ['jpg']],
+  ['image/gif', ['gif']],
+  ['image/webp', ['webp']],
+  ['image/avif', ['avif']],
+  ['image/svg+xml', ['svg']],
+  ['application/octet-stream', null],
+  ['binary/octet-stream', null],
+])
+
+/** The media type of a `content-type` header, lower-cased, parameters dropped; `''` when there is none. */
+function mediaType(header: string | null): string {
+  return (header ?? '').split(';')[0]!.trim().toLowerCase()
+}
 
 export interface FetchRemoteAssetDeps {
   /**
@@ -127,6 +172,8 @@ export interface FetchRemoteAssetDeps {
   allowLoopback?: boolean
   /** Test seam — defaults to the global `fetch`. */
   fetchImpl?: typeof fetch
+  /** Deadline for the whole exchange. Defaults to {@link REMOTE_FETCH_TIMEOUT_MS}; a test shortens it. */
+  timeoutMs?: number
   /**
    * Test seam — defaults to the system DNS resolver. Must return EVERY
    * address a hostname resolves to (never just one), so every candidate can
@@ -304,48 +351,101 @@ export async function fetchRemoteBytes(
   const sniHost = stripHostnameBrackets(url.hostname)
   const fetchImpl = deps.fetchImpl ?? fetch
 
-  // Try each validated address until one CONNECTS. Only a transport failure
-  // moves on to the next candidate — an HTTP response, of any status, is the
-  // host answering and ends the loop, so a 404 is never retried against a
-  // second address.
-  let res: Response | null = null
-  let lastError: unknown
-  for (const address of resolution.addresses) {
-    try {
-      res = await fetchImpl(pinUrlToAddress(url, address), {
-        redirect: 'error',
-        headers: { 'user-agent': 'studio-asset-fetch', host: url.host },
-        ...(url.protocol === 'https:' ? { tls: { serverName: sniHost } } : {}),
-      })
-      break
-    } catch (err) {
-      lastError = err
-    }
-  }
-  if (!res) {
-    console.error('[remoteAssetFetch] fetch failed', lastError)
-    return {
-      ok: false,
-      error: `Could not fetch ${rawUrl} (a redirect response is refused outright and never followed).`,
-    }
-  }
-  if (!res.ok) return { ok: false, error: `The remote server returned ${res.status} for ${rawUrl}.` }
-
-  let bytes: Uint8Array
+  // Protection 8: one deadline for connect, headers and body. Aborting the
+  // controller tears the connection down, which also errors a body read in
+  // flight; the race below is what returns on time when a body never ends.
+  const timeoutMs = deps.timeoutMs ?? REMOTE_FETCH_TIMEOUT_MS
+  const deadline = new AbortController()
+  const timer = setTimeout(() => deadline.abort(), timeoutMs)
+  const timedOut = (): FetchRemoteBytesResult => ({
+    ok: false,
+    error: `Fetching ${rawUrl} took longer than ${Math.round(timeoutMs / 1000)} s, so it was stopped.`,
+  })
   try {
-    const maxBytes = deps.maxBytes ?? MAX_REMOTE_ASSET_BYTES
-    bytes = await readBytesWithLimit(
-      res,
-      maxBytes,
-      `The fetched asset is larger than the ${Math.round(maxBytes / (1024 * 1024))} MB limit.`,
-    )
-  } catch (err) {
-    if (err instanceof ArchiveIngestError) return { ok: false, error: err.message }
-    console.error('[remoteAssetFetch] failed reading response body', err)
-    return { ok: false, error: `Could not read the fetched asset.` }
-  }
+    // Try each validated address until one CONNECTS. Only a transport failure
+    // moves on to the next candidate — an HTTP response, of any status, is the
+    // host answering and ends the loop, so a 404 is never retried against a
+    // second address.
+    let res: Response | null = null
+    let lastError: unknown
+    for (const address of resolution.addresses) {
+      if (deadline.signal.aborted) break
+      try {
+        res = await fetchImpl(pinUrlToAddress(url, address), {
+          redirect: 'error',
+          signal: deadline.signal,
+          headers: { 'user-agent': 'studio-asset-fetch', host: url.host },
+          ...(url.protocol === 'https:' ? { tls: { serverName: sniHost } } : {}),
+        })
+        break
+      } catch (err) {
+        lastError = err
+      }
+    }
+    if (deadline.signal.aborted) return timedOut()
+    if (!res) {
+      console.error('[remoteAssetFetch] fetch failed', lastError)
+      return {
+        ok: false,
+        error: `Could not fetch ${rawUrl} (a redirect response is refused outright and never followed).`,
+      }
+    }
+    if (!res.ok) return { ok: false, error: `The remote server returned ${res.status} for ${rawUrl}.` }
 
-  return { ok: true, bytes, filenameHint: filenameHintFromUrl(url) }
+    // Protection 7, first half: refuse what does not even claim to be an
+    // image before reading a byte of it.
+    const declared = mediaType(res.headers.get('content-type'))
+    const expectedExtensions = ALLOWED_REMOTE_CONTENT_TYPES.get(declared)
+    if (expectedExtensions === undefined) {
+      void res.body?.cancel().catch(() => {})
+      return {
+        ok: false,
+        error: `${rawUrl} was served as "${declared || 'no content type'}", not as an image (PNG, JPEG, GIF, WebP, AVIF or SVG), so it was not downloaded.`,
+      }
+    }
+
+    let bytes: Uint8Array
+    try {
+      const maxBytes = deps.maxBytes ?? MAX_REMOTE_ASSET_BYTES
+      const reading = readBytesWithLimit(
+        res,
+        maxBytes,
+        `The fetched asset is larger than the ${Math.round(maxBytes / (1024 * 1024))} MB limit.`,
+      )
+      // Marked handled: when the deadline wins the race, this read rejects
+      // later (the connection was torn down) with nobody left to hear it.
+      reading.catch(() => {})
+      const expired = new Promise<null>((resolveExpired) => {
+        if (deadline.signal.aborted) resolveExpired(null)
+        deadline.signal.addEventListener('abort', () => resolveExpired(null), { once: true })
+      })
+      const read = await Promise.race([reading, expired])
+      if (read === null) return timedOut()
+      bytes = read
+    } catch (err) {
+      if (deadline.signal.aborted) return timedOut()
+      if (err instanceof ArchiveIngestError) return { ok: false, error: err.message }
+      console.error('[remoteAssetFetch] failed reading response body', err)
+      return { ok: false, error: `Could not read the fetched asset.` }
+    }
+
+    // Protection 7, second half: the bytes decide, and they must agree with
+    // what the server said they were.
+    const sniffed = sniffImageExtension(bytes)
+    if (sniffed === null) {
+      return { ok: false, error: `The bytes at ${rawUrl} are not a recognized image format (PNG, JPEG, GIF, WebP, AVIF or SVG).` }
+    }
+    if (expectedExtensions !== null && !expectedExtensions.includes(sniffed)) {
+      return {
+        ok: false,
+        error: `${rawUrl} was served as "${declared}" but its bytes are ${sniffed.toUpperCase()}, so it was refused rather than landed as something it did not say it was.`,
+      }
+    }
+
+    return { ok: true, bytes, filenameHint: filenameHintFromUrl(url) }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 /**

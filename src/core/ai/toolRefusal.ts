@@ -266,6 +266,18 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'A remote URL could not be fetched, was refused by the SSRF guard, or exceeded the size cap.',
   },
+  'host-not-allowed': {
+    retryable: false,
+    meaning: 'An agent may only make Studio fetch from Figma asset hosts, the stock photo provider, the Figma Dev Mode server when the operator enabled loopback, or a URL the user pasted into this conversation. Any other host is refused before a request is made.',
+  },
+  'stock-search-failed': {
+    retryable: true,
+    meaning: 'The stock photo provider could not answer: unreachable, rate-limited, or an error on its side. The same search can work a little later.',
+  },
+  'stock-key-refused': {
+    retryable: false,
+    meaning: 'The stock photo provider refused the API key this Studio server is configured with. Only the operator can fix it; carry on down the Assets ladder.',
+  },
   'asset-write-failed': {
     retryable: false,
     meaning: 'Bytes were obtained but could not be landed as a project file (validation, containment, or naming).',

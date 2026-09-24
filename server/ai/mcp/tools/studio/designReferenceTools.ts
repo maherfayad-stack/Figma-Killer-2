@@ -51,6 +51,7 @@ import { readProjectImageBytes } from './readProjectImageBytes'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { authoredFrameHeight, authoredFrameWidth } from '../../../../handlers/studio/boardGeometry'
 import { fetchRemoteBytes } from '../../../../handlers/studio/remoteAssetFetch'
+import { remoteFetchRefusal } from './remoteFetchPolicy'
 import {
   getDesignReference,
   listDesignReferences,
@@ -108,6 +109,11 @@ const registerDesignReferenceTool: AiTool = {
       // a size the HTTP upload route happily accepted. See `maxBytes` on
       // `FetchRemoteAssetDeps` for why this is per-caller and not one shared
       // constant.
+      // The same host policy as studio_fetch_remote_asset: a design export
+      // comes from Figma or from the user, never from a host an agent was
+      // talked into naming (`remoteFetchPolicy.ts`, security review F8).
+      const refused = remoteFetchRefusal(url, ctx)
+      if (refused) return refused
       const fetched = await fetchRemoteBytes(url, { maxBytes: DESIGN_REFERENCE_MAX_BYTES })
       if (!fetched.ok) return toolRefusal('remote-fetch-failed', fetched.error)
       bytes = fetched.bytes

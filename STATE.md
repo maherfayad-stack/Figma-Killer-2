@@ -86,6 +86,12 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   3. Edit a text in the inspector, pause 2 s, then click: no hitch.
   4. Pan an edited frame off screen and back: it comes back as a picture, then live.
 
+### mcp-30 — P4-E: assets for the agent (AI-13, AI-20, P4-C review F8)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` · **PR:** not yet · **Updated:** 2026-09-24
+- **Stage:** implementing
+- **Goal:** the agent finds a real icon or photo instead of drawing a grey box; lists the project's own images and fonts; and `studio_fetch_remote_asset` can no longer be pointed at an arbitrary host (F8).
+- **Next:** tests for find_image/find_icon/list tools, prompt ladder, docs, gates, draft PR, security-guard review.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

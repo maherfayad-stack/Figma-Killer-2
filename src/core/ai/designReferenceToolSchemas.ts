@@ -28,7 +28,7 @@ export const StudioRegisterDesignReferenceInputSchema = Type.Object({
   url: Type.Optional(Type.String({
     minLength: 1,
     description:
-      'An http:// or https:// URL that returns the reference\'s image bytes (e.g. a Figma export/download URL another tool already returned) — fetched SERVER-SIDE, never transiting you, the same studio_fetch_remote_asset pattern. Provide exactly one of url or imageBase64.',
+      'A URL returning the reference image bytes, fetched SERVER-SIDE so they never transit you: one a Figma connector returned, or one the user pasted into this conversation (other hosts are refused host-not-allowed). Provide exactly one of url, path or imageBase64.',
   })),
   imageBase64: Type.Optional(Type.String({
     minLength: 1,

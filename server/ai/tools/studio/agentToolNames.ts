@@ -149,7 +149,15 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // AI-14 — the exact import for the file it goes into, and a usage with
   // valid enum values: what the catalog tools list but never wrote out.
   'studio_component_snippet',
-  // Assets and dependencies.
+  // Assets and dependencies. P4-E (AI-13, AI-20): what the project already
+  // has (images, fonts) comes first, then the two finders that replaced
+  // "a grey box" as the answer to a missing photo or icon — the design
+  // system's own icon set by what it shows, and licensed stock photography
+  // landed with its credit.
+  'studio_list_assets',
+  'studio_list_fonts',
+  'studio_find_icon',
+  'studio_find_image',
   'studio_upload_asset',
   'studio_fetch_remote_asset',
   // The only reachable source for artwork that exists solely inside a design
