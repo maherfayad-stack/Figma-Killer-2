@@ -93,6 +93,8 @@ import type { AiStreamRequest } from '../drivers/types'
 import { acquireConversationStream } from '../conversations/activeStreams'
 import { routeChatTurnModel } from '../routing/chatTurnModel'
 import { createTurnTelemetry } from '../turnTelemetry'
+import { DELEGATE_TOOL_NAME, createDelegateRunner } from '../delegation/delegateRunner'
+import { recordDelegatedUsage } from '../delegation/delegatedUsage'
 import { REQUEST_ABORTED, abandonTurn, armAbortedReleaseGuard, clientClosedRequest, waitForRequest } from '../chatTurnGuards'
 
 
@@ -524,6 +526,14 @@ async function handleAiChat(
           userSuppliedUrls: collectUserSuppliedUrls(messages),
           // The persisted user message that opened this turn: its checkpoint key (AI-7).
           turnId,
+          // The HTTP drivers' subagents (AI-23), for a turn offered studio_delegate.
+          delegate: tools.some((tool) => tool.name === DELEGATE_TOOL_NAME)
+            ? createDelegateRunner({
+              driver, credentials: resolvedCredential, providerId: credential.providerId, systemPrompt, tools,
+              conversationModelId: conversation.modelId, modelSource: conversation.modelSource,
+              recordUsage: (usage, modelId) => recordDelegatedUsage(db, conversation.id, credential.providerId, usage, modelId),
+            })
+            : undefined,
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(

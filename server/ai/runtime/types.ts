@@ -256,6 +256,12 @@ export interface ToolContext {
    * client) — such a tool must answer without one.
    */
   readonly bridge?: AiBrowserBridge
+  /**
+   * The chat turn's subagent runner (`studio_delegate`, AI-23), mirroring
+   * `ToolContextBase.delegate` — where it is set. `undefined` everywhere but
+   * an HTTP-driver turn with a project open, and inside a subagent.
+   */
+  readonly delegate?: import('../delegation/delegateRunner').DelegateRunner
 }
 
 // ---------------------------------------------------------------------------

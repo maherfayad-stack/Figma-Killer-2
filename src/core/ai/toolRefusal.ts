@@ -328,6 +328,18 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'This exact write, with these exact arguments, already ran this turn and nothing else has been written since. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. Observers (screenshots, compares, measurements, typechecks) are never answered this way, and a write repeated after a different write landed runs again.',
   },
+  'not-owned': {
+    retryable: false,
+    meaning: 'A studio_delegate subagent tried to write a file it does not own. A subagent owns exactly its page\'s component file and that page\'s .module.css; every shared file stays with the agent that delegated. Name the change you need in your final reply instead.',
+  },
+  'overlapping-ownership': {
+    retryable: false,
+    meaning: 'Two studio_delegate tasks name the same page, so two subagents would write the same files. Give each page to exactly one task.',
+  },
+  'delegation-unavailable': {
+    retryable: false,
+    meaning: 'Delegation runs only inside a chat turn on an API-key driver with a project open; this call has none (an external client, or a subagent, which cannot delegate further). Do the work yourself.',
+  },
   'strict-mode-stand-in-refused': {
     retryable: false,
     meaning: 'Strict fidelity mode will not measure against a stand-in reference. Register the real design as a spec first.',

@@ -34,7 +34,7 @@
  */
 import { beforeAll, describe, expect, it } from 'bun:test'
 import { buildStudioAgentSystemPrompt } from '../../../server/ai/tools/studio/systemPrompt'
-import { studioAgentTools } from '../../../server/ai/tools/studio'
+import { studioAgentTools, studioHttpAgentTools } from '../../../server/ai/tools/studio'
 import { resolveNativeToolAllowlist } from '../../../server/ai/drivers/claudeCliToolSurface'
 import { runClaudeCliTurns } from '../../../server/ai/drivers/claudeCli.testHelpers'
 
@@ -94,5 +94,25 @@ describe('the Studio agent subagent contract', () => {
 
   it('the prompt no longer claims there are no subagents', () => {
     expect(staticPrefix()).not.toContain('no subagents,')
+  })
+})
+
+describe('the HTTP drivers subagent contract (AI-23)', () => {
+  const httpPrompt = (tools: typeof studioHttpAgentTools) => buildStudioAgentSystemPrompt(null, tools).join('\n')
+
+  it('offered studio_delegate, the HTTP prompt fans out with it under the same ownership rule', () => {
+    const prompt = httpPrompt(studioHttpAgentTools)
+    expect(prompt).toContain('fan out with studio_delegate')
+    expect(prompt).toContain('One agent per page')
+    expect(prompt).toContain('EVERY SHARED FILE IS YOURS ALONE')
+    expect(prompt).not.toContain('There are no subagents on this path')
+    // The CLI's Task vocabulary is not the HTTP path's.
+    expect(prompt).not.toContain('subagent_type')
+  })
+
+  it('without it (a read-only caller), the HTTP prompt builds one screen at a time', () => {
+    const prompt = httpPrompt(studioHttpAgentTools.filter((tool) => tool.name !== 'studio_delegate'))
+    expect(prompt).toContain('There are no subagents on this path')
+    expect(prompt).not.toContain('studio_delegate')
   })
 })

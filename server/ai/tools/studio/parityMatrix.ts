@@ -195,7 +195,13 @@ export const STUDIO_CANVAS_PARITY_MATRIX: readonly ParityRow[] = [
     // `WORKSPACE_NATIVE_TOOLS`; this row said "withheld" for a wave after
     // that, and agent.md repeated it (AI-24).
     action: 'Delegate to a subagent',
-    status: { kind: 'native', how: "Task, with subagent_type 'general-purpose' and nothing else — granted on the claude CLI path whenever a project is open (claudeCliToolSurface.ts). One subagent per page, and that page's .tsx and .module.css are the subagent's alone; every shared file stays the orchestrator's. The HTTP drivers have no delegation tool." },
+    status: { kind: 'native', how: "Task, with subagent_type 'general-purpose' and nothing else — granted on the claude CLI path whenever a project is open (claudeCliToolSurface.ts). One subagent per page, and that page's .tsx and .module.css are the subagent's alone; every shared file stays the orchestrator's. The HTTP drivers do the same through studio_delegate (row below)." },
+  },
+  {
+    // AI-23 — the HTTP drivers' Task: the same one-page-per-agent contract,
+    // enforced on each child's writes (`delegateRunner.ts`), not only asked for.
+    action: 'Delegate pages to subagents on an HTTP driver (API key, OpenAI, OpenRouter, Ollama, custom)',
+    status: { kind: 'tool', toolNames: ['studio_delegate'] },
   },
   {
     action: 'Reach a file outside the open project',

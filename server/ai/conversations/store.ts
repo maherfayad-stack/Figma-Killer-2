@@ -388,6 +388,29 @@ export async function adoptConversationProjectKey(
 }
 
 /**
+ * Add usage that belongs to a conversation but to none of its messages — a
+ * `studio_delegate` subagent's own provider rounds (AI-23), which run on their
+ * own model and are billed to the turn that delegated them. The totals the
+ * list view and the audit row read include it; no message row claims it.
+ */
+export async function addConversationUsageTotals(
+  db: DbClient,
+  conversationId: string,
+  usage: { promptTokens: number; completionTokens: number; costUsd: number; cacheReadTokens: number; cacheCreationTokens: number },
+): Promise<void> {
+  await db`
+    update ai_conversations
+    set prompt_tokens_total = prompt_tokens_total + ${usage.promptTokens},
+        completion_tokens_total = completion_tokens_total + ${usage.completionTokens},
+        cost_usd_total = cost_usd_total + ${usage.costUsd},
+        cache_read_tokens_total = cache_read_tokens_total + ${usage.cacheReadTokens},
+        cache_creation_tokens_total = cache_creation_tokens_total + ${usage.cacheCreationTokens},
+        updated_at = current_timestamp
+    where id = ${conversationId}
+  `
+}
+
+/**
  * Patch a conversation. Pass only fields to update.
  */
 export async function updateConversationForUser(

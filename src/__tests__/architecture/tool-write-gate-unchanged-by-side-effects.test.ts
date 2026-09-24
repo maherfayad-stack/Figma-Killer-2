@@ -119,9 +119,13 @@ const WRITE_GATED_BEFORE_THE_SPLIT: Readonly<Record<string, readonly CoreCapabil
  *     `ai.tools.write` + `studio.run.project`, and the project's tier checked
  *     in the handler. It changes nothing, so it is an observer to the loop
  *     (`sideEffects: 'none'`).
+ *   - P4-G (AI-23): `studio_delegate` runs subagents that write their pages'
+ *     files, so it carries the file tools' gate (`ai.tools.write` +
+ *     `studio.write`) and is a `'write'` to the loop. HTTP agent surface only.
  */
 const WRITE_GATED_ADDED_SINCE: Readonly<Record<string, readonly CoreCapability[]>> = {
   studio_arrange_frames: ['studio.write'],
+  studio_delegate: ['studio.write'],
   studio_edit_file: ['studio.write'],
   studio_edit_files: ['studio.write'],
   studio_find_image: ['studio.write'],
