@@ -237,14 +237,17 @@ export interface AgentToolWriteInput {
 export function agentToolInputContentRefusal(filePath: string, cwd: string, input: AgentToolWriteInput | undefined): AgentWriteRefusal | null {
   if (!input || !isTailwindStylesheetPath(filePath)) return null
   if (typeof input.content === 'string') {
-    let before: string | null = null
-    try {
-      before = readFileSync(isAbsolute(filePath) ? filePath : resolve(cwd, filePath), 'utf8')
-    } catch {
-      before = null
-    }
-    return agentContentRefusal(filePath, before, input.content)
+    return agentContentRefusal(filePath, currentTextOrNull(isAbsolute(filePath) ? filePath : resolve(cwd, filePath)), input.content)
   }
   if (typeof input.new_string === 'string') return agentContentRefusal(filePath, input.old_string ?? '', input.new_string)
   return null
+}
+
+/** The file's text, or `null` when there is none to read (a new file). */
+function currentTextOrNull(abs: string): string | null {
+  try {
+    return readFileSync(abs, 'utf8')
+  } catch {
+    return null
+  }
 }

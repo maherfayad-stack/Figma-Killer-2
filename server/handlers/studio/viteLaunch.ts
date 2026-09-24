@@ -37,7 +37,7 @@
  * `bun run` falls back to on a host without Node (the Docker image).
  */
 import { readFileSync } from 'node:fs'
-import { delimiter, dirname, join, relative, resolve, sep } from 'node:path'
+import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { isRealpathContained } from './workspacePackageResolve'
 
 /** `npx vite …`, `bunx vite …`, `pnpm exec vite …`, `yarn vite …` → the tokens after `vite`. `null` for anything else. */
@@ -61,7 +61,7 @@ function appRootToProjectDir(appRoot: string, projectDir: string): string[] {
     out.push(current)
     if (current === root) return out
     const rel = relative(root, current)
-    if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`)) return out
+    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return out
     const parent = dirname(current)
     if (parent === current) return out
     current = parent
