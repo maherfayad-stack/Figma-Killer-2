@@ -48,6 +48,7 @@
 import { decodeSourceNodeId } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
 import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
+import { useEditorStore } from '@site/store/store'
 import type { ClassTokenRefusal } from './classNameWriteback'
 import type { StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
 
@@ -180,6 +181,11 @@ function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[]): void 
         : `${entry.label} has no hand-editable CSS file in this project (a generated utility class, a compiled ` +
           'build artefact, or a stylesheet syntax Studio does not write), so this change stays on the canvas ' +
           'only and will be lost on reload. Style the element instead to write it to source.',
+      // WB-30 (P3-C, partial) — the remedy the sentence names, one click away:
+      // the same inline-style target `ClassCssLockedNotice`'s button and the
+      // Element chip switch to. It does not MOVE the declarations already typed
+      // into the class; that is still the user's next edit.
+      action: { label: 'Style the element instead', onSelect: () => useEditorStore.getState().setInlineStyleEditing(true) },
     })
   }
 }
