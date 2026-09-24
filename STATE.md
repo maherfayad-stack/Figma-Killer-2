@@ -171,6 +171,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `agentWriteScope.ts` gained a credential-name rule (one loop at the end of `agentWriteRefusal`); `fix/security-hardening-followups` edits the same gate — merge with care.
   - `revertAgentCheckpoint`/`readAgentCheckpointDiff` take `conversationId`; the diff route requires it.
 - **Next:** security-guard review; owner dogfood (below).
+  - **Security re-review APPROVED (`review-251`).** Non-blocking follow-up: the diff route still shows a credential checkpoint written before the fix (revert refuses it). Such checkpoints exist only on machines that ran this branch; the one-line fix is to treat them as withheld.
 - **Human action needed:** dogfood on `test4`: ask the agent to change two files → "Changed 2 files" → Diff → Revert turn restores both; repeat, edit one file on the canvas, Revert turn is refused naming it, per-file revert of the other works; select a layer → chip shows `name · File.tsx:line`; Plan mode → plan checklist.
 
 ## Blocked
