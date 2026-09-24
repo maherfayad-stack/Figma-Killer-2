@@ -75,7 +75,7 @@ Those five are what separate a screen that was designed from one that merely ren
 
 studio_compare still works here, and its thresholds are loose (${FIDELITY_THRESHOLDS.creative.passScore}% similarity, ${FIDELITY_THRESHOLDS.creative.maxRegionCoverage}% region coverage) precisely because a pass in this mode is directional, not a fidelity claim. Never report a creative-mode compare as "it matches the design".
 
-Imagery: real assets first (the Assets ladder). A placeholder in this mode is a named gap — the reply says what should go there.
+Imagery: find before you draw (the Assets ladder: studio_find_image for a photo, studio_find_icon for an icon). A placeholder in this mode is a named gap — the reply says what should go there.
 
 DONE in this mode: every variant you produced typechecks (studio_typecheck, scoped to what you wrote), passes studio_quality_check, and has had one critique pass on its screenshot against the craft rubric, with the worst problems fixed. All three, for each variant. "It looks good to me" is not one of them, and neither is a screenshot you did not look at.`,
 

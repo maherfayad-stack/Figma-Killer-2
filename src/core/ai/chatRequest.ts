@@ -1,4 +1,5 @@
 import { Type, type Static } from '@core/utils/typeboxHelpers'
+import { AiTextOriginSchema } from './contentBlock'
 import {
   AI_USER_IMAGE_MAX_BASE64_CHARS,
   AI_USER_IMAGE_MAX_PER_MESSAGE,
@@ -18,6 +19,8 @@ const AiUserTextBlockSchema = Type.Object(
   {
     kind: Type.Literal('text'),
     text: Type.String(),
+    /** `'studio'` when Studio composed this text for the user (see `AiTextOriginSchema`). */
+    origin: Type.Optional(AiTextOriginSchema),
   },
   { additionalProperties: false },
 )

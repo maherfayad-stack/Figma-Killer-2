@@ -12,8 +12,14 @@
  * containment rule and the ONE agent write gate (`agentWriteRefusal`) — and
  * holds `withProjectWriteLock` across its check and its write. This module is
  * what happens between those two.
+ *
+ * Binary assets take the same road ({@link landAgentAsset}): `studio_find_image`
+ * and `studio_fetch_remote_asset` land image bytes through `assetLanding.ts`,
+ * the one image landing contract, with the target directory first put to the
+ * same agent write gate and the landing held under the same lock (P4-E).
  */
 import { writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -22,10 +28,14 @@ import { pushStudioDiskChange } from './liveReloadPush'
 import {
   hasOtherHardLinks,
   readTextFile,
+  resolveAgentFilePath,
   statIfPresent,
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { appendTurnWrite } from '../../../../handlers/studio/turnWriteLog'
+import { DEFAULT_ASSET_TARGET_DIR, landAssetBytes } from '../../../../handlers/studio/assetLanding'
+import { assetSiteUrlResolver } from '../../../../handlers/studio/assetSiteUrl'
+import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
 import { studioAgentUserKey } from '../../../../handlers/studio/agentUserScope'
 
 /** The open project this turn writes into, or the refusal when there is none. */
@@ -148,4 +158,74 @@ export function commitPlannedWrites(
   const targets = written.map(({ target }) => target)
   afterWrites(dir, ctx, targets)
   return { written: targets }
+}
+
+/** An image an agent tool landed: where it is, the URL the project's own site serves it at, and its size. */
+export interface LandedAgentAsset {
+  /** Project-relative POSIX path — import it from the file that shows it. */
+  readonly relPath: string
+  /** Site-root URL (`assetSiteUrl.ts`), `null` when nothing serves the file. Percent-encoded, safe to write verbatim. */
+  readonly src: string | null
+  /** True when a production build serves `src`, not only the dev server — i.e. the file is under `public/`. */
+  readonly buildSafe: boolean
+  readonly width: number | null
+  readonly height: number | null
+  /** True when an identical file was already there and was reused; nothing was written. */
+  readonly deduped: boolean
+  readonly bytesWritten: number
+}
+
+/**
+ * Land image bytes an agent tool obtained into `dir` — through the ONE image
+ * landing contract (`landAssetBytes`: sniffed type, sanitized SVG, content
+ * dedupe, `wx` names, symlink-aware containment) and the ONE agent write gate.
+ *
+ * The target directory is resolved with `resolveAgentFilePath(…, 'write')`
+ * first, so an agent cannot land an image anywhere its file tools could not
+ * write: not `.studio/`, `.claude/`, `.git/` or `prototype/` (Studio's preview
+ * shell), not through a link out of the project. `landAssetBytes`' own guard
+ * is narrower on purpose — it also serves the canvas's drop and upload routes,
+ * where the user is the one choosing. The whole landing holds
+ * `withProjectWriteLock`, and a new file is recorded in the turn write log.
+ */
+export async function landAgentAsset(
+  dir: string,
+  ctx: ToolContext,
+  targetDir: string | undefined,
+  bytes: Uint8Array,
+  filenameHint: string,
+): Promise<LandedAgentAsset | ToolRefusal> {
+  const requested = targetDir && targetDir.trim().length > 0 ? targetDir.trim() : DEFAULT_ASSET_TARGET_DIR
+  return withProjectWriteLock(dir, () => {
+    const target = resolveAgentFilePath(dir, requested, 'write')
+    if (!target.ok) return toolRefusal(target.code, target.message, { remedy: target.remedy })
+    // Judged again as a FILE inside the folder: the gate's directory rules
+    // (`.husky/`, `.vscode/`, `.github/workflows/`) apply to a path's parent
+    // segments, so the folder alone reads as a file named `.husky` and passes
+    // (review of #248, finding 7).
+    const inside = resolveAgentFilePath(dir, `${target.rel}/asset.png`, 'write')
+    if (!inside.ok) return toolRefusal(inside.code, inside.message, { remedy: inside.remedy })
+    const existing = statIfPresent(target.abs)
+    if (existing && !existing.isDirectory()) {
+      return toolRefusal('not-a-file', `"${target.rel}" is a file, not a folder to land an image in.`, {
+        remedy: `Omit targetDir to use ${DEFAULT_ASSET_TARGET_DIR}, or name a folder.`,
+      })
+    }
+    const landed = landAssetBytes(dir, target.rel, bytes, filenameHint)
+    if (!landed.ok) return toolRefusal('asset-write-failed', landed.error)
+    if (!landed.deduped) {
+      const abs = join(dir, ...landed.relPath.split('/'))
+      appendTurnWrite(dir, studioAgentUserKey(ctx.userId), abs)
+    }
+    const url = assetSiteUrlResolver(dir)(landed.relPath)
+    return {
+      relPath: landed.relPath,
+      src: url?.src ?? null,
+      buildSafe: url?.buildSafe ?? false,
+      width: landed.width,
+      height: landed.height,
+      deduped: landed.deduped,
+      bytesWritten: landed.deduped ? 0 : bytes.length,
+    }
+  })
 }

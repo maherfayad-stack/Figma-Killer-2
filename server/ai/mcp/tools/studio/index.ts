@@ -29,6 +29,9 @@ import { studioSetTokensMcpTools } from './setTokensTool'
 import { studioArrangeFramesMcpTools } from './arrangeFramesTool'
 import { studioFigmaBindingMcpTools } from './figmaBindingTools'
 import { studioRemoteAssetMcpTools } from './remoteAssetTools'
+import { studioFindImageMcpTools } from './findImageTool'
+import { studioFindIconMcpTools } from './findIconTool'
+import { studioAssetInventoryMcpTools } from './assetInventoryTools'
 import { studioScreenshotTool } from './screenshot'
 import { studioCompareMcpTools } from './compare'
 import { studioMeasureReferenceMcpTools } from './measureReference'
@@ -70,6 +73,9 @@ export const studioMcpTools: AiTool[] = [
   ...studioComponentSnippetMcpTools,
   ...studioFigmaBindingMcpTools,
   ...studioRemoteAssetMcpTools,
+  ...studioFindImageMcpTools,
+  ...studioFindIconMcpTools,
+  ...studioAssetInventoryMcpTools,
   ...studioCommentMcpTools,
   ...studioGitMcpTools,
   ...studioPageDiagnosticsMcpTools,

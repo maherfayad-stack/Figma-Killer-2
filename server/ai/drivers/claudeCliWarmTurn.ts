@@ -96,7 +96,11 @@ export async function* runWarmTurn(
   // object after a reload, and `workspaceDir` changes the moment the user
   // opens another project. See `claudeCliConnector.ts`.
   const releaseRegistries = lease.connectorId
-    ? bindConnectorRegistries(lease.connectorId, { bridge: req.bridge, workspaceDir: ctx.workspaceDir })
+    ? bindConnectorRegistries(lease.connectorId, {
+        bridge: req.bridge,
+        workspaceDir: ctx.workspaceDir,
+        userSuppliedUrls: req.toolContextBase.userSuppliedUrls,
+      })
     : null
 
   let discarded = false

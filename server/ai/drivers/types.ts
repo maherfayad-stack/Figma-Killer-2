@@ -238,6 +238,15 @@ export interface ToolContextBase {
    */
   readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
   /**
+   * Every http(s) URL the USER typed or pasted into this conversation
+   * (`collectUserSuppliedUrls`), normalised. The only hosts outside a short
+   * fixed list an agent may make Studio fetch from — see
+   * `server/ai/mcp/tools/studio/remoteFetchPolicy.ts`. `undefined` for a call
+   * with no chat behind it (an external MCP client), which gets the fixed
+   * list only.
+   */
+  readonly userSuppliedUrls?: readonly string[]
+  /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's
    * onSnapshot) so later server read tools see post-mutation state.

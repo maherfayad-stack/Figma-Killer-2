@@ -33,6 +33,7 @@ import { resolvePageSourceFile } from '../../../handlers/studio/pageSourceFile'
 import { DEFAULT_TRUST_TIER, readStudioMeta } from '../../../handlers/studio/studioMeta'
 import { findFigmaUrlInText } from '../../../handlers/studio/figmaUrl'
 import { resolveProjectTscPath } from '../../../handlers/studio/typecheck'
+import { stockPhotoApiKey } from '../../mcp/tools/studio/stockPhotos'
 import { loopbackAssetFetchEnabled } from '../../../handlers/studio/remoteAssetFetch'
 import { listProjectMcpServers } from '../../drivers/projectMcpServers'
 import { listRegisteredMcpServers, recordBuiltInSignIn, registeredMcpServerProjectKey } from '../../drivers/registeredMcpServers'
@@ -226,6 +227,12 @@ export interface StudioCapabilityDigest {
     readonly loopbackAssetFetchBlocked: boolean
   }
   readonly typecheck: TypecheckAvailability
+  /**
+   * Whether `studio_find_image` has a stock-photo key to search with
+   * (`stockPhotos.ts`, P4-E). An env read, no network. Stated only when it is
+   * NOT configured, so the agent skips a tool that would only say so.
+   */
+  readonly stockPhotos: { readonly configured: boolean }
 }
 
 /** `true` for a URL whose hostname resolves to loopback ONLY — used here purely to word the digest line correctly, never as a security boundary (that check lives in `remoteAssetFetch.ts`/`ssrfGuard.ts` and is unaffected by anything in this file). */
@@ -361,6 +368,7 @@ export function buildStudioCapabilityDigest(dir: string, userId?: string): Studi
   return {
     figma: probeFigmaConnectorStatus(dir, userId),
     typecheck: probeTypecheckAvailability(dir),
+    stockPhotos: { configured: stockPhotoApiKey() !== null },
   }
 }
 

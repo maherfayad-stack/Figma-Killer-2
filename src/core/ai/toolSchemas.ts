@@ -556,8 +556,10 @@ export const StudioListComponentBindingsInputSchema = Type.Object({
 // into the project. `execution: 'server'`, headless — the fetch and the
 // write both happen server-side; see `server/handlers/studio/
 // remoteAssetFetch.ts` for the URL-safety reasoning (scheme restriction, no
-// redirect ever followed, streamed size cap) and `assetLanding.ts` for the
-// write pipeline it shares with `studio_upload_asset`.
+// redirect ever followed, streamed size cap, deadline, image content type),
+// `server/ai/mcp/tools/studio/remoteFetchPolicy.ts` for which hosts an agent
+// may name, and `assetLanding.ts` for the write pipeline it shares with
+// `studio_upload_asset`.
 // ---------------------------------------------------------------------------
 
 export const StudioFetchRemoteAssetInputSchema = Type.Object({
@@ -565,10 +567,10 @@ export const StudioFetchRemoteAssetInputSchema = Type.Object({
   url: Type.String({
     minLength: 1,
     description:
-      'An http:// or https:// URL that returns image bytes (e.g. a Figma export/download URL another tool already returned) to fetch SERVER-SIDE and land as a new file in the project. Never a data: URL, never a local/internal path. Use this INSTEAD of studio_upload_asset when you already have a URL rather than bytes in hand — it avoids round-tripping the asset\'s bytes through your own context. No redirect is ever followed; the actual response bytes are sniffed against real image magic numbers, and SVG content is sanitized, before anything is written.',
+      'The image URL to fetch server-side: one a Figma connector returned, a stock photo URL, or one the user pasted into this conversation (anything else is refused host-not-allowed). http(s) only; never a data: URL or a local path.',
   }),
   targetDir: Type.Optional(
-    Type.String({ description: 'Workspace-relative directory to write into. Defaults to src/assets. Pass the directory an existing import already points at when replacing that import\'s target.' }),
+    Type.String({ maxLength: 1024, description: 'Project-relative folder to land the image in. Defaults to src/assets. Use public/... when the image must be referenced by URL (a CSS url() or a literal src) and survive a production build. Refused where an agent may not write (.studio, .git, prototype/).' }),
   ),
 })
 

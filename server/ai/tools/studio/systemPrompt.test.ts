@@ -126,7 +126,10 @@ const FIXTURE_CTX: StudioPromptContext = {
   warningCount: 0,
 }
 
-function baseLiveDigest(capabilities: StudioLiveDigest['capabilities']): StudioLiveDigest {
+function baseLiveDigest(
+  partial: Omit<StudioLiveDigest['capabilities'], 'stockPhotos'> & Partial<Pick<StudioLiveDigest['capabilities'], 'stockPhotos'>>,
+): StudioLiveDigest {
+  const capabilities: StudioLiveDigest['capabilities'] = { stockPhotos: { configured: true }, ...partial }
   return {
     board: { activeBoardId: null, frames: [] },
     activePage: null,
@@ -178,6 +181,19 @@ describe('Studio system prompt — capability digest (mcp-tooling task)', () => 
     expect(suffix).toContain('Figma MCP connector: configured.')
     expect(suffix).not.toContain('not configured for this project')
     expect(suffix).not.toContain('asset downloads from it are blocked')
+  })
+
+  it('stock search not set up: one line telling the agent not to call studio_find_image; configured says nothing', () => {
+    const off = baseLiveDigest({
+      figma: { status: 'configured', loopbackAssetFetchBlocked: false },
+      typecheck: { available: true },
+      stockPhotos: { configured: false },
+    })
+    const [, , offSuffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, off)
+    expect(offSuffix).toContain('studio_find_image: stock photo search is not set up')
+    const on = baseLiveDigest({ figma: { status: 'configured', loopbackAssetFetchBlocked: false }, typecheck: { available: true } })
+    const [, , onSuffix] = buildStudioAgentSystemPrompt(FIXTURE_CTX, studioAgentTools, on)
+    expect(onSuffix).not.toContain('stock photo search')
   })
 
   it('degraded: figma not configured produces an actionable line naming the fallback tool', () => {
