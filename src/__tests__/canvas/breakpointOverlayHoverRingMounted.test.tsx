@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { act, cleanup, render, waitFor } from '@testing-library/react'
 import { SELECTION_OVERLAY_ROOT_ID, isSelectionChromeMutation } from '@core/studio-runtime'
 import { BreakpointFrame } from '@site/canvas/BreakpointFrame'
+import { setCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
@@ -27,9 +28,6 @@ function resetStore() {
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     activeBreakpointId: BREAKPOINT.id,
   } as Parameters<typeof useEditorStore.setState>[0])
 }
@@ -83,12 +81,12 @@ describe('BreakpointSelectionOverlay — the hover ring stays mounted (PERF-2)',
     try {
       for (const hovered of ['heading', null, 'copy', null, 'heading']) {
         act(() => {
-          useEditorStore.setState({ hoveredNodeId: hovered, hoveredBreakpointId: BREAKPOINT.id } as Parameters<typeof useEditorStore.setState>[0])
+          setCanvasHover(hovered, BREAKPOINT.id)
         })
         await new Promise((resolve) => setTimeout(resolve, 20))
       }
       act(() => {
-        useEditorStore.setState({ hoveredNodeId: null } as Parameters<typeof useEditorStore.setState>[0])
+        setCanvasHover(null)
       })
       await new Promise((resolve) => setTimeout(resolve, 20))
       count(observer.takeRecords())

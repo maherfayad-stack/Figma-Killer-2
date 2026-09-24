@@ -17,6 +17,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import type { Page } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
+import { getCanvasHover, setCanvasHover } from '@site/canvas/canvasHover'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base/index'
 
@@ -85,7 +86,7 @@ function expectNoDanglingIds() {
   const held = [
     ...s.selectedNodeIds,
     ...(s.selectedNodeId ? [s.selectedNodeId] : []),
-    ...(s.hoveredNodeId ? [s.hoveredNodeId] : []),
+    ...(getCanvasHover() ? [getCanvasHover()!.nodeId] : []),
     ...(s.activeInlineEdit ? [s.activeInlineEdit.nodeId] : []),
     ...s.enteredInstanceIds,
   ]
@@ -100,9 +101,6 @@ beforeEach(() => {
     selectedNodeId: null,
     selectedNodeIds: [],
     selectedNodeFrameId: null,
-    hoveredNodeId: null,
-    hoveredBreakpointId: null,
-    hoveredFrameId: null,
     activeInlineEdit: null,
     enteredInstanceIds: [],
     _historyPast: [],
@@ -128,8 +126,8 @@ describe('patchPages — the selection follows the element an agent write shifte
   })
 
   it('carries hover, the inline-edit session and the entered-instance stack the same way', () => {
+    setCanvasHover('a.tsx:4:5', 'studio')
     useEditorStore.setState({
-      hoveredNodeId: 'a.tsx:4:5',
       enteredInstanceIds: ['a.tsx:4:5'],
       activeInlineEdit: {
         nodeId: 'a.tsx:4:5',
@@ -145,7 +143,7 @@ describe('patchPages — the selection follows the element an agent write shifte
 
     store().patchPages({ pages: [pageWithBannerAbove()] })
 
-    expect(store().hoveredNodeId).toBe('a.tsx:5:5')
+    expect(getCanvasHover()?.nodeId).toBe('a.tsx:5:5')
     expect(store().activeInlineEdit?.nodeId).toBe('a.tsx:5:5')
     expect(store().enteredInstanceIds).toEqual(['a.tsx:5:5'])
     expectNoDanglingIds()
@@ -209,7 +207,7 @@ describe('loadSite — a full reload never leaves a dangling or re-pointed id (E
   })
 
   it('drops every held id whose element the reload no longer has', () => {
-    useEditorStore.setState({ hoveredNodeId: 'a.tsx:4:5' } as Parameters<typeof useEditorStore.setState>[0])
+    setCanvasHover('a.tsx:4:5', 'studio')
     store().loadSite(
       makeSite({
         pages: [
@@ -229,7 +227,7 @@ describe('loadSite — a full reload never leaves a dangling or re-pointed id (E
 
     expect(store().selectedNodeIds).toEqual([])
     expect(store().selectedNodeId).toBeNull()
-    expect(store().hoveredNodeId).toBeNull()
+    expect(getCanvasHover()).toBeNull()
     expectNoDanglingIds()
   })
 

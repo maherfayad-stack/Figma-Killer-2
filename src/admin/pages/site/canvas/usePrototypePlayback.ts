@@ -47,7 +47,10 @@ export function usePrototypePlayback(editingPage: Page | null): PrototypePlaybac
   const playState = useEditorStore((s) => s.playState)
   const playTransition = useEditorStore((s) => s.playTransition)
   const playLeaveTransition = useEditorStore((s) => s.playLeaveTransition)
-  const pages = useEditorStore((s) => s.site?.pages)
+  // The pages only while the player is armed — outside Play this hook reads
+  // nothing from them, and `site.pages` is replaced on every edit, so reading it
+  // unconditionally re-rendered the canvas root on every keystroke (P2-I, PERF-12).
+  const pages = useEditorStore((s) => (s.playMode ? s.site?.pages : undefined))
 
   if (!playMode) {
     return {

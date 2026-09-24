@@ -61,7 +61,6 @@ beforeEach(() => {
     activePageId: site.pages[0].id,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeBreakpointId: 'desktop',
     hasUnsavedChanges: false,
   } as Parameters<typeof useEditorStore.setState>[0])

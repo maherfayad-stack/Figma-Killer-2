@@ -26,6 +26,7 @@ import { join } from 'path'
 import React from 'react'
 import { render, cleanup, fireEvent, act } from '@testing-library/react'
 import { DomPanel } from '@site/panels/DomPanel/DomPanel'
+import { setCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { makeSite, makePage, makeNode } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
@@ -94,7 +95,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     focusedPanel: 'canvas',
   } as Parameters<typeof useEditorStore.setState>[0])
@@ -195,7 +195,7 @@ describe('Layers tree — windowing budgets', () => {
 
       const t1 = performance.now()
       act(() => {
-        useEditorStore.getState().hoverNode('s0-b0-l0')
+        setCanvasHover('s0-b0-l0')
       })
       const hoverCommitMs = performance.now() - t1
 

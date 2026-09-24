@@ -30,7 +30,6 @@ function freshStore(): void {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     boards: createBoardsFile(),
     activeBoardId: null,
     boardsLoaded: false,

@@ -12,7 +12,8 @@
 import { type CSSProperties } from 'react'
 import { useAsyncResource } from '@admin/lib/useAsyncResource'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { isTemplatePage, primaryTemplateTableSlug } from '@core/templates'
+import { primaryTemplateTableSlug } from '@core/templates'
+import { selectPageDirectory } from '@site/store/slices/pageDirectory'
 import { getCmsDataTableBySlug, previewCmsDataLoopItems } from '@core/persistence/cmsData'
 import type { LoopItem } from '@core/loops/types'
 import { Select } from '@ui/components/Select'
@@ -63,14 +64,12 @@ const CHEVRON_ALLOWANCE_PX = 20
 function PreviewSourceSelect({ templateId, page }: PreviewSourceSelectProps) {
   const selection = useEditorStore((s) => s.templatePreviewSelection[templateId] ?? null)
   const setSelection = useEditorStore((s) => s.setTemplatePreviewSelection)
-  // Select the stable pages array (not a freshly-filtered one) so unrelated
-  // store changes don't churn this subscription; filter in the render body
-  // where the React Compiler memoizes it.
-  const sitePages = useEditorStore((s) => s.site?.pages ?? null)
+  // The page LIST, not `site.pages` — Mutative replaces that array on every
+  // edit, so this toolbar re-rendered on every keystroke (P2-I, PERF-12).
+  // Filtered in the render body, where the React Compiler memoizes it.
+  const sitePages = useEditorStore(selectPageDirectory)
   const targetKind = page.template?.target?.kind ?? null
-  const everywherePages = targetKind === 'everywhere' && sitePages
-    ? sitePages.filter((p) => !isTemplatePage(p))
-    : null
+  const everywherePages = targetKind === 'everywhere' ? sitePages.filter((p) => !p.isTemplate) : null
 
   const tableSlug = targetKind === 'postTypes' ? primaryTemplateTableSlug(page) : null
 

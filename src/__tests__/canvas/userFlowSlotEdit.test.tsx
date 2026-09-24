@@ -36,7 +36,6 @@ beforeEach(() => {
     activeDocument: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 360 },
     propertiesPanelMode: 'docked',
     packageJson: {},

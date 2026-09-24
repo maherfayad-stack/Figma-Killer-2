@@ -3,7 +3,7 @@
  *
  * Responsibilities:
  * - Captures all wheel, drag, and pinch gestures via useCanvas
- * - Manages the CanvasSelectionContext (click → selectNode, hover → hoverNode)
+ * - Manages the CanvasSelectionContext (click → selectNode, hover → `canvasHover.ts`)
  * - Registers the canvas keyboard SCOPES on the editor key ladder
  *   (`editorKeyDispatcher.ts`); the one listener lives in `SitePage`
  * - Delegates the rename modal to useCanvasRenameDialog + CanvasRenameDialog
@@ -122,8 +122,8 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   const isLive = canvasView === 'live'
   const runScripts = useEditorStore((s) => s.runScripts)
   // selectedNodeId is needed here for canvas-level keyboard shortcuts (Delete, Ctrl+D).
-  // hoveredNodeId is NOT subscribed here — NodeRenderer handles its own hover state
-  // via per-node selectors to avoid O(N) re-renders on every hover event (#495).
+  // Hover is not store state at all (`canvasHover.ts`, P2-I) — nothing here
+  // re-renders on a pointer crossing.
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   const clearSelection = useEditorStore((s) => s.clearSelection)
   const deleteNode = useEditorStore((s) => s.deleteNode)
@@ -310,9 +310,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // ─── Selection context value ───────────────────────────────────────────────
   // What a click / hover / right-click / double-click on a canvas node does
   // lives in its own module — see `useCanvasNodeInteraction`. Context carries
-  // only these stable callbacks; selectedNodeId/hoveredNodeId are intentionally
-  // excluded (Perf fix — Contribution #495), so each NodeRenderer subscribes to
-  // its own boolean and only the 2 affected nodes re-render per event.
+  // only these stable callbacks; the selection is intentionally excluded (Perf
+  // fix — Contribution #495), so each NodeRenderer reads its own keyed boolean
+  // (`canvasNodeSelection.ts`) and only the affected nodes re-render per event.
   const selectionContextValue = useCanvasNodeInteraction({
     editable,
     isLive,

@@ -16,6 +16,7 @@ import type { VisualComponent } from '@core/visualComponents'
 import { styleRuleSelector } from '@core/page-tree'
 import { selectCanvasPageFor, useEditorStore } from '@site/store/store'
 import { CanvasPageContext } from './CanvasContexts'
+import { useCanvasHoverSelect } from './canvasHover'
 
 const EMPTY_VISUAL_COMPONENTS: readonly VisualComponent[] = []
 /** Stable empty fallback for the frame-scoped selection read below (Guideline #239 — no inline `?? []`). */
@@ -24,7 +25,7 @@ const EMPTY_SELECTED_NODE_IDS: readonly string[] = []
 /**
  * PERF-13 — the ids of `ids` this frame's page can render. A selection or
  * hover made WITHOUT a frame (a Layers-panel row: `selectedNodeFrameId` /
- * `hoveredFrameId` null) used to arm the rings, the in-place inspector
+ * the hover's `frameId` null) used to arm the rings, the in-place inspector
  * wrapper and a measure scheduler in EVERY mounted board frame, each of which
  * then queried its document for a node it does not contain, on every pass.
  * `_nodeIdToPageIds` (WS-5.2) answers "which pages contain this id" in O(1).
@@ -87,23 +88,29 @@ export function useBreakpointOverlaySelectionState(
     }
     return idsRenderedByFramePage(s._nodeIdToPageIds, s.selectedNodeIds, framePageId)
   }))
-  // `hoveredBreakpointId === null` means "global hover" — i.e. the hover did
-  // not originate from a specific breakpoint frame on the canvas (e.g. it was
+  // Hover is read from `canvasHover.ts`, not the store (P2-I, PERF-1) — one
+  // subscription per mounted FRAME, which is the right multiplier for it. Each
+  // read returns a primitive, so a crossing re-renders only the frames whose
+  // answer changed, not every mounted frame.
+  //
+  // `breakpointId === null` means "global hover" — i.e. the hover did not
+  // originate from a specific breakpoint frame on the canvas (e.g. it was
   // triggered by hovering a row in the DOM panel). In that case every frame
   // mirrors the hover so the user sees the highlight wherever they're looking.
   // When the hover originated from the canvas itself, scope it to the owning
   // frame so adjacent breakpoint previews don't all light up at once.
-  // `hoveredFrameId` is the SAME idea one dimension over — see its own doc.
-  const hoveredNodeId = useEditorStore((s) =>
-    s.hoveredNodeId &&
-    (s.hoveredBreakpointId === null || s.hoveredBreakpointId === breakpointId) &&
-    (s.hoveredFrameId === null
-      ? framePageCanRender(s._nodeIdToPageIds, s.hoveredNodeId, framePageId)
-      : s.hoveredFrameId === frameId)
-      ? s.hoveredNodeId
+  // `frameId` is the SAME idea one dimension over — see its own doc.
+  const nodeIdToPageIds = useEditorStore((s) => s._nodeIdToPageIds)
+  const hoveredNodeId = useCanvasHoverSelect((hover) =>
+    hover &&
+    (hover.breakpointId === null || hover.breakpointId === breakpointId) &&
+    (hover.frameId === null
+      ? framePageCanRender(nodeIdToPageIds, hover.nodeId, framePageId)
+      : hover.frameId === frameId)
+      ? hover.nodeId
       : null,
   )
-  const hoveredBreakpointOrigin = useEditorStore((s) => s.hoveredBreakpointId)
+  const hoveredBreakpointOrigin = useCanvasHoverSelect((hover) => hover?.breakpointId ?? null)
   const activeBreakpointId = useEditorStore((s) => s.activeBreakpointId)
 
   // Selector-affinity highlight: the CSS selector of the rule currently hovered

@@ -16,50 +16,50 @@ import {
  * items 5, 6 and 7, on the 40-frame × ~300-element corpus of item 2
  * (`helpers/largeBoardCorpus.ts`).
  *
- * Four tests, all against the same board at the same zoom:
+ * Six tests, all against the same board at the same zoom:
  *
  *   - **hover sweep** — a pointer crossing 50 elements in a frame, with nine
- *     frames mounted. Every crossing is a store write that sweeps every
- *     mounted node's selectors (PERF-1) and used to re-run the frame's two
- *     full-document layout passes because the hover ring mounted inside the
- *     observed `<body>` (PERF-2).
+ *     frames mounted. Every crossing used to be a store write that swept every
+ *     mounted node's selectors (PERF-1, fixed in P2-I) and to re-run the
+ *     frame's two full-document layout passes because the hover ring mounted
+ *     inside the observed `<body>` (PERF-2, fixed in P2-A).
  *   - **Layers-panel hover sweep** — the same, from the Layers panel, whose
  *     hover carries no frame id and so used to arm chrome in EVERY mounted
  *     frame (PERF-13 × PERF-2).
  *   - **pan with a selection** — the selection toolbar must stay on the ring
  *     WHILE the board moves, not freeze and jump ~100 ms after (PERF-3).
+ *   - **warm click -> ring** — WS-5.6's "selection -> ring paint" (P2-I).
+ *   - **post-edit pause** — the frame being edited is never rasterized into a
+ *     poster under the user (PERF-5, P2-I).
  *   - **idle** — a board with a selection that nobody touches must let the
  *     main thread sleep: zero `requestAnimationFrame` calls from the app
  *     (PERF-4's ruler loops were two permanent 60 Hz loops).
  *
- * Every budget below was calibrated on this spec's own first runs; the
- * before/after numbers are in the P2-A `STATE.md` entry and PR. Read-only
- * against the corpus: nothing here writes a file.
+ * Every budget below was calibrated on this spec's own runs; the before/after
+ * numbers are in the P2-A and P2-I PRs. Nothing here writes a file: the board
+ * opens with autosave off, so the post-edit case's edit stays in memory.
  */
 
 /**
- * **Hover sweeps: no animation frame over this — a RATCHET, not the target.**
- * The roadmap's target is 20 ms (one missed vsync at most). P2-A measured,
- * on this Windows box under other agents' load (the PR table has every run):
+ * **Hover sweeps: no animation frame over this.** The roadmap's target is
+ * 20 ms (one missed vsync at most). Measured on this Windows box, dev build:
  *
- * | | before P2-A | after P2-A |
- * |---|---|---|
- * | canvas hover, worst frame | 195.2 / 148.5 / 198.3 ms | 132.7 / 150.4 ms |
- * | Layers hover, worst frame | 185.7 ms | 149.7 ms |
+ * | | before P2-A | after P2-A | after P2-I |
+ * |---|---|---|---|
+ * | canvas hover, worst frame | 148–198 ms | 124–183 ms | 20.9–30.3 ms |
+ * | canvas hover, frames > 20 ms | ~49/195 | 48–49/~196 | 3–19/~137 |
+ * | Layers hover, worst frame | 185.7 ms | 111–150 ms | 20.4–25.6 ms |
  *
- * What P2-A removed is asserted EXACTLY, below, as a count: selection chrome
- * no longer mounts anything inside a frame on hover (4 → 0 tree mutations on
- * the canvas sweep, 14 → 0 on the Layers sweep, each of which used to re-run
- * a frame's two full-document layout passes). What is left in the frame time
- * is PERF-1 — every hover crossing is still two global store writes that each
- * sweep ~40k per-node selectors — and it is P2-I's bundle. P2-I ratchets this
- * number toward 20; set at ~1.5× the worst "after" run so a regression of the
- * size PERF-2 was fails, and machine noise does not.
+ * P2-A took the chrome's tree mutations out of a hover (asserted exactly
+ * below, as a count). P2-I took hover out of the editor store
+ * (`canvasHover.ts`), so a crossing no longer sweeps ~40k per-node selectors.
+ * Set at ~1.5× the worst P2-I run: a regression of PERF-1's size (a store
+ * write per crossing) fails by a factor of four.
  */
-const BUDGET_HOVER_SWEEP_WORST_FRAME_MS = 225
+const BUDGET_HOVER_SWEEP_WORST_FRAME_MS = 45
 
-/** **Layers-panel hover sweep** — same ratchet, same reasoning as the canvas sweep above. */
-const BUDGET_LAYERS_HOVER_WORST_FRAME_MS = 225
+/** **Layers-panel hover sweep** — same reasoning; ~1.5× the worst P2-I run. */
+const BUDGET_LAYERS_HOVER_WORST_FRAME_MS = 40
 
 /**
  * **Pan with a selection: the toolbar's worst distance from where the ring
@@ -78,6 +78,26 @@ const BUDGET_PAN_TOOLBAR_DRIFT_PX = 2
  * after P2-A it is: nothing in the editor polls.
  */
 const BUDGET_IDLE_RAF_PER_SECOND = 0
+
+/**
+ * **Warm click -> selection ring painted, mean over the samples.** WS-5.6's
+ * target is 32 ms in a production build; this runs the dev build. Measured
+ * (P2-I): trunk 292–440 ms, because every click re-rendered all ~2,800
+ * mounted `NodeRenderer`s through an unstable `CanvasSelectionContext` value;
+ * after P2-I 78–85 ms. Set at ~1.4× the worst P2-I mean.
+ */
+const WARM_CLICK_SAMPLES = 8
+const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = 120
+
+/**
+ * **Post-edit pause** — how long the board is watched after an edit commits:
+ * the poster queue's 700 ms quiet period plus one ~1 s rasterization of a
+ * 310-element frame (measured: 880–1,160 ms each). Before P2-I the edited
+ * frame was rasterized ~600 ms into this window (worst frame 1,139.7 ms).
+ */
+const POST_EDIT_PAUSE_MS = 2500
+/** `useFramePosterCapture.ts`'s User Timing measure name. */
+const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
 
 /** The frame every case works in: the first one, which `Ctrl+0` brings on screen. */
 const TARGET_PAGE_ID = largeBoardPageId(0)
@@ -345,6 +365,133 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     annotate('pan with selection: samples', String(samples.length))
     annotate('pan with selection: worst toolbar drift', `${drift.toFixed(1)}px`)
     expect(drift).toBeLessThanOrEqual(BUDGET_PAN_TOOLBAR_DRIFT_PX)
+  })
+
+  test('warm click -> selection ring: the ring is on screen within budget', async ({ page }) => {
+    // WS-5.6's "selection -> ring paint", never built until P2-I (PERF-14):
+    // pointerdown in the frame to the first animation frame after the ring
+    // for THAT node exists, on the same clock (the frame's own document).
+    // Warm: one selection first, so this is the steady state, not the
+    // lazily-armed observers of the first one (`studio-board-perf`'s cold
+    // click measures that).
+    const { frameEl, content } = await openAtWorkingZoom(page)
+    const warmUp = content.locator('.block__heading').nth(1)
+    const warmUpId = await warmUp.getAttribute('data-node-id')
+    await clickInFrame(page, warmUp)
+    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    await page.waitForTimeout(500)
+
+    // Targets that are actually under the viewport, in page coordinates (the
+    // canvas zoom is a CSS scale on the iframe) — same mapping as the hover sweep.
+    const iframeBox = await frameEl.locator(CANVAS_FRAME_IFRAME_SELECTOR).boundingBox()
+    if (!iframeBox) throw new Error('the target iframe has no bounding box')
+    // Never the warm-up node: clicking the selection again paints no new ring.
+    const probe = await content.evaluate((skip) => ({
+      width: document.documentElement.clientWidth,
+      targets: Array.from(document.querySelectorAll('.block__heading, .block__body'))
+        .map((el) => ({ id: el.getAttribute('data-node-id'), rect: el.getBoundingClientRect() }))
+        .filter((t) => t.id !== null && t.id !== skip && t.rect.width > 0)
+        .map((t) => ({ id: t.id!, x: t.rect.left + t.rect.width / 2, y: t.rect.top + t.rect.height / 2 })),
+    }), warmUpId)
+    const scale = iframeBox.width / probe.width
+    const targets = probe.targets
+      .map((t) => ({ id: t.id, x: iframeBox.x + t.x * scale, y: iframeBox.y + t.y * scale }))
+    // Only points where the frame itself is the top-most element — never under
+    // a ruler, the floating toolbar or a panel.
+    const hittable = await page.evaluate(
+      (points) => points.map((p) => document.elementFromPoint(p.x, p.y)?.tagName === 'IFRAME'),
+      targets,
+    )
+    const clickable = targets.filter((_, index) => hittable[index]).slice(0, WARM_CLICK_SAMPLES)
+    expect(clickable.length, 'too few click targets on screen').toBe(WARM_CLICK_SAMPLES)
+
+    const samples: number[] = []
+    for (const [i, target] of clickable.entries()) {
+      const nodeId = target.id
+      await content.evaluate((id) => {
+        const state = { downAt: 0, ringAt: 0, paintAt: 0, observer: null as MutationObserver | null }
+        ;(window as unknown as { __p2iClick: typeof state }).__p2iClick = state
+        document.addEventListener('pointerdown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
+        const check = () => {
+          if (state.ringAt !== 0) return
+          const ring = Array.from(document.querySelectorAll('[data-canvas-selection-ring="true"]')).find(
+            (el) => el.getAttribute('data-canvas-overlay-node-id') === id && (el as HTMLElement).style.display !== 'none',
+          )
+          if (!ring) return
+          state.ringAt = performance.now()
+          requestAnimationFrame(() => { state.paintAt = performance.now() })
+        }
+        state.observer = new MutationObserver(check)
+        state.observer.observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ['style', 'data-canvas-overlay-node-id'] })
+      }, nodeId)
+      await page.mouse.click(target.x, target.y)
+      const ms = await content.evaluate(async () => {
+        const state = (window as unknown as { __p2iClick: { downAt: number; paintAt: number; observer: MutationObserver | null } }).__p2iClick
+        for (let wait = 0; wait < 100 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
+        state.observer?.disconnect()
+        if (state.downAt === 0 || state.paintAt === 0) return -1
+        return state.paintAt - state.downAt
+      })
+      expect(ms, `click ${i}: no ring for ${nodeId} painted within 1 s`).toBeGreaterThan(0)
+      samples.push(ms)
+      await page.waitForTimeout(250)
+    }
+    const mean = samples.reduce((a, b) => a + b, 0) / samples.length
+    annotate('warm click -> ring paint: samples', samples.map((n) => n.toFixed(1)).join(', '))
+    annotate('warm click -> ring paint: mean / worst', `${mean.toFixed(1)}ms / ${Math.max(...samples).toFixed(1)}ms`)
+    expect(mean).toBeLessThan(BUDGET_WARM_CLICK_TO_RING_MEAN_MS)
+  })
+
+  test('post-edit pause: the frame being edited is not rasterized under the user', async ({ page }) => {
+    // PERF-5 (P2-I) — an edit makes a new `Page`, and the poster effect used
+    // to treat that as "no poster yet": 700 ms after the last keystroke the
+    // queue rasterized the ON-SCREEN frame being edited (`html-to-image`,
+    // 85–350 ms of main thread), right where the next click lands. Posters
+    // now refresh only once a frame leaves the screen.
+    const { content } = await openAtWorkingZoom(page)
+    const heading = content.locator('.block__heading').nth(1)
+    await clickInFrame(page, heading)
+    await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
+    // Edit it the way a user most often does: the inspector's Text field.
+    const original = (await heading.textContent())?.trim() ?? ''
+    const fields = page.locator('input:visible, textarea:visible')
+    let textField: Locator | null = null
+    for (let i = 0; i < (await fields.count()); i += 1) {
+      if ((await fields.nth(i).inputValue().catch(() => '')) === original) {
+        textField = fields.nth(i)
+        break
+      }
+    }
+    if (!textField) throw new Error(`no inspector field holds the heading's text ("${original}")`)
+    await textField.click()
+    await page.keyboard.press('End')
+    await page.keyboard.type(' edited')
+    await page.keyboard.press('Tab')
+    await expect(heading).toContainText('edited', { timeout: 10_000 })
+
+    // The pause itself: past the queue's 700 ms quiet period plus a capture.
+    // Every capture records a `studio:poster-capture` User Timing measure
+    // (`useFramePosterCapture.ts`), so this counts the captures directly
+    // rather than inferring them from frame times — an unrelated capture of
+    // a pooled OFF-screen frame may legitimately run in the same window.
+    const editedAt = await page.evaluate(() => performance.now())
+    const pause = await profileGesture(page, async () => {
+      await page.waitForTimeout(POST_EDIT_PAUSE_MS)
+    })
+    const captures = await page.evaluate(
+      ({ since, name }) =>
+        performance
+          .getEntriesByName(name)
+          .filter((entry) => entry.startTime >= since)
+          .map((entry) => ({ pageId: (entry as PerformanceMeasure).detail?.pageId as string, ms: entry.duration })),
+      { since: editedAt, name: POSTER_CAPTURE_MEASURE },
+    )
+    annotate('post-edit pause: worst frame', `${pause.worstFrameMs.toFixed(1)}ms`)
+    annotate('post-edit pause: poster captures', captures.map((c) => `${c.pageId} ${c.ms.toFixed(0)}ms`).join(', ') || '(none)')
+    expect(
+      captures.filter((c) => c.pageId === TARGET_PAGE_ID),
+      'the frame being edited was rasterized while the user was looking at it',
+    ).toEqual([])
   })
 
   test('idle with a selection: the editor schedules no animation frames', async ({ page }) => {

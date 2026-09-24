@@ -51,7 +51,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     propertiesPanel: { collapsed: false, x: 0, y: 0, width: 280 },
     focusedPanel: 'canvas',

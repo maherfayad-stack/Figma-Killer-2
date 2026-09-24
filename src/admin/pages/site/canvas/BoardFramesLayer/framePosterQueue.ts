@@ -22,8 +22,8 @@
  * ## The rule
  *
  * A request never runs while the user's hands are on the board. Every
- * `request`, and every wheel / pointer / key event on the editor document,
- * re-arms one shared quiet timer, so a burst of arrivals and the gesture that
+ * `request`, and every wheel / pointer / key event on the editor document or
+ * inside any mounted canvas frame (P2-I), re-arms one shared quiet timer, so a burst of arrivals and the gesture that
  * caused them collapse into a single settle; only when nothing has happened
  * for `QUIET_PERIOD_MS` does the queue drain. It then drains **serially**, one
  * capture per macrotask, so two posters can never land in one animation frame
@@ -59,6 +59,10 @@
  * fires, so this always drains.
  */
 
+import { listFrameAdapters, onFrameAdapterRegistryChange } from '../frameAdapter/canvasFrameAdapterRegistry'
+import type { FrameDocumentAdapter } from '../frameAdapter/FrameDocumentAdapter'
+import { isPortalFrameAdapter } from '../frameAdapter/PortalFrameAdapter'
+
 /** How long the board must be quiet before any poster is rasterized. */
 const QUIET_PERIOD_MS = 700
 
@@ -72,6 +76,8 @@ let quietTimer: ReturnType<typeof setTimeout> | null = null
 let draining = false
 let pointerHeld = false
 let listening = false
+/** Detaches the per-frame listeners; non-null exactly while any request is pending. */
+let stopFrameListening: (() => void) | null = null
 
 /** Any of these means the user is working; a poster can wait. */
 const BUSY_EVENTS = ['wheel', 'pointerdown', 'pointerup', 'pointercancel', 'keydown'] as const
@@ -82,19 +88,87 @@ function onBusyEvent(event: Event): void {
   armQuietTimer()
 }
 
+function listenOnDocument(doc: Document): () => void {
+  for (const type of BUSY_EVENTS) doc.addEventListener(type, onBusyEvent, { capture: true, passive: true })
+  return () => {
+    for (const type of BUSY_EVENTS) doc.removeEventListener(type, onBusyEvent, { capture: true })
+  }
+}
+
 /**
- * Attached to the editor document on the first request and left attached:
- * the board is open for the whole session, the listeners are passive and
- * capture-phase (so nothing in the canvas can hide a gesture from them), and
- * a teardown hook would need an owner component this module deliberately does
- * not have.
+ * P2-I (PERF-5) — the same busy signal from INSIDE a canvas frame. A click,
+ * a key or a resize drag that starts in a frame never reaches the editor
+ * document (`useIframeEventForwarding` forwards a pointerdown only when it
+ * starts a pan), so with editor-document listeners alone a capture could
+ * start the moment the user pressed on a node. A portal frame is listened to
+ * directly; a bridge (Tier-2) frame reports its input over the adapter.
+ */
+function listenOnFrame(adapter: FrameDocumentAdapter): () => void {
+  if (isPortalFrameAdapter(adapter)) {
+    const frameDocument = adapter.getPortalWindow()?.document
+    return frameDocument ? listenOnDocument(frameDocument) : () => {}
+  }
+  const unsubscribes = [
+    adapter.on('pointer', (event) => {
+      if (event.phase === 'move') return
+      if (event.phase === 'down') pointerHeld = true
+      else if (event.phase === 'up') pointerHeld = false
+      armQuietTimer()
+    }),
+    adapter.on('wheel', armQuietTimer),
+    adapter.on('key', armQuietTimer),
+  ]
+  return () => {
+    for (const unsubscribe of unsubscribes) unsubscribe()
+  }
+}
+
+/** Keyed by adapter, not iframe: a frame gets a fresh adapter per document it boots. */
+const frameListeners = new Map<FrameDocumentAdapter, () => void>()
+
+function syncFrameListeners(): void {
+  const registered = new Set(listFrameAdapters().values())
+  for (const [adapter, detach] of frameListeners) {
+    if (registered.has(adapter)) continue
+    detach()
+    frameListeners.delete(adapter)
+  }
+  for (const adapter of registered) {
+    if (!frameListeners.has(adapter)) frameListeners.set(adapter, listenOnFrame(adapter))
+  }
+}
+
+/**
+ * The editor document is listened to from the first request on and left
+ * attached: the board is open for the whole session, the listeners are
+ * passive and capture-phase (so nothing in the canvas can hide a gesture from
+ * them), and a teardown hook would need an owner component this module
+ * deliberately does not have.
+ *
+ * The frames are listened to only while a request is PENDING — that is the
+ * only time their input can hold anything back. Frames come and go with the
+ * mount pool, so those listeners follow the adapter registry, and they are
+ * detached (registry subscription included) the moment the queue is empty.
  */
 function listenForInput(): void {
-  if (listening || typeof document === 'undefined') return
-  listening = true
-  for (const type of BUSY_EVENTS) {
-    document.addEventListener(type, onBusyEvent, { capture: true, passive: true })
+  if (typeof document === 'undefined') return
+  if (!listening) {
+    listening = true
+    listenOnDocument(document)
   }
+  if (stopFrameListening) return
+  syncFrameListeners()
+  const unsubscribeRegistry = onFrameAdapterRegistryChange(syncFrameListeners)
+  stopFrameListening = () => {
+    unsubscribeRegistry()
+    for (const detach of frameListeners.values()) detach()
+    frameListeners.clear()
+    stopFrameListening = null
+  }
+}
+
+function stopFrameListeningIfIdle(): void {
+  if (pending.size === 0 && !draining) stopFrameListening?.()
 }
 
 function armQuietTimer(): void {
@@ -126,6 +200,7 @@ async function drain(): Promise<void> {
     }
   } finally {
     draining = false
+    stopFrameListeningIfIdle()
   }
 }
 
@@ -144,11 +219,13 @@ export function requestFramePoster(token: object, capture: Capture): void {
 /** Withdraw a request that has not run yet. A capture already in flight finishes. */
 export function cancelFramePoster(token: object): void {
   pending.delete(token)
+  stopFrameListeningIfIdle()
 }
 
 /** Test seam: drop every queued request and disarm the timer. */
 export function resetFramePosterQueue(): void {
   pending.clear()
+  stopFrameListening?.()
   if (quietTimer !== null) clearTimeout(quietTimer)
   quietTimer = null
   pointerHeld = false

@@ -83,7 +83,6 @@ function resetStore() {
     activePageId: null,
     selectedNodeId: null,
     selectedNodeIds: [],
-    hoveredNodeId: null,
     activeDocument: null,
     focusedPanel: 'canvas',
   } as Parameters<typeof useEditorStore.setState>[0])

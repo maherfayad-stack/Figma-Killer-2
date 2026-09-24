@@ -17,6 +17,7 @@ import {
   idsRenderedByFramePage,
   useBreakpointOverlaySelectionState,
 } from '@site/canvas/useBreakpointOverlaySelectionState'
+import { setCanvasHover } from '@site/canvas/canvasHover'
 import { useEditorStore } from '@site/store/store'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
@@ -64,7 +65,8 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup()
-  useEditorStore.setState({ selectedNodeIds: [], selectedNodeId: null, selectedNodeFrameId: null, hoveredNodeId: null, hoveredFrameId: null, hoveredBreakpointId: null })
+  useEditorStore.setState({ selectedNodeIds: [], selectedNodeId: null, selectedNodeFrameId: null })
+  setCanvasHover(null)
 })
 
 describe('selection chrome is scoped to the frames that can render the node (PERF-13)', () => {
@@ -76,7 +78,7 @@ describe('selection chrome is scoped to the frames that can render the node (PER
   })
 
   it('a Layers-panel hover (no frame, no breakpoint) lights only the owning frame', () => {
-    useEditorStore.setState({ hoveredNodeId: 'a-text', hoveredFrameId: null, hoveredBreakpointId: null })
+    setCanvasHover('a-text')
     render(<Board />)
     expect(seen['frame-a']!.hovered).toBe('a-text')
     expect(seen['frame-b']!.hovered).toBeNull()

@@ -11,6 +11,7 @@ import type { StyleRuleRegistry } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { CanvasTreeLadderRowButton } from './CanvasTreeLadderRowButton'
+import { getCanvasHover, subscribeCanvasHover } from './canvasHover'
 import {
   buildCanvasTreeLadderRows,
   commitCanvasTreeLadderSelection,
@@ -125,17 +126,14 @@ export function useCanvasTreeLadderOverlay({
     setTreeLadderHighlightedNodeId(null)
   }, [breakpointId])
 
-  useEffect(() => useEditorStore.subscribe(
-    (s) => [s.hoveredNodeId, s.hoveredBreakpointId] as const,
-    ([nodeId, hoveredBreakpoint]) => {
-      if (!inspectActive || inspectSuppressed) return
-      if (nodeId && hoveredBreakpoint === breakpointId) {
-        setInspectAnchorNodeId(nodeId)
-        setTreeLadderHighlightedNodeId(null)
-      }
-    },
-    { equalityFn: (a, b) => a[0] === b[0] && a[1] === b[1] },
-  ), [breakpointId, inspectActive, inspectSuppressed])
+  useEffect(() => subscribeCanvasHover(() => {
+    if (!inspectActive || inspectSuppressed) return
+    const hover = getCanvasHover()
+    if (hover && hover.breakpointId === breakpointId) {
+      setInspectAnchorNodeId(hover.nodeId)
+      setTreeLadderHighlightedNodeId(null)
+    }
+  }), [breakpointId, inspectActive, inspectSuppressed])
 
   useEffect(() => {
     if (!iframeElement) return
@@ -148,12 +146,9 @@ export function useCanvasTreeLadderOverlay({
       const rawNodeId = nodeElement?.getAttribute('data-node-id') ?? null
       if (!rawNodeId) return
 
-      const state = useEditorStore.getState()
-      const activeTree = selectActiveCanvasPage(state)
-      const hoveredId =
-        state.hoveredBreakpointId === breakpointId && state.hoveredNodeId
-          ? state.hoveredNodeId
-          : null
+      const activeTree = selectActiveCanvasPage(useEditorStore.getState())
+      const hover = getCanvasHover()
+      const hoveredId = hover && hover.breakpointId === breakpointId ? hover.nodeId : null
       const anchorNodeId = hoveredId && activeTree?.nodes[hoveredId] ? hoveredId : rawNodeId
 
       setInspectActive(true)

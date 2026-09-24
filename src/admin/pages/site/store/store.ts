@@ -27,13 +27,14 @@ import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
 import { useAdminUi } from '@admin/state/adminUi'
 import { readWorkspaceLayout, workspaceFromPathname } from '@admin/state/workspaceLayoutStorage'
 import { restoreStoredSiteEditorLayout } from '@site/layout/siteEditorLayoutPersistence'
+import { clearCanvasHover } from '@site/canvas/canvasHover'
 
 /**
  * EditorStore — the central Zustand store for the visual editor.
  *
  * Composed of 14 slices (6 canonical Phase 0 + agentSlice + sitePanelSlice + filesSlice + visualComponentsSlice + clipboardSlice + inlineEditSlice + layoutsSlice + saveTrackingSlice):
  *   - siteSlice:        owns SiteDocument (pages, nodes, breakpoints, settings, classes, files)
- *   - selectionSlice:      selectedNodeId, hoveredNodeId
+ *   - selectionSlice:      selectedNodeIds, selectedNodeId (hover is NOT store state — `canvas/canvasHover.ts`)
  *   - canvasSlice:         zoom, pan, activeBreakpointId, canvasMode (Constraint #317)
  *   - uiSlice:             panel visibility, unsaved-changes flag, insert picker
  *   - styleRuleSlice:      style-rule (class + ambient) CRUD + node↔class assignment
@@ -201,9 +202,15 @@ export const EDITOR_STORE_TEST_RESET_KEY = '__resetEditorStoreForTests'
 
 const PRISTINE_EDITOR_STATE = useEditorStore.getState()
 
-/** Restores the module-load state. Test-only — see the block comment above. */
+/**
+ * Restores the module-load state. Test-only — see the block comment above.
+ * Includes the hover, which is editor state kept off the store on purpose
+ * (`canvas/canvasHover.ts`, P2-I) and would otherwise leak between tests the
+ * same way.
+ */
 export function __resetEditorStoreForTests(): void {
   useEditorStore.setState(PRISTINE_EDITOR_STATE, true)
+  clearCanvasHover()
 }
 
 if (process.env.NODE_ENV === 'test') {

@@ -221,7 +221,6 @@ export interface NodeWrapperProps {
   'data-module-id'?: string
   tabIndex?: 0
   'data-canvas-selected'?: 'true'
-  'data-hovered'?: 'true'
   /**
    * Read-only region markers, spread onto every element of a non-editable
    * composed subtree (`ReadOnlyNodeTree`). The canvas reads the nearest
