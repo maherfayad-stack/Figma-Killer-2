@@ -12,7 +12,7 @@
  * (e.g. `ServerStreamEvent` from `src/admin/pages/site/agent/types.ts`,
  * which this replaces).
  *
- * @see docs/plans/2026-05-26-ai-runtime-rewrite.md
+ * @see docs/features/agent.md
  */
 
 import type { TSchema } from '@sinclair/typebox'
