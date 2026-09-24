@@ -132,6 +132,28 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - Prefix budget: raise `STATIC_PREFIX_BUDGET_CHARS` deliberately, never silently.
 - **Next:** the owner runs a creative and a match brief (bench:agent-turn) on both paths. The HTTP-path dogfood is in the PR body.
 
+### canvas-25 — P2-C: arrow keys move the selected layer (IX-1) + free move's camelCase key (canvas-23)
+- **Agent:** canvas-engineer · **Branch:** `feat/arrow-keys-reorder-and-nudge` off `77115367` · **PR:** #242 (draft, base `feat/canvas-excellence`; long form and gate triage in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** with ONE layer selected, a bare arrow moves it. `absolute|fixed` → nudge 1 px / ⇧ 10 px; anything else → reorder ±1 along the parent's axis (`moveNode`; reversed for `*-reverse` / RTL row; a cross-axis arrow does nothing). One layout read decides (`measureArrowTarget`, one adapter `measure` for the node + ancestor chain — live frames too). A held nudge previews each repeat (`setPreviewNodeStyles` + optimistic broadcast) and writes ONE `setNodeInlineStyles` on the arrow keyup, then `flushAutosave` → one undo entry, one source write. A held reorder is one step per press.
+- **Also fixed:** `canvasFreeMove` wrote `'inset-inline-start'` into JSX `style={{}}`; it now writes `insetInlineStart` (shared `inlineOffsetProperty`), and only the CSSOM preview spells it kebab. A nudge writes the offsets the source AUTHORED (`authoredOffsets`: inline over class base styles, `inset` read per side) — a right-anchored layer moves `right` and never gains `left`; a stretched one moves both.
+- **Registry:** `board.nudgeFrames` → `canvas.moveSelection` (one arrow binding, three rungs: annotation / node / board); `frameNudgeDelta` → `nudgeDelta`; the annotation hook's private arrow table is gone. OD-3 register rows for ← ↑ → ↓ and "held arrow".
+- **Canvas files touched:** `canvas/{canvasNodeArrowMove (new), useCanvasNodeArrowKeys (new), canvasFreeMove, useCanvasNodeShortcuts, useBoardFrameNudge, useBoardAnnotationKeyboard, CanvasRoot}.ts(x)`, `spotlight/keybindings.ts`. No runtime change (no bundle regen).
+- **Tests:** `nodeArrowKeys.test.tsx` (19; the IX-1 and anchoring cases shown failing with the hook / `authoredOffsets` disabled in place), `canvasFreeMove.test.ts` (+2, shown failing with the kebab key restored). New e2e `node-arrow-keys.e2e.ts` 4/4 green: file bytes, save-request count, computed position, one ⌘Z.
+- **Landmines:**
+  - **Events × keyboard:** the hold ends on the ARROW's keyup only (releasing ⇧ mid-hold does not end it), from the dispatcher's release broadcast. `handleKeyUp(null)` (focus left) COMMITS at the last preview — same as a lost pointerup.
+  - **Events × focus:** arrows are canvas-scoped (`isCanvasKeyboardSurface`) like Tab — with focus on a panel button or the Layers tree they are NOT claimed. Click the canvas first.
+  - **Injectors:** the live-frame preview is the optimistic style rule (`!important`); it stays until Vite's update lands. Portal preview is the store's `previewNodeStyles` slot — single slot, shared with the inspector's scrub.
+  - **Height:** none touched; a nudge of an absolute child cannot change the frame's fit height (absolute is out of flow) unless it pokes past the body's bottom.
+  - The first keydown awaits one measure; keydowns during it accumulate and a release during it is honoured when it lands.
+- **Next:** multi-select nudge / reorder (P5-F); grid Up/Down by column count (audit P2).
+- **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, SMS frame (static tier):
+  1. Click empty space in the SMS content banner (below the header), press ↓ five times holding it: the banner slides down live; release — ONE save, `SMS.tsx`'s banner `<div>` gains `style={{ top: "129px" }}` and no `bottom`. ⌘Z once: back to 124.
+  2. Same banner, ⇧→ once: `left: "10px", right: "-10px"` (it moves, keeps its width).
+  3. Click the 2nd code input, press →: it swaps with the 3rd in `SMS.tsx`. Hold →: still one place. Press ↓: nothing.
+  4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
+  5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -172,6 +194,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-18` · 2+ frames at 100 % and 50 % · Alt-hover measures distances and padding
 - `canvas-23` · `/admin/site` on `test4` · resize a border-box and a content-box element (the CSS width lands exactly), a `flex: 1` child (goes fixed; static frames only), ⇧/⌥ mid-drag, the W/N handles of an absolute element, the W×H badge; release outside the window ends the drag. Script: the `canvas-23` entry in the archive
 - `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry under `## Now`
+- `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row

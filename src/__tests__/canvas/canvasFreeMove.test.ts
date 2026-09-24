@@ -10,6 +10,8 @@
 import { describe, expect, it } from 'bun:test'
 import {
   FREE_MOVE_SNAP_PX,
+  clearFreeMovePreview,
+  previewFreeMove,
   freeMoveStylePatch,
   planFreeMoveProperties,
   readFreeMoveBase,
@@ -55,7 +57,7 @@ describe('planFreeMoveProperties — when a coordinate write is honest', () => {
 
   it('writes the LOGICAL property under direction: rtl, with the axis reversed', () => {
     const plan = planFreeMoveProperties(style({ direction: 'rtl' }), 'relative')
-    expect(plan).toEqual({ inlineProperty: 'inset-inline-start', inlineSign: -1, needsAbsolute: true })
+    expect(plan).toEqual({ inlineProperty: 'insetInlineStart', inlineSign: -1, needsAbsolute: true })
   })
 })
 
@@ -87,7 +89,7 @@ describe('readFreeMoveBase — where the drag starts from', () => {
 
   it('reads the LOGICAL property when that is what the write targets', () => {
     const rtl = style({ direction: 'rtl', insetInlineStart: '30px', top: '5px' })
-    expect(readFreeMoveBase(element, rtl, 'inset-inline-start')).toEqual({ baseInline: 30, baseTop: 5 })
+    expect(readFreeMoveBase(element, rtl, 'insetInlineStart')).toEqual({ baseInline: 30, baseTop: 5 })
   })
 })
 
@@ -115,7 +117,7 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
 
   it('reverses the horizontal delta for an RTL inline start', () => {
     // A drag to visual-right DECREASES the distance from an RTL inline start.
-    const step = stepFreeMove(plan({ inlineProperty: 'inset-inline-start', inlineSign: -1 }), 30, 0)
+    const step = stepFreeMove(plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 }), 30, 0)
     expect(step.inline).toBe(70)
   })
 
@@ -153,10 +155,48 @@ describe('freeMoveStylePatch — what reaches the user\'s source', () => {
   })
 
   it('writes the logical property name in RTL, so an RTL author reads their own CSS back', () => {
-    const p = plan({ inlineProperty: 'inset-inline-start', inlineSign: -1 })
+    const p = plan({ inlineProperty: 'insetInlineStart', inlineSign: -1 })
     expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0))).toEqual({
-      'inset-inline-start': '80px',
+      insetInlineStart: '80px',
       top: '100px',
     })
+  })
+})
+
+/**
+ * P2-C — the RTL offset reached the user's source as `'inset-inline-start'`,
+ * a kebab key inside a JSX `style={{…}}` object, which React only reads in
+ * camelCase (P2-D's finding, `canvas-23`). The source key and the CSSOM name
+ * are two spellings of one property; each belongs on exactly one side.
+ */
+describe('free move writes a React style key to the source and a CSSOM name to the preview (P2-C)', () => {
+  function recordingElement() {
+    const set = new Map<string, string>()
+    const style = {
+      setProperty: (name: string, value: string) => void set.set(name, value),
+      removeProperty: (name: string) => {
+        set.delete(name)
+        return ''
+      },
+    }
+    return { element: { style } as unknown as HTMLElement, set }
+  }
+
+  it('every key of an RTL free-move patch is camelCase', () => {
+    const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
+    const p = plan({ ...properties })
+    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 0))
+    for (const key of Object.keys(patch)) expect(key).not.toContain('-')
+    expect(patch).toEqual({ insetInlineStart: '88px', top: '100px' })
+  })
+
+  it('the preview sets and clears the CSSOM name, never the source key', () => {
+    const properties = planFreeMoveProperties(style({ position: 'absolute', direction: 'rtl' }), 'relative')!
+    const { element, set } = recordingElement()
+    const p = plan({ ...properties, element })
+    previewFreeMove(p, stepFreeMove(p, 12, 0))
+    expect([...set.keys()].sort()).toEqual(['inset-inline-start', 'top'])
+    clearFreeMovePreview(p)
+    expect(set.size).toBe(0)
   })
 })
