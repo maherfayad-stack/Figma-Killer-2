@@ -39,7 +39,7 @@
  * wire-shape definitions" move, consistent with this module's own stated
  * split (wire shape here, dispatch behaviour there).
  */
-import { CssEditSchema } from './studioCssWriteback'
+import { AtRuleScopeSchema, CssEditSchema } from './studioCssWriteback'
 import {
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
@@ -109,10 +109,13 @@ const StyleEditSchema = Type.Object({
  *     codemod can emit the only reachable spelling: `styles.<local>`.
  *
  * Can REFUSE with a specific reason (`css-module-binding` /
- * `css-module-import-missing` / `template-dynamic` / `spread-attribute` /
- * `unsupported-call` / `unsupported-expression` — `ClassNameRefusalReason` in
- * `@core/ast-codemods`) exactly like `detach`/`swap`/`css` do — see
- * `applyStudioEdit`'s `'class'` case.
+ * `template-dynamic` / `spread-attribute` / `unsupported-call` /
+ * `unsupported-expression` — `ClassNameRefusalReason` in `@core/ast-codemods`)
+ * exactly like `detach`/`swap`/`css` do — see `applyStudioEdit`'s `'class'`
+ * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather
+ * than refusing, and a module token whose stylesheet the file does not import
+ * yet is imported after the batch (`cssModuleImportPlan.ts`), so through this
+ * schema `css-module-import-missing` no longer occurs.
  */
 const ClassNameTokenSchema = Type.Union([
   Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),
@@ -148,8 +151,9 @@ const ClassEditSchema = Type.Object({
  *
  * `className` is the synthetic class Phase A flattened this template's CSS
  * under; `selector` is the flattened selector the declaration lives beneath
- * (`.Card_sc__a1b2c3`, `.Card_sc__a1b2c3:hover`); `atMedia`, when present, is
- * a nested `@media`'s query. Together they name exactly one declaration in one
+ * (`.Card_sc__a1b2c3`, `.Card_sc__a1b2c3:hover`); `atRule`, when present, is
+ * the nested `@media`/`@container`/`@supports` block it sits in, as
+ * `name params` (P3-C, WB-31). Together they name exactly one declaration in one
  * template — the codemod refuses, by name, if they name zero or two.
  *
  * There is no `op` here, and that is the scope statement: a styled edit only
@@ -162,7 +166,7 @@ const StyledEditSchema = Type.Object({
   nodeId: Type.String(),
   className: Type.String(),
   selector: Type.String(),
-  atMedia: Type.Optional(Type.String()),
+  atRule: Type.Optional(AtRuleScopeSchema),
   property: Type.String(),
   value: Type.String(),
 })

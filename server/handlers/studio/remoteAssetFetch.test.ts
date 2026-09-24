@@ -12,9 +12,10 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
+import * as http from 'node:http'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { fetchRemoteAsset, MAX_REMOTE_ASSET_BYTES, type FetchRemoteAssetDeps } from './remoteAssetFetch'
+import { fetchRemoteAsset, fetchRemoteBytes, MAX_REMOTE_ASSET_BYTES, type FetchRemoteAssetDeps } from './remoteAssetFetch'
 
 let dir: string
 
@@ -32,7 +33,8 @@ const SVG_WITH_SCRIPT = new TextEncoder().encode('<svg xmlns="http://www.w3.org/
 /** A real, non-blocked public address — TEST-NET-3 (RFC 5737), never routable. */
 const PUBLIC_IP = '203.0.113.10'
 
-function okResponse(bytes: Uint8Array, headers: Record<string, string> = {}): Response {
+/** Labelled `application/octet-stream` unless a test says otherwise: the type that makes no claim, so the sniff alone decides. */
+function okResponse(bytes: Uint8Array, headers: Record<string, string> = { 'content-type': 'application/octet-stream' }): Response {
   return new Response(bytes, { status: 200, headers })
 }
 
@@ -346,5 +348,150 @@ describe('fetchRemoteAsset — SSRF: loopback, cloud metadata, RFC1918, encoding
     })
     expect(result.ok).toBe(true)
     expect(seenUrl).toContain(PUBLIC_IP)
+  })
+})
+
+/**
+ * P4-E (security review of #233, F8): what a response must SAY it is, and how
+ * long it may take. The in-memory fakes above prove the decisions; the local
+ * server below proves them against Bun's real `fetch`, which is where a
+ * never-ending body and a redirect actually behave the way an attacker's
+ * server would make them. No live network: the server is on loopback, which
+ * each test opts into explicitly.
+ */
+describe('fetchRemoteBytes — the response must be an image, and must say so (F8)', () => {
+  it('refuses a response with no content type at all', async () => {
+    const result = await fetchRemoteBytes('https://cdn.example.com/x.png', {
+      fetchImpl: async () => new Response(PNG_BYTES, { status: 200, headers: {} }),
+      resolveHostAddresses: publicResolver(),
+    })
+    expect(result.ok).toBe(false)
+  })
+
+  it('refuses bytes that are not the image type the server declared (an SVG served as image/png)', async () => {
+    const result = await fetchRemoteAsset(dir, 'https://cdn.example.com/x.png', undefined, {
+      fetchImpl: async () => okResponse(SVG_WITH_SCRIPT, { 'content-type': 'image/png' }),
+      resolveHostAddresses: publicResolver(),
+    })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('SVG')
+    expect(fs.existsSync(path.join(dir, 'src/assets'))).toBe(false)
+  })
+
+  it('accepts a matching declared type', async () => {
+    const result = await fetchRemoteBytes('https://cdn.example.com/x.png', {
+      fetchImpl: async () => okResponse(PNG_BYTES, { 'content-type': 'image/png' }),
+      resolveHostAddresses: publicResolver(),
+    })
+    expect(result.ok).toBe(true)
+  })
+})
+
+describe('fetchRemoteBytes — against a real local server (F8)', () => {
+  const PNG_HEADER = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+  let server: http.Server
+  let base: string
+  const timers: Array<ReturnType<typeof setInterval>> = []
+
+  // `node:http`, not `Bun.serve`: the suite's setup installs happy-dom's
+  // window, whose `Response` would be what a `Bun.serve` handler builds, and
+  // it drops the headers these tests are about. Raw `writeHead` has no such
+  // layer.
+  beforeEach(async () => {
+    server = http.createServer((req, res) => {
+      const pathname = new URL(req.url ?? '/', 'http://x').pathname
+      if (pathname === '/trickle.png') {
+        // One byte every 20 ms, forever: under any size cap for minutes.
+        res.writeHead(200, { 'content-type': 'image/png' })
+        res.write(PNG_HEADER)
+        const timer = setInterval(() => res.write(new Uint8Array([0])), 20)
+        timers.push(timer)
+        res.on('close', () => clearInterval(timer))
+        return
+      }
+      if (pathname === '/endless.png') {
+        // As fast as the socket takes it, forever, with no content-length.
+        res.writeHead(200, { 'content-type': 'image/png' })
+        const chunk = new Uint8Array(64 * 1024)
+        chunk.set(PNG_HEADER)
+        const pump = (): void => {
+          while (!res.destroyed && res.write(chunk)) { /* until the socket pushes back */ }
+          if (!res.destroyed) res.once('drain', pump)
+        }
+        pump()
+        return
+      }
+      if (pathname === '/page.html') {
+        // An endless HTML body: reading it at all would end on the byte cap.
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        const chunk = new TextEncoder().encode('<p>'.repeat(20_000))
+        const pump = (): void => {
+          while (!res.destroyed && res.write(chunk)) { /* until the socket pushes back */ }
+          if (!res.destroyed) res.once('drain', pump)
+        }
+        pump()
+        return
+      }
+      if (pathname === '/redirect.png') {
+        res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' })
+        res.end()
+        return
+      }
+      res.writeHead(200, { 'content-type': 'image/png' })
+      res.end(PNG_BYTES)
+    })
+    await new Promise<void>((resolveListen) => server.listen(0, '127.0.0.1', () => resolveListen()))
+    base = `http://images.example.test:${(server.address() as { port: number }).port}`
+  })
+
+  afterEach(async () => {
+    for (const timer of timers.splice(0)) clearInterval(timer)
+    server.closeAllConnections()
+    await new Promise<void>((resolveClose) => server.close(() => resolveClose()))
+  })
+
+  // `Bun.fetch`, named, for the same reason: happy-dom's `fetch` shadows the
+  // global one production uses.
+  const LOCAL: FetchRemoteAssetDeps = {
+    allowLoopback: true,
+    resolveHostAddresses: async () => ['127.0.0.1'],
+    fetchImpl: Bun.fetch,
+  }
+
+  it('fetches a real image through the real transport', async () => {
+    const result = await fetchRemoteBytes(`${base}/ok.png`, LOCAL)
+    expect(result.ok).toBe(true)
+  })
+
+  it('stops a body that never ends, at the deadline, instead of holding the turn open', async () => {
+    const startedAt = performance.now()
+    const result = await fetchRemoteBytes(`${base}/trickle.png`, { ...LOCAL, timeoutMs: 400 })
+    const elapsed = performance.now() - startedAt
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('took longer than')
+    expect(elapsed).toBeLessThan(3_000)
+  })
+
+  it('stops a huge body with no content-length at the byte cap', async () => {
+    const result = await fetchRemoteBytes(`${base}/endless.png`, { ...LOCAL, maxBytes: 1024 * 1024 })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('larger than')
+  })
+
+  it('refuses an HTML response on its content type, before reading its body', async () => {
+    const result = await fetchRemoteBytes(`${base}/page.html`, { ...LOCAL, maxBytes: 1024 * 1024 })
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('"text/html"')
+  })
+
+  it('never follows a redirect, even one pointing at cloud metadata', async () => {
+    const result = await fetchRemoteBytes(`${base}/redirect.png`, LOCAL)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.error).toContain('redirect')
   })
 })

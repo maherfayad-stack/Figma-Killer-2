@@ -49,6 +49,7 @@
 import {
   INLINE_ID_SEPARATOR,
   decodeSourceNodeId,
+  loopTemplateNodeId,
   sourceLocationKey,
   type Page,
   type PageNode,
@@ -74,7 +75,10 @@ function relOfLocation(location: string): string | null {
 /** Every fingerprinted position a page's nodes name: each element, plus each literal origin behind a resolved value. */
 function* pageIdentities(page: Page): Generator<[string, string]> {
   for (const node of Object.values(page.nodes) as PageNode[]) {
-    const location = sourceLocationKey(node.id)
+    // A `.map` row names its row TEMPLATE's position — where its style and
+    // class edits are written (P3-C, OD-8).
+    const template = loopTemplateNodeId(node.id)
+    const location = sourceLocationKey(template ?? node.id)
     if (location && node.sourceFingerprint) yield [location, node.sourceFingerprint]
     const origins = [node.textOrigin, node.assetOrigin, ...Object.values(node.resolvedProps ?? {}).map((entry) => entry.origin)]
     for (const origin of origins) {

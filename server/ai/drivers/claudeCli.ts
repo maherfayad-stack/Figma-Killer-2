@@ -498,6 +498,7 @@ export async function* streamClaudeCli(
       conversationId: req.toolContextBase.conversationId,
       bridge: req.bridge,
       workspaceDir: workspaceCwd ?? undefined,
+      userSuppliedUrls: req.toolContextBase.userSuppliedUrls,
       ...(options.mintConnector ? { mintConnector: options.mintConnector } : {}),
       ...(options.revokeConnector ? { revokeConnector: options.revokeConnector } : {}),
     })

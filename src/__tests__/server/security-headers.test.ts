@@ -11,11 +11,11 @@
  * to verify end-to-end behaviour within the router.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { applySecurityHeaders } from '../../../server/securityHeaders'
-import { hardenUploadResponse } from '../../../server/static'
+import { hardenUploadResponse, INERT_FILE_CSP } from '../../../server/static'
 import { configurePublicOrigins, resetPublicOrigins } from '../../../server/auth/security'
 import { handleServerRequest } from '../../../server/router'
 import { createFakeDb } from './dbTestFake'
@@ -159,17 +159,17 @@ describe('applySecurityHeaders — admin framing protection', () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe('hardenUploadResponse — upload Content-Security-Policy', () => {
-  it("adds default-src 'none' CSP to upload responses", () => {
+  it('adds the inert, sandboxed CSP to upload responses', () => {
     const base = new Response('data', { headers: { 'content-type': 'image/png' } })
     const res = hardenUploadResponse(base)
-    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(res.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
   })
 
   it('retains the existing nosniff header alongside the CSP', () => {
     const base = new Response('data', { headers: { 'content-type': 'text/html' } })
     const res = hardenUploadResponse(base)
     expect(res.headers.get('x-content-type-options')).toBe('nosniff')
-    expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+    expect(res.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
   })
 })
 
@@ -191,7 +191,7 @@ describe('/uploads/* responses via router (integration)', () => {
         { db: fakeDb, uploadsDir },
       )
       expect(res.status).toBe(200)
-      expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+      expect(res.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
       expect(res.headers.get('x-content-type-options')).toBe('nosniff')
     } finally {
       rmSync(uploadsDir, { recursive: true, force: true })
@@ -207,9 +207,38 @@ describe('/uploads/* responses via router (integration)', () => {
         { db: fakeDb, uploadsDir },
       )
       expect(res.status).toBe(200)
-      expect(res.headers.get('content-security-policy')).toBe("default-src 'none'")
+      expect(res.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
       expect(res.headers.get('content-disposition')).toBe('attachment')
       expect(res.headers.get('x-content-type-options')).toBe('nosniff')
+    } finally {
+      rmSync(uploadsDir, { recursive: true, force: true })
+    }
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Published runtime assets: an SVG/HTML document gets the inert CSP (review
+// of #248, F1); a script does not need it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+describe('/_studio/assets/* responses via router (integration)', () => {
+  const fakeDb = createFakeDb(async (sql) => {
+    throw new Error(`Unexpected DB call in security-headers test: ${sql}`)
+  })
+
+  it('serves a published SVG with the inert CSP, and a script without it', async () => {
+    const uploadsDir = mkdtempSync(join(tmpdir(), 'studio-sec-runtime-'))
+    try {
+      const current = join(uploadsDir, 'published', 'current', '_studio', 'assets')
+      mkdirSync(current, { recursive: true })
+      writeFileSync(join(current, 'logo.svg'), '<svg xmlns="http://www.w3.org/2000/svg"/>')
+      writeFileSync(join(current, 'app.js'), 'export {}')
+      const svg = await handleServerRequest(new Request('http://localhost/_studio/assets/logo.svg'), { db: fakeDb, uploadsDir })
+      expect(svg.status).toBe(200)
+      expect(svg.headers.get('content-security-policy')).toBe(INERT_FILE_CSP)
+      const js = await handleServerRequest(new Request('http://localhost/_studio/assets/app.js'), { db: fakeDb, uploadsDir })
+      expect(js.status).toBe(200)
+      expect(js.headers.get('content-security-policy')).toBeNull()
     } finally {
       rmSync(uploadsDir, { recursive: true, force: true })
     }

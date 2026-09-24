@@ -241,6 +241,12 @@ export interface ToolContext {
    * tier lower.
    */
   readonly designPolicy?: import('../../handlers/studio/designPolicy').DesignPolicy
+  /**
+   * The URLs the user pasted into this conversation, mirroring
+   * `ToolContextBase.userSuppliedUrls` — where it is set, and where the
+   * reasoning lives. Read by `remoteFetchPolicy.ts` only.
+   */
+  readonly userSuppliedUrls?: readonly string[]
   readonly snapshot: unknown
   readonly signal: AbortSignal
 }

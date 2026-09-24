@@ -247,14 +247,14 @@ never silently no-ops.
     project's one editable stylesheet (`insertRule`). The anchor page is the
     class's own page, or — for a class that is on no element yet — the page
     the user has OPEN (Z8, `resolveOpenPageFile`). With several candidates and
-    none co-located, `resolveCssInsertDestination` still refuses rather than
-    guessing, but the refusal is a **choice**: a `RefusalDialog` with one
-    `choose-stylesheet` remedy per candidate file, which pins the destination
-    and re-runs the insert. Never a toast.
+    none co-located, `resolveCssInsertDestination` CHOOSES (P3-C, ERR-14): a
+    global sheet over another page's module, the stylesheet written last, the
+    nearest, the largest — remembered per rule. Never a dialog, never a toast.
   - `op: 'create'` — no editable stylesheet exists at all: the server invents
     one co-located with the anchor page, wires the page's `import`
     (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
-    client-side), and writes the rule into it.
+    client-side), and writes the rule into it. With no page at all (ERR-15) it
+    makes `studio.css` beside the app entry and imports it there.
 
   All three are formatting-preserving postcss CST edits, and inserting a
   selector that already exists **merges** rather than adding a second
@@ -349,14 +349,12 @@ project now starts at Tier 2, a fresh import clears that gate before the
 banner would ever have a reason to show; the banner is reachable today only
 for a project explicitly demoted to `static`.
 
-- **A style change scoped to a real `@media` breakpoint does not reach disk.**
-  The codemod and the wire both support it — `insertRule`/`setDeclaration`
-  take an `atMedia` query, and the `insert`/`create` payload schemas carry the
-  field — but **nothing in the editor ever sets it.** A change made in a real
-  user breakpoint context is reported through `collectStyleRuleEdits`'s
-  `unwritableContexts` and toasted, never dropped silently. Only the board's
-  own synthetic `studio` viewport context writes. Wiring a producer for
-  `atMedia` is the whole remaining gap.
+- **A breakpoint or condition override writes into its own at-rule block** —
+  `@media`, and since P3-C (WB-31) `@container` and `@supports` too
+  (`atRuleForContext` → the `atRule` field). Only an override under a context
+  the document no longer defines is reported (`unwritableContexts`), never
+  dropped silently. Every declaration lands where the cascade reads it (WB-16);
+  a covering `!important` shorthand is the one cascade refusal left.
 - **A style edit on a rule with no honest destination still refuses.** An
   imported rule the parser could not map back to a hand-authored `.css` file
   (Tailwind/Sass/PostCSS output, a non-`.css` module) goes to `unmapped` and is

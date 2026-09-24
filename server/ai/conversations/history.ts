@@ -123,7 +123,7 @@ export function projectUserImagesForModel(
         continue
       }
       if (!breadcrumbAdded) {
-        content.push({ kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED })
+        content.push({ kind: 'text', text: NON_VISION_USER_IMAGE_OMITTED, origin: 'studio' })
         breadcrumbAdded = true
       }
     }

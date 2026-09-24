@@ -132,8 +132,9 @@ describe('applyStudioEditBatch — two instances, one file, every change lands',
   })
 
   it('a refused merged edit is reported refused for EVERY instance behind it, never as written', () => {
-    // `className={tone}` is a bare identifier — `setJsxClassName` refuses it
-    // by name (`unsupported-expression`) rather than guess.
+    // `className={tone}` is a bare identifier. An ADD wraps it (P3-C, WB-18);
+    // a REMOVE refuses by name (`unsupported-expression`) — the token is
+    // produced by `tone`, and there is no text in the file to delete it from.
     const dynamicCard = [
       "const tone = 'card'",
       'export default function Card() {',
@@ -148,8 +149,8 @@ describe('applyStudioEditBatch — two instances, one file, every change lands',
       return `pages/Home.tsx:${call.line}:${call.col}${INLINE_ID_SEPARATOR}components/Card.tsx:${root.line}:${root.col}`
     }
     const edits: StudioEdit[] = [
-      { kind: 'class', nodeId: idAt(1), add: [{ kind: 'literal', token: 'a' }], remove: [] },
-      { kind: 'class', nodeId: idAt(2), add: [{ kind: 'literal', token: 'b' }], remove: [] },
+      { kind: 'class', nodeId: idAt(1), add: [], remove: [{ kind: 'literal', token: 'card' }] },
+      { kind: 'class', nodeId: idAt(2), add: [], remove: [{ kind: 'literal', token: 'card' }] },
     ]
 
     const result = applyStudioEditBatch(tmpDir, edits)

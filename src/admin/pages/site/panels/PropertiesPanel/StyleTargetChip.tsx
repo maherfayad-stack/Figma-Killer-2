@@ -38,23 +38,22 @@
  *
  *   - `{ kind: 'plain-css', file }` — the class already has a real
  *     hand-editable `.css` source. Edits write there now (`setDeclaration`).
- *   - `{ kind: 'will-create-existing', file }` — no source yet, but this
- *     project has exactly one other hand-editable stylesheet Studio already
- *     knows about. The FIRST edit creates the rule there (`insertRule`,
- *     Track B1); every edit after that takes the ordinary `plain-css` path.
+ *   - `{ kind: 'will-create-existing', file, alternatives }` — no source yet;
+ *     the FIRST edit creates the rule in `file` (`insertRule`, Track B1), and
+ *     every edit after that takes the ordinary `plain-css` path. When the
+ *     project has several stylesheets Studio CHOSE `file` (ERR-14) and
+ *     `alternatives` names the others, so the tooltip can say so.
  *   - `{ kind: 'will-create-new-stylesheet', pageFile }` — no editable
- *     stylesheet exists in the project yet, but this class is scoped to a
- *     specific element on a known page. The first edit creates a NEW,
- *     co-located stylesheet and wires its `import` into `pageFile` (Track
- *     B1b, server-side — the client can't safely rewrite an import).
+ *     stylesheet exists in the project yet. The first edit creates a NEW one
+ *     co-located with `pageFile` and wires its `import` there, or — with
+ *     `pageFile: null` — beside the app's entry module (ERR-15). Server-side
+ *     (Track B1b): the client can't safely rewrite an import.
  *   - `{ kind: 'compiled', reason }` — a build artefact/CSS-Modules compile;
  *     there is no honest hand-editable source at this layer. `reason` names
  *     the specific cause (`classifyStylesheetEditability`).
- *   - `{ kind: 'unmapped', reason? }` — no source, and no insert destination
- *     could be resolved honestly either (ambiguous candidates, or an
- *     imported/generated rule that was never a candidate to begin with).
- *     `reason`, when present, names why (e.g. which candidate files were
- *     ambiguous).
+ *   - `{ kind: 'unmapped', reason? }` — an imported/generated rule with no
+ *     source (a Tailwind utility, a build output), which was never an insert
+ *     candidate. `reason`, when present, names why.
  *
  * `undefined` (no class assigned yet) falls back to the same "no class"
  * wording the pre-F1 chip used.
@@ -68,8 +67,10 @@ import styles from './StyleTargetChip.module.css'
 /** See this module's doc for what each of the five outcomes means and writes. */
 export type ClassCssEditability =
   | { kind: 'plain-css'; file: string }
-  | { kind: 'will-create-existing'; file: string }
-  | { kind: 'will-create-new-stylesheet'; pageFile: string }
+  /** `alternatives` — the other stylesheets Studio chose `file` over (ERR-14); empty when `file` was the only answer. */
+  | { kind: 'will-create-existing'; file: string; alternatives: readonly string[] }
+  /** `pageFile: null` — no page to sit beside, so the stylesheet is created beside the app entry (ERR-15). */
+  | { kind: 'will-create-new-stylesheet'; pageFile: string | null }
   | { kind: 'compiled'; reason: string }
   | { kind: 'unmapped'; reason?: string }
   /**
@@ -152,9 +153,15 @@ function classTooltip(classSelector: string | undefined, editability: ClassCssEd
     return `Saved to ${basename(editability.file)} — edits to this class write back to source.`
   }
   if (editability.kind === 'will-create-existing') {
-    return `No declarations here yet — the first edit creates this rule in ${basename(editability.file)}.`
+    const chosen =
+      editability.alternatives.length > 0
+        ? ` Studio chose it over ${editability.alternatives.map(basename).join(', ')} — the stylesheet you wrote to last, else the nearest global one.`
+        : ''
+    return `No declarations here yet — the first edit creates this rule in ${basename(editability.file)}.${chosen}`
   }
-  return `No editable stylesheet exists yet — the first edit creates one next to ${basename(editability.pageFile)} and wires its import.`
+  return editability.pageFile === null
+    ? 'No editable stylesheet exists yet — the first edit creates one beside the app entry and imports it there.'
+    : `No editable stylesheet exists yet — the first edit creates one next to ${basename(editability.pageFile)} and wires its import.`
 }
 
 const CLASS_ASSIGNMENT_TOOLTIP =

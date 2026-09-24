@@ -195,7 +195,17 @@ test.describe('P3-D — structural refusals become writes', () => {
     expect(read(ABOUT), 'the frame it was copied from is untouched').toBe(ABOUT_PAGE)
 
     await page.keyboard.press('Control+z')
-    await expect.poll(() => read(HOME), { timeout: 30_000 }).toBe(HOME_PAGE)
+    await expect
+      .poll(() => read(HOME), { timeout: 30_000 })
+      .toBe(HOME_PAGE)
+      .catch(async (error: unknown) => {
+        const undo = page.getByRole('button', { name: /undo/i }).first()
+        throw new Error(
+          `${String(error)}
+toasts: ${JSON.stringify(await readToastRecorder(page))}
+undo disabled: ${await undo.isDisabled().catch(() => 'n/a')}`,
+        )
+      })
   })
 
   test('OD-7: Delete inside ONE instance of a shared component changes that instance only; ONE ⌘Z restores it', async ({ page }) => {

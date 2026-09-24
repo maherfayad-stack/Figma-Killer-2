@@ -22,14 +22,13 @@
  *     that file in the code panel, through the caller's `openSource`
  *   - `detach` / `extract` → the real `studio.instance` codemods the
  *     Properties panel's Component section already dispatches
- *   - `choose-stylesheet` (Z8) → pins the destination the user picked for one
- *     brand-new class and asks for an immediate save, which re-issues the
- *     insert that refused, now against a file they named
  *
  * Deliberately NOT wired: `select-container` (three different refusals share
  * that kind and only one of them means "select something"), `promote-tier1`
- * (no refusal emits it yet), `style-inline-instead` and `preview-branch` (the
- * surfaces that own those flows are not the ones that render a refusal).
+ * (no refusal emits it yet), and `preview-branch` (the surface that owns that
+ * flow is not the one that renders a refusal). Z8's `choose-stylesheet` is
+ * gone: P3-C made a new class's stylesheet the editor's own choice, so there
+ * is no question left to answer.
  *
  * **Lives beside the store, not beside the component that renders it**, and
  * takes `openSource` as context rather than importing `jumpToSource`: a
@@ -42,9 +41,7 @@
 import type { EditConstraint, EditConstraintAction } from '@core/page-tree'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { pushToast } from '@ui/components/Toast'
-import { requestEditorSave } from '@admin/state/adminEvents'
 import { detachInstance, extractInstanceCopy } from '@site/studio/studioSaveRequests'
-import { pinCssInsertDestination } from '@site/studio/styleRuleWriteback'
 import type { SourceOrigin } from './openSourceFile'
 
 /** What a runnable action needs beyond the action itself. */
@@ -144,21 +141,6 @@ export function resolveConstraintAction(
     const nodeId = context.nodeId
     const onSettled = context.onSettled
     return () => void runInstanceCodemod('Duplicate', () => extractInstanceCopy(nodeId), onSettled)
-  }
-  // Z8 — the user answering "which stylesheet?". Pinning is all it takes: the
-  // refused rule's diff baseline was never advanced (nothing reached disk), so
-  // the immediate save below re-diffs the very same declarations and
-  // `resolveCssInsertDestination` now returns the file they named. No codemod
-  // runs here and no value is invented — the choice is a destination, and the
-  // write is the one that already refused.
-  if (action.kind === 'choose-stylesheet' && action.stylesheet) {
-    const { ruleId, file } = action.stylesheet
-    const onSettled = context.onSettled
-    return () => {
-      pinCssInsertDestination(ruleId, file)
-      requestEditorSave()
-      onSettled?.(true)
-    }
   }
   // K6 — `context.nodeId` is the CONTAINER here, not the dragged element: the
   // refusal is about the parent, and so is the remedy.

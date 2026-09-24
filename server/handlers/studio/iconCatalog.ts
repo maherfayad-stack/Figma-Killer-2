@@ -89,7 +89,7 @@ const MAX_ICON_BYTES = 4096
 const MAX_ICONS = 600
 
 /** What `StudioIcon.pkg` says for an icon out of Studio's built-in design system. Matches `designSystemDetect.ts`'s `'builtin'` ref name. */
-const BUILTIN_ICON_SOURCE_NAME = 'alm'
+export const BUILTIN_ICON_SOURCE_NAME = 'alm'
 
 export interface StudioIcon {
   /** Stable identity: `<source>:<path below the icon root>`. */
@@ -100,6 +100,8 @@ export interface StudioIcon {
   group: string
   /** The design system that ships it — an installed package's name, or `'alm'` for Studio's built-in one. */
   pkg: string
+  /** The file's path inside that package (`src/icons/line-icons/sms.svg`) — what a `?raw` import names after the package (`studio_find_icon`). */
+  packagePath: string
   /** Raw file text — sanitised by the CLIENT, see the module doc. */
   markup: string
 }
@@ -148,6 +150,7 @@ function designSystemIcons(pkgRoot: string, pkg: string, budget: number): Studio
         name: file.rel.slice(slash + 1).replace(/\.svg$/i, ''),
         group: slash === -1 ? '' : file.rel.slice(0, slash),
         pkg,
+        packagePath: `${root}/${file.rel}`,
         markup,
       })
     }

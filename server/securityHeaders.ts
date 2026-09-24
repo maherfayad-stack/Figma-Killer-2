@@ -30,6 +30,8 @@ import { publicOriginIsHttps } from './auth/security'
  *         emits a `<base>` element).
  *       · `object-src 'none'` — blocks `<object>` / `<embed>` plugin content
  *         (the admin never embeds either).
+ *     A policy the route already set (a user or project file served with
+ *     `INERT_FILE_CSP`) is kept, with these three appended — never replaced.
  *
  *   A `script-src` / `style-src` policy is deliberately NOT set here yet: the
  *   admin ships an inline `<script type="importmap">` the plugin runtime needs,
@@ -43,6 +45,8 @@ import { publicOriginIsHttps } from './auth/security'
  * @param res      The raw Response from the route handler.
  * @param pathname URL pathname of the incoming request.
  */
+const ADMIN_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+
 export function applySecurityHeaders(res: Response, pathname: string): Response {
   const headers = new Headers(res.headers)
 
@@ -66,10 +70,12 @@ export function applySecurityHeaders(res: Response, pathname: string): Response 
   // A framed CMS admin is a clickjacking vector for one-click publish/delete.
   if (pathname.startsWith('/admin')) {
     headers.set('x-frame-options', 'DENY')
-    headers.set(
-      'content-security-policy',
-      "frame-ancestors 'none'; base-uri 'self'; object-src 'none'",
-    )
+    // A route that already set a policy keeps it, with the admin directives
+    // appended. `/admin/api/studio/asset` serves a project's own files with
+    // `INERT_FILE_CSP` (`static.ts`); overwriting it here is exactly how a
+    // project SVG ran script with the admin session (review of #248, F1).
+    const routePolicy = headers.get('content-security-policy')
+    headers.set('content-security-policy', routePolicy ? `${routePolicy}; ${ADMIN_CSP}` : ADMIN_CSP)
   }
 
   return new Response(res.body, {

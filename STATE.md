@@ -63,6 +63,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### parser-18 — P3-C: value refusals become writes (two PRs)
+- **Agent:** parser-surgeon · **Branches:** PR 1 `feat/value-refusals-become-writes` off `01f3d9c2` (#247); PR 2 `feat/style-edits-land-anywhere`, stacked on PR 1 (#249) · both draft, base `feat/canvas-excellence`, long form in the bodies · **Updated:** 2026-09-24
+- **Stage:** verifying — both drafts open, gates green (pre-existing failures listed in the PR bodies).
+- **Goal:** ROADMAP P3-C: WB-6, WB-8, ERR-14, ERR-15 (PR 1); WB-16, WB-17, WB-18, WB-19, WB-30, WB-31, OD-8 (PR 2).
+- **Scope (parser files):** `page-parser/{types,jsxAttributeReaders,nodeResolution,parsePageFile,componentSubstitution,inlineLocalComponents,nextAppLayout}.ts`; `ast-codemods/{setStringLiteral,setJsxStyle,setJsxClassName,classNameWrap(new),cssModuleImportPlan(new),jsxImportEdits,jsxSubtree,insertJsxElement,insertJsxIntoSlotProp,wrapJsxElement,wrapJsxElements,swapComponentInstance,setStyledDeclaration}.ts`; `css-codemods/{setDeclaration,removeDeclaration,insertRule,analyzeDeclarationTarget,cssAtRuleScope(new),keyframes,cssPropertyCase}.ts`; `page-tree/{sourceNodeId,editConstraint}.ts`; `studio-sync/parsedPageToSitePage.ts`. Client/server files: see the PR bodies.
+- **Done (PR 1):** WB-6 call-site literals are the origin of forwarded text/props; WB-8 every origin-backed value writes as `literal`; ERR-14 a new class's stylesheet is ranked, never asked (dialog deleted); ERR-15 no stylesheet → `studio.css` beside the entry.
+- **Done (PR 2):**
+  - WB-16: `setDeclaration` writes the WINNING declaration (later block, after a covering shorthand, last duplicate); `unset` removes every copy in scope. Only a covering `!important` shorthand refuses.
+  - WB-31: `atRule` (`media`/`container`/`supports`) replaces `atMedia`; `setDeclarationAtMedia` deleted.
+  - WB-17: `setJsxStyle` writes after a spread (moving a pre-spread key, TS1117) and wraps an identifier/call/member/conditional.
+  - WB-18: a class ADD wraps an expression `className` (`cn(expr, "a")` or `` `a ${expr || ''}` ``); a missing CSS-Module import is reserved and added after the batch (`ModuleImportPlan`); `templateHeadClassNames` shows whole static classes only.
+  - WB-19: `planImportBindings` aliases a clashing component name (insert, slot fill, wrap, group, swap) or reuses an existing alias.
+  - OD-8: a `.map` row's style/class edits write the row template (`loopTemplateNodeId`); rows are fingerprinted; "Applied to all N rows" + page re-read.
+  - WB-30 (partial): the unmapped-class warning carries "Style the element instead".
+- **Decisions (per new resolution):** call-site literal origin — locks: no; codeProps: yes; origin: yes (the string literal only). `templateHeadClassNames` (className template head) — locks: no; codeProps: yes (unchanged); origin: none (visual only, className becomes `classIds`); panel: class chips. Row fingerprint — identity metadata only (no lock, no codeProps, no origin).
+- **Landmines:** (1) `chosenDestinations` resets only on a project switch. (2) The row-template notice names ⌘Z instead of an Undo button — by the time it shows, the newest history entry may be another edit. (3) The old `className` head fallback rendered half-tokens (`banner--`); both sites now share `templateHeadClassNames`. (4) Test files are outside `tsc -b`: a wrong fixture shape surfaces only when the test runs.
+- **Found, not fixed:** WB-30's real move (typed class declarations → the element's inline style) is not built. Transplant still refuses `binding-conflict` (it carries user markup verbatim). Storybook args have no origin. ERR-14's "change" chip and per-project memory are not built. Canvas resize handles on a `.map` row were not checked (canvas area, P2-I's).
+- **Next:** orchestrator merges #247, then PR 2. studio-scribe: landmines (2)–(3) are in `studio-import.md`; (4) is not.
+
 ### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
 - **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `01f3d9c2` merged in) · **PR:** #245 (draft, base `feat/canvas-excellence`; full tables in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
@@ -107,6 +126,30 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   3. Select the 2nd and 3rd code inputs, press ⌥↓ (or ⌘]): both move one place right together.
   4. Select a code input and the banner (mixed), press ↓: the banner moves, the input stays.
   5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
+
+### mcp-30 — P4-E: assets for the agent (AI-13, AI-20, P4-C review F8)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-finds-icons-and-images` off `5a15f249` (trunk merged in) · **PR:** #248 (draft, base `feat/canvas-excellence`; long form, threat list and tool table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying: the security review of #248 came back CHANGES-REQUIRED; F1, F2, F3 and F7 are fixed and need re-review. F4, F5 and F6 are deferred (reasons in the PR).
+- **Goal:** the agent finds a real icon or photo instead of drawing a grey box, lists the project's images and fonts, and can no longer be steered into fetching from an arbitrary host (F8).
+- **Tools added** (all `execution: server`):
+  - `studio_find_image` (`ai.tools.write` + `studio.write`, `write`, `headlessOnly`): `{ dir?, query, orientation?, size?, count ≤4, photoId?, targetDir? }`. Pexels (direct HTTP) lands photos and credits each in `IMAGE-CREDITS.md`. With no `PEXELS_API_KEY` it returns `configured:false` and "Stock photo search is not set up on this Studio server…"; it is not an error.
+  - `studio_find_icon` (read): `{ dir?, query, limit ≤12, forFile? }`. With no catalog: "This project has no design-system icon files Studio can read… never draw one."
+  - `studio_list_assets` (read): `{ dir?, query?, offset?, limit ≤100 }`. `studio_list_fonts` (read): `{ dir?, query?, limit ≤20 }`.
+- **Done:**
+  - `remoteFetchPolicy.ts`: Figma hosts, the stock host, the opted-in loopback, or a URL the user pasted (exact); anything else is `host-not-allowed` before any request. Covers `fetch_remote_asset` and `register_design_reference({url})`. User URLs come from `chat.ts` via `ToolContextBase.userSuppliedUrls`; on the CLI path via `connectorUserUrls.ts`.
+  - `remoteAssetFetch.ts`: 30 s deadline, image content-type allowlist, and a magic-byte match.
+  - `landAgentAsset`: agent write gate, project lock and turn log for fetch, find_image and extract_reference_asset (`prototype/` was reachable).
+  - Prompt ladder rewritten (find, then name the gap); a digest line when stock search is not set up. Codes `host-not-allowed`, `stock-search-failed`, `stock-key-refused`.
+- **Decisions:** Pexels (licence allows self-hosting; one image host). Figma and Dev Mode hosts were added beyond the brief's "stock + user" list so the Figma asset flow keeps working; flagged in the PR. The key is env-only.
+- **Review #248 fixes:**
+  - F1: `INERT_FILE_CSP` (`default-src 'none'; sandbox`, `static.ts`), one helper for studio asset, uploads and published SVG/HTML; `applySecurityHeaders` now APPENDS to a route's CSP; the SVG sanitizer is hardened.
+  - F2: `origin: 'studio'` on composed user text ("Address with AI"), which `collectUserSuppliedUrls` skips.
+  - F3: loopback allowed only at `:3845/assets/`.
+  - F7: the target folder is judged as a parent.
+- **Landmines:** `ConnectorRegistryBinding` now requires `userSuppliedUrls`. A route that sets its own CSP under `/admin` now keeps it. Test servers need `node:http` + `Bun.fetch`, because the suite preload swaps in happy-dom's `Response`/`fetch`. `chat.ts` is at 699/700 lines.
+- **Verification:** build and lint clean; every chunk run under the lock; only pre-existing failures (render_reference dev server, bundle freshness, optimistic broadcast, bridge measurement, liveOrigin WS). `editorLayoutPersistence` timed out in a 200-file batch and passes alone.
+- **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
+  - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
 ### store-19 — P3-D: structural refusals become writes (ERR-7, ERR-8, ERR-16, WB-14, WB-20, WB-21, WB-22; WB-15 not done)
 - **Agent:** store-engineer · **Branch:** `feat/structural-refusals-become-writes` off `be5733fb` · **PR:** #250 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
@@ -183,6 +226,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-32` · a mobile breakpoint tab · Fill keeps a text colour the user declared at base
 - `canvas-16` · a frame with a per-frame axes override · the override shows on the frame and can be cleared
 - `panel-40` · any panel · a panel that throws takes out only that panel; hide/lock fan out over the selection
+- `parser-18` · a page calling `<Header title="…"/>` · double-click the heading and retype it: the page's `title="…"` changes, `Header.tsx` does not; a new class in a project with two stylesheets saves with no dialog; restyle one row of a `.map` list → "Applied to all N rows" and every row changes; add a class to an element whose `className={cond ? …}` is code → it saves
 
 **Board, assets, performance**
 - `panel-33` (2026-09-17, Assets), `panel-34`, `meta-12` · `test4` → Assets · every card is a live render; search finds "header", "pill", "row"; Colors swatches split light/dark

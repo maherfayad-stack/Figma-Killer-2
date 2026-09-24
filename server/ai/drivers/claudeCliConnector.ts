@@ -5,12 +5,12 @@
  * Split out of `claudeCli.ts` because it is a different reason to change: this
  * module owns the LIFECYCLE of that credential and everything bound to it,
  * while `claudeCli.ts` owns spawning the CLI and streaming its output.
- * The three pieces here are set up together, must be torn down together, and
+ * The pieces here are set up together, must be torn down together, and
  * are meaningless apart — bundling them behind one open/close pair is what
- * stops a future edit from adding a fourth registration and forgetting the
+ * stops a future edit from adding another registration and forgetting the
  * matching release in a `finally` block several hundred lines away.
  *
- * The three:
+ * The four:
  *   1. **The connector** itself (`sessionConnector.ts`) — a short-lived bearer
  *      token carrying exactly the caller's own capabilities. Minting is
  *      FAIL-SOFT: a turn that cannot get one is degraded (no tools) rather
@@ -24,6 +24,9 @@
  *      has only a connector id to identify the turn, so without this the
  *      Studio tools fall back to "first project alphabetically" and an agent
  *      silently works on `untitled` while the user is in `untitled-2`.
+ *   4. **The user's URLs** (`connectorUserUrls.ts`) — the URLs the user
+ *      pasted into this conversation, the only hosts outside a short fixed
+ *      list an agent may make Studio fetch from (`remoteFetchPolicy.ts`).
  *
  * ## Two lifetimes, one credential, and why the registries are separable
  *
@@ -51,6 +54,7 @@ import type { CoreCapability } from '@core/capabilities'
 import type { AiBrowserBridge } from '../runtime/types'
 import { registerPermissionGate } from '../mcp/permissionGate'
 import { registerConnectorWorkspace } from '../mcp/connectorWorkspace'
+import { registerConnectorUserUrls } from '../mcp/connectorUserUrls'
 import {
   mintClaudeCliSessionConnector,
   revokeClaudeCliSessionConnector,
@@ -64,19 +68,23 @@ export interface ConnectorRegistryBinding {
   readonly bridge: AiBrowserBridge
   /** The validated open project, or `undefined` when the turn has none. */
   readonly workspaceDir: string | undefined
+  /** The http(s) URLs the user pasted into this conversation (`collectUserSuppliedUrls`). */
+  readonly userSuppliedUrls: readonly string[] | undefined
 }
 
 /**
- * Bind the permission gate and the workspace for one turn, returning the
+ * Bind the permission gate, the workspace and the user's URLs for one turn, returning the
  * matching release. Safe to call repeatedly against the same connector id as
  * long as each binding's release runs before the next is taken.
  */
 export function bindConnectorRegistries(connectorId: string, binding: ConnectorRegistryBinding): () => void {
   const releasePermissionGate = registerPermissionGate(connectorId, binding.bridge)
   const releaseWorkspace = binding.workspaceDir ? registerConnectorWorkspace(connectorId, binding.workspaceDir) : null
+  const releaseUserUrls = registerConnectorUserUrls(connectorId, binding.userSuppliedUrls ?? [])
   return () => {
     releasePermissionGate()
     releaseWorkspace?.()
+    releaseUserUrls()
   }
 }
 

@@ -10,9 +10,20 @@ import { Type, type Static } from '@core/utils/typeboxHelpers'
  * members but projects durable image bytes to authenticated lazy URLs.
  */
 
+/**
+ * Who composed a user-role text block. Absent: the user typed it. `'studio'`:
+ * Studio assembled it for the user from data it holds (the "Address with AI"
+ * comment digest, which quotes every comment in the thread, the AI's own
+ * earlier replies included). Such text is not the user naming anything, so
+ * `collectUserSuppliedUrls` (`remoteFetchPolicy.ts`) never treats a URL in it
+ * as one the user supplied (security review of #248, F2).
+ */
+export const AiTextOriginSchema = Type.Literal('studio')
+
 export const AiTextBlockSchema = Type.Object({
   kind: Type.Literal('text'),
   text: Type.String(),
+  origin: Type.Optional(AiTextOriginSchema),
 })
 
 const AiImageBlockSchema = Type.Object({

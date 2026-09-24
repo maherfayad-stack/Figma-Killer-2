@@ -86,6 +86,7 @@ import { studioAgentUserKey } from '../../handlers/studio/agentUserScope'
 import { prepareStudioHttpTurn } from '../studioHttpTurn'
 import { registerTurnDesignReferences } from '../../handlers/studio/turnDesignReferences'
 import { buildCmsSiteSystemPrompt, buildStudioProjectSystemPrompt } from '../chatSystemPrompt'
+import { collectUserSuppliedUrls } from '../mcp/tools/studio/remoteFetchPolicy'
 import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 
@@ -489,6 +490,8 @@ async function handleAiChat(
           workspaceDir: validatedWorkspaceDir ?? undefined,
           fidelityMode: resolvedFidelityMode,
           designPolicy: resolvedDesignPolicy,
+          // The user's own pasted URLs: what an agent may fetch beyond the fixed hosts (`remoteFetchPolicy.ts`).
+          userSuppliedUrls: collectUserSuppliedUrls(messages),
           snapshot,
         }
         const { bridgeId, bridge, destroy } = createBridge(

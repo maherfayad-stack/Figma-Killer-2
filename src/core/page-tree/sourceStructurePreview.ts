@@ -18,7 +18,7 @@
  * being lifted in one surface and forgotten in another.
  */
 import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
-import { isSourceDerivedNodeId, isStudioPageRootId, listRowTemplateId } from './sourceNodeId'
+import { isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { getParent } from './selectors'
 import { createScratchTree, moveOnScratch, planMoveSequence, type SequencedMove } from './moveSequence'
 import {
@@ -182,8 +182,8 @@ export function previewStructuralMove(
   // right before its FIRST row is "before the list". (Between two rows of one
   // list there is no such place — every row is one piece of source.) The
   // codemod resolves the row's template to its `{items.map(…)}` container.
-  const previousList = previous === undefined ? null : listRowTemplateId(previous)
-  const nextList = next === undefined ? null : listRowTemplateId(next)
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
   if (previousList && previousList !== nextList) candidates.push({ anchorNodeId: previousList, position: 'after' })
   if (nextList && nextList !== previousList) candidates.push({ anchorNodeId: nextList, position: 'before' })
 
@@ -312,8 +312,8 @@ export function resolveContainerAnchor(
   if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
   // WB-22 — beside a `.map` list's edge, the list itself is the anchor (see
   // `previewStructuralMove`).
-  const previousList = previous === undefined ? null : listRowTemplateId(previous)
-  const nextList = next === undefined ? null : listRowTemplateId(next)
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
   if (previousList && previousList !== nextList && addressable(previousList)) return { anchorNodeId: previousList, position: 'after' }
   if (nextList && nextList !== previousList && addressable(nextList)) return { anchorNodeId: nextList, position: 'before' }
   return { anchorNodeId: null, position: 'after' }

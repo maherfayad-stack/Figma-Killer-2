@@ -173,7 +173,7 @@ function composeOneLayout(
     // first (destructured) parameter includes one — regardless of any real
     // call-site props, which is exactly right here: there is no call site,
     // only the fact that this function's `children` parameter IS the page.
-    const env = buildSubstitutionEnv(fn, {})
+    const env = buildSubstitutionEnv(fn, { props: {} })
     if (![...env.values()].some((sub) => sub.kind === 'children')) return undefined
 
     const patched = applySubstitutions(roots, layoutParsed, env, childPage.rootIds, sourceFile, relFile, fn, evalOptions)
