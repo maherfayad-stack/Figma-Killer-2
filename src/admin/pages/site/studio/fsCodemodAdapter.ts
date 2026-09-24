@@ -41,7 +41,6 @@ import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
 import { useEditorStore } from '@site/store/store'
 import { useAdminUi } from '@admin/state/adminUi'
-import { notifyUnexplainedSkips } from '@site/panels/unexplainedSkipsNotice'
 import { notifyInlineStyleUnsaved } from '@site/panels/inlineStyleUnsavedNotice'
 import { armSidecarBaselines, loadSidecarSettings, noteFrameworkSynced, saveChangedSidecarSettings } from './sidecarSync'
 import { notifyClassAssignmentUnsaved } from '@site/panels/classAssignmentUnsavedNotice'
@@ -50,6 +49,7 @@ import { fetchExtractedTokens, type TokenExtractionStatus } from './studioTokenS
 import { setStudioProjectKey, setStudioTrustTier } from './studioProjectTrust'
 import { notifyCreatedStylesheets, postEdits } from './studioSaveRequests'
 import { captureIdentities } from './sourceIdentity'
+import { refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
@@ -415,17 +415,17 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
           const retry = await retryAfterElementMoved(movedEdits, identities, result.touchedFiles ?? [], postEdits)
           if (!retry || elementMovedNodeIds(retry.refusals).size > 0) return warnElementMoved(moved)
           reportEditRefusals(retry.refusals ?? [])
-          notifyUnexplainedSkips(retry.unexplainedSkips ?? [])
           // The re-read before the retry showed the file WITHOUT the edit;
           // this one shows it with.
           if (retry.written > 0) await resyncBoardAfterWrite(retry.touchedFiles ?? [])
         }
       }
 
-      // WS-4.4/4.5/6.3 — every named refusal gets its own toast carrying the
-      // actual reason (`refusalToasts.ts`), de-duped by (kind, target, reason)
-      // rather than by advancing the baseline past it — which used to be how a
-      // repeat toast was avoided, and silently threw the edit away with it
+      // WB-12 — every edit that did not write is a named refusal, and each
+      // gets one warning carrying its actual reason and its remedy
+      // (`refusalToasts.ts`), de-duped by (kind, target, reason) rather than
+      // by advancing the baseline past it — which used to be how a repeat
+      // toast was avoided, and silently threw the edit away with it
       // (`style-02`). `element-moved` is not a refusal the user acts on — it
       // is recovered from above.
       const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))
@@ -437,50 +437,26 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
         if (refusal.kind === 'class') refusedClassNodeIds.push(refusal.nodeId)
       }
 
-      // Some edits resolved to no writable source location, so nothing reached
-      // disk for them. The commonest cause is text that is not a literal in the
-      // target element at all: `<p className="title">{title}</p>` renders a prop
-      // the CALL SITE passes, and `setJsxText` refuses rather than baking the
-      // binding away into a string. Say so — the alternative is the user
-      // watching their edit snap back with no explanation. Excludes skips
-      // already explained by a refusal toast above.
-      //
-      // Phase 0 item 0.7 — `result.unexplainedSkips` (added alongside
-      // `refusals`/`shifted`/etc. on `StudioSaveResponseSchema`) carries the
-      // actual `{ nodeId, kind }[]` behind this count, so the toast can name
-      // the affected node(s) instead of a bare number — see
-      // `unexplainedSkipsNotice.ts`. `?? []` covers an older/dev server that
-      // hasn't picked up the field yet; `notifyUnexplainedSkips([])` is a
-      // documented no-op, matching the old `unexplainedSkips > 0` guard.
-      const unexplainedSkips = result.skipped - (result.refusals ?? []).length
-      notifyUnexplainedSkips(result.unexplainedSkips ?? [])
-
       // Track B1 create branch — name the file Studio invented and register it
       // in the write-back map, so the same rule is writable through the ordinary
-      // `set` path on its next edit with no reload. Creating a file is a bigger
-      // surprise than choosing one, so it is never silent.
+      // `set` path on its next edit with no reload.
       notifyCreatedStylesheets(result, site.styleRules)
 
       // E1 fix (`STUDIO-FIGMA-PARITY-PLAN.md` 0.1) — advance the node-value
       // baseline to what this batch wrote, so the NEXT autosave tick diffs
-      // against disk-as-it-now-is rather than the as-loaded snapshot. Gated
-      // on `unexplainedSkips === 0`: the response only reports aggregate
-      // counts for the whole POST (props + text + style + tag + CSS +
-      // localized text all share one `written`/`skipped`), so there is no
-      // per-edit signal to tell which SPECIFIC bump landed when only some of
-      // the batch did. Skipping the whole commit in that rare case is the
-      // safe direction — a bump that should have landed just gets re-diffed
-      // (harmless, `setJsxProp`/`setJsxText` are idempotent) on the next
-      // tick, instead of a refused/skipped edit's value being silently
-      // adopted as the new baseline and the user never seeing why their
-      // change didn't stick.
-      if (unexplainedSkips === 0) {
-        commitNodeValuesBaseline(bumps)
-        // `style-03` — a REMOVED inline style has no value to record, so its
-        // baseline entry has to be deleted instead; leaving it behind would
-        // re-emit the same removal on every later tick.
-        dropNodeValuesBaseline(drops)
-      }
+      // against disk-as-it-now-is rather than the as-loaded snapshot.
+      //
+      // WB-35 — per edit. The response names every edit it refused (WB-12), so
+      // the edits that landed advance their baseline and the refused ones stay
+      // in the diff for a later save. This used to be all-or-nothing on an
+      // aggregate count: one unwritable edit held back every baseline, and the
+      // whole batch was re-sent on every tick after it.
+      const refused = refusedEditKeys(result.refusals)
+      commitNodeValuesBaseline(bumps.filter((bump) => !refused.has(bump.editKey)))
+      // `style-03` — a REMOVED inline style has no value to record, so its
+      // baseline entry has to be deleted instead; leaving it behind would
+      // re-emit the same removal on every later tick.
+      dropNodeValuesBaseline(drops.filter((drop) => !refused.has(drop.editKey)))
 
       // A write shifted line numbers, so every `line:col` node id below that
       // point is now stale against disk and must be re-derived by re-reading

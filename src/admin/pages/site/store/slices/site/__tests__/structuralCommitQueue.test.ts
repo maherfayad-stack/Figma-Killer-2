@@ -184,7 +184,7 @@ describe('structural commits queue instead of refusing (store-14)', () => {
     expect(duplicated[0]!.repeatCount).toBe(5)
   })
 
-  it('a burst past the ceiling is reported, never silently dropped', async () => {
+  it('ERR-25 — a burst past the ceiling (a held key) is dropped without a toast', async () => {
     const { release } = stubDeferredSaveFetch()
     const tree = makeStudioTree()
     const { writeDuplicateToSource } = createStudioSourceWrites(makeHelpers(), () => tree)
@@ -197,7 +197,9 @@ describe('structural commits queue instead of refusing (store-14)', () => {
       writeDuplicateToSource(['pages/Home.tsx:5:5'])
     }
     expect(deferredStructuralGestureCount()).toBe(MAX_DEFERRED_STRUCTURAL_GESTURES)
-    expect(toasts.some((t) => t.kind === 'warning' && t.title === 'Too many changes at once')).toBe(true)
+    // The copies keep appearing while the writer catches up; the extra repeats
+    // simply do not happen. Nothing is said, because nothing went wrong.
+    expect(toasts).toEqual([])
 
     release()
     await waitFor(

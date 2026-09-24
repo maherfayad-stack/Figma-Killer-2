@@ -99,7 +99,7 @@ export function previewStructuralTransplant(
       refusal: {
         reason: 'reparent',
         message:
-          'The element this gesture started on is no longer on the board. Reload the project and try again.',
+          'The element this gesture started on left the board while you were dragging it, so nothing was written.',
       },
     }
   }

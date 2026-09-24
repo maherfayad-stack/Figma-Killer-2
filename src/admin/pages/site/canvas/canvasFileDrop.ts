@@ -150,7 +150,7 @@ export const CANVAS_FILE_DROP_REFUSAL = {
   frameGone: {
     reason: 'no-frame',
     headline: 'That frame is gone',
-    message: 'That frame is no longer on the board. Reload the project and try again.',
+    message: 'That frame left the board while the image was being dropped, so nothing was added. Drop it onto a frame that is on the board now.',
   },
   noPosition: {
     reason: 'no-position',

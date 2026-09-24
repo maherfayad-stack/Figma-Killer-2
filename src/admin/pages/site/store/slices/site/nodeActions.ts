@@ -50,7 +50,7 @@ import { createImageDropActions } from './imageDropActions'
 import { createInlineStyleActions } from './inlineStyleActions'
 import { createVisibilityActions } from './visibilityActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
-import { excludePendingOptimisticTargets } from './structuralOptimism'
+import { resolvePreviewTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
@@ -304,17 +304,21 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       return inserted ? newNode.id : null
     },
 
-    deleteNode: (nodeId) => {
-      // `perf-10` — a Delete on the thing a still-in-flight insert/duplicate/
-      // wrap just previewed would otherwise take the "ordinary CMS node"
-      // path (a preview id is never `isSourceDerivedNodeId`) against a node
-      // the write's own resync is about to erase anyway. Treated exactly like
-      // a missing node. See `structuralOptimism.ts`'s "one gap left open".
-      if (excludePendingOptimisticTargets([nodeId]).length === 0) return
+    deleteNode: (rawNodeId) => {
       // ERR-4 — a delete pressed while another structural write is in flight
       // runs after it, against the element it was pressed on (re-found by
       // identity), never whatever that write moved into its old line.
-      if (deferWhileStructuralCommitInFlight((relocate) => actions.deleteNode(relocate(nodeId)), [nodeId])) return
+      // ERR-22 — that includes a Delete on the preview a still-in-flight
+      // insert/duplicate/wrap just showed: it runs once that write settles,
+      // aimed at the element the write created (`resolvePreviewTargets`). See
+      // `structuralOptimism.ts`'s "one gap left open".
+      const deferred = deferWhileStructuralCommitInFlight((relocate) => {
+        const [target] = resolvePreviewTargets([relocate(rawNodeId)])
+        if (target) actions.deleteNode(target)
+      }, [rawNodeId])
+      if (deferred) return
+      const [nodeId] = resolvePreviewTargets([rawNodeId])
+      if (nodeId === undefined) return
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
       const tree = readTree()

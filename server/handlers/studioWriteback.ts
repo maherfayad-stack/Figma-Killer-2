@@ -43,9 +43,10 @@
  *     `applyStudioEditBatch`'s counting loop, both below).
  *
  * Synthetic nodes (e.g. the `index:body` root) don't match the loc pattern and
- * are skipped. The save route applies each edit independently — one codemod
- * throwing (e.g. a text edit landing on an element with mixed children) is
- * logged and skipped by the route rather than aborting the whole batch.
+ * write nothing. The save route applies each edit independently — one codemod
+ * declining (e.g. a text edit landing on an element with mixed children) is
+ * reported as that edit's named refusal rather than aborting the whole batch,
+ * and every edit that does not write is named (WB-12, `studioEditRefusals.ts`).
  */
 import { join } from 'node:path'
 import { existsSync } from 'node:fs'
@@ -56,9 +57,7 @@ import {
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
-  JsxPropTargetError,
   setJsxStyle,
-  JsxStyleTargetError,
   setJsxTagName,
   setJsxText,
   setStringLiteral,
@@ -84,14 +83,19 @@ import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { countLines, recordCreatedPosition, resolveCreatedNodeIds, type CreatedNodePosition } from './studioEditPositions'
 import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
-  isRefusingEditKind,
   type StudioEdit,
   type StudioEditApplyOutcome,
   type StudioEditBatchResult,
   type StudioEditRefusal,
   type StudioEditSwapDetail,
-  type StudioEditUnexplainedSkip,
 } from './studioEditSchemas'
+import {
+  refusalFor,
+  refusalForUnwritable,
+  refusalFromCodemodError,
+  StudioEditRefusalError,
+  writeFailedRefusal,
+} from './studioEditRefusals'
 
 export {
   StudioEditSchema,
@@ -100,8 +104,8 @@ export {
   type StudioEditBatchResult,
   type StudioEditRefusal,
   type StudioEditSwapDetail,
-  type StudioEditUnexplainedSkip,
 } from './studioEditSchemas'
+export { StudioEditRefusalError } from './studioEditRefusals'
 
 // The ROUTING half — which file an edit lands in, and in what order a batch
 // is applied. Its own module since this file passed the 700-line ceiling;
@@ -126,23 +130,6 @@ import {
 } from './studioEditRouting'
 
 /**
- * Thrown by `applyStudioEdit` when a `detach`/`swap` codemod REFUSES rather
- * than failing unexpectedly — a typed, first-class outcome (reason +
- * message) distinct from an ordinary codemod exception. `applyStudioEditBatch`
- * catches this specially and records it in `StudioEditBatchResult.refusals`
- * so the client can show the SPECIFIC reason (a toast with an offer, per
- * WS-4.4's plan), not just a generic "skipped" count — every other codemod's
- * thrown error stays in the existing skip-and-log path unchanged.
- */
-export class StudioEditRefusalError extends Error {
-  readonly reason: string
-  constructor(reason: string, message: string) {
-    super(message)
-    this.name = 'StudioEditRefusalError'
-    this.reason = reason
-  }
-}
-/**
  * Applies one typed studio edit to the .tsx source under `dir`, dispatching
  * on `edit.kind` to the matching `ast-codemods` writer. Extracted as a pure
  * helper (dir + edit in, codemod side effect out) so it's unit-testable
@@ -156,21 +143,29 @@ export class StudioEditRefusalError extends Error {
  * OTHER instance, so the save route reports `sharedComponents` and the client
  * reloads.
  *
- * Returns `false` for a synthetic node id (e.g. the `index:body` root) that
- * has no source location — nothing to write, not an error. Returns `true` once
- * the matching codemod has written the file. Propagates whatever the underlying
- * codemod throws (e.g. `JsxTextTargetError`, `JsxStyleTargetError`) for a real
- * source location it refuses to touch — callers decide whether to
- * skip-and-log or let it bubble. A `detach`/`swap` REFUSAL (a typed, expected
- * outcome — see `detachComponentInstance`/`swapComponentInstance`) throws
- * `StudioEditRefusalError` specifically, so `applyStudioEditBatch` can surface
- * the reason instead of folding it into the generic skip-and-log path.
+ * Returns `applied: false` (with its `unwritable` reason) for a synthetic node
+ * id (e.g. the `index:body` root) that has no source location, or a target path
+ * that fails containment — nothing to write, not an exception. Returns
+ * `applied: true` once the matching codemod has written the file. Every NAMED
+ * decline — a codemod's typed error (`JsxTextTargetError`, `JsxPropTargetError`,
+ * a locate miss …) or a returned refusal (`detach`/`swap`/`class`/`css`/the
+ * structural family) — throws `StudioEditRefusalError` with a stable reason
+ * and a sentence for a person (`studioEditRefusals.ts`, WB-12). Anything else
+ * propagates unchanged; `applyStudioEditBatch` reports it as `write-failed`.
  *
  * `StudioEditSwapDetail`/`StudioEditApplyOutcome` (this function's own return
  * shape) now live in `studioEditSchemas.ts`, alongside every other RESPONSE
  * type this module builds and returns — see that module's own doc for why.
  */
 export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
+  try {
+    return dispatchStudioEdit(dir, edit)
+  } catch (err) {
+    throw refusalFromCodemodError(edit, err) ?? err
+  }
+}
+
+function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
   // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
   // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
@@ -183,12 +178,13 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
     if ('refusal' in outcome) throw new StudioEditRefusalError(outcome.refusal.reason, outcome.refusal.message)
     return {
       applied: outcome.applied,
+      ...(outcome.applied ? {} : { unwritable: 'stylesheet-unavailable' as const }),
       ...(outcome.createdStylesheet ? { createdStylesheet: outcome.createdStylesheet } : {}),
     }
   }
 
   const target = studioEditLocation(dir, edit.nodeId)
-  if (!target) return { applied: false } // synthetic node (e.g. body) — no source location
+  if (!target) return { applied: false, unwritable: 'no-source-location' } // synthetic node (e.g. body)
   const loc = { file: join(dir, target.rel), line: target.line, col: target.col }
 
   switch (edit.kind) {
@@ -197,15 +193,10 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // `callSiteProps:<name>` (see `PropEditSchema`'s doc comment); the
       // actual JSX attribute is `<name>` at this SAME location (the instance
       // node's own id is the call site's own plain location).
+      // WB-11 — an attribute holding code refuses `binding-overwrite` rather
+      // than baking a literal over the binding (`studioEditRefusals.ts`).
       const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
-      try {
-        setJsxProp({ ...loc, prop, value: edit.value })
-      } catch (err) {
-        // WB-11 — the attribute holds code, and a literal written over it would
-        // delete the binding. A named decision, same channel as `style-target`.
-        if (err instanceof JsxPropTargetError) throw new StudioEditRefusalError(err.reason, err.message)
-        throw err
-      }
+      setJsxProp({ ...loc, prop, value: edit.value })
       return { applied: true }
     }
     case 'text':
@@ -232,19 +223,9 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       return { applied: true }
     }
     case 'style':
-      // `style-03` — `JsxStyleTargetError` is a NAMED decision (a spread, a
-      // non-object initializer, a shorthand key), not an unexpected failure.
-      // It used to fall into the generic catch and be reported as an
-      // unexplained skip with the wrong sentence attached; it is a refusal,
-      // and gets the same channel `class`/`css`/`detach`/`swap` use.
-      try {
-        setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}) })
-      } catch (err) {
-        if (err instanceof JsxStyleTargetError) {
-          throw new StudioEditRefusalError('style-target', err.message)
-        }
-        throw err
-      }
+      // `style-03` — `JsxStyleTargetError` (a spread, a non-object initializer,
+      // a shorthand key) refuses `style-target` (`studioEditRefusals.ts`).
+      setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}) })
       return { applied: true }
     case 'class': {
       // Track B2 — the real write behind Phase 0 item 0.6's honesty-only
@@ -260,7 +241,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // path decoder stays server-side and singular.
       const add = resolveClassNameTokens(dir, target.rel, edit.add)
       const remove = resolveClassNameTokens(dir, target.rel, edit.remove)
-      if (add === null || remove === null) return { applied: false } // unsafe or missing stylesheet — refuse, never guess
+      if (add === null || remove === null) return { applied: false, unwritable: 'stylesheet-unavailable' } // never guess
       const result = setJsxClassName({ ...loc, add, remove })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }
@@ -274,7 +255,7 @@ export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyO
       // is therefore the file HOLDING the import, which is exactly what
       // `relativeImportSpecifier` needs as its "from" side.
       const assetPath = resolveContainedRefPath(dir, edit.assetPath)
-      if (assetPath === null) return { applied: false } // unsafe or missing target — refuse, never guess
+      if (assetPath === null) return { applied: false, unwritable: 'asset-unavailable' } // never guess
       const specifier = relativeImportSpecifier(target.rel, assetPath)
       setImportSpecifier({ ...loc, specifier })
       return { applied: true }
@@ -529,13 +510,11 @@ export function applyStudioEditBatch(
   }
 
   let written = 0
-  let skipped = identity.moved.length
   const refusals: StudioEditRefusal[] = identity.moved.map((entry) => entry.refusal)
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
   const createdStylesheets: { nodeId: string; file: string }[] = []
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
-  const unexplainedSkips: StudioEditUnexplainedSkip[] = []
   // `store-13` — where each created element sat, measured from the END of its
   // file. See `resolveCreatedNodeIds` for why that anchor and not the line.
   const createdPositions: CreatedNodePosition[] = []
@@ -552,7 +531,6 @@ export function applyStudioEditBatch(
     const brokenTarget = syntaxRefusal(edit)
     if (brokenTarget) {
       refusals.push(brokenTarget)
-      skipped += 1
       continue
     }
     try {
@@ -575,21 +553,19 @@ export function applyStudioEditBatch(
         const identity = fingerprintAfterWrite(dir, edit)
         if (identity) fingerprints.push(identity)
       } else {
-        skipped += 1
-        unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
+        refusals.push(refusalForUnwritable(edit, outcome))
       }
     } catch (err) {
-      if (err instanceof StudioEditRefusalError && isRefusingEditKind(edit.kind)) {
-        refusals.push({ nodeId: edit.nodeId, kind: edit.kind, reason: err.reason, message: err.message })
+      if (err instanceof StudioEditRefusalError) {
+        refusals.push(refusalFor(edit, err.reason, err.message))
       } else {
         console.error('[studio]', err)
-        unexplainedSkips.push({ nodeId: edit.nodeId, kind: edit.kind })
+        refusals.push(writeFailedRefusal(edit))
       }
-      skipped += 1
     }
   }
   // WB-7 — an edit several nodes collapsed into reports its outcome for each of them.
-  skipped += expandMergedOutcomes(ordered, refusals, unexplainedSkips)
+  expandMergedOutcomes(ordered, refusals)
 
   // Only a binding that was live BEFORE and is dead AFTER — an import the user
   // had already left unused is their line, not something this batch created.
@@ -634,7 +610,7 @@ export function applyStudioEditBatch(
 
   return {
     written,
-    skipped,
+    skipped: refusals.length,
     shifted,
     sharedComponents,
     refusals: asSent(refusals),
@@ -642,7 +618,6 @@ export function applyStudioEditBatch(
     createdStylesheets: asSent(createdStylesheets),
     promoteDetails: asSent(promoteDetails),
     addSlotPropDetails: asSent(addSlotPropDetails),
-    unexplainedSkips: asSent(unexplainedSkips),
     touchedFiles: [...touchedFiles],
     removed: asSent(removed),
     prunedImports,

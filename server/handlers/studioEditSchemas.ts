@@ -41,12 +41,12 @@
  */
 import { CssEditSchema } from './studioCssWriteback'
 import {
-  isSlotEditKind,
   SlotEditSchemas,
   type StudioAddSlotPropDetail,
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
-import { isStructuralEditKind, StructuralEditSchemas } from './studioStructuralWriteback'
+import { StructuralEditSchemas } from './studioStructuralWriteback'
+import type { StudioEditUnwritableReason } from './studioEditRefusals'
 import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -314,6 +314,13 @@ export interface StudioEditSwapDetail {
  */
 export interface StudioEditApplyOutcome {
   applied: boolean
+  /**
+   * WB-12 — for an `applied: false` outcome that is not an `add-slot-prop`
+   * preview: WHY there was nowhere to write. The batch reports it as the
+   * refusal of that name (`studioEditRefusals.ts`); absent reads as
+   * `no-source-location`.
+   */
+  unwritable?: StudioEditUnwritableReason
   swapDetail?: StudioEditSwapDetail
   createdStylesheet?: { file: string }
   promoteDetail?: StudioPromoteComponentDetail
@@ -359,70 +366,28 @@ export interface StudioEditApplyOutcome {
 }
 
 /**
- * One edit that refused rather than writing — surfaced to the client so it can
- * show the SPECIFIC reason (a toast with an offer, per WS-4.4's plan;
- * `StyleTargetChip`'s per-tier message for `css`; the AST-only structural
- * reasons for `move`/`delete`) instead of a generic "skipped" count.
+ * One edit that did not write — surfaced to the client with its SPECIFIC
+ * reason and a sentence for the person who made it.
  *
- * `kind` is any edit kind. Most refusals come from the kinds
- * `isRefusingEditKind` names (a codemod that declines on purpose), but P1-A's
- * `element-moved` can refuse ANY kind that names a node — it is decided before
- * the codemod runs, from the identity the client expected at that position
- * (`studioEditIdentity.ts`).
+ * WB-12 — every kind refuses by name (`studioEditRefusals.ts`): a codemod's
+ * typed decline, P1-A's `element-moved`, an `applied: false` outcome with its
+ * `unwritable` reason, and `write-failed` for an exception nobody named. So the
+ * batch's `refusals` list is COMPLETE: an edit the caller sent wrote exactly
+ * when no refusal matches its `(nodeId, kind, prop)`. That is the per-edit
+ * outcome the client commits its diff baselines against (WB-35).
+ *
+ * `nodeId` is the id the caller SENT, even for an edit that was re-found
+ * elsewhere (P1-D) or merged with another instance's (WB-7, reported once per
+ * contributing node). `prop` is present for a `prop` edit only: one element
+ * can carry several prop edits in a batch, and only the refused one may be
+ * held back.
  */
 export interface StudioEditRefusal {
   nodeId: string
   kind: StudioEdit['kind']
+  prop?: string
   reason: string
   message: string
-}
-
-/**
- * The edit kinds whose codemod can REFUSE by name (throwing
- * `StudioEditRefusalError`) rather than fail unexpectedly: `detach`/`swap`/
- * `css`/`class`/`style`/`styled`, every structural and slot kind (reasons only
- * the AST can see), and `prop` (WB-11's `binding-overwrite` — `setJsxProp`
- * will not bake a literal over an expression).
- */
-export function isRefusingEditKind(kind: StudioEdit['kind']): boolean {
-  // `style` joined the list in `style-03`: `JsxStyleTargetError` is a named
-  // decision (a spread, a non-object initializer, a shorthand key), not an
-  // unexpected failure. It used to fall into the generic catch and reach the
-  // user as an unexplained skip with the PROP-binding sentence attached.
-  return (
-    kind === 'prop' ||
-    kind === 'detach' ||
-    kind === 'swap' ||
-    kind === 'css' ||
-    kind === 'class' ||
-    kind === 'style' ||
-    // W4-4 Phase B — every decline `setStyledDeclaration` makes is a named,
-    // expected outcome with a sentence for the user (an interpolated value, a
-    // covering shorthand, a declaration written in a spliced mixin), never a
-    // codemod exception.
-    kind === 'styled' ||
-    isStructuralEditKind(kind) ||
-    isSlotEditKind(kind)
-  )
-}
-
-/**
- * `STUDIO-FIGMA-PARITY-PLAN.md` item 0.7 — one edit that skipped WITHOUT a
- * named `StudioEditRefusal` (no writable source location for a `prop`/`text`/
- * `style`/etc, or an unexpected codemod exception on a non-refusing kind).
- * Distinct from `StudioEditRefusal`: this case has no specific reason to
- * report — `applyStudioEdit` returned `applied: false` because there was
- * simply nowhere to write, not because a codemod evaluated the edit and
- * declined it. The client previously only received an aggregate `skipped`
- * count for this bucket (`fsCodemodAdapter.ts`'s `unexplainedSkips` toast),
- * which could never say WHICH node(s) were affected. This carries just
- * enough for the client to resolve and select the affected node(s) — it
- * already has the full `PageNode` tree, so a bare id is enough; no reason
- * string to keep here since (per the point of this type) there isn't one.
- */
-export interface StudioEditUnexplainedSkip {
-  nodeId: string
-  kind: StudioEdit['kind']
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */
@@ -433,16 +398,12 @@ export interface StudioEditBatchResult {
   shifted: boolean
   /** True when any edit targets an inlined/shared source location — every OTHER frame reading the same file is now stale too. */
   sharedComponents: boolean
-  /** WS-4.4/4.5 — every `detach`/`swap` edit that refused, with why. Empty array when none did (always present, never omitted, so a client doesn't need an `?.length` guard). */
-  refusals: StudioEditRefusal[]
   /**
-   * Item 0.7 — every edit that skipped with NO matching `refusals` entry,
-   * i.e. exactly the set `fsCodemodAdapter.ts`'s `unexplainedSkips` count
-   * describes today, but named. `unexplainedSkips.length` always equals
-   * `skipped - refusals.length`, so a client can drop the old subtraction
-   * once it reads this instead.
+   * Every edit that did not write, with why — the complete per-edit outcome
+   * (see {@link StudioEditRefusal}). `skipped === refusals.length`. Empty array
+   * when every edit wrote (always present, never omitted).
    */
-  unexplainedSkips: StudioEditUnexplainedSkip[]
+  refusals: StudioEditRefusal[]
   /** WS-4.5 — every `swap` edit that SUCCEEDED, with what changed on the call site. Empty array when none did. */
   swapDetails: (StudioEditSwapDetail & { nodeId: string })[]
   /**

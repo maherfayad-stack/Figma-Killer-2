@@ -129,7 +129,6 @@ describe('applyStudioEditBatch — two instances, one file, every change lands',
     expect(card).toMatch(/className="card a b"/)
     expect(result.skipped).toBe(0)
     expect(result.refusals).toEqual([])
-    expect(result.unexplainedSkips).toEqual([])
   })
 
   it('a refused merged edit is reported refused for EVERY instance behind it, never as written', () => {

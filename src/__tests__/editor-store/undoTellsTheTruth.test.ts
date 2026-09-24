@@ -18,7 +18,7 @@ import { useEditorStore } from '@site/store/store'
 import { makePage, makeSite } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
 import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
-import { setStructuralWriteRetrySleepForTests } from '@site/studio/structuralWriteRetry'
+import { setUnreachableRetrySleepForTests } from '@core/http'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 
 const FILE_A = 'app/a.tsx'
@@ -69,7 +69,7 @@ function reply(json: unknown): Response {
 beforeEach(() => {
   resetStructuralCommitQueue()
   __resetToastBusForTests()
-  setStructuralWriteRetrySleepForTests(async () => {})
+  setUnreachableRetrySleepForTests(async () => {})
   toasts = []
   unsubscribeToasts = subscribeToasts((next) => {
     toasts = next
@@ -122,7 +122,7 @@ beforeEach(() => {
 
 afterEach(() => {
   globalThis.fetch = realFetch
-  setStructuralWriteRetrySleepForTests(null)
+  setUnreachableRetrySleepForTests(null)
   unsubscribeToasts()
   resetStructuralCommitQueue()
 })

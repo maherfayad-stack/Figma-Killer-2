@@ -413,15 +413,19 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       expect(shippedTextValue(secondBody.edits[0]!)).toBe('Hell')
     })
 
-    it('does NOT advance the baseline for a batch with an unexplained skip, so a stale-id failure keeps re-attempting instead of silently adopting the unwritten value', async () => {
+    it('does NOT advance the baseline for an edit the server refused, so it keeps re-attempting instead of silently adopting the unwritten value', async () => {
       stubFetch({
         '/admin/api/studio/load': {
           dir: '/tmp/studio-test', projectName: 'studio-test',
           pages: [makePage({ rootNodeId: 'root', nodes: { root: makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', props: { text: 'Hell' } }) } })],
           componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
         },
-        // written:0, skipped:1 — the edit never reached disk.
-        '/admin/api/studio/save': { ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false },
+        // written:0, skipped:1 — the edit never reached disk, and the refusal
+        // names it (WB-12: every edit that does not write is named).
+        '/admin/api/studio/save': {
+          ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
+          refusals: [{ nodeId: 'pages/Home.tsx:3:1', kind: 'prop', prop: 'text', reason: 'write-failed', message: 'Studio could not write this change.' }],
+        },
       })
       await loadThenResetCalls()
 
@@ -628,8 +632,9 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
     })
   })
 
-  // ─── Phase 0 seam A (item 0.7) — the unexplained-skips toast names the node ──
-  describe('save-skip toast names the affected node (0.7 seam)', () => {
+  // ─── WB-12 / WB-13 / WB-35 — a refusal is one warning with its remedy, and
+  // only the refused edit stays in the diff ────────────────────────────────
+  describe('save-time refusals (P3-A)', () => {
     function collectToasts(): Toast[] {
       let latest: Toast[] = []
       subscribeToasts((snapshot) => {
@@ -638,68 +643,105 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
       return latest
     }
 
-    it('a skip with no matching refusal produces a toast naming the real node label, not a bare count', async () => {
-      stubFetch({
-        '/admin/api/studio/load': {
-          dir: '/tmp/studio-test', projectName: 'studio-test',
-          pages: [makePage({
-            rootNodeId: 'root',
-            nodes: {
-              root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
-              'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', label: 'Headline', props: { text: 'Hi' } }),
-            },
-          })],
-          componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
-        },
-        // written:0, skipped:1, and the server names exactly that node via
-        // `unexplainedSkips` (Phase 0 item 0.7's new field) — no matching
-        // `refusals` entry, so this is the "no writable location" case.
-        '/admin/api/studio/save': {
-          ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
-          unexplainedSkips: [{ nodeId: 'pages/Home.tsx:3:1', kind: 'text' }],
-        },
-      })
-      await loadThenResetCalls()
+    const HEADLINE = 'pages/Home.tsx:3:1'
 
-      const site = makeSite({
+    function loadedHeadline(props: Record<string, unknown>) {
+      return {
+        dir: '/tmp/studio-test', projectName: 'studio-test',
         pages: [makePage({
           rootNodeId: 'root',
           nodes: {
-            root: makeNode({ id: 'root', moduleId: 'base.body', children: ['pages/Home.tsx:3:1'] }),
-            'pages/Home.tsx:3:1': makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', label: 'Headline', props: { text: 'Bye' } }),
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: [HEADLINE] }),
+            [HEADLINE]: makeNode({ id: HEADLINE, moduleId: 'base.text', label: 'Headline', props }),
+          },
+        })],
+        componentSources: {}, styleRules: {}, conditions: [], vendorCss: '', trust: 'static', paletteHiddenModuleIds: [],
+      }
+    }
+
+    function editedHeadline(props: Record<string, unknown>) {
+      return makeSite({
+        pages: [makePage({
+          rootNodeId: 'root',
+          nodes: {
+            root: makeNode({ id: 'root', moduleId: 'base.body', children: [HEADLINE] }),
+            [HEADLINE]: makeNode({ id: HEADLINE, moduleId: 'base.text', label: 'Headline', props }),
           },
         })],
       })
-      useEditorStore.setState({ site, activePageId: site.pages[0]!.id } as Parameters<typeof useEditorStore.setState>[0])
+    }
 
-      await fsCodemodAdapter.saveSite(site)
+    // One element, two prop edits in one batch: the refusal names WHICH prop
+    // (`prop`), so the other one can still be committed.
+    const BINDING_REFUSAL = {
+      nodeId: HEADLINE,
+      kind: 'prop',
+      prop: 'text',
+      reason: 'binding-overwrite',
+      message: '"text" is set from code here ({copy.title}), not a literal, so writing a value would replace that code.',
+    }
 
-      const toasts = collectToasts()
-      expect(toasts).toHaveLength(1)
-      // Named by the real node label ("Headline"), not the old bare-count
-      // "1 edit had no writable location" message.
-      expect(toasts[0].body).toContain('Headline')
-      expect(toasts[0].action?.label).toBe('Select node')
-    })
-
-    it('an older/dev server response with no unexplainedSkips field produces no toast, not a crash', async () => {
+    it('WB-13 — a refused edit is ONE warning naming its reason, with "Open in code" — never a red card', async () => {
       stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ text: 'Hi' }),
         '/admin/api/studio/save': {
           ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: false,
-          // No `unexplainedSkips` key at all — tolerant-rollout shape.
+          refusals: [BINDING_REFUSAL],
         },
       })
       await loadThenResetCalls()
 
-      const site = makeSite({
-        pages: [makePage({
-          rootNodeId: 'root',
-          nodes: { root: makeNode({ id: 'pages/Home.tsx:3:1', moduleId: 'base.text', props: { text: 'Bye' } }) },
-        })],
+      await fsCodemodAdapter.saveSite(editedHeadline({ text: 'Bye' }))
+
+      const toasts = collectToasts()
+      expect(toasts).toHaveLength(1)
+      expect(toasts[0]!.kind).toBe('warning')
+      expect(toasts[0]!.title).toBe('Property not saved to source')
+      expect(toasts[0]!.body).toContain('is set from code here')
+      expect(toasts[0]!.action?.label).toBe('Open in code')
+    })
+
+    it('WB-35 — a partly refused batch commits the edit that wrote; the next save re-sends only the refused one', async () => {
+      stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ text: 'Hi', title: 'old' }),
+        '/admin/api/studio/save': {
+          ok: true, written: 1, skipped: 1, shifted: false, sharedComponents: false,
+          refusals: [BINDING_REFUSAL],
+        },
       })
+      await loadThenResetCalls()
+      const site = editedHeadline({ text: 'Bye', title: 'new' })
 
       await fsCodemodAdapter.saveSite(site)
+      const first = calls[0]!.body as { edits: Array<{ prop?: string }> }
+      expect(first.edits.map((edit) => edit.prop).sort()).toEqual(['text', 'title'])
 
+      calls = []
+      await fsCodemodAdapter.saveSite(site)
+
+      // `title` landed, so its baseline advanced and it is not sent again.
+      // The refused `text` did NOT land, so its baseline held — it is still
+      // the user's pending change, and a later save tries it again. (Before
+      // WB-35 the batch was all-or-nothing on an aggregate count, and a named
+      // refusal's value was adopted as if it had been written.)
+      expect(calls).toHaveLength(1)
+      const second = calls[0]!.body as { edits: Array<{ prop?: string }> }
+      expect(second.edits.map((edit) => edit.prop)).toEqual(['text'])
+    })
+
+    it('a batch the server fully wrote advances every baseline — nothing is re-sent', async () => {
+      stubFetch({
+        '/admin/api/studio/load': loadedHeadline({ text: 'Hi', title: 'old' }),
+        '/admin/api/studio/save': { ok: true, written: 2, skipped: 0, shifted: false, sharedComponents: false, refusals: [] },
+      })
+      await loadThenResetCalls()
+      const site = editedHeadline({ text: 'Bye', title: 'new' })
+
+      await fsCodemodAdapter.saveSite(site)
+      calls = []
+      await fsCodemodAdapter.saveSite(site)
+
+      expect(calls).toHaveLength(0)
       expect(collectToasts()).toHaveLength(0)
     })
   })
@@ -856,9 +898,11 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
 
       const toasts = collectToasts()
       expect(toasts).toHaveLength(1)
-      expect(toasts[0].kind).toBe('error')
+      // WB-13 — a warning with its one-click remedy, never a red card.
+      expect(toasts[0].kind).toBe('warning')
       expect(toasts[0].title).toBe('Class change not saved to source')
       expect(toasts[0].body).toContain('CSS Modules')
+      expect(toasts[0].action?.label).toBe('Open in code')
     })
   })
 

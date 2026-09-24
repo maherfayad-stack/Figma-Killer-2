@@ -1,2 +1,2 @@
 export { ErrorBoundary } from './ErrorBoundary'
-export { flattenErrorChain, logErrorChain } from './errorReporting'
+export { flattenErrorChain, logErrorChain, type ErrorChainEntry } from './errorReporting'

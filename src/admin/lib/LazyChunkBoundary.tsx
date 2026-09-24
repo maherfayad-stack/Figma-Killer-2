@@ -5,13 +5,32 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { ErrorBoundary } from '@ui/components/ErrorBoundary'
+import { ErrorBoundary, type ErrorChainEntry } from '@ui/components/ErrorBoundary'
 import { Button } from '@ui/components/Button'
 import { ReloadIcon } from 'pixel-art-icons/icons/reload'
 import styles from './LazyChunkBoundary.module.css'
 
 const DEFAULT_TIMEOUT_MS = 8000
 const EMPTY_RESET_KEYS: ReadonlyArray<unknown> = []
+
+/**
+ * The messages browsers and bundlers use for a lazy chunk that could not be
+ * fetched or evaluated: Vite/Chromium ("Failed to fetch dynamically imported
+ * module"), Safari ("Importing a module script failed"), Firefox ("error
+ * loading dynamically imported module"), Vite's CSS preload, and webpack's
+ * `ChunkLoadError`.
+ */
+const CHUNK_LOAD_MESSAGE =
+  /failed to fetch dynamically imported module|importing a module script failed|error loading dynamically imported module|unable to preload css|loading (css )?chunk [\w-]+ failed/i
+
+/**
+ * ERR-13 — whether a caught error is really a chunk that failed to load. Only
+ * then is "Editor chunk failed to load" true; an ordinary render error that
+ * reaches this boundary is something else, and says so.
+ */
+export function isChunkLoadError(chain: readonly ErrorChainEntry[]): boolean {
+  return chain.some((entry) => entry.name === 'ChunkLoadError' || CHUNK_LOAD_MESSAGE.test(entry.message))
+}
 
 interface LazyChunkBoundaryProps {
   location: string
@@ -43,14 +62,27 @@ export function LazyChunkBoundary({
     <ErrorBoundary
       location={location}
       resetKeys={boundaryResetKeys}
-      fallback={({ chain, reset }) => (
-        <LazyChunkFailure
-          titleId={`lazy-chunk-boundary-${location}-title`}
-          title="Editor chunk failed to load"
-          message={chain[0]?.message ?? 'The editor chunk could not be loaded.'}
-          onRetry={() => retry(reset)}
-        />
-      )}
+      fallback={({ chain, reset }) =>
+        isChunkLoadError(chain) ? (
+          <LazyChunkFailure
+            titleId={`lazy-chunk-boundary-${location}-title`}
+            title="Editor chunk failed to load"
+            message={chain[0]?.message ?? 'The editor chunk could not be loaded.'}
+            onRetry={() => retry(reset)}
+          />
+        ) : (
+          // ERR-13 — not a chunk: a render error nothing narrower caught. Every
+          // editor panel, section and chrome seam has its own boundary now, so
+          // reaching here is rare; the copy says what happened, and the raw
+          // message stays in the console (`[error-boundary:<location>]`).
+          <LazyChunkFailure
+            titleId={`lazy-chunk-boundary-${location}-title`}
+            title="The editor stopped responding"
+            message="Something in the editor failed while drawing. Your files are unchanged."
+            onRetry={() => retry(reset)}
+          />
+        )
+      }
     >
       <Suspense
         fallback={(

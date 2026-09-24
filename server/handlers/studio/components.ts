@@ -44,7 +44,7 @@
  * so this handler never sees one.
  */
 import { createWorkspaceProject } from '@core/page-parser'
-import { jsonResponse } from '../../http'
+import { jsonResponse, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { extractLocalComponentCatalog, type LocalComponentSpec } from './componentSpecExtract'
 
@@ -62,7 +62,6 @@ export async function tryServeStudioComponents(req: Request, url: URL, pathname:
     return jsonResponse({ components })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:components]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:components]', err)
   }
 }

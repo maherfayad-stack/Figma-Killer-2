@@ -101,6 +101,23 @@ export function findJsxElementAtLocation(
   return found
 }
 
+/**
+ * Thrown when no JSX element starts at the requested `line:col` — the file
+ * changed since whoever named that position read it. A TYPED miss, so the
+ * writeback batch can report it as the `element-moved` refusal it is (and the
+ * board can re-read and retry) instead of an unexplained codemod failure.
+ */
+export class JsxElementNotFoundError extends Error {
+  readonly reason = 'element-moved'
+  readonly path: string
+
+  constructor(message: string, path: string) {
+    super(message)
+    this.name = 'JsxElementNotFoundError'
+    this.path = path
+  }
+}
+
 /** Finds the target element or throws a clear, location-specific error. */
 export function findJsxElementAtLocationOrThrow(
   sourceFile: SourceFile,
@@ -110,9 +127,10 @@ export function findJsxElementAtLocationOrThrow(
 ): JsxOpeningLikeElement {
   const element = findJsxElementAtLocation(sourceFile, line, col)
   if (!element) {
-    throw new Error(
+    throw new JsxElementNotFoundError(
       `No JSX element found at ${file}:${line}:${col} (expected the column to point at the ` +
         'character immediately after "<" in a JSX opening/self-closing tag).',
+      `${file}:${line}:${col}`,
     )
   }
   return element

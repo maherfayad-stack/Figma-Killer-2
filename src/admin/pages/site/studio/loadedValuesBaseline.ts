@@ -221,6 +221,8 @@ export interface NodeValueBump {
   nodeId: string
   key: string
   value: string | number | boolean
+  /** The outcome key of the edit that carries this value (`editOutcomes.ts`) — committed only when that edit wrote. */
+  editKey: string
 }
 
 /**
@@ -239,13 +241,11 @@ export interface NodeValueBump {
  *
  * Deliberately per-key rather than a wholesale re-snapshot (unlike
  * `resetLoadedValues`/`mergeLoadedValuesBaseline`, which replace an entire
- * node's bag): a save's response only confirms the batch as a WHOLE landed
- * (`written`/`skipped` are aggregate counts across the whole POST, not
- * per-edit), so the caller only invokes this when every edit in the batch is
- * known to have written — see `fsCodemodAdapter.ts`'s `unexplainedSkips === 0`
- * gate before calling this. Never call this for a key whose edit was refused
- * or skipped: doing so would erase the very diff the user still needs to see
- * refused on a later save.
+ * node's bag): the caller passes exactly the bumps whose edit WROTE — the
+ * save response names every edit it refused (WB-35, `editOutcomes.ts`), so
+ * one refused edit no longer holds back the whole batch. Never call this for
+ * a key whose edit was refused: doing so would erase the very diff the user
+ * still needs a later save to write.
  */
 export function commitNodeValuesBaseline(bumps: readonly NodeValueBump[]): void {
   for (const { nodeId, key, value } of bumps) {
@@ -262,6 +262,8 @@ export function commitNodeValuesBaseline(bumps: readonly NodeValueBump[]): void 
 export interface NodeValueDrop {
   nodeId: string
   key: string
+  /** As {@link NodeValueBump.editKey}. */
+  editKey: string
 }
 
 /**
@@ -274,7 +276,7 @@ export interface NodeValueDrop {
  * would keep reporting the same removal on every later autosave tick, and
  * `Object.keys(baseline)` (which is how a removed inline style is even
  * DETECTED — the current bag no longer mentions it) would keep listing it.
- * Called under the same `unexplainedSkips === 0` gate, for the same reason.
+ * Called with the same per-edit filter, for the same reason.
  */
 export function dropNodeValuesBaseline(drops: readonly NodeValueDrop[]): void {
   for (const { nodeId, key } of drops) {

@@ -41,11 +41,14 @@ export interface SetJsxStyleParams {
  */
 export class JsxStyleTargetError extends Error {
   readonly path: string
+  /** The reason on its own, without the codemod prefix and the absolute path — what a person may read (WB-33). */
+  readonly detail: string
 
   constructor(message: string, path: string) {
     super(`[ast-codemods/setJsxStyle] ${path}: ${message}`)
     this.name = 'JsxStyleTargetError'
     this.path = path
+    this.detail = message
   }
 }
 
