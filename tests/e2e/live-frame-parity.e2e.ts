@@ -170,13 +170,17 @@ test.describe('Live-frame parity (Tier 2)', () => {
 
   test('canvas-23: a drag at the bottom of the frame never grows it by the size badge', async ({ page }) => {
     const live = await openLiveSms(page)
-    const main = live.content.locator('main').first()
-    // A point in `main` below the absolutely positioned banner selects `main`.
-    const mainBox = await main.boundingBox()
-    await panIntoView(page, live.canvasRoot, main)
-    await page.mouse.click(mainBox!.x + 12, mainBox!.y + mainBox!.height - 12)
+    // `main` is the page: its bottom is the body's. A point in it below the
+    // absolutely positioned banner (on screen, unlike main's own bottom edge)
+    // selects it.
+    const resend = live.content.locator('[class*="resend"]').first()
+    await panIntoView(page, live.canvasRoot, resend, 80)
+    const below = await resend.boundingBox()
+    await page.mouse.click(below!.x + 4, below!.y + below!.height + 80)
     const handle = live.content.locator('[data-canvas-resize-handle="e"]')
-    await expect(handle, 'selecting the page’s <main> drew no handles').toBeVisible({ timeout: 15_000 })
+    await expect(handle, 'selecting the page’s <main> drew no handles').toBeAttached({ timeout: 15_000 })
+    await panIntoView(page, live.canvasRoot, handle)
+    await expect(handle).toBeVisible()
     const frameHeight = async () => (await live.frame.boundingBox())!.height
     const before = await frameHeight()
 
@@ -218,7 +222,9 @@ test.describe('Live-frame parity (Tier 2)', () => {
     await expect(input).not.toHaveAttribute('data-studio-resize-preview', { timeout: 30_000 })
     const after = await measure(input)
     near(after.width, Math.round(before.width + 30), 'the input snapped back after the HMR')
-    near(after.left, before.left, 'the input moved')
+    // The inline START edge stays put (the right one under RTL).
+    const rtl = await input.evaluate((el) => getComputedStyle(el).direction === 'rtl')
+    near(rtl ? after.right : after.left, rtl ? before.right : before.left, 'the input moved')
   })
 
   test('canvas-26: a resize edge snaps to a sibling’s edge within 8 screen px', async ({ page }) => {
