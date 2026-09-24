@@ -52,6 +52,11 @@ export { setAgentStoreApi } from './storeRef'
 // — the conversation stamp, the chat turn, and the browser bridge all derive
 // their project from here so they cannot disagree.
 export { agentProjectDir } from './agentProjectDir'
+export { agentSelectionKey } from './studioAgentSnapshot'
+
+// AI-7 — a turn's changed files: the per-file diff request and the shapes the card renders.
+export { fetchAgentTurnFileDiff } from './agentTurnChanges'
+export type { AgentRevertResult, AgentTurnChanges, AgentTurnFileChange, AgentTurnFileDiff } from './agentTurnChangeTypes'
 
 // Session controls — the composer's permission-mode trigger reads the initial
 // state back so its project-switch reset can never drift from the initializer.

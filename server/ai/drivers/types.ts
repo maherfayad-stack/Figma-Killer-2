@@ -4,7 +4,7 @@
  * The runtime owns the agent loop and the bridge; drivers own one SDK each
  * and one or more `AiAuthMode`s.
  *
- * @see docs/plans/2026-05-26-ai-runtime-rewrite.md → "Drivers"
+ * @see docs/features/agent.md → "Providers"
  */
 
 import type { CoreCapability } from '@core/capabilities'
@@ -246,6 +246,14 @@ export interface ToolContextBase {
    * list only.
    */
   readonly userSuppliedUrls?: readonly string[]
+  /**
+   * The persisted id of the user message that opened this turn — the key the
+   * turn's file checkpoint is stored under (AI-7, `agentCheckpoints.ts`) and
+   * the id the panel shows "Changed N files" against. `undefined` for a call
+   * with no chat turn behind it (an external MCP client), which takes no
+   * checkpoint.
+   */
+  readonly turnId?: string
   /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's

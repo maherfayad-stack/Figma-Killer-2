@@ -976,31 +976,27 @@ migrated section narrows its own bag to the handful of properties it claims;
 this one instead claims "every uncurated key" (`!isCuratedProperty`), the
 Webflow/Framer-style escape hatch `CustomPropertiesSection.tsx` (kept at its
 original path, widened with an additive `forceOpen` prop) has always been.
-It has two call sites — the manifest wrapper here (`forceOpen` always on,
-serving one node and N alike since S5), plus `StyleRuleComposer.tsx`
-(ambient/global-selector), which calls it directly now that
-`StyleSectionsEditor.tsx` — the registry-driven renderer every curated section
-(G1–G11) used to share — is deleted.
+It has two call sites: the manifest wrapper here (`forceOpen` always on,
+serving one node and N alike), and `StyleRuleComposer.tsx`.
 
-**`StyleSectionsEditor.tsx` and `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`
-array are retired, not both deleted.** `StyleSectionsEditor.tsx` (the last
-file that ever rendered the legacy curated-section registry) is deleted
-outright. `CLASS_STYLE_SECTIONS` itself is permanently `[]`, not removed —
-`StyleCategoryRail.tsx` (the ambient-selector rail's "one button per CSS
-category" loop, now rendering zero buttons — a disclosed, by-construction
-narrowing, not a bug) and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
-still import from that file.
+**The ambient/global-selector surface is the one place that is not a manifest
+section.** Picking a class in the Classes panel (`SelectorsPanel`) makes
+`PropertiesPanelBody.tsx` mount `SelectorInspector.tsx` instead of
+`StyleSurface`. The manifest sections all read `useSelectionModel()`, which
+needs a selected node, and this surface has none, so it renders two things:
 
-**Multi-select narrowed with it, and S5 reversed that.** By the time P3
-reached item 11, every curated category had migrated to a manifest entry
-reading `useSelectionModel()` — which was built for exactly one node — so the
-legacy composers were left rendering only `CustomPropertiesSection`, and a
-multi-selection lost every other section. That was never a design decision,
-just the far end of a migration. S5 widened the model to N (§9.0) and deleted
-the multi-select composer entirely; the ambient/global-selector surface
-(`StyleRuleComposer.tsx` + `StyleCategoryRail.tsx`) is the only caller of the
-now-empty `CLASS_STYLE_SECTIONS` left, and closing that one is its own
-ticket.
+- `StyleRuleComposer.tsx`: the rule's own stored bag (base, the active custom
+  condition's or the active breakpoint's `contextStyles`) through `CustomPropertiesSection`, and nothing
+  else.
+- `StyleCategoryRail.tsx`: the "one button per CSS category" rail. It loops
+  over `classStyleSections.ts`'s `CLASS_STYLE_SECTIONS`, which is `[]`, so it
+  renders no category buttons.
+
+`CLASS_STYLE_SECTIONS` stays exported, empty, because `SelectorInspector.tsx`,
+`StyleCategoryRail.tsx` and `cssControlTypes.ts` (`ALL_CURATED_CSS_PROPERTIES`)
+still import it. A multi-selection does not use this surface: it renders the
+ordinary `INSPECTOR_SECTIONS` column (§9.0), with `MultiSelectTargetBar.tsx`
+above it (§9.4).
 
 ---
 
@@ -1103,10 +1099,10 @@ on a text layer, rather than one that is promoted to the top of a fixed list
 duplicated) from `styleSectionOrder.ts`. `orderStyleSections`/
 `isTextSelection`/this section's own "Typography renders first" reordering
 stays live, unchanged, for the one surface this migration didn't touch:
-`StyleRuleComposer.tsx`/`StyleCategoryRail.tsx` (`SelectorInspector.tsx`'s
-ambient global-selector surface), which still renders the legacy
-`CLASS_STYLE_SECTIONS` list directly and has no `typography` entry left to
-promote, so the reordering is now an inert no-op there, not a bug. (The other
+`StyleCategoryRail.tsx` (in `SelectorInspector.tsx`'s ambient global-selector
+surface), which still renders the `CLASS_STYLE_SECTIONS` list directly; that
+list is empty and has no `typography` entry to promote, so the reordering is
+an inert no-op there, not a bug. (The other
 former caller, the multi-select composer, is deleted — see §9.0.) It resolves
 for real when the ambient surface joins the manifest too.
 
@@ -1893,10 +1889,10 @@ final word to. Confirmation is remembered per class id while the surface stays
 mounted: re-asking on every keystroke trains the user to click through. The
 gate is inline, under the chip that raised the question — never
 `window.confirm` (`no-native-browser-dialogs`), and never a modal, because the
-question is about the surface already on screen. Once confirmed, the class
-target mounts the ordinary `StyleRuleComposer` under the same pre-flight
-`StyleWriteLockContext` the single-node surface provides, so a compiled class
-is as unwritable here as it is there.
+question is about the surface already on screen. Once confirmed,
+`MultiSelectTargetBar.tsx` sets the class as the write target and the ordinary
+`INSPECTOR_SECTIONS` column writes to it; a multi-selection has no separate
+composer.
 
 ### §9.4a The write lock carries a count, not a boolean
 
@@ -1918,6 +1914,16 @@ whose `width` comes from an expression takes a `color` edit perfectly well, and
 a selection-wide count would be wrong on every property but one. Each row asks
 about its own property in O(1) via `resolveRowWriteLock`, and carries
 `data-write-partial="true"` when it has something to disclose.
+
+**Nothing in the panel provides this context today.** No component renders
+`StyleWriteLockContext.Provider`, so `useStyleWriteLock()` in
+`ClassPropertyRow.tsx` always reads `null`, and neither the `blocked` nor the
+`partial` row state reaches the app; only
+`src/__tests__/panels/classPropertyRowWriteLock.test.tsx` mounts a provider.
+The class lock the panel does apply comes from the selection model:
+`selectionModel.ts` sets `writableClasses[].lockReason` through
+`classCssWritability.ts`'s `classCssWriteLockReason`, and a multi-selection's
+skipped layers and code-set properties are named by `MultiSelectTargetBar.tsx`.
 
 ### §9.4b Selection colors (G6.4)
 

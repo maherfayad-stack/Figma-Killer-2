@@ -69,6 +69,8 @@ const OWN_READDIR_ALLOWLIST: Record<string, string> = {
   'studio-tool-refusals-are-coded.test.ts': 'same: one non-recursive readdirSync of one directory',
   'workspace-volume-persistence.test.ts':
     'one non-recursive readdirSync of the repo root for compose*.yml, an extension the cache does not hold',
+  'bun-version-pinned.test.ts':
+    'one non-recursive readdirSync of .github/workflows/ for *.yml, an extension the cache does not hold',
   'shared-source-tree-walk.test.ts': 'this gate — it walks independently in order to check the cache',
 }
 

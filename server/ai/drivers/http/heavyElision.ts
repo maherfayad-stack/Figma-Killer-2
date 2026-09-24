@@ -18,6 +18,30 @@ export function isHeavyResult(r: TurnToolResult): boolean {
   return (r.output.images?.length ?? 0) > 0 || HEAVY_TOOL_NAMES.has(r.name)
 }
 
+/**
+ * What a call's result is about, from its input: the pages it named
+ * (`pages`, sorted — the same set in another order is the same capture), else
+ * one `pageId`/`page`/`path`/`nodeId`. `''` when the call names nothing, which
+ * keeps the old per-tool behaviour for it.
+ */
+export function heavyResultScope(input: unknown): string {
+  if (!input || typeof input !== 'object') return ''
+  const params = input as Record<string, unknown>
+  if (Array.isArray(params.pages)) {
+    return params.pages.filter((page): page is string => typeof page === 'string').sort().join(',')
+  }
+  for (const key of ['pageId', 'page', 'path', 'nodeId']) {
+    const value = params[key]
+    if (typeof value === 'string') return value
+  }
+  return ''
+}
+
+/** Results supersede each other per (tool, scope) — see `TurnToolResult.scope`. */
+function supersessionKey(r: TurnToolResult): string {
+  return `${r.name}|${r.scope ?? ''}`
+}
+
 /** Replace a heavy payload with a one-line breadcrumb pointing back at the tool. */
 function stubHeavyResult(r: TurnToolResult): TurnToolResult {
   return {
@@ -35,7 +59,8 @@ function stubHeavyResult(r: TurnToolResult): TurnToolResult {
 /**
  * The message array for ONE request: the canonical history with every
  * superseded heavy tool result swapped for its breadcrumb. Per heavy tool name
- * only the most recent message keeps full fidelity; non-heavy results in the
+ * AND scope (the page or file it is about — AI-18) only the most recent
+ * message keeps full fidelity; non-heavy results in the
  * same message are left untouched (a turn can mix a heavy `site_read_document`
  * with a cheap `site_update_node_props`). Messages are rebuilt through the
  * adapter, so this stays provider-agnostic.
@@ -53,17 +78,17 @@ export function projectHeavyElision<TMessage>(
   const projected = history.slice()
   if (heavyMessages.length === 0) return projected
 
-  const lastIndexByTool = new Map<string, number>()
+  const lastIndexByKey = new Map<string, number>()
   for (const m of heavyMessages) {
     for (const r of m.results) {
-      if (isHeavyResult(r) && m.index > (lastIndexByTool.get(r.name) ?? -1)) {
-        lastIndexByTool.set(r.name, m.index)
+      if (isHeavyResult(r) && m.index > (lastIndexByKey.get(supersessionKey(r)) ?? -1)) {
+        lastIndexByKey.set(supersessionKey(r), m.index)
       }
     }
   }
   for (const m of heavyMessages) {
     const superseded = (r: TurnToolResult): boolean =>
-      isHeavyResult(r) && lastIndexByTool.get(r.name) !== m.index
+      isHeavyResult(r) && lastIndexByKey.get(supersessionKey(r)) !== m.index
     if (!m.results.some(superseded)) continue
     projected[m.index] = adapter.buildToolResultMessage(
       m.results.map((r) => (superseded(r) ? stubHeavyResult(r) : r)),
