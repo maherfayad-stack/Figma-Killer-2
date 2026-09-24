@@ -75,7 +75,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** orchestrator review.
 
 ### sec-24 — security hardening follow-ups (mcp-28 / mcp-30 open items, P1-E2 found-not-fixed)
-- **Agent:** security-guard · **Branch:** `fix/security-hardening-followups` off `25681dcb` · **PR:** PR_PLACEHOLDER (draft, base `feat/canvas-excellence`; the item | threat | fix | test table and the adversarial inputs are in its body) · **Updated:** 2026-09-24
+- **Agent:** security-guard · **Branch:** `fix/security-hardening-followups` off `25681dcb` · **PR:** #256 (draft, base `feat/canvas-excellence`; the item | threat | fix | test table and the adversarial inputs are in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; needs a security-guard re-review)
 - **Goal:** close the follow-ups that reviews #233 and #248 deferred, each with a test that failed with its fix disabled in place.
 - **Done:**
