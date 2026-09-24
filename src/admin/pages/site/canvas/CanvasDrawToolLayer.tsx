@@ -46,6 +46,7 @@ import {
   drawnRect,
   isDrawDrag,
   offerBoardDraw,
+  setDrawGestureActive,
   type DrawPoint,
   type DrawRect,
 } from './canvasDrawTool'
@@ -94,6 +95,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     return () => {
       snapshotRef.current?.dispose()
       snapshotRef.current = null
+      setDrawGestureActive(false)
       if (frameRef.current !== null) cancelAnimationFrame(frameRef.current)
     }
   }, [])
@@ -153,6 +155,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
       scale: viewport ? getViewportZoom(viewport) : 1,
       frameId: viewport?.closest<HTMLElement>('[data-frame-id]')?.dataset.frameId ?? null,
     }
+    setDrawGestureActive(true)
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
     } catch (_err) {
@@ -164,6 +167,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const session = sessionRef.current
     if (!session || session.pointerId !== event.pointerId) return
     sessionRef.current = null
+    setDrawGestureActive(false)
     setDrawn(null)
     if (!commit) return
     const end = { x: event.clientX, y: event.clientY }

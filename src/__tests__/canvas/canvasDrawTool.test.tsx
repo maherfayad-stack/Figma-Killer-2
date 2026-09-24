@@ -27,6 +27,7 @@ import {
   isDrawTool,
   offerBoardDraw,
   registerBoardDrawHandler,
+  setDrawGestureActive,
   type CanvasBoardDraw,
 } from '@site/canvas/canvasDrawTool'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -118,6 +119,16 @@ describe('R / O / E / T / F arm a draw tool (IX-12)', () => {
     expect(inserted.moduleId).toBe('base.container')
     expect(inserted.inlineStyles).toMatchObject({ width: '100px', height: '100px' })
     expect(useEditorStore.getState().canvasTool).toBe('move')
+  })
+
+  it('Escape DURING a draw ends the draw and keeps the selection (the node rung stands down)', () => {
+    mount()
+    press({ key: 'r' })
+    setDrawGestureActive(true)
+    press({ key: 'Escape' })
+    setDrawGestureActive(false)
+    expect(useEditorStore.getState().canvasTool).toBe('move')
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['box'])
   })
 
   it('without a tool armed, ⏎ keeps its layer meaning (select the children)', () => {

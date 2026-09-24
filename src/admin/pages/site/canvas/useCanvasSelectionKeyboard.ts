@@ -55,7 +55,7 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { isDrawTool } from './canvasDrawTool'
+import { isDrawGestureActive, isDrawTool } from './canvasDrawTool'
 import { startCanvasTextEdit } from './canvasTextEditStart'
 import { isCanvasKeyboardSurface, isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
@@ -92,6 +92,10 @@ export function useCanvasSelectionKeyboard(
     (event) => {
       // ── Step into / out of an instance ────────────────────────────────
       if (isTextInputTarget(event.target)) return false
+      // P5-E — Escape during a draw ends the draw (the `board` rung puts the
+      // tool away); deselecting under a rectangle still following the pointer
+      // would be two gestures at once.
+      if (event.key === 'Escape' && isDrawGestureActive()) return false
 
       if (event.key === 'Escape') {
         // Only claims the keystroke when something is actually entered —

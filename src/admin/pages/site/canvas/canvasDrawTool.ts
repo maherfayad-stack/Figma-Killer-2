@@ -165,6 +165,25 @@ export function drawInsertStyles(
   return styles
 }
 
+// ── A draw in flight ─────────────────────────────────────────────────────────
+
+let drawGestureActive = false
+
+/**
+ * Set by `CanvasDrawToolLayer` for the length of one press. While a draw is
+ * in flight Escape belongs to IT (the `node` rung's deselect stands down and
+ * the `board` rung puts the tool away, which ends the draw) — otherwise, with
+ * a layer selected, Escape would deselect and leave the rectangle still
+ * following the pointer.
+ */
+export function setDrawGestureActive(active: boolean): void {
+  drawGestureActive = active
+}
+
+export function isDrawGestureActive(): boolean {
+  return drawGestureActive
+}
+
 // ── The empty-board seam (P5-G) ─────────────────────────────────────────────
 
 export interface CanvasBoardDraw {
