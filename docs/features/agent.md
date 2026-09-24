@@ -542,7 +542,7 @@ Every tool the in-canvas agent is offered, in `STUDIO_AGENT_TOOL_NAMES` order. "
 | `studio_list_fonts` | `server` | read | `none` | Which typefaces the project can actually render and how each is loaded, its font tokens and font files; with `query`, a Google family to add and its `@import` line |
 | `studio_find_icon` | `server` | read | `none` | Fuzzy search (words, camelCase, synonyms, typos) over the design system's icon catalogs; the exact `?raw` import per match, or the markup and where to save it |
 | `studio_find_image` | `server` | `studio.write` | `write` | Licensed stock (Pexels) search that lands the best matches through the agent write gate and credits each photographer in `IMAGE-CREDITS.md`. Without `PEXELS_API_KEY` it says so and lands nothing |
-| `studio_upload_asset` | `bridge` (needs the open board) | `studio.write` | `write` | Land bytes the model holds as a new image file in the project |
+| `studio_upload_asset` | `server` | `studio.write` | `write` | Land bytes the model holds (base64 PNG/JPEG/WebP, must match `mimeType`) as a new image file, through the agent write gate like every other agent landing |
 | `studio_fetch_remote_asset` | `server` | `studio.write` | `write` | Fetch an image URL server-side and land it as a project image; bytes never transit the model. Only Figma asset hosts, the stock host, or a URL the user pasted (`host-not-allowed` otherwise) |
 | `studio_extract_reference_asset` | `server` | `studio.write` | `write` | Crop artwork out of the registered reference when it exists nowhere else |
 | `studio_install_deps` | `server` (background job) | `studio.write` + trust ≥ Tier 1 | `write` | Start a `bun install --ignore-scripts` job; returns a `jobId` |
@@ -844,9 +844,12 @@ the user watching sees the frame flip exactly as before. The variant's placement
 `VARIANT_GAP` in `@core/studio-board`, shared with `boardSlice.ts`, so the
 toolbar and the tool cannot drift apart.
 
-`studio_upload_asset` deliberately did NOT move. It posts real `FormData` as the
-signed-in user, and that endpoint's authority is the operator's session — the
-one thing a server-side tool has no honest way to hold.
+`studio_upload_asset` did not move then; it moved later (security review of #248, F6). It
+posted real `FormData` to the canvas's own upload route, which serves the USER and so never
+asks the agent write gate: an agent could land files in Studio's preview shell `prototype/`.
+It is now a server tool on `landAgentAsset` — the agent write gate, the project lock and the
+turn log, like `studio_fetch_remote_asset` — and the capability check (`studio.write`) is
+the same one every server write tool passes.
 
 ### `studio_extract_reference_asset` — artwork that exists only in the comp
 
@@ -1172,7 +1175,7 @@ Two consequences worth knowing. `StudioCapabilityDigest.figma.status` gained **`
 
 | Editor action | Tool | Where it runs, and why |
 |---|---|---|
-| Upload a new image asset into the project | `studio_upload_asset` | **`bridge`** (`server/ai/mcp/tools/studio/uploadAssetTool.ts` declares it; `src/admin/pages/site/agent/studioUploadAsset.ts` runs it). Decodes the agent's base64 into a `Blob` and posts real `FormData` to `POST /admin/api/studio/asset-upload` **as the signed-in user** — that endpoint's authority is the operator's session, the one thing a server-side tool cannot honestly stand in for. Every validation (magic-number sniffing, containment) happens server-side exactly as for a human upload. |
+| Upload a new image asset into the project | `studio_upload_asset` | **`server`** (`server/ai/mcp/tools/studio/uploadAssetTool.ts`). Decodes the base64 strictly, refuses bytes that are not the declared `mimeType`, and lands them through `landAgentAsset` — the agent write gate on `targetDir`, `withProjectWriteLock`, the turn write log, and `assetLanding.ts`' sniffed type and `wx` names. No tab needs to be open. |
 | Set a board frame's preview axes (direction/locale/color-scheme) | `studio_set_frame_axes` | **Server** (`frameAxesTools.ts`). Writes `.studio/boards.json` and pushes a live reload. |
 | Duplicate a board frame as a variant | `studio_duplicate_frame_as_variant` | **Server** (`frameAxesTools.ts`). Same file, same push; the variant lands beside its source at the shared `VARIANT_GAP`. |
 
