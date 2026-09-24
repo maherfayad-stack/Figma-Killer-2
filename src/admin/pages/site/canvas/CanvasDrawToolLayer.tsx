@@ -73,6 +73,8 @@ interface DrawSession {
   drop: CanvasPointerInsertionDrop | null
   /** The pressed frame's on-screen scale, to turn the drawn screen px into CSS px. */
   scale: number
+  /** The board frame pressed in (`null` outside a board) — where T's new text opens. */
+  frameId: string | null
 }
 
 export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolLayerProps) {
@@ -149,6 +151,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
       current: start,
       drop: viewport ? resolveDrop(start.x, start.y) : null,
       scale: viewport ? getViewportZoom(viewport) : 1,
+      frameId: viewport?.closest<HTMLElement>('[data-frame-id]')?.dataset.frameId ?? null,
     }
     try {
       event.currentTarget.setPointerCapture(event.pointerId)
@@ -167,20 +170,20 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const dragged = isDrawDrag(session.start, end)
     const rect = dragged ? drawnRect(session.start, end, { square: event.shiftKey, fromCenter: event.altKey }) : null
     if (session.drop) {
-      commitFrameDraw(session.drop, rect, session.scale)
+      commitFrameDraw(session.drop, rect, session.scale, session.frameId)
       return
     }
     commitBoardDraw(session.start, rect)
   }
 
-  const commitFrameDraw = (drop: CanvasPointerInsertionDrop, rect: DrawRect | null, scale: number) => {
+  const commitFrameDraw = (drop: CanvasPointerInsertionDrop, rect: DrawRect | null, scale: number, frameId: string | null) => {
     const definition = registry.get(spec.moduleId)
     if (!definition) return
     const store = useEditorStore.getState()
     // Every insert writes through the ACTIVE tree, so the frame's page must be
     // active before it runs (`useCanvasInsertionDrag` does the same).
     if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
-    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId) })
+    if (tool === 'text') armCreatedNodeFollowUp((nodeId) => { startCanvasTextEdit(nodeId, frameId) })
     const nodeId = insertModule(definition, drop.location, { inlineStyles: drawInsertStyles(spec, rect, scale) })
     if (nodeId !== null) useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
     useEditorStore.getState().setCanvasTool('move')

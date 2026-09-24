@@ -67,7 +67,7 @@ import { useEditorKeyScope } from './useEditorKeyDispatcher'
 function startTextEditOnEnter(): boolean {
   const state = useEditorStore.getState()
   if (!state.selectedNodeId || state.selectedNodeIds.length > 1) return false
-  return startCanvasTextEdit(state.selectedNodeId)
+  return startCanvasTextEdit(state.selectedNodeId, state.selectedNodeFrameId)
 }
 
 /**

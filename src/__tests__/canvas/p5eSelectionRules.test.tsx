@@ -15,6 +15,8 @@ import {
   FOLLOW_UP_WINDOW_MS,
   offerSelectionToFollowUp,
 } from '@site/canvas/createdNodeFollowUp'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { makeNode, makePage, makeSite } from '../fixtures'
 import '@modules/base'
 
@@ -108,11 +110,45 @@ describe('⏎ on a text layer types into it (IX-7)', () => {
     return event.defaultPrevented
   }
 
-  it('opens the inline edit on the selected text, as a double-click would', () => {
+  /** A board frame (`data-frame-id`) whose portal document renders `title`. */
+  function mountFrame(frameId: string): () => void {
+    const wrapper = document.createElement('div')
+    wrapper.setAttribute('data-frame-id', frameId)
+    const iframe = document.createElement('iframe')
+    iframe.setAttribute('data-breakpoint-id', 'studio')
+    wrapper.appendChild(iframe)
+    document.body.appendChild(wrapper)
+    const text = document.createElement('p')
+    text.setAttribute('data-node-id', 'title')
+    document.body.appendChild(text)
+    registerFrameAdapter(iframe, new PortalFrameAdapter(document), 'studio')
+    return () => {
+      unregisterFrameAdapter(iframe)
+      wrapper.remove()
+      text.remove()
+    }
+  }
+
+  it('opens the inline edit on the selected text, in the frame that renders it', () => {
+    const unmount = mountFrame('frame-1')
     mount()
+    // A Layers-panel selection carries no frame: the one rendering the text is found.
     useEditorStore.getState().selectNode('title')
     expect(press({ key: 'Enter' })).toBe(true)
-    expect(useEditorStore.getState().activeInlineEdit).toMatchObject({ nodeId: 'title', prop: 'text' })
+    expect(useEditorStore.getState().activeInlineEdit).toMatchObject({
+      nodeId: 'title',
+      prop: 'text',
+      frameId: 'frame-1',
+      breakpointId: 'studio',
+    })
+    unmount()
+  })
+
+  it('opens NO session when no frame renders the text — never an inline-edit rung over nothing', () => {
+    mount()
+    useEditorStore.getState().selectNode('title')
+    press({ key: 'Enter' })
+    expect(useEditorStore.getState().activeInlineEdit).toBeNull()
   })
 
   it('on a container it selects ALL the children instead', () => {
