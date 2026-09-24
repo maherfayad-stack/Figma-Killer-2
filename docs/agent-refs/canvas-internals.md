@@ -126,7 +126,7 @@ AUTHORED `overflow-y` was something other than the CSS default `visible`
 un-scaled child (an SVG icon bigger than its box) reports a real, positive
 `scrollHeight - clientHeight` deficit in an ordinary browser even though
 nothing is clipped — `overflow-y: visible` never hid anything, so there is
-nothing to "unroll." See `classifyUnrollElement` in `canvasScrollUnroll.ts`
+nothing to "unroll." See `classifyUnrollElement` in `@core/studio-runtime`'s `scrollUnrollRules.ts`
 for the exact gate. It **never writes `body`'s or
 `html`'s `height`** — see "Height, and the feedback loop" below for why that
 specific boundary is load-bearing.
@@ -173,7 +173,7 @@ prototype player made a click mean "follow this link", because every link
 authored on a button pushed its target twice.
 
 **Hover is a MATCH, not a property**, which is why suppressing it is a selector
-rewrite (`hoverSuppression.ts`, applied by `CanvasHoverSuppressionInjector`) and
+rewrite (`@core/studio-runtime`'s `hoverSuppressionRules.ts`, applied by `CanvasHoverSuppressionInjector`) and
 not an injected rule: `.btn:hover { background: X }` names an arbitrary
 declaration block, and no blanket override can undo an arbitrary declaration.
 `:hover` is swapped for a class token nothing wears — a CLASS specifically, so
@@ -1270,7 +1270,7 @@ it exists, and two of the three biggest items were not the node tree at all:
 | ~85–350 ms per **poster** (880–1,160 ms on a 310-element frame), in a burst | `useFramePosterCapture` → `html-to-image` | queued: `framePosterQueue.ts` holds every capture until the board is quiet, then runs them one per macrotask; since P2-I only off-screen pooled frames are captured |
 | ~10 ms | `CanvasHoverSuppressionInjector` walking all four content sheets' CSSOM | a per-sheet-text rewrite **plan**, built once and applied by index in every other frame |
 | ~7 ms | `ProjectCssInjector` assigning `textContent` — the browser parsing vendor CSS into a new document | unchanged; only an iframe **pool** can avoid it, see below |
-| ~5 ms | `collectScrollDeficits` (`resolveFrameFitHeight.ts`) forced layout | unchanged |
+| ~5 ms | `collectScrollDeficits` (`@core/studio-runtime`'s `frameFitRules.ts`) forced layout | unchanged |
 | ~5 ms | `CanvasScrollUnrollInjector`'s `snapshotAuthoredStyles` + unroll pass | unchanged |
 
 `IframeFrameSurface` therefore mounts in **three commits**: the `<iframe

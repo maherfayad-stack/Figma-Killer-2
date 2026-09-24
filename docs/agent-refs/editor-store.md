@@ -601,9 +601,9 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiSelectTargetBar`), and each row states how far its own edit
-  reaches ("writes to 3 of 5") through the three-state
-  `StyleWriteLockContext`. A class target is reachable too, once the user
+  (`MultiSelectTargetBar`). The per-row "writes to 3 of 5" state of the
+  three-state `StyleWriteLockContext` exists, but no component provides that
+  context, so it never renders (`inspector.md` §9.4a). A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See

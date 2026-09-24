@@ -189,7 +189,7 @@ Full description, the gates and the default:
 [`docs/features/trust-tiers.md`](../features/trust-tiers.md).
 
 **Unroll** — neutralizing inner scroll containers on the design canvas so a whole
-app screen is visible in one frame (`canvasScrollUnroll.ts`,
+app screen is visible in one frame (`src/core/studio-runtime/scrollUnrollRules.ts`,
 `CanvasScrollUnrollInjector.tsx`). Scoped to a CONFIRMED scroll region
 (`[data-studio-unroll-overflow-y="auto"|"scroll"]`), never the universal
 selector — a clip mask and an ellipsis container are not scroll regions.
