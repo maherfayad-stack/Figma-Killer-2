@@ -336,11 +336,13 @@ function sharedDirectoryDepth(a: string, b: string): number {
  * what every caller shares (the rule-source registry, the anchor page, the
  * last write), so the panel's preview and the save agree:
  *
- *   1. the stylesheet written most recently this session — the user is
+ *   1. a plain `.css` before a `*.module.css`: a module's classes reach only
+ *      the files that import it (and one co-located with the class's own page
+ *      was already the answer above), while a plain stylesheet is global once
+ *      loaded — reach first, so a class is never parked in another page's
+ *      module just because that is where the user was typing;
+ *   2. the stylesheet written most recently this session — the user is
  *      styling into it;
- *   2. a plain `.css` before a `*.module.css`: a module's classes reach only
- *      the files that import it, while a plain stylesheet is global once
- *      loaded;
  *   3. the nearest to the anchor page by shared directory;
  *   4. the one holding the most rules — the project's main stylesheet;
  *   5. alphabetical, so a tie never depends on iteration order.
@@ -354,8 +356,8 @@ function rankCandidateStylesheets(files: readonly string[], anchorPageFile: stri
   const nearness = (file: string) => (anchorPageFile ? sharedDirectoryDepth(file, anchorPageFile) : 0)
   return [...files].sort(
     (a, b) =>
-      Number(b === lastWrittenStylesheet) - Number(a === lastWrittenStylesheet) ||
       Number(isModule(a)) - Number(isModule(b)) ||
+      Number(b === lastWrittenStylesheet) - Number(a === lastWrittenStylesheet) ||
       nearness(b) - nearness(a) ||
       (ruleCount.get(b) ?? 0) - (ruleCount.get(a) ?? 0) ||
       a.localeCompare(b),

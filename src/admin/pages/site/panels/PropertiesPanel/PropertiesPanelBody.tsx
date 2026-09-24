@@ -209,7 +209,11 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
           selection pays no height for it. */}
       <div className={styles.nodeNotices} data-testid="properties-node-notices">
         {singleNodeChrome && selectedNode?.fromComponent && selectedNodeId ? (
-          <SharedComponentNotice componentName={selectedNode.fromComponent} nodeId={selectedNodeId} />
+          <SharedComponentNotice
+            componentName={selectedNode.fromComponent}
+            nodeId={selectedNodeId}
+            textOrigin={selectedNode.textOrigin}
+          />
         ) : null}
         {/* E2.5 — the selected node IS the content filling another component's
             slot (a `header={<Icon/>}` fill, or a fragment-slot child). States

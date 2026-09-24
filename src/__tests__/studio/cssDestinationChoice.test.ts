@@ -8,7 +8,7 @@
  * seconds after the first keystroke — from autosave, while the user was still
  * typing. Every candidate IS a real write target; which one is something the
  * editor can decide. Now it does, by a stated order (`rankCandidateStylesheets`):
- * the stylesheet written last, a global sheet over another page's module, the
+ * a global sheet over another page's module, the stylesheet written last, the
  * nearest, the main one, then alphabetical — and it remembers the answer per
  * rule, so the save, the baseline and the panel agree.
  *
@@ -129,6 +129,19 @@ describe('ERR-14 — the ranking', () => {
       },
       {},
     )
+    setOpenPageFile('pages/Home.tsx')
+    expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/index.css' })
+  })
+
+  it('reach outranks the last write: a global sheet over the module the user last wrote to', () => {
+    setStudioStyleRuleSources(
+      {
+        a: { file: 'pages/Onboarding.module.css', selector: '.a' },
+        b: { file: 'src/index.css', selector: '.b' },
+      },
+      {},
+    )
+    noteStylesheetWritten('pages/Onboarding.module.css')
     setOpenPageFile('pages/Home.tsx')
     expect(resolveCssInsertDestination(newRule())).toMatchObject({ file: 'src/index.css' })
   })
