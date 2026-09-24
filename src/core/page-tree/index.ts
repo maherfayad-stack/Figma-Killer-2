@@ -29,7 +29,6 @@ export {
   isSourceDerivedNodeId,
   isStudioPageRootId,
   listRowTemplateId,
-  matchesCallSitePosition,
   toRuntimeStampId,
   withSourceLocation,
 } from './sourceNodeId'
@@ -59,6 +58,7 @@ export type { SourceWritableNode } from './sourceWritability'
 export {
   SourceStructureError,
   isResolvedByInstanceDetach,
+  markSoleInstanceComponentFile,
   refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,

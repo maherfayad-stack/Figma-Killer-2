@@ -28,16 +28,6 @@ export interface StructuralRefusalDialogState {
   /** The node the refusal is about, when the plan had one in hand. */
   nodeId?: string
   /**
-   * Re-run the gesture this refusal blocked once a detach/extract's board
-   * reload lands. `mapId` takes every id the gesture named to the id that
-   * element has now (P3-D: after a detach, the instance's inner elements all
-   * have new addresses, not only the refused one). Present only for the two
-   * remedies that invalidate ids (`detach` / `extract`) — every other runnable
-   * remedy (`edit-component`, `jump-to-source`, `edit-array`) just opens a
-   * file and needs no re-issue.
-   */
-  retry?: (mapId: (nodeId: string) => string) => void
-  /**
    * D2 G3 — run the refused cross-frame drop again as a COPY.
    *
    * A closure rather than an id because the gesture's destination (which page,

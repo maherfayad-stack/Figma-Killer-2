@@ -23,9 +23,19 @@
  *      undoes the gesture AND puts `<Card …/>` back; one ⌘⇧Z redoes both.
  *
  * No dialog on the way. When detach itself refuses (a hook, an ambiguous
- * spread — P1-E1's named refusals), the gesture was not made, and the one
- * honest answer is the refusal the user would have seen before: the dialog,
- * whose "Duplicate as a new file" is the component-copy way forward.
+ * spread — P1-E1's named refusals), the editor makes a COMPONENT COPY for this
+ * call site instead (`Card` → `Card2`, `extractInstanceCopy`), marks the copy
+ * single-instance (`markSoleInstanceComponentFile`, so the placement rule
+ * lets the gesture write into it) and replays there; one ⌘Z undoes the
+ * gesture and points the call site back at `Card` (a `swap`). The copy's file
+ * stays on disk, unreferenced. Only when the copy refuses too does the user
+ * see a refusal — one warning, never the dialog.
+ *
+ * Ids are followed through what the WRITE reported, never re-guessed from the
+ * call site's old position: a detach that adds an import above the call site
+ * moves it down a line, and the old "whatever sits at the call site now"
+ * lookup then re-issued the gesture against the wrong element. The detach
+ * reports the inlined root it created; the copy is found by its own file.
  *
  * Scope: every element the gesture names must live in ONE instance whose
  * component renders one root. A gesture that crosses the instance's edge
@@ -33,7 +43,17 @@
  * deleting the detached markup on undo would take the outside element with
  * it, and that is not an undo.
  */
-import { callSitePosition, isInlinedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import {
+  INLINE_ID_SEPARATOR,
+  callSitePosition,
+  decodeSourceNodeId,
+  isInlinedNodeId,
+  markSoleInstanceComponentFile,
+  type NodeTree,
+  type PageNode,
+} from '@core/page-tree'
+import { extractInstanceCopy } from '@site/studio/studioSaveRequests'
+import { waitForBoardRead } from '@site/studio/sourceIdentity'
 import { pushToast } from '@ui/components/Toast'
 import { commitStudioDetachForInstance } from '@site/studio/studioStructuralCommits'
 import { isStructuralCommitInFlight, subscribeStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
@@ -83,7 +103,8 @@ export function applyToThisInstanceOnly(input: {
     const inlined = outcome?.createdNodeIds[0]
     const detached = resolveActiveTreeTarget(get())?.tree
     if (!outcome) {
-      onRefused()
+      const copied = await replayInComponentCopy({ get, set, tree, callSite, rootId, retry })
+      if (!copied) onRefused()
       return
     }
     if (!inlined || !detached?.nodes[inlined]) {
@@ -99,17 +120,79 @@ export function applyToThisInstanceOnly(input: {
     const detachAt = get()._historyPast.length - 1
     retry(mapId)
     await structuralWritesIdle()
-    const past = get()._historyPast
-    const detach = past[detachAt]
-    const gesture = past[detachAt + 1]
-    if (past.length === detachAt + 2 && gesture?.structural && isDetachEntry(detach)) {
-      set((state) => {
-        const entry = state._historyPast[detachAt]
-        if (entry) entry.linkedToNext = true
-      })
-    }
+    linkIfGestureLanded(get, set, detachAt, isDetachEntry)
   })()
   return true
+}
+
+/**
+ * The fallback: a copy of the component for this call site, the gesture
+ * replayed inside it, and an undo that points the call site back. `false`
+ * when the copy is refused too.
+ */
+async function replayInComponentCopy(input: {
+  get: () => EditorStore
+  set: EditorStoreSetter
+  tree: NodeTree<PageNode>
+  callSite: string
+  rootId: string
+  retry: (mapId: NodeIdMap) => void
+}): Promise<boolean> {
+  const { get, set, tree, callSite, rootId, retry } = input
+  const componentRel = decodeSourceNodeId(rootId)?.rel
+  const componentName = tree.nodes[rootId]?.fromComponent
+  if (!componentRel || !componentName) return false
+  const read = waitForBoardRead(8000)
+  const copy = await extractInstanceCopy(callSite)
+  if (!copy.ok || !copy.newFile) return false
+  await read
+  const board = resolveActiveTreeTarget(get())?.tree
+  const marker = `${INLINE_ID_SEPARATOR}${copy.newFile}:`
+  const inCopy = board ? Object.keys(board.nodes).find((id) => id.includes(marker)) : undefined
+  if (!board || !inCopy) return false
+  const newCallSite = callSitePosition(inCopy)
+  markSoleInstanceComponentFile(copy.newFile)
+  get().recordStructuralSourceWrite({
+    kind: 'push',
+    gesture: {
+      label: `Change this ${componentName} only`,
+      forward: [],
+      inverseTemplate: { kind: 'unsupported', message: 'Redo is not available for a change made through a component copy — make the change again.' },
+      inverse: [{ kind: 'swap', nodeId: newCallSite, newComponentName: componentName, newComponentSource: 'local', newComponentFile: componentRel }],
+    },
+  })
+  const copyAt = get()._historyPast.length - 1
+  // The copy is the component's file under a new name, line for line, so an
+  // inner element keeps its own position; its call-site prefix is the new one.
+  const mapId: NodeIdMap = (nodeId) => {
+    if (nodeId === callSite) return newCallSite
+    if (!nodeId.startsWith(`${callSite}${INLINE_ID_SEPARATOR}`)) return nodeId
+    const [, inner, ...deeper] = nodeId.split(INLINE_ID_SEPARATOR)
+    const location = inner ? decodeSourceNodeId(inner) : null
+    const mapped = location
+      ? [newCallSite, `${copy.newFile}:${location.line}:${location.col}`, ...deeper].join(INLINE_ID_SEPARATOR)
+      : nodeId
+    return board.nodes[mapped] ? mapped : nodeId
+  }
+  retry(mapId)
+  await structuralWritesIdle()
+  linkIfGestureLanded(get, set, copyAt, (entry) => entry?.structural?.gesture === 'source' && entry.structural.source.inverse?.[0]?.kind === 'swap')
+  return true
+}
+
+/** Link the entry at `at` to the one above it, when the replayed gesture pushed exactly that one. */
+function linkIfGestureLanded(
+  get: () => EditorStore,
+  set: EditorStoreSetter,
+  at: number,
+  isFirst: (entry: EditorStore['_historyPast'][number] | undefined) => boolean,
+): void {
+  const past = get()._historyPast
+  if (past.length !== at + 2 || !past[at + 1]?.structural || !isFirst(past[at])) return
+  set((state) => {
+    const entry = state._historyPast[at]
+    if (entry) entry.linkedToNext = true
+  })
 }
 
 /** True for the history entry `commitStudioDetachForInstance` pushed. */

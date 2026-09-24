@@ -77,6 +77,7 @@
  * residual refusals only the AST can answer (`not-siblings`, `expression-child`).
  */
 import {
+  INLINE_ID_SEPARATOR,
   decodeSourceNodeId,
   hasWritableSourceLocation,
   isInlinedNodeId,
@@ -320,7 +321,7 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
       message: `${gesture} a row of a list that the code generates. One piece of source JSX renders every row, so there is no way to change just this one — edit the array it maps over.`,
     }
   }
-  if (isInlinedNodeId(node.id)) {
+  if (isInlinedNodeId(node.id) && !isSoleInstanceNodeId(node.id)) {
     return {
       reason: 'shared-component',
       message: `${gesture} markup that lives in a shared component's own file, so the change would apply to every place that component is used, not just here.`,
@@ -339,6 +340,27 @@ export function refusePlacement(node: SourceStructureNode, gesture: string): Str
     }
   }
   return null
+}
+
+/**
+ * OD-7 — component files Studio made for ONE call site: the copy
+ * (`extractComponentCopy`, `Card` → `Card2`) the editor writes when a detach
+ * refuses. Markup inlined from such a file has exactly one instance, so a
+ * structural edit written into it changes only that instance — an honest
+ * single target, not a `shared-component` refusal. Recorded by the store the
+ * moment it makes the copy; a board read never forgets it for the session.
+ */
+const soleInstanceComponentFiles = new Set<string>()
+
+export function markSoleInstanceComponentFile(rel: string): void {
+  soleInstanceComponentFiles.add(rel)
+}
+
+/** True for markup inlined ONE level deep from a file in {@link markSoleInstanceComponentFile}'s set. */
+function isSoleInstanceNodeId(nodeId: string): boolean {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const rel = decodeSourceNodeId(nodeId)?.rel
+  return segments.length === 2 && rel !== undefined && soleInstanceComponentFiles.has(rel)
 }
 
 /**

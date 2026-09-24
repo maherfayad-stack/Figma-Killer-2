@@ -600,10 +600,8 @@ export function presentStructuralRefusal(
     /** The node the refusal is about, when the plan had one — see `StructuralPlan.nodeId`. */
     nodeId?: string
     /**
-     * Re-run the gesture this refusal blocked, against the node that replaces
-     * `nodeId` once a detach/extract's reload lands. Only ever consulted by
-     * `RefusalDialog` (Phase B) after a `detach`/`extract` action settles —
-     * every other path through this function ignores it.
+     * Re-run the gesture this refusal blocked with every id it named passed
+     * through `mapId` — OD-7's detach-and-replay (`instanceOnlyGesture.ts`).
      */
     retry?: (mapId: (nodeId: string) => string) => void
     /**
@@ -638,7 +636,6 @@ export function presentStructuralRefusal(
           title,
           constraint,
           ...(context.nodeId !== undefined ? { nodeId: context.nodeId } : {}),
-          ...(context.retry ? { retry: context.retry } : {}),
           ...(context.duplicateIntoFrame ? { duplicateIntoFrame: context.duplicateIntoFrame } : {}),
         }
       })
@@ -654,7 +651,16 @@ export function presentStructuralRefusal(
       set: context.set,
       refusedNodeId: context.nodeId,
       retry: context.retry,
-      onRefused: openDialog,
+      // OD-7 — both the detach and the component copy refused: ONE warning,
+      // never the dialog (its remedies are the two writes that just refused).
+      onRefused: () =>
+        pushToast({
+          kind: 'warning',
+          title,
+          body: `This instance could not be detached or copied, so nothing was changed. ${constraint.explanation}`,
+          location: 'site-editor',
+          dedupeKey: `structural-refusal:${title}:instance-only`,
+        }),
     })
     if (tookOver) return
   }

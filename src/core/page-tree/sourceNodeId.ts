@@ -204,16 +204,6 @@ export function callSitePosition(nodeId: string): string {
 }
 
 /**
- * True when `nodeId` is the same call site as `position` — either literally
- * (a plain, non-inlined node) or as the head of a composite id (inlined from
- * that call site). Used to find whatever node NOW occupies a call site whose
- * old id was invalidated by a detach/extract reload.
- */
-export function matchesCallSitePosition(nodeId: string, position: string): boolean {
-  return nodeId === position || nodeId.startsWith(position + INLINE_ID_SEPARATOR)
-}
-
-/**
  * True for the synthetic root `parsedPageToSitePage` mints for every imported
  * page (`<pageId>:body`). It is not a source location — nothing was written at
  * it — so a structural edit whose only target is this node has nowhere to go,

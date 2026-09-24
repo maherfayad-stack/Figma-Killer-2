@@ -16,13 +16,14 @@ import { useEditorStore } from '@site/store/store'
 import { makePage, makeSite } from '../fixtures'
 import type { Page, PageNode } from '@core/page-tree'
 import { isStructuralCommitInFlight, resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
-import { resetSourceIdentities } from '@site/studio/sourceIdentity'
+import { noteBoardRead, resetSourceIdentities } from '@site/studio/sourceIdentity'
 import { __resetToastBusForTests } from '@ui/components/Toast/toastBus'
 import {
   CMS_SITE_RELOAD_EVENT,
   claimCmsSiteReloadRequests,
   latestCmsSiteReloadRequest,
   registerCmsSiteReloader,
+  requestCmsSiteReload,
 } from '@admin/state/adminEvents'
 import { applyStructuralWriteOutcome } from '@site/hooks/siteReloadApply'
 
@@ -76,6 +77,40 @@ const detached = (): Page => pageOf([
   el(`${FILE}:9:5`, MAIN),
 ])
 
+/**
+ * Item 3 — the detach ADDED an import above the call site: everything moved
+ * down a line, and `app/page.tsx:5:5` is now a different element (the old
+ * "whatever sits at the call site" lookup re-issued the gesture there).
+ */
+const SHIFTED_ROOT = `${FILE}:6:5`
+const SHIFTED_TITLE = `${FILE}:7:7`
+const shiftedDetached = (): Page => pageOf([
+  el('page-1:body', undefined, [MAIN]),
+  el(MAIN, 'page-1:body', [`${FILE}:5:5`, SHIFTED_ROOT, `${FILE}:10:5`]),
+  // Something else now sits at the call site's old line.
+  el(`${FILE}:5:5`, MAIN, [`${FILE}:5:9`]),
+  el(`${FILE}:5:9`, `${FILE}:5:5`),
+  el(SHIFTED_ROOT, MAIN, [SHIFTED_TITLE, `${FILE}:8:7`]),
+  el(SHIFTED_TITLE, SHIFTED_ROOT),
+  el(`${FILE}:8:7`, SHIFTED_ROOT),
+  el(`${FILE}:10:5`, MAIN),
+])
+
+/** Item 2 — the detach refused; the call site now uses `Card2`, a copy made for it alone. */
+const COPY_CALL_SITE = `${FILE}:6:5`
+const inCopy = (line: number) => `${COPY_CALL_SITE}~ui/Card2.tsx:${line}:10`
+const copied = (): Page => pageOf([
+  el('page-1:body', undefined, [MAIN]),
+  el(MAIN, 'page-1:body', [COPY_CALL_SITE, `${FILE}:7:5`]),
+  el(COPY_CALL_SITE, MAIN, [inCopy(2)], { label: 'Card2' }),
+  el(inCopy(2), COPY_CALL_SITE, [inCopy(3), inCopy(4)], { fromComponent: 'Card2' }),
+  el(inCopy(3), inCopy(2), [], { fromComponent: 'Card2' }),
+  el(inCopy(4), inCopy(2), [], { fromComponent: 'Card2' }),
+  el(`${FILE}:7:5`, MAIN),
+])
+
+let scenario: 'detach' | 'shifted' | 'copy' = 'detach'
+
 const store = () => useEditorStore.getState()
 
 let posted: Record<string, unknown>[][]
@@ -83,7 +118,11 @@ let realFetch: typeof globalThis.fetch
 let unregister: () => void
 let onReload: () => void
 
+let extracted = false
+
 beforeEach(() => {
+  scenario = 'detach'
+  extracted = false
   resetStructuralCommitQueue()
   resetSourceIdentities()
   __resetToastBusForTests()
@@ -97,6 +136,12 @@ beforeEach(() => {
       posted.push(edits)
       const detach = edits.find((edit) => edit.kind === 'detach')
       const deletes = edits.filter((edit) => edit.kind === 'delete')
+      if (detach && scenario === 'copy') {
+        return new Response(
+          JSON.stringify({ ok: true, written: 0, skipped: 1, shifted: false, sharedComponents: true, touchedFiles: [FILE], refusals: [{ nodeId: CALL_SITE, kind: 'detach', reason: 'uses-hooks', message: 'Card uses useState.' }] }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        )
+      }
       return new Response(
         JSON.stringify({
           ok: true,
@@ -105,7 +150,7 @@ beforeEach(() => {
           shifted: true,
           sharedComponents: false,
           touchedFiles: [FILE],
-          createdNodeIds: detach ? [DETACHED_ROOT] : [],
+          createdNodeIds: detach ? [scenario === 'shifted' ? SHIFTED_ROOT : DETACHED_ROOT] : [],
           removed: [
             ...(detach ? [{ nodeId: CALL_SITE, text: '      <Card />\n', wholeLine: true }] : []),
             ...deletes.map((edit) => ({ nodeId: edit.nodeId, text: '        <h2>Title</h2>\n', wholeLine: true })),
@@ -115,6 +160,11 @@ beforeEach(() => {
         { status: 200, headers: { 'content-type': 'application/json' } },
       )
     }
+    if (url.includes('/extract-component')) {
+      extracted = true
+      queueMicrotask(() => requestCmsSiteReload())
+      return new Response(JSON.stringify({ ok: true, newFile: 'ui/Card2.tsx', newComponentName: 'Card2' }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }
     return new Response(JSON.stringify({ ok: true, narrow: false }), { status: 200, headers: { 'content-type': 'application/json' } })
   }) as typeof globalThis.fetch
 
@@ -123,8 +173,10 @@ beforeEach(() => {
   unregister = registerCmsSiteReloader()
   onReload = () => {
     const covers = latestCmsSiteReloadRequest()
-    store().loadSite(makeSite({ pages: [detached()] }))
+    const next = scenario === 'shifted' ? shiftedDetached() : scenario === 'copy' ? (extracted ? copied() : shared()) : detached()
+    store().loadSite(makeSite({ pages: [next] }))
     store().setActivePage('page-1')
+    noteBoardRead([next], 'reset')
     const claimed = claimCmsSiteReloadRequests(covers)
     for (const outcome of claimed.structuralOutcomes) applyStructuralWriteOutcome(outcome)
     claimed.settle()
@@ -209,6 +261,40 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     expect(posted[0]).toEqual([{ kind: 'detach', nodeId: CALL_SITE }])
     expect(posted[1]).toEqual([
       expect.objectContaining({ kind: 'move', nodeId: DETACHED_BODY, anchorNodeId: DETACHED_TITLE, position: 'before' }),
+    ])
+  })
+
+  // P3-D item 3 — the detach added an import, so the call site's old line
+  // now holds something else. The gesture follows the id the detach
+  // REPORTED, never "whatever sits at the call site now".
+  it('follows the detach’s reported id when an added import shifted the call site', async () => {
+    scenario = 'shifted'
+    store().deleteNode(TITLE)
+    await settle()
+    expect(posted[1]).toEqual([{ kind: 'delete', nodeId: SHIFTED_TITLE }])
+  })
+
+  // P3-D item 2 — the detach refuses (a hook): a component copy for this
+  // call site, the gesture written into the copy, no dialog, one ⌘Z.
+  it('falls back to a component copy when the detach refuses — no dialog, one ⌘Z', async () => {
+    scenario = 'copy'
+    store().deleteNode(TITLE)
+    await settle()
+
+    expect(store().structuralRefusalDialog).toBeNull()
+    expect(extracted).toBe(true)
+    // Written into Card2.tsx, the copy only this call site uses.
+    expect(posted.at(-1)).toEqual([{ kind: 'delete', nodeId: inCopy(3) }])
+    expect(store()._historyPast).toHaveLength(2)
+    expect(store()._historyPast[0]!.linkedToNext).toBe(true)
+
+    const before = posted.length
+    store().undo()
+    await settle()
+    // The delete is taken back, then the call site points at Card again.
+    expect(posted[before]).toEqual([expect.objectContaining({ kind: 'reinsert-source' })])
+    expect(posted[before + 1]).toEqual([
+      { kind: 'swap', nodeId: COPY_CALL_SITE, newComponentName: 'Card', newComponentSource: 'local', newComponentFile: 'ui/Card.tsx' },
     ])
   })
 })
