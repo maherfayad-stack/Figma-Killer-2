@@ -21,6 +21,7 @@ import { getNavigationCommands } from './commands/navigation'
 import { getAccountCommands } from './commands/account'
 import { getEditorCommands } from './commands/editor'
 import { getLayersCommands } from './commands/layers'
+import { getLayerArrangeCommands } from './commands/layerArrange'
 import { getPanelsCommands } from './commands/panels'
 import { getSettingsCommands } from './commands/settings'
 import { getHelpCommands } from './commands/help'
@@ -65,6 +66,7 @@ export function getAllCommands(): Command[] {
       ...getNavigationCommands(),
       ...getEditorCommands(),
       ...getLayersCommands(),
+      ...getLayerArrangeCommands(),
       ...getPanelsCommands(),
       ...getPagesCommands(),
       ...getBreakpointsCommands(),
