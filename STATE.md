@@ -155,7 +155,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
 
 ### store-18 — P3-A: toast and failure policy (WB-12, WB-13, WB-33, WB-35, ERR-13, ERR-18, ERR-22, ERR-24, ERR-25, ERR-26, ERR-29)
-- **Agent:** store-engineer · **Branch:** `fix/quiet-editor-toast-policy` (trunk `a03f410a` merged in) · **PR:** see the PR body for the long form · **Updated:** 2026-09-24
+- **Agent:** store-engineer · **Branch:** `fix/quiet-editor-toast-policy` (trunk `a03f410a` merged in) · **PR:** #244 (draft; long form in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open)
 - **Goal:** never show an edit the editor cannot keep; never a red toast for something the editor could have done itself.
 - **Slices / modules touched:** no new slice, no new selector. `site` slice: `deleteNode`/`deleteNodes` queue a Delete on a pending preview and retarget it (`structuralOptimism.resolvePreviewTargets`, bounded map fed by `settle(createdNodeIds)`). No history or coalesce change: the queued delete runs the ordinary delete (its own entry, tagged as before).
