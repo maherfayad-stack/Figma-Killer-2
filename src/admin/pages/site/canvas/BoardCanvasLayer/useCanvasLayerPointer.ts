@@ -51,7 +51,7 @@ import { paintCanvasDrag } from '../canvasDragPainter'
 import type { ClientPoint } from '../canvasDragSession'
 import { isCanvasSpacePanActive } from '../canvasPanInput'
 import type { CanvasTransform } from '../math'
-import { canvasLayerAtPoint, canvasLayerRects, clientToBoardPoint, readBoardOrigin, type CanvasLayerRect } from './canvasLayerGeometry'
+import { STUDIO_BREAKPOINT_ID, canvasLayerAtPoint, canvasLayerRects, clientToBoardPoint, readBoardOrigin, type CanvasLayerRect } from './canvasLayerGeometry'
 import { resolveCanvasLayerDrop, type CanvasLayerDropState, type CanvasLayerFrameTarget } from './canvasLayerDropPreview'
 import { setHoveredCanvasLayer } from './canvasLayerHover'
 
@@ -219,6 +219,14 @@ export function useCanvasLayerPointer({
       const selected = state.selectedCanvasLayerIds
       if (event.shiftKey) state.selectCanvasLayer(hit.id, 'toggle')
       else if (!selected.includes(hit.id)) state.selectCanvasLayer(hit.id, 'replace')
+      // A frame offers itself as a drop target only while the board's shared
+      // breakpoint is the active one (`BreakpointSelectionOverlay`), which a
+      // click INTO a frame sets. A loose layer is pressed on the board, so it
+      // sets it here — otherwise a session that has not yet clicked a frame
+      // could never drop a layer into one.
+      if (useEditorStore.getState().activeBreakpointId !== STUDIO_BREAKPOINT_ID) {
+        useEditorStore.getState().setActiveBreakpoint(STUDIO_BREAKPOINT_ID)
+      }
       const moving = useEditorStore.getState().selectedCanvasLayerIds
       if (!moving.includes(hit.id)) return // Shift-click just deselected it: a click, not a drag.
 

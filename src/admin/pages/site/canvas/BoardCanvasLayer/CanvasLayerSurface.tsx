@@ -41,12 +41,10 @@ import { canvasLayerPageId, type CanvasLayerPlacement } from '@core/studio-board
 import type { Page } from '@core/page-tree'
 import { CanvasBreakpointContext } from '../CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from '../IframeFrameSurface'
-import type { CanvasLayerWindow } from './canvasLayerGeometry'
+import { STUDIO_BREAKPOINT_ID, type CanvasLayerWindow } from './canvasLayerGeometry'
 import { CanvasLayerHost } from './CanvasLayerHost'
 import styles from './BoardCanvasLayer.module.css'
 
-/** The synthetic breakpoint every studio frame shares — so class CSS keyed on it matches here too. */
-const STUDIO_BREAKPOINT_ID = 'studio'
 
 const SURFACE_CHROME_CSS = [
   '[data-studio-canvas-host] {',

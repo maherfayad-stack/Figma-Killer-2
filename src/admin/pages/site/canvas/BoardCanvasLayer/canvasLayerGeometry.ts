@@ -22,6 +22,9 @@
  */
 import type { CanvasLayerPlacement } from '@core/studio-board'
 
+/** The synthetic breakpoint every studio board frame shares (`BoardFrameView`'s `STUDIO_BREAKPOINT_BASE.id`); the surface renders under it too, so class CSS keyed on it matches. */
+export const STUDIO_BREAKPOINT_ID = 'studio'
+
 export interface CanvasLayerSize {
   width: number
   height: number
