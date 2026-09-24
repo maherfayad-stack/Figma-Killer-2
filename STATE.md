@@ -151,6 +151,23 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** security-guard review. Found-not-fixed items are in the PR body (`studio_upload_asset` bypasses the agent gate; stale icon-guide text).
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
+### canvas-28 — P5-D (first half): SVG-0, SVG-1, SVG-2
+- **Agent:** parser-surgeon · **Branch:** `feat/svg-renders-as-itself` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, test/proof table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; security-guard review of SVG-2 requested)
+- **Goal:** ROADMAP §9 P5-D SVG-0/1/2 (`docs/audits/2026-09-23-studio-audit/08-svg.md` §2 defects 1 and 4, §9). SVG-3 onward not started.
+- **Done:**
+  - SVG-0: `SvgEditor` renders a literal `<svg>` AS the node (`splitSvgRoot.ts`, cached HTML-parser split); no `display:contents` span. `isSizeableDisplay(display, localName)` sizes inline REPLACED elements (svg/img/…), so an svg gets resize handles.
+  - SVG-1: `@core/vector` (new barrel, gated; CLAUDE.md barrel list edited — owner review): `svgAttributeNames` (ONE markup⇄JSX table), `svgReferences`, `pathData` (byte-identical `d` round trip over the 4,247 parseable `d`s in the 568 vendored icons; the 7 with `NaN` refuse), `pathModel` (minimal re-emit), `pathGeometry`, `arcToCubic`, `simplify`, `precision`.
+  - SVG-2: sanitizer keeps `href`/`xlink:href` only as `^#[\w.-]+$` on use/gradients/pattern/filter/textPath/mpath/feImage and adds `<use>`; importer writes `xlink:href` as `href` and REFUSES a remote `url()`; `sanitizeSvgBytes` strips DOCTYPE/entities, XHTML embedding + `srcdoc` + the XHTML namespace, and non-`xml` PIs (XSLT).
+- **Scope (parser files):** `src/core/page-parser/inlineSvg.ts` (name table only) + `__tests__/imageAssetsAndInlineSvg.test.ts`. Also `core/{sanitize,vector/*}`, `core/studio-runtime/{elementResizeRules,resizeHandles,generated/runtimeBridgeBundle}`, `modules/base/svg/*`, `canvas/{resizeOffer,CanvasResizeHandles}`, `studio/svgToJsxNode`, `server/handlers/cms/svgSanitize`.
+- **Decisions:** no new resolution: nothing new locks, joins `codeProps`, or carries an `origin`; the parse only spells `xlinkHref`/`xmlSpace`/`tabIndex` correctly now. A remote `url()` in an import is refused, not dropped (never write less than the file drew without saying so). `data:image/*` in `url()` is allowed (loads nothing).
+- **Landmines:**
+  - **Found, fixed in scope (security):** under happy-dom (the Bun server's DOMPurify DOM) a removed element made DOMPurify skip the NEXT node's attributes: `<foo></foo><a href="javascript:…" onclick>` survived `sanitizeRichtext`. `sanitize.ts` now repeats until a pass removes nothing (clean input = 1 pass).
+  - `runtimeBridgeBundle.ts` was patched with the pristine→modified source diff (CRLF/Bun-1.3.6 tree). Re-run `studio-runtime:sync` on an LF tree, and expect a textual conflict with any other bundle that touched it (it is one line).
+  - **Height:** none new; an svg's box is now the app's box. **Injectors:** none. **Events:** none.
+  - Not yet in `docs/features/studio-import.md` → studio-scribe: the happy-dom skipped-node rule (every server-side DOMPurify call must go through `sanitizeToFixpoint`).
+- **Next:** SVG-3 (part stamps) can start; it reuses `@core/vector`'s name table.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
