@@ -79,3 +79,44 @@ export function layerPaintOrder(layers: readonly CanvasLayerPlacement[]): Canvas
   const ordered = layers.filter((layer) => layer.z !== undefined).sort((a, b) => (a.z ?? 0) - (b.z ?? 0))
   return [...unordered, ...ordered]
 }
+
+/**
+ * One placement's value before and after a gesture — what a canvas-layer
+ * gesture's undo and redo put back. It rides the gesture's STRUCTURAL history
+ * entry (`StructuralSourceGesture.placements`), not a board snapshot pair: a
+ * create, place or lift is one write to source AND one change to the board,
+ * and one ⌘Z has to take back both.
+ */
+export interface CanvasLayerPlacementChange {
+  boardId: string
+  layerId: string
+  before: CanvasLayerPlacement | null
+  after: CanvasLayerPlacement | null
+}
+
+/**
+ * Put every change's `side` value in place: set it on its board, or remove it.
+ * A layer is taken off every board first, so it can never end up on two.
+ * Returns `file` itself for an empty change list.
+ */
+export function applyPlacementChanges(
+  file: BoardsFile,
+  changes: readonly CanvasLayerPlacementChange[],
+  side: 'before' | 'after',
+): BoardsFile {
+  let next = file
+  for (const change of changes) {
+    const value = side === 'before' ? change.before : change.after
+    for (const board of next.boards) {
+      const removed = removeLayerPlacements(board, new Set([change.layerId]))
+      if (removed !== board) next = { ...next, boards: next.boards.map((b) => (b.id === board.id ? removed : b)) }
+    }
+    if (!value) continue
+    const board = next.boards.find((candidate) => candidate.id === change.boardId)
+    if (board) {
+      const placed = upsertLayerPlacement(board, value)
+      next = { ...next, boards: next.boards.map((b) => (b.id === board.id ? placed : b)) }
+    }
+  }
+  return next
+}

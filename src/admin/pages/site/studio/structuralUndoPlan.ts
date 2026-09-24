@@ -65,6 +65,8 @@
  * whatever happens to sit at that line now.
  */
 
+import { canvasLayerEditNodeId, type CanvasLayerPlacementChange } from '@core/studio-board'
+
 /** One edit exactly as `postEdits` puts it on the wire. `kind`/`nodeId` are read back here; the rest rides through. */
 export interface StructuralEditPayload {
   kind: string
@@ -116,6 +118,19 @@ export type StructuralInverseTemplate =
       nodes: { nodeId: string; parentNodeId: string; index: number }[]
     }
   | { kind: 'unsupported'; message: string }
+  // ── P5-G, the free canvas ────────────────────────────────────────────────
+  /** A layer this gesture made (a create, a lifted COPY): delete its module. Known at gesture time — the layer id is minted by the client. */
+  | { kind: 'canvas-layer-delete'; layerId: string }
+  /** A layer delete: write each module back, byte for byte, from the `removed` bytes the delete reported. */
+  | { kind: 'canvas-layer-restore-removed'; layerIds: string[] }
+  /** A layer placed into a frame (a move): delete what it wrote into the page and write the module back. */
+  | { kind: 'canvas-layer-unplace'; layerId: string }
+  /**
+   * An element lifted out of a frame (a move): place the new layer's root back
+   * into the container it left — `transplant-back`'s shape, with the same
+   * live-tree anchor resolution ({@link anchorTransplantBack}).
+   */
+  | { kind: 'canvas-layer-lift-back'; layerId: string; parentNodeId: string; index: number }
 
 /** One `delete` edit's own discarded bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
 export interface StructuralRemovedText {
@@ -187,6 +202,35 @@ export function resolveStructuralInverse(
       // tree as it is when ⌘Z is pressed. Appending is the honest fallback the
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
+    }
+    case 'canvas-layer-delete':
+      return [{ kind: 'canvas-layer-delete', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId }]
+    case 'canvas-layer-restore-removed': {
+      // All or nothing, for `reinsert-deleted`'s reason: restoring two of three
+      // layers silently drops the third.
+      const byNodeId = new Map(outcome.removed.map((r) => [r.nodeId, r] as const))
+      const texts = template.layerIds.map((layerId) => byNodeId.get(canvasLayerEditNodeId(layerId))?.text)
+      if (texts.some((text) => text === undefined)) return null
+      return template.layerIds.map((layerId, i) => ({
+        kind: 'canvas-layer-restore',
+        nodeId: canvasLayerEditNodeId(layerId),
+        layerId,
+        text: texts[i]!,
+      }))
+    }
+    case 'canvas-layer-unplace': {
+      const [created] = outcome.createdNodeIds
+      const [removed] = outcome.removed
+      if (created === undefined || removed === undefined) return null
+      return [
+        { kind: 'delete', nodeId: created },
+        { kind: 'canvas-layer-restore', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId, text: removed.text },
+      ]
+    }
+    case 'canvas-layer-lift-back': {
+      const [root] = outcome.createdNodeIds
+      if (root === undefined) return null
+      return [{ kind: 'canvas-layer-place', nodeId: root, layerId: template.layerId, parentNodeId: template.parentNodeId }]
     }
     case 'reinsert-deleted': {
       // `null` — not "skip the ones we can" — the moment ANY deleted node's
@@ -300,7 +344,7 @@ export function remapInverseTemplate(
   template: StructuralInverseTemplate,
   remap: ReadonlyMap<string, string>,
 ): StructuralInverseTemplate {
-  if (template.kind === 'transplant-back') {
+  if (template.kind === 'transplant-back' || template.kind === 'canvas-layer-lift-back') {
     return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
   }
   if (template.kind === 'reinsert-deleted') {
@@ -338,11 +382,11 @@ export function anchorTransplantBack(
   template: StructuralInverseTemplate,
   parentChildIds: readonly string[],
 ): StructuralEditPayload[] {
-  if (template.kind !== 'transplant-back') return [...edits]
+  if (template.kind !== 'transplant-back' && template.kind !== 'canvas-layer-lift-back') return [...edits]
   const anchorNodeId = parentChildIds[template.index]
   if (anchorNodeId === undefined) return [...edits]
   return edits.map((edit) =>
-    edit.kind === 'transplant' ? { ...edit, anchorNodeId, position: 'before' } : edit,
+    edit.kind === 'transplant' || edit.kind === 'canvas-layer-place' ? { ...edit, anchorNodeId, position: 'before' } : edit,
   )
 }
 
@@ -372,6 +416,14 @@ export interface StructuralSourceGesture {
   forward: StructuralEditPayload[]
   inverseTemplate: StructuralInverseTemplate
   inverse: StructuralEditPayload[] | null
+  /**
+   * P5-G — the free-canvas placements this gesture changed. A create, place,
+   * lift or delete of a loose layer is one write to source AND one change to
+   * `.studio/boards.json`, and one ⌘Z takes back both: undo puts `before`
+   * back, redo `after` (`structuralSourceHistory.ts`). Absent for every
+   * gesture that touches no loose layer.
+   */
+  placements?: CanvasLayerPlacementChange[]
 }
 
 /**

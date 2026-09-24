@@ -126,7 +126,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     })
 
     expect(plan.ok).toBe(true)
-    if (!plan.ok) return
+    if (!plan.ok || plan.kind !== 'frame') return
     expect(plan.pageId).toBe('home')
     expect(plan.target.parentId).toBe(MAIN)
     expect(plan.file.name).toBe('photo.png')
@@ -134,6 +134,34 @@ describe('planCanvasFileDrop — a good drop', () => {
 })
 
 describe('planCanvasFileDrop — refusals, all decided before the network', () => {
+  it('puts the image on the free canvas when the empty board is a Studio board (P5-G)', () => {
+    mountFrame('home')
+    const plan = planCanvasFileDrop({
+      files: [imageFile()],
+      point: { x: 900, y: 400 },
+      transform: null,
+      readPage,
+      freeCanvas: { origin: { left: 100, top: 50 }, zoom: 0.5 },
+    })
+
+    expect(plan.ok).toBe(true)
+    if (!plan.ok || plan.kind !== 'canvas') throw new Error('expected a free-canvas plan')
+    // Client (900, 400) against a board origin at (100, 50), at 50% zoom.
+    expect(plan.at).toEqual({ x: 1600, y: 700 })
+  })
+
+  it('still puts the image in the frame under the pointer when there is one', () => {
+    mountFrame('home')
+    const plan = planCanvasFileDrop({
+      files: [imageFile()],
+      point: { x: 100, y: 100 },
+      transform: null,
+      readPage,
+      freeCanvas: { origin: { left: 0, top: 0 }, zoom: 1 },
+    })
+    expect(plan.ok && plan.kind).toBe('frame')
+  })
+
   it('refuses a drop on the empty board and says where to drop instead', () => {
     mountFrame('home')
     const plan = planCanvasFileDrop({

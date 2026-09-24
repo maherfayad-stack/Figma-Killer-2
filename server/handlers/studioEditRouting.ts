@@ -26,6 +26,7 @@ import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
+import { isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
 import type { StudioEdit } from './studioEditSchemas'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -248,7 +249,9 @@ function isStudioAuthoredSourceRel(rel: string): boolean {
  */
 export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']): boolean {
   if (kind === 'asset' || kind === 'literal' || kind === 'detach' || kind === 'swap') return true
-  if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind))) return true
+  // P5-G — every canvas-layer kind creates, removes or moves a whole element
+  // across files, exactly like `transplant`.
+  if (kind !== undefined && (isStructuralEditKind(kind) || isSlotEditKind(kind) || isCanvasLayerEditKind(kind))) return true
   return isInlinedNodeId(nodeId) || isRouteChromeNodeId(nodeId)
 }
 
@@ -369,7 +372,10 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'group' ||
       edit.kind === 'transplant' ||
       edit.kind === 'reinsert-source' ||
-      edit.kind === 'styled'
+      edit.kind === 'styled' ||
+      // P5-G — a place or lift names a real element but is never the "same
+      // write" as a value edit on it; the other three carry synthetic ids.
+      isCanvasLayerEditKind(edit.kind)
     ) {
       passthrough.push(edit)
       continue

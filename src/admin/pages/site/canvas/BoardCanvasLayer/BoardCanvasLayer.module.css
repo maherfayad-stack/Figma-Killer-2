@@ -1,0 +1,60 @@
+/**
+ * The free canvas (P5-G). Two layers, both at the transform layer's origin so
+ * every `--*-x`/`--*-y` is a plain board coordinate:
+ *
+ *  - `.layer` holds the surface: one iframe per board, painted BELOW the frames
+ *    (it mounts first in `StudioBoardLayers`), and never a pointer target —
+ *    `useCanvasLayerPointer` hit-tests the layers from the board instead.
+ *  - `.chromeLayer` holds the selection and hover rings, ABOVE the frames.
+ */
+.layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+}
+
+.surface {
+    position: absolute;
+    left: var(--surface-x);
+    top: var(--surface-y);
+    width: var(--surface-w);
+    height: var(--surface-h);
+    pointer-events: none;
+}
+
+/* While a loose layer is dragged it is aimed at a frame, so the surface paints
+   above the frames for the gesture (design §4.4). */
+.surface[data-studio-lifted] {
+    z-index: 1;
+}
+
+.surfaceFrame {
+    display: block;
+    height: 100%;
+    border: 0;
+    background: transparent;
+    pointer-events: none;
+}
+
+.chromeLayer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    pointer-events: none;
+}
+
+/* A ring is drawn in board units and counter-scaled by the live zoom, so it
+   stays one screen pixel at every zoom — the frames' own ring rule. */
+.ring {
+    position: absolute;
+    left: var(--ring-x);
+    top: var(--ring-y);
+    width: var(--ring-w);
+    height: var(--ring-h);
+    box-sizing: border-box;
+    border: calc(1px / var(--canvas-zoom)) solid var(--canvas-selection-ring-color);
+}
+
+.ring[data-hover] {
+    border-color: var(--canvas-hover-ring-color);
+}

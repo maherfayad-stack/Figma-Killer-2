@@ -162,6 +162,22 @@ describe('resolveCanvasFileDragPaint — over the empty board', () => {
     expect(paint?.ghost?.label).toBe('Drop onto a frame')
   })
 
+  it('offers the free canvas on a Studio board (P5-G) — not a refusal', () => {
+    mountFrame()
+    const session = beginCanvasFileDragSession(measureBoardDropSurfaces(null))
+    const { paint } = resolveCanvasFileDragPaint(session, {
+      point: { x: 900, y: 400 },
+      facts: { count: 1, type: 'image/png' },
+      transform: null,
+      readPage,
+      hintLayer: document.createElement('div'),
+      hintOrigin: { x: 0, y: 0 },
+      freeCanvas: true,
+    })
+    expect(paint?.ghost?.label).toBe('Place on canvas')
+    expect(paint?.ghost?.refusing).toBeUndefined()
+  })
+
   it('still leads with the FILE’s own refusal when there is one — the nearer fact', () => {
     mountFrame()
     const { paint } = paintAt({ x: 900, y: 400 }, { count: 1, type: 'application/pdf' })

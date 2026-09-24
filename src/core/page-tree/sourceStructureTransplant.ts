@@ -199,6 +199,59 @@ export function previewStructuralTransplant(
 }
 
 /**
+ * P5-G (FC-5) — may this element leave its page for the free canvas (a LIFT:
+ * dragged out of a frame and released over empty board)?
+ *
+ * The origin half of {@link previewStructuralTransplant}, asked without a
+ * destination container because the destination is a NEW layer module — it
+ * has no children to be placed among and no refusal of its own to raise. So
+ * the same four origin rules apply, with the same copy exemption: a `.map` row
+ * and code-placed markup refuse either way; a shared component or route chrome
+ * refuses a MOVE (it would cut markup other screens share) but not a COPY.
+ * Whether the markup can travel at all is the AST's answer at save time
+ * (`captured-scope`), exactly as for a frame-to-frame move.
+ */
+export function previewStructuralLift(
+  originTree: NodeTree<PageNode>,
+  nodeIds: readonly string[],
+  copy: boolean,
+): { ok: true; nodeId: string } | { ok: false; refusal: StructuralRefusal; nodeId?: string } {
+  const nodeId = nodeIds[0]
+  const node = nodeId === undefined ? undefined : originTree.nodes[nodeId]
+  if (!node) {
+    return {
+      ok: false,
+      refusal: { reason: 'reparent', message: 'The element this gesture started on is no longer on the board, so nothing was written.' },
+    }
+  }
+  if (nodeIds.length > 1) {
+    return {
+      ok: false,
+      nodeId: node.id,
+      refusal: {
+        reason: 'multi-select',
+        message: `Studio ${copy ? 'copies' : 'moves'} one element onto the canvas at a time. Drag them one by one.`,
+      },
+    }
+  }
+  if (!isSourceDerivedNodeId(node.id)) {
+    return {
+      ok: false,
+      nodeId: node.id,
+      refusal: {
+        reason: 'insert',
+        message: 'This element exists only on the canvas — there is no markup for it in the code, so there is nothing to put on the free canvas.',
+      },
+    }
+  }
+  const placement = refusePlacement(node, copy ? 'Copied' : 'Moved')
+  if (placement && !(copy && copyEscapesOriginRefusal(placement.reason))) {
+    return { ok: false, refusal: placement, nodeId: node.id }
+  }
+  return { ok: true, nodeId: node.id }
+}
+
+/**
  * Whether `destinationTree` is a page a cross-frame drop could ever write into
  * — used by the DRAG, while the pointer is still down, to decide whether a
  * frame is a candidate at all before any container has been resolved.

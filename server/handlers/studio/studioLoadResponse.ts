@@ -59,6 +59,7 @@
  * as the caller names its id.
  */
 import type { Page } from '@core/page-tree'
+import { isCanvasLayerPageId } from '@core/studio-board'
 import { safeParseValue, Type } from '@core/utils/typeboxHelpers'
 import type { StudioLoadResult } from './studioLoadContract'
 
@@ -102,7 +103,11 @@ export function missingStudioLoadPageIds(
 ): string[] | undefined {
   if (!pageIds) return undefined
   const found = new Set(pages.map((page) => page.id))
-  return pageIds.filter((id) => !found.has(id))
+  // P5-G — a narrowed reload after a canvas-layer write names the layer's
+  // `canvas:<id>` page id; a layer is answered by `canvasLayers` (always the
+  // full set), never by `pages`, so it is not missing and must never make the
+  // client drop a page.
+  return pageIds.filter((id) => !found.has(id) && !isCanvasLayerPageId(id))
 }
 
 /**

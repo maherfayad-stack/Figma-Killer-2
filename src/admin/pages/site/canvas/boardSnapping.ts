@@ -228,6 +228,10 @@ export type DraggedFurniture =
   | { kind: 'frame'; pageId: string }
   | { kind: 'note'; id: string }
   | { kind: 'doc'; id: string }
+  // P5-G — a loose layer: every frame, note and doc is a peer. Other loose
+  // layers are too, but their sizes are measured (`canvasLayerGeometry.ts`),
+  // not stored on the board, so the caller adds them.
+  | { kind: 'layer'; id: string }
 
 /**
  * Every OTHER piece of furniture on `board` (frames, notes, docs) as a flat

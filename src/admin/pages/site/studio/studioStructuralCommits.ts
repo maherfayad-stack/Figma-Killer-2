@@ -41,6 +41,7 @@ import {
 import { resyncBoardAfterWrite } from './studioBoardResync'
 import type { InsertPropValue } from './studioSaveRequests'
 import { isUnreachableFailure } from '@core/http'
+import type { CanvasLayerPlacementChange } from '@core/studio-board'
 import { postEditsRetryingUnreachable } from './structuralWriteRetry'
 import { captureIdentities, type IdentityCapture } from './sourceIdentity'
 import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
@@ -54,7 +55,7 @@ import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from '
  * what the gesture made; a "Duplicated" card on top of the duplicate is noise
  * that says the same thing twice (02 §2a "Inserted / Placed").
  */
-interface StructuralCommitOptions {
+export interface StructuralCommitOptions {
   /**
    * `store-14` — this gesture's ⌘Z, as a template the write's own answer fills
    * in (`structuralUndoPlan.ts`). Omitted by `move`/`reparent`, whose undo
@@ -63,7 +64,7 @@ interface StructuralCommitOptions {
    * pushed an entry, and TAGGED it with this same template, before the commit
    * that reveals the answer even started.
    */
-  undo?: { label: string; template: StructuralInverseTemplate }
+  undo?: { label: string; template: StructuralInverseTemplate; placements?: CanvasLayerPlacementChange[] } // P5-G — see `StructuralSourceGesture.placements`
   /**
    * `store-15` — set only by `delete`. Its tree mutation (and history entry)
    * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
@@ -529,7 +530,7 @@ export async function commitStudioStructuralReissue(
  * `rollback` takes back what the gesture already did, and the user sees ONE
  * toast for it however many edits the batch held.
  */
-async function commitStructural(
+export async function commitStructural(
   edits: readonly StructuralEditPayload[],
   refusalTitle: string,
   options: StructuralCommitOptions = {},
@@ -669,6 +670,7 @@ function resolvePendingHistory(
       forward: [...edits],
       inverseTemplate: options.undo.template,
       inverse: resolveStructuralInverse(options.undo.template, outcome),
+      ...(options.undo.placements ? { placements: [...options.undo.placements] } : {}),
     },
   }
 }

@@ -354,7 +354,7 @@ export async function tryServeStudio(
       // convert for every route not asked for, while the meta below stays a
       // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
       const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
-      const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
+      const { pages, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
       // stays a pure read: opening the board is the moment the board may be
@@ -411,7 +411,7 @@ export async function tryServeStudio(
       // does not attempt.
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -419,6 +419,7 @@ export async function tryServeStudio(
         dir,
         projectName,
         pages,
+        canvasLayers,
         componentSources,
         styleRules,
         styleRuleSources,
@@ -480,7 +481,7 @@ export async function tryServeStudio(
         prunedImports,
         fingerprints,
         retargeted,
-      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
+      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {}, { canvasLayers: 'allow' })
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WB-12 — `refusals` names WHY each edit that did not write didn't (a

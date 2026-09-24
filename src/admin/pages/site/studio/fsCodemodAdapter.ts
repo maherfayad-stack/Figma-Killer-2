@@ -228,6 +228,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       trust,
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
+      canvasLayers: loadedCanvasLayers,
     } = meta
     // ERR-14 — the automatic stylesheet choices are this project's; a load of
     // a DIFFERENT project starts without them (a resync keeps them).
@@ -259,6 +260,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // misdirect a real diff in the new one. `watchLocalizedPagesForBaseline`
     // is idempotent — safe to call on every load, only subscribes once.
     useEditorStore.getState().resetLocalizedPages()
+    // P5-G — the free canvas's loose layers, kept apart from `site.pages` by
+    // construction (`canvasLayerSlice.ts`): they never enter the document below.
+    useEditorStore.getState().setCanvasLayers(loadedCanvasLayers ?? [])
     resetLocalizedTextBaseline()
     watchLocalizedPagesForBaseline()
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per

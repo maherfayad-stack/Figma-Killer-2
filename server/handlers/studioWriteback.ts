@@ -78,6 +78,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
+import { applyCanvasLayerEdit, canvasLayerTouchedFiles, createCanvasLayerScope, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createSyntaxGuard } from './studioSyntaxGuard'
 import { expandMergedOutcomes } from './studioEditMerge'
 import { fingerprintAfterWrite, resolveEditIdentities } from './studioEditIdentity'
@@ -87,6 +88,7 @@ import { projectThumbnailQueue } from './studio/projectThumbnailQueue'
 import {
   type StudioEdit,
   type StudioEditApplyOutcome,
+  type StudioEditBatchOptions,
   type StudioEditBatchResult,
   type StudioEditRefusal,
   type StudioEditSwapDetail,
@@ -191,6 +193,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
   }
 
+  // P5-G — the free canvas's kinds address a layer by id (three never decode).
+  if (isCanvasLayerEdit(edit)) return applyCanvasLayerEdit(dir, edit, (nodeId) => studioEditLocation(dir, nodeId))
   const target = studioEditLocation(dir, edit.nodeId)
   if (!target) return { applied: false, unwritable: 'no-source-location' } // synthetic node (e.g. body)
   const loc = { file: join(dir, target.rel), line: target.line, col: target.col }
@@ -436,6 +440,7 @@ export function applyStudioEditBatch(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations = {},
+  options: StudioEditBatchOptions = {},
 ): StudioEditBatchResult {
   // P1-A/P1-D — which edits still name the element the client read, which name
   // one that moved within its changed file (re-addressed to where it is now),
@@ -443,6 +448,7 @@ export function applyStudioEditBatch(
   // codemod). Decided against the files as they stand BEFORE this batch writes
   // a byte, and before ordering — a re-addressed edit sorts by where it will
   // actually write. See `studioEditIdentity.ts`.
+  const locate = (nodeId: string) => studioEditLocation(dir, nodeId)
   const identity = resolveEditIdentities(dir, edits, expect)
   const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, identity.runnable))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
@@ -471,6 +477,7 @@ export function applyStudioEditBatch(
       const destination = studioEditFile(dir, edit.parentNodeId)
       if (destination) touchedFiles.add(destination)
     }
+    for (const file of canvasLayerTouchedFiles(dir, edit, locate)) touchedFiles.add(file)
   }
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
@@ -513,7 +520,7 @@ export function applyStudioEditBatch(
     const removesMarkup =
       edit.kind === 'delete' ||
       edit.kind === 'ungroup' ||
-      (edit.kind === 'transplant' && edit.copy !== true)
+      ((edit.kind === 'transplant' || edit.kind === 'canvas-layer-lift') && edit.copy !== true)
     if (!removesMarkup) continue
     const file = studioEditFile(dir, edit.nodeId)
     if (!file || referencedBefore.has(file)) continue
@@ -541,12 +548,13 @@ export function applyStudioEditBatch(
   const removed: (DeletedJsxText & { nodeId: string })[] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
   const syntaxRefusal = createSyntaxGuard(dir)
+  const canvasLayerScope = createCanvasLayerScope(options.canvasLayers, locate) // P5-G — agents never write loose layers
   const fingerprints: { nodeId: string; fingerprint: string }[] = []
   // P3-C (WB-18) — CSS-Module imports the class edits below reserve, added
   // after the loop for the same reason the import prune runs there.
   const moduleImports = createModuleImportPlan()
   for (const edit of ordered) {
-    const brokenTarget = syntaxRefusal(edit)
+    const brokenTarget = canvasLayerScope(edit) ?? syntaxRefusal(edit)
     if (brokenTarget) {
       refusals.push(brokenTarget)
       continue
@@ -685,6 +693,8 @@ export function applyStudioEditBatchLocked(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations = {},
+  options: StudioEditBatchOptions = {},
 ): Promise<StudioEditBatchResult> {
-  return withProjectWriteLock(dir, () => applyStudioEditBatch(dir, edits, expect))
+  return withProjectWriteLock(dir, () => applyStudioEditBatch(dir, edits, expect, options))
 }
+

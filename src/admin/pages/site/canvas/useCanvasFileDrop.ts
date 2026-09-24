@@ -122,6 +122,7 @@ export function useCanvasFileDrop({
         readPage,
         hintLayer: hintLayerRef.current,
         hintOrigin: hintOriginRef.current,
+        freeCanvas: document.querySelector('[data-studio-board-origin]') !== null,
       })
       // Only one layer ever carries chrome — the frame's or the board's. Clear
       // the one being left BEFORE writing the new one, the same discipline the
@@ -168,6 +169,7 @@ export function useCanvasFileDrop({
         point: { x: event.clientX, y: event.clientY },
         transform: transformRef?.current ?? null,
         readPage,
+        freeCanvas: freeCanvasAt(transformRef?.current ?? null),
       })
 
       if (!plan.ok) {
@@ -182,7 +184,8 @@ export function useCanvasFileDrop({
         return
       }
 
-      void landAndInsert(plan.file, plan.pageId, plan.target.parentId, plan.target.index)
+      if (plan.kind === 'canvas') void landOnCanvas(plan.file, plan.at)
+      else void landAndInsert(plan.file, plan.pageId, plan.target.parentId, plan.target.index)
     }
 
     // `relatedTarget === null` is the drag leaving the WINDOW; every other
@@ -229,6 +232,60 @@ async function landAndInsert(file: File, pageId: string, parentId: string, index
     return
   }
   useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
+}
+
+/**
+ * P5-G — the free canvas under a drop, when this is a Studio board: the element
+ * `BoardCanvasLayer` keeps at board (0, 0) (`data-studio-board-origin`) and the
+ * live zoom. Read at the moment of the drop, like the frame rects are.
+ */
+function freeCanvasAt(transform: CanvasTransform | null): { origin: { left: number; top: number }; zoom: number } | null {
+  const origin = document.querySelector<HTMLElement>('[data-studio-board-origin]')
+  if (!origin) return null
+  const rect = origin.getBoundingClientRect()
+  return { origin: { left: rect.left, top: rect.top }, zoom: transform?.zoom ?? useEditorStore.getState().zoom }
+}
+
+/**
+ * An image dropped on the empty board: its bytes land exactly as a frame drop's
+ * do (the project's `public/`), and it becomes a loose layer centred on the
+ * drop point at its intrinsic size (design G2). One structural commit, and the
+ * layer appearing is the answer — no toast.
+ */
+async function landOnCanvas(file: File, at: { x: number; y: number }): Promise<void> {
+  let src: string
+  try {
+    src = (await dropStudioAsset(file)).src
+  } catch (err) {
+    console.error('[canvas-file-drop] landing the dropped image failed:', err)
+    pushToast({
+      kind: 'error',
+      title: DROP_TITLE,
+      body: getErrorMessage(err, 'The image could not be written into your project.'),
+      location: 'site-editor',
+    })
+    return
+  }
+  const size = await intrinsicImageSize(file)
+  useEditorStore.getState().createCanvasLayer(
+    { name: 'img', props: { src, alt: altTextFor(file), ...(size ? { width: size.width, height: size.height } : {}) } },
+    size ? { x: at.x - size.width / 2, y: at.y - size.height / 2 } : at,
+  )
+}
+
+/** The image's own pixel size, or `null` when the browser cannot decode it here (the server's sniff decides validity). */
+async function intrinsicImageSize(file: File): Promise<{ width: number; height: number } | null> {
+  if (typeof createImageBitmap !== 'function') return null
+  try {
+    const bitmap = await createImageBitmap(file)
+    const size = { width: bitmap.width, height: bitmap.height }
+    bitmap.close()
+    return size.width > 0 && size.height > 0 ? size : null
+  } catch {
+    // An SVG with no intrinsic size, or a format this browser cannot decode:
+    // the layer hugs whatever the image renders at.
+    return null
+  }
 }
 
 /**

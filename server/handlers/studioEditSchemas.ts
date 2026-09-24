@@ -46,6 +46,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
+import { CanvasLayerEditSchemas } from './studioCanvasLayerWriteback'
 import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -271,6 +272,8 @@ export const StudioEditSchema = Type.Union([
   SwapEditSchema,
   ...StructuralEditSchemas,
   ...SlotEditSchemas,
+  // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
+  ...CanvasLayerEditSchemas,
   CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
@@ -394,6 +397,15 @@ export interface StudioEditRefusal {
   prop?: string
   reason: string
   message: string
+}
+
+/**
+ * P5-G — how a batch is run. `canvasLayers: 'allow'` is passed by the editor's
+ * `/save` route alone; absent (every agent tool), canvas-layer kinds and
+ * layer-module targets are refused by name (`studioCanvasLayerWriteback.ts`).
+ */
+export interface StudioEditBatchOptions {
+  canvasLayers?: 'allow'
 }
 
 /** The result of applying a batch of studio edits — `POST /admin/api/studio/save`'s own response shape. */

@@ -4,8 +4,10 @@
  *
  * One gesture, one write, one toast. The whole point of this module is that
  * every way the gesture can fail is decided HERE, before a byte is uploaded:
- * a drop on the empty board, a drop of something that is not an image, a drop
- * of several files at once. Each returns a refusal with a sentence, and none
+ * a drop of something that is not an image, a drop of several files at once,
+ * and — on a canvas with no free canvas (the CMS editor) — a drop on the empty
+ * board. On a Studio board the empty board is the FREE CANVAS (P5-G): the image
+ * becomes a loose layer there, never part of a page (`kind: 'canvas'`). Each returns a refusal with a sentence, and none
  * of them touches the network or the user's repository.
  *
  * ## Why the position is resolved as an INSERT
@@ -56,7 +58,13 @@ export interface CanvasFileDropRefusal {
 }
 
 export type CanvasFileDropPlan =
-  | { ok: true; file: File; pageId: string; target: CanvasInsertionTarget }
+  | { ok: true; kind: 'frame'; file: File; pageId: string; target: CanvasInsertionTarget }
+  /**
+   * P5-G — released over the empty board of a Studio board: the image becomes a
+   * loose layer on the free canvas, its top-left at `at` (board units). Never
+   * written into a page.
+   */
+  | { ok: true; kind: 'canvas'; file: File; at: { x: number; y: number } }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
@@ -168,6 +176,13 @@ export interface CanvasFileDropInput {
   transform: CanvasTransform | null
   /** The page tree a frame renders — the caller's one store read. */
   readPage: (pageId: string) => NodeTree<PageNode> | null
+  /**
+   * P5-G — the free canvas, when this canvas is a Studio board: the client
+   * rect of the element at board (0, 0) and the live zoom, which is all it
+   * takes to turn the drop point into a board point. Absent (a CMS canvas),
+   * the empty board still refuses: there is nowhere to put the image.
+   */
+  freeCanvas?: { origin: { left: number; top: number }; zoom: number } | null
 }
 
 /**
@@ -188,6 +203,18 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
+  if (!surface && input.freeCanvas) {
+    const zoom = input.freeCanvas.zoom > 0 ? input.freeCanvas.zoom : 1
+    return {
+      ok: true,
+      kind: 'canvas',
+      file,
+      at: {
+        x: (input.point.x - input.freeCanvas.origin.left) / zoom,
+        y: (input.point.y - input.freeCanvas.origin.top) / zoom,
+      },
+    }
+  }
   if (!surface || !surface.pageId) {
     return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noFrame }
   }
@@ -209,7 +236,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
     return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noPosition }
   }
 
-  return { ok: true, file, pageId: surface.pageId, target }
+  return { ok: true, kind: 'frame', file, pageId: surface.pageId, target }
 }
 
 /** Shared with the in-flight preview so both halves resolve the same containers. */
