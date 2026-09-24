@@ -489,13 +489,29 @@ export default function Home() {
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'insert',
       nodeId: 'src/Home.tsx:5:6',
+      name: 'script',
+    }])
+
+    expect(result.written).toBe(0)
+    expect(result.refusals?.[0]?.reason).toBe('unsafe-tag')
+    expect(read('src/Home.tsx')).toBe(before)
+  })
+
+  it('P3-C (WB-19) — a component whose name the file already binds is inserted under an alias, through the batch', () => {
+    write('src/Home.tsx', `import { Button } from './ui/Button'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n    </section>\n  )\n}\n`)
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'insert',
+      nodeId: 'src/Home.tsx:5:6',
       name: 'Button',
       importSpecifier: '@alm-design/design-system',
     }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals?.[0]?.reason).toBe('binding-conflict')
-    expect(read('src/Home.tsx')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/Home.tsx')).toBe(
+      `import { Button } from './ui/Button'\nimport { Button as Button2 } from '@alm-design/design-system'\n\nexport default function Home() {\n  return (\n    <section>\n      <Button />\n      <Button2 />\n    </section>\n  )\n}\n`,
+    )
   })
 
   it('is always treated as shared — the write shifts every line below it', () => {
@@ -683,8 +699,7 @@ describe('applyStudioEditBatch — every edit that does not write is a named ref
     const result = applyStudioEditBatch(tmpDir, [{
       kind: 'insert',
       nodeId: 'src/Home.tsx:5:6',
-      name: 'Button',
-      importSpecifier: '@alm-design/design-system',
+      name: 'script',
     }])
 
     expect(result.skipped).toBe(1)

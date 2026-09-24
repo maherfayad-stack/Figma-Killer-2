@@ -260,6 +260,21 @@ export function collectSubtreeImports(root: InsertJsxNode): Map<string, ImportRe
 }
 
 /**
+ * P3-C (WB-19) — the subtree with every COMPONENT tag spelled by the local name
+ * `planImportBindings` bound it to (`Button` → `Button2` when the file already
+ * uses `Button` for something else). Intrinsic tags and prop elements are
+ * untouched: neither names a binding.
+ */
+export function renameSubtreeComponents(node: InsertJsxNode, localName: (name: string) => string): InsertJsxNode {
+  const { children } = node
+  return {
+    ...node,
+    ...(node.importSpecifier !== undefined ? { name: localName(node.name) } : {}),
+    ...(Array.isArray(children) ? { children: children.map((child) => renameSubtreeComponents(child, localName)) } : {}),
+  }
+}
+
+/**
  * The first refusal anywhere in the subtree, or `undefined` when all of it is
  * writable. Runs before any byte is written so a bad grandchild cannot leave a
  * half-built element behind.
