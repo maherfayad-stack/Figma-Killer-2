@@ -223,8 +223,10 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutco
       return { applied: true }
     }
     case 'style':
-      // `style-03` — `JsxStyleTargetError` (a spread, a non-object initializer,
-      // a shorthand key) refuses `style-target` (`studioEditRefusals.ts`).
+      // `style-03` — `JsxStyleTargetError` refuses `style-target`
+      // (`studioEditRefusals.ts`). Since P3-C (WB-17) that is only a removal
+      // from an expression `style`, a value that is not an object, or a
+      // shorthand key: a spread or an identifier is written, not refused.
       setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}) })
       return { applied: true }
     case 'class': {

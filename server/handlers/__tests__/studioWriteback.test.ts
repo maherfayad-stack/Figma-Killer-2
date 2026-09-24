@@ -1679,10 +1679,13 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
   })
 
   it('turns a JsxStyleTargetError into a NAMED refusal, whose sentence carries no path', () => {
-    write('src/ui/Card.tsx', ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n'))
+    // A REMOVAL from an expression `style` is the refusal P3-C (WB-17) kept:
+    // the key lives inside `s`, so there is nothing in this file to delete.
+    const before = ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n')
+    write('src/ui/Card.tsx', before)
 
     const result = applyStudioEditBatch(tmpDir, [
-      { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: { color: 'red' } },
+      { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: {}, remove: ['color'] },
     ])
 
     expect(result.written).toBe(0)
@@ -1690,6 +1693,21 @@ describe('applyStudioEdit — the style kind, removal + refusal', () => {
     expect(result.refusals).toHaveLength(1)
     expect(result.refusals[0]!.reason).toBe('style-target')
     expect(result.refusals[0]!.message).not.toContain(tmpDir)
+    expect(read('src/ui/Card.tsx')).toBe(before)
+  })
+
+  it('P3-C (WB-17) — a SET on an expression `style` wraps it, keeping the binding, through the batch', () => {
+    write('src/ui/Card.tsx', ['export function Card({ s }) {', '  return <div style={s}>Hi</div>', '}', ''].join('\n'))
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'style', nodeId: 'src/ui/Card.tsx:2:11', style: { color: 'red' } },
+    ])
+
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/ui/Card.tsx')).toBe(
+      ['export function Card({ s }) {', '  return <div style={{ ...s, color: "red" }}>Hi</div>', '}', ''].join('\n'),
+    )
   })
 })
 

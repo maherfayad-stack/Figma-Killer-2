@@ -142,7 +142,8 @@ export function refusalFromCodemodError(edit: StudioEdit, err: unknown): StudioE
         : err.message,
     )
   }
-  // `style-03` — a spread, a non-object initializer, a shorthand key: a named
+  // `style-03` — a removal from an expression `style`, a non-object value, a
+  // shorthand key (P3-C/WB-17 writes a spread or an identifier): a named
   // decision, with the codemod's own reason minus its path prefix.
   if (err instanceof JsxStyleTargetError) return new StudioEditRefusalError('style-target', err.detail)
   return null
