@@ -68,6 +68,22 @@ export function payloadTooLarge(message: string): Response {
   return jsonResponse({ error: message }, { status: 413 })
 }
 
+/** The one sentence a 500 says to the client — see {@link internalServerError}. */
+export const INTERNAL_SERVER_ERROR_MESSAGE = 'Studio could not finish this request. The details are in the server log.'
+
+/**
+ * A 500 for an exception nobody named (WB-33). The raw error — its message can
+ * carry an absolute path, a ts-morph internal, a stack — goes to the SERVER
+ * log under `logLabel` (the `[<module>]` prefix, plus any context); the client
+ * gets one plain sentence it can show a person. A failure the handler DID
+ * name (a typed error with a user-facing message and its own status) is not
+ * this, and keeps its own envelope.
+ */
+export function internalServerError(logLabel: string, err: unknown): Response {
+  console.error(logLabel, err)
+  return jsonResponse({ error: INTERNAL_SERVER_ERROR_MESSAGE }, { status: 500 })
+}
+
 /**
  * Parse and validate a request body against a TypeBox schema. Returns the
  * validated value on success, or null on JSON parse failure or schema mismatch.

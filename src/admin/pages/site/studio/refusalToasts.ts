@@ -35,9 +35,19 @@
  * Deliberately a module-level set rather than store state: it is per-session
  * UI noise control with no undo, no persistence, and no renderer — the same
  * shape and the same reason as `studioRawCssStores.ts`'s tiny external stores.
+ *
+ * ## Warnings, each with its remedy (WB-13)
+ *
+ * Every report here is a `warning`, never an `error`. A refusal is the editor
+ * keeping a promise — it would not write something it could not write
+ * honestly — and the file is exactly as it was; nothing broke. Where a refusal
+ * has a place in the code the person can go and fix, the warning carries that
+ * one click ("Open in code"). A red card is for a failure the user did not
+ * cause and cannot act on, and a save-time refusal is neither.
  */
 import { decodeSourceNodeId, explainCssRuleConstraint } from '@core/page-tree'
 import { pushToast, type ToastInput } from '@ui/components/Toast'
+import { jumpToSource } from '@site/panels/PropertiesPanel/jumpToSource'
 import type { StructuralRefusalDialogState } from '@site/store/slices/structuralRefusalDialogState'
 import type { ClassTokenRefusal } from './classNameWriteback'
 import type { CssDestinationRefusal, StyleRuleEditPlan, UnmappedStyleRule } from './styleRuleWriteback'
@@ -51,12 +61,11 @@ export interface StudioEditRefusalReport {
 }
 
 /**
- * A `detach`/`swap`/`css`/`class` refusal is a NAMED, expected outcome (Card
- * uses a hook, the new name would shadow a binding, this stylesheet is a
- * compiled build artefact, …), so it gets a toast carrying the actual reason
- * rather than folding into the generic "no writable location" message, which
- * would be actively misleading — the location WAS writable; the codemod
- * declined on purpose.
+ * Every refusal is a NAMED, expected outcome (Card uses a hook, the new name
+ * would shadow a binding, this stylesheet is a compiled build artefact, this
+ * element holds more than text …), so it gets a warning carrying the actual
+ * reason. WB-12 — every kind refuses by name now, so there is no generic
+ * "no writable location" message left to fall back on.
  */
 const REFUSAL_TITLES: Record<string, string> = {
   detach: 'Detach refused',
@@ -71,6 +80,28 @@ const REFUSAL_TITLES: Record<string, string> = {
   // styled-component template (an interpolated value, a covering shorthand, a
   // declaration written in a spliced mixin).
   styled: 'Style not saved to source',
+  text: 'Text not saved to source',
+  literal: 'Copy not saved to source',
+  tag: 'Tag not changed in source',
+  asset: 'Image not saved to source',
+}
+
+/** A refusal whose REASON tells the story better than its kind. */
+const REASON_TITLES: Record<string, string> = {
+  // WB-24 — any kind refuses this way, and the file, not the edit, is the story.
+  'syntax-error': 'Not saved: the file has a syntax error',
+  'write-failed': 'Not saved to source',
+}
+
+/**
+ * The one-click remedy for a refusal: open the code it names. `null` when the
+ * refusal names no source position (a `css` edit's synthetic id) — then the
+ * sentence is the whole answer.
+ */
+function openInCodeRemedy(nodeId: string): ToastInput['action'] {
+  const target = decodeSourceNodeId(nodeId)
+  if (!target) return undefined
+  return { label: 'Open in code', onSelect: () => jumpToSource(target) }
 }
 
 let seen = new Set<string>()
@@ -99,11 +130,12 @@ export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[])
   for (const refusal of refusals) {
     const target = decodeSourceNodeId(refusal.nodeId)
     const targetKey = target ? `${target.rel}:${target.line}:${target.col}` : refusal.nodeId
+    const action = openInCodeRemedy(refusal.nodeId)
     toastOnce(`${refusal.kind}::${targetKey}::${refusal.reason}`, {
-      kind: 'error',
-      // WB-24 — any kind refuses this way, and the file, not the edit, is the story.
-      title: refusal.reason === 'syntax-error' ? 'Not saved: the file has a syntax error' : (REFUSAL_TITLES[refusal.kind] ?? 'Edit refused'),
+      kind: 'warning',
+      title: REASON_TITLES[refusal.reason] ?? REFUSAL_TITLES[refusal.kind] ?? 'Edit refused',
       body: refusal.message,
+      ...(action ? { action } : {}),
     })
   }
 }
@@ -117,7 +149,7 @@ export function reportEditRefusals(refusals: readonly StudioEditRefusalReport[])
 export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[]): void {
   for (const refusal of refusals) {
     toastOnce(`class-token::${refusal.nodeLabel}::${refusal.className}::${refusal.reason}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Class not attached in source',
       body: `${refusal.className} on ${refusal.nodeLabel}: ${refusal.message}`,
     })
@@ -140,7 +172,7 @@ export function reportClassTokenRefusals(refusals: readonly ClassTokenRefusal[])
 function reportUnmappedStyleRules(unmapped: readonly UnmappedStyleRule[]): void {
   for (const entry of unmapped) {
     toastOnce(`css-unmapped::${entry.label}::${entry.reason ?? ''}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Style not saved to source',
       body: entry.reason
         ? `${entry.label}: ${entry.reason}`
@@ -202,7 +234,7 @@ function presentCssDestinationRefusals(
       continue
     }
     pushToast({
-      kind: 'error',
+      kind: 'warning',
       title: 'Style not saved to source',
       body: constraint.explanation,
     })
@@ -251,7 +283,7 @@ export function styleRulePlanTouchedSomething(plan: StyleRuleEditPlan): boolean 
 function reportUnwritableContexts(labels: readonly string[]): void {
   for (const label of labels) {
     toastOnce(`css-context::${label}`, {
-      kind: 'error',
+      kind: 'warning',
       title: 'Override not saved to source',
       body:
         `${label} changed under a container or feature query. Studio writes breakpoint overrides as @media ` +

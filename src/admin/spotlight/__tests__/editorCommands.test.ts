@@ -168,7 +168,7 @@ describe('editor.save', () => {
     cmsSpy.mockRestore()
   })
 
-  it('surfaces an error toast and leaves hasUnsavedChanges set when the underlying save throws', async () => {
+  it('a failed save leaves hasUnsavedChanges set and toasts nothing — the save chip owns that failure', async () => {
     __resetToastBusForTests()
     seedStore()
 
@@ -184,9 +184,7 @@ describe('editor.save', () => {
     await command.run(ctx)
 
     expect(useEditorStore.getState().hasUnsavedChanges).toBe(true)
-    expect(latestToasts).toHaveLength(1)
-    expect(latestToasts[0]?.kind).toBe('error')
-    expect(latestToasts[0]?.title).toBe('Save failed')
+    expect(latestToasts).toEqual([])
 
     unsubscribe()
   })

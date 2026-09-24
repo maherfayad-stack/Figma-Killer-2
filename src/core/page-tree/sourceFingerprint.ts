@@ -41,6 +41,19 @@ import { buildSourceNodeId, decodeSourceNodeId } from './sourceNodeId'
  */
 export const ELEMENT_MOVED_REASON = 'element-moved'
 
+/**
+ * ERR-29 — every refusal that means "the writer's id is stale against disk":
+ * P1-A's `element-moved`, and the two AST-level cousins a codemod reports on
+ * its own — `stale-source` (the file changed during the write) and `not-found`
+ * (no element at that `line:col` any more). All three used to end in "Reload
+ * the project and try again". The board does that itself now: it re-reads the
+ * file, re-finds the element by identity, and retries once, silently
+ * (`elementMovedRecovery.ts`). Only a second miss says anything.
+ */
+export function isStaleTargetRefusalReason(reason: string): boolean {
+  return reason === ELEMENT_MOVED_REASON || reason === 'stale-source' || reason === 'not-found'
+}
+
 export const SourceFingerprintSchema = Type.String({ pattern: '^[^\\s#]+#[0-9a-f]{8}$' })
 export type SourceFingerprint = Static<typeof SourceFingerprintSchema>
 

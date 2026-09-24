@@ -52,6 +52,7 @@ import {
   type ForeignFrameDrop,
 } from './canvasDragBoard'
 import { paintCanvasDrag } from './canvasDragPainter'
+import { dropParentOutlineRect } from './canvasDropParentOutline'
 import {
   constrainToDragAxis,
   indexLocalPoint,
@@ -250,6 +251,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
       rect: session.index.candidates.find((candidate) => candidate.nodeId === session.draggedId)?.rect,
       dx: point.x - origin.x,
       dy: point.y - origin.y,
+      zoom: session.index.scale,
       ghost: { point, label: session.label, duplicating: session.duplicating },
     })
     session.paintedLayer = env.dropLayer
@@ -298,6 +300,12 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
   }
 
   refreshReflowPreview(session, foreign, index)
+  // IX-24 — which container a before/after line lands in: a lookup in the
+  // index the drop was just resolved against, so no layout read.
+  const parent = dropParentOutlineRect(
+    foreign ? session.foreignResolution.target : session.resolution.target,
+    index.candidates,
+  )
 
   const pan = autoPanDelta(env.canvasRoot, screenPoint)
 
@@ -310,6 +318,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
     ...(foreign ? session.foreignResolution : session.resolution),
     ghost,
     reflow: session.reflow,
+    parent,
   })
 
   if (pan && env.panBy) {

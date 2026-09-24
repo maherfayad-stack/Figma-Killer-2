@@ -28,6 +28,8 @@ export interface SetJsxTextParams {
  * (mixed content). `path` is `<file>:<line>:<col>` of the target element.
  */
 export class JsxTextTargetError extends Error {
+  /** The stable refusal code the writeback batch reports (WB-12). */
+  readonly reason = 'mixed-children'
   readonly path: string
 
   constructor(message: string, path: string) {

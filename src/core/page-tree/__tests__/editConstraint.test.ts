@@ -16,7 +16,6 @@ import {
   explainPropConstraint,
   explainStyleConstraint,
   explainSwapConstraint,
-  explainUnexplainedSkip,
   type EditConstraint,
 } from '../editConstraint'
 import {
@@ -480,8 +479,9 @@ describe('explainGestureConstraint (scope: gesture, D2 seam)', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Absorbed vocabularies — Detach (19-21), className (B2), CSS (B1/B1b),
-// unexplained-skip (23).
+// Absorbed vocabularies — Detach (19-21), className (B2), CSS (B1/B1b).
+// Row 23 (an aggregate "unexplained skip") is gone: every save-time edit that
+// does not write is a named refusal now (WB-12).
 // ---------------------------------------------------------------------------
 
 describe('absorbed vocabularies — no parallel reasons invented', () => {
@@ -551,13 +551,5 @@ describe('absorbed vocabularies — no parallel reasons invented', () => {
     assertWellFormed(constraint)
     expect(constraint.explanation).toContain('different prop shape')
     expect(constraint.actions).toEqual([])
-  })
-
-  it('row 23 — unexplained-skip is informational only, singular vs. plural wording', () => {
-    const one = explainUnexplainedSkip(1)
-    const many = explainUnexplainedSkip(3)
-    expect(one.explanation).toContain('1 edit')
-    expect(many.explanation).toContain('3 edits')
-    expect(one.actions).toEqual([])
   })
 })

@@ -69,10 +69,14 @@
  * sub-second window before ITS OWN resync lands, would otherwise run through
  * the "ordinary CMS node" path (`isSourceDerivedNodeId` is false for a
  * preview id) — a real, undo-tracked mutation against a node the resync is
- * about to erase anyway. `isPendingOptimisticNodeId` +
- * `excludePendingOptimisticTargets` close the DELETE half of that (wired into
- * `nodeActions.ts`'s `deleteNode` and `deleteNodesAction.ts`'s `deleteNodes`)
- * by treating a pending id exactly like a missing node. MOVE is left
+ * about to erase anyway. ERR-22 closes the DELETE half of that (wired into
+ * `nodeActions.ts`'s `deleteNode` and `deleteNodesAction.ts`'s `deleteNodes`):
+ * a Delete on a pending preview is QUEUED behind the write that made it, like
+ * every other structural gesture, and when it runs it is retargeted at the
+ * element that write actually created (`resolvePreviewTargets`) — the id the
+ * server reports in `createdNodeIds`. It used to be refused with "Still
+ * writing your last change", which asked the user to wait and press Delete
+ * again for something the editor could simply do in order. MOVE is left
  * unguarded, by name: closing it would mean threading this module's
  * pending-id set into `@core/page-tree`'s pure `previewStructuralMove`, and
  * the race it would close is narrow: drag the ghost you just made before its
@@ -81,7 +85,6 @@
  * as this module's handle.)
  */
 import { createNode, insertNode, wrapNode, wrapNodes } from '@core/page-tree'
-import { pushToast } from '@ui/components/Toast'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import type { SiteSliceHelpers } from './types'
 
@@ -98,9 +101,10 @@ export interface OptimisticPreviewHandle {
   /**
    * Stop tracking these ids as pending, without touching the tree. Call once
    * a resync is guaranteed to have replaced (or is about to replace) the
-   * page they live on.
+   * page they live on. `createdNodeIds` is what the write reports it made, in
+   * order — ERR-22 retargets a queued Delete on a preview id at its match.
    */
-  settle: () => void
+  settle: (createdNodeIds?: readonly string[]) => void
 }
 
 /**
@@ -114,9 +118,11 @@ export interface OptimisticPreviewHandle {
 export function settleOrRollbackOptimistic(
   optimistic: OptimisticPreviewHandle | undefined,
   action: 'settle' | 'rollback',
+  createdNodeIds: readonly string[] = [],
 ): void {
   try {
-    optimistic?.[action]()
+    if (action === 'settle') optimistic?.settle(createdNodeIds)
+    else optimistic?.rollback()
   } catch (err) {
     console.error(`[structuralOptimism] preview ${action} failed:`, err)
   }
@@ -136,23 +142,44 @@ export function isPendingOptimisticNodeId(id: string): boolean {
 }
 
 /**
- * Guard for a gesture about to target `nodeIds`: strips any id that is still
- * a pending preview, and toasts once (deduped) when it had to. Returns the
- * ids that are safe to act on — possibly fewer than were asked for, possibly
- * empty when EVERY id was pending.
+ * What each resolved preview id became: the id of the element its write
+ * created, or `null` when the write made nothing to match it (a rollback, or
+ * a count that did not line up). Bounded — only a gesture queued behind the
+ * write that is settling ever reads it, so the recent few are all it needs.
  */
-export function excludePendingOptimisticTargets(nodeIds: readonly string[]): string[] {
-  const safe = nodeIds.filter((id) => !pendingIds.has(id))
-  if (safe.length < nodeIds.length) {
-    pushToast({
-      kind: 'warning',
-      title: 'Still writing your last change',
-      body: 'That element is still being written to your project source — try again in a moment.',
-      location: 'site-editor',
-      dedupeKey: 'structural-optimistic-pending',
-    })
+const resolvedPreviewTargets = new Map<string, string | null>()
+const MAX_RESOLVED_PREVIEW_TARGETS = 64
+
+function rememberResolvedPreview(previewId: string, target: string | null): void {
+  resolvedPreviewTargets.delete(previewId)
+  resolvedPreviewTargets.set(previewId, target)
+  if (resolvedPreviewTargets.size > MAX_RESOLVED_PREVIEW_TARGETS) {
+    const oldest = resolvedPreviewTargets.keys().next().value
+    if (oldest !== undefined) resolvedPreviewTargets.delete(oldest)
   }
-  return safe
+}
+
+/**
+ * ERR-22 — the ids a gesture queued against previews should act on now that
+ * their write has settled: each preview id becomes the element its write
+ * created, a preview whose write made nothing drops out (there is nothing left
+ * to act on), and every other id passes through unchanged. A preview id still
+ * PENDING drops out too — acting on it would mutate a node its own resync is
+ * about to erase; that can only happen if a gesture was not queued behind the
+ * write that owns it.
+ */
+export function resolvePreviewTargets(nodeIds: readonly string[]): string[] {
+  const resolved: string[] = []
+  for (const id of nodeIds) {
+    if (pendingIds.has(id)) continue
+    if (!resolvedPreviewTargets.has(id)) {
+      resolved.push(id)
+      continue
+    }
+    const target = resolvedPreviewTargets.get(id)
+    if (target) resolved.push(target)
+  }
+  return resolved
 }
 
 /**
@@ -174,19 +201,25 @@ function safelyBuild(label: string, build: () => (() => void) | null): (() => vo
 function trackPreview(nodeIds: readonly string[], rollback: () => void): OptimisticPreviewHandle {
   for (const id of nodeIds) pendingIds.add(id)
   let resolved = false
-  const resolve = (): void => {
+  const resolve = (createdNodeIds: readonly string[] | null): void => {
     if (resolved) return
     resolved = true
-    for (const id of nodeIds) pendingIds.delete(id)
+    // One created element per preview, in order — anything else is not a
+    // match this module can vouch for, and a queued gesture drops the id.
+    const matched = createdNodeIds !== null && createdNodeIds.length === nodeIds.length
+    nodeIds.forEach((id, index) => {
+      pendingIds.delete(id)
+      rememberResolvedPreview(id, matched ? createdNodeIds[index]! : null)
+    })
   }
   return {
     nodeIds,
     rollback: () => {
       const wasResolved = resolved
-      resolve()
+      resolve(null)
       if (!wasResolved) rollback()
     },
-    settle: resolve,
+    settle: (createdNodeIds = []) => resolve(createdNodeIds),
   }
 }
 
@@ -299,4 +332,5 @@ export function previewOptimisticGroup(
 /** Test seam: drop every tracked id, so one spec's unsettled preview cannot poison the next. */
 export function resetOptimisticPreviewTracking(): void {
   pendingIds.clear()
+  resolvedPreviewTargets.clear()
 }

@@ -30,6 +30,7 @@ import type { Breakpoint } from '@core/page-tree'
 import { registry } from '@core/module-engine'
 import { getNodeDisplayName } from '@core/page-tree'
 import { ErrorBoundary } from '@ui/components/ErrorBoundary'
+import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { useCanvas } from '@site/hooks/useCanvas'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import { CanvasTransformLayer } from './CanvasTransformLayer'
@@ -541,7 +542,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               already uses to decide whether to render `BoardFramesLayer`
               instead of ordinary breakpoint frames (`selectActiveBoard`). */}
           {!isLive && !activeBoardId && rightSidebarExpanded && (permissions.canEditStyle || permissions.canEditStructure) && (
-            <CanvasContextSelector />
+            <ChromeBoundary id="canvas-context-selector">
+              <CanvasContextSelector />
+            </ChromeBoundary>
           )}
 
           {/*
@@ -550,10 +553,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           active page id means switching pages naturally clears stuck
           errors — the user navigates away from a broken module preview
           rather than getting "stuck" on the failure screen.
+          ERR-13 — and it retries ONCE on its own before showing that screen:
+          the commonest canvas crash is a render racing a resync that is about
+          to replace the page it read, and the retry renders the settled page.
         */}
           <ErrorBoundary
             location="canvas"
             resetKeys={[canvasPage?.id ?? null, activeDocument?.kind ?? null, canvasView]}
+            autoRetry={1}
           >
             {isLive ? (
               <CanvasLiveSurface
@@ -587,7 +594,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               chrome tier as CanvasNotch/CanvasModeToggle. Design mode only: a
               live frame has no pan/zoom to rule against. */}
           {!isLive && editable && (
-            <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+            <ChromeBoundary id="canvas-rulers">
+              <CanvasRulers canvasRootRef={canvasRef} transformRef={transformRef} />
+            </ChromeBoundary>
           )}
 
           {/* D2 G15 — where an OS file drag's cursor chip is painted while the
@@ -608,23 +617,29 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           {!isLive && editable && <PluginCanvasOverlayLayer />}
 
           {/* Studio-mode untransformed chrome: notes/comment toolbar + the armed comment tool. */}
-          {!isLive && editable && <LazyStudioCanvasChrome transformLayerRef={transformLayerRef} />}
+          {!isLive && editable && (
+            <ChromeBoundary id="studio-canvas-chrome">
+              <LazyStudioCanvasChrome transformLayerRef={transformLayerRef} />
+            </ChromeBoundary>
+          )}
 
           {!isLive && editable && contextMenu.position && (
-            <CanvasLayerContextMenu
-              position={contextMenu.position}
-              onClose={contextMenu.close}
-              actions={{
-                requestDeleteNode,
-                duplicateNode,
-                openRenameDialog: renameDialog.open,
-                wrapNode,
-                copyNode,
-                cutNode,
-                pasteNode,
-                pasteHtml: handlePasteHtml,
-              }}
-            />
+            <ChromeBoundary id="canvas-context-menu">
+              <CanvasLayerContextMenu
+                position={contextMenu.position}
+                onClose={contextMenu.close}
+                actions={{
+                  requestDeleteNode,
+                  duplicateNode,
+                  openRenameDialog: renameDialog.open,
+                  wrapNode,
+                  copyNode,
+                  cutNode,
+                  pasteNode,
+                  pasteHtml: handlePasteHtml,
+                }}
+              />
+            </ChromeBoundary>
           )}
 
           {!isLive && editable && renameDialog.state && (

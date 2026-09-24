@@ -557,8 +557,8 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
     const removed = removeDeclaration(cssText, edit.selector, edit.property, { atMedia: edit.atMedia })
     if (removed.changed) writeFileSync(filePath, removed.css, 'utf8')
     // `applied: true` even when the declaration was already absent: the
-    // requested state IS the state on disk, and reporting a skip would put the
-    // edit in `unexplainedSkips` and toast the user about a no-op.
+    // requested state IS the state on disk, and reporting a skip would refuse
+    // the edit and warn the user about a no-op.
     return { applied: true }
   }
 

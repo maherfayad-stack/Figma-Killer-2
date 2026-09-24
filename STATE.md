@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
-- **Next:** Phase 1 exit gate passed (#232). Merged in Phase 2: P2-F #234, P2-A #235, P2-G #236, P2-D #237; P4-C #233. Running: P2-B, P2-H, P4-D. Then P2-C→E and P2-I (after P2-B). P2-C must also fix `canvasFreeMove` writing the kebab key `inset-inline-start` into JSX `style={{}}` (P2-D finding, `canvas-23`). **P2-I must A/B the cold click-to-ring** on a quiet machine (P2-A measured a 432 → 485 ms mean, within load noise; suspect: lazy portal observers paying setup on the first selection). Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
+- **Next:** Phase 2 is merged except P2-I (running; owes the cold-click A/B). Also running: P2-C2 bulk actions (OD-16). Merged since the exit gate: P2-F #234, P2-A #235, P2-G #236, P2-D #237, P2-B #238, P2-H #239, P2-C #242, P2-E #243 (+ OD-15); P3-B #240, P3-A #244; P4-C #233, P4-D #241. Then P4-E, P3-C/D/E/F, P0-I. Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
@@ -62,97 +62,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - ~~The Docker images and templates kept `studio-workspace/` outside every volume.~~ Fixed by P1-H (#228, `server-28`).
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
-
-### canvas-24 — P2-B: selection and keyboard hands (IX-2, IX-3, IX-4, IX-11, IX-15, ERR-11, ERR-21)
-- **Agent:** canvas-engineer · **Branch:** `feat/figma-selection-and-keyboard` off `91df2c59` (trunk `db824fb3` merged in) · **PR:** #238 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; owner dogfood below)
-- **Done:** ⇧-click toggles on the canvas, range stays in Layers (`canvasClickSelectionMode`). Tab / ⇧Tab cycle siblings, canvas-scoped (`isCanvasKeyboardSurface`). ⌘A: siblings, then climb, then all frames. V = move tool. Zoom, ⌘0/⇧0, ⇧1/⇧2 and Space are one `global`-rung scope (`hooks/useCanvasViewportKeys.ts`); the canvas div has no `onKeyDown`. Losing focus releases held keys. `isTextInputTarget` = text-entry and not read-only. `keybindings.ts` has the OD-3 conflict register; the viewport keys moved to `keybindingViewport.ts`. `board.selectAllFrames` is renamed `canvas.selectAll`.
-- **Also fixed (P2-G's finding):** a click inside nested instances selects the OUTERMOST one, and a double-click opens one level (`resolveInstanceEntry`). Live frames skipped the instance boundary entirely until now.
-- **Canvas files touched:** `canvas/{canvasFrameKeyRelay (new), canvasPanInput, canvasSelectionUtils, editorKeyDispatcher, editorKeyGuards, useEditorKeyDispatcher, useIframeEventForwarding, useCanvasSelectionKeyboard, useCanvasToolShortcuts, useBoardSelectAllShortcut, useCanvasNodeInteraction, useCanvasFormControlSuppression, NodeRenderer (double-click only), CanvasRoot}.tsx?`, `canvas/BoardFramesLayer/{useBridgeFrameInteraction, LiveBoardFrame}`, `canvas/frameAdapter/{FrameDocumentAdapter, BridgeFrameAdapter}`, `hooks/{useCanvas, useCanvasViewportKeys (new)}`, `store/slices/{selectionSlice, selectionResolve, selectionTraversalActions}`, `core/studio-runtime/{keyForwarding, keyMessages (new), messages, messageShapes, runtime}` + `generated/runtimeBridgeBundle.ts`.
-- **Tests:** 11 regressions, each shown failing with its fix disabled in place. New e2e `selection-keyboard-hands.e2e.ts`: 5/5 green (portal + live frame).
-- **Landmines:**
-  - **Events × keyboard:** a frame's keyup is NOT cloned onto the parent — it goes straight into `dispatchEditorKeyUp`. A clone would double-fire the Alt ladder and Alt-measure, which listen in every frame document already. P2-C's key-hold coalescing gets its keyups this way, from portal and live frames alike.
-  - **Events × focus:** window `blur` also fires when focus moves INTO a frame. `releaseEditorKeysIfFocusLeft` checks `document.hasFocus()` a task later, so only a real departure releases. Space-pan lowers BOTH keyboard sources on any release, and every Space keydown (repeats too) re-asserts its source.
-  - **Events × Tab:** portal frames `preventDefault` Tab in the frame, then forward it. Bridge frames cancel every design-mode keydown in-frame, except one typed into a contentEditable or text field.
-  - **Injectors:** none touched.
-  - **Height:** none touched. But a selection can pan the board (`focusActiveBreakpoint`). An e2e point measured before a click can land under a side panel after it (it opened board rename once). Re-centre before a double-click.
-  - `runtimeBridgeBundle.ts` was patched with the diff between a pristine and a modified local build, because `studio-runtime:sync` differs on this CRLF tree. Re-sync on an LF tree.
-  - `studio-feel.e2e.ts`'s refusal case now double-clicks into the clock's instances. A click selects the instance now.
-- **Merged into the trunk** (orchestrator): `runtimeBridgeBundle.ts` regenerated from the merged runtime sources because it conflicted with P2-D's hand patch. On the merged trunk, `selection-keyboard-hands.e2e.ts` failed once, twice on the outermost-instance live-frame case, then passed 6/6 twice. The first failure was a flake right after the bundle was regenerated, most likely a cold Vite start.
-- **Next:** the owner dogfoods (below); P2-C builds node arrows on the release broadcast.
-- **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, all three frames:
-  1. Click a box, then ⇧-click a second one: both are selected. ⇧-click the first again: only the second stays.
-  2. Click an element, press Tab: the next sibling is selected. ⇧Tab goes back; the last one wraps to the first. Click into an inspector field and press Tab: focus moves between fields and the canvas selection does not change.
-  3. With an element selected, press ⌘A: its siblings are selected. Press again: the parent's level is selected. No admin text is highlighted.
-  4. Press H, then V: the cursor is back to the arrow. Press C, then V: comment mode is off.
-  5. Click into the Properties panel, press − and +: the canvas zooms. ⇧1 fits, ⇧0 goes to 100%.
-  6. Hold Space and Alt-Tab away, release Space, come back: clicking an element selects it and does not pan.
-  7. Click the status-bar clock on SMS: SheetHeader is selected ("SheetHeader · Local"). Double-click: IOSStatusBar is selected. Double-click again: the clock is selected.
-  8. Pick a value in an inspector dropdown, then press Delete: the selected element is deleted.
-
-### parser-17 — P3-B: ordinary React renders (WB-3, WB-4, WB-26, WB-5)
-- **Agent:** parser-surgeon · **Branch:** `feat/ordinary-react-renders` · **PR:** #240 (draft; long form in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open)
-- **Goal:** text in container tags, `memo`/`forwardRef`/`React.memo`, `export { default as X }` barrels, `import * as UI`, `React.Fragment`, and class/HOC pages all render — or the frame names the shape. Never a blank frame.
-- **Scope (parser files):** `src/core/page-parser/{componentDeclaration,reactImports}.ts` (new), `parsePageFile.ts`, `inlineLocalComponents.ts`, `componentSources.ts`, `types.ts`, `branchSelection.ts`, `staticEval.ts`, `staticEvalCore.ts`, `componentSubstitution.ts`, `cssInJsExtract.ts`, `nextAppLayout.ts`, `index.ts`; `src/core/ast-codemods/{resolveComponentCallSite,extractComponentCopy,swapComponentInstance}.ts`; `src/core/studio-sync/parsedPageToSitePage.ts`. Also: `server/handlers/studio/{moduleMapping,loadWarnings,studioLoadContract}.ts`, `src/modules/base/{text/*,utils/htmlTag.ts}` (`text/tags.ts` deleted), `src/admin/pages/site/studio/{studioLoadWarningsStore,studioLoadStreamSchema,fsCodemodAdapter,studioLiveReloadFetch}.ts`, `canvas/CanvasEmptyPageHint.tsx` + one prop in `BoardFrameView.tsx`.
-- **Done:**
-  - WB-4: `getFunctionLikeNode` unwraps React's own `memo`/`forwardRef` (import provenance, same-file args only). `resolveExportedDeclaration` returns the declaration NODE; `CallTarget` carries `declaration`, `isDefaultExport`, `via`. Namespace members resolve; `<Card.Header/>` on a default import is declined (it used to render `Card`'s whole JSX — proven).
-  - WB-26: React's `Fragment` flattens like `<>`. WB-3: text-only elements → `base.text` + `customTag` (`isTextHostTag`). WB-5: class `render()` and unknown-HOC pages render (HOC with a note); anything else → `unreadable-page-export` warning → named in the frame.
-- **Decisions (per new resolution):**
-  - memo/forwardRef unwrap — locks: no · codeProps: no · origin: n/a (structure, not a value). Nodes write to the wrapped function's JSX, the one honest target.
-  - HOC page read — locks: no · codeProps: no · origin: none; a `resolution.note` names the wrapper. Page-only: `getFunctionLikeNode` does NOT read through unknown HOCs (detach would drop the HOC silently).
-  - Class `render()` — locks: no · `this.props`/`this.state` text is code-valued via the existing trace, never guessed · origin only where a literal is read, as everywhere.
-  - Custom-tag text node — locks: no · codeProps: unchanged rules · text writes via `setJsxText`, tag via `setJsxTagName`. Cost: `base.text` is a leaf, so nothing drops INTO an imported `<li>`.
-  - Barrel hops go into `dependencyFiles` (ONE name's route, `reexportChainFiles`), so a re-pointed barrel invalidates the route parse.
-- **Landmines (not in studio-import.md before this PR; added there in this PR):** `extractComponentCopy` wrote `import { X2 }` for a DEFAULT-exported component (fixed: `CallTarget.isDefaultExport`). A literal `className` with no rule never reaches the DOM (board-27f), so e2e specs must locate nodes by `data-node-id`, not class. `setJsxText` always writes `{"…"}` (WB-9/10's bundle).
-- **Next:** orchestrator merge; `studio-scribe` has nothing extra to fold (the doc changes ship in this PR).
-- **Verification:** see the PR body. Every CONFIRMED finding's test failed before the fix (pre-fix trunk run, plus in-place disables).
-- **Human action needed:** dogfood `/admin/site` on a repo with `memo`/barrels and a `lazy()` page (script in the PR body).
-
-### mcp-29 — P4-D: the assistant designs with craft (AI-19, AI-12, AI-14, AI-16, AI-17, AI-15, AI-9)
-- **Agent:** mcp-tooling (+ parser-surgeon for the token codemod) · **Branch:** `feat/agent-designs-with-craft` off `6efc088a` · **PR:** #241 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open)
-- **Goal:** a creative, tool-packed assistant: one prompt for both paths that teaches design, not only matching; tools to place frames, change tokens, write component usages and check breakpoints; the selection in the digest.
-- **Prompt (AI-19):** "done" first and mode-specific; decide before drawing, real content, one critique pass against a craft rubric, Initiative; the eSIM facts are gone; "keep the screen a static composition" (dropped from CLAUDE.md by P4-B) now lives under Canvas invariants; "specification, not inspiration" moved into BALANCED. The largest prefix went from ~36.9K to ~32.5K characters. Gate: `agent-prompt-craft.test.ts` checks the CLI file and both HTTP wires (sections, mode block, no project facts, a 34,000-char budget).
-- **Tools added** (all `execution: server`, in the registry AND on both agent paths):
-  - `studio_set_tokens`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, set: [{ name, value, scheme? }] ≤40 }`. It makes a CST edit (`@core/css-codemods` `setCustomPropertyValueAtLine`) through `resolveAgentFilePath(…,'write')`, under the write lock, and it is all-or-nothing. Refusals: `no-such-token` ("--x is not declared at the document root of any stylesheet the canvas loads"), `read-only-source`, `ambiguous-declaration` (lists every file:line), and `stale-source`.
-  - `studio_arrange_frames`: `ai.tools.write` + `studio.write`, `sideEffects: write`. Input `{ dir?, pageIds+layout(row|column|grid)+columns?+gap?+origin? | positions[{pageId,x,y}], notes?[{pageId,text}], boardId? }`. When a page has no frame it refuses `no-board-frame`: "No frame on board … for: X" with the remedy "call studio_screenshot first".
-  - `studio_component_snippet`: a read, ungated. Input `{ dir?, name, forFile, props?, children?, package? }`. Refusals: `no-such-component` (gives the nearest names) and `invalid-prop-value` (lists the accepted values).
-  - `studio_screenshot` gains `widths[]` (≤4, 240–2560). It is headless-only and never writes the board. When headless cannot run, the error says: "capture-unavailable: the Npx capture needs the headless browser… no other width was substituted".
-- **Other changes:**
-  - AI-12: the app archetype pool plus `APP_CHROME_RULE`, a `surface` taken from the platform or the frame widths, and a colour-strategy axis. The axis is drawn last, so old rngSeeds reproduce.
-  - AI-9: `StudioAgentSnapshot.selection[{nodeId, box?}]` replaces `selectedNodeId`. The box is measured client-side (`selectionBoxes.ts`, leaf imports only, fail-soft). `selectionDigest.ts` adds file:line:col, an excerpt read under containment, and the box.
-  - The shared write steps moved to `agentWriteSupport.ts`, and five refusal codes were added.
-- **Decisions:**
-  - No new quality_check findings (touch target, line length, edge alignment). Every non-DS finding is a Stop-gate error, and a CSS-only heuristic would block turns on false positives. This needs a layout-measured grader.
-  - `studio_set_tokens` never creates a token.
-- **Landmines:**
-  - The snapshot wire shape changed (`selection`). Anything that builds a `StudioAgentSnapshot` must send the array.
-  - `WRITE_GATED_ADDED_SINCE` now lists `studio_arrange_frames` and `studio_set_tokens`.
-  - Prefix budget: raise `STATIC_PREFIX_BUDGET_CHARS` deliberately, never silently.
-- **Next:** the owner runs a creative and a match brief (bench:agent-turn) on both paths. The HTTP-path dogfood is in the PR body.
-
-### canvas-25 — P2-C: arrow keys move the selected layer (IX-1) + free move's camelCase key (canvas-23)
-- **Agent:** canvas-engineer · **Branch:** `feat/arrow-keys-reorder-and-nudge` off `77115367` · **PR:** #242 (draft, base `feat/canvas-excellence`; long form and gate triage in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; owner dogfood below)
-- **Done:** with ONE layer selected, a bare arrow moves it. `absolute|fixed` → nudge 1 px / ⇧ 10 px; anything else → reorder ±1 along the parent's axis (`moveNode`; reversed for `*-reverse` / RTL row; a cross-axis arrow does nothing). One layout read decides (`measureArrowTarget`, one adapter `measure` for the node + ancestor chain — live frames too). A held nudge previews each repeat (`setPreviewNodeStyles` + optimistic broadcast) and writes ONE `setNodeInlineStyles` on the arrow keyup, then `flushAutosave` → one undo entry, one source write. A held reorder is one step per press.
-- **Also fixed:** `canvasFreeMove` wrote `'inset-inline-start'` into JSX `style={{}}`; it now writes `insetInlineStart` (shared `inlineOffsetProperty`), and only the CSSOM preview spells it kebab. A nudge writes the offsets the source AUTHORED (`authoredOffsets`: inline over class base styles, `inset` read per side) — a right-anchored layer moves `right` and never gains `left`; a stretched one moves both.
-- **Registry:** `board.nudgeFrames` → `canvas.moveSelection` (one arrow binding, three rungs: annotation / node / board); `frameNudgeDelta` → `nudgeDelta`; the annotation hook's private arrow table is gone. OD-3 register rows for ← ↑ → ↓ and "held arrow".
-- **Canvas files touched:** `canvas/{canvasNodeArrowMove (new), useCanvasNodeArrowKeys (new), canvasFreeMove, useCanvasNodeShortcuts, useBoardFrameNudge, useBoardAnnotationKeyboard, CanvasRoot}.ts(x)`, `spotlight/keybindings.ts`. No runtime change (no bundle regen).
-- **Tests:** `nodeArrowKeys.test.tsx` (19; the IX-1 and anchoring cases shown failing with the hook / `authoredOffsets` disabled in place), `canvasFreeMove.test.ts` (+2, shown failing with the kebab key restored). New e2e `node-arrow-keys.e2e.ts` 4/4 green: file bytes, save-request count, computed position, one ⌘Z.
-- **Landmines:**
-  - **Events × keyboard:** the hold ends on the ARROW's keyup only (releasing ⇧ mid-hold does not end it), from the dispatcher's release broadcast. `handleKeyUp(null)` (focus left) COMMITS at the last preview — same as a lost pointerup.
-  - **Events × focus:** arrows are canvas-scoped (`isCanvasKeyboardSurface`) like Tab — with focus on a panel button or the Layers tree they are NOT claimed. Click the canvas first.
-  - **Injectors:** the live-frame preview is the optimistic style rule (`!important`); it stays until Vite's update lands. Portal preview is the store's `previewNodeStyles` slot — single slot, shared with the inspector's scrub.
-  - **Height:** none touched; a nudge of an absolute child cannot change the frame's fit height (absolute is out of flow) unless it pokes past the body's bottom.
-  - The first keydown awaits one measure; keydowns during it accumulate and a release during it is honoured when it lands.
-- **Next:** multi-select nudge / reorder (P5-F); grid Up/Down by column count (audit P2).
-- **Human action needed:** dogfood on `test4`, `/admin/site`, 100% zoom, SMS frame (static tier):
-  1. Click empty space in the SMS content banner (below the header), press ↓ five times holding it: the banner slides down live; release — ONE save, `SMS.tsx`'s banner `<div>` gains `style={{ top: "129px" }}` and no `bottom`. ⌘Z once: back to 124.
-  2. Same banner, ⇧→ once: `left: "10px", right: "-10px"` (it moves, keeps its width).
-  3. Click the 2nd code input, press →: it swaps with the 3rd in `SMS.tsx`. Hold →: still one place. Press ↓: nothing.
-  4. Click an inspector button, press →: the layer does NOT move. Click the canvas, press →: it does.
-  5. Select a board frame (click its title), arrows still nudge the frame; a sticky note still nudges.
 
 ### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
 - **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `a03f410a` merged in) · **PR:** draft, base `feat/canvas-excellence`; full tables in its body · **Updated:** 2026-09-24
@@ -216,8 +125,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `keys-01` · 3+ frames · the keyboard dispatcher: Delete, ⌘D, paste beside the selection
 - `canvas-18` · 2+ frames at 100 % and 50 % · Alt-hover measures distances and padding
 - `canvas-23` · `/admin/site` on `test4` · resize a border-box and a content-box element (the CSS width lands exactly), a `flex: 1` child (goes fixed; static frames only), ⇧/⌥ mid-drag, the W/N handles of an absolute element, the W×H badge; release outside the window ends the drag. Script: the `canvas-23` entry in the archive
-- `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry under `## Now`
-- `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry under `## Now`
+- `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry in the archive
+- `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry in the archive
+- `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry in the archive
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row
@@ -277,16 +187,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `store-18` — P3-A: per-edit save outcomes (successes commit, refusals named and re-sent), save-time refusals warn with "Open in code", no success toasts on gestures, chrome error boundaries; error toast sites 128 → 104, pinned — #244 — 2026-09-23
+- `canvas-26` — P2-E: one snap threshold (8 screen px ÷ zoom), parent edges/padding/centre snap, resize edges snap (static frames), drop outlines the landing container, Alt measures to the parent; OD-15 arrows after a Layers click — #243 — 2026-09-23
+- `canvas-25` — P2-C: arrows nudge an absolute layer 1/10 px or reorder a flow child, one undo + one write per held key; free move writes camelCase `insetInlineStart` — #242 — 2026-09-23
+- `mcp-29` — P4-D: one rewritten prompt for both paths (craft rubric, self-critique, real content, no eSIM facts), archetypes, component snippets, multi-width screenshots, `studio_arrange_frames`, `studio_set_tokens`, selection digest — #241 — 2026-09-23
+- `parser-17` — P3-B: text in containers is editable, memo/forwardRef/React.memo/barrels/namespace imports unwrap, Fragment is a fragment, class and HOC pages render or name their shape — #240 — 2026-09-23
+- `canvas-24` — P2-B: ⇧-click toggles, Tab cycles siblings, ⌘A climbs, V, zoom keys on the dispatcher, blur releases keys, keys forwarded from live frames, the outermost instance is selected first — #238 — 2026-09-23
 - `panel-45` — P2-H: dark hover lifts, AA text contrast (light `--text-subtle` darkened), Layers focus ring, selected ≠ hovered, plain forceOpen headers, skeletons on first open — #239 — 2026-09-23
 - `canvas-23` — P2-D: resize writes the CSS size per `box-sizing`, flex/grid children go through `sizingPatch(fixed)`, live ⇧/⌥, W/N move left/top, a W×H badge, one shared drag-session guard — #237 — 2026-09-23
 - `panel-44` — P2-G: one "<Name> · Local" title row under Measures with icon Detach/Swap, hidden under multi-select, 96px labels, draft-then-commit text props — #236 — 2026-09-23
 - `perf-11` — P2-A: toolbar pinned to the ring through a pan, 0 idle rAF, no chrome-driven hover mutations, O(1) no-op marquee; benches + `canvas-feel-budgets.e2e.ts` in CI — #235 — 2026-09-23
-- `panel-43` — P2-F: a real header + 8px + hairline on the props block, 12px `--inspector-section-gap`, 4px rows, Shadow + Blur → Effects — #234 — 2026-09-23
-- `mcp-28` — P4-C: file tools for the HTTP drivers behind one write gate (`needs-user` for host-executed files), retries, wind-down + summary round, per-model max_tokens; security review approved — #233 — 2026-09-23
-- `test-06` — Phase 1 exit gate: an outside edit mid-session, then edit/delete/undo land exactly; all 8 P1 regressions proven to fail before their fix — #232 — 2026-09-23
-- `mcp-27` — P4-B: the static prefix, mode and policy blocks reach the Claude CLI via `--append-system-prompt-file`; the warm-session fingerprint hashes the prompt; the generated `CLAUDE.md` is facts only — #231 — 2026-09-23
-- `store-17` — P1-F: ScrubInput commits only when typed; undo resolves the owning page; a stale step is skipped, not jammed; refused moves/deletes roll back, network failures retry then roll back — #230 — 2026-09-23
-- `server-29` — P1-D: a project watcher reloads the board on outside edits; an edit whose element moved is re-located by line diff + fingerprint, written only on exactly one match — #229 — 2026-09-23
 
 ---
 

@@ -204,7 +204,7 @@ export function resolveSourceContainer(
       ok: false,
       refusal: {
         reason: 'insert',
-        message: 'The element this would go inside is no longer on the board. Reload the project and try again.',
+        message: 'The element this would go inside is no longer on the board, so nothing was written.',
       },
     }
   }

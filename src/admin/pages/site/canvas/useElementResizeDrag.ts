@@ -22,7 +22,16 @@
  * (`BreakpointSelectionOverlay`'s docblock); dividing by zoom here would
  * double-correct and make the element run away from the cursor at any zoom
  * other than 1. `setPointerCapture` on the handle keeps the whole gesture in
- * that one document even when the cursor leaves the frame.
+ * that one document even when the cursor leaves the frame. The ONE zoom-aware
+ * number is the snap threshold, which is screen px by design (IX-5a).
+ *
+ * ## Snapping (P2-E / IX-6e)
+ *
+ * The edge under the cursor snaps to its siblings' and its parent's edges and
+ * centres — `elementResizeSnap.ts` says which edge that is (only one the drag
+ * really moves), reads the peers once at pointerdown, and snaps the POINTER
+ * delta before `resizeElementBox` sees it. The guides are painted in the
+ * frame's parent-document drag layer in the same rAF as the preview.
  *
  * ## What a drag writes
  *
@@ -74,6 +83,16 @@ import {
   type ResizeHandle,
 } from '@core/studio-runtime'
 import { createInlineStylePreview, planResizeSizing, resizeInlinePatch } from './elementResizeSizing'
+import { nodeVisualRect } from './canvasDomGeometry'
+import type { SnapGuide } from './boardSnapping'
+import {
+  iframeZoom,
+  paintResizeGuides,
+  readResizeSnapInput,
+  resizeSnapEdges,
+  resolveResizeGuideSurface,
+  snapResizeDelta,
+} from './elementResizeSnap'
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
@@ -142,7 +161,8 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         // `K4` — the scale tool (`K`) locks the ratio as if ⇧ were held. Read
         // once, here: the tool is latched for the gesture, ⇧ and ⌥ are live.
         const scaleTool = state.canvasTool === 'scale'
-        const stored = findNodeById(state, nodeId)?.inlineStyles ?? NO_INLINE_STYLES
+        const node = findNodeById(state, nodeId)
+        const stored = node?.inlineStyles ?? NO_INLINE_STYLES
         const plan = planResizeSizing(view, target, start, stored)
         const preview = createInlineStylePreview(target)
         const startX = event.clientX
@@ -150,6 +170,25 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         let pointer = { x: startX, y: startY }
         let modifiers = resizeModifiersOf(event, scaleTool)
         let last = resizeStartStep(start)
+
+        // IX-6e — what the moving edge snaps to, and where its guides paint.
+        // Both read once, here, before the first write of the drag.
+        const iframe = view.frameElement
+        const guideSurface = resolveResizeGuideSurface(iframe)
+        const parentNode = node?.parentId ? findNodeById(state, node.parentId) : null
+        const snapInput = readResizeSnapInput({
+          view,
+          element: target,
+          siblingIds: (parentNode?.children ?? []).filter((id) => id !== nodeId),
+          parentId: parentNode?.id ?? null,
+          resolveElement: (id) => presentedElementForNode(iframeDoc, id),
+          resolveRect: (element) => {
+            const rect = nodeVisualRect(element)
+            return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null
+          },
+          zoom: guideSurface?.zoom ?? iframeZoom(iframe),
+        })
+        let guides: SnapGuide[] = []
 
         // Freeze the expensive derived geometry (the parent-doc anchor session,
         // the frame's auto-height refit) for the length of the drag — this
@@ -184,9 +223,23 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         const applyPending = () => {
           pendingFrame = null
           preview.apply(resizeInlinePatch(start, last, plan) ?? {})
+          paintResizeGuides(guideSurface, guides)
         }
         const step = () => {
-          last = resizeElementBox(handle, start, pointer.x - startX, pointer.y - startY, modifiers, MIN_ELEMENT_SIZE)
+          const dx = pointer.x - startX
+          const dy = pointer.y - startY
+          const snapped = snapInput
+            ? snapResizeDelta(
+                resizeSnapEdges(handle, modifiers, start.offsets !== null, snapInput.anchored),
+                snapInput.rect,
+                dx,
+                dy,
+                snapInput.peers,
+                snapInput.threshold,
+              )
+            : { dx, dy, guides: [] }
+          guides = snapped.guides
+          last = resizeElementBox(handle, start, snapped.dx, snapped.dy, modifiers, MIN_ELEMENT_SIZE)
           pendingFrame ??= requestAnimationFrame(applyPending)
         }
 
@@ -231,6 +284,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
             doc.removeEventListener('keyup', onKey, true)
           }
           frame.removeAttribute(RESIZE_ACTIVE_ATTR)
+          paintResizeGuides(guideSurface, [])
           try {
             handleEl.releasePointerCapture(event.pointerId)
           } catch (_err) {

@@ -1,6 +1,5 @@
 import { useEditorStore, selectActiveCanvasPage } from '@site/store/store'
 import { resolveInsertLocation, type InsertLocation } from '@site/store/insertLocation'
-import { pushToast } from '@ui/components/Toast'
 import type { AssetItem } from '@site/panels/AssetsPanel/assetsModel'
 import { useInsertModule } from './useInsertModule'
 
@@ -8,9 +7,13 @@ import { useInsertModule } from './useInsertModule'
  * Shared handler for the module inserter dialog's `onInsertItem` callback.
  *
  * Inserts the picked module / saved layout / Visual Component into the active
- * canvas document and surfaces a success toast. Every inserter entry point uses
- * it — the Assets panel's cards and the canvas selection toolbar's "Insert
- * module" action — so the flows stay identical.
+ * canvas document. Every inserter entry point uses it — the Assets panel's
+ * cards and the canvas selection toolbar's "Insert module" action — so the
+ * flows stay identical.
+ *
+ * Silent on success (P3-A): the new element appearing on the canvas, selected,
+ * IS the feedback. A "Placed Button" card on top of the placed button said the
+ * same thing twice, once per gesture.
  *
  * Target resolution: when the dialog passes an explicit drop `target` it is
  * used verbatim; otherwise the shared insert hooks resolve the location from
@@ -41,7 +44,6 @@ export function useInsertInserterItem() {
   return (
     item: AssetItem,
     target: InsertLocation | undefined,
-    mode: 'click' | 'drop',
   ): boolean => {
     const inserted =
       item.kind === 'module'
@@ -52,14 +54,6 @@ export function useInsertInserterItem() {
             ? insertVC(item.id, target)
             : false
 
-    if (!inserted) return false
-
-    pushToast({
-      kind: 'success',
-      title: mode === 'drop' ? `Placed ${item.name}` : `Inserted ${item.name}`,
-      body: mode === 'drop' ? 'Dropped on canvas.' : 'Inserted at the current selection.',
-      location: 'assets-panel',
-    })
-    return true
+    return inserted
   }
 }

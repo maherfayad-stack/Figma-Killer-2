@@ -5,8 +5,14 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 233 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 239 entries, archived 2026-09-23, newest first
 
+- 2026-09-23 · `store-18` · P3-A: toast and failure policy (PR #244) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-26` · P2-E: snapping and measuring + OD-15 (PR #243) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-25` · P2-C: arrow keys move the selected layer (PR #242) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `mcp-29` · P4-D: the assistant designs with craft (PR #241) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `parser-17` · P3-B: ordinary React renders (PR #240) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-24` · P2-B: selection and keyboard hands (PR #238) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `panel-45` · P2-H: panel polish (PR #239) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `canvas-23` · P2-D: resize that obeys CSS (PR #237) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `panel-44` · P2-G: the Component section (PR #236) · [`2026-09.md`](2026-09.md)

@@ -9,7 +9,7 @@
  * afterwards is `requestCmsSiteReload()`.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { apiRequest } from '@core/http'
+import { apiRequest, retryWhileUnreachable } from '@core/http'
 import type { PageKind } from '@core/studio-board'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
 import { studioWriteDir } from './studioWorkspaceDir'
@@ -49,6 +49,11 @@ export type CreatedStudioPage = Static<typeof StudioCreatePageResponseSchema>
  * Throws `ApiError` on failure (e.g. a name collision → 409) so the caller can
  * toast the message. The caller reloads the workspace afterwards
  * (`requestCmsSiteReload`) to render it.
+ *
+ * P3-A — a request that got no answer (a dev-server restart) is tried again
+ * quietly first, under ONE idempotency key: `/page` is an idempotent-replay
+ * route, so a retry of a create that did land gets the stored answer back
+ * rather than a second page.
  */
 export function createStudioPage(
   name?: string,
@@ -63,11 +68,15 @@ export function createStudioPage(
   // FIRST board regardless of which one the author had open.
   if (boardId) body.boardId = boardId
   if (overrideDir) body.dir = overrideDir
-  return apiRequest('/admin/api/studio/page', {
-    method: 'POST',
-    body,
-    schema: StudioCreatePageResponseSchema,
-  })
+  const idempotencyKey = crypto.randomUUID()
+  return retryWhileUnreachable(() =>
+    apiRequest('/admin/api/studio/page', {
+      method: 'POST',
+      body,
+      schema: StudioCreatePageResponseSchema,
+      idempotencyKey,
+    }),
+  )
 }
 
 /** DELETE /admin/api/studio/page response — what the delete actually removed. */
@@ -93,12 +102,18 @@ export type DeletedStudioPage = Static<typeof StudioDeletePageResponseSchema>
  *
  * Throws `ApiError` on failure (an unknown `pageId` → 404) so the caller can
  * toast the message and reload to put the page back on screen, since the
- * store already removed it optimistically.
+ * store already removed it optimistically. Retried quietly while unreachable,
+ * under one idempotency key, exactly like {@link createStudioPage}.
  */
 export function deleteStudioPage(pageId: string): Promise<DeletedStudioPage> {
-  return apiRequest('/admin/api/studio/page', {
-    method: 'DELETE',
-    body: { dir: studioWriteDir(), pageId },
-    schema: StudioDeletePageResponseSchema,
-  })
+  const body = { dir: studioWriteDir(), pageId }
+  const idempotencyKey = crypto.randomUUID()
+  return retryWhileUnreachable(() =>
+    apiRequest('/admin/api/studio/page', {
+      method: 'DELETE',
+      body,
+      schema: StudioDeletePageResponseSchema,
+      idempotencyKey,
+    }),
+  )
 }

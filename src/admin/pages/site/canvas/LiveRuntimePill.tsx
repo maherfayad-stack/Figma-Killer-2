@@ -55,6 +55,7 @@ import { Button } from '@ui/components/Button'
 import { Tooltip } from '@ui/components/Tooltip'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import {
   fetchStudioTrustStatus,
   getStudioTrustTier,
@@ -110,7 +111,9 @@ export function LiveRuntimePill() {
     if (busy) return
     setBusy(true)
     try {
-      await setStudioProjectTrust(projectDir, next)
+      // P3-A — setting a tier is idempotent: an unanswered write is retried
+      // quietly before anything is said.
+      await retryWhileUnreachable(() => setStudioProjectTrust(projectDir, next))
       requestCmsSiteReload()
     } catch (err) {
       console.error(`[LiveRuntimePill] writing trust tier ${next} failed:`, err)

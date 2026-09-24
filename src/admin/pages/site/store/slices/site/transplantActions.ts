@@ -140,7 +140,6 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
         anchorNodeId: commit.anchorNodeId,
         position: commit.position,
         copy: commit.copy,
-        destinationLabel: destinationPage.title || destinationPage.slug,
         // `store-14` — where it came from, which is the whole of a MOVE's undo.
         // The slot is recorded as parent + index rather than as a sibling id:
         // every sibling below the element shifts up the moment it leaves, so a

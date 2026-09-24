@@ -110,7 +110,7 @@
 import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { projectsRootDir, resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { resolveAppRoot } from './appRoot'
 import {
@@ -635,8 +635,7 @@ export async function tryServeStudioInstall(req: Request, url: URL, pathname: st
       return jsonResponse({ jobId })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:install]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:install]', err)
     }
   }
 

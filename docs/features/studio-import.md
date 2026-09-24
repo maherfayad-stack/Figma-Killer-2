@@ -1311,6 +1311,44 @@ A `style={{ … }}` edit merges into the element's own object literal, and — `
 
 `JsxStyleTargetError` (a spread attribute, a non-object initializer, a shorthand key whose value the codemod never read) is now a **named refusal** on the wire (`reason: 'style-target'`, `kind: 'style'` on `StudioEditRefusal`) rather than an unexpected exception. It used to fall into the generic catch and reach the user as an *unexplained skip*, which attaches the wrong sentence entirely — that bucket's message is about a prop binding, and this is a decision the codemod made on purpose.
 
+### Every edit that does not write is named, and the rest commit (P3-A)
+
+`applyStudioEditBatch` used to have two failure channels: a handful of kinds
+threw a typed `StudioEditRefusalError`, and everything else — a text edit on an
+element with mixed children, a locate miss, a tag rename on a component, a
+literal that is no longer a string, a path that failed containment — fell into
+an anonymous `unexplainedSkips` bucket. The client could answer that bucket
+only with one red "Some changes were not saved to source", and always blamed
+"text that comes from a prop or a variable".
+
+**WB-12.** Every decline is a refusal with a stable reason now
+(`server/handlers/studioEditRefusals.ts`): the value codemods' error classes
+carry a `reason` (`JsxTextTargetError` → `mixed-children`,
+`JsxElementNotFoundError` → `element-moved`, `JsxTagNameTargetError` →
+`component-tag`/`invalid-tag`, `StringLiteralTargetError`/
+`ImportSpecifierTargetError` → `element-moved`/`not-a-literal`,
+`JsxPropTargetError` → `binding-overwrite`/`spread-attribute`), an
+`applied: false` outcome carries its `unwritable` reason, and an exception
+nobody named is `write-failed` (logged on the server, never sent). The sentence
+a person reads is written from the reason — the codemods' own messages carry an
+absolute path. `unexplainedSkips` is gone from the wire.
+
+**WB-35.** Because `refusals` is complete, it IS the per-edit outcome: an edit
+wrote exactly when no refusal names its `(nodeId, kind, prop)` (`prop` rides on
+a `prop` edit's refusal, since one element can carry several). The client tags
+each baseline bump with its edit's key (`editOutcomes.ts`) and commits exactly
+the ones that landed; a refused edit stays in the diff and is re-sent by a later
+save of that page, while its warning is shown once per session.
+
+**WB-13.** Every save-time refusal is a `warning` with a one-click remedy
+("Open in code" when it names a source position), never a red card
+(`refusalToasts.ts`; gated by `error-toast-sites.test.ts`).
+
+**ERR-29.** A structural codemod's `stale-source` / `not-found` ("…Reload the
+project and try again") is recovered exactly like `element-moved`: the board
+re-reads the file, re-finds the element by identity and retries once, silently
+(`isStaleTargetRefusalReason`, `elementMovedRecovery.ts`).
+
 ## Structural write-back — move and delete (`struct-01`)
 
 Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite` walked node values only. Nothing in the pipeline diffed parent, child, or order — so a structural gesture produced **no edit at all**: the layers tree moved, the save reported success, the `.tsx` was untouched, and the change was gone on the next reload. In Studio the repository IS the document, so an edit the repository never saw did not happen. That is the exact failure the "one honest write target" invariant exists to prevent, and it applied to 526 of 802 nodes on the real corpus before `lock-01` widened it further by correctly unlocking 149 more.

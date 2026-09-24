@@ -96,7 +96,8 @@ export function useCopyAsPngShortcut(isLive: boolean): void {
 
       const target = resolveCopyAsPngTarget(readCopyAsPngSelection())
       if (!target.ok) {
-        pushToast({ kind: 'error', title: 'Nothing to copy as PNG', body: target.reason })
+        // ERR-24 — a no-op, not a failure: nothing is open to photograph.
+        pushToast({ kind: 'info', title: 'Nothing to copy as PNG', body: target.reason })
         return true
       }
 

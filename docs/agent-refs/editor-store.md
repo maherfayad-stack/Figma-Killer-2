@@ -186,9 +186,11 @@ See `studio-pipeline.md` → "A refusal reaches the user as an `EditConstraint`"
 (`planSourceInsert` — which resolves the synthetic page root to the page's
 returned root element, and downgrades an unaddressable anchor to "append"),
 commits it, and returns `''`. The new node arrives via the reload, with a real
-source id. The success toast is therefore pushed by `commitStudioInsert`, not by
-the inserter: until the write lands there is nothing to report. Announced, not silent: unlike a
-value refusal, the gesture is always a deliberate one a person just made.
+source id. **No structural commit toasts a success (P3-A).** The optimistic
+preview paints the gesture at once and the resync selects what it made; a
+"Duplicated" / "Placed" / "Undone" card on top of that said the same thing
+twice. A refusal is one `warning`; a write that outlives its retry ladder is one
+`warning` too — it was taken back, so board and disk agree again.
 
 **A structural write reports what it created, and the board selects it
 (`store-13`).** `insert`, `duplicate`, `wrap` and `group` create markup that has
@@ -452,10 +454,12 @@ whether its guessed id matches the real one; `commitStructuralBody` explicitly
 rolls it back only on the two paths where no resync follows (a full refusal,
 or the POST never reaching disk). `ungroup`/paste/K2 Alt-drag-duplicate/
 transplant/image-drop are unchanged — still nothing shown until the resync.
-A pending preview id is guarded against a same-window Delete
-(`isPendingOptimisticNodeId`/`excludePendingOptimisticTargets`, wired into
-`deleteNode`/`deleteNodes`) — everything else that could target it goes
-through `structuralCommitQueue.ts` and simply re-plans once the id is gone.
+A Delete on a pending preview id is QUEUED behind the write that made it and
+then aimed at the element that write created (ERR-22, `resolvePreviewTargets`,
+fed by `settle(createdNodeIds)` — wired into `deleteNode`/`deleteNodes`); it
+used to be refused with "Still writing your last change". Everything else that
+could target a preview goes through `structuralCommitQueue.ts` and simply
+re-plans once the id is gone.
 
 **The whole family is undoable (`store-14`).** It used to record nothing at all,
 so ⌘Z after a ⌘D, a ⌘G, a cross-frame drag or a file drop undid whatever came
@@ -474,9 +478,9 @@ closes the original double-write race — stays; the refusal is gone.
 `structuralCommitQueue.ts` parks the gesture as a THUNK and re-runs it the
 moment the wire is clear, so it re-reads the tree the previous resync left
 behind and re-plans from scratch rather than posting a plan built against
-stale ids. Five presses are five writes, one collapsed toast, the last copy
-selected, five undo steps. The queue holds 20; overflowing it is reported, not
-dropped.
+stale ids. Five presses are five writes, no toast, the last copy selected,
+five undo steps. The queue holds 20; the overflow — only reachable by a held
+key auto-repeating — is dropped without a toast (ERR-25), logged for devtools.
 
 **Every structural writer is in that queue, and its ids are re-found, not
 re-read (P1-A, ERR-4).** `moveNodes`, `deleteNode`, `deleteNodes` and a

@@ -106,25 +106,22 @@ function mergeClass(earlier: ClassEdit, later: ClassEdit): Pick<ClassEdit, 'add'
 }
 
 /**
- * Repeats every refusal and unexplained skip a merged edit earned for each node
- * it absorbed, and returns how many outcomes that added — the caller's
- * `skipped` count grows by exactly that much, so `skipped` still equals the
- * number of per-node outcomes the client reads (`fsCodemodAdapter.ts` derives
- * its unexplained count as `skipped - refusals.length`). Matched on kind AND
- * node id: one node can carry a merged `style` edit and a merged `class` edit
- * in the same batch, each with its own absorbed set.
+ * Repeats every refusal a merged edit earned for each node it absorbed, so the
+ * refusals stay one per per-node outcome the client reads (WB-35 — every
+ * contributing node's baseline is held back, not only the last one's).
+ * Matched on kind AND node id: one node can carry a merged `style` edit and a
+ * merged `class` edit in the same batch, each with its own absorbed set.
  */
-export function expandMergedOutcomes<R extends { nodeId: string; kind: string }, S extends { nodeId: string; kind: string }>(
+export function expandMergedOutcomes<R extends { nodeId: string; kind: string }>(
   applied: readonly DedupedStudioEdit<{ nodeId: string; kind: string }>[],
   refusals: R[],
-  unexplainedSkips: S[],
-): number {
+): void {
   const absorbedBy = new Map<string, readonly string[]>()
   for (const edit of applied) {
     if (edit.absorbedNodeIds?.length) absorbedBy.set(outcomeKey(edit), edit.absorbedNodeIds)
   }
-  if (absorbedBy.size === 0) return 0
-  return repeatForAbsorbed(refusals, absorbedBy) + repeatForAbsorbed(unexplainedSkips, absorbedBy)
+  if (absorbedBy.size === 0) return
+  repeatForAbsorbed(refusals, absorbedBy)
 }
 
 function outcomeKey(outcome: { nodeId: string; kind: string }): string {
@@ -134,13 +131,8 @@ function outcomeKey(outcome: { nodeId: string; kind: string }): string {
 function repeatForAbsorbed<O extends { nodeId: string; kind: string }>(
   outcomes: O[],
   absorbedBy: ReadonlyMap<string, readonly string[]>,
-): number {
-  let added = 0
+): void {
   for (const outcome of [...outcomes]) {
-    for (const nodeId of absorbedBy.get(outcomeKey(outcome)) ?? []) {
-      outcomes.push({ ...outcome, nodeId })
-      added += 1
-    }
+    for (const nodeId of absorbedBy.get(outcomeKey(outcome)) ?? []) outcomes.push({ ...outcome, nodeId })
   }
-  return added
 }

@@ -62,7 +62,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse, readValidatedBody } from '../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../http'
 import { requireCapability } from '../auth/authz'
 import { isStateChangingMethod, originAllowed } from '../auth/security'
 import type { DbClient } from '../db/client'
@@ -157,7 +157,7 @@ export async function tryServeDesignImport(
       if (err instanceof DesignImportError) {
         return jsonResponse({ error: err.message }, { status: err.status })
       }
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio]', err)
     }
   }
 
@@ -185,8 +185,7 @@ export async function tryServeDesignImport(
       return jsonResponse({ ok: true, dir: destRoot, written, skipped })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[designImport]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[designImport]', err)
     }
   }
 

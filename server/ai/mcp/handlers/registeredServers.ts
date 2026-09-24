@@ -38,7 +38,7 @@ import {
   SetMcpServerApprovalBodySchema,
   type ProjectMcpServerView,
 } from '@core/ai'
-import { badRequest, jsonResponse, readValidatedBody } from '../../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../../http'
 import { requireCapability } from '../../../auth/authz'
 import type { DbClient } from '../../../db/client'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../../../handlers/studioProjects'
@@ -132,7 +132,7 @@ async function handleAdd(req: Request, db: DbClient): Promise<Response> {
     if (err instanceof ReservedMcpServerNameError) {
       return jsonResponse({ error: err.message }, { status: 400 })
     }
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[mcp/registered-servers]', err)
   }
 
   if (body.secrets) {

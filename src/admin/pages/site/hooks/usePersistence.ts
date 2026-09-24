@@ -74,8 +74,14 @@ import {
   subscribeToEditorPrefsChanged,
 } from '@site/preferences/editorPreferences'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { getErrorMessage } from '@core/utils/errorMessage'
-import { pushToast } from '@ui/components/Toast'
+import { isAbortError, isUnreachableFailure, retryWhileUnreachable } from '@core/http'
+import {
+  LOAD_RETRY_BACKOFF_MS,
+  SAVE_RETRY_BACKOFF_MS,
+  UNREACHABLE_LOAD_MESSAGE,
+  type PersistenceController,
+  type PersistenceSaveStatus,
+} from './persistenceStatus'
 import { noteBoardRead } from '@site/studio/sourceIdentity'
 import { applySitePagesPatch, applyStructuralWriteOutcome } from './siteReloadApply'
 import { registerEditorSave } from './editorSaveRef'
@@ -100,38 +106,6 @@ import {
   registerCmsSiteReloader,
   type CmsSitePagesPatchDetail,
 } from '@admin/state/adminEvents'
-
-export interface PersistenceSaveStatus {
-  state: 'loading' | 'saved' | 'unsaved' | 'saving' | 'error'
-  message?: string
-  lastSavedAt?: number
-  /**
-   * Only meaningful for `state: 'error'` — true while the automatic retry
-   * ladder (see `SAVE_RETRY_BACKOFF_MS`) still has a rung left. The toolbar's
-   * save-status chip reads "Saving…" while it is true and only admits
-   * "Unsaved — retry" once it is false, so a dev server that takes six
-   * seconds to come back never makes the editor claim work was lost.
-   */
-  retrying?: boolean
-}
-
-/**
- * Delays before automatic save retry 1, 2 and 3; the length is the budget.
- *
- * A save fails for two reasons in practice — the dev server is restarting, or
- * the target file is momentarily locked — and both usually clear inside ten
- * seconds. Past three attempts the failure is not transient and the user has
- * to be told, which is what "Unsaved — retry" is for. The ladder lives here
- * rather than in the chip because retrying a save is the persistence layer's
- * job: it already owns the single-flight queue and the dirty snapshot that a
- * retry re-ships.
- */
-export const SAVE_RETRY_BACKOFF_MS = [2000, 4000, 8000] as const
-
-interface PersistenceController {
-  saveSite: () => Promise<void>
-  saveStatus: PersistenceSaveStatus
-}
 
 function errorMessage(err: unknown, fallback: string): string {
   return err instanceof Error && err.message.trim() ? err.message : fallback
@@ -192,6 +166,10 @@ export function usePersistence(
   const [saveStatus, setSaveStatus] = useState<PersistenceSaveStatus>(
     enabled ? { state: 'loading' } : { state: 'saved' },
   )
+  /** ERR-18 — bumped by `retryLoad` to run the initial load again. */
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  /** ERR-18 — see `PersistenceController.boardStale`. */
+  const [boardStale, setBoardStale] = useState(false)
   /** Whether the initial load has completed — prevents auto-save before load */
   const loadedRef = useRef(false)
   /** Stable reference to the adapter so it doesn't trigger re-renders */
@@ -361,7 +339,21 @@ export function usePersistence(
         try {
           // The adapter validates internally (validateSite + validatePages).
           // Constraint #230 is satisfied at the adapter boundary.
-          const site = await adapterRef.current.loadSite(idToTry)
+          // ERR-18 — a load that got no answer is tried again on
+          // `LOAD_RETRY_BACKOFF_MS`, and the load-error state says so
+          // (`retrying`) instead of declaring the project unopenable.
+          const site = await retryWhileUnreachable(
+            () => {
+              if (cancelled) throw new DOMException('Load superseded', 'AbortError')
+              return adapterRef.current.loadSite(idToTry)
+            },
+            {
+              backoffMs: LOAD_RETRY_BACKOFF_MS,
+              onRetry: () => {
+                if (!cancelled) setSaveStatus({ state: 'error', message: UNREACHABLE_LOAD_MESSAGE, retrying: true })
+              },
+            },
+          )
           if (site && !cancelled) {
             if (pendingCmsSiteReload) consumePendingCmsSiteReload()
             loadSite(site)
@@ -369,18 +361,22 @@ export function usePersistence(
             settleReloadRequests(covers)
             applyDefaultBreakpointPreference(site.breakpoints)
             loadedRef.current = true
+            setBoardStale(false)
             setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
             return
           }
         } catch (err) {
+          if (cancelled || isAbortError(err)) return
           if (err instanceof SiteValidationError) {
             console.warn('[persistence] Corrupt CMS site data:', err.message)
           } else {
             console.warn('[persistence] Failed to load CMS site:', err)
           }
-          if (!cancelled) {
-            setSaveStatus({ state: 'error', message: errorMessage(err, 'Failed to load CMS site') })
-          }
+          setSaveStatus({
+            state: 'error',
+            message: isUnreachableFailure(err) ? UNREACHABLE_LOAD_MESSAGE : errorMessage(err, 'Failed to load CMS site'),
+            retrying: false,
+          })
           return
         }
       }
@@ -423,7 +419,15 @@ export function usePersistence(
 
     load()
     return () => { cancelled = true }
-  }, [enabled, markNewSiteUnsaved, requestedSiteId])
+  }, [enabled, markNewSiteUnsaved, requestedSiteId, loadAttempt])
+
+  // ERR-18 — the Retry button: the whole load again, from a clean "loading".
+  // Exception #1: returned to the layout, which passes it down as a click
+  // handler; a stable identity keeps the error state from re-rendering.
+  const retryLoad = useCallback(() => {
+    setSaveStatus({ state: 'loading' })
+    setLoadAttempt((attempt) => attempt + 1)
+  }, [])
 
   // External "site changed at the server" hook. Non-editor workspaces call
   // `requestCmsSiteReload()`, which retains the reload if this hook is not
@@ -452,9 +456,26 @@ export function usePersistence(
       const covers = latestCmsSiteReloadRequest()
       const idToTry = requestedSiteId || 'default'
       const pendingCmsSiteReload = hasPendingCmsSiteReload()
+      let settledEarly = false
       try {
-        // Adapter validates internally (Constraint #230).
-        const site = await adapterRef.current.loadSite(idToTry)
+        // Adapter validates internally (Constraint #230). ERR-18 — a re-read
+        // that got no answer is tried again on `LOAD_RETRY_BACKOFF_MS`; the
+        // requests it covers are settled at the FIRST miss, so a structural
+        // queue waiting on this re-read never stalls behind the ladder.
+        const site = await retryWhileUnreachable(
+          () => {
+            if (token !== reloadTokenRef.current) throw new DOMException('Reload superseded', 'AbortError')
+            return adapterRef.current.loadSite(idToTry)
+          },
+          {
+            backoffMs: LOAD_RETRY_BACKOFF_MS,
+            onRetry: () => {
+              if (settledEarly) return
+              settledEarly = true
+              settleReloadRequests(covers)
+            },
+          },
+        )
         if (token !== reloadTokenRef.current) return
         if (!site) {
           if (pendingCmsSiteReload) consumePendingCmsSiteReload()
@@ -468,26 +489,23 @@ export function usePersistence(
         // The site doc on disk is now authoritative; clear the unsaved flag so
         // the auto-save loop doesn't immediately overwrite it back.
         setHasUnsavedChanges(false)
-        settleReloadRequests(covers)
+        if (!settledEarly) settleReloadRequests(covers)
         if (pendingCmsSiteReload) consumePendingCmsSiteReload()
+        setBoardStale(false)
         setSaveStatus({ state: 'saved', lastSavedAt: Date.now() })
       } catch (err) {
         // A failure a newer reload has already overtaken is not the board's
         // state any more; that reload reports its own outcome.
-        if (token !== reloadTokenRef.current) return
+        if (token !== reloadTokenRef.current || isAbortError(err)) return
         // Nothing waiting on this reload is left hanging: the queue behind a
         // structural write must not stall on a board that could not catch up.
-        settleReloadRequests(covers)
+        if (!settledEarly) settleReloadRequests(covers)
         // The write already landed on disk — this is the board failing to
-        // catch up with it. Silent, it reads as "nothing happened" and the
-        // only recovery the user can find is a page refresh; say so instead.
+        // catch up with it, after its retries. ERR-18 — marked quietly on
+        // the save chip ("Out of date — reload"), which is also the one-click
+        // way back; never a red card over the canvas.
         console.error('[persistence] Reload after a source write failed:', err)
-        pushToast({
-          kind: 'error',
-          title: 'The board could not reload your project',
-          body: `Your change was written to disk, but the canvas could not re-read it. Refresh to catch up. ${getErrorMessage(err, 'Unknown reload error')}`,
-        })
-        setSaveStatus({ state: 'error', message: 'Reload failed' })
+        setBoardStale(true)
       }
     }
 
@@ -657,5 +675,5 @@ export function usePersistence(
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [enabled, saveCurrentSite])
 
-  return { saveSite: saveCurrentSite, saveStatus }
+  return { saveSite: saveCurrentSite, saveStatus, retryLoad, boardStale }
 }

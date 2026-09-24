@@ -33,7 +33,7 @@
  *     evaluated — "parse, never execute" holds trivially.
  */
 import { isDesignSystemPath, isPrototypeShellPath, listWorkspaceFiles } from '@core/page-parser'
-import { jsonResponse } from '../../http'
+import { jsonResponse, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { assetSiteUrlResolver } from './assetSiteUrl'
 
@@ -107,7 +107,6 @@ export async function tryServeStudioProjectAssets(
     return jsonResponse({ assets: describeProjectImageAssets(dir) })
   } catch (err) {
     rethrowProjectDirRefusal(err)
-    console.error('[studio:project-assets]', err)
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio:project-assets]', err)
   }
 }

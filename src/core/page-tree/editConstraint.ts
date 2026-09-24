@@ -98,10 +98,6 @@ export type ConstraintReason =
   | 'unbound-reference'
   // Row 22 — Swap refusal (component shape mismatch, etc).
   | 'swap-refused'
-  // Row 23 — save-time prop/text/style edit reached no writable location, only
-  // ever known in aggregate today (`unexplainedSkips`) — see this module's
-  // `explainUnexplainedSkip` doc for why it stays informational-only.
-  | 'unexplained-skip'
   // Row 25-26 — CSS class/breakpoint has no hand-editable source, absorbed
   // from B1/B1b's `classifyStylesheetEditability` vocabulary.
   | 'no-editable-stylesheet'
@@ -471,26 +467,3 @@ export function explainCssRuleConstraint(
   }
 }
 
-/**
- * Row 23 — `unexplainedSkips`: a save-time prop/text/style edit reached no
- * writable location, known server-side only as an AGGREGATE COUNT
- * (`fsCodemodAdapter.ts`'s `unexplainedSkips`, per `StudioSaveResponseSchema`
- * — `detach`/`swap`/`css` carry a per-node `refusals` entry, but the far more
- * common prop/text/style path does not). Deliberately NOT given a jump-to-
- * source action or a real `origin`: this track cannot manufacture per-node
- * identification the server response does not carry. Extending
- * `StudioSaveResponseSchema` to add `{nodeId, kind, reason}` for this path is
- * a SERVER change (`server/handlers/studioWriteback.ts` — E2.4's territory
- * this wave) — flagged in the handoff, not built here.
- */
-export function explainUnexplainedSkip(count: number): EditConstraint {
-  return {
-    reason: 'unexplained-skip',
-    scope: 'node',
-    explanation:
-      count === 1
-        ? '1 edit had no writable location in the code and was not saved.'
-        : `${count} edits had no writable location in the code and were not saved.`,
-    actions: [],
-  }
-}

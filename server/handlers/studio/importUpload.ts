@@ -40,7 +40,7 @@
 import { join } from 'node:path'
 import { unzipSync, type Unzipped } from 'fflate'
 import { Type, safeParseValue } from '@core/utils/typeboxHelpers'
-import { badRequest, jsonResponse } from '../../http'
+import { badRequest, jsonResponse, internalServerError } from '../../http'
 import {
   ArchiveIngestError,
   MAX_ARCHIVE_BYTES,
@@ -234,6 +234,6 @@ export async function tryServeStudioIngest(
     if (err instanceof ArchiveIngestError) {
       return jsonResponse({ error: err.message }, { status: err.status })
     }
-    return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+    return internalServerError('[studio]', err)
   }
 }

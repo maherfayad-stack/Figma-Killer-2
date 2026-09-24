@@ -7,7 +7,7 @@
  * `boardSlice`'s doc prescribes for `frameDefaults`.
  *
  * FAILURE POSTURE: a failed write leaves store state exactly as it was and
- * raises a toast. There is deliberately no optimistic insert-then-roll-back.
+ * raises a toast (a failed READ does not — see `reloadComments`). There is deliberately no optimistic insert-then-roll-back.
  * A comment that appears, then vanishes a moment later, is worse than one that
  * takes 40 ms to appear — the author cannot tell whether it was sent, and the
  * whole value of a review thread is that what you can see is what everybody
@@ -17,6 +17,7 @@ import { useEditorStore } from '@site/store/store'
 import { getStudioWorkspaceDir } from '@site/studio/studioWorkspaceDir'
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
+import { retryWhileUnreachable } from '@core/http'
 import type { CommentAnchor } from '@core/studio-comments'
 import { applyCommentOp, fetchComments, type CommentOp } from './commentsApi'
 
@@ -36,19 +37,21 @@ async function run(op: CommentOp, failureTitle: string): Promise<boolean> {
   }
 }
 
-/** Re-read the whole file — after a load, a project switch, or an agent push. */
+/**
+ * Re-read the whole file — after a load, a project switch, or an agent push.
+ *
+ * P3-A — retried quietly while the server is unreachable; a failure that
+ * outlives the ladder is the Comments panel's own empty state
+ * (`markCommentsLoadFailed`), never a toast over a board that works.
+ */
 export async function reloadComments(): Promise<void> {
   try {
-    const file = await fetchComments(getStudioWorkspaceDir())
+    const dir = getStudioWorkspaceDir()
+    const file = await retryWhileUnreachable(() => fetchComments(dir))
     useEditorStore.getState().loadComments(file)
   } catch (err) {
     console.error('[commentActions] failed to load comments:', err)
     useEditorStore.getState().markCommentsLoadFailed()
-    pushToast({
-      kind: 'error',
-      title: 'Failed to load comments',
-      body: getErrorMessage(err, 'Unknown error loading studio comments'),
-    })
   }
 }
 

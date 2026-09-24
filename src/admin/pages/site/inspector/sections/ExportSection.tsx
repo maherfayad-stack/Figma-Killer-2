@@ -201,8 +201,9 @@ function ExportSectionBody({ nodeId, pageId, node, classSelectors, provenanceByP
   async function copyCss() {
     const declarations = collectNodeCssDeclarations(ALL_CURATED_CSS_PROPERTIES, provenanceByProperty)
     if (declarations.length === 0) {
+      // P3-A — a no-op, not a failure: an `info` note, never a red card.
       pushToast({
-        kind: 'error',
+        kind: 'info',
         title: 'Nothing to copy',
         body: 'No CSS is declared on this element yet — style it, or copy from an element that carries a class or an inline style.',
       })

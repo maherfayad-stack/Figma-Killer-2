@@ -9,12 +9,12 @@ The product calls the owner has made, in one place, newest first. A decision rec
 
 - **The standing authorization holds** (2026-07-31, re-confirmed 2026-09-23): agents finish their bundle without stopping to ask, inside fixed limits (no push to `main`, draft PRs, no merges, security review where the plan says so).
 - **Every project is Tier 2 (`run-project`) by default** (2026-09-20). How the tiers work: [`docs/features/trust-tiers.md`](features/trust-tiers.md).
-- **The canvas excellence program's fourteen decisions** (OD-1…OD-14, OD-FC-1/2) are below; `ROADMAP.md` bundles cite them by id.
+- **The canvas excellence program's fifteen decisions** (OD-1…OD-15, OD-FC-1/2) are below; `ROADMAP.md` bundles cite them by id.
 - Older decision sets are kept with their original ids (FEEL §6.n, BUILTIN §0.n, NEXT-WS Dn) because code comments and archived plans cite those ids. A superseded row says what replaced it.
 
 | Id | Date | Topic |
 |---|---|---|
-| OD-1 … OD-14, OD-FC-1/2 | 2026-09-23 | The canvas excellence program ([below](#the-canvas-excellence-program-2026-09-23)) |
+| OD-1 … OD-15, OD-FC-1/2 | 2026-09-23 (OD-15: 2026-09-24) | The canvas excellence program ([below](#the-canvas-excellence-program-2026-09-23)) |
 | Standing authorization | 2026-07-31, re-confirmed 2026-09-23 | [below](#the-standing-authorization) |
 | Trust default | 2026-09-20 | [below](#every-project-starts-at-tier-2-2026-09-20) |
 | FEEL §6.1 … §6.7 | 2026-09-17 | Figma-feel plan ([below](#figma-feel-plan-decisions-2026-09-17)) |
@@ -47,6 +47,7 @@ Source: [`ROADMAP.md`](../ROADMAP.md) §2, answered by the owner on 2026-09-23. 
 | OD-14 | **Free canvas.** The owner, verbatim: *"right in the canvas I want a free canvas that I can drag an element/component or an image in it and it's not part of the pages, and it's still there just not part of the live preview, so it's figma like free canvas"*. The empty board around the frames holds **loose layers**: elements, component instances, images and SVGs placed at any x/y. They persist across reloads and never appear in a page, the live preview or a publish. They can be dragged into a frame and out again. Each layer is one `.tsx` file at `.studio/canvas/<id>.tsx`; its position is stored in `boards.json`; all layers render in one shared static iframe per board. Design: [`docs/audits/2026-09-23-studio-audit/10-free-canvas.md`](audits/2026-09-23-studio-audit/10-free-canvas.md) | **owner:** new feature |
 | OD-FC-1 | Loose layers do not sync through git, the same as `boards.json` | recommendation |
 | OD-FC-2 | Loose layers paint below frames and lift above them while dragged | recommendation |
+| OD-15 | Arrows after a **Layers** pick: a pointer click on a Layers row hands the keyboard to the canvas, so the arrows nudge / reorder the layer (P2-C's `canvas.moveSelection`) and every canvas shortcut acts on it; keyboard entry into the tree (Tab) keeps ↑/↓ as row navigation; text fields keep their caret | **owner:** 2026-09-24, "like Figma" |
 
 ## The standing authorization
 

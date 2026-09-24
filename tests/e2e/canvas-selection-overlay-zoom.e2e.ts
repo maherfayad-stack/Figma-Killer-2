@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { readZoomPercent, zoomToPercent } from './helpers/studioFixtureProject'
 
 /**
  * Real-browser coverage for WS-5.1 (`canvas-05`): "the selection ring / props
@@ -79,56 +80,6 @@ async function panBy(page: Page, canvasRoot: Locator, dx: number, dy: number): P
   await page.mouse.move(rootBox.x + rootBox.width / 2, rootBox.y + rootBox.height / 2)
   await page.mouse.wheel(dx, dy)
   await page.waitForTimeout(200)
-}
-
-/** The zoom percentage `ZoomControls` currently displays (its debounced, committed value). */
-async function readZoomPercent(page: Page): Promise<number> {
-  const text = await page.getByTestId('toolbar-zoom-controls').locator('button', { hasText: '%' }).textContent()
-  const match = text?.match(/(\d+)%/)
-  if (!match) throw new Error(`readZoomPercent: could not parse a percentage from "${text}"`)
-  return Number(match[1])
-}
-
-/**
- * Reaches `targetPct` via a REAL ctrl+wheel zoom gesture (`useCanvas.ts`'s
- * `handleWheel`, `math.ts`'s `zoomFromWheelDelta`: `factor = 0.9985 **
- * deltaY`), anchored at the canvas root's center so the frame doesn't drift
- * off-screen mid-zoom. Computes the analytic delta needed from the CURRENT
- * displayed zoom, then verifies against the debounced (~100ms) committed
- * value and nudges again if still outside `tolerancePct` — `ZoomControls`
- * only displays the store's committed `zoom`, never the ref-driven live
- * value, so every read needs the settle wait.
- */
-async function zoomToPercent(
-  page: Page,
-  canvasRoot: Locator,
-  targetPct: number,
-  tolerancePct = 1,
-): Promise<void> {
-  const rootBox = await canvasRoot.boundingBox()
-  if (!rootBox) throw new Error('zoomToPercent: the canvas root has no bounding box')
-  const anchorX = rootBox.x + rootBox.width / 2
-  const anchorY = rootBox.y + rootBox.height / 2
-
-  for (let attempt = 0; attempt < 8; attempt += 1) {
-    const currentPct = await readZoomPercent(page)
-    if (Math.abs(currentPct - targetPct) <= tolerancePct) return
-
-    const factor = targetPct / currentPct
-    const deltaY = Math.log(factor) / Math.log(0.9985)
-
-    await page.mouse.move(anchorX, anchorY)
-    await page.keyboard.down('Control')
-    await page.mouse.wheel(0, deltaY)
-    await page.keyboard.up('Control')
-    // Store commit is debounced ~100ms after the last wheel event
-    // (useCanvas.ts's scheduleStoreCommit) — ZoomControls reads the
-    // committed value, not the ref-driven live transform.
-    await page.waitForTimeout(220)
-  }
-  throw new Error(
-    `zoomToPercent: could not reach ${targetPct}% (stuck at ${await readZoomPercent(page)}%) after 8 attempts`,
-  )
 }
 
 test.describe('canvas-05 / WS-5.1: selection ring and inspector must not drift at zoom ≠ 1 with pan', () => {

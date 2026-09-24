@@ -93,7 +93,7 @@ import { join } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { sanitizePackageName } from '@core/module-engine'
 import { safeParseJson } from '@core/utils/jsonValidate'
-import { badRequest, jsonResponse, readValidatedBody } from '../../http'
+import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { serveStaticFile } from '../../static'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
 import { isRealpathContained } from './workspacePackageResolve'
@@ -465,8 +465,7 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       return jsonResponse({ ok: true, url: bundleUrl(dir, hash), hash, components, warnings })
     } catch (err) {
       rethrowProjectDirRefusal(err)
-      console.error('[studio:componentBundle]', err)
-      return jsonResponse({ error: err instanceof Error ? err.message : String(err) }, { status: 500 })
+      return internalServerError('[studio:componentBundle]', err)
     }
   }
 
