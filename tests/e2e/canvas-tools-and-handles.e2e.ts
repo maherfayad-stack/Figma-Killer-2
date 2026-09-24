@@ -7,8 +7,10 @@ import {
   createAuthoredFixtureProject,
   openFixtureBoard,
   panIntoView,
+  readToastRecorder,
   removeFixtureProject,
   sourceNodeId,
+  startToastRecorder,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 
@@ -153,16 +155,20 @@ test.describe('P5-E — tools and handles (computed layout + file bytes)', () =>
 
   test('IX-17: ⌥-dragging a padding band writes all four sides', async ({ page }) => {
     const { content, element, zoom } = await openAndSelect(page, DIV.row)
-    const band = content.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="column"]').first()
+    // The RIGHT band (left, then right, in DOM order): the row's left edge can
+    // sit under the ruler / Explorer at this viewport size.
+    const band = content.locator('[data-canvas-spacing-band][data-spacing-kind="padding"][data-spacing-axis="column"]').nth(1)
     await expect(band).toBeVisible({ timeout: 15_000 })
     const box = (await band.boundingBox())!
     const x = box.x + box.width / 2
     const y = box.y + box.height / 2
     await page.mouse.move(x, y)
-    await page.keyboard.down('Alt')
     await page.mouse.down()
-    // The left band grows as it is pulled right.
-    await page.mouse.move(x + 6 * zoom, y, { steps: 6 })
+    // ⌥ pressed DURING the drag, as a hand does it: the drag claims the key,
+    // so the Alt-hover ladder never opens over the band being dragged.
+    await page.keyboard.down('Alt')
+    // The right band grows as it is pulled left.
+    await page.mouse.move(x - 6 * zoom, y, { steps: 6 })
     await page.mouse.up()
     await page.keyboard.up('Alt')
     await expect.poll(readPage, { timeout: 30_000 }).toContain('paddingLeft: "16px"')
@@ -174,22 +180,35 @@ test.describe('P5-E — tools and handles (computed layout + file bytes)', () =>
 
   test('IX-12: R arms the rectangle tool; a drag in the frame inserts a box of the DRAWN size', async ({ page }) => {
     const { canvasRoot, content, zoom } = await openAndSelect(page, DIV.b)
+    await startToastRecorder(page)
+    const consoleLines: string[] = []
+    page.on('console', (message) => consoleLines.push(`${message.type()}: ${message.text()}`))
     const saves = recordSaves(page)
     await canvasRoot.focus()
     await page.keyboard.press('r')
     await expect(page.locator('[data-canvas-draw-layer="rectangle"]')).toBeVisible()
 
-    // Draw inside the stage, 80 × 30 frame px.
+    // Draw inside the stage, 80 × 30 frame px — from its right-hand part, which
+    // stays clear of the ruler and the Explorer at this viewport size.
     const stage = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', DIV.stage)}"]`).first()
     const stageBox = (await stage.boundingBox())!
-    const x = stageBox.x + 10 * zoom
-    const y = stageBox.y + stageBox.height - 20 * zoom
+    const x = stageBox.x + stageBox.width - 100 * zoom
+    const y = stageBox.y + stageBox.height - 40 * zoom
     await page.mouse.move(x, y)
     await page.mouse.down()
     await page.mouse.move(x + 80 * zoom, y + 30 * zoom, { steps: 8 })
+    // Mid-drag: the rectangle being drawn is on screen.
+    await expect(page.locator('[data-canvas-drawn-rect]')).toBeVisible()
     await page.mouse.up()
 
-    await expect.poll(readPage, { timeout: 30_000 }).toContain('width: "80px"')
+    try {
+      await expect.poll(readPage, { timeout: 30_000 }).toContain('width: "80px"')
+    } catch (err) {
+      // Say WHY nothing landed: a refusal is a toast, a crash is a console error.
+      const toasts = JSON.stringify(await readToastRecorder(page))
+      const console = consoleLines.filter((line) => !line.startsWith('debug')).slice(-15).join(' | ')
+      throw new Error(`no drawn box in the source. Toasts: ${toasts}. Console: ${console}`, { cause: err })
+    }
     const source = readPage()
     expect(source).toContain('height: "30px"')
     await page.waitForTimeout(QUIET_MS)
