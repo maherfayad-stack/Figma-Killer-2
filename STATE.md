@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### mcp-32 — P4-G: lint, HTTP subagents, model routing, short tool descriptions (AI-21, AI-23, AI-25, AI-29)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-routing-and-lint` off `a92df2d3` · **PR:** draft, base `feat/canvas-excellence` (long form, security note and tool table in its body) · **Updated:** 2026-09-24
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-routing-and-lint` off `a92df2d3` · **PR:** #255 (draft, base `feat/canvas-excellence`; long form, security note and tool table in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying — **needs security-guard review** (`studio_lint` runs project tooling; `studio_delegate` hands out write tools)
 - **Tools added:**
   - `studio_lint` — `server`; `ai.tools.write` + `studio.run.project` AND the project at `run-project` (`checkTrustTier`); `sideEffects: none`; both agent paths + registry. Input `{ dir?, paths?[≤50] }`. Below Tier 2: `trust-tier-required` "…linting runs its own ESLint config and plugins, which needs the highest tier". Also `eslint-not-installed`, `no-eslint-config`, `lint-invocation-error`, `lint-timed-out`.
