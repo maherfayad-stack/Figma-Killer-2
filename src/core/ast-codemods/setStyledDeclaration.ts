@@ -81,8 +81,14 @@ export interface SetStyledDeclarationParams {
   className: string
   /** The flattened selector the declaration lives under, e.g. `.Card_sc__a1b2c3` or `.Card_sc__a1b2c3:hover`. */
   selector: string
-  /** The media QUERY (without the `@media` keyword) when the declaration sits inside a nested `@media` block. */
-  atMedia?: string
+  /**
+   * The conditional block the declaration sits inside, as `name params`
+   * (`media (min-width: 700px)`, `container (min-width: 400px)`,
+   * `supports (display: grid)` — `@core/css-codemods`' `cssAtRuleScope.ts`),
+   * when it is nested one level in a template's `@media`/`@container`/
+   * `@supports` block (P3-C, WB-31: `@media` used to be the only one).
+   */
+  atRule?: string
   property: string
   value: string
   /** Optional pre-existing project to reuse across several edits in one batch. */
@@ -117,7 +123,7 @@ export type SetStyledDeclarationResult =
 const UNWRITABLE_VALUE_RE = /[`;{}\\\n\r]|\$\{/
 
 export function setStyledDeclaration(params: SetStyledDeclarationParams): SetStyledDeclarationResult {
-  const { file, line, col, className, selector, property, value, atMedia } = params
+  const { file, line, col, className, selector, property, value, atRule } = params
 
   if (UNWRITABLE_VALUE_RE.test(value)) {
     return {
@@ -153,7 +159,7 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
     (span) =>
       normalizeSelector(span.selector) === normalizeSelector(selector) &&
       span.property.toLowerCase() === property.toLowerCase() &&
-      matchesMedia(span, atMedia),
+      matchesScope(span, atRule),
   )
 
   if (matches.length === 0) {
@@ -200,7 +206,7 @@ export function setStyledDeclaration(params: SetStyledDeclarationParams): SetSty
     serializeSpans(spans),
     match.selector,
     property,
-    match.conditions.length === 1 ? { atMedia: mediaParams(match.conditions[0]!) } : {},
+    match.conditions.length === 1 ? { atRule: conditionScope(match.conditions[0]!) } : {},
   )
   if (!analysis.ok) return { ok: false, reason: analysis.refusal.reason, message: analysis.refusal.message }
 
@@ -367,22 +373,22 @@ function sameConditions(a: readonly string[], b: readonly string[]): boolean {
 }
 
 /**
- * Whether a span sits under the media query the caller named. A caller with no
- * `atMedia` means the template's UNCONDITIONAL declarations, so a span inside
- * any `@media` is a different target; a caller with one matches a span nested
- * exactly one level deep, because a doubly-nested query is a condition pair
- * this edit shape cannot name.
+ * Whether a span sits under the conditional block the caller named. A caller
+ * with no `atRule` means the template's UNCONDITIONAL declarations, so a span
+ * inside any block is a different target; a caller with one matches a span
+ * nested exactly one level deep, because a doubly-nested condition is a pair
+ * this edit shape cannot name. The at-rule NAME is compared too: a
+ * `@container (min-width: 400px)` is not a `@media (min-width: 400px)`.
  */
-function matchesMedia(span: TemplateDeclarationSpan, atMedia: string | undefined): boolean {
-  if (!atMedia) return span.conditions.length === 0
+function matchesScope(span: TemplateDeclarationSpan, atRule: string | undefined): boolean {
+  if (!atRule) return span.conditions.length === 0
   if (span.conditions.length !== 1) return false
-  return normalizeQuery(mediaParams(span.conditions[0]!)) === normalizeQuery(atMedia)
+  return normalizeQuery(conditionScope(span.conditions[0]!)) === normalizeQuery(atRule)
 }
 
-/** `@media (min-width: 700px)` -> `(min-width: 700px)`. Anything that is not an `@media` keeps its whole text, so it can never match a media query. */
-function mediaParams(condition: string): string {
-  const match = /^@media\s+(.*)$/i.exec(condition.trim())
-  return match ? match[1]!.trim() : condition.trim()
+/** `@media (min-width: 700px)` -> `media (min-width: 700px)` — a flattened condition as the `name params` scope `atRule` spells. */
+function conditionScope(condition: string): string {
+  return condition.trim().replace(/^@/, '')
 }
 
 function normalizeQuery(query: string): string {

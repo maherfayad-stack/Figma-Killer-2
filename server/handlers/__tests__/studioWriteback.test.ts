@@ -939,16 +939,17 @@ describe('applyStudioEdit — the css kind (WS-6.3)', () => {
 })
 
 /**
- * `panel-02` — the honest-target gate (`analyzeDeclarationTarget`) reaching
- * the real dispatch, not just its own unit tests. Each case below is a write
- * that WOULD have succeeded at the filesystem level and changed nothing the
- * user could see, because `setDeclaration` targets the FIRST matching rule
- * while the CSS cascade lets the LAST declaration win. A silent no-op is the
- * worst available outcome here, so each one refuses with a reason instead —
- * and, critically, leaves the file byte-identical.
+ * P3-C (WB-16) — a css edit is written where the CASCADE reads it, through the
+ * real dispatch. These three shapes used to REFUSE (`duplicate-selector`,
+ * `shorthand-override`, `duplicate-declaration`): `setDeclaration` wrote the
+ * FIRST matching rule while the cascade honours the LAST declaration, so the
+ * write would have changed nothing on screen. But the declaration the canvas
+ * shows is a real line in the file — one honest target — so it is written
+ * there now, and the bytes are asserted. The one refusal left is a covering
+ * `!important`, which leaves the file byte-identical.
  */
-describe('applyStudioEditBatch — css edits refuse rather than write invisibly', () => {
-  it('refuses when the selector is declared twice and the later block sets the same property', () => {
+describe('applyStudioEditBatch — css edits land on the declaration that takes effect', () => {
+  it('writes the LATER block when the selector is declared twice and both set the property', () => {
     const before = '.hero {\n  color: red;\n}\n\n.hero {\n  color: green;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -962,13 +963,12 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: 'blue',
     }])
 
-    expect(result.written).toBe(0)
-    expect(result.refusals).toHaveLength(1)
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-selector' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(1)
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n}\n\n.hero {\n  color: blue;\n}\n')
   })
 
-  it('refuses when a shorthand later in the same rule would reset the edited longhand', () => {
+  it('writes the longhand right after a shorthand that would otherwise reset it', () => {
     const before = '.hero {\n  padding-top: 2px;\n  padding: 0;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -982,9 +982,8 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: '12px',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'shorthand-override' })
-    expect(result.refusals[0]!.message).toContain('padding')
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  padding-top: 2px;\n  padding: 0;\n  padding-top: 12px;\n}\n')
   })
 
   it('refuses when an !important shorthand outranks the edited longhand from any position', () => {
@@ -1005,7 +1004,7 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
     expect(read('src/screens/Home.css')).toBe(before)
   })
 
-  it('refuses a property declared twice inside one rule', () => {
+  it('writes the second of a property declared twice inside one rule', () => {
     const before = '.hero {\n  color: red;\n  color: green;\n}\n'
     write('src/screens/Home.css', before)
 
@@ -1019,8 +1018,28 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
       value: 'blue',
     }])
 
-    expect(result.refusals[0]).toMatchObject({ kind: 'css', reason: 'duplicate-declaration' })
-    expect(read('src/screens/Home.css')).toBe(before)
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe('.hero {\n  color: red;\n  color: blue;\n}\n')
+  })
+
+  it('P3-C (WB-31) — writes a @container override into its own block', () => {
+    write('src/screens/Home.css', '.hero {\n  color: red;\n}\n')
+
+    const result = applyStudioEditBatch(tmpDir, [{
+      kind: 'css',
+      op: 'set',
+      nodeId: 'css:src/screens/Home.css#.hero#container card (min-width: 400px)#color',
+      file: 'src/screens/Home.css',
+      selector: '.hero',
+      property: 'color',
+      value: 'blue',
+      atRule: 'container card (min-width: 400px)',
+    }])
+
+    expect(result.refusals).toEqual([])
+    expect(read('src/screens/Home.css')).toBe(
+      '.hero {\n  color: red;\n}\n\n@container card (min-width: 400px) {\n  .hero {\n    color: blue;\n  }\n}\n',
+    )
   })
 
   it('still writes when a duplicate selector exists but does not touch this property', () => {
@@ -1042,11 +1061,12 @@ describe('applyStudioEditBatch — css edits refuse rather than write invisibly'
   })
 
   it('one refusal does not abort the rest of the batch', () => {
-    write('src/screens/Bad.css', '.a {\n  color: red;\n  color: green;\n}\n')
+    // A covering `!important` is the cascade refusal that survives P3-C (WB-16).
+    write('src/screens/Bad.css', '.a {\n  padding-top: 1px;\n  padding: 0 !important;\n}\n')
     write('src/screens/Good.css', '.b {\n  color: red;\n}\n')
 
     const result = applyStudioEditBatch(tmpDir, [
-      { kind: 'css', op: 'set', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'color', value: 'blue' },
+      { kind: 'css', op: 'set', nodeId: 'css:a', file: 'src/screens/Bad.css', selector: '.a', property: 'padding-top', value: '4px' },
       { kind: 'css', op: 'set', nodeId: 'css:b', file: 'src/screens/Good.css', selector: '.b', property: 'color', value: 'blue' },
     ])
 
@@ -1530,7 +1550,7 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
  * dispatcher and onto a real file: clearing a declaration, and writing one
  * under a breakpoint's `@media` query.
  */
-describe('applyStudioEdit — css unset + atMedia', () => {
+describe('applyStudioEdit — css unset + atRule', () => {
   it('clears a declaration and leaves the rest of the file alone', () => {
     write('src/app.css', '.card {\n  color: red;\n  padding: 4px;\n}\n')
 
@@ -1563,20 +1583,18 @@ describe('applyStudioEdit — css unset + atMedia', () => {
     expect(read('src/app.css')).toBe('.card {\n  padding: 4px;\n}\n')
   })
 
-  it('refuses an unset the cascade would ignore, exactly as a set would be refused', () => {
-    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+  it('P3-C (WB-16) — an unset clears the property from every block, so the class stops setting it', () => {
+    write('src/app.css', '.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n  margin: 0;\n}\n')
 
-    expect(() =>
-      applyStudioEdit(tmpDir, {
-        kind: 'css',
-        op: 'unset',
-        nodeId: 'css:src/app.css#.card##color',
-        file: 'src/app.css',
-        selector: '.card',
-        property: 'color',
-      }),
-    ).toThrow(/declared more than once/)
-    expect(read('src/app.css')).toBe('.card {\n  color: red;\n}\n\n.card {\n  color: blue;\n}\n')
+    applyStudioEdit(tmpDir, {
+      kind: 'css',
+      op: 'unset',
+      nodeId: 'css:src/app.css#.card##color',
+      file: 'src/app.css',
+      selector: '.card',
+      property: 'color',
+    })
+    expect(read('src/app.css')).toBe('.card {\n  margin: 0;\n}\n')
   })
 
   it('writes a set into a new @media block, leaving the unconditional rule untouched', () => {
@@ -1590,7 +1608,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: '(max-width: 768px)',
+      atRule: 'media (max-width: 768px)',
     })
 
     const written = read('src/app.css')
@@ -1610,7 +1628,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: 'print',
+      atRule: 'media print',
     })
 
     const written = read('src/app.css')
@@ -1630,7 +1648,7 @@ describe('applyStudioEdit — css unset + atMedia', () => {
       selector: '.card',
       property: 'color',
       value: 'blue',
-      atMedia: 'print',
+      atRule: 'media print',
     })
 
     expect(applied.applied).toBe(true)

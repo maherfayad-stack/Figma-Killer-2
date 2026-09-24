@@ -214,7 +214,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutco
         selector: edit.selector,
         property: edit.property,
         value: edit.value,
-        ...(edit.atMedia ? { atMedia: edit.atMedia } : {}),
+        ...(edit.atRule ? { atRule: edit.atRule } : {}),
       })
       if (!outcome.ok) throw new StudioEditRefusalError(outcome.reason, outcome.message)
       // `changed: false` means the template already says exactly this — the

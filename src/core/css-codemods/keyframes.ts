@@ -2,15 +2,14 @@
  * keyframes — the `@keyframes`-scoped half of the plain-CSS write-back tier
  * (W5-5, animation editing).
  *
- * `setDeclaration` addresses `<selector> { … }` at a file's top level and
- * `setDeclarationAtMedia` addresses the same rule one nesting level down,
- * inside `@media <query>`. Neither can reach a keyframe step: a step lives
- * inside an AT-RULE that is matched by NAME rather than by query, and its own
- * "selector" (`from`, `to`, `50%`) is a keyframe offset, not a CSS selector —
- * `findRule` would happily match the string `50%` but only ever at the scope
- * it was handed, and the at-rule name/params pair has no counterpart in the
- * `@media` matcher. So this module is the third scope, built to
- * `setDeclarationAtMedia`'s shape on purpose: same postcss CST round-trip,
+ * `setDeclaration` addresses `<selector> { … }` at a file's top level, or one
+ * nesting level down inside a `@media`/`@container`/`@supports` block. None of
+ * those reaches a keyframe step: its own "selector" (`from`, `to`, `50%`) is
+ * a keyframe offset, not a CSS selector, and a second `@keyframes` block of
+ * the same name REPLACES the first rather than cascading with it — so the
+ * class writer's "write the declaration the cascade reads" rule does not
+ * apply. So this module is the keyframes scope, built to the at-rule write's
+ * shape on purpose: same postcss CST round-trip,
  * same "create the container if it is missing" behaviour, same
  * formatting-preservation guarantee (every byte this codemod did not touch
  * round-trips verbatim through postcss's `raws`).
@@ -21,7 +20,7 @@
  *                                no other codemod provides (a `@keyframes`
  *                                block reaches the editor as an opaque
  *                                `StyleRule.rawCss` string).
- *   - `setDeclarationAtKeyframe`    ← `setDeclarationAtMedia`
+ *   - `setDeclarationAtKeyframe`    ← `setDeclaration` with an `atRule`
  *   - `removeDeclarationAtKeyframe` ← `removeDeclaration`
  *   - `insertKeyframes`             ← `insertRule`, for a WHOLE new block.
  *
@@ -224,7 +223,7 @@ function buildStep(keyText: string, declarations: Readonly<Record<string, string
   return rule
 }
 
-/** The literal CSS text of a whole `@keyframes` block — the one reliable way to get correct nested indentation (see `setDeclarationAtMedia`'s note). */
+/** The literal CSS text of a whole `@keyframes` block — the one reliable way to get correct nested indentation (see `appendRule`'s note in `setDeclaration.ts`). */
 function keyframesFragment(name: string, steps: readonly KeyframeStep[]): string {
   const body = steps
     .map((step) => {
@@ -251,7 +250,7 @@ function appendKeyframes(root: Root, name: string, steps: readonly KeyframeStep[
 /**
  * Set one declaration inside one step of `@keyframes <name>`, creating the
  * step — and the whole block — at the end of the file if either is missing.
- * The exact `setDeclarationAtMedia` contract, one scope over.
+ * `setDeclaration`'s at-rule contract, one scope over.
  */
 export function setDeclarationAtKeyframe(
   cssText: string,

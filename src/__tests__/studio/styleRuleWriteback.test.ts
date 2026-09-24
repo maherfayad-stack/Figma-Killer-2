@@ -108,7 +108,7 @@ describe('collectStyleRuleEdits — what it refuses instead of dropping', () => 
     expect(plan.unmapped).toEqual([{ label: '.hero-title', reason: null }])
   })
 
-  it('reports a REAL breakpoint override, which needs a media query this edit kind cannot carry', () => {
+  it('reports an override under a breakpoint this document does not define — no block to name', () => {
     const edited = rule({ contextStyles: { mobile: { width: '90px' } } })
 
     const plan = collectStyleRuleEdits({ [RULE_ID]: edited })
@@ -715,14 +715,14 @@ describe('style-03 — removals and per-breakpoint writes', () => {
 
     expect(plan.unwritableContexts).toHaveLength(0)
     expect(plan.edits).toHaveLength(1)
-    expect(plan.edits[0]).toMatchObject({ op: 'set', property: 'width', value: '90%', atMedia: '(max-width: 375px)' })
+    expect(plan.edits[0]).toMatchObject({ op: 'set', property: 'width', value: '90%', atRule: 'media (max-width: 375px)' })
   })
 
   it('falls back to the breakpoint width when it carries no explicit mediaQuery', () => {
     setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
     const edited = rule({ contextStyles: { wide: { width: '90%' } } })
     const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], { breakpoints: BREAKPOINTS })
-    expect(plan.edits[0]).toMatchObject({ atMedia: '(max-width: 1440px)' })
+    expect(plan.edits[0]).toMatchObject({ atRule: 'media (max-width: 1440px)' })
   })
 
   it('writes a kind:media condition override under its own query', () => {
@@ -733,28 +733,42 @@ describe('style-03 — removals and per-breakpoint writes', () => {
       conditions: [{ id: 'media:print', label: 'Print', condition: { kind: 'media', query: 'print' } }],
     })
 
-    expect(plan.edits[0]).toMatchObject({ atMedia: 'print' })
+    expect(plan.edits[0]).toMatchObject({ atRule: 'media print' })
   })
 
-  // The refusal that SURVIVES: `setDeclarationAtMedia` writes `@media` and
-  // nothing else, so a container/feature query would land under the wrong
-  // at-rule entirely.
-  it('still refuses a @container context, by name, and writes nothing for it', () => {
+  // P3-C (WB-31) — `@container` and `@supports` used to be the refusal that
+  // survived ("cannot yet write @container or @supports … lost on reload"):
+  // only `@media` could be written. They are written into their own block now.
+  it('writes a @container context into its own block, named container included', () => {
     setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
-    const edited = rule({ contextStyles: { 'container::(min-width: 400px)': { width: '100%' } } })
+    const edited = rule({ contextStyles: { 'container:card:(min-width: 400px)': { width: '100%' } } })
 
     const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], {
       conditions: [
         {
-          id: 'container::(min-width: 400px)',
+          id: 'container:card:(min-width: 400px)',
           label: 'Card ≥400',
-          condition: { kind: 'container', query: '(min-width: 400px)' },
+          condition: { kind: 'container', name: 'card', query: '(min-width: 400px)' },
         },
       ],
     })
 
-    expect(plan.edits).toHaveLength(0)
-    expect(plan.unwritableContexts).toEqual(['.hero-title'])
+    expect(plan.unwritableContexts).toEqual([])
+    expect(plan.edits).toEqual([
+      expect.objectContaining({ op: 'set', property: 'width', value: '100%', atRule: 'container card (min-width: 400px)' }),
+    ])
+  })
+
+  it('writes a @supports context into its own block', () => {
+    setStudioStyleRuleSources(SOURCES, { [RULE_ID]: rule() })
+    const edited = rule({ contextStyles: { 'supports:grid': { display: 'grid' } } })
+
+    const plan = collectStyleRuleEdits({ [RULE_ID]: edited }, [], {
+      conditions: [{ id: 'supports:grid', label: 'Grid', condition: { kind: 'supports', query: '(display: grid)' } }],
+    })
+
+    expect(plan.unwritableContexts).toEqual([])
+    expect(plan.edits).toEqual([expect.objectContaining({ op: 'set', property: 'display', atRule: 'supports (display: grid)' })])
   })
 
   it('refuses a context the document no longer defines rather than guessing a query', () => {
@@ -771,7 +785,7 @@ describe('style-03 — removals and per-breakpoint writes', () => {
 
     const plan = collectStyleRuleEdits({ [RULE_ID]: cleared }, [], { breakpoints: BREAKPOINTS })
 
-    expect(plan.edits[0]).toMatchObject({ op: 'unset', property: 'width', atMedia: '(max-width: 375px)' })
+    expect(plan.edits[0]).toMatchObject({ op: 'unset', property: 'width', atRule: 'media (max-width: 375px)' })
   })
 
   it('keeps the base and the breakpoint edits on distinct nodeIds, so one refusal cannot mute the other', () => {

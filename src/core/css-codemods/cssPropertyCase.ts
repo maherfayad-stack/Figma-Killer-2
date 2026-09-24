@@ -3,7 +3,7 @@
  *
  * `CSSPropertyBag` (`@core/page-tree`) keys are camelCase everywhere in this
  * editor (property controls, `StyleRule.styles`, the publisher's own
- * `CSSPropertyBag`). `setDeclaration`/`setDeclarationAtMedia` write into a
+ * `CSSPropertyBag`). `setDeclaration`/`removeDeclaration` write into a
  * REAL `.css` file through a postcss CST, which only understands kebab-case
  * property names — a bare `backgroundColor: red;` would be silently invalid
  * CSS. This is the one-line conversion every writeback caller needs before

@@ -218,10 +218,11 @@ export function styleRulePlanTouchedSomething(plan: StyleRuleEditPlan): boolean 
 }
 
 /**
- * `style-03` — a context Studio genuinely cannot write. A breakpoint or a
- * `kind: 'media'` condition now goes to disk through `setDeclarationAtMedia`;
- * what is left is `@container` / `@supports`, which are a different at-rule
- * entirely. Writing one as `@media` would put the declaration under a
+ * `style-03` — a context Studio genuinely cannot write. Every breakpoint and
+ * every `media`/`container`/`supports` condition goes to disk inside its own
+ * block (P3-C, WB-31 — `@container`/`@supports` used to land here). What is
+ * left is an override under a context the document no longer defines: there
+ * is no block to name, and guessing one would put the declaration under a
  * condition the user did not ask for — worse than saying so.
  */
 function reportUnwritableContexts(labels: readonly string[]): void {
@@ -230,9 +231,8 @@ function reportUnwritableContexts(labels: readonly string[]): void {
       kind: 'warning',
       title: 'Override not saved to source',
       body:
-        `${label} changed under a container or feature query. Studio writes breakpoint overrides as @media ` +
-        'blocks, and cannot yet write @container or @supports, so this override stays on the canvas only and ' +
-        'will be lost on reload.',
+        `${label} changed under a breakpoint or condition this project no longer defines, so there is no block ` +
+        'to write it into and it stays on the canvas only.',
     })
   }
 }
