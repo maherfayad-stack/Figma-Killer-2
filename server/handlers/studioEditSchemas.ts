@@ -109,10 +109,13 @@ const StyleEditSchema = Type.Object({
  *     codemod can emit the only reachable spelling: `styles.<local>`.
  *
  * Can REFUSE with a specific reason (`css-module-binding` /
- * `css-module-import-missing` / `template-dynamic` / `spread-attribute` /
- * `unsupported-call` / `unsupported-expression` — `ClassNameRefusalReason` in
- * `@core/ast-codemods`) exactly like `detach`/`swap`/`css` do — see
- * `applyStudioEdit`'s `'class'` case.
+ * `template-dynamic` / `spread-attribute` / `unsupported-call` /
+ * `unsupported-expression` — `ClassNameRefusalReason` in `@core/ast-codemods`)
+ * exactly like `detach`/`swap`/`css` do — see `applyStudioEdit`'s `'class'`
+ * case. Since P3-C (WB-18) an ADD to an expression `className` wraps it rather
+ * than refusing, and a module token whose stylesheet the file does not import
+ * yet is imported after the batch (`cssModuleImportPlan.ts`), so through this
+ * schema `css-module-import-missing` no longer occurs.
  */
 const ClassNameTokenSchema = Type.Union([
   Type.Object({ kind: Type.Literal('literal'), token: Type.String() }),

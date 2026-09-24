@@ -18,6 +18,7 @@ import {
   type JsxAttribute,
   type JsxSpreadAttribute,
   type SourceFile,
+  type TemplateExpression,
 } from 'ts-morph'
 import { LOOP_ID_SEPARATOR, styleValueKey } from '@core/page-tree'
 import type { ParsedNode, ParsedPropValue } from './types'
@@ -96,6 +97,36 @@ export { LOOP_ID_SEPARATOR }
  * that an object resolves, the exclusion has to be stated.
  */
 const READER_OWNED_ATTRIBUTES: ReadonlySet<string> = new Set(['style', 'dangerouslySetInnerHTML'])
+
+/**
+ * The class names a `className` template's static HEAD definitely carries —
+ * `undefined` when it carries none. `` `card ${tone}` `` → `card`; but
+ * `` `badge badge--${tone}` `` → `badge` only: a head that does not end in
+ * whitespace may end MID-TOKEN, and `badge--` is a class no element ever has.
+ * The one shape that provably does not is the BEM modifier idiom,
+ * `` `price${strike ? ' price--strike' : ''}` ``: every branch of the first
+ * interpolation is empty or starts with whitespace, so `price` is whole.
+ * Every name returned is one the element carries at runtime whatever the
+ * interpolation says, which is what makes showing them honest.
+ */
+export function templateHeadClassNames(template: TemplateExpression): string | undefined {
+  const head = template.getHead().getLiteralText()
+  const tokens = head.split(/\s+/).filter((token) => token.length > 0)
+  const lastIsWhole = /\s$/.test(head) || interpolationStartsAClass(template.getTemplateSpans()[0]?.getExpression())
+  if (tokens.length > 0 && !lastIsWhole) tokens.pop()
+  return tokens.length > 0 ? tokens.join(' ') : undefined
+}
+
+/** A ternary whose branches are string literals each empty or starting with whitespace — it can never extend the token before it. */
+function interpolationStartsAClass(expression: Node | undefined): boolean {
+  if (!expression || !Node.isConditionalExpression(expression)) return false
+  return [expression.getWhenTrue(), expression.getWhenFalse()].every((branch) => {
+    const inner = Node.isParenthesizedExpression(branch) ? branch.getExpression() : branch
+    if (!Node.isStringLiteral(inner) && !Node.isNoSubstitutionTemplateLiteral(inner)) return false
+    const value = inner.getLiteralValue()
+    return value.length === 0 || /^\s/.test(value)
+  })
+}
 
 /**
  * Literal-valued attributes (mirrors `../ast-codemods/readJsxProps`), falling
@@ -347,6 +378,20 @@ export function extractProps(
       // `evalOptions` keeps its pre-§7 behaviour exactly, per this module's
       // own header comment), so there is nothing to report failing.
       if (ctx.eval) codeProps.push(name)
+      // P3-C (WB-18) — an element's `className={\`card ${tone || ''}\`}` shows
+      // the classes its static head DEFINITELY carries (`templateHeadClassNames`),
+      // exactly as an inlined component's element does (`componentSubstitution.ts`).
+      // Without it, a class Studio itself wrote into the head of a wrapped
+      // expression would vanish from the canvas on the next parse. Visual only,
+      // and safe: `parsedPageToSitePage` turns className into `classIds` and
+      // drops the prop, so no writeback reads this value, and the `codeProps`
+      // entry above keeps it locked. Not for a component call site — there the
+      // prop is the component's INPUT, and a partial value would be substituted
+      // as though it were the whole one.
+      if (name === 'className' && kind !== 'component' && Node.isTemplateExpression(expression)) {
+        const head = templateHeadClassNames(expression)
+        if (head !== undefined) result[name] = head
+      }
     }
   }
 

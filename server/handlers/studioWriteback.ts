@@ -52,6 +52,7 @@ import { join } from 'node:path'
 import { existsSync } from 'node:fs'
 import {
   createImportPruneSession,
+  createModuleImportPlan,
   detachComponentInstance,
   isPrunableSourceFile,
   setImportSpecifier,
@@ -64,6 +65,7 @@ import {
   setStyledDeclaration,
   swapComponentInstance,
   type DeletedJsxText,
+  type ModuleImportPlan,
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
 import { applyCssEdit, cssCreateImportTarget } from './studioCssWriteback'
@@ -94,6 +96,7 @@ import {
   refusalForUnwritable,
   refusalFromCodemodError,
   StudioEditRefusalError,
+  WRITE_FAILED_REASON,
   writeFailedRefusal,
 } from './studioEditRefusals'
 
@@ -157,15 +160,20 @@ import {
  * shape) now live in `studioEditSchemas.ts`, alongside every other RESPONSE
  * type this module builds and returns — see that module's own doc for why.
  */
-export function applyStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
+export function applyStudioEdit(dir: string, edit: StudioEdit, moduleImports?: ModuleImportPlan): StudioEditApplyOutcome {
+  // P3-C (WB-18) — a batch passes ITS plan and adds the reserved imports after
+  // its last edit; a lone edit has nothing pending below it, so it adds them now.
+  const plan = moduleImports ?? createModuleImportPlan()
   try {
-    return dispatchStudioEdit(dir, edit)
+    const outcome = dispatchStudioEdit(dir, edit, plan)
+    if (!moduleImports) plan.apply()
+    return outcome
   } catch (err) {
     throw refusalFromCodemodError(edit, err) ?? err
   }
 }
 
-function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutcome {
+function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: ModuleImportPlan): StudioEditApplyOutcome {
   // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
   // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
@@ -244,7 +252,9 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit): StudioEditApplyOutco
       const add = resolveClassNameTokens(dir, target.rel, edit.add)
       const remove = resolveClassNameTokens(dir, target.rel, edit.remove)
       if (add === null || remove === null) return { applied: false, unwritable: 'stylesheet-unavailable' } // never guess
-      const result = setJsxClassName({ ...loc, add, remove })
+      // WB-18 — a CSS Module this file does not import yet is written against a
+      // binding reserved in the batch's plan, imported after the last edit.
+      const result = setJsxClassName({ ...loc, add, remove, pendingModuleImports: moduleImports.forFile(loc.file) })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }
     }
@@ -532,6 +542,9 @@ export function applyStudioEditBatch(
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
   const syntaxRefusal = createSyntaxGuard(dir)
   const fingerprints: { nodeId: string; fingerprint: string }[] = []
+  // P3-C (WB-18) — CSS-Module imports the class edits below reserve, added
+  // after the loop for the same reason the import prune runs there.
+  const moduleImports = createModuleImportPlan()
   for (const edit of ordered) {
     const brokenTarget = syntaxRefusal(edit)
     if (brokenTarget) {
@@ -539,7 +552,7 @@ export function applyStudioEditBatch(
       continue
     }
     try {
-      const outcome = applyStudioEdit(dir, edit)
+      const outcome = applyStudioEdit(dir, edit, moduleImports)
       if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
       if (isSlotPreviewOutcome(outcome)) {
         // E2.2 — a deliberate `add-slot-prop` preview: `ok`, nothing written,
@@ -571,6 +584,22 @@ export function applyStudioEditBatch(
   }
   // WB-7 — an edit several nodes collapsed into reports its outcome for each of them.
   expandMergedOutcomes(ordered, refusals)
+
+  // Every edit has landed, so an import line can no longer move a pending one.
+  // A failed import is one the written markup already reads, so each class
+  // edit in that file says so rather than reporting a clean write.
+  for (const { file, imports } of moduleImports.apply().failed) {
+    for (const edit of ordered) {
+      if (edit.kind !== 'class' || studioEditFile(dir, edit.nodeId) !== file) continue
+      refusals.push(
+        refusalFor(
+          edit,
+          WRITE_FAILED_REASON,
+          `The class was written, but Studio could not add ${imports.join('; ')} to the file. Add it by hand.`,
+        ),
+      )
+    }
+  }
 
   // Only a binding that was live BEFORE and is dead AFTER — an import the user
   // had already left unused is their line, not something this batch created.

@@ -1501,6 +1501,62 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
     expect(read('src/ui/Card.tsx')).toContain('className={s.row}')
   })
 
+  it('P3-C (WB-18) — a stylesheet the file does not import is imported AFTER the batch, so no pending edit is mis-aimed', () => {
+    // The class edit is BELOW the text edit, so it runs first (bottom-to-top).
+    // An import line added right then would move the heading off line 3 and
+    // the text edit would land on the wrong element — or refuse.
+    const before = [
+      'export function Recipe() {',
+      '  return <section>',
+      '    <h2>Soup</h2>',
+      '    <p>Simmer</p>',
+      '  </section>',
+      '}',
+      '',
+    ].join('\n')
+    write('src/ui/Recipe.tsx', before)
+    write('src/ui/Recipe.module.css', '.step { color: red; }\n')
+
+    const result = applyStudioEditBatch(tmpDir, [
+      { kind: 'text', nodeId: 'src/ui/Recipe.tsx:3:6', text: 'Stew' },
+      { kind: 'class', nodeId: 'src/ui/Recipe.tsx:4:6', add: [{ kind: 'module', file: 'src/ui/Recipe.module.css', local: 'step' }], remove: [] },
+    ])
+
+    expect(result.refusals).toEqual([])
+    expect(result.written).toBe(2)
+    expect(result.shifted).toBe(true)
+    expect(read('src/ui/Recipe.tsx')).toBe(
+      [
+        "import styles from './Recipe.module.css'",
+        'export function Recipe() {',
+        '  return <section>',
+        '    <h2>{"Stew"}</h2>',
+        '    <p className={styles.step}>Simmer</p>',
+        '  </section>',
+        '}',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it('P3-C (WB-18) — a lone applyStudioEdit adds the import itself (nothing is pending below it)', () => {
+    const before = ['export function Recipe() {', '  return <p>Simmer</p>', '}', ''].join('\n')
+    write('src/ui/Recipe.tsx', before)
+    write('src/ui/Recipe.module.css', '.step { color: red; }\n')
+
+    const applied = applyStudioEdit(tmpDir, {
+      kind: 'class',
+      nodeId: 'src/ui/Recipe.tsx:2:11',
+      add: [{ kind: 'module', file: 'src/ui/Recipe.module.css', local: 'step' }],
+      remove: [],
+    })
+
+    expect(applied.applied).toBe(true)
+    expect(read('src/ui/Recipe.tsx')).toBe(
+      ["import styles from './Recipe.module.css'", 'export function Recipe() {', '  return <p className={styles.step}>Simmer</p>', '}', ''].join('\n'),
+    )
+  })
+
   it('declines an out-of-workspace module path without writing anything', () => {
     write('src/ui/Card.tsx', page)
 
