@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
-- **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `a03f410a` merged in) · **PR:** draft, base `feat/canvas-excellence`; full tables in its body · **Updated:** 2026-09-24
+- **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `01f3d9c2` merged in) · **PR:** #245 (draft, base `feat/canvas-excellence`; full tables in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Done:**
   - Hover is off the editor store: `canvas/canvasHover.ts` (keyed + per-frame reads). `hoverNode`/`hovered*` are gone; store actions call `clearCanvasHover`/`followCanvasHover`. The dead `isHovered`/`data-hovered` is deleted.
