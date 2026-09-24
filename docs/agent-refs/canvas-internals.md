@@ -825,14 +825,27 @@ The rules the ladder replaced prose with:
   (notes AND frames) nudges the notes, because `annotation` outranks `board`.
   Sibling selection went to Tab / ⇧Tab, not the arrows.
 - **Arrows on a layer (IX-1).** An `absolute | fixed` layer nudges its
-  offsets 1 px / ⇧ 10 px; any other layer reorders one place along its
-  parent's axis (`reorderStep`: reversed for `*-reverse` and an RTL row; a
-  cross-axis arrow does nothing) through `moveNode`. The decision needs ONE
-  layout read — `measureArrowTarget` asks the frame adapters for the node and
-  its ancestor chain in one `measure`, so a live frame answers it too. Rules in
-  `canvas/canvasNodeArrowMove.ts`, the gesture in `useCanvasNodeArrowKeys.ts`.
-  Canvas-scoped like Tab (`isCanvasKeyboardSurface`): in a panel the arrows
-  stay the panel's. Single selection only.
+  offsets 1 px / ⇧ 10 px; any other layer reorders along its parent's axis
+  (`reorderStep`: reversed for `*-reverse` and an RTL row; a cross-axis arrow
+  does nothing; in a GRID ↑ / ↓ move a whole row — the resolved
+  `grid-template-columns` count — and ← / → one cell, P2-C2). The decision
+  needs ONE layout read — `measureArrowTargets` asks the frame adapters for
+  every selected layer and its ancestor chain in one `measure`, so a live
+  frame answers it too. Rules in `canvas/canvasNodeArrowMove.ts`, the gesture
+  in `useCanvasNodeArrowKeys.ts`. Canvas-scoped like Tab
+  (`isCanvasKeyboardSurface`): in a panel the arrows stay the panel's.
+- **A multi-selection moves as one gesture (P2-C2, OD-16).** Any positioned
+  member → every positioned member nudges by the same delta (one preview bag
+  per layer, `NodeStylesPreview.stylesByNode`; one
+  `setNodesInlineStylesPerNode` on release); the flow members of a MIXED
+  selection stay put. All flow → `stepSiblings`: `@core/page-tree`'s
+  `planSiblingSteps` turns the step into INDEPENDENT single-element moves (a
+  run of 2+ is its one neighbour jumping over it; a single layer moves
+  itself), written as ONE `/save` batch (`commitStudioMoves`, applied
+  bottom-to-top) and ONE history entry (`gesture: 'siblings'`, undone by
+  the inverse batch through `moveSiblings`). A grid-row step of 2+ layers
+  and a nested pair are not independent and refuse by name. ⌥↑ / ⌥↓, ⌘[ /
+  ⌘] and the palette's Move up / down share `stepSelectionAmongSiblings`.
 - **A pointer pick in Layers hands the keyboard to the canvas (OD-15).** A
   click on a Layers row (`event.detail > 0`) calls `returnKeyboardToCanvas`
   (`canvas/canvasKeyboardFocus.ts`), which focuses the canvas root exactly as
@@ -847,7 +860,7 @@ The rules the ladder replaced prose with:
 - **A held arrow is one undo entry and one source write.** A nudge previews
   every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
   + the optimistic style broadcast for live frames), then writes ONE
-  `setNodeInlineStyles` on the arrow's keyup (the dispatcher's release
+  inline-style transaction on the arrow's keyup (the dispatcher's release
   broadcast — P2-B routes frame keyups there) and flushes the autosave. A
   focus loss (`handleKeyUp(null)`) commits where the preview was. A reorder is
   one step per PRESS: the repeats are claimed and dropped, because a

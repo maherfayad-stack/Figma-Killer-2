@@ -365,7 +365,7 @@ multi-property gesture one property at a time turns one click into N undo
 steps. The Properties panel's single multi-property write channel is
 `onChangeMany(patch)` (`StyleSectionsEditor`). A HELD key is one gesture too:
 the canvas arrow nudge (P2-C) previews every auto-repeat through
-`setPreviewNodeStyles` and commits ONE `setNodeInlineStyles` on the keyup, so
+`setPreviewNodeStyles` (one bag per layer for a multi-selection) and commits ONE `setNodesInlineStylesPerNode` on the keyup, so
 a hold is one entry and — with `flushAutosave` — one source write
 (`canvas/useCanvasNodeArrowKeys.ts`). And a field must compare before
 it commits — a prefilled field that writes its own displayed value on blur
@@ -385,6 +385,11 @@ back to it — on the page that OWNS the element, found through
 `deleteNodes` tags its entry as a `source` gesture whose undo is a
 `reinsert-source` write (`store-15`). Tagging happens only when a source write
 was actually issued — a CMS or Visual Component tree keeps plain patch replay.
+A multi-selection step (`stepSiblings` → `moveSiblings`, P2-C2) is tagged
+`siblings` with the whole batch of independent single-element moves; its undo
+re-issues the inverse batch through `moveSiblings` — again one write and one
+entry (`siblingStepActions.ts`; the independence rule is `@core/page-tree`'s
+`planSiblingSteps`). A batch of one is an ordinary `move` entry.
 
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a

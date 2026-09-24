@@ -10,6 +10,10 @@
  *     axis REORDERS it one place (`moveNode`, a STRUCTURAL edit). An arrow
  *     across the axis does nothing.
  *
+ * A multi-selection (P2-C2, OD-16) follows the same rule per layer —
+ * `resolveArrowSelectionMove` below says what a MIXED selection does — and a
+ * grid child steps a whole row on ↑ / ↓ (`reorderStep`).
+ *
  * This module holds the rules (pure) and the one layout read they need
  * (`measureArrowTargets`, through the frame adapters, so a live bridge frame
  * answers the same question a portal frame does). The key handling — the hold,
