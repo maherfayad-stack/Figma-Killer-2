@@ -63,11 +63,11 @@ on those surfaces structurally cannot fail on the thing it is named after
 *computed* layout — measured rects, `scrollHeight`, computed styles after
 layout.
 
-Running the four budget specs by path is usually enough and takes a few
+Running the five budget specs by path is usually enough and takes a few
 minutes:
 
 ```sh
-npx playwright test tests/e2e/studio-board-perf.e2e.ts   tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
+npx playwright test tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts   tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts
 ```
 
 ### In CI
@@ -86,8 +86,8 @@ cold whole-suite run anyone had ever done (`verify-2`) reported **23 passed /
 "The full-suite baseline" below for what those 64 turned out to be.
 
 `e2e-budgets` runs the narrow budget slice — `studio-board-perf`,
-`inspector-panel-measurement`, `inspector-height`, `studio-feel` — because
-those four measure **computed layout and frame time**, the one class of
+`canvas-feel-budgets`, `inspector-panel-measurement`, `inspector-height`,
+`studio-feel` — because those five measure **computed layout and frame time**, the one class of
 question happy-dom structurally cannot answer. It stays its own
 job so a 40 ms regression is visible in ten minutes instead of at the end of an
 hour-long run, and so the two kinds of failure get the triage they each need.
@@ -321,6 +321,7 @@ work that was never folded into that matrix at all — each spec below cites the
 | Phase 0 exit dogfood (`STUDIO-FIGMA-FEEL-PLAN.md` §8, `meta-14`) | The seven claims wave 1 could not close from a unit test: ⌘D ×5 inside 300 ms, Alt-hover measurement against real `getBoundingClientRect` geometry, Alt+drag duplicate, ⌘G/⌘⇧G/⌘Z, a panel that throws, the save chip's Saving→Saved and its Retry, and zero unexplained `console.error` across the whole file | `studio-feel-phase0.e2e.ts` (+ `helpers/studioFixtureProject.ts`) |
 | `parser-p1a` (P1-A, WB-1) | A Delete on an element whose line moved under the board (an outside write the board was not told about) is refused `element-moved`, re-read and re-planned, and deletes the element the user pointed at — nothing else | `element-identity-guard.e2e.ts` |
 | `store-16` (P1-B, ERR-5) | The selection follows its ELEMENT, not its `line:col`, when a write above it shifts the line | `selection-follows-element.e2e.ts` |
+| `mcp-31` (P4-F, AI-7) | An agent turn (a local fake model behind an Ollama credential, the real HTTP tool loop and file tools — no provider key) writes two files; "Revert turn" restores both byte for byte; after the user edits one, "Revert turn" is refused naming it and the other still reverts on its own | `agent-turn-revert.e2e.ts` |
 | `server-29` (P1-D, ERR-19) | A file edited outside Studio mid-session reaches the canvas with no gesture (the project watcher), and a later Delete lands on the right element | `outside-edit-live-reload.e2e.ts` |
 | `store-17` (P1-F, ERR-1) | A width typed, entered and undone is not written back when the parked field blurs | `undo-tells-the-truth.e2e.ts` |
 | `canvas-23` (P2-D, IX-6a/6b/6d) | A real handle drag, measured as COMPUTED layout: a border-box and a content-box element each grow by exactly the drag (mid-drag too) with the CSS width in the source and one undo entry; a `flex: 1` item renders at the dragged width; an absolute element's W/N handles keep the opposite edge | `element-resize.e2e.ts` |

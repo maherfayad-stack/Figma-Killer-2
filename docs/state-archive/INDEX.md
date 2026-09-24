@@ -5,8 +5,14 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 239 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 245 entries, archived 2026-09-23, newest first
 
+- 2026-09-23 · `docs-16` · clean stale references (PR #252) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `mcp-31` · P4-F: trust and panel (PR #251) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `mcp-30` · P4-E: assets for the agent (PR #248) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `parser-18` · P3-C: value refusals become writes (#247 + #249) (PR #247) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `canvas-27` · P2-C2: bulk actions on a multi-selection (OD-16) (PR #246) · [`2026-09.md`](2026-09.md)
+- 2026-09-23 · `perf-12` · P2-I: selector sweep (PR #245) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `store-18` · P3-A: toast and failure policy (PR #244) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `canvas-26` · P2-E: snapping and measuring + OD-15 (PR #243) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `canvas-25` · P2-C: arrow keys move the selected layer (PR #242) · [`2026-09.md`](2026-09.md)

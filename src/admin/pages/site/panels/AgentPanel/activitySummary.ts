@@ -16,6 +16,7 @@
 import { formatTurnProgress } from '@core/ai'
 import type { AgentMessage, AgentToolCall } from '@site/agent'
 import { getToolCallDisplay } from './toolCallDisplay'
+import { inputProgressHeadline } from './turnPresentation'
 
 export interface ActivityStep {
   key: string
@@ -102,6 +103,10 @@ function headlineFor(message: AgentMessage, steps: ActivityStep[]): string {
   if (message.retrying) {
     return `The AI provider is busy — trying again (${message.retrying.attempt} of ${message.retrying.maxAttempts})`
   }
+  // AI-26 — a call whose arguments are still streaming (a whole file being
+  // written) is the newest thing happening, and the one most likely to look
+  // stuck without this.
+  if (message.inputProgress) return inputProgressHeadline(message.inputProgress)
   const running = steps.findLast((step) => step.status === 'pending')
   if (running) {
     return running.detail ? `${running.title} — ${running.detail}` : running.title

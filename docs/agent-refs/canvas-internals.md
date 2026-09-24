@@ -126,7 +126,7 @@ AUTHORED `overflow-y` was something other than the CSS default `visible`
 un-scaled child (an SVG icon bigger than its box) reports a real, positive
 `scrollHeight - clientHeight` deficit in an ordinary browser even though
 nothing is clipped — `overflow-y: visible` never hid anything, so there is
-nothing to "unroll." See `classifyUnrollElement` in `canvasScrollUnroll.ts`
+nothing to "unroll." See `classifyUnrollElement` in `@core/studio-runtime`'s `scrollUnrollRules.ts`
 for the exact gate. It **never writes `body`'s or
 `html`'s `height`** — see "Height, and the feedback loop" below for why that
 specific boundary is load-bearing.
@@ -173,7 +173,7 @@ prototype player made a click mean "follow this link", because every link
 authored on a button pushed its target twice.
 
 **Hover is a MATCH, not a property**, which is why suppressing it is a selector
-rewrite (`hoverSuppression.ts`, applied by `CanvasHoverSuppressionInjector`) and
+rewrite (`@core/studio-runtime`'s `hoverSuppressionRules.ts`, applied by `CanvasHoverSuppressionInjector`) and
 not an injected rule: `.btn:hover { background: X }` names an arbitrary
 declaration block, and no blanket override can undo an arbitrary declaration.
 `:hover` is swapped for a class token nothing wears — a CLASS specifically, so
@@ -924,6 +924,14 @@ the generic dispatcher runs it (that is how ⌘⇧H → `layers.toggleVisibility
 ⌘⇧L → `layers.toggleLock` work). Anything the canvas must own itself goes in
 `COMPONENT_OWNED_SHORTCUTS` so it can't double-fire.
 
+The registry spans three files: `keybindings.ts` (the chords the dispatcher
+routes), `keybindingViewport.ts` (the view keys `useCanvasViewportKeys` handles)
+and `keybindingGestures.ts` (modifier gestures read off pointer or drag events,
+whose `match` is constant-false; they are there for the `?` sheet). A key that
+Figma and Penpot give different meanings gets a row in the **conflict register**
+at the top of `keybindings.ts` (OD-3, `docs/decisions.md`) before it gets a
+binding.
+
 ### The latched tools (`K4`)
 
 `canvasTool: 'move' | 'hand' | 'scale'` on the canvas slice is what a plain drag
@@ -1252,7 +1260,10 @@ a component in a live frame selected the element inside it.
 `set()`. So each `useEditorStore(...)` in it is paid ~3,600 times per
 keystroke, click and pan commit. The rules, gated by
 `per-node-selector-budget.test.ts` (budget 7, no `useShallow`) and timed by
-`bench:editor-store`'s subscriber sweep:
+`bench:editor-store`'s subscriber sweep, a gate there (a breach fails the
+bench). The sweep (`scripts/bench/lib/canvasSubscriberSweep.ts`) runs a COPY of
+`NodeRenderer.tsx`'s selectors, so a change to one changes the other in the
+same PR:
 
 - **Hover is not store state.** `canvas/canvasHover.ts` holds it: keyed
   listeners (`useIsNodeHovered`, a Layers row) wake only the two ids a
@@ -1308,7 +1319,7 @@ it exists, and two of the three biggest items were not the node tree at all:
 | ~85–350 ms per **poster** (880–1,160 ms on a 310-element frame), in a burst | `useFramePosterCapture` → `html-to-image` | queued: `framePosterQueue.ts` holds every capture until the board is quiet, then runs them one per macrotask; since P2-I only off-screen pooled frames are captured |
 | ~10 ms | `CanvasHoverSuppressionInjector` walking all four content sheets' CSSOM | a per-sheet-text rewrite **plan**, built once and applied by index in every other frame |
 | ~7 ms | `ProjectCssInjector` assigning `textContent` — the browser parsing vendor CSS into a new document | unchanged; only an iframe **pool** can avoid it, see below |
-| ~5 ms | `collectScrollDeficits` (`resolveFrameFitHeight.ts`) forced layout | unchanged |
+| ~5 ms | `collectScrollDeficits` (`@core/studio-runtime`'s `frameFitRules.ts`) forced layout | unchanged |
 | ~5 ms | `CanvasScrollUnrollInjector`'s `snapshotAuthoredStyles` + unroll pass | unchanged |
 
 `IframeFrameSurface` therefore mounts in **three commits**: the `<iframe
@@ -1753,12 +1764,11 @@ cloned wheel. Everything the board learns about a bridge frame arrives as a
 | `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 | `key` (P2-B; `down`/`up`, `key`/`code` ≤ 32 chars, `location`, `repeat`, modifiers) / `blur` | `keyForwarding.ts` — capture-phase `keydown`/`keyup` on the document and `blur` on its window, DESIGN mode only, never for a key typed into a contentEditable or a text field; a design-mode keydown is cancelled and stopped in the frame | `useBridgeFrameInteraction` → `canvasFrameKeyRelay.ts`, the portal frame's own relay: `down` becomes a keydown clone on the parent `document` (the one dispatcher), `up` goes into the release broadcast, `blur` releases every held key if focus left the editor (ERR-11) |
 | `dropCandidates:result` (`speed-06`; every stamped node's `{nodeId, occurrenceIndex, rect, axis, reversed, childRects}`, bounded ≤2000 candidates/≤200 `childRects` each) | `dropCandidates.ts`'s `collectDropCandidates`, answering the matching `dropCandidates` request | `BridgeFrameAdapter.measureDropCandidates()`'s pending-request map → `canvasInsertionDragSnapshot.ts`'s per-drag snapshot (never a per-move consumer) |
-| `ready`, `hmr:before`/`hmr:after`, `frame:resize`, `error`, `text:edit`, `measure:result` | unchanged | `useAdapterReady`, `overlayMeasureScheduler`, `useIframeFrameAutoHeight`, `useBridgeFrameDiagnostics`, `useBridgeComputedValues`, and (`hmr:after`/`frame:resize`) `useBridgeSelectionChrome`'s anchor refresh |
 
 And the other direction — what the parent sends a bridge frame that a portal
-frame never needs, all from `useBridgeSelectionChrome` (called by
-`BreakpointSelectionOverlay` with the frame's adapter; a no-op for a portal
-adapter):
+frame never needs (each is a no-op on a portal adapter). The chrome calls come
+from `useBridgeSelectionChrome` (called by `BreakpointSelectionOverlay` with the
+frame's adapter); the rest name their caller:
 
 | Adapter call | What the runtime does with it |
 |---|---|
@@ -1768,8 +1778,7 @@ adapter):
 | `measure(selection)` | answers with body-relative rects; the parent projects them through `createCanvasOverlayMeasureSession` to anchor the selection toolbar and in-place inspector, which stay in the parent document as they do for a portal frame — once per selection change, pan/zoom commit, `frame:resize` or `hmr:after`, never per frame |
 | `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule ALWAYS scoped to `nodeId`'s own element (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared), stamping `[data-studio-optimistic-style]` and keying the rule on that stamp — for BOTH an inline write and a class write (`className` present). `className` crosses the wire but is informational only: a bridge frame cannot build a `.<className>` selector from it, because that name is Studio's own PARSE of the class, not the independently-hashed name Vite's CSS-modules plugin gave it in the live DOM — proven live (`speed-01`'s STATE.md entry, "Live-measurement fix"), a `.<className>` rule matched nothing. Only the edited node previews instantly; other elements sharing the class catch up on the next HMR update. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a BASE-context OR a BREAKPOINT-context style commit or scrub — the broadcast layer (`optimisticStructuralBroadcast.ts`'s `broadcastOptimisticStyle`) filters a breakpoint-context write to only the bridge frame(s) whose OWN `breakpointId` (`canvasFrameAdapterRegistry.ts`'s per-registration field, set by `IframeFrameSurface.tsx`) matches; a base write reaches every bridge frame, same as before. Only a STATE/condition context (hover, focus, active, …) is skipped entirely — a live board frame IS a breakpoint frame, so treating every non-base context as "skip" (the pre-fix behaviour) silently removed the preview from its main use case. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
 | `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId` — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
-| `optimistic.style(nodeId, patch, className?)` (`speed-01`) | applies the patch as a stylesheet rule (never `nodeId`'s own inline `style`, which React's later HMR write must not be cleared) — an inline write stamps the node's element and keys on `[data-studio-optimistic-style]`; a class write (`className` present) keys on `.<className>` and touches no element, reaching every node in the frame carrying that class. Called from `commitApi.ts`'s `writeToTarget`/`previewToTarget` for a base-context (no active breakpoint/condition) style commit or scrub. `PortalFrameAdapter`'s implementation is a documented no-op — the portal tree already repaints from the same store write. |
-| `optimistic.clearStyle(nodeId)` (`speed-01`) | drops whatever optimistic style rule is currently active for `nodeId`, whichever selector shape it turned out to be — a no-op when nothing is active. Called from `commitApi.ts`'s `clearStylePreview`. |
+| `optimistic.insert(nodeId, parentNodeId, index, tagName, text?)` / `optimistic.delete(nodeId)` / `optimistic.move(nodeId, parentNodeId, index)` (`live-07`) | the same-tick paint of a structural gesture, ahead of the file write and Fast Refresh: `optimisticDomOps.ts` inserts a ghost element built from structured `tagName`/`text` (never HTML; the id is a throwaway `optimistic:<uuid>`), removes the node's element, or moves it. `optimisticStructuralBroadcast.ts` sends each call to EVERY registered bridge adapter; a frame that does not hold the node no-ops. Callers: `studioSourceWrites.ts` (insert), `nodeActions.ts` and `deleteNodesAction.ts` (delete), `nodeActions.ts` and `siblingStepActions.ts` (move). |
 | `startTextEdit(nodeId, allowed, text?)` (`live-18`) | the reply to the frame's own `text:editStart` request (called from `useBridgeFrameInteraction`, not `useBridgeSelectionChrome` — the frame asks per-node, not once per selection). `allowed` makes the target `contentEditable`, seeds it with `text` (the node's current canonical value), focuses it and selects all; refused is a silent no-op, mirroring the portal editor's own silence for a non-editable double-click. `PortalFrameAdapter`'s implementation is a documented no-op — nothing in portal mode ever emits `text:editStart` in the first place, since `NodeRenderer` owns its whole session directly with no adapter round trip. |
 | `measureDropCandidates()` (`speed-06`) | a bounded `dropCandidates`/`dropCandidates:result` round trip; the wire candidate's stamp+`occurrenceIndex` is translated to a canonical node id exactly like every other inbound method here. Called by `canvasInsertionDragSnapshot.ts`, once per drag per frame it visits (never per pointer move) and again on that frame's own `hmr:after`/`frame:resize`. `PortalFrameAdapter`'s implementation reuses the SAME `collectDropCandidates` the runtime answers with — a portal document's `data-node-id` values are already canonical, so there is no stamp translation to do. |
 

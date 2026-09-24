@@ -2,7 +2,7 @@
  * Condition — a reusable, site-level CSS condition definition.
  *
  * Part of the unified "editing context" model (see
- * docs/plans/2026-05-30-unified-condition-axis.md). An *editing context* is the
+ * docs/reference/css-class-registry.md → "Per-context styles"). An *editing context* is the
  * condition under which a style override applies. There are two kinds of
  * context id a `StyleRule.contextStyles` map can key on:
  *

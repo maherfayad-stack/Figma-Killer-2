@@ -54,6 +54,7 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import {
   hostExecutedWorkspaceFile,
+  isSecretBearingFileName,
   realpathAllowingMissing,
   studioShellWorkspaceFile,
   unwritableWorkspaceSegment,
@@ -179,6 +180,22 @@ export function agentWriteRefusal(filePath: string, cwd: string): AgentWriteRefu
         `Not written: "${filePath}" is ${why}. It runs on the user's machine outside the page, so a change to it needs the user. `
         + 'Show the user the exact change and ask them to make or approve it, then carry on with the screen files — '
         + '.tsx, .ts, .css and assets stay yours to write.',
+    }
+  }
+  // Key material and credential stores (`credentials.json`, `*.key`, `id_rsa`,
+  // `.pgpass`, `*.tfvars`, `.dev.vars`, …). The HTTP file tools refused these
+  // through their own read/write rule while the CLI hook did not, so the two
+  // paths disagreed (review of #251, F2). Checked after `needs-user`, so an env
+  // file keeps that answer. Real path too: a link named `x.ts` onto a key is a key.
+  for (const [base, candidate] of pairs) {
+    const rel = relativeInside(base, candidate)
+    const name = rel?.split(sep).at(-1)
+    if (!name || !isSecretBearingFileName(name)) continue
+    return {
+      code: 'protected-path',
+      message:
+        `Refused: "${filePath}" is a credential file (key material or a credential store), which no agent may read or write. `
+        + 'Tell the user what it should contain and let them write it.',
     }
   }
   return null

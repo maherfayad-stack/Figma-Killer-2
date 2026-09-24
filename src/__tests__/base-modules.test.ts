@@ -1371,8 +1371,8 @@ describe('base.link — render() specifics', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Inline text edit declarations (docs/superpowers/specs/
-// 2026-06-10-inline-text-editing-design.md) — the canvas resolves these
+// Inline text edit declarations (docs/agent-refs/canvas-internals.md →
+// "Inline text editing") — the canvas resolves these
 // generically; the declaration IS the feature's per-module surface.
 // ---------------------------------------------------------------------------
 

@@ -257,6 +257,20 @@ anything pending first (so those edits are re-found server-side), then calls
 `resyncBoardAfterWrite(files)` — the same narrow-or-full re-read Studio's own
 writes use, which P1-B's follower then maps the selection through.
 
+Limits of the watcher, each by construction:
+
+- **No open tab, no watcher.** `subscribeProjectChanges` starts the one watcher
+  per project for its first subscriber (`server/ai/mcp/outsideEditReload.ts`, fed
+  by the editor bridge stream) and closes it when the last one leaves.
+- **An event is a hint, never a file list.** `fs.watch` on Windows drops most of
+  a burst and names directories; the watcher diffs a `size:mtime` snapshot to
+  learn what changed.
+- **A Studio writer that does not hold the project write lock reads as
+  `outside`** (for example `translationWrite.ts`, `i18nScaffold.ts`,
+  `pageDelete.ts`) and costs one redundant re-read.
+- **The remembered texts behind re-location are per process.** After a server
+  restart the first stale edit refuses `element-moved` as before.
+
 ---
 
 ## The value evaluator — tiers are the boundary
