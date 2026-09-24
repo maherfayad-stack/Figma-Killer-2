@@ -63,6 +63,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### mcp-32 — P4-G: lint, HTTP subagents, model routing, short tool descriptions (AI-21, AI-23, AI-25, AI-29)
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-routing-and-lint` off `a92df2d3` · **PR:** draft, base `feat/canvas-excellence` (long form, security note and tool table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying — **needs security-guard review** (`studio_lint` runs project tooling; `studio_delegate` hands out write tools)
+- **Tools added:**
+  - `studio_lint` — `server`; `ai.tools.write` + `studio.run.project` AND the project at `run-project` (`checkTrustTier`); `sideEffects: none`; both agent paths + registry. Input `{ dir?, paths?[≤50] }`. Below Tier 2: `trust-tier-required` "…linting runs its own ESLint config and plugins, which needs the highest tier". Also `eslint-not-installed`, `no-eslint-config`, `lint-invocation-error`, `lint-timed-out`.
+  - `studio_delegate` — `server`; `ai.tools.write` + `studio.write`; `sideEffects: write`; HTTP agent surface only (`studioHttpAgentTools`), not in the MCP catalog. Input `{ tasks: [{ page, brief }] ≤4 }`. No runner: `delegation-unavailable` "There is no chat turn with an open project to run subagents in." Also `overlapping-ownership`, `not-owned` (a child writing outside its page's `.tsx` + `.module.css`).
+- **Done:**
+  - AI-29: every tool description ≤ 900 chars (26 trimmed; `studio_apply_edits` 7,215 → 893), gate `tool-description-length.test.ts`; long form for two external-only tools in the new MCP resource `studio://tool-notes`.
+  - AI-21: `projectLint.ts` runs the project's own `eslint` bin directly (`projectPackageBin.ts`, mirrors `viteLaunch.ts`: no `<pm> run`, no `npx`), config pinned inside the project, no `--fix`/`--cache`, minimal env, capped, 120 s.
+  - AI-23: `server/ai/delegation/` — one child tool loop per page, concurrent, ownership enforced on the real write tools, children billed at their own model (`addConversationUsageTotals`), checkpointed in the parent turn, no bridge, cannot re-delegate. HTTP prompt gets a "Parallel work" section sharing the CLI's ownership paragraphs.
+  - AI-25: `routing/modelRouting.ts` (one table; compaction reads it), migration 024 `ai_conversations.model_source`, routing only for default Anthropic conversations, only down a tier, only to a listed model; `modelRouting` stream event + chip label; `kind: 'turn'` telemetry lines (`turnTelemetry.ts`); `bench:agent-models` (real billed turns, needs `ANTHROPIC_API_KEY` + `STUDIO_BENCH_SPEND=1`). **Nothing measured**: no paid turn was run.
+- **Decisions:** the CLI is not model-routed (static aliases, warm pool keyed to one model). `claude-fable-5-1` holds no role until benched. Routing never moves a turn UP a tier, so an admin's Sonnet default stays Sonnet.
+- **Landmines:**
+  - `chat.ts` guards moved to `server/ai/chatTurnGuards.ts` (tests import from there).
+  - `ConversationRecord.modelSource` is required; `createConversation` (client) takes `modelSource`.
+  - Security-hardening bundle overlap: `fileWriteTools.ts` (description only), `agent.md`, `mcp-connectors.md`; after both merge, `viteLaunch.ts` should use `resolveProjectPackageBin`.
+  - `module-size-budgets` fails on `agentCheckpoints.ts` (789 lines, P4-F, pre-existing on the trunk).
+- **Next:** security-guard review; the owner runs `bench:agent-models` before changing the routing table.
+- **Human action needed:** dogfood (below); run the bench with a key when ready to pay for ~8 turns.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -80,6 +100,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
+- `mcp-32` · the Agent panel with an Anthropic API key, default model · "build a signup and a login screen": one `studio_delegate` call, both pages written, "Revert turn" undoes both; "rename the button to Continue": the model chip reads `turn · claude-sonnet-5`; pick Opus in the picker, repeat: no routing. On a project with ESLint at Tier 2: ask it to lint — `studio_lint` returns diagnostics; at Tier 0 it refuses. Script: the PR body
 - `mcp-29` · a mobile project, CLI and API-key paths · "design a checkout screen, 3 directions": variants use app bands, sit side by side with a note each; select two elements and ask "what are these": the reply names both file:lines; "make the brand colour coral" edits one `--brand` declaration. Script: the PR body
 
 **Element identity (P1)**

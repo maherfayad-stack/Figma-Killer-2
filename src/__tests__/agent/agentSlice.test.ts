@@ -3,6 +3,8 @@ import { useEditorStore } from '@site/store/store'
 import {
   processStreamEvent,
   executeAgentTool,
+  routedModelLabel,
+  routedModelTitle,
   type AgentBridgeRuntime,
   type AgentTextStreamSink,
   type AgentMessage,
@@ -1668,5 +1670,27 @@ describe('processStreamEvent — retrying', () => {
 
     await run({ type: 'text', text: 'hello' })
     expect(useEditorStore.getState().agentMessages[0]!.retrying).toBeUndefined()
+  })
+})
+
+describe('processStreamEvent — modelRouting (AI-25)', () => {
+  it('stores the model the turn ran on, and the chip names it only when the turn was routed', async () => {
+    const { assistantId } = freshAgentState()
+    await processStreamEvent(
+      { type: 'modelRouting', mode: 'routed', modelId: 'claude-sonnet-5', role: 'smallEdit', reason: 'A small edit runs on claude-sonnet-5.' },
+      assistantId,
+      noopTextSink,
+      useEditorStore.setState,
+      emptyBridge(),
+      null,
+      executeAgentTool,
+    )
+    const routed = useEditorStore.getState().agentRoutedModel
+    expect(routed).toEqual({ mode: 'routed', modelId: 'claude-sonnet-5', role: 'smallEdit', reason: 'A small edit runs on claude-sonnet-5.' })
+    expect(routedModelLabel(routed)).toBe('turn · claude-sonnet-5')
+    expect(routedModelTitle(routed)).toBe('A small edit runs on claude-sonnet-5.')
+    // A pinned or default turn ran on the model the picker already shows.
+    expect(routedModelLabel({ ...routed!, mode: 'pinned' })).toBeNull()
+    expect(routedModelLabel({ ...routed!, mode: 'default' })).toBeNull()
   })
 })

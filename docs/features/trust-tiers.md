@@ -1,5 +1,5 @@
 # Trust tiers
-> **Purpose:** what each per-project trust tier lets Studio run, where it is stored, and which routes check it · **Read when:** touching anything that runs a user's own code (style compile, package bundle, dev server, deploy, `studio_render_reference`), or changing a default · **Trust:** current · **Owner:** security-guard · **Verified:** 2026-09-23
+> **Purpose:** what each per-project trust tier lets Studio run, where it is stored, and which routes check it · **Read when:** touching anything that runs a user's own code (style compile, package bundle, dev server, deploy, `studio_render_reference`, `studio_lint`), or changing a default · **Trust:** current · **Owner:** security-guard · **Verified:** 2026-09-23
 
 Studio's founding invariant is that it **parses a React project and never executes it**. Three things a design tool needs cannot be done under that rule alone: rendering a component from an arbitrary npm package (its markup exists only when it runs), compiling a project's own Sass/PostCSS/Tailwind (its class names exist only after its build), and comparing a frame against the running app. The trust tier is the per-project permission to run the user's own toolchain for exactly those purposes. **The parse itself never executes anything at any tier.**
 
@@ -11,7 +11,7 @@ Studio's founding invariant is that it **parses a React project and never execut
 |---|---|---|---|
 | 0 | `static` | Nothing of the user's. Parse, CSS Modules transform, vendor `.css` reads | nothing to check |
 | 1 | `render-packages` | The workspace's own style toolchain in a capped subprocess (`styleCompileTier1.ts`), and its package components bundled and rendered on the canvas (`componentBundle.ts`) | `trust !== 'static'` |
-| 2 | `run-project` | Everything in Tier 1, plus the project's own dev server (`devServer.ts`, which live frames and `studio_render_reference` use) and a preview deploy (`deploy.ts`) | `trust === 'run-project'` exactly, via `requireTrustTier` / `checkTrustTier` |
+| 2 | `run-project` | Everything in Tier 1, plus the project's own dev server (`devServer.ts`, which live frames and `studio_render_reference` use), the project's own ESLint (`studio_lint`, `projectLint.ts`) and a preview deploy (`deploy.ts`) | `trust === 'run-project'` exactly, via `requireTrustTier` / `checkTrustTier` |
 
 - **Default: every project is `run-project`** (`DEFAULT_TRUST_TIER`, `server/handlers/studio/studioMeta.ts`; owner decision 2026-09-20, [`docs/decisions.md`](../decisions.md)). Nothing promotes automatically, because there is no lower default to promote from.
 - The owner lowers a project with the Live pill's **"Back to static"** and can raise it again. Every promote and demote goes through one route.
@@ -46,7 +46,7 @@ The demotion has to stop the process because nothing else would. The routes clos
 - `requireTrustTier(projectDir, required, message)` wraps it in `409 { error, code: 'trust-tier-required' }` for HTTP routes: `deploy.ts` and `devServer.ts`'s `status`/`start`. `stop` is deliberately ungated, so a demoted project is always killable.
 - Agent and MCP tools (`server/ai/mcp/tools/studio/referenceRender.ts`) call `checkTrustTier` and return a structured `toolRefusal('trust-tier-required', …)`, because a tool result is JSON the model reads.
 
-**A Tier-2 tool needs two gates.** The connector capability `studio.run.project` (`server/auth/capabilities.ts`, granted to Owner and Admin) answers "may this caller run project code at all"; the project's own tier answers "may this project be run". `studio_render_reference` checks both. Gated by `src/__tests__/architecture/studio-tier2-two-gates.test.ts`.
+**A Tier-2 tool needs two gates.** The connector capability `studio.run.project` (`server/auth/capabilities.ts`, granted to Owner and Admin) answers "may this caller run project code at all"; the project's own tier answers "may this project be run". `studio_render_reference` and `studio_lint` (which loads the project's own ESLint config and plugins) check both. Gated by `src/__tests__/architecture/studio-tier2-two-gates.test.ts`.
 
 **The dev-server spawner has its own condition.** `server/handlers/studio/liveCapability.ts` reads the `dev` (else `start`) script from the app root's `package.json` and reports `capable` only when that script invokes `vite` (directly or through a runner such as `npx vite`). The whole live path is a Vite plugin, and without this check the Tier-2 default would run any imported repository's `dev`/`start` script on first open (`sec-20`). It judges the script text, not the probed framework or the presence of a `vite.config`, because Studio's shell scaffold writes a `vite.config.js` into every project it opens.
 
