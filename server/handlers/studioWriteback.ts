@@ -71,7 +71,7 @@ import {
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
 import type { Project } from 'ts-morph'
-import { applyCssEdit, cssCreateImportTarget } from './studioCssWriteback'
+import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
@@ -132,6 +132,7 @@ import {
   orderStudioEditsForApply,
   studioEditFile,
   studioEditLocation,
+  studioEditsTouchedFiles,
   type StudioEditLocation,
 } from './studioEditRouting'
 
@@ -177,28 +178,17 @@ export function applyStudioEdit(dir: string, edit: StudioEdit, batch?: StudioEdi
 }
 
 /**
- * What one edit shares with the rest of its batch (`applyStudioEditBatch`).
- *
- * `project` is WB-25: every VALUE codemod used to create its own ts-morph
- * project and parse its file from scratch — 40 edits to one 1,500-element page
- * took 3.8 s (audit probe; ~17 s on a loaded machine), all of it inside the
- * project write lock. One project per batch parses each file once; the batch
- * re-syncs it with the disk before every edit (`syncProjectWithDisk`), so an
- * edit never sees a previous edit's half-finished tree. The structural kinds
- * keep their own projects: each is one write per gesture, and several of them
- * resolve modules across files in ways a shared tree would have to re-verify.
+ * What one edit shares with its batch. `project` is WB-25: one ts-morph project
+ * per batch, re-synced with the disk before each edit (`syncProjectWithDisk`),
+ * instead of a parse per VALUE codemod — 40 edits to a 1,500-element page took
+ * 3.8 s in the audit, all under the write lock. Structural kinds keep their own.
  */
 export interface StudioEditBatchContext {
   moduleImports: ModuleImportPlan
   project: Project
 }
 
-function dispatchStudioEdit(
-  dir: string,
-  edit: StudioEdit,
-  moduleImports: ModuleImportPlan,
-  project: Project | undefined,
-): StudioEditApplyOutcome {
+function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: ModuleImportPlan, project?: Project): StudioEditApplyOutcome {
   // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
   // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
@@ -475,31 +465,9 @@ export function applyStudioEditBatch(
   const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, identity.runnable))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
-  const touchedFiles = new Set<string>()
   // A refused edit's file is still reported: the caller re-reads exactly these
   // to recover from an `element-moved` refusal.
-  for (const edit of [...ordered, ...identity.moved.map((entry) => entry.edit)]) {
-    const file = studioEditFile(dir, edit.nodeId)
-    if (file) touchedFiles.add(file)
-    // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
-    // edit itself rewrites `pageFile`'s import list — a real line-count
-    // change downstream code needs to see, exactly like every OTHER kind's
-    // decoded location. Added explicitly rather than through
-    // `studioEditFile` because this kind's write target is a FILE +
-    // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
-    if (edit.kind === 'css' && edit.op === 'create') {
-      const importer = cssCreateImportTarget(dir, edit)
-      if (importer) touchedFiles.add(join(dir, importer))
-    }
-    // D2 G3 — a transplant writes TWO files, and only the origin is named by
-    // `edit.nodeId`. The destination has to be in this set or the batch's
-    // line-count-shift check would report `shifted: false` for a write that
-    // moved every id in the file the element landed in.
-    if (edit.kind === 'transplant') {
-      const destination = studioEditFile(dir, edit.parentNodeId)
-      if (destination) touchedFiles.add(destination)
-    }
-  }
+  const touchedFiles = studioEditsTouchedFiles(dir, [...ordered, ...identity.moved.map((entry) => entry.edit)])
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
     lineCountBefore.set(file, countLines(file))

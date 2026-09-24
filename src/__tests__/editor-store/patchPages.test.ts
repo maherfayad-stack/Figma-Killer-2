@@ -10,8 +10,10 @@
  *     dangling `selectedFrameIds`/`activePageId` reference
  *   - selection FOLLOWS its element to the id the reparse gave it (ERR-5),
  *     and is dropped cleanly (no dangling id) when no element honestly is it
- *   - a page with local (unsaved) edits that gets overwritten surfaces a
- *     toast — the "merge" policy's explicit data-loss case
+ *   - ERR-9 — a page with local (unsaved) edits is REBASED, not overwritten:
+ *     the edits land on the fresh page, the page stays marked for the next
+ *     save, and nothing is said; an edit that cannot be carried says why
+ *     (never "an agent")
  *   - THE GATE: patching never marks the store dirty — the write -> reload ->
  *     re-dirty -> autosave -> write loop `fsCodemodAdapter.test.ts` protects
  *     against, applied to this new path.
@@ -23,7 +25,9 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
 import type { StyleRule } from '@core/page-tree'
+import type { Page } from '@core/page-tree'
 import { makeNode, makePage, makeSite } from '../fixtures'
+import { mergeLoadedValuesBaseline, resetLoadedValues } from '@site/studio/loadedValuesBaseline'
 import { subscribeToasts, __resetToastBusForTests } from '@ui/components/Toast/toastBus'
 import '@modules/base/index'
 
@@ -307,41 +311,155 @@ describe('patchPages — selection', () => {
   })
 })
 
-describe('patchPages — local edits lost', () => {
-  it('toasts when a page with unsaved edits is overwritten by the incoming patch', () => {
-    useEditorStore.getState().loadSite(twoPageSite())
+describe('patchPages — unsaved edits are rebased onto the re-read page (ERR-9)', () => {
+  /** Load `site` the way the adapter does: the save-diff baseline first, then the store. */
+  function load(site: ReturnType<typeof twoPageSite>) {
+    resetLoadedValues(site.pages)
+    useEditorStore.getState().loadSite(site)
     useEditorStore.getState().openPageInCanvas('home')
-    // A real store mutation — populates `_dirtySave.pageIds` for 'home'.
-    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
-    expect(useEditorStore.getState()._dirtySave.pageIds.has('home')).toBe(true)
+  }
 
-    const toasts: { kind: string; title: string }[] = []
+  /** A re-read of `pages`, as `fetchStudioPagesById` delivers it: the baseline advanced to it first. */
+  function reread(pages: Page[]) {
+    mergeLoadedValuesBaseline(pages)
+    useEditorStore.getState().patchPages({ pages })
+  }
+
+  function collectToasts() {
+    const toasts: { kind: string; title: string; body?: string }[] = []
     const unsubscribe = subscribeToasts((list) => {
       toasts.length = 0
-      toasts.push(...list.map((t) => ({ kind: t.kind, title: t.title })))
+      toasts.push(...list.map((t) => ({ kind: t.kind, title: t.title, body: t.body })))
     })
+    return { toasts, unsubscribe }
+  }
 
-    const freshHome = makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })
-    useEditorStore.getState().patchPages({ pages: [freshHome] })
+  /** Home as the file now reads: a banner written above the heading, which therefore got a new id. */
+  function homeWithBannerAbove(heroText = 'Hi') {
+    return makePage({
+      id: 'home',
+      slug: 'index',
+      title: 'Home',
+      rootNodeId: 'root',
+      nodes: {
+        root: makeNode({ id: 'root', moduleId: 'base.body', children: ['banner', 'hero-moved'] }),
+        banner: makeNode({ id: 'banner', moduleId: 'base.text', props: { text: 'Sale' } }),
+        'hero-moved': makeNode({ id: 'hero-moved', moduleId: 'base.text', props: { text: heroText } }),
+      },
+    })
+  }
+
+  it('carries a typed edit onto the fresh page, following the element to its new id, and says nothing', () => {
+    load(twoPageSite())
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+    const { toasts, unsubscribe } = collectToasts()
+
+    reread([homeWithBannerAbove()])
     unsubscribe()
 
-    expect(toasts.some((t) => t.kind === 'warning' && t.title === 'Local edits overwritten')).toBe(true)
+    const state = useEditorStore.getState()
+    const home = state.site!.pages.find((p) => p.id === 'home')!
+    expect(home.nodes['hero-moved']?.props.text).toBe('User-typed edit')
+    // Both halves of the write survive: the one that landed on disk too.
+    expect(home.nodes.banner?.props.text).toBe('Sale')
+    // Still unsaved, so the autosave writes it against the fresh baseline.
+    expect(state._dirtySave.pageIds.has('home')).toBe(true)
+    expect(state.hasUnsavedChanges).toBe(true)
+    expect(toasts).toEqual([])
+  })
+
+  it('does nothing to a value the re-read already holds (a save that was in flight landed it)', () => {
+    load(twoPageSite())
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+
+    reread([homeWithBannerAbove('User-typed edit')])
+
+    const state = useEditorStore.getState()
+    expect(state.site!.pages.find((p) => p.id === 'home')!.nodes['hero-moved']?.props.text).toBe('User-typed edit')
+    expect(state._dirtySave.pageIds.has('home')).toBe(false)
+  })
+
+  it('never blames an agent, and names the real cause when the edited element is gone', () => {
+    load(twoPageSite())
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+    const { toasts, unsubscribe } = collectToasts()
+
+    reread([makePage({ id: 'home', slug: 'index', title: 'Home', rootNodeId: 'root', nodes: { root: makeNode({ id: 'root', moduleId: 'base.body' }) } })])
+    unsubscribe()
+
+    expect(toasts).toHaveLength(1)
+    expect(toasts[0]!.kind).toBe('warning')
+    expect(toasts[0]!.body).toContain('no longer in the file')
+    expect(JSON.stringify(toasts)).not.toContain('agent')
+    expect(useEditorStore.getState()._dirtySave.pageIds.has('home')).toBe(false)
+  })
+
+  it('does not write a typed literal over a value the file now sets in code', () => {
+    load(twoPageSite())
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+    const { toasts, unsubscribe } = collectToasts()
+
+    // `<h1>{greeting}</h1>` where it said `<h1>Hi</h1>`: same element, now code.
+    const fresh = twoPageSite().pages[0]!
+    fresh.nodes.hero = { ...fresh.nodes.hero!, props: { text: 'Welcome, Ada' }, codeProps: ['text'] }
+    reread([fresh])
+    unsubscribe()
+
+    expect(useEditorStore.getState().site!.pages.find((p) => p.id === 'home')!.nodes.hero?.props.text).toBe('Welcome, Ada')
+    expect(toasts[0]?.body).toContain('from code')
+  })
+
+  it('without a baseline for the read (not a Studio re-read) the page is simply replaced', () => {
+    load(twoPageSite())
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+
+    useEditorStore.getState().patchPages({ pages: [homeWithBannerAbove()] })
+
+    expect(useEditorStore.getState().site!.pages.find((p) => p.id === 'home')!.nodes['hero-moved']?.props.text).toBe('Hi')
   })
 
   it('does NOT toast when the overwritten page had no unsaved edits', () => {
-    useEditorStore.getState().loadSite(twoPageSite())
+    load(twoPageSite())
+    const { toasts, unsubscribe } = collectToasts()
 
-    const toasts: { kind: string; title: string }[] = []
-    const unsubscribe = subscribeToasts((list) => {
-      toasts.length = 0
-      toasts.push(...list.map((t) => ({ kind: t.kind, title: t.title })))
-    })
-
-    const freshHome = makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })
-    useEditorStore.getState().patchPages({ pages: [freshHome] })
+    reread([makePage({ id: 'home', slug: 'index', title: 'Home (from disk)' })])
     unsubscribe()
 
-    expect(toasts.some((t) => t.title === 'Local edits overwritten')).toBe(false)
+    expect(toasts).toEqual([])
+  })
+})
+
+describe('loadSite — a full re-read of the same project rebases too (ERR-9)', () => {
+  it('carries a typed edit through a whole-project reload, and keeps the page unsaved', () => {
+    const site = twoPageSite()
+    resetLoadedValues(site.pages)
+    useEditorStore.getState().loadSite(site)
+    useEditorStore.getState().openPageInCanvas('home')
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+
+    const reloaded = twoPageSite()
+    resetLoadedValues(reloaded.pages, { sameProject: true })
+    useEditorStore.getState().loadSite(reloaded)
+
+    const state = useEditorStore.getState()
+    expect(state.site!.pages.find((p) => p.id === 'home')!.nodes.hero?.props.text).toBe('User-typed edit')
+    expect(state.hasUnsavedChanges).toBe(true)
+    expect(state._dirtySave.pageIds.has('home')).toBe(true)
+  })
+
+  it('carries nothing into a different project', () => {
+    const site = twoPageSite()
+    resetLoadedValues(site.pages)
+    useEditorStore.getState().loadSite(site)
+    useEditorStore.getState().openPageInCanvas('home')
+    useEditorStore.getState().updateNodeProps('hero', { text: 'User-typed edit' })
+
+    const other = twoPageSite()
+    resetLoadedValues(other.pages, { sameProject: false })
+    useEditorStore.getState().loadSite(other)
+
+    expect(useEditorStore.getState().site!.pages.find((p) => p.id === 'home')!.nodes.hero?.props.text).toBe('Hi')
+    expect(useEditorStore.getState().hasUnsavedChanges).toBe(false)
   })
 })
 

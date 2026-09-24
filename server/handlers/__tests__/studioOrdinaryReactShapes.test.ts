@@ -167,7 +167,7 @@ describe('WB-3 — text inside a container tag is an editable text node', () => 
     const result = writeText(nodeWithText(page, 'Headliner'), 'Closing act')
     expect(result.refusals ?? []).toEqual([])
     expect(result.written).toBe(1)
-    expect(read('pages/Lineup.tsx')).toBe(before.replace('<li>Headliner</li>', '<li>{"Closing act"}</li>'))
+    expect(read('pages/Lineup.tsx')).toBe(before.replace('<li>Headliner</li>', '<li>Closing act</li>'))
   })
 
   it('keeps an element with element children a container', async () => {
@@ -206,7 +206,7 @@ describe('WB-4 — memo, forwardRef, React.memo, a default re-export barrel and 
     const result = writeText(nodeWithText(page, 'Line-up soon'), 'Line-up announced')
     expect(result.refusals ?? []).toEqual([])
     expect(result.written).toBe(1)
-    expect(read('ui/StageCard.tsx')).toBe(before.replace('<p>Line-up soon</p>', '<p>{"Line-up announced"}</p>'))
+    expect(read('ui/StageCard.tsx')).toBe(before.replace('<p>Line-up soon</p>', '<p>Line-up announced</p>'))
   })
 
   it('writes an edit inside React.memo(Inner) to the inner function, byte for byte', async () => {
@@ -214,7 +214,7 @@ describe('WB-4 — memo, forwardRef, React.memo, a default re-export barrel and 
     const before = read('ui/Badge.tsx')
     const result = writeText(nodeWithText(page, 'VIP'), 'Backstage')
     expect(result.written).toBe(1)
-    expect(read('ui/Badge.tsx')).toBe(before.replace('<em>VIP</em>', '<em>{"Backstage"}</em>'))
+    expect(read('ui/Badge.tsx')).toBe(before.replace('<em>VIP</em>', '<em>Backstage</em>'))
   })
 
   it('writes an edit reached through a default re-export barrel to the declaring file', async () => {
@@ -223,7 +223,7 @@ describe('WB-4 — memo, forwardRef, React.memo, a default re-export barrel and 
     const before = read('ui/Arrow.tsx')
     const result = writeText(nodeWithText(page, 'Next'), 'Onward')
     expect(result.written).toBe(1)
-    expect(read('ui/Arrow.tsx')).toBe(before.replace('>Next<', '>{"Onward"}<'))
+    expect(read('ui/Arrow.tsx')).toBe(before.replace('>Next<', '>Onward<'))
     expect(read('ui/index.ts')).toBe(barrel)
   })
 
@@ -269,7 +269,7 @@ describe('WB-26 — React.Fragment is a fragment', () => {
     const before = read('pages/Lineup.tsx')
     const result = writeText(nodeWithText(page, 'Stage A'), 'Stage North')
     expect(result.written).toBe(1)
-    expect(read('pages/Lineup.tsx')).toBe(before.replace('<h2>Stage A</h2>', '<h2>{"Stage North"}</h2>'))
+    expect(read('pages/Lineup.tsx')).toBe(before.replace('<h2>Stage A</h2>', '<h2>Stage North</h2>'))
   })
 })
 
@@ -321,7 +321,7 @@ describe('WB-5 — a wrapped or class page renders, or says why it cannot', () =
     const before = read('pages/Tickets.tsx')
     const result = writeText(nodeWithText(page, 'On sale Monday'), 'On sale Friday')
     expect(result.written).toBe(1)
-    expect(read('pages/Tickets.tsx')).toBe(before.replace('On sale Monday', '{"On sale Friday"}'))
+    expect(read('pages/Tickets.tsx')).toBe(before.replace('On sale Monday', 'On sale Friday'))
   })
 
   it('renders a class page from the JSX its render() returns, and writes there', async () => {
@@ -329,7 +329,7 @@ describe('WB-5 — a wrapped or class page renders, or says why it cannot', () =
     const before = read('pages/Archive.tsx')
     const result = writeText(nodeWithText(page, 'Past years'), 'Every year')
     expect(result.written).toBe(1)
-    expect(read('pages/Archive.tsx')).toBe(before.replace('Past years', '{"Every year"}'))
+    expect(read('pages/Archive.tsx')).toBe(before.replace('Past years', 'Every year'))
   })
 
   it('renders a memo() page with no note — memo changes nothing about what renders', async () => {
