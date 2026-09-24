@@ -833,6 +833,17 @@ The rules the ladder replaced prose with:
   `canvas/canvasNodeArrowMove.ts`, the gesture in `useCanvasNodeArrowKeys.ts`.
   Canvas-scoped like Tab (`isCanvasKeyboardSurface`): in a panel the arrows
   stay the panel's. Single selection only.
+- **A pointer pick in Layers hands the keyboard to the canvas (OD-15).** A
+  click on a Layers row (`event.detail > 0`) calls `returnKeyboardToCanvas`
+  (`canvas/canvasKeyboardFocus.ts`), which focuses the canvas root exactly as
+  a canvas click would — so the arrows move the layer just picked, Tab cycles
+  its siblings, and nothing is stuck (Esc and a canvas click behave as
+  before). KEYBOARD entry into the tree (Tab, a keyboard-synthesised click)
+  never hands off: there ↑/↓ are the tree's own row navigation
+  (`LayerRowList`'s `handleTreeKeyDown`: select and focus the next visible
+  row, ⇧ extends the range, nothing is written) and →/← expand and collapse.
+  A rename field keeps its caret (P2-B's input guard, and its target is not a
+  row).
 - **A held arrow is one undo entry and one source write.** A nudge previews
   every repeat through the inspector's scrub channel (`setPreviewNodeStyles`
   + the optimistic style broadcast for live frames), then writes ONE
@@ -1067,6 +1078,18 @@ a component in a live frame selected the element inside it.
     `position: absolute | fixed` element is the exception (IX-6d): its W/N
     handles (and ⌥) also move `left` (`insetInlineStart` under RTL) / `top`
     so the opposite edge stays put.
+  - **The moving edge snaps** (P2-E / IX-6e, `elementResizeSnap.ts`) to the
+    siblings' and the parent's padding / content box edges and centres, at
+    the screen-px threshold. Only an edge the drag really moves snaps: every
+    handle of an `absolute | fixed` element; the E/S handles of a flow element
+    whose layout keeps its start edge (`flowStartAnchored`: block flow, a
+    start-packed flex/grid item, LTR for the inline axis). A W/N handle on a
+    flow element, a centred item, ⌥ and ⇧ on a corner do not snap — no single
+    edge follows the pointer there, and a guide that promises an alignment
+    the element does not reach is worse than none. The POINTER delta is
+    snapped before `resizeElementBox`; guides paint into the frame's
+    parent-document drag layer (`resolveResizeGuideSurface`) in the preview's
+    own rAF. Portal frames only — the live runtime's handles do not snap yet.
   - **The W×H badge** (IX-18) is a child of the handle frame, shown by
     `selectionChromeCss.ts` only while the frame carries
     `data-canvas-resizing`; its text is the ring's own measured rect, written
@@ -1080,7 +1103,10 @@ a component in a live frame selected the element inside it.
     the node's stored styles, which the frame side of the wire does not have.
 - **Alt-hover measurement (K5).** `MeasureLayer.tsx` + `canvasMeasureGeometry.ts`.
   With a selection and Alt held, hovering another node paints the distances
-  between the two boxes and the hovered node's padding bands/content box, into
+  between the two boxes and the hovered node's padding bands/content box — and
+  with NOTHING hovered, the same drawing against the selection's parent (the
+  nearest ancestor a multi-selection shares; P2-E / IX-19,
+  `resolveMeasureTarget`) — into
   the SAME in-frame overlay root the rings use (parent-document fallback for a
   live/bridge frame, same `scoped`/`fixed` mode attribute the ring fallback
   uses). Mounted from `BreakpointSelectionOverlay` with one line; it owns its
@@ -1109,6 +1135,9 @@ a component in a live frame selected the element inside it.
     selection itself and whenever nothing is selected (its behaviour there is
     completely unchanged). Both gestures fire immediately — there is no delay
     to sequence them with — so the split has to be by target, not by time.
+    The no-hover parent fallback applies only while no node has been hovered
+    during this Alt hold: once one has, the ladder is anchored on it, and the
+    pointer leaving the frame is how the user reaches the ladder's rows.
     The ladder is SUPPRESSED (not merely hidden) while measurement owns Alt,
     which is what stops an Alt release from committing a new selection out
     from under the thing being measured. Both stand down during an inline
@@ -1467,7 +1496,9 @@ silent no-op). It **refuses** when the container is `position: static`,
 because absolute positioning there hands the element to a different ancestor
 than the one it was dropped in; the refusal carries a one-click "make the
 container `position: relative`" remedy. Studio still does not fake absolute
-placement — an ordinary drag is still a reorder. See
+placement — an ordinary drag is still a reorder. It snaps to its siblings
+and its parent's padding / content box at the screen-px threshold
+(`snapThresholdAtZoom`, P2-E). See
 `docs/reference/canvas-dnd.md` → "Free movement (K6)".
 
 **Chrome outside `CanvasRoot` reaches the canvas through the store, not the

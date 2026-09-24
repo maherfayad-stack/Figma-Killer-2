@@ -38,7 +38,7 @@
  * moves inside one drop zone costs nothing after the first frame.
  */
 import type { SnapGuide } from './boardSnapping'
-import type { CanvasDragPaintTarget, CanvasInvalidDropTarget } from './canvasDnd'
+import type { CanvasDragPaintTarget, CanvasInvalidDropTarget, CanvasRect } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import type { CanvasReflowShift } from './canvasReflowPreview'
 import { REFLOW_SHIFT_LIMIT } from './canvasReflowPreview'
@@ -50,6 +50,7 @@ import {
   type CanvasDropVars,
 } from './canvasSelectionOverlayPositioning'
 import styles from './BreakpointSelectionOverlay.module.css'
+import ownStyles from './canvasDragPainter.module.css'
 
 /** Where the ghost sits and what it says. */
 export interface CanvasDragGhost {
@@ -92,6 +93,12 @@ export interface CanvasDragPaint {
    * refused position, and any layout the packing model stands down for.
    */
   reflow?: readonly CanvasReflowShift[]
+  /**
+   * P2-E / IX-24 — the container a before/after drop lands in, outlined
+   * faintly so a line in nested rows says WHICH row. `null` for an "inside"
+   * drop, whose drop box already is that container (`canvasDropParentOutline.ts`).
+   */
+  parent?: CanvasRect | null
 }
 
 /**
@@ -107,6 +114,8 @@ interface DragLayerParts {
   chipLabel: HTMLSpanElement
   ghost: HTMLDivElement
   ghostLabel: HTMLSpanElement
+  /** IX-24 — the drop target's parent outline. */
+  parent: HTMLDivElement
   /**
    * K6's alignment guides, POOLED rather than created per frame: at most two
    * exist at once (one per axis), and a snap that appears and disappears as
@@ -184,6 +193,13 @@ export function paintCanvasDrag(layer: HTMLElement | null, paint: CanvasDragPain
     hide(parts.chip)
   }
 
+  if (paint.parent) {
+    applyIndicatorVars(parts.parent, rectStyle(paint.parent))
+    show(parts.parent)
+  } else {
+    hide(parts.parent)
+  }
+
   paintGuides(parts, layer, paint.guides ?? [])
   paintReflow(parts, paint.reflow ?? [])
 
@@ -228,6 +244,11 @@ function createParts(layer: HTMLElement): DragLayerParts {
   ghostLabel.className = styles.dragGhostLabel
   ghost.appendChild(ghostLabel)
 
+  const parent = doc.createElement('div')
+  parent.className = ownStyles.dropParentOutline
+  parent.setAttribute('data-canvas-drop-parent', 'true')
+  parent.setAttribute('aria-hidden', 'true')
+
   const reflow: ReflowPart[] = []
   for (let i = 0; i < REFLOW_SHIFT_LIMIT; i++) {
     const element = doc.createElement('div')
@@ -240,9 +261,10 @@ function createParts(layer: HTMLElement): DragLayerParts {
     reflow.push({ element, dx: 0, dy: 0, fromDx: 0, fromDy: 0, animation: null })
   }
 
-  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, guides: [], reflow }
+  const parts: DragLayerParts = { line, invalid, chip, chipLabel, ghost, ghostLabel, parent, guides: [], reflow }
   hideAll(parts)
-  layer.append(line, invalid, chip, ghost, ...reflow.map((part) => part.element))
+  // The parent outline goes first so every other indicator paints over it.
+  layer.append(parent, line, invalid, chip, ghost, ...reflow.map((part) => part.element))
   layerParts.set(layer, parts)
   return parts
 }
@@ -413,6 +435,7 @@ function hideAll(parts: DragLayerParts): void {
   hide(parts.invalid)
   hide(parts.chip)
   hide(parts.ghost)
+  hide(parts.parent)
   for (const guide of parts.guides) hide(guide)
   // The reflow boxes stay in the DOM between gestures — see `DragLayerParts`
   // for why they are never created on demand — so the end of a drag RESETS

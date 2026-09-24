@@ -1,12 +1,24 @@
 /**
- * boardSnapping — pure snap-to-peer alignment for studio board furniture
- * (frames, sticky notes, doc blocks).
+ * boardSnapping — the ONE pure snap-to-peer resolver on the canvas. Board
+ * furniture (frames, sticky notes, doc blocks) uses it, and so do the
+ * element-level gestures one layer down: a free move (`canvasFreeMove.ts`)
+ * and an element resize (`elementResizeSnap.ts`, P2-E / IX-6e).
  *
- * `computeSnap` is the testable core (Phase 6B): given a dragged rect, the
- * OTHER furniture on the active board, and a threshold (board units), it
- * finds the closest edge/center alignment on each axis independently and
- * returns the adjusted top-left position plus the guide line(s) to draw.
- * Pure — no React, no DOM — mirroring `rectResize.ts` / `frameVirtualization.ts`.
+ * `computeSnap` is the testable core (Phase 6B): given a dragged rect, its
+ * peers, and a threshold, it finds the closest edge/center alignment on each
+ * axis independently and returns the adjusted top-left position plus the
+ * guide line(s) to draw. `computeEdgeSnap` is the same question for ONE
+ * moving edge — what a resize handle moves. Pure — no React, no DOM —
+ * mirroring `rectResize.ts` / `frameVirtualization.ts`.
+ *
+ * ## The threshold is screen pixels (IX-5a)
+ *
+ * Every caller passes `snapThresholdAtZoom(zoom)`: {@link SNAP_THRESHOLD_SCREEN_PX}
+ * divided by the canvas zoom, in whatever unit the rects are in (board units
+ * or frame px — both are "one CSS px at 100%"). A fixed rect-space threshold
+ * used to be 24 screen px of pull at 400% and 1.5 px at 25%, so snapping felt
+ * sticky zoomed in and absent zoomed out. Penpot does the same division
+ * (`main/snap.cljs`, `snap-accuracy / zoom`).
  *
  * `collectPeerRects` is the one non-pure-math helper: it turns a `Board`'s
  * frames/notes/docs into the flat `SnapRect[]` peer list `computeSnap` wants,
@@ -73,11 +85,20 @@ export function snapGuidesEqual(a: readonly SnapGuide[], b: readonly SnapGuide[]
   return true
 }
 
-/** Default snap distance, in board units (not screen pixels — a fixed feel
- * regardless of zoom was simpler than dividing a screen-pixel constant by
- * zoom, and reads fine in practice since board furniture rarely sits near
- * the snap threshold at extreme zoom levels). */
-export const SNAP_THRESHOLD_BOARD_UNITS = 8
+/**
+ * How close an edge must come to a peer's edge to snap, in SCREEN pixels —
+ * the same pull at every zoom. Convert with {@link snapThresholdAtZoom}.
+ */
+export const SNAP_THRESHOLD_SCREEN_PX = 8
+
+/**
+ * The snap threshold in rect units (board units, or frame px) at `zoom`
+ * (1 = 100%). An unreadable zoom is treated as 100% rather than producing an
+ * infinite or negative threshold.
+ */
+export function snapThresholdAtZoom(zoom: number): number {
+  return SNAP_THRESHOLD_SCREEN_PX / (Number.isFinite(zoom) && zoom > 0 ? zoom : 1)
+}
 
 interface AxisEdges {
   start: number
@@ -101,19 +122,17 @@ interface AxisMatch {
 }
 
 /**
- * Closest (dragged edge, peer edge) pair within `threshold`, checking every
- * combination of the dragged rect's start/center/end against every peer's
- * start/center/end (so e.g. the dragged left edge can snap to a peer's
- * center, not just its left edge) — "closest wins" across all peers and all
- * combinations.
+ * Closest (dragged value, peer edge) pair within `threshold`, checking every
+ * dragged value against every peer's start/center/end (so e.g. the dragged
+ * left edge can snap to a peer's center, not just its left edge) — "closest
+ * wins" across all peers and all combinations.
  */
 function findClosestMatch(
-  draggedEdges: AxisEdges,
-  peers: SnapRect[],
+  draggedValues: readonly number[],
+  peers: readonly SnapRect[],
   edgesOf: (rect: SnapRect) => AxisEdges,
   threshold: number,
 ): AxisMatch | null {
-  const draggedValues = [draggedEdges.start, draggedEdges.center, draggedEdges.end]
   let best: AxisMatch | null = null
 
   for (const peer of peers) {
@@ -134,40 +153,73 @@ function findClosestMatch(
 }
 
 /**
+ * The guide for a match on `axis`: a line at the peer's edge, spanning the
+ * union of the dragged extent and the peer's extent on the OTHER axis — long
+ * enough to touch both.
+ */
+function guideFor(axis: 'x' | 'y', match: AxisMatch, span: { start: number; end: number }): SnapGuide {
+  const peerStart = axis === 'x' ? match.peer.y : match.peer.x
+  const peerEnd = axis === 'x' ? match.peer.y + match.peer.height : match.peer.x + match.peer.width
+  return {
+    axis,
+    position: match.peerValue,
+    start: Math.min(span.start, peerStart),
+    end: Math.max(span.end, peerEnd),
+  }
+}
+
+/**
  * Snaps `dragged` to the closest aligned peer edge/center on each axis
  * independently (at most one snap per axis — "closest wins"), returning the
  * adjusted top-left position and the guide line(s) to draw. No peers, or no
  * match within `threshold` on an axis, leaves that axis's position untouched
  * and emits no guide for it.
  */
-export function computeSnap(dragged: SnapRect, peers: SnapRect[], threshold: number): SnapResult {
+export function computeSnap(dragged: SnapRect, peers: readonly SnapRect[], threshold: number): SnapResult {
   const guides: SnapGuide[] = []
   let x = dragged.x
   let y = dragged.y
 
-  const xMatch = findClosestMatch(edgesX(dragged), peers, edgesX, threshold)
+  const draggedX = edgesX(dragged)
+  const xMatch = findClosestMatch([draggedX.start, draggedX.center, draggedX.end], peers, edgesX, threshold)
   if (xMatch) {
     x = dragged.x + (xMatch.peerValue - xMatch.draggedValue)
-    guides.push({
-      axis: 'x',
-      position: xMatch.peerValue,
-      start: Math.min(dragged.y, xMatch.peer.y),
-      end: Math.max(dragged.y + dragged.height, xMatch.peer.y + xMatch.peer.height),
-    })
+    guides.push(guideFor('x', xMatch, { start: dragged.y, end: dragged.y + dragged.height }))
   }
 
-  const yMatch = findClosestMatch(edgesY(dragged), peers, edgesY, threshold)
+  const draggedY = edgesY(dragged)
+  const yMatch = findClosestMatch([draggedY.start, draggedY.center, draggedY.end], peers, edgesY, threshold)
   if (yMatch) {
     y = dragged.y + (yMatch.peerValue - yMatch.draggedValue)
-    guides.push({
-      axis: 'y',
-      position: yMatch.peerValue,
-      start: Math.min(dragged.x, yMatch.peer.x),
-      end: Math.max(dragged.x + dragged.width, yMatch.peer.x + yMatch.peer.width),
-    })
+    guides.push(guideFor('y', yMatch, { start: dragged.x, end: dragged.x + dragged.width }))
   }
 
   return { x, y, guides }
+}
+
+/** One moving edge's snap: how far to move it, and the guide to draw there. */
+export interface EdgeSnap {
+  delta: number
+  guide: SnapGuide
+}
+
+/**
+ * Snaps ONE moving edge — the edge a resize handle drags (IX-6e) — to the
+ * closest peer start/center/end on the same axis. `value` is the edge's
+ * position on `axis` (an x for a vertical edge); `span` is the element's
+ * extent on the OTHER axis, which only sizes the guide. `null` when no peer
+ * edge is within `threshold`.
+ */
+export function computeEdgeSnap(
+  axis: 'x' | 'y',
+  value: number,
+  span: { start: number; end: number },
+  peers: readonly SnapRect[],
+  threshold: number,
+): EdgeSnap | null {
+  const match = findClosestMatch([value], peers, axis === 'x' ? edgesX : edgesY, threshold)
+  if (!match) return null
+  return { delta: match.peerValue - value, guide: guideFor(axis, match, span) }
 }
 
 /** Identifies which furniture is currently being dragged, so `collectPeerRects`
