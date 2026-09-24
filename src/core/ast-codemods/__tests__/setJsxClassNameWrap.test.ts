@@ -43,9 +43,9 @@ const read = (file: string) => fs.readFileSync(file, 'utf8')
 describe('setJsxClassName — wrapping an expression on ADD', () => {
   it("uses the file's own join helper when one is in scope", () => {
     const source = [
-      "import { clsx } from 'clsx'",
+      "import { cn } from './cn'",
       'export function RecipeCard({ tone }: { tone?: string }) {',
-      '  return <article className={clsx(tone)}>Soup</article>',
+      '  return <article className={cn(tone)}>Soup</article>',
       '}',
       'export function Plain({ tone }: { tone?: string }) {',
       '  return <section className={tone}>Stew</section>',
@@ -57,7 +57,7 @@ describe('setJsxClassName — wrapping an expression on ADD', () => {
     const at = locateTag(source, 'section')
 
     expect(setJsxClassName({ file, ...at, add: t('featured'), remove: t() }).ok).toBe(true)
-    expect(read(file)).toBe(source.replace('className={tone}', 'className={clsx(tone, "featured")}'))
+    expect(read(file)).toBe(source.replace('className={tone}', 'className={cn(tone, "featured")}'))
   })
 
   it('parenthesises a logical before the fallback', () => {
