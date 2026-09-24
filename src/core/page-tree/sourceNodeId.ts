@@ -139,6 +139,29 @@ export function hasWritableSourceLocation(nodeId: string): boolean {
   return decodeSourceNodeId(nodeId) !== null
 }
 
+/**
+ * The id of the source element a `.map` row was rendered from — the row's own
+ * id with its iteration suffixes dropped (`a.tsx:70:21#2` → `a.tsx:70:21`) —
+ * or `null` when `nodeId` is not a row.
+ *
+ * Two rows of one list share it, which is how a caller tells "the next row of
+ * this list" from "the first element after it". It names the ROW TEMPLATE, so
+ * it is only ever an honest write target where every row is meant: a
+ * structural anchor written against the list as a whole (WB-22 — the codemod
+ * resolves it to the `{items.map(…)}` container), or an edit that applies to
+ * all N rows on purpose.
+ */
+export function listRowTemplateId(nodeId: string): string | null {
+  const segments = nodeId.split(INLINE_ID_SEPARATOR)
+  const last = segments[segments.length - 1]!
+  const cut = last.indexOf(LOOP_ID_SEPARATOR)
+  if (cut === -1) return null
+  const template = last.slice(0, cut)
+  if (!SOURCE_LOCATION.test(template)) return null
+  segments[segments.length - 1] = template
+  return segments.join(INLINE_ID_SEPARATOR)
+}
+
 /** True when this id came from a component inlined at a call site — one edit here rewrites every instance. */
 export function isInlinedNodeId(nodeId: string): boolean {
   return nodeId.includes(INLINE_ID_SEPARATOR)

@@ -298,6 +298,7 @@ import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
+import { applyStudioEditSequenceLocked } from './studioEditSequence'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
@@ -464,7 +465,8 @@ export async function tryServeStudio(
 
       // Ordering, dedup, per-edit try/catch, and shift/shared-component
       // detection all live in `applyStudioEditBatch` — the single engine both
-      // this route and `studio_apply_edits` (MCP) run through.
+      // this route and `studio_apply_edits` (MCP) run through. A `sequence`
+      // (P3-D) runs each edit as its own batch, in order, all or nothing.
       const {
         written,
         skipped,
@@ -480,7 +482,7 @@ export async function tryServeStudio(
         prunedImports,
         fingerprints,
         retargeted,
-      } = await applyStudioEditBatchLocked(dir, edits, body.expect ?? {})
+      } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {})
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WB-12 — `refusals` names WHY each edit that did not write didn't (a

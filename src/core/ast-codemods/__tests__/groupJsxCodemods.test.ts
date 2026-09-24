@@ -184,7 +184,10 @@ describe('wrapJsxElements', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(PAGE)
   })
 
-  it('REFUSES a run whose members disagree about owning their line', () => {
+  // WB-21 — this used to refuse `mixed-indentation`. The run now takes lines
+  // of its own: `<i>`, which shared the run's last line, moves to the line
+  // after the container, and nothing else changes.
+  it('groups a run whose last member shares its line, splitting that line after the container', () => {
     const source = `export default () => (
   <div>
     <a href="/a">A</a>
@@ -198,9 +201,44 @@ describe('wrapJsxElements', () => {
       targets: [locateTag(source, 'a'), locateTag(source, 'b')],
       name: 'span',
     })
-    expect(result.ok).toBe(false)
-    if (!result.ok) expect(result.refusal.reason).toBe('mixed-indentation')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default () => (
+  <div>
+    <span>
+      <a href="/a">A</a>
+      <b>B</b>
+    </span>
+    <i>I</i>
+  </div>
+)
+`)
+  })
+
+  it('groups a run whose first member shares its line, leaving that sibling where it was', () => {
+    const source = `export default () => (
+  <div>
+    <i>I</i><a href="/a">A</a>
+    <b>B</b>
+  </div>
+)
+`
+    const file = writeFixture(source)
+    const result = wrapJsxElements({
+      file,
+      targets: [locateTag(source, 'a'), locateTag(source, 'b')],
+      name: 'span',
+    })
+    expect(result.ok).toBe(true)
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default () => (
+  <div>
+    <i>I</i>
+    <span>
+      <a href="/a">A</a>
+      <b>B</b>
+    </span>
+  </div>
+)
+`)
   })
 
   it('REFUSES a run with an expression container between its members', () => {

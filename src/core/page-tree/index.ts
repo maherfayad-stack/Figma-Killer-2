@@ -28,6 +28,7 @@ export {
   isRouteChromeNodeId,
   isSourceDerivedNodeId,
   isStudioPageRootId,
+  listRowTemplateId,
   matchesCallSitePosition,
   toRuntimeStampId,
   withSourceLocation,

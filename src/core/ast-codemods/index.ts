@@ -180,3 +180,11 @@ export {
 } from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
 export { readSourceFingerprintAt } from './sourceFingerprintAt'
+/**
+ * The unit a structural codemod acts on at a `line:col` — exported for the
+ * server's edit SEQUENCE (`studioEditSequence.ts`, P3-D), which has to know
+ * exactly which elements a step moved, removed or created to follow every
+ * other element it names through that step.
+ */
+export { resolveJsxChildRange } from './jsxChildRange'
+export type { JsxChildRange, JsxChildUnit } from './jsxChildRange'

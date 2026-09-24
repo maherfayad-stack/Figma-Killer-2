@@ -181,7 +181,9 @@ export function transplantJsxElement(params: TransplantJsxElementParams): Transp
   const originSource = loadSourceFile(project, file)
   const destinationSource = loadSourceFile(project, destinationFile)
 
-  const target = resolveJsxChildRange(originSource, line, col)
+  // WB-20 — a MOVE of `{cond && <X/>}` carries the condition with it, exactly
+  // as a same-file move does. A copy stays element-only, like ⌘D.
+  const target = resolveJsxChildRange(originSource, line, col, params.copy ? 'element' : 'conditional')
   if (!target.ok) return refuseTransplant(target.reason, target.message)
 
   const originText = verbatimSourceText(originSource, file)

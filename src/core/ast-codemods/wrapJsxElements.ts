@@ -40,11 +40,14 @@
  *
  * INDENTATION, AND THE ONE PLACE IT MOVES. Exactly `wrapJsxElement`'s rule:
  * the wrapped span gains one level (`reindentBlock` — leading whitespace only),
- * every line outside it is untouched to the byte, and a run that shares one
+ * every line outside it is untouched to the byte, and a run that sits on one
  * line (`<div><a/><b/></div>`) is wrapped in place with no reindentation at
- * all. A run where some elements own their line and others share one refuses
- * (`mixed-indentation`), for the same reason a move across that boundary does:
- * there is no correct answer for where the newlines go.
+ * all. A run that spans lines but starts or ends in the middle of one (WB-21:
+ * `<x/><a/>` then `<b/>` on the next line, grouping `a` and `b`) is split at
+ * its two ends so the container owns its lines: the sibling that shared the
+ * run's first line keeps it, and one that shared its last line moves to a line
+ * of its own after the container. Inside the container every byte of the run
+ * travels as it was.
  */
 import { Node, type Project, type SourceFile } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
@@ -55,7 +58,7 @@ import {
   writeVerbatimSource,
   type JsxChildRange,
 } from './jsxChildRange'
-import { elementChildren, indentUnit, lineIndentAt, reindentBlock } from './jsxChildPlacement'
+import { elementChildren, indentUnit, lineIndentAt, reindentBlock, trimTrailingBlankBack } from './jsxChildPlacement'
 import { conflictingBinding, resolveImportEdits } from './jsxImportEdits'
 import { validateSubtree } from './jsxSubtree'
 import type { WrapJsxRefusalReason } from './wrapJsxElement'
@@ -93,7 +96,6 @@ export type WrapJsxElementsRefusalReason =
   // same gates as `wrapJsxElement`, and refuses for the same extra reason.
   | WrapJsxRefusalReason
   | 'not-contiguous'
-  | 'mixed-indentation'
   | 'no-targets'
 
 export interface WrapJsxElementsRefusal {
@@ -171,18 +173,9 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
   const baseIndent = lineIndentAt(verbatim, spanStart)
   const unit = indentUnit(verbatim)
 
-  const edit = first.wholeLine
-    ? {
-        start: first.start,
-        end: last.end,
-        text:
-          [
-            `${baseIndent}<${tag}>`,
-            `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
-            `${baseIndent}</${tag}>`,
-          ].join('\n') + '\n',
-      }
-    : { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
+  const edit = !span.includes('\n') && !first.wholeLine
+    ? { start: spanStart, end: spanEnd, text: `<${tag}>${span}</${tag}>` }
+    : ownLinesWrap(verbatim, spanStart, spanEnd, span, tag, baseIndent, unit)
 
   const importEdits = resolveImportEdits(
     sourceFile,
@@ -192,6 +185,40 @@ export function wrapJsxElements(params: WrapJsxElementsParams): WrapJsxElementsR
 
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [edit, ...importEdits]))
   return { ok: true, created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, edit.start), edit.text) }
+}
+
+/**
+ * The edit that writes the container on lines of its own around a run that
+ * spans lines. When the run already owns its first and last lines this is
+ * byte-for-byte the classic whole-line wrap; when it starts or ends mid-line
+ * the line is split there (see the module doc).
+ */
+function ownLinesWrap(
+  verbatim: string,
+  spanStart: number,
+  spanEnd: number,
+  span: string,
+  tag: string,
+  baseIndent: string,
+  unit: string,
+): { start: number; end: number; text: string } {
+  const lineStart = verbatim.lastIndexOf('\n', spanStart - 1) + 1
+  const opensLine = verbatim.slice(lineStart, spanStart).trim() === ''
+  const newlineAfter = verbatim.indexOf('\n', spanEnd)
+  const lineEnd = newlineAfter === -1 ? verbatim.length : newlineAfter
+  const closesLine = verbatim.slice(spanEnd, lineEnd).trim() === ''
+  let trailing = spanEnd
+  while (trailing < lineEnd && (verbatim[trailing] === ' ' || verbatim[trailing] === '\t')) trailing += 1
+  const block = [
+    `${baseIndent}<${tag}>`,
+    `${baseIndent}${unit}${reindentBlock(span, baseIndent, baseIndent + unit)}`,
+    `${baseIndent}</${tag}>`,
+  ].join('\n')
+  return {
+    start: opensLine ? lineStart : trimTrailingBlankBack(verbatim, spanStart),
+    end: closesLine ? Math.min(lineEnd + 1, verbatim.length) : trailing,
+    text: `${opensLine ? '' : '\n'}${block}${closesLine ? '\n' : `\n${baseIndent}`}`,
+  }
 }
 
 /** The named elements as one unbroken run of a single parent's element children, or why they are not one. */
@@ -216,13 +243,6 @@ function resolveRun(
   }
 
   ranges.sort((a, b) => a.element.getStart() - b.element.getStart())
-
-  if (ranges.some((range) => range.wholeLine !== ranges[0]!.wholeLine)) {
-    return refuseWrap(
-      'mixed-indentation',
-      'Some of these elements sit on a line of their own and others share a line, so Studio cannot put one container around them without reformatting code you did not touch. Group them in the file instead.',
-    )
-  }
 
   const contiguity = refuseGaps(parent, ranges)
   if (contiguity) return contiguity
