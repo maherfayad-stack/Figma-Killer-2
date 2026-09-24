@@ -18,7 +18,6 @@
  * the one image landing contract, with the target directory first put to the
  * same agent write gate and the landing held under the same lock (P4-E).
  */
-import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { ToolContext } from '../../../runtime/types'
@@ -34,6 +33,7 @@ import {
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { appendTurnWrite } from '../../../../handlers/studio/turnWriteLog'
+import { writeFileAtomic } from '../../../../handlers/studio/atomicFileWrite'
 import { DEFAULT_ASSET_TARGET_DIR, landAssetBytes } from '../../../../handlers/studio/assetLanding'
 import { assetSiteUrlResolver } from '../../../../handlers/studio/assetSiteUrl'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
@@ -146,14 +146,14 @@ export function commitPlannedWrites(
   try {
     for (const plan of plans) {
       if (plan.next === plan.original) continue
-      writeFileSync(plan.target.abs, plan.next, 'utf8')
+      writeFileAtomic(plan.target.abs, plan.next)
       written.push(plan)
     }
   } catch (err) {
     const unrestored: string[] = []
     for (const { target, original } of written) {
       try {
-        writeFileSync(target.abs, original, 'utf8')
+        writeFileAtomic(target.abs, original)
       } catch (restoreErr) {
         console.error('[studio:mcp] could not restore a file after a failed batch write:', restoreErr)
         unrestored.push(target.rel)
