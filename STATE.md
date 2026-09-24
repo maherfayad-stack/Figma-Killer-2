@@ -63,6 +63,21 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### parser-18 — P3-C: value refusals become writes (PR 1 of 2)
+- **Agent:** parser-surgeon · **Branch:** `feat/value-refusals-become-writes` off `01f3d9c2` · **PR:** #247 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** PR 1 verifying (draft open, gates green); PR 2 (`feat/style-edits-land-anywhere`, stacked on this branch) in progress.
+- **Goal:** ROADMAP P3-C (1): WB-6, WB-8, ERR-14, ERR-15. Never refuse what the editor could have written itself.
+- **Scope (parser files):** `page-parser/{types,jsxAttributeReaders,nodeResolution,parsePageFile,componentSubstitution,inlineLocalComponents,nextAppLayout}.ts`, `ast-codemods/setStringLiteral.ts`. Client: `studio/{nodeDiffWriteback,cssInsertDestination,styleRuleWriteback,styleRuleBaseline,classNameWriteback,keyframesWriteback,refusalToasts,fsCodemodAdapter,studioSaveRequests,studioEditPayload}.ts`, `panels/PropertiesPanel/{classCssWritability,StyleTargetChip,SharedComponentNotice,PropertiesPanelBody}`, `store/constraintActions.ts`, `page-tree/editConstraint.ts`. Server: `studio{CssWriteback,SyntaxGuard,Writeback}.ts`, `studio/storyPages.ts` (comment).
+- **Done:**
+  - WB-6: text/props a component is handed carry the call site's literal as origin (`ParsedNode.literalPropOrigins` → `Substitution.origin` → `textOrigin`/`resolvedProps[k].origin`), through nested inlining and dictionaries. `setStringLiteral` spells a JSX-attribute literal as JSX does.
+  - WB-8: `nodeDiffWriteback` writes every origin-backed value as `literal` before the location guard (a `.map` row's prop was silently dropped; an instance's `callSiteProps:` origin was sent as a `prop` edit and refused `binding-overwrite`).
+  - ERR-14: `resolveCssInsertDestination` always answers; several stylesheets are ranked (last written, global over module, nearest, largest, alphabetical) and remembered per rule. The "Which stylesheet?" dialog, `choose-stylesheet`, the pin and `explainCssRuleConstraint` are deleted.
+  - ERR-15: no stylesheet + no page → `create` with no `pageFile`; the server writes `studio.css` beside `findEntryFile` and imports it (`cssCreateImportTarget`, shared with the syntax guard and touched-files). A class waiting on a created sheet is held silently and re-saved at once (no `stylesheet-not-created-yet` warning).
+- **Decisions (per new resolution):** call-site literal origin — locks: no; codeProps: yes (the component's attribute stays code), origin: yes, the call-site string literal (never a component default, never a `.map`-row call site's literal, never computed). `tryResolveExpression` now hands on an origin only for a STRING value (numeric origins led to `not-a-literal` refusals). Substituted text sets `codeText`.
+- **Landmines:** (1) `chosenDestinations` is per session and reset only when a DIFFERENT project loads — the ranking reads `lastWrittenStylesheet`, so without the memory the insert and `commitBaseline`'s source synthesis could disagree. (2) A chosen `*.module.css` for a page that does not import it still ends in `css-module-import-missing` on the class token until PR 2's import pass. (3) `insertRule` on an empty file writes no trailing newline (pre-existing).
+- **Found, not fixed:** Storybook args-only story args still have no origin: the save side is ready now, but `storyDiscovery` keeps no literal positions. ERR-14's "→ file · change" chip affordance and per-project `.studio/` memory are not built (the tooltip names the chosen file and the alternatives).
+- **Next:** PR 2 — WB-16, WB-17, WB-18, WB-19, WB-30, WB-31, OD-8.
+
 ### perf-12 — P2-I: selector sweep (PERF-1, PERF-12, PERF-5; PERF-14 measured and refuted)
 - **Agent:** perf-hunter · **Branch:** `perf/hover-and-selection-off-the-global-store` off `ecfa57d6` (trunk `01f3d9c2` merged in) · **PR:** #245 (draft, base `feat/canvas-excellence`; full tables in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
@@ -184,6 +199,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-32` · a mobile breakpoint tab · Fill keeps a text colour the user declared at base
 - `canvas-16` · a frame with a per-frame axes override · the override shows on the frame and can be cleared
 - `panel-40` · any panel · a panel that throws takes out only that panel; hide/lock fan out over the selection
+- `parser-18` · a page calling `<Header title="…"/>` · double-click the heading and retype it: the page's `title="…"` changes, `Header.tsx` does not; a new class in a project with two stylesheets saves with no dialog
 
 **Board, assets, performance**
 - `panel-33` (2026-09-17, Assets), `panel-34`, `meta-12` · `test4` → Assets · every card is a live render; search finds "header", "pill", "row"; Colors swatches split light/dark

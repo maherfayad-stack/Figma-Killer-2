@@ -14,6 +14,7 @@
  */
 import {
   type Page,
+  type PageNode,
   canWriteInlineStyleForModule,
   hasWritableSourceLocation,
   isPropWritableToSource,
@@ -51,6 +52,38 @@ function effectiveTag(props: Record<string, unknown> | undefined): string | unde
   if (tag !== CUSTOM_HTML_TAG_VALUE) return tag
   const custom = props?.customTag
   return typeof custom === 'string' && custom.length > 0 ? custom : undefined
+}
+
+type OriginBackedValue = { key: string; value: string | number; origin: { rel: string; line: number; col: number } }
+
+/**
+ * WB-8 (P3-C) — every scalar value on `node` whose code-valued prop the parser
+ * traced to a single string literal (`resolvedProps[key].origin`), keyed the
+ * way `codeProps` and the baseline key it: a flat prop name, or
+ * `callSiteProps:<name>` for an instance's call-site props.
+ *
+ * The module's text prop is left to the `textOrigin` branch, which owns it
+ * (`parsedPageToSitePage` re-keys text's resolution onto that prop with the
+ * same origin, and emitting it twice would send the same write twice).
+ */
+function originBackedValues(node: PageNode, textProp: string | undefined): OriginBackedValue[] {
+  const resolved = node.resolvedProps
+  if (!resolved) return []
+  const out: OriginBackedValue[] = []
+  const collect = (key: string, value: unknown): void => {
+    if (typeof value !== 'string' && typeof value !== 'number') return
+    const origin = resolved[key]?.origin
+    if (origin) out.push({ key, value, origin })
+  }
+  for (const [prop, value] of Object.entries(node.props ?? {})) {
+    if (prop === textProp && node.textOrigin) continue
+    collect(prop, value)
+  }
+  if (node.moduleId === 'studio.instance') {
+    const callSiteProps = (node.props as { callSiteProps?: Record<string, unknown> }).callSiteProps ?? {}
+    for (const [name, value] of Object.entries(callSiteProps)) collect(`callSiteProps:${name}`, value)
+  }
+  return out
 }
 
 /**
@@ -125,8 +158,28 @@ export function collectNodeDiffEdits(
         }
       }
 
+      // WB-8 (P3-C) — a code-valued prop the parser traced to ONE string
+      // literal (`resolvedProps[k].origin`: a dictionary entry, or the call-site
+      // literal a component was handed) is editable, but ONLY at that literal.
+      // `isPropWritableToSource` authorises it on exactly this promise; a
+      // `kind: 'prop'` write would bake a string over the binding (and
+      // `setJsxProp` refuses `binding-overwrite` for it anyway). Like the text
+      // branch above, this runs BEFORE the location guard: the origin is not
+      // this node's JSX, so a `.map` row whose prop read its own array element
+      // writes its own string — it used to pass the store's gate and then be
+      // dropped here in silence. An instance's call-site props are the same
+      // rule under the `callSiteProps:` key, where a `prop` edit at the call
+      // site used to be emitted instead.
+      const writtenAtOrigin = new Set<string>()
+      for (const { key, value, origin } of originBackedValues(node, textProp)) {
+        writtenAtOrigin.add(key)
+        if (baseline && Object.is(baseline[key], value)) continue
+        const editKey = emit({ kind: 'literal', nodeId: `${origin.rel}:${origin.line}:${origin.col}`, text: String(value) })
+        bumps.push({ nodeId: node.id, key, value, editKey })
+      }
+
       // No single source location to write to (a synthetic `index:body` root, a
-      // `.map` iteration). Reached only after the text-origin branch above,
+      // `.map` iteration). Reached only after the two origin branches above,
       // which is why a `.map` row can still have its own copy edited.
       if (!hasWritableSourceLocation(node.id)) continue
 
@@ -166,23 +219,8 @@ export function collectNodeDiffEdits(
         // — silently destroying the binding. `setJsxText` refuses that on
         // the text path, but `setJsxProp` will happily do it.
         if (baseline && Object.is(baseline[prop], value)) continue
-        // A code-valued prop the evaluator traced to a real literal
-        // (`title={t.home.skipTheTaxiQueue}` -> `skipTheTaxiQueue: '…'` in
-        // `i18n/translations.ts`) is editable — but ONLY at that literal.
-        // `isPropWritableToSource` authorises it on exactly this promise;
-        // falling through to the `kind: 'prop'` write below would bake a
-        // string over the binding, which is the thing the whole rule exists
-        // to prevent. Same shape as the `textOrigin` branch above.
-        const propOrigin = node.resolvedProps?.[prop]?.origin
-        if (propOrigin) {
-          const editKey = emit({
-            kind: 'literal',
-            nodeId: `${propOrigin.rel}:${propOrigin.line}:${propOrigin.col}`,
-            text: String(value),
-          })
-          bumps.push({ nodeId: node.id, key: prop, value, editKey })
-          continue
-        }
+        // Already emitted as a `literal` edit aimed at its origin, above.
+        if (writtenAtOrigin.has(prop)) continue
         // Second gate on the same rule the store applies, here because THIS is
         // the boundary that writes files: `updateNodeProps` refuses a
         // code-valued prop, but a tree can also arrive from an agent or a
@@ -211,6 +249,7 @@ export function collectNodeDiffEdits(
           if (typeof value !== 'string' && typeof value !== 'number' && typeof value !== 'boolean') continue
           const codeKey = `callSiteProps:${name}`
           if (baseline && Object.is(baseline[codeKey], value)) continue
+          if (writtenAtOrigin.has(codeKey)) continue
           if (!isPropWritableToSource(node, codeKey)) continue
           const editKey = emit({ kind: 'prop', nodeId: node.id, prop: codeKey, value })
           bumps.push({ nodeId: node.id, key: codeKey, value, editKey })

@@ -88,10 +88,11 @@ export function resolveClassCssEditability(cls: StyleRule): ClassCssEditability 
   // (Tailwind's generated utilities, a Sass/PostCSS build, a CSS Modules
   // compile) and must never appear to gain a fabricated write target.
   if (isImportedStyleRuleId(cls.id)) return { kind: 'unmapped' }
+  // P3-C — an editor-authored class always has somewhere to go: a stylesheet
+  // Studio chose (ERR-14) or one it will create (ERR-15). Never `unmapped`.
   const destination = resolveCssInsertDestination(cls)
-  if (!destination.ok) return { kind: 'unmapped', reason: destination.message }
   return destination.kind === 'existing'
-    ? { kind: 'will-create-existing', file: destination.file }
+    ? { kind: 'will-create-existing', file: destination.file, alternatives: destination.alternatives }
     : { kind: 'will-create-new-stylesheet', pageFile: destination.pageFile }
 }
 

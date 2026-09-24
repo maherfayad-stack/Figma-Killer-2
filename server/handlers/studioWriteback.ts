@@ -66,7 +66,7 @@ import {
   type DeletedJsxText,
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
-import { applyCssEdit } from './studioCssWriteback'
+import { applyCssEdit, cssCreateImportTarget } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
@@ -447,7 +447,10 @@ export function applyStudioEditBatch(
     // decoded location. Added explicitly rather than through
     // `studioEditFile` because this kind's write target is a FILE +
     // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
-    if (edit.kind === 'css' && edit.op === 'create') touchedFiles.add(join(dir, edit.pageFile))
+    if (edit.kind === 'css' && edit.op === 'create') {
+      const importer = cssCreateImportTarget(dir, edit)
+      if (importer) touchedFiles.add(join(dir, importer))
+    }
     // D2 G3 — a transplant writes TWO files, and only the origin is named by
     // `edit.nodeId`. The destination has to be in this set or the batch's
     // line-count-shift check would report `shifted: false` for a write that

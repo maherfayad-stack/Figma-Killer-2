@@ -34,6 +34,7 @@ import type { ValueOrigin } from './staticEvalTypes'
 import { packagedImageImportRefusal, STUDIO_ASSET_SENTINEL } from './assetImports'
 import { iconPropFromJsx, withNestedIconValues } from './iconPropValues'
 import { decodeJsxTextEntities } from './jsxTextEntities'
+import { originOf } from './staticEvalValues'
 
 /**
  * Everything one parse pass needs to read values and record nodes. Built once
@@ -126,6 +127,8 @@ export function extractProps(
    */
   codeFunctionPaths: string[]
   assetOrigin?: ValueOrigin
+  /** P3-C — a COMPONENT call site's string-literal attributes, by name. See `ParsedNode.literalPropOrigins`. */
+  literalOrigins: Record<string, ValueOrigin>
 } {
   const result: Record<string, ParsedPropValue> = {}
   const resolutions: Resolution[] = []
@@ -139,6 +142,19 @@ export function extractProps(
   // rarely has more than one image-shaped prop, and picking one honest target
   // beats guessing which of several an edit meant.
   let assetOrigin: ValueOrigin | undefined
+  const literalOrigins: Record<string, ValueOrigin> = {}
+  /**
+   * P3-C (WB-6) — a call site's string literal is the honest target for the
+   * text or prop the component renders from it (`ParsedNode.literalPropOrigins`).
+   * Only a component's attribute crosses into another file's JSX, and only one
+   * NOT inside a `.map` row: `ctx.idSuffix` marks an iteration, whose literal
+   * one piece of JSX renders for every row.
+   */
+  const recordLiteralOrigin = (name: string, literal: Node): void => {
+    if (kind !== 'component' || ctx.idSuffix !== undefined) return
+    const { origin } = originOf(literal, ctx.eval?.options.workspaceRoot)
+    if (origin) literalOrigins[name] = origin
+  }
 
   for (const attribute of attributes) {
     if (!Node.isJsxAttribute(attribute)) continue // skip {...spread} attributes
@@ -155,6 +171,7 @@ export function extractProps(
 
     if (Node.isStringLiteral(initializer)) {
       result[name] = initializer.getLiteralValue()
+      recordLiteralOrigin(name, initializer)
       continue
     }
 
@@ -168,6 +185,7 @@ export function extractProps(
       }
       if (Node.isStringLiteral(expression)) {
         result[name] = expression.getLiteralValue()
+        recordLiteralOrigin(name, expression)
         continue
       }
       if (Node.isTrueLiteral(expression)) {
@@ -332,7 +350,15 @@ export function extractProps(
     }
   }
 
-  return { props: result, resolutions, resolutionsByKey, codeProps, codeFunctionPaths, ...(assetOrigin ? { assetOrigin } : {}) }
+  return {
+    props: result,
+    resolutions,
+    resolutionsByKey,
+    codeProps,
+    codeFunctionPaths,
+    literalOrigins,
+    ...(assetOrigin ? { assetOrigin } : {}),
+  }
 }
 
 /**

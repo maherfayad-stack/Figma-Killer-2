@@ -536,6 +536,9 @@ function processElement(
     ...(styleResult.styles !== undefined ? { inlineStyles: styleResult.styles } : {}),
     ...(lock.resolution ? { resolution: lock.resolution } : {}),
     ...(resolvedProps ? { resolvedProps } : {}),
+    // P3-C (WB-6) — a call site's literal attributes, for the values that cross
+    // into the component. See `ParsedNode.literalPropOrigins`.
+    ...(Object.keys(propsResult.literalOrigins).length > 0 ? { literalPropOrigins: propsResult.literalOrigins } : {}),
   }
   ctx.nodes[id] = node
 

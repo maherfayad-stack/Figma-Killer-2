@@ -46,7 +46,7 @@ export type StudioEditPayload =
   | { kind: 'css'; op: 'set'; nodeId: string; file: string; selector: string; property: string; value: string; atMedia?: string }
   | { kind: 'css'; op: 'unset'; nodeId: string; file: string; selector: string; property: string; atMedia?: string }
   | { kind: 'css'; op: 'insert'; nodeId: string; file: string; selector: string; declarations: Record<string, string>; atMedia?: string }
-  | { kind: 'css'; op: 'create'; nodeId: string; pageFile: string; selector: string; declarations: Record<string, string>; atMedia?: string }
+  | { kind: 'css'; op: 'create'; nodeId: string; pageFile?: string; selector: string; declarations: Record<string, string>; atMedia?: string }
   // W5-5 — the same three moves inside a `@keyframes` block. A keyframes
   // target is a FILE + ANIMATION NAME + STEP rather than a file + selector,
   // which is why these are their own variants rather than a widened `set`:

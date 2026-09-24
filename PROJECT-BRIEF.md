@@ -247,14 +247,14 @@ never silently no-ops.
     project's one editable stylesheet (`insertRule`). The anchor page is the
     class's own page, or — for a class that is on no element yet — the page
     the user has OPEN (Z8, `resolveOpenPageFile`). With several candidates and
-    none co-located, `resolveCssInsertDestination` still refuses rather than
-    guessing, but the refusal is a **choice**: a `RefusalDialog` with one
-    `choose-stylesheet` remedy per candidate file, which pins the destination
-    and re-runs the insert. Never a toast.
+    none co-located, `resolveCssInsertDestination` CHOOSES (P3-C, ERR-14): a
+    global sheet over another page's module, the stylesheet written last, the
+    nearest, the largest — remembered per rule. Never a dialog, never a toast.
   - `op: 'create'` — no editable stylesheet exists at all: the server invents
     one co-located with the anchor page, wires the page's `import`
     (`ensureStylesheetImport`, a ts-morph edit — which is why it cannot happen
-    client-side), and writes the rule into it.
+    client-side), and writes the rule into it. With no page at all (ERR-15) it
+    makes `studio.css` beside the app entry and imports it there.
 
   All three are formatting-preserving postcss CST edits, and inserting a
   selector that already exists **merges** rather than adding a second

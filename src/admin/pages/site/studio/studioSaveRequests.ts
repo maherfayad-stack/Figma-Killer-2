@@ -176,12 +176,16 @@ const projectsToldAboutCreatedStylesheets = new Set<string>()
  * Studio invents in a project is worth naming, and every later one is the same
  * behaviour the person has already been told about. It used to be a success
  * card on every created file, in the middle of typing a class name.
+ *
+ * Returns how many stylesheets the response created, so the caller can attach
+ * the classes that were waiting on them (ERR-15 — `awaitingCreatedStylesheet`).
  */
 export function notifyCreatedStylesheets(
   result: StudioSaveResponse,
   styleRules: Record<string, StyleRule>,
-): void {
-  for (const created of result.createdStylesheets ?? []) {
+): number {
+  const createdList = result.createdStylesheets ?? []
+  for (const created of createdList) {
     const ruleId = ruleIdFromCssCreateNodeId(created.nodeId)
     if (!ruleId) continue
     const rule = styleRules[ruleId]
@@ -193,10 +197,11 @@ export function notifyCreatedStylesheets(
       kind: 'info',
       title: 'Stylesheet created',
       body: rule
-        ? `Studio created ${created.file} and wired it into your page for “${rule.name}”.`
-        : `Studio created ${created.file} and wired it into your page.`,
+        ? `Studio created ${created.file} for “${rule.name}” and imported it.`
+        : `Studio created ${created.file} and imported it.`,
     })
   }
+  return createdList.length
 }
 
 /**

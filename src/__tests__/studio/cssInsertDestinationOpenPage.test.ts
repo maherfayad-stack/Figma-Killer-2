@@ -1,6 +1,5 @@
 /**
- * Z8 — the open page as a CSS insert destination's anchor of last resort, and
- * the user's own answer to an ambiguity.
+ * Z8 — the open page as a CSS insert destination's anchor of last resort.
  *
  * `resolveCssInsertDestination` used to refuse a class that is on no element
  * yet with the words "this class has no page to co-locate a new one with",
@@ -27,7 +26,7 @@
 import { beforeEach, describe, expect, it } from 'bun:test'
 import type { Page, PageNode, StyleRule } from '@core/page-tree'
 import {
-  pinCssInsertDestination,
+  resetCssDestinationMemory,
   resolveCssInsertDestination,
   resolveOpenPageFile,
   setOpenPageFile,
@@ -67,6 +66,7 @@ function page(id: string, nodeIds: readonly string[]): Page {
 beforeEach(() => {
   setStudioStyleRuleSources({}, {})
   setOpenPageFile(null)
+  resetCssDestinationMemory()
 })
 
 describe('resolveOpenPageFile — which file the open page actually is', () => {
@@ -122,9 +122,9 @@ describe('resolveCssInsertDestination — the open page as the anchor of last re
     setOpenPageFile('src/screens/Dashboard.jsx')
 
     expect(resolveCssInsertDestination(freestandingRule())).toEqual({
-      ok: true,
       kind: 'existing',
       file: 'src/screens/Dashboard.css',
+      alternatives: [],
     })
   })
 
@@ -132,7 +132,6 @@ describe('resolveCssInsertDestination — the open page as the anchor of last re
     setOpenPageFile('src/screens/Dashboard.jsx')
 
     expect(resolveCssInsertDestination(freestandingRule())).toEqual({
-      ok: true,
       kind: 'create',
       pageFile: 'src/screens/Dashboard.jsx',
     })
@@ -157,7 +156,7 @@ describe('resolveCssInsertDestination — the open page as the anchor of last re
     })
   })
 
-  it('still refuses ambiguity when the open page has no stylesheet of its own', () => {
+  it('P3-C (ERR-14) — chooses among the stylesheets when the open page has none of its own, and names the others', () => {
     setStudioStyleRuleSources(
       {
         a: { file: 'src/screens/Dashboard.css', selector: '.a' },
@@ -166,83 +165,20 @@ describe('resolveCssInsertDestination — the open page as the anchor of last re
       {},
     )
     // The open page is a THIRD screen Studio has never seen a stylesheet for.
-    // The anchor is not a licence to pick any file — two real choices remain
-    // and the user is the only one who can make that call.
+    // Both files are real write targets; this used to be a modal asking the
+    // user to pick one. Equally near, equally sized: alphabetical decides.
     setOpenPageFile('src/screens/Billing.jsx')
 
-    const result = resolveCssInsertDestination(freestandingRule())
-    expect(result).toMatchObject({ ok: false, reason: 'ambiguous-stylesheet' })
-    expect(result.ok === false && result.candidates).toEqual([
-      'src/screens/Dashboard.css',
-      'src/screens/Settings.css',
-    ])
-  })
-
-  it('keeps the terminal refusal when nothing — not even the board — names a page', () => {
-    // The one path left to `no-editable-stylesheet`: zero stylesheets, no
-    // class page, and a board showing a page with no resolvable source file.
-    const result = resolveCssInsertDestination(freestandingRule())
-    expect(result).toMatchObject({ ok: false, reason: 'no-editable-stylesheet' })
-    expect(result.ok === false && result.candidates).toEqual([])
-  })
-})
-
-describe('pinCssInsertDestination — the user’s answer to an ambiguity', () => {
-  beforeEach(() => {
-    setStudioStyleRuleSources(
-      {
-        a: { file: 'src/styles/base.css', selector: '.a' },
-        b: { file: 'src/styles/marketing.css', selector: '.b' },
-      },
-      {},
-    )
-  })
-
-  it('turns the refusal into a resolved destination for that rule only', () => {
-    expect(resolveCssInsertDestination(freestandingRule())).toMatchObject({ reason: 'ambiguous-stylesheet' })
-
-    pinCssInsertDestination(NEW_RULE_ID, 'src/styles/marketing.css')
-
     expect(resolveCssInsertDestination(freestandingRule())).toEqual({
-      ok: true,
       kind: 'existing',
-      file: 'src/styles/marketing.css',
+      file: 'src/screens/Dashboard.css',
+      alternatives: ['src/screens/Settings.css'],
     })
-    // A different rule was not answered, so it still asks.
-    const other = freestandingRule({ id: 'nanoid-other', selector: '.other' })
-    expect(resolveCssInsertDestination(other)).toMatchObject({ reason: 'ambiguous-stylesheet' })
   })
 
-  it('outranks the open page — an answer the user gave is not a heuristic to be beaten', () => {
-    setOpenPageFile('src/styles/base.tsx')
-    pinCssInsertDestination(NEW_RULE_ID, 'src/styles/marketing.css')
-
-    expect(resolveCssInsertDestination(freestandingRule())).toMatchObject({ file: 'src/styles/marketing.css' })
-  })
-
-  it('is ignored once the file it names is no longer a stylesheet this project writes to', () => {
-    pinCssInsertDestination(NEW_RULE_ID, 'src/styles/marketing.css')
-    // A reload against a project that no longer has that file: the pin is a
-    // decision about a world that is gone, so the refusal comes back rather
-    // than a write landing somewhere unverifiable.
-    setStudioStyleRuleSources(
-      { a: { file: 'src/styles/base.css', selector: '.a' }, c: { file: 'src/styles/app.css', selector: '.c' } },
-      {},
-    )
-
-    expect(resolveCssInsertDestination(freestandingRule())).toMatchObject({ reason: 'ambiguous-stylesheet' })
-  })
-
-  it('does not survive a fresh load', () => {
-    pinCssInsertDestination(NEW_RULE_ID, 'src/styles/marketing.css')
-    setStudioStyleRuleSources(
-      {
-        a: { file: 'src/styles/base.css', selector: '.a' },
-        b: { file: 'src/styles/marketing.css', selector: '.b' },
-      },
-      {},
-    )
-
-    expect(resolveCssInsertDestination(freestandingRule())).toMatchObject({ reason: 'ambiguous-stylesheet' })
+  it('P3-C (ERR-15) — creates beside the app entry when nothing, not even the board, names a page', () => {
+    // Zero stylesheets, no class page, no page on screen: this used to be the
+    // terminal `no-editable-stylesheet` refusal.
+    expect(resolveCssInsertDestination(freestandingRule())).toEqual({ kind: 'create', pageFile: null })
   })
 })

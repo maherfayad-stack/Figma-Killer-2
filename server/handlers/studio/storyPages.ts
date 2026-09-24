@@ -41,17 +41,15 @@
  *
  * The honest target EXISTS — `label: 'Click me'` is an ordinary string literal
  * at a known `rel:line:col`, exactly the shape `textOrigin`/`setStringLiteral`
- * already writes. Recording it as `resolvedProps[arg].origin` would be enough
- * for the FLAT prop loop in `fsCodemodAdapter.saveSite` (it emits
- * `kind: 'literal'` aimed at the origin). It is NOT enough for a
- * `studio.instance`, and that is the concrete blocker: the adapter's
- * `callSiteProps` branch has no origin case at all — it asks
- * `isPropWritableToSource` (which an origin makes say YES) and then emits
- * `kind: 'prop'` at the call site, which here is the `export const`. Setting an
- * origin today would therefore authorise precisely the mis-aimed write the rule
- * exists to prevent. Closing that gap is a one-branch change in
- * `fsCodemodAdapter.ts` and belongs with whoever owns that file; until then
- * this module deliberately records `source` and no `origin`.
+ * already writes. Since P3-C the save side is ready for it: `nodeDiffWriteback.ts`
+ * writes every origin-backed value — an instance's `callSiteProps:<name>`
+ * included — as a `kind: 'literal'` edit at the origin, never a `prop` edit at
+ * the call site. What is still missing is HERE: `storyDiscovery` reads the
+ * args to plain values and keeps no literal positions, so there is no origin
+ * to record. Recording one needs the arg's own literal (a story's `args`
+ * entry, not a `meta.args` one every story inherits — that would be the
+ * shared-default case `componentSubstitution.ts` refuses). Until then this
+ * module records `source` and no `origin`.
  * ---------------------------------------------------------------------------
  */
 import {
