@@ -29,7 +29,8 @@
  * Three things only the surface needs, written into its document from here:
  *  - `html`/`body` are transparent and marginless (inline, so a project's
  *    `body { background: #fff }` cannot paint a slab over the board, and its
- *    `body { margin: 8px }` cannot shift every host);
+ *    `body { margin: 8px }` cannot shift every host), and `html` clips — a
+ *    host straddling the window's edge never grows a scrollbar;
  *  - the window origin custom properties;
  *  - a small UNLAYERED stylesheet laying out `[data-studio-canvas-host]`. It
  *    needs no `!important`: only a Studio-rendered host carries that
@@ -58,6 +59,32 @@ const SURFACE_CHROME_CSS = [
   '[data-studio-canvas-host][data-studio-layer-fill] { width: var(--studio-layer-w); }',
 ].join('\n')
 
+/**
+ * Write the surface's own chrome into its document and return the cleanup.
+ * At module scope, like `iframeBodyReset.ts`'s writers, so the React Compiler
+ * does not read cross-document DOM writes as a mutation of React state.
+ */
+function applySurfaceChrome(doc: Document): () => void {
+  const style = doc.createElement('style')
+  style.setAttribute('data-studio-canvas-surface', '')
+  style.textContent = SURFACE_CHROME_CSS
+  doc.head.appendChild(style)
+  for (const element of [doc.documentElement, doc.body]) {
+    element.style.background = 'transparent'
+    element.style.margin = '0'
+  }
+  // A host straddling the window's edge must be clipped by it, never grow a
+  // scrollbar inside a document nobody can scroll.
+  doc.documentElement.style.overflow = 'hidden'
+  return () => style.remove()
+}
+
+/** The window's board origin, which every host's position is measured from. */
+function writeSurfaceOrigin(doc: Document, x: number, y: number): void {
+  doc.body.style.setProperty('--studio-canvas-origin-x', `${x}px`)
+  doc.body.style.setProperty('--studio-canvas-origin-y', `${y}px`)
+}
+
 interface CanvasLayerSurfaceProps {
   boardId: string
   area: CanvasLayerWindow
@@ -78,24 +105,11 @@ export function CanvasLayerSurface({ boardId, area, layers, pages, surfaceElemen
   }
 
   // The surface's own chrome — see the module doc. Once per document.
-  useEffect(() => {
-    if (!doc) return
-    const style = doc.createElement('style')
-    style.setAttribute('data-studio-canvas-surface', '')
-    style.textContent = SURFACE_CHROME_CSS
-    doc.head.appendChild(style)
-    for (const element of [doc.documentElement, doc.body]) {
-      element.style.background = 'transparent'
-      element.style.margin = '0'
-    }
-    return () => style.remove()
-  }, [doc])
+  useEffect(() => (doc ? applySurfaceChrome(doc) : undefined), [doc])
 
   // The window origin — two style writes per re-fit, no host re-renders.
   useEffect(() => {
-    if (!doc) return
-    doc.body.style.setProperty('--studio-canvas-origin-x', `${area.x}px`)
-    doc.body.style.setProperty('--studio-canvas-origin-y', `${area.y}px`)
+    if (doc) writeSurfaceOrigin(doc, area.x, area.y)
   }, [doc, area.x, area.y])
 
   const surfaceStyle = {
