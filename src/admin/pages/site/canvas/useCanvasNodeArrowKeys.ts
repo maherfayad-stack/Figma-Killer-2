@@ -93,7 +93,8 @@ const LOCKED_TITLE = 'Locked layers do not move'
 
 /** Each nudged layer's patch for the hold so far. */
 function nudgePatches(session: ArrowSession): { nodeId: string; patch: Record<string, string> }[] {
-  return [...(session.plans ?? [])].map(([nodeId, plan]) => ({ nodeId, patch: nudgeStylePatch(plan, session.dx, session.dy) }))
+  if (!session.plans) return []
+  return [...session.plans].map(([nodeId, plan]) => ({ nodeId, patch: nudgeStylePatch(plan, session.dx, session.dy) }))
 }
 
 function previewNudge(session: ArrowSession): void {
@@ -108,7 +109,8 @@ function previewNudge(session: ArrowSession): void {
 
 function dropNudgePreview(session: ArrowSession): void {
   const store = useEditorStore.getState()
-  for (const nodeId of session.plans?.keys() ?? []) {
+  if (!session.plans) return
+  for (const nodeId of session.plans.keys()) {
     store.clearPreviewNodeStyles(nodeId)
     broadcastOptimisticStyleClear(nodeId)
   }
