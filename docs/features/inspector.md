@@ -953,7 +953,13 @@ notice when no style target is writable, which is always the case for an
 instance with no class, and before P2-G that notice swallowed the props too.
 `designCallSiteSections` still mounts it above the notice. A Detach refusal
 shows the parser's sentence under the title, and `explainDetachConstraint`
-alone decides whether "duplicate as a new file" is offered.
+alone decides whether "duplicate as a new file" is offered. A prop's control
+depends on its declared kind, which only the project's component catalog
+knows, so while that fetch is in flight (`useLocalComponentCatalog()` returns
+`null`) the section draws one disabled `ControlRow` with a field-height
+skeleton per prop the call site sets — never a guessed text box that becomes a
+dropdown a moment later. A catalog that has already arrived is read on the
+first render, so selecting the next instance draws no placeholder.
 
 **Separate entries, not one "Studio extras" component** — Component only applies
 to `studio.instance` nodes (the others apply to any node), and cramming

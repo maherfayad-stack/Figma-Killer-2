@@ -268,3 +268,62 @@ describe('ComponentSection — Detach refusals surface as before (P1-E1)', () =>
     expect(source).not.toContain('EXTRACT_OFFER_REASONS')
   })
 })
+
+describe('ComponentSection — while the catalog is in flight (panel-44)', () => {
+  /**
+   * The bug this pins: the catalog arrives after the section mounts, and
+   * until it did every call-site prop was classified `unknown` — so a union
+   * prop the call site already sets (`variant="primary"`) drew as a text box,
+   * then became a dropdown a moment later. A keystroke in that window wrote
+   * free text into a prop that only takes two values.
+   */
+  let releaseCatalog: () => void = () => {}
+
+  beforeEach(() => {
+    const answered = globalThis.fetch
+    const gate = new Promise<void>((resolve) => {
+      releaseCatalog = resolve
+    })
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/admin/api/studio/components')) await gate
+      return answered(input, init)
+    }) as typeof fetch
+  })
+
+  function seedWithVariant() {
+    const owner = seedInstance()
+    const node = useEditorStore.getState().site!.pages[0]!.nodes[owner.id]!
+    ;(node.props as { callSiteProps: Record<string, unknown> }).callSiteProps = { title: 'Hello', variant: 'primary' }
+    return owner
+  }
+
+  it('draws a placeholder per known prop, never a guessed text box, until the catalog says what the prop is', async () => {
+    seedWithVariant()
+    render(<ComponentSection />)
+
+    const loading = screen.getByTestId('instance-call-site-props-loading')
+    expect(loading.getAttribute('aria-busy')).toBe('true')
+    expect(loading.textContent).toContain('variant')
+    expect(loading.querySelector('input, select, textarea')).toBeNull()
+    expect(screen.queryByTestId('instance-call-site-prop-variant')).toBeNull()
+    expect(screen.queryByText('This component takes no props.')).toBeNull()
+
+    releaseCatalog()
+    const row = await screen.findByTestId('instance-call-site-prop-variant')
+    expect(row.querySelector('select')).not.toBeNull()
+    expect(row.querySelector('input[type="text"]')).toBeNull()
+    expect(screen.queryByTestId('instance-call-site-props-loading')).toBeNull()
+  })
+
+  it('reads a settled catalog on the first render — no placeholder when the next instance is selected', async () => {
+    seedWithVariant()
+    releaseCatalog()
+    const first = render(<ComponentSection />)
+    await screen.findByTestId('instance-call-site-prop-variant')
+    first.unmount()
+
+    render(<ComponentSection />)
+    expect(screen.queryByTestId('instance-call-site-props-loading')).toBeNull()
+    expect(screen.getByTestId('instance-call-site-prop-variant').querySelector('select')).not.toBeNull()
+  })
+})
