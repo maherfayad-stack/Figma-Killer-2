@@ -20,13 +20,18 @@
  *   - **An installed package's SVG** — `import x from '<pkg>/<path>.svg?raw'`,
  *     inlined. The only form that renders on the canvas and inherits
  *     `currentColor` (see `designSystemGuide.ts`'s `renderIconReference`).
- *   - **Studio's built-in design system, icon already in the project's
- *     `design-system/` folder** — the same `?raw` import, relative to the file.
- *   - **Built-in, not in the folder** — the project carries only the icons its
- *     components use, so there is no file to import. The match carries the
- *     SVG markup and a path to save it at; the agent writes the file with its
- *     file tool and imports it. Markup is capped per call so a broad query
- *     cannot flood the context.
+ *   - **Studio's built-in design system** — the same `?raw` import, relative
+ *     to the file, into the project's `design-system/icons/…`. The folder
+ *     carries only the icons something imports, but that set is demand-driven:
+ *     `ensureDesignSystemFiles` runs on every load and copies in each icon a
+ *     project file imports (`collectProjectIconDemand`), so writing the import
+ *     IS how the file arrives. That holds only for a project whose
+ *     `.studio/meta.json` says `designSystem: 'alm'`.
+ *   - **Built-in, in a project Studio does not maintain the folder for** —
+ *     nothing would copy the file in, so the match carries the SVG markup and
+ *     a path to save it at; the agent writes the file with its file tool and
+ *     imports it. Markup is capped per call so a broad query cannot flood the
+ *     context.
  *
  * A read: it never writes. With no catalog at all it says so, and what to ask
  * the user for.
@@ -41,6 +46,7 @@ import { resolveToolProjectDir } from './resolveToolProjectDir'
 import { pathRefusal } from './fileReadTools'
 import { AGENT_PATH_MAX_CHARS, resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
 import { BUILTIN_ICON_SOURCE_NAME, collectStudioIcons, type StudioIcon } from '../../../../handlers/studio/iconCatalog'
+import { readStudioMeta } from '../../../../handlers/studio/studioMeta'
 
 const DEFAULT_LIMIT = 6
 const MAX_LIMIT = 12
@@ -233,6 +239,9 @@ export function findIcons(
     .slice(0, limit)
 
   const from = input.forFile ?? 'pages/Screen.tsx'
+  // Studio copies an imported built-in icon into `design-system/` on the next
+  // load for exactly these projects (see the module doc).
+  const studioMaintainsFolder = readStudioMeta(dir).designSystem === 'alm'
   let markupBudget = MARKUP_BUDGET_BYTES
   let truncatedMarkup = false
   const matches = ranked.map(({ icon, score }): IconMatch => {
@@ -244,7 +253,7 @@ export function findIcons(
     }
     // Studio's built-in system: vendored `src/icons/…` is the project's `design-system/icons/…`.
     const projectPath = `${PROJECT_DESIGN_SYSTEM_DIR}/${icon.packagePath.replace(/^src\//, '')}`
-    if (existsSync(join(dir, ...projectPath.split('/')))) {
+    if (studioMaintainsFolder || existsSync(join(dir, ...projectPath.split('/')))) {
       return { ...base, import: `import ${binding} from '${relativeSpecifier(from, projectPath)}?raw'` }
     }
     const saveAs = `${LANDED_ICON_DIR}/${words(icon.name).join('-') || 'icon'}.svg`
@@ -266,7 +275,7 @@ const findIconTool: AiTool = {
   sideEffects: 'none',
   requiredCapabilities: [],
   description:
-    'Find an icon in the project\'s design-system icon set by what it shows ("search", "arrow left", "bell"), with synonyms and typos matched — before you ever hand-draw a path. Returns matches best first, each with the exact ?raw import line for forFile and a usage that inlines the SVG (so it inherits currentColor). A match with saveAs and markup is not in the project yet: write markup to saveAs with your file tool, then use its import. No catalog → says so, with what to ask the user for. A read; writes nothing.',
+    'Find an icon in the project\'s design-system icon set by what it shows ("search", "arrow left", "bell"), with synonyms and typos matched — before you ever hand-draw a path. Returns matches best first, each with the exact ?raw import line for forFile (pass it: imports are relative) and a usage that inlines the SVG (so it inherits currentColor). Write the import as given; Studio brings a built-in icon file into design-system/ itself. A match with saveAs and markup is the exception: write markup to saveAs with your file tool, then use its import. No catalog → says so, with what to ask the user for. A read; writes nothing.',
   inputSchema: FindIconInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { dir: dirInput, query, limit, forFile } = input as { dir?: string; query: string; limit?: number; forFile?: string }

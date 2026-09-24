@@ -9,6 +9,7 @@ import * as path from 'node:path'
 import type { ToolContext } from '../../../runtime/types'
 import { findIcons, scoreIcon, studioFindIconMcpTools } from './findIconTool'
 import type { StudioIcon } from '../../../../handlers/studio/iconCatalog'
+import { ensureDesignSystemFiles } from '../../../../handlers/studio/designSystemFiles'
 
 const tool = studioFindIconMcpTools[0]!
 
@@ -83,6 +84,7 @@ describe('studio_find_icon — the handler', () => {
     beforeEach(() => {
       // `isDesignSystemBacked`: the project carries the design-system folder.
       fs.mkdirSync(path.join(dir, 'design-system', 'icons', 'line-icons'), { recursive: true })
+      fs.mkdirSync(path.join(dir, 'pages'), { recursive: true })
       fs.writeFileSync(path.join(dir, 'design-system', 'index.js'), 'export {}\n')
       fs.writeFileSync(path.join(dir, 'design-system', 'icons', 'line-icons', 'calendar.svg'), '<svg/>')
     })
@@ -101,6 +103,21 @@ describe('studio_find_icon — the handler', () => {
       expect(x.saveAs).toBe('src/assets/icons/x.svg')
       expect(x.markup).toContain('<svg')
       expect(x.import).toBe("import xSvg from '../src/assets/icons/x.svg?raw'")
+    })
+
+    it('in a project Studio maintains the folder for, an icon not there yet is still an import: the next load copies it in', async () => {
+      fs.mkdirSync(path.join(dir, '.studio'), { recursive: true })
+      fs.writeFileSync(path.join(dir, '.studio', 'meta.json'), JSON.stringify({ designSystem: 'alm' }))
+      const result = (await tool.handler!({ dir, query: 'close', forFile: 'pages/Trips.tsx' }, ctx())) as { matches: Array<Record<string, string>> }
+      const x = result.matches.find((match) => match.name === 'x')!
+      expect(x.import).toBe("import xSvg from '../design-system/icons/line-icons/x.svg?raw'")
+      expect(x.markup).toBeUndefined()
+      expect(x.saveAs).toBeUndefined()
+
+      // And it does: write the import, run what every load runs.
+      fs.writeFileSync(path.join(dir, 'pages', 'Trips.tsx'), `${x.import}\nexport default function Trips() {\n  return <span dangerouslySetInnerHTML={{ __html: xSvg }} />\n}\n`)
+      ensureDesignSystemFiles(dir)
+      expect(fs.readFileSync(path.join(dir, 'design-system', 'icons', 'line-icons', 'x.svg'), 'utf8')).toContain('<svg')
     })
 
     it('refuses a forFile outside the project', async () => {
