@@ -91,8 +91,10 @@ import { collectUserSuppliedUrls } from '../mcp/tools/studio/remoteFetchPolicy'
 import type { AiStreamEvent } from '../runtime/types'
 import type { AiStreamRequest } from '../drivers/types'
 import { acquireConversationStream } from '../conversations/activeStreams'
+import { routeChatTurnModel } from '../routing/chatTurnModel'
+import { createTurnTelemetry } from '../turnTelemetry'
+import { REQUEST_ABORTED, abandonTurn, armAbortedReleaseGuard, clientClosedRequest, waitForRequest } from '../chatTurnGuards'
 
-const REQUEST_ABORTED = Symbol('request-aborted')
 
 
 /**
@@ -245,11 +247,27 @@ async function handleAiChat(
   }
   const requestedImage = preflight.images.length > 0
 
+  // AI-25 — the model this turn runs on: the conversation's own, or a cheaper
+  // one for the job when the model was Studio's default. Never up, never
+  // over a pick, only to a model the key lists (`routing/modelRouting.ts`).
+  const turnModel = await waitForRequest(routeChatTurnModel({
+    driver,
+    credentials: resolvedCredential,
+    conversation,
+    userText: content.flatMap((block) => (block.kind === 'text' ? [block.text] : [])).join('\n'),
+    attachmentCount: preflight.images.length,
+    workspaceDir: validatedWorkspaceDir,
+    userId: user.id,
+    fidelityMode: resolvedFidelityMode,
+    signal: req.signal,
+  }), req.signal)
+  if (turnModel === REQUEST_ABORTED) return clientClosedRequest()
+
   // Resolve every selected model, not only image-bearing turns: the same
   // authoritative flag also gates browser-tool screenshots. Model-specific
   // drivers are cached/de-duplicated by the shared resolver.
   const modelCapabilities = await waitForRequest(
-    resolveModelCapabilities(driver, resolvedCredential, conversation.modelId),
+    resolveModelCapabilities(driver, resolvedCredential, turnModel.modelId),
     req.signal,
   )
   if (modelCapabilities === REQUEST_ABORTED) return clientClosedRequest()
@@ -412,7 +430,7 @@ async function handleAiChat(
         targetId: conversation.id,
         metadata: {
           providerId: credential.providerId,
-          modelId: conversation.modelId,
+          modelId: turnModel.modelId,
         },
       })
       return { messages, systemPrompt, tokensAtStart, turnId: appendedMessage.id }
@@ -443,6 +461,16 @@ async function handleAiChat(
     () => abandonTurn(turnDeath, releaseConversation),
   )
 
+  // One `kind: 'turn'` line in the project's telemetry (AI-25).
+  const telemetry = createTurnTelemetry({
+    dir: validatedWorkspaceDir,
+    conversationId: conversation.id,
+    providerId: credential.providerId,
+    conversationModelId: conversation.modelId,
+    route: turnModel,
+    fidelityMode: resolvedFidelityMode,
+  })
+
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       let streamClosed = false
@@ -455,6 +483,7 @@ async function handleAiChat(
         try { controller.close() } catch { /* already closed */ }
       }
       const emit = (event: AiStreamEvent): void => {
+        telemetry.observe(event)
         if (streamClosed) return
         if (event.type === 'error') streamError = event.message
         // Inject the live "context used" count onto each per-round `context`
@@ -507,6 +536,7 @@ async function handleAiChat(
         emit({ type: 'bridgeReady', bridgeId })
         // Which turn this is, so the panel can list and revert what it changes (AI-7).
         emit({ type: 'turn', turnId })
+        emit({ type: 'modelRouting', mode: turnModel.mode, modelId: turnModel.modelId, role: turnModel.role, reason: turnModel.reason })
 
         const request: AiStreamRequest = {
           systemPrompt,
@@ -514,10 +544,10 @@ async function handleAiChat(
           // turn (there is no server-side session to resume) — with its older
           // part summarised once it outgrows the window (AI-18).
           messages: await compactHistoryForTurn({
-            db, conversationId: conversation.id, modelId: conversation.modelId, credentials: resolvedCredential, messages, toolContextBase, signal: turnSignal,
+            db, conversationId: conversation.id, modelId: turnModel.modelId, credentials: resolvedCredential, messages, toolContextBase, signal: turnSignal,
           }),
           tools,
-          modelId: conversation.modelId,
+          modelId: turnModel.modelId,
           modelCapabilities,
           credentials: resolvedCredential,
           signal: turnSignal,
@@ -537,9 +567,10 @@ async function handleAiChat(
           prepareStudioHttpTurn(validatedWorkspaceDir, { userId: user.id, conversationId: conversation.id, turnId })
         }
 
+        // Priced as the model that actually ran.
         const persister = createConversationsPersister(db, conversation.id, {
           providerId: credential.providerId,
-          modelId: conversation.modelId,
+          modelId: turnModel.modelId,
         })
         await runChat({ driver, request, persister, emit, abandonedSignal: turnDeath.signal })
 
@@ -560,6 +591,7 @@ async function handleAiChat(
           const promptDelta = post ? post.promptTokensTotal - tokensAtStart.prompt : 0
           const completionDelta = post ? post.completionTokensTotal - tokensAtStart.completion : 0
           const costDelta = post ? Number((post.costUsdTotal - tokensAtStart.cost).toFixed(6)) : 0
+          telemetry.finish({ promptTokens: promptDelta, completionTokens: completionDelta, aborted: turnSignal.aborted })
           await createAuditEvent(db, {
             actorUserId: user.id,
             action: streamError ? 'ai.chat.failed' : 'ai.chat.completed',
@@ -567,7 +599,7 @@ async function handleAiChat(
             targetId: conversation.id,
             metadata: {
               providerId: credential.providerId,
-              modelId: conversation.modelId,
+              modelId: turnModel.modelId,
               promptTokens: promptDelta,
               completionTokens: completionDelta,
               costUsd: costDelta,
@@ -600,86 +632,6 @@ async function handleAiChat(
       'Cache-Control': 'private, no-store',
       'X-Accel-Buffering': 'no',
     },
-  })
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Guarantees that `release` runs the moment `signal` aborts, independently of
- * whatever ALSO calls `release` on the "natural" path (the stream handler's
- * own `finally`), which may be blocked awaiting a driver that never settles.
- *
- * **Immediate, deliberately — there is no grace period.** This originally
- * waited 15s, on the reasoning that releasing the lock while the old turn
- * might still write would permit exactly the interleaved assistant/tool rows
- * `acquireConversationStream` exists to prevent. That reasoning was correct
- * at the time and is now obsolete: `release` here is `abandonTurn`, which
- * aborts `turnDeath` BEFORE releasing, and `runChat` checks that signal
- * before every remaining write. Releasing is therefore safe by construction
- * rather than by hope, and once it is safe, delay buys nothing and costs the
- * user everything.
- *
- * What the delay cost: pressing Stop and immediately sending another message
- * returned 409 "This conversation is already generating a response" for up to
- * 15 seconds — plus the driver's own teardown (a bounded stderr drain and the
- * SIGTERM→SIGKILL escalation, several more seconds). Stop means stopped. A
- * user who has just stopped a turn is telling us the turn is over; making
- * them wait to be believed is the bug, not the safety.
- *
- * The subprocess teardown still proceeds in the background on its own
- * schedule — it simply no longer holds the conversation hostage while it
- * finishes.
- *
- * Returns `dispose()`, which the natural path calls once it settles, so the
- * listener is not left attached to a long-lived signal. Exported for its own
- * focused unit test — standing up the full HTTP handler to prove this is
- * unnecessary weight.
- */
-export function armAbortedReleaseGuard(
-  signal: AbortSignal,
-  release: () => void,
-): () => void {
-  const onAbort = (): void => release()
-  signal.addEventListener('abort', onAbort, { once: true })
-  if (signal.aborted) onAbort()
-  return () => {
-    signal.removeEventListener('abort', onAbort)
-  }
-}
-
-/**
- * The action performed once `armAbortedReleaseGuard`'s grace period expires:
- * mark the turn dead, THEN release the lock — in that exact order. Order is
- * the whole point: `runChat` (`server/ai/runtime/runner.ts`) checks
- * `turnDeath.signal` before every remaining persister write, so a new turn
- * must never be able to acquire the conversation lock (via `release`) before
- * this one has already been marked unable to write. Releasing first, even by
- * one microtask, would reopen exactly the interleaved-writes hazard
- * `acquireConversationStream` exists to prevent — a new turn writing while
- * this one might still be mid-write, "sound by construction" would just be
- * "usually fine."
- *
- * Exported for its own unit test — proving the ordering doesn't require
- * standing up the full HTTP handler.
- */
-export function abandonTurn(turnDeath: AbortController, release: () => void): void {
-  turnDeath.abort()
-  release()
-}
-
-function clientClosedRequest(): Response {
-  return new Response(null, { status: 499, statusText: 'Client Closed Request' })
-}
-
-function waitForRequest<T>(promise: Promise<T>, signal: AbortSignal): Promise<T | typeof REQUEST_ABORTED> {
-  if (signal.aborted) return Promise.resolve(REQUEST_ABORTED)
-  return new Promise<T | typeof REQUEST_ABORTED>((resolve, reject) => {
-    const onAbort = () => resolve(REQUEST_ABORTED)
-    signal.addEventListener('abort', onAbort, { once: true })
-    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
   })
 }
 

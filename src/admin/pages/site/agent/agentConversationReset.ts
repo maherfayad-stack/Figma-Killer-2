@@ -23,6 +23,7 @@ type ConversationResetKeys =
   | 'agentConversationId'
   | 'agentActiveCredentialId'
   | 'agentActiveModelId'
+  | 'agentModelPicked'
   | 'agentUsage'
   | 'agentComposerEpoch'
   | 'agentTurnChanges'
@@ -47,6 +48,7 @@ export function conversationResetState(agentComposerEpoch: number): Pick<AgentSl
     agentConversationId: null,
     agentActiveCredentialId: null,
     agentActiveModelId: null,
+    agentModelPicked: false,
     agentUsage: emptyConversationUsage(),
     agentComposerEpoch,
     agentTurnChanges: {},

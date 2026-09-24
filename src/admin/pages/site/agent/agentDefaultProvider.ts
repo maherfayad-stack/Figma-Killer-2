@@ -15,6 +15,8 @@ import type { AgentSliceGet, EditorStoreSet } from './agentSliceTypes'
 export interface ResolvedCredentials {
   credentialId: string
   modelId: string
+  /** `chosen` when the user picked this model, `default` when it is Studio's default (AI-25). */
+  modelSource: 'default' | 'chosen'
 }
 
 /**
@@ -30,10 +32,10 @@ export async function resolveStudioCredentials(
   signal?.throwIfAborted()
   const credentialId = get().agentActiveCredentialId
   const modelId = get().agentActiveModelId
-  if (credentialId && modelId) return { credentialId, modelId }
+  if (credentialId && modelId) return { credentialId, modelId, modelSource: get().agentModelPicked ? 'chosen' : 'default' }
   const credentials = await fetchStudioDefault(signal)
   signal?.throwIfAborted()
-  return credentials
+  return credentials ? { ...credentials, modelSource: 'default' } : null
 }
 
 /**
@@ -67,6 +69,7 @@ export async function loadStudioDefaultInto(
   set({
     agentActiveCredentialId: creds.credentialId,
     agentActiveModelId: creds.modelId,
+    agentModelPicked: creds.modelSource === 'chosen',
     agentError: null,
   })
 }

@@ -342,6 +342,13 @@ export type AiStreamEvent =
    */
   | { type: 'routing'; mode: 'pinned' | 'auto'; effort: string; shape?: string; reason: string }
   /**
+   * Which MODEL this turn runs on and why (AI-25, `routing/modelRouting.ts`) —
+   * emitted once by the chat handler, before the provider is called, on every
+   * path. Display only, for the same reason as `routing`: a turn moved to a
+   * cheaper model must be visible, or it reads as the model having a bad day.
+   */
+  | { type: 'modelRouting'; mode: 'pinned' | 'routed' | 'default'; modelId: string; role: string; reason: string }
+  /**
    * The provider was momentarily unable (a rate limit, an overload, a 5xx, a
    * dropped connection) and the HTTP tool loop is about to re-send the same
    * request after `delayMs` (AI-8, `drivers/http/providerRetry.ts`). Display

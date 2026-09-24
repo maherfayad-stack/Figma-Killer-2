@@ -46,6 +46,7 @@ interface ConversationRow {
   context_tokens: number | string
   session_epoch: number | string
   project_key: string | null
+  model_source: string | null
   created_at: Date | string
   updated_at: Date | string
   deleted_at: Date | string | null
@@ -88,6 +89,8 @@ function conversationRowToRecord(row: ConversationRow): ConversationRecord {
     contextTokens: toNumber(row.context_tokens),
     sessionEpoch: toNumber(row.session_epoch),
     projectKey: row.project_key ?? null,
+    // NULL (a row from before migration 024) is `chosen`: never routed.
+    modelSource: row.model_source === 'default' ? 'default' : 'chosen',
     createdAt: isoDateOrNull(row.created_at)!,
     updatedAt: isoDateOrNull(row.updated_at)!,
     deletedAt: isoDateOrNull(row.deleted_at),
@@ -220,7 +223,7 @@ export async function listConversationsForUser(
       select id, user_id, title, credential_id, model_id,
              prompt_tokens_total, completion_tokens_total,
              cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-             context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+             context_tokens, session_epoch, project_key, model_source, created_at, updated_at, deleted_at
       from ai_conversations
       where user_id = ${userId}
         and deleted_at is null
@@ -233,7 +236,7 @@ export async function listConversationsForUser(
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, model_source, created_at, updated_at, deleted_at
     from ai_conversations
     where user_id = ${userId}
       and deleted_at is null
@@ -255,7 +258,7 @@ export async function readConversationForUser(
     select id, user_id, title, credential_id, model_id,
            prompt_tokens_total, completion_tokens_total,
            cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, model_source, created_at, updated_at, deleted_at
     from ai_conversations
     where id = ${conversationId}
       and user_id = ${userId}
@@ -342,16 +345,16 @@ export async function createConversationForUser(
   const title = (input.title ?? '').trim() || DEFAULT_CONVERSATION_TITLE
   const { rows } = await db<ConversationRow>`
     insert into ai_conversations (
-      id, user_id, scope, title, credential_id, model_id, project_key
+      id, user_id, scope, title, credential_id, model_id, project_key, model_source
     )
     values (
       ${id}, ${userId}, ${LEGACY_SCOPE_COLUMN}, ${title},
-      ${input.credentialId}, ${input.modelId}, ${input.projectKey ?? null}
+      ${input.credentialId}, ${input.modelId}, ${input.projectKey ?? null}, ${input.modelSource ?? 'chosen'}
     )
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, model_source, created_at, updated_at, deleted_at
   `
   return conversationRowToRecord(rows[0]!)
 }
@@ -401,18 +404,22 @@ export async function updateConversationForUser(
     patch.credentialId !== undefined ? patch.credentialId : existing.credentialId
   const nextModelId =
     patch.modelId !== undefined ? patch.modelId : existing.modelId
+  // A model set through this patch is the user's pick (the model picker is
+  // its one caller), so it is never routed from here on (AI-25).
+  const nextModelSource = patch.modelId !== undefined ? 'chosen' : existing.modelSource
 
   const { rows } = await db<ConversationRow>`
     update ai_conversations
     set title = ${nextTitle},
         credential_id = ${nextCredentialId},
         model_id = ${nextModelId},
+        model_source = ${nextModelSource},
         updated_at = current_timestamp
     where id = ${conversationId} and user_id = ${userId}
     returning id, user_id, title, credential_id, model_id,
               prompt_tokens_total, completion_tokens_total,
               cost_usd_total, cache_read_tokens_total, cache_creation_tokens_total,
-           context_tokens, session_epoch, project_key, created_at, updated_at, deleted_at
+           context_tokens, session_epoch, project_key, model_source, created_at, updated_at, deleted_at
   `
   return rows[0] ? conversationRowToRecord(rows[0]) : null
 }
