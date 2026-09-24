@@ -133,7 +133,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
 ### mcp-31 — P4-F: trust and panel (AI-7, AI-28, AI-18, AI-26, AI-22)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-turns-you-can-undo` off `30d046d5` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, dogfood script in its body) · **Updated:** 2026-09-24
+- **Agent:** mcp-tooling · **Branch:** `feat/agent-turns-you-can-undo` off `30d046d5` · **PR:** #251 (draft, base `feat/canvas-excellence`; long form, threat list and dogfood script in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying — **needs security-guard review** (revert writes user files).
 - **Goal:** every agent turn is undoable; the panel shows what the agent sees and does; long HTTP conversations compact.
 - **Done:**
