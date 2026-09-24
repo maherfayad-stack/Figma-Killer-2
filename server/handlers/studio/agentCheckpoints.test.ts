@@ -270,7 +270,7 @@ function forgeRecord(turnId: string, rel: string, pre: string, post: string): vo
 describe('agentCheckpoints — kept out of git', () => {
   it('this repository ignores a project\'s .studio/agent-checkpoints/', () => {
     const repoRoot = path.resolve(import.meta.dir, '../../..')
-    const probe = 'studio-workspace/test4/.studio/agent-checkpoints/0123456789abcdef/turn1/files/x.pre'
+    const probe = 'studio-workspace/__canonical-fixture/.studio/agent-checkpoints/0123456789abcdef/turn1/files/x.pre'
     const result = spawnSync('git', ['check-ignore', '-q', '--no-index', probe], { cwd: repoRoot })
     expect(result.status).toBe(0)
   })
