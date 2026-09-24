@@ -152,7 +152,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Security re-review APPROVED (`review-248`). Open follow-ups:** F5, the pre-existing address-class gaps in `ssrfGuard.ts` (reachable only through a URL the user pasted); make the sanitizer strip DOCTYPE, XHTML elements (`iframe srcdoc`) and XSLT instructions (the sandbox CSP stops them today); switch the CSP helper to `headers.append` so a future route's `frame-ancestors` cannot win; F4, narrow the Figma host allowance; F6, `studio_upload_asset` should go through `agentWriteRefusal`.
 
 ### test-07 — Green baseline: the 16 pre-existing unit failures and the broken e2e specs
-- **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (per-failure table in its body) · **Updated:** 2026-09-24
+- **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** #257 (draft, base `feat/canvas-excellence`; per-failure table in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open)
 - **Goal:** the baseline every bundle reports shows no pre-existing red, so a real regression is visible.
 - **Done (unit):**
