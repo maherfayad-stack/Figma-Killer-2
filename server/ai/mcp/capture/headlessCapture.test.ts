@@ -236,6 +236,11 @@ beforeEach(() => {
 afterEach(async () => {
   fs.rmSync(dir, { recursive: true, force: true })
   await closeWarmCaptureBrowser()
+  // A test that made the launch fail leaves the pool's launch-failure memo
+  // set, and the next FILE in this worker process would skip its own launch
+  // on the strength of it.
+  launchShouldFail = null
+  clearLaunchFailureMemo()
 })
 
 /** Scaffolds a page and sets its board frame's AUTHORED (CSS px) size. */

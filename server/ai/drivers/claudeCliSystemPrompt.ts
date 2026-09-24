@@ -22,9 +22,11 @@
  *
  * ## Why a file, and never argv
  *
- * The static prefix alone is ~34-36 KB for every (mode, policy) pair.
- * Windows' `CreateProcess` caps the whole command line at 32,767 characters,
- * so `--append-system-prompt <text>` cannot carry it: the spawn fails outright.
+ * The static prefix is ~28-32.5 KB per (mode, policy) pair (P4-D shrank it
+ * from ~34-37 KB), and the dynamic suffix after it adds kilobytes that vary
+ * with the board. Windows' `CreateProcess` caps the whole command line at
+ * 32,767 characters, so `--append-system-prompt <text>` would spawn on one
+ * turn and fail outright on the next.
  * `--append-system-prompt-file <path>` (print mode only, which every Studio
  * turn is) reads the same text from a file, so the text goes in a file on
  * every platform. One path, not a size-dependent branch: a prompt that grows

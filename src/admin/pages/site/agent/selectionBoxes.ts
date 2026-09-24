@@ -12,13 +12,20 @@
  * (cross-origin) frame is skipped, and a node found in no readable frame gets
  * no box, which the digest reports as unmeasured rather than guessing.
  *
- * The box is frame-local CSS px, document-relative — the same space
- * `studio_screenshot`'s `nodeRects` report — so a box in the digest and a
- * rectangle in a capture line up. The first frame that renders a node wins; a
- * node the board shows twice (a variant under other axes) is measured in one.
+ * The box is BODY-relative CSS px (`rectRelativeToBody`) — the space the frame
+ * adapters' `measure` and the capture's `nodeRects` speak — so a box in the
+ * digest and a rectangle in a screenshot line up. The first frame that renders
+ * a node wins; a node the board shows twice is measured in one.
+ *
+ * Deliberately built on leaf modules only — the adapter registry, the
+ * attribute escaper and `@core/studio-runtime`'s shared node-DOM rules — and
+ * not on `canvasNodeLookup.ts`: the agent slice is composed INTO the editor
+ * store, and the canvas lookup reaches the store through the frame adapters,
+ * which would make the store import itself.
  */
+import { presentedElementOf, rectRelativeToBody } from '@core/studio-runtime'
 import { listFrameAdapterRegistrations } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
-import { presentedElementForNode } from '@site/canvas/canvasNodeLookup'
+import { escapeCssAttributeValue } from '@site/canvas/escapeCssAttributeValue'
 import type { SelectionBoxMeasurer } from './studioAgentSnapshot'
 
 function readableDocument(iframe: HTMLIFrameElement): Document | null {
@@ -30,6 +37,20 @@ function readableDocument(iframe: HTMLIFrameElement): Document | null {
   }
 }
 
+/**
+ * The element carrying `nodeId`, or `null`. Never throws: this runs while a
+ * message is being SENT, and a selector a DOM implementation rejects must cost
+ * one box, not the message.
+ */
+function elementFor(doc: Document, nodeId: string): Element | null {
+  try {
+    return doc.querySelector(`[data-node-id="${escapeCssAttributeValue(nodeId)}"]`)
+  } catch (err) {
+    console.error('[agent/selectionBoxes] could not look up a selected node — sending without its box:', err)
+    return null
+  }
+}
+
 export const measureSelectionBoxes: SelectionBoxMeasurer = (nodeIds) => {
   const boxes = new Map<string, { x: number; y: number; width: number; height: number }>()
   const pending = new Set(nodeIds)
@@ -37,15 +58,15 @@ export const measureSelectionBoxes: SelectionBoxMeasurer = (nodeIds) => {
     if (pending.size === 0) break
     const doc = readableDocument(iframe)
     const view = doc?.defaultView
-    if (!doc || !view) continue
+    if (!doc || !view || !doc.body) continue
     for (const nodeId of [...pending]) {
-      const element = presentedElementForNode(doc, nodeId)
-      if (!element) continue
-      const rect = element.getBoundingClientRect()
+      const own = elementFor(doc, nodeId)
+      if (!own) continue
+      const rect = rectRelativeToBody(presentedElementOf(view, own), doc.body)
       if (rect.width <= 0 && rect.height <= 0) continue
       boxes.set(nodeId, {
-        x: Math.round(rect.left + view.scrollX),
-        y: Math.round(rect.top + view.scrollY),
+        x: Math.round(rect.x),
+        y: Math.round(rect.y),
         width: Math.round(rect.width),
         height: Math.round(rect.height),
       })
