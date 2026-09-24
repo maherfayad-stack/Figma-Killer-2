@@ -7,7 +7,7 @@ At trust tier `run-project` (Tier 2, the default: [`trust-tiers.md`](trust-tiers
 
 ## TL;DR
 
-- **One dev server per project**, spawned from the project's own `dev` (else `start`) script, only when that script invokes `vite` (`server/handlers/studio/liveCapability.ts`). Manager: `server/handlers/studio/devServer.ts`.
+- **One dev server per project**: the project's own installed Vite, run directly with the arguments of its `dev` (else `start`) script, only when that script invokes `vite` (`server/handlers/studio/liveCapability.ts`). Never `<pm> run dev`, which would also run a repository's `predev`/`postdev` scripts (`viteLaunch.ts`). Manager: `server/handlers/studio/devServer.ts`.
 - **A second, cookie-free listener** (`server/liveOrigin.ts`, `LIVE_PORT`, default `PORT + 1`) proxies `/p/<projectKey>/*`, HTTP and WebSocket, to that dev server. The user's code never runs on the admin origin and never sees the admin session.
 - **The Vite plugin** (`src/core/studio-runtime/vitePlugin.ts`) stamps `data-node-id` on every JSX element with the same id the parser mints, and injects the in-frame runtime (`src/core/studio-runtime/runtime.ts`).
 - **The editor never touches a live frame's `Document`.** Every canvas feature talks to a frame through `FrameDocumentAdapter`: `PortalFrameAdapter` for static frames, `BridgeFrameAdapter` (TypeBox-validated `postMessage`) for live ones.
@@ -50,7 +50,7 @@ The message catalogue (every runtime message, its in-frame source and its parent
 
 ## Lifecycle of a live frame
 
-1. The canvas mounts a project at Tier 2. `useDevServerPrewarm` calls `POST dev-server/start`; `devServer.ts` spawns the dev script with `minimalSubprocessEnv()` plus the project key, the editor's parent origin and `STUDIO_LIVE_BASE_PATH`.
+1. The canvas mounts a project at Tier 2. `useDevServerPrewarm` calls `POST dev-server/start`; `devServer.ts` spawns the project's own `node_modules/vite` bin (found from the app root up to the project directory, real-path contained; no Vite installed means no boot) under Node, else Bun, with `minimalSubprocessEnv()`, the `node_modules/.bin` directories in front of `PATH`, plus the project key, the editor's parent origin and `STUDIO_LIVE_BASE_PATH`.
 2. `devServer.ts` tails the child's log file (the child writes to a file, never a pipe, so it survives an API restart) until Vite prints its `Local:` URL, then marks the entry `ready` and records `{ pid, baseUrl, projectKey }` under `.tmp/dev-servers/`. A restarted API process adopts a still-running child from that record instead of spawning a second one.
 3. `BoardFrameView` renders `LiveBoardFrame`: the static render is visible, the bridge iframe loads `<LIVE_ORIGIN>/p/<key>/__screen/<page>` hidden.
 4. The runtime boots in the frame and posts `ready`. `BridgeFrameAdapter` validates it; `LiveBoardFrame` shows the bridge iframe and unmounts the fallback.

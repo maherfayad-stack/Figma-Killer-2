@@ -19,6 +19,7 @@ import {
   type ReferenceRenderOverrides,
 } from './referenceRender'
 import type { SpawnedProcessLike } from '../../../../handlers/studio/subprocessRunner'
+import { writeViteProject } from '../../../../handlers/studio/viteLaunch.testHelpers'
 
 function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder()
@@ -81,10 +82,6 @@ function makeFakeBrowser(pngBase64: string): { browser: PlaywrightLikeBrowser; g
 
 const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
-function writePackageJson(dir: string, scripts: Record<string, string>): void {
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture', scripts }))
-}
 
 /**
  * A10 — every non-refusal path below needs the project at Tier 2, because
@@ -110,7 +107,7 @@ describe('studio_render_reference', () => {
   })
 
   it('boots the dev server, discovers its printed URL, and screenshots the route', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
     const { proc } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'] })
     const { browser, gotoUrls } = makeFakeBrowser(TINY_PNG_BASE64)
@@ -136,7 +133,7 @@ describe('studio_render_reference', () => {
   })
 
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
     const { proc, wasKilled } = makeFakeProcess()
 
@@ -159,7 +156,7 @@ describe('studio_render_reference', () => {
   })
 
   it('returns ok:false with a clear message when package.json has no dev or start script', async () => {
-    writePackageJson(tmpDir, { build: 'vite build' })
+    writeViteProject(tmpDir, { build: 'vite build' })
     writeTrustTier(tmpDir, 'run-project')
 
     const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
@@ -173,7 +170,7 @@ describe('studio_render_reference', () => {
   })
 
   it('reuses the same dev server across calls for the same project (no second spawn)', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
     let spawnCount = 0
     const overrides: ReferenceRenderOverrides = {
@@ -219,7 +216,7 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('refuses a Tier 0 (static) project with trust-tier-required, and spawns nothing', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'static')
     let spawnCount = 0
 
@@ -247,7 +244,7 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('refuses a Tier 1 (render-packages) project too — the gate is equality, not a floor', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'render-packages')
 
     const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
@@ -259,7 +256,7 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('a project with no .studio/meta.json at all is at the default tier — run-project — and proceeds', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
 
     const tool = createReferenceRenderTool({
       spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5198/\n'] }).proc,
@@ -272,7 +269,7 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('proceeds once the project is promoted to run-project', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
 
     const tool = createReferenceRenderTool({
