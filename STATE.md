@@ -63,6 +63,28 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
+### canvas-27 — P2-C2: bulk actions on a multi-selection (OD-16)
+- **Agent:** canvas-engineer · **Branch:** `feat/bulk-actions-on-multi-selection` off `bee865f1` (trunk `01f3d9c2` merged in) · **PR:** draft, base `feat/canvas-excellence` (long form + the per-action audit table in its body) · **Updated:** 2026-09-24
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Done:** arrows, ⌥↑/⌥↓, ⌘[/⌘] and the palette's Move up/down act on the WHOLE selection, one undo entry + one source write per gesture.
+  - Nudge: every absolute layer moves by one delta from its own authored offsets (per-layer preview bag `NodeStylesPreview.stylesByNode`, one `setNodesInlineStylesPerNode` on keyup). Mixed selection: absolute members nudge, flow members stay put.
+  - Reorder: `@core/page-tree`'s new `planSiblingSteps` reduces a step to INDEPENDENT single-element moves (a run's neighbour jumps over it; a single layer moves itself); new store actions `stepSiblings`/`moveSiblings` (`siblingStepActions.ts`) write them as ONE `/save` batch (`commitStudioMove` → `commitStudioMoves`) and tag ONE `gesture: 'siblings'` entry whose undo is the inverse batch. Each parent steps along its own axis. Refused by name: a grid-row step of 2+ layers, a nested pair, a locked member.
+  - Grid: ↑/↓ move a child one row (resolved `grid-template-columns` count), ←/→ one cell; past the last row nothing moves.
+  - Audit: delete, duplicate, copy/cut, hide, lock, group, style edits and align-self were already bulk (table in the PR). Ungroup and copy-as-PNG stay anchor-only (reasons in the PR).
+- **Files touched:** `core/page-tree/{siblingSteps (new), index}`; `store/slices/site/{siblingStepActions (new), nodeActions, types, historyTypes, historyNodeIdRemap, structuralHistory, undoRedoActions}`, `store/slices/styleRule/{types, uiStateActions}`; `studio/studioStructuralCommits`; `canvas/{canvasNodeArrowMove, useCanvasNodeArrowKeys, useCanvasNodeShortcuts, canvasNodeInlineStyle}`; `spotlight/{keybindings (OD-3 rows), commands/layers}`. None of P2-I's files (NodeRenderer untouched: the per-node preview rides its existing selector).
+- **Tests:** `siblingSteps.test.ts` (11), `siblingStepsBatch.test.ts` (4: one request each way, never half), `nodeArrowKeys.test.tsx` (+8). Each shown failing with its fix disabled in place. e2e `node-arrow-keys.e2e.ts` 8/8 (ports 50374/30302): two absolute layers held → = one save + one ⌘Z; A and C step → in ONE `/save` batch (and one undo batch); grid ↓ = one row.
+- **Landmines:**
+  - **Events × history:** a batch of 2+ moves is `gesture: 'siblings'`; a batch of one is still a plain `move` entry (`moveSiblings` delegates). Undo of a partially refused batch replays the whole inverse — the same pre-existing hazard a multi-delete has.
+  - **Injectors:** none. **Height:** none.
+  - The batch is honest only because regions are disjoint AND applied bottom-to-top by the server (`orderStudioEditsForApply`). Anything that reorders a batch client-side, or adds a non-move edit to it, breaks that.
+- **Next:** P3-D can reuse `planSiblingSteps`/`moveSiblings` for multi-select drag; multi-ungroup needs a per-container undo template.
+- **Human action needed:** dogfood on `test4`, `/admin/site`, static tier, SMS frame, 100%:
+  1. Click the SheetHeader, press ⇧Enter (its absolute `.header` wrapper is selected), then ⇧-click empty space in the content banner. Hold ↓ three times: both slide together; release → ONE save; both `<div>`s gain a `top` style; ⌘Z once restores both.
+  2. Click the 2nd code input, ⇧-click the 4th, press →: they become 3rd and 5th in `SMS.tsx` in one save; ⌘Z once puts both back.
+  3. Select the 2nd and 3rd code inputs, press ⌥↓ (or ⌘]): both move one place right together.
+  4. Select a code input and the banner (mixed), press ↓: the banner moves, the input stays.
+  5. (No grid in `test4`.) In any project with a CSS grid, select a cell, press ↓: it moves one row down; ← / → move one cell.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -105,6 +127,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-24` · `/admin/site` on `test4` · ⇧-click toggles; Tab cycles siblings (never in a panel); ⌘A climbs; V; zoom keys from a panel; Space + Alt-Tab never sticks; a click on a component selects the outermost instance. Script: the `canvas-24` entry in the archive
 - `canvas-25` · `/admin/site` on `test4`, SMS · arrows nudge the absolute banner (one save, one ⌘Z), reorder a code input, stand down in a panel. Script: the `canvas-25` entry in the archive
 - `canvas-26` · `/admin/site` on `test4`, 100% and 50% · snaps feel the same at both zooms (move and resize, parent edges too), the drop's container is outlined, Alt off-node measures to the parent, a Layers click then → moves the layer. Script: the `canvas-26` entry in the archive
+- `canvas-27` · `/admin/site` on `test4`, SMS · two absolute layers nudge together (one save, one ⌘Z), two code inputs step together, ⌥↓ on a pair, a mixed selection nudges only the absolute one. Script: the `canvas-27` entry under `## Now`
 
 **Inspector**
 - `panel-39`, `panel-41`, `panel-37`, `panel-36` · a ~900 px window, text layer · the Design tab fits, or ends in one collapsed More row
