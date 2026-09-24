@@ -34,7 +34,7 @@ import type { EditorStore } from '@site/store/types'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
-import type { ImageDropRequest } from './imageDropActions'
+import type { ImageDropRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
@@ -363,7 +363,7 @@ export interface SiteSlice {
    */
   dropImagesIntoPage: (drop: ImageDropRequest) => void
   /** P5-B (IMG-3) — a file dropped onto an `<img>` replaces its source: the import it reads, or its literal `src`. */
-  replaceImageInPage: (pageId: string, nodeId: string, file: File) => void
+  replaceImageInPage: (pageId: string, nodeId: string, file: File, paintProgress?: UploadProgressPainter) => void
   /** P5-B (IMG-7) — ⇧-drop: the file becomes the element's top background layer, written to its own inline style. */
   setBackgroundImageInPage: (pageId: string, nodeId: string, file: File) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string

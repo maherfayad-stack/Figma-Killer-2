@@ -68,6 +68,7 @@ import {
   type DroppedFileFacts,
 } from './canvasFileDrop'
 import { measureDropContainer, type DropContainerBox } from './canvasImageDropPlacement'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
 /** What one in-flight file drag knows, carried across its `dragover` stream. */
@@ -159,7 +160,7 @@ export function resolveCanvasFileDragPaint(
 
   const layer = frame.surface.dropLayer()
   const point = indexLocalPoint(frame.index, env.point)
-  const doc = frame.surface.iframe?.contentDocument ?? null
+  const doc = resolvePortalDocument(frame.surface.iframe)
   const intent = resolveCanvasFileDropIntent({
     tree: frame.tree,
     candidates: frame.index.candidates,

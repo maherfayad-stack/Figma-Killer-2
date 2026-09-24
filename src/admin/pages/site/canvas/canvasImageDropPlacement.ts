@@ -25,9 +25,13 @@
  * parent would silently place the image against some distant ancestor. RTL
  * writes the logical `insetInlineStart`, K6's `inlineOffsetProperty`.
  *
- * Everything but {@link measureDropContainer} is pure.
+ * The pure size and cascade maths (`clampImageSize`, `absolutePlacementStyle`)
+ * live in the store-side leaf `imageDropShapes.ts`, which the store builds
+ * props with; this module is the canvas half — the container measurement and
+ * the K6 decision. Everything but {@link measureDropContainer} is pure.
  */
-import { inlineOffsetProperty, type InlineOffsetProperty } from '@core/studio-runtime'
+import { inlineOffsetProperty } from '@core/studio-runtime'
+import type { AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
 import type { ClientPoint } from './canvasDragSession'
 import { presentedElementForNode } from './canvasNodeLookup'
 
@@ -77,31 +81,6 @@ export function measureDropContainer(doc: Document, nodeId: string): DropContain
   }
 }
 
-/**
- * The `width`/`height` attributes a dropped image is written with: its
- * intrinsic size, scaled down (never up) to `maxWidth` with the aspect kept,
- * rounded to whole pixels. `null` when either dimension is unknown.
- */
-export function clampImageSize(
-  intrinsic: { width: number | null; height: number | null },
-  maxWidth: number | null,
-): { width: number; height: number } | null {
-  const { width, height } = intrinsic
-  if (width === null || height === null || width <= 0 || height <= 0) return null
-  if (maxWidth === null || maxWidth <= 0 || width <= maxWidth) {
-    return { width: Math.round(width), height: Math.round(height) }
-  }
-  const scale = maxWidth / width
-  return { width: Math.round(maxWidth), height: Math.max(1, Math.round(height * scale)) }
-}
-
-/** Where a ⌘-dropped image goes, in the container's own space. */
-export interface AbsoluteImagePlacement {
-  property: InlineOffsetProperty
-  inline: number
-  top: number
-}
-
 export type AbsolutePlacementResolution =
   | { ok: true; placement: AbsoluteImagePlacement }
   | { ok: false; reason: 'static-parent' | 'unmeasured' }
@@ -131,24 +110,3 @@ export function resolveAbsolutePlacement(
     },
   }
 }
-
-/**
- * The `style={{…}}` object the Nth ⌘-dropped image is written with: K6's
- * `position: absolute` plus the offsets. Several images cascade down-and-inward
- * by a fixed step, the way a stack of pasted pictures lands, rather than all
- * sitting exactly on top of each other where only the last could be seen.
- */
-export function absolutePlacementStyle(
-  placement: AbsoluteImagePlacement,
-  cascadeStep: number,
-): Record<string, string> {
-  const offset = cascadeStep * IMAGE_CASCADE_STEP_PX
-  return {
-    position: 'absolute',
-    [placement.property]: `${placement.inline + offset}px`,
-    top: `${placement.top + offset}px`,
-  }
-}
-
-/** How far each further ⌘-dropped image is offset from the one before it. */
-export const IMAGE_CASCADE_STEP_PX = 24

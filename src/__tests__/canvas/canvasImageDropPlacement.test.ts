@@ -7,13 +7,12 @@
  * container, written as the logical inline start under RTL.
  */
 import { describe, expect, it } from 'bun:test'
+import { resolveAbsolutePlacement, type DropContainerBox } from '@site/canvas/canvasImageDropPlacement'
 import {
   IMAGE_CASCADE_STEP_PX,
   absolutePlacementStyle,
   clampImageSize,
-  resolveAbsolutePlacement,
-  type DropContainerBox,
-} from '@site/canvas/canvasImageDropPlacement'
+} from '@site/store/slices/site/imageDropShapes'
 import { resolvePickedImageTarget } from '@site/canvas/canvasImagePicker'
 import { makeNode, makePage } from '../fixtures'
 

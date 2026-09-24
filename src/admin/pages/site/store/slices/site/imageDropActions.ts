@@ -46,8 +46,6 @@
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { canWriteInlineStyleForModule, isSourceDerivedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
-import { clampImageSize, absolutePlacementStyle, type AbsoluteImagePlacement } from '@site/canvas/canvasImageDropPlacement'
-import { findRenderedCanvasElements } from '@site/canvas/canvasNodeLookup'
 import { backgroundModelPatch, insertBackgroundLayer, parseBackgroundLayers } from '@site/panels/PropertiesPanel/backgroundLayers'
 import { wrapUrlPayload } from '@site/panels/PropertiesPanel/gradientValue'
 import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
@@ -58,31 +56,18 @@ import { uploadStudioAsset } from '@site/studio/uploadStudioAsset'
 import type { InsertPropValue } from '@site/studio/studioSaveRequests'
 import { previewOptimisticInsertRun, type OptimisticPreviewHandle } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceInsert, presentStructuralRefusal, type SourceInsertCommit } from './structuralSourceEdits'
+import {
+  UPLOADING_ATTRIBUTE,
+  absolutePlacementStyle,
+  clampImageSize,
+  type ImageDropRequest,
+} from './imageDropShapes'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type ImageDropActions = Pick<SiteSlice, 'dropImagesIntoPage' | 'replaceImageInPage' | 'setBackgroundImageInPage'>
 
-/** Everything an image INSERT drop carries from the canvas to the store. */
-export interface ImageDropRequest {
-  pageId: string
-  /** The container and index the drop line showed. */
-  parentId: string
-  index: number
-  /** The images, in drop order. */
-  files: readonly File[]
-  /** The container's content-box width (CSS px) the intrinsic size is clamped to; `null` = do not clamp. */
-  maxWidth: number | null
-  /** ⌘-drop: the absolute placement in the container's space; `null` for a flow drop. */
-  absolute: AbsoluteImagePlacement | null
-}
-
 /** Title every refusal and failure of the image gestures shares. */
 export const IMAGE_DROP_TITLE = 'Cannot add that image'
-
-/** The attribute the ghost carries while its bytes upload — `EditorChromeInjector`'s selector. */
-export const UPLOADING_ATTRIBUTE = 'data-studio-uploading'
-/** The custom property the upload's progress (0..1) is written into. */
-export const UPLOAD_PROGRESS_PROPERTY = '--studio-upload-progress'
 
 /**
  * The `alt` a dropped image starts with: its own file name without the
@@ -93,24 +78,6 @@ export const UPLOAD_PROGRESS_PROPERTY = '--studio-upload-progress'
 export function altTextFor(file: File): string {
   const base = file.name.replace(/\.[^./\\]+$/, '').trim()
   return base.length > 0 ? base : 'Image'
-}
-
-/**
- * Paint an upload's progress onto every rendered element of `nodeId` — the
- * ghost, or the `<img>` being replaced. A pure WRITE (no measurement), once
- * per XHR progress event; React owns neither the attribute nor the property,
- * so a re-render leaves them alone.
- */
-function paintUploadProgress(nodeId: string, fraction: number | null): void {
-  for (const { element } of findRenderedCanvasElements(nodeId)) {
-    if (fraction === null) {
-      element.removeAttribute(UPLOADING_ATTRIBUTE)
-      element.style.removeProperty(UPLOAD_PROGRESS_PROPERTY)
-    } else {
-      element.setAttribute(UPLOADING_ATTRIBUTE, '')
-      element.style.setProperty(UPLOAD_PROGRESS_PROPERTY, String(Math.max(0, Math.min(1, fraction))))
-    }
-  }
 }
 
 /**
@@ -199,14 +166,14 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       void landAndInsert(helpers, drop, commit)
     },
 
-    replaceImageInPage: (pageId, nodeId, file) => {
+    replaceImageInPage: (pageId, nodeId, file, paintProgress) => {
       const tree = findPage(get, pageId)
       const node = tree?.nodes[nodeId]
       if (!tree || !node) return
       activatePage(get, pageId)
 
       void (async () => {
-        const onProgress = (fraction: number) => paintUploadProgress(nodeId, fraction)
+        const onProgress = (fraction: number) => paintProgress?.(nodeId, fraction)
         try {
           if (node.assetOrigin) {
             // Import-bound (`src={hero}`): the IMPORT is repointed, never the
@@ -232,7 +199,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           console.error('[image-drop] replacing an image failed:', err)
           reportUnlanded([{ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') }], 0)
         } finally {
-          paintUploadProgress(nodeId, null)
+          paintProgress?.(nodeId, null)
         }
       })()
     },
@@ -312,7 +279,7 @@ async function landAndInsert(
 
     const settled = await Promise.allSettled(
       drop.files.map((file, i) =>
-        dropStudioAsset(file, { onProgress: (fraction) => paintUploadProgress(ghostIds[i]!, fraction) }),
+        dropStudioAsset(file, { onProgress: (fraction) => drop.paintProgress?.(ghostIds[i]!, fraction) }),
       ),
     )
     const landed: { file: File; asset: DroppedStudioAsset; order: number }[] = []

@@ -64,6 +64,7 @@ import {
   type AbsoluteImagePlacement,
   type DropContainerBox,
 } from './canvasImageDropPlacement'
+import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
 import type { CanvasTransform } from './math'
 
 export type CanvasFileDropRefusalReason =
@@ -362,7 +363,9 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   }
 
   const index = buildFrameCandidateIndex(surface.viewport, tree, surface.iframe, input.transform)
-  const doc = surface.iframe?.contentDocument ?? null
+  // Portal frames only: the container box is a computed-style read, which a
+  // cross-origin live frame cannot answer (it takes no file drops anyway).
+  const doc = resolvePortalDocument(surface.iframe)
   const measureContainer = (nodeId: string) => (doc ? measureDropContainer(doc, nodeId) : null)
   const intent = resolveCanvasFileDropIntent({
     tree,

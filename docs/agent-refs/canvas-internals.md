@@ -694,7 +694,9 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   paints one optimistic `base.image` per file from its object URL
   (`previewOptimisticInsertRun`) marked `data-studio-uploading`, and writes the
   XHR upload progress into `--studio-upload-progress` on the ghost's own
-  element; `EditorChromeInjector` masks the not-yet-uploaded share. It HOLDS
+  element (the painter, `canvasUploadProgress.ts`, is INJECTED into the store
+  action — the store never imports frame-document code, or it cycles through
+  `store.ts`); `EditorChromeInjector` masks the not-yet-uploaded share. It HOLDS
   the structural queue (`beginStructuralCommit`) from before the upload until
   the commit ends, so no other structural write can resync the page under the
   ghost or renumber the insert's ids. Object URLs are revoked on every outcome.

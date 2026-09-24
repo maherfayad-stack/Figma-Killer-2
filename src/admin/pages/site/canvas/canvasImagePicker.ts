@@ -27,6 +27,7 @@ import { IMAGE_DROP_TITLE } from '@site/store/slices/site/imageDropActions'
 import { findRenderedCanvasElements } from './canvasNodeLookup'
 import { looksLikeImage } from './canvasFileDrop'
 import { measureDropContainer } from './canvasImageDropPlacement'
+import { paintCanvasUploadProgress } from './canvasUploadProgress'
 
 /** What a picker's images are inserted into, or why they cannot be. */
 export type PickedImageTarget =
@@ -107,5 +108,6 @@ function insertPickedImages(target: Extract<PickedImageTarget, { ok: true }>, pi
     files,
     maxWidth: box ? box.contentWidth : null,
     absolute: null,
+    paintProgress: paintCanvasUploadProgress,
   })
 }

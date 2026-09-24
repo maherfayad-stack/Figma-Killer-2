@@ -70,6 +70,7 @@ import {
   type DroppedFileFacts,
 } from './canvasFileDrop'
 import { presentFreeMoveRefusal } from './canvasFreeMove'
+import { paintCanvasUploadProgress } from './canvasUploadProgress'
 import type { CanvasTransform } from './math'
 
 interface UseCanvasFileDropOptions {
@@ -239,7 +240,7 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
   const store = useEditorStore.getState()
   const { action } = plan
   if (action.kind === 'replace') {
-    store.replaceImageInPage(plan.pageId, action.nodeId, plan.files[0]!)
+    store.replaceImageInPage(plan.pageId, action.nodeId, plan.files[0]!, paintCanvasUploadProgress)
     return
   }
   if (action.kind === 'background') {
@@ -253,5 +254,6 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     files: plan.files,
     maxWidth: action.maxWidth,
     absolute: action.absolute,
+    paintProgress: paintCanvasUploadProgress,
   })
 }
