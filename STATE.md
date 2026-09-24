@@ -64,7 +64,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### canvas-27 — P2-C2: bulk actions on a multi-selection (OD-16)
-- **Agent:** canvas-engineer · **Branch:** `feat/bulk-actions-on-multi-selection` off `bee865f1` (trunk `01f3d9c2` merged in) · **PR:** draft, base `feat/canvas-excellence` (long form + the per-action audit table in its body) · **Updated:** 2026-09-24
+- **Agent:** canvas-engineer · **Branch:** `feat/bulk-actions-on-multi-selection` off `bee865f1` (trunk `01f3d9c2` merged in) · **PR:** #246 (draft), base `feat/canvas-excellence` (long form + the per-action audit table in its body) · **Updated:** 2026-09-24
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Done:** arrows, ⌥↑/⌥↓, ⌘[/⌘] and the palette's Move up/down act on the WHOLE selection, one undo entry + one source write per gesture.
   - Nudge: every absolute layer moves by one delta from its own authored offsets (per-layer preview bag `NodeStylesPreview.stylesByNode`, one `setNodesInlineStylesPerNode` on keyup). Mixed selection: absolute members nudge, flow members stay put.
