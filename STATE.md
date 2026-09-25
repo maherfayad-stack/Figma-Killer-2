@@ -46,6 +46,19 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### canvas-39 — P5-A: one paste pipeline (IMG-4 base, SVG-5 clipboard part)
+- **Agent:** canvas-engineer · **Branch:** `feat/one-paste-pipeline` (from trunk `08c429f1`) · **Updated:** 2026-09-26
+- **Stage:** done, draft PR against `feat/canvas-excellence`; security review requested (pasted SVG/HTML surface is listed in the PR body).
+- **Goal:** ⌘V driven by the `paste` event, bridged from every frame document; copies mark the OS clipboard so a paste tells "my layers" from "a newer image/SVG".
+- **Done:** `canvasClipboardBridge.ts` (listeners per document, keydown-armed `navigator.clipboard.read()` fallback, copy marker via `copy`/`cut` event else `clipboard.write`); `canvasClipboardData.ts` (marker, SVG sniff, `decideCanvasPaste`); `canvasPaste.ts`; `useCanvasClipboardBridge.ts`; `canvasSelectionInsert.ts` (⇧K's target + image insert, now shared); store `insertJsxSubtreeIntoPage` (`subtreeInsertActions.ts`, `gesturePage.ts`); `svgToJsxNode` refusals carry `reason` and a too-deep SVG now refuses instead of silently dropping parts.
+- **Canvas files touched:** `CanvasRoot.tsx`, `useCanvasNodeShortcuts.ts`, `useIframeEventForwarding.ts`, `canvasImagePicker.ts`, the five new canvas modules above; `spotlight/shortcutDispatch.ts`.
+- **Decisions:** image paste = the drop's `dropImagesIntoPage` (no second pipeline); SVG ≤ 64 KB and within `svgToJsxNode`'s budget → ONE subtree insert, too large → `<img>` of the landed file, any other refusal stays a refusal; node paste still needs a selection (unchanged); palette/context-menu "Paste" stay layer-only.
+- **Landmines (events × keys):**
+  - ⌘C/⌘X/⌘V must NEVER `preventDefault` their keydown — that cancels the clipboard event. The spotlight's window CAPTURE listener used to run `layers.copy/cut/paste` on canvas surfaces with `preventDefault` BEFORE the node rung; they are now `COMPONENT_OWNED_SHORTCUTS`. Gated in `keybindings-single-dispatcher.test.ts`.
+  - The paste fallback relies on engines raising `paste` synchronously in the keydown's task (all do); a timer armed at keydown runs only when no event came. The annotation rung still `preventDefault`s ⌘V when the annotation clipboard is non-empty — that paste never reaches the bridge.
+  - Tier 2 bridge frames are cross-origin: their `paste` is never heard, so ⌘V there always takes the async-read fallback (first use may prompt).
+- **Next:** SVG-5 proper (drop inline-vs-img, icon insert, `base.svg` ghost) consumes `insertJsxSubtreeIntoPage`. Owner dogfood: see the PR body.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
