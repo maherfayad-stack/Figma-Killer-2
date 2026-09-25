@@ -119,10 +119,15 @@ let unregister: () => void
 let onReload: () => void
 
 let extracted = false
+let holdDeletes = false
+let releaseDeletes: () => void = () => {}
+let deleteGate: Promise<void> = Promise.resolve()
 
 beforeEach(() => {
   scenario = 'detach'
   extracted = false
+  holdDeletes = false
+  deleteGate = new Promise<void>((resolve) => { releaseDeletes = resolve })
   resetStructuralCommitQueue()
   resetSourceIdentities()
   __resetToastBusForTests()
@@ -134,6 +139,7 @@ beforeEach(() => {
     if (url.includes('/studio/save')) {
       const edits: Record<string, unknown>[] = body.edits ?? []
       posted.push(edits)
+      if (holdDeletes && edits.some((edit) => edit.kind === 'delete')) await deleteGate
       const detach = edits.find((edit) => edit.kind === 'detach')
       const deletes = edits.filter((edit) => edit.kind === 'delete')
       if (detach && scenario === 'copy') {
@@ -295,6 +301,24 @@ describe('OD-7 — a gesture inside a shared component applies to this instance 
     expect(posted[before]).toEqual([expect.objectContaining({ kind: 'reinsert-source' })])
     expect(posted[before + 1]).toEqual([
       { kind: 'swap', nodeId: COPY_CALL_SITE, newComponentName: 'Card', newComponentSource: 'local', newComponentFile: 'ui/Card.tsx' },
+    ])
+  })
+
+  // A ⌘Z pressed while the REPLAYED gesture is still being written waits for
+  // it and then runs at once — the link must already be there, or only the
+  // gesture is undone and the detached markup stays.
+  it('one ⌘Z pressed while the replayed delete is still in flight undoes both', async () => {
+    holdDeletes = true
+    store().deleteNode(TITLE)
+    for (let i = 0; i < 400 && posted.length < 2; i++) await new Promise((r) => setTimeout(r, 1))
+    expect(posted[1]).toEqual([{ kind: 'delete', nodeId: DETACHED_TITLE }])
+    store().undo()
+    releaseDeletes()
+    await settle()
+    expect(posted[2]).toEqual([expect.objectContaining({ kind: 'reinsert-source', nodeId: DETACHED_ROOT })])
+    expect(posted[3]).toEqual([
+      { kind: 'delete', nodeId: DETACHED_ROOT },
+      expect.objectContaining({ kind: 'reinsert-source', nodeId: MAIN, text: '      <Card />' + String.fromCharCode(10) }),
     ])
   })
 })

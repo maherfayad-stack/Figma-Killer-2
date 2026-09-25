@@ -118,9 +118,10 @@ export function applyToThisInstanceOnly(input: {
     }
     const mapId = followIntoDetached(tree, callSite, rootId, detached, inlined)
     const detachAt = get()._historyPast.length - 1
+    if (isDetachEntry(get()._historyPast[detachAt])) linkReplay(get, set, detachAt, true)
     retry(mapId)
     await structuralWritesIdle()
-    linkIfGestureLanded(get, set, detachAt, isDetachEntry)
+    unlinkIfNothingLanded(get, set, detachAt)
   })()
   return true
 }
@@ -162,6 +163,7 @@ async function replayInComponentCopy(input: {
     },
   })
   const copyAt = get()._historyPast.length - 1
+  linkReplay(get, set, copyAt, true)
   // The copy is the component's file under a new name, line for line, so an
   // inner element keeps its own position; its call-site prefix is the new one.
   const mapId: NodeIdMap = (nodeId) => {
@@ -176,23 +178,30 @@ async function replayInComponentCopy(input: {
   }
   retry(mapId)
   await structuralWritesIdle()
-  linkIfGestureLanded(get, set, copyAt, (entry) => entry?.structural?.gesture === 'source' && entry.structural.source.inverse?.[0]?.kind === 'swap')
+  unlinkIfNothingLanded(get, set, copyAt)
   return true
 }
 
-/** Link the entry at `at` to the one above it, when the replayed gesture pushed exactly that one. */
-function linkIfGestureLanded(
-  get: () => EditorStore,
-  set: EditorStoreSetter,
-  at: number,
-  isFirst: (entry: EditorStore['_historyPast'][number] | undefined) => boolean,
-): void {
-  const past = get()._historyPast
-  if (past.length !== at + 2 || !past[at + 1]?.structural || !isFirst(past[at])) return
+/**
+ * Mark the entry at `at` (the detach, or the component copy) as undone WITH
+ * the one above it. Set BEFORE the replay runs, not after it lands: a ⌘Z
+ * pressed while the replay is still being written waits for that write and
+ * then runs at once — before any code after the write could still link.
+ */
+function linkReplay(get: () => EditorStore, set: EditorStoreSetter, at: number, linked: boolean): void {
+  if (!get()._historyPast[at]) return
   set((state) => {
     const entry = state._historyPast[at]
-    if (entry) entry.linkedToNext = true
+    if (!entry) return
+    if (linked) entry.linkedToNext = true
+    else delete entry.linkedToNext
   })
+}
+
+/** The replay pushed no entry of its own (refused, or nothing to write): the link has nothing to join. */
+function unlinkIfNothingLanded(get: () => EditorStore, set: EditorStoreSetter, at: number): void {
+  const past = get()._historyPast
+  if (past[at]?.linkedToNext && !past[at + 1]?.structural) linkReplay(get, set, at, false)
 }
 
 /** True for the history entry `commitStudioDetachForInstance` pushed. */
