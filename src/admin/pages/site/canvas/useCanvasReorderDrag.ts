@@ -51,6 +51,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
+import { resolveCanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import { commitCanvasDrag } from './canvasDragCommit'
 import {
   DRAG_ACTIVATE_PX,
@@ -68,6 +69,7 @@ import { paintCanvasDrag } from './canvasDragPainter'
 import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
+import { useInFrameMarquee } from './useInFrameMarquee'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
@@ -320,6 +322,10 @@ export function useCanvasReorderDrag({
               target: session.foreignResolution.target,
             }
           : null,
+      // P5-G — over no frame at all: the element leaves for the free canvas.
+      lift: session.free || session.foreign
+        ? null
+        : resolveCanvasLiftDrop({ ...session, canvasRoot: canvasRootRef?.current ?? null }),
     }
     resetDrag()
 
@@ -555,6 +561,9 @@ export function useCanvasReorderDrag({
     frameId,
     beginDrag,
   })
+  // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
+  // not a drag (the root never moves). Same document, same gate.
+  useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
 
   useEffect(() => resetDrag, [resetDrag])
 

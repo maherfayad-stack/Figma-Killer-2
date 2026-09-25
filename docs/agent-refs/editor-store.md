@@ -133,7 +133,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMoves` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` / `commitStudioSequence` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
@@ -387,6 +387,37 @@ line's store-free halves (`authoredCss`, `vendorCss`, `styleRuleSources`,
 convert is skipped for every unrequested route — but never the meta: the style
 registry is built from every route's stylesheets together, so it stays a full,
 fresh recompute (`studioPageLoad.ts`'s `options.pageIds` doc).
+
+**A re-read is applied by VALUE, not by object (PERF-6, P6-A).** Everything
+off the wire is a brand-new object graph, and the canvas compares by identity:
+every `NodeRenderer` selects its node, every mounted frame's
+`ClassStyleInjector` regenerates its `<style>` on a new `styleRules` object.
+So `patchPages` puts each re-read page, `styleRules` and `conditions` in
+through `replaceEqualDeep` (`@core/utils/replaceEqualDeep`): a node, rule or
+condition deep-equal to the one the store held keeps its old object, and the
+page or registry itself keeps its identity when all of it is unchanged. A prop
+write therefore re-renders the one node it changed and restyles no frame
+("wholesale" above is about which rules EXIST — a deleted rule is gone — not
+about object identity).
+
+**A renumbered node keeps its React key.** A structural write renumbers every
+`rel:line:col` id below it, and `NodeRenderer` used to key each child by its
+id, so every one of those elements remounted. `site/rereadRenderKeys.ts`
+aligns each re-read page against the page the store held (`alignPageTrees`,
+the alignment the selection follower then reuses via `alignments`) and hands
+it to `canvas/nodeRenderKeys.ts`, an off-store per-page map from node id to
+the key it renders under. `NodeRenderer` and `CanvasComposedTree` key children
+by `nodeRenderKey(pageId, id)`; a moved element re-renders in place (its id
+changed), it does not remount. Rules: keys stay unique among siblings (an
+unaligned node whose id a moved node carries gets a minted key); a node object
+shared from the previous page whose CHILD keys changed is copied, because a
+shared parent would not re-render and would keep the old keys (a move among
+same-size siblings permutes the addresses without changing the parent's
+`children` ids); `loadSite`/`createSite`/`clearSite` clear the map. Only board
+frames (which provide `CanvasPageContext`) carry keys; a frame without a page
+context keys by id, as before. Measured by `bench:editor-store`'s post-write
+re-sync scenario (`scripts/bench/lib/postWriteResync.ts`), whose counts are a
+budget.
 
 A resync triggered by `saveSite` runs as the **last** thing that function does,
 after every diff baseline has advanced, and carries the save's `refusedRuleIds`
@@ -673,9 +704,10 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiSelectTargetBar`). The per-row "writes to 3 of 5" state of the
-  three-state `StyleWriteLockContext` exists, but no component provides that
-  context, so it never renders (`inspector.md` §9.4a). A class target is reachable too, once the user
+  (`MultiSelectTargetBar`). Each `ClassPropertyRow` also states its own
+  count ("writes to 3 of 5"): `StyleSurface` provides the three-state
+  `StyleWriteLockContext` from `SelectionModel.inlineWriteReach`
+  (`inspector.md` §9.4a). A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See

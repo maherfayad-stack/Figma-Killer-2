@@ -1,5 +1,5 @@
 /**
- * elementSizing — the parent-aware Fixed / Hug / Fill engine (W8-4).
+ * elementSizingRules — the parent-aware Fixed / Hug / Fill engine (W8-4).
  *
  * The defect this covers: Hug/Fill used to write `fit-content` / `100%` for
  * every element in every container. `width: 100%` on a flex child resolves
@@ -23,7 +23,7 @@ import {
   type SizingAxis,
   type SizingMode,
   type SizingParentLayout,
-} from '../elementSizing'
+} from '@core/studio-runtime'
 
 const FLEX_ROW: SizingParentLayout = { display: 'flex', flexDirection: 'row' }
 const FLEX_COLUMN: SizingParentLayout = { display: 'flex', flexDirection: 'column' }

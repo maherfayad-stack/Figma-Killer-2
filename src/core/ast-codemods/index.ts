@@ -35,8 +35,19 @@ export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'
 export type { MoveJsxElementParams, MoveJsxElementResult, MoveJsxRefusal, MoveJsxRefusalReason } from './moveJsxElement'
 // D2 G3 — the cross-FILE move `moveJsxElement` deliberately refuses.
-export { transplantJsxElement } from './transplantJsxElement'
+export {
+  transplantJsxElement,
+  // P5-G — the free canvas's two endpoints: a loose layer placed into a frame,
+  // and an element lifted out of one onto the board.
+  placeCanvasLayerRoot,
+  liftJsxElementToCanvasModule,
+  canvasLayerModuleRoot,
+} from './transplantJsxElement'
+export { buildCanvasLayerModule, canvasLayerModuleFromSpec, type CanvasLayerModule } from './canvasLayerModule'
 export type {
+  LiftJsxElementParams,
+  LiftJsxElementResult,
+  PlaceCanvasLayerRootParams,
   TransplantJsxElementParams,
   TransplantJsxElementResult,
   TransplantJsxRefusal,

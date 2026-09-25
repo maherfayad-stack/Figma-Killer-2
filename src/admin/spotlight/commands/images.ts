@@ -1,9 +1,8 @@
 /**
  * Image commands — IX-img's "Insert image…": a file picker whose images land
  * beside the selection, through the same write an OS file drop makes
- * (`canvasImagePicker.ts`). Penpot and Figma bind it to ⇧K / ⇧⌘K; this is the
- * command the binding will name (`insert.image`), reachable from the palette
- * until then.
+ * (`canvasImagePicker.ts`). Bound to ⇧K on the canvas, as in Penpot and Figma
+ * (`keybindingTools.ts`, P5-E), and reachable from the palette.
  *
  * Capability: inserting an element is a structural edit.
  */

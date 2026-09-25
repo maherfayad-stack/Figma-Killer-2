@@ -72,7 +72,25 @@ export const WORKSPACE_MAX_FILES = 5000
  */
 export function listWorkspaceFiles(dir: string): string[] {
   const results: string[] = []
+  walkWorkspace(dir, (relPath) => results.push(relPath), () => {})
+  return results.sort()
+}
 
+/**
+ * Every directory `listWorkspaceFiles(dir)` enters, `''` (the root) first,
+ * as POSIX paths relative to `dir`. A directory's own mtime moves when an
+ * entry is added, removed or renamed in it, so stamping these is how a cache
+ * of "the file list under `dir`" knows it went stale without re-walking
+ * (the preview shell's input stamp does exactly that for the pages dir).
+ */
+export function listWorkspaceDirectories(dir: string): string[] {
+  const results: string[] = []
+  walkWorkspace(dir, () => {}, (relDir) => results.push(relDir))
+  return results
+}
+
+/** The one walk behind both lists above: the same exclusions, the same refusal to follow links. */
+function walkWorkspace(dir: string, onFile: (relPath: string) => void, onDirectory: (relDir: string) => void): void {
   function walk(currentDir: string, relDir: string): void {
     let entries: Dirent[]
     try {
@@ -80,6 +98,7 @@ export function listWorkspaceFiles(dir: string): string[] {
     } catch {
       return
     }
+    onDirectory(relDir)
     for (const entry of entries) {
       // Never follow symlinks — keeps any consumer confined to `dir`.
       if (entry.isSymbolicLink()) continue
@@ -91,31 +110,9 @@ export function listWorkspaceFiles(dir: string): string[] {
         walk(join(currentDir, entry.name), entryRelPath)
         continue
       }
-      if (entry.isFile()) results.push(entryRelPath)
+      if (entry.isFile()) onFile(entryRelPath)
     }
   }
 
   walk(dir, '')
-  return results.sort()
-}
-
-/** The file kinds `createWorkspaceProject` hands to ts-morph — what the parser can read as a module. */
-const WORKSPACE_SOURCE_FILE_RE = /\.(tsx?|jsx?)$/i
-
-/**
- * Every file the workspace-wide ts-morph `Project` should contain, as POSIX
- * paths relative to `dir`, in deterministic order: `listWorkspaceFiles`
- * narrowed to `.ts/.tsx/.js/.jsx` and minus Studio's own preview shell
- * (`isPrototypeShellPath`). The shell is Studio's scaffold, not the user's
- * app, and its generated runtime bundle is megabytes of minified JS — walking
- * it as source is exactly the failure `PROTOTYPE_SHELL_DIR`'s doc describes,
- * and parsing it cost more than every real page put together.
- *
- * ONE selection rule, consulted both when the `Project` is first built and
- * every time `server/handlers/studio/workspaceProject.ts` brings a kept
- * `Project` back in step with the disk — so the two can never disagree about
- * which files exist.
- */
-export function listWorkspaceSourceFiles(dir: string): string[] {
-  return listWorkspaceFiles(dir).filter((relPath) => WORKSPACE_SOURCE_FILE_RE.test(relPath) && !isPrototypeShellPath(relPath))
 }

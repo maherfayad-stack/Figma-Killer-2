@@ -31,6 +31,7 @@ import {
   TextGlyphIcon,
 } from "@ui/components/ElementIcons";
 import { Button } from "@ui/components/Button";
+import { shortcutLabelFor } from "@admin/spotlight/keybindings";
 import {
   ContextMenu,
   ContextMenuItem,
@@ -433,6 +434,16 @@ function actionForItem(
   return null;
 }
 
+/**
+ * P5-E (UX-23) — the tool key that draws what a notch primitive inserts, shown
+ * in its tooltip ("Add Text  T"). Keyed by module, because the notch lists
+ * modules; only the two with a tool of their own have one.
+ */
+const NOTCH_TOOL_COMMANDS: Readonly<Record<string, string>> = {
+  "base.text": "tools.text",
+  "base.container": "tools.frame",
+};
+
 function renderActionButton(
   action: CanvasNotchAction,
   options?: {
@@ -454,6 +465,11 @@ function renderActionButton(
       disabled={Boolean(action.disabledReason)}
       aria-label={`Add ${action.label}`}
       tooltip={action.disabledReason ?? `Add ${action.label}`}
+      tooltipShortcut={
+        action.disabledReason || !action.moduleId
+          ? undefined
+          : shortcutLabelFor(NOTCH_TOOL_COMMANDS[action.moduleId] ?? "")
+      }
       data-testid={`canvas-notch-${testIdPart(action.label)}-btn`}
     >
       {ActionIcon ? (

@@ -20,7 +20,7 @@
  *   - the board's live reload (`server/ai/mcp/outsideEditReload.ts`) acts only
  *     on `outside` changes — Studio's own writes are already followed by the
  *     writer's own resync, and a second reload would race it;
- *   - PERF-8's `/load` invalidation (ROADMAP P6-C) needs EVERY change, its own
+ *   - PERF-8's `/load` invalidation (P6-B, `projectChangeFeed.ts`) needs EVERY change, its own
  *     writes first of all, to drop a memoised load without walking and
  *     statting the whole tree on every load.
  *
@@ -77,10 +77,11 @@
  * closes it. Keyed by the project's REAL path, like the write lock, so a
  * symlinked spelling of the same project shares one watcher.
  */
+import { CANVAS_LAYER_DIR } from '@core/studio-board'
 import { existsSync, readdirSync, realpathSync, statSync, watch, type Dirent, type FSWatcher } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
-import { studioWriteSessionCovers } from './projectWriteLock'
+import { studioWriteSessionCovers, studioWroteSince } from './projectWriteLock'
 
 export type ProjectChangeOrigin = 'studio' | 'outside'
 
@@ -118,8 +119,8 @@ export type ProjectWatchStrategy = 'auto' | 'recursive' | 'per-directory'
 
 const SCRATCH_FILE = /(\.sw[a-p]x?$)|(~$)|(^\.#)|(___jb_(tmp|old)___$)|(^4913$)|(\.crswap$)|(^\.DS_Store$)/i
 
-/** The one directory under an excluded one that is still app content. */
-const STUDIO_CANVAS_DIR = '.studio/canvas'
+/** The one directory under an excluded one that is still app content (P5-G — spelled once, in `@core/studio-board`). */
+const STUDIO_CANVAS_DIR = CANVAS_LAYER_DIR
 
 /** Whether a change to the FILE at `rel` is reported at all — see this module's doc. */
 export function isWatchedProjectPath(rel: string): boolean {
@@ -189,6 +190,8 @@ interface ProjectWatch {
   root: string
   listeners: Set<ProjectChangeListener>
   snapshot: Snapshot
+  /** Wall-clock ms at which {@link snapshot}'s walk BEGAN — anything written after it may be missing from it. */
+  scannedAt: number
   /** Reconcile the OS handles with the directories the last walk found (per-directory strategy only). */
   reconcile: (dirs: ReadonlySet<string>) => void
   close: () => void
@@ -198,6 +201,13 @@ interface ProjectWatch {
 }
 
 const watches = new Map<string, ProjectWatch>()
+
+/**
+ * `resolve(dir)` → the real root its watch was started on, while subscribed.
+ * `settleProjectChanges` runs before every load (P6-B's memo), and a
+ * `realpathSync` there was a third of a warm load's own work on Windows.
+ */
+const rootByDir = new Map<string, string>()
 
 function realRoot(dir: string): string {
   const resolved = resolve(dir)
@@ -228,9 +238,11 @@ function flush(pw: ProjectWatch): void {
   pw.timer = null
   const burstStartedAt = pw.burstStartedAt ?? Date.now()
   pw.burstStartedAt = null
+  const scannedAt = Date.now()
   const next = scan(pw.root)
   const changes = diff(pw, pw.snapshot, next, burstStartedAt)
   pw.snapshot = next
+  pw.scannedAt = scannedAt
   pw.reconcile(next.dirs)
   const overflow = pw.overflow || next.truncated
   pw.overflow = false
@@ -303,10 +315,12 @@ function watchPerDirectory(pw: ProjectWatch): void {
 }
 
 function startWatch(root: string, strategy: ProjectWatchStrategy): ProjectWatch {
+  const scannedAt = Date.now()
   const pw: ProjectWatch = {
     root,
     listeners: new Set(),
     snapshot: scan(root),
+    scannedAt,
     reconcile: () => {},
     close: () => {},
     overflow: false,
@@ -340,6 +354,7 @@ export function subscribeProjectChanges(
     pw = startWatch(root, options.strategy ?? 'auto')
     watches.set(root, pw)
   }
+  rootByDir.set(resolve(dir), root)
   pw.listeners.add(listener)
   const owned = pw
   let subscribed = true
@@ -351,7 +366,39 @@ export function subscribeProjectChanges(
     if (owned.timer) clearTimeout(owned.timer)
     owned.close()
     if (watches.get(root) === owned) watches.delete(root)
+    for (const [key, value] of rootByDir) if (value === root) rootByDir.delete(key)
   }
+}
+
+/**
+ * Bring every subscriber of `dir`'s watcher up to date NOW, synchronously,
+ * when the snapshot may not reflect the disk — so a caller about to trust
+ * "no batch arrived, so nothing changed" (the `/load` memo, P6-B) is not
+ * trusting a debounce. The snapshot is re-walked, and the resulting batch
+ * delivered to every listener before this returns, when:
+ *
+ *   - a burst is pending (an event arrived and its {@link QUIET_MS} have not
+ *     run out), or the watch failed and has not reported it yet;
+ *   - Studio held a write session that ended after the last walk began
+ *     (`projectWriteLock.ts`'s `studioWroteSince`) — a save is followed by the
+ *     board's own resync sooner than the debounce would report the save;
+ *   - the last walk is older than `maxSnapshotAgeMs` — the backstop for an
+ *     event `fs.watch` dropped outright, which bounds how long such a change
+ *     can go unseen.
+ *
+ * Returns `false` when `dir` has no watcher at all, so the caller knows it
+ * has nothing to trust.
+ */
+export function settleProjectChanges(dir: string, options: { maxSnapshotAgeMs: number }): boolean {
+  const pw = watches.get(rootByDir.get(resolve(dir)) ?? realRoot(dir))
+  if (!pw) return false
+  const stale =
+    pw.timer !== null ||
+    pw.overflow ||
+    studioWroteSince(pw.root, pw.scannedAt) ||
+    Date.now() - pw.scannedAt > options.maxSnapshotAgeMs
+  if (stale) flush(pw)
+  return true
 }
 
 /** Whether `dir` has a live watcher. Test/diagnostic only. */

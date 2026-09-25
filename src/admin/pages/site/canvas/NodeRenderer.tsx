@@ -57,6 +57,7 @@ import {
   shouldSuppressAuthoredFormControlEvent,
 } from './canvasEventTargets'
 import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
+import { canvasProjectAssetScope, projectAssetProps, projectAssetStyle } from './canvasProjectAssetUrl'
 import {
   CanvasBreakpointContext,
   CanvasFrameContext,
@@ -73,8 +74,10 @@ import {
 import { useResponsiveBackgroundStyle } from '@admin/shared/media/hooks/useResponsiveBackgroundStyle'
 import { getCanvasNodeClassIds, getCanvasNodeClassName } from './canvasNodeClassName'
 import { useIsNodeSelected } from './canvasNodeSelection'
+import { nodeRenderKey } from './nodeRenderKeys'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
 import { findEnclosingComponentRef, findEnclosingInstance, resolveInstanceEntry, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -284,8 +287,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     sel.addRange(range)
   }, [isInlineEditing])
 
-  const inlineStyle = useResponsiveBackgroundStyle(
-    mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId),
+  // A portal frame lives on the admin origin, so a site-root `url('/bg.png')`
+  // in the node's own style resolves to the project asset route here — the
+  // same resolution the props below and every CSS injector get
+  // (`canvasProjectAssetUrl.ts`, P5-B2). Render-time only; the store keeps
+  // what the source says.
+  const assetScope = canvasProjectAssetScope()
+  const inlineStyle = projectAssetStyle(
+    useResponsiveBackgroundStyle(mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId)),
+    assetScope,
   )
 
   if (!node) return null
@@ -324,7 +334,10 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     node.moduleId === 'base.loop' && node.children.length > 0 ? (
       <LoopIterationsPreview node={node} baseTemplateContext={templateContext} />
     ) : (
-      node.children.map((childId) => <NodeRenderer key={childId} nodeId={childId} />)
+      // PERF-6 — keyed by the node's CARRIED render key, not its id: a write
+      // that renumbered this child's `rel:line:col` re-renders it in place
+      // rather than remounting it (`nodeRenderKeys.ts`).
+      node.children.map((childId) => <NodeRenderer key={nodeRenderKey(contextPageId, childId)} nodeId={childId} />)
     )
 
   const ComponentType = definition.component
@@ -332,15 +345,22 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // Pass the module schema so resolveProps drops breakpoint overrides for
   // non-responsive (content) keys — text/tag/src etc. must look identical
   // across every breakpoint frame, since published HTML is one document.
-  const effectiveProps = addEditorFormPreviewProps(
-    node.moduleId,
-    resolveDynamicProps(
-    resolveProps(node, breakpointId, definition.schema),
-    effectiveNodeBindings(node),
-    templateContext,
+  //
+  // Resource URLs (`src`, `srcSet`, `poster`) resolve last, for every module
+  // at once: a site-root `src="/hero.png"` would otherwise load from the
+  // admin origin and show broken (P5-B2, `canvasProjectAssetUrl.ts`).
+  const effectiveProps = projectAssetProps(
+    addEditorFormPreviewProps(
+      node.moduleId,
+      resolveDynamicProps(
+      resolveProps(node, breakpointId, definition.schema),
+      effectiveNodeBindings(node),
+      templateContext,
+      ),
+      editorFormPreviewState,
+      editorFormPreviewSuccessMessage,
     ),
-    editorFormPreviewState,
-    editorFormPreviewSuccessMessage,
+    assetScope,
   )
 
   // Build className from classIds using the user-facing class names.
@@ -501,7 +521,9 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       }
     },
     onMouseEnter: () => handleNodeHover(nodeId),
-    onMouseLeave: () => handleNodeHover(null),
+    // Hand the hover to the node the pointer went INTO — a leave into the
+    // parent brings the parent no `mouseenter` (`canvasHoverHandoff.ts`).
+    onMouseLeave: (e: { relatedTarget: EventTarget | null }) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget)),
   }
 
   // Inline editing: this node's element becomes the contentEditable surface.

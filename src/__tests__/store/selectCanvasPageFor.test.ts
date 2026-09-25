@@ -70,6 +70,7 @@ function makeState(
       boards: overrides.frames ? [{ id: 'board-1', frames: overrides.frames }] : [],
     },
     activeBoardId: overrides.frames ? 'board-1' : null,
+    canvasLayerPages: {},
   } as unknown as EditorStore
 }
 
@@ -132,7 +133,7 @@ describe('selectCanvasPageFor', () => {
   })
 
   it('returns null without scanning when there is no site', () => {
-    const state = { site: null, activeDocument: null } as unknown as EditorStore
+    const state = { site: null, activeDocument: null, canvasLayerPages: {} } as unknown as EditorStore
     expect(selectCanvasPageFor(state, 'a')).toBeNull()
   })
 })

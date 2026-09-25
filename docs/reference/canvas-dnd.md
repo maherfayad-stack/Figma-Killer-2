@@ -500,7 +500,7 @@ honest target, in exactly two cases. `canvasFreeMove.ts` owns the whole thing.
 
 | The element is… | ⌘/Ctrl held? | What happens |
 |---|---|---|
-| `position: absolute \| fixed` | not needed | the drag writes `left`/`top` — that is already the property deciding where it is, so dragging it into the child order would be the surprising behaviour |
+| `position: absolute \| fixed` | not needed | the drag moves the offsets the source AUTHORED (P5-E, IX-21): `left`/`top`, or `right`/`bottom` for a layer anchored that way, or both of a stretched pair — that is already what decides where it is, so dragging it into the child order would be the surprising behaviour |
 | in flow, parent is positioned | yes | the drag writes `position: absolute` **and** `left`/`top`. Writing the offsets alone would do nothing at all on a static element, and a declaration with no effect is exactly the silent no-op this codebase refuses |
 | in flow, parent is `position: static` | yes | **refuses** — see below |
 | in flow | no | ordinary reorder |
@@ -519,6 +519,17 @@ back. It is also the one refusal in `editConstraint.ts` that is NOT a
 source-writability question: the file would take the write; the CSS would not
 do what was pointed at.
 
+**Anchoring (P5-E, IX-21).** A free move of an already-positioned layer
+moves the offsets its source authored — the same plan the arrow-key nudge
+uses (`planNudge` over `authoredOffsets`, `canvasNodeArrowMove.ts`). A layer
+anchored by `right: 24px` keeps `right` and never gains a `left` (with both,
+the next width change moves the wrong edge, or `width: auto` stretches it);
+`bottom` likewise; a stretched `left` + `right` pair moves both. A `left: 50%`
++ `translate(-50%)` centring moves as `left` from its USED px value, so the
+translate still centres it where it lands. Only a layer that becomes absolute
+in this gesture has nothing authored and takes `left`/`top`. A resize of a
+positioned layer follows the same rule (`elementResizeAnchoring.ts`).
+
 **RTL.** In a right-to-left element the physical `left` is the wrong property:
 a drag to the right must DECREASE the distance from the inline start. The
 write is `inset-inline-start`, with the horizontal delta negated. `top` is
@@ -526,7 +537,7 @@ unaffected — RTL mirrors the inline axis only, never the block axis.
 
 **Snapping.** The moved rect snaps to its SIBLINGS' edges and centres, and to
 its PARENT's padding box and content box (edges and centre — P2-E / IX-5b,
-`canvasSnapPeers.ts`), through `computeSnap` — the same pure resolver board
+`@core/studio-runtime`'s `snapPeerRules.ts`), through `computeSnap` — the same pure resolver board
 furniture already uses, at the same "closest wins, at most one snap per axis"
 contract. The threshold is **screen px** (IX-5a): `snapThresholdAtZoom(zoom)`,
 `SNAP_THRESHOLD_SCREEN_PX` (8) divided by the session's live zoom, so the pull
@@ -766,7 +777,7 @@ Studio-mode board furniture — frames (`BoardFramesLayer`), sticky notes (`Boar
 
 **Snap-to-peer alignment (Phase 6B).** While dragging a frame/note/doc, its move handler snaps the raw new position to the closest aligned edge/center of every OTHER piece of furniture on the active board, and draws the alignment guide(s) it snapped to:
 
-- **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/admin/pages/site/canvas/boardSnapping.ts`. For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
+- **`computeSnap(dragged, peers, threshold)`** — the pure core, `src/core/studio-runtime/snapRules.ts` (shared with the element-level gestures and the live frame's resize; `canvas/boardSnapping.ts` keeps only `collectPeerRects`/`guideSnapRects`). For each axis (x, y) independently, it checks the dragged rect's start/center/end against every peer's start/center/end, picks the closest pair within `threshold` board units (closest wins; at most one snap per axis), and returns the adjusted top-left position plus a `SnapGuide` per matched axis. No peers, or no match within threshold, leaves that axis untouched. Pure — no React, no DOM — unit-tested in `src/__tests__/canvas/boardSnapping.test.ts` the same way `frameResize.ts`/`frameVirtualization.ts` are.
 - **`collectPeerRects(board, dragged)`** — flattens a board's frames/notes/docs into the flat `SnapRect[]` peer list, excluding whichever object is being dragged. Frames without a saved size fall back to `FRAME_WIDTH`/`FRAME_HEIGHT`, mirroring `BoardFramesLayer`'s own render-time fallback.
 - **Threshold:** `snapThresholdAtZoom(zoom)` — `SNAP_THRESHOLD_SCREEN_PX = 8` screen px divided by the canvas zoom (P2-E / IX-5a). It used to be a fixed 8 board units, which was 32 screen px of pull at 400% and 2 px at 25%. Every snapping gesture (furniture, free move, element resize) uses the same constant.
 - **Guides are transient, not persisted.** `boardSnapGuides` (`boardSlice`) is a top-level store field holding the active drag's `SnapGuide[]`, separate from `boards`/`BoardsFile` — it never reaches `serializeBoardsFile` or the boards auto-save effect, and `setBoardSnapGuides` never flips `boardsDirty`. Each move handler calls `setBoardSnapGuides(snapped.guides)`; pointer-up/cancel clears it (`setBoardSnapGuides([])`).
@@ -882,7 +893,7 @@ present on that surface.
   - `src/admin/shared/media/hooks/useMediaDnd.ts` / `src/admin/shared/media/utils/mediaDragDrop.ts` / `src/admin/shared/media/utils/mediaDnd.ts` — the media picker's native HTML5 DnD, incl. the `dragover` protected-mode session mirror
   - `src/admin/pages/site/store/insertLocation.ts` — `InsertLocation` shape
   - `src/core/page-tree/mutations.ts` — `insertNode`, `moveNode`, `moveNodes`, `wrapNode`
-  - `src/admin/pages/site/canvas/boardSnapping.ts` — `computeSnap`, `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
+  - `src/core/studio-runtime/snapRules.ts` — `computeSnap`, `computeEdgeSnap`, `snapThresholdAtZoom`; `src/admin/pages/site/canvas/boardSnapping.ts` — `collectPeerRects` (Studio board furniture snap-to-peer, Phase 6B)
   - `src/admin/pages/site/canvas/BoardGuidesLayer/` — renders the active snap guides
   - `src/admin/pages/site/store/slices/boardSlice.ts` — `boardSnapGuides` / `setBoardSnapGuides` (transient, not persisted)
   - `src/core/page-tree/sourceStructure.ts` — `previewStructuralMove` (G5's pure preview), `refusePlacement`/`refuseStructuralEdit` (the refusal vocabulary)

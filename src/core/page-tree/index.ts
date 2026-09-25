@@ -87,6 +87,7 @@ export type {
 // page it is written in and land in a container on another one?
 export {
   isTransplantDestinationTree,
+  previewStructuralLift,
   previewStructuralTransplant,
 } from './sourceStructureTransplant'
 export type {

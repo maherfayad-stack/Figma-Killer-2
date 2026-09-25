@@ -77,9 +77,11 @@ import { useLocalComponentCatalog, findLocalComponentSpec } from '@site/studio/c
 import { detachInstance, extractInstanceCopy, swapInstance } from '@site/studio/studioSaveRequests'
 import { getErrorMessage } from '@core/utils/errorMessage'
 import { Button } from '@ui/components/Button'
+import { ControlRow } from '@ui/components/ControlRow'
 import { InspectorPopover } from '@ui/components/InspectorPopover'
 import { SearchBar } from '@ui/components/SearchBar'
 import { SectionStaticHeader } from '@ui/components/Section'
+import { Skeleton } from '@ui/components/Skeleton'
 import { pushToast } from '@ui/components/Toast'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { ArrowsHorizontalIcon } from 'pixel-art-icons/icons/arrows-horizontal'
@@ -127,9 +129,12 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
 
   // E1/E2.5 — the project-wide component catalog, fetched once (cached per
   // workspace dir) and reused for both the row set below and the Swap
-  // picker's candidate list.
+  // picker's candidate list. `null` while the fetch is in flight: a prop's
+  // control depends on its declared kind, so until the catalog says what a
+  // prop IS the rows are placeholders, never a guessed text box that turns
+  // into a dropdown a moment later (`panel-44`).
   const catalog = useLocalComponentCatalog()
-  const spec = findLocalComponentSpec(catalog, componentName, sourceFile)
+  const spec = catalog === null ? null : findLocalComponentSpec(catalog, componentName, sourceFile)
   const rows = buildComponentCallSiteRows(spec, callSiteProps)
 
   const [detaching, setDetaching] = useState(false)
@@ -176,7 +181,7 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
 
   // Every OTHER local component the catalog knows about — local-only
   // (package components aren't in this catalog; the empty state says so).
-  const swapCandidates: LocalSwapCandidate[] = catalog
+  const swapCandidates: LocalSwapCandidate[] = (catalog ?? [])
     .filter((c) => !(c.name === componentName && c.file === sourceFile))
     .map((c) => ({ componentName: c.name, sourceFile: c.file }))
 
@@ -298,7 +303,9 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
         )}
 
         {/* One row per DECLARED prop (E1/E2.5). */}
-        {rows.length === 0 ? (
+        {catalog === null ? (
+          <PropRowsLoading keys={rows.map((row) => row.key)} />
+        ) : rows.length === 0 ? (
           <p className={styles.noParams}>This component takes no props.</p>
         ) : (
           <div className={styles.propsList} role="list" aria-label="Component props">
@@ -370,6 +377,32 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
           </div>
         </InspectorPopover>
       )}
+    </div>
+  )
+}
+
+/**
+ * The prop rows while the catalog is in flight: one placeholder per prop the
+ * call site already sets (its name is known; its control is not), at least
+ * one, each a real `ControlRow` with a field-height skeleton where the
+ * control will go. The label column and row rhythm are the loaded rows', so
+ * the swap changes content, not layout.
+ */
+function PropRowsLoading({ keys }: { keys: readonly string[] }) {
+  const labels = keys.length > 0 ? keys : ['']
+  return (
+    <div
+      className={styles.propsList}
+      role="status"
+      aria-busy="true"
+      aria-label="Loading component props"
+      data-testid="instance-call-site-props-loading"
+    >
+      {labels.map((key, index) => (
+        <ControlRow key={key || index} propKey={key || `loading-${index}`} label={key || ' '} disabled>
+          <Skeleton width="100%" height="var(--inspector-row-h)" radius="var(--inspector-field-radius)" />
+        </ControlRow>
+      ))}
     </div>
   )
 }

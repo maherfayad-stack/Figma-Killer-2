@@ -1,0 +1,37 @@
+/**
+ * CanvasDrawToolLayer — the click-catching surface of an armed draw tool, and
+ * the rectangle it draws. Tokens only; `--drawn-*` are written inline per
+ * frame (dynamic geometry, the one sanctioned inline-style use).
+ */
+
+/* Over the frames (the transform layer), under the rulers (45) and the notch
+   (53): the chrome stays clickable with a tool armed. */
+.layer {
+    position: absolute;
+    inset: 0;
+    z-index: 44;
+    cursor: crosshair;
+    touch-action: none;
+}
+
+/* Space held (or the hand tool): the pan owns the pointer, exactly as it
+   does over a frame (`IframeFrameSurface.module.css`). */
+:global(html[data-studio-canvas-parent-space-pan='1']) .layer,
+:global(html[data-studio-canvas-iframe-space-pan='1']) .layer,
+:global(html[data-studio-canvas-hand-tool='1']) .layer {
+    pointer-events: none;
+}
+
+/* The rectangle being drawn — viewport coordinates, so it paints over an
+   iframe's contents like the insertion preview does. */
+.drawnRect {
+    position: fixed;
+    left: var(--drawn-left);
+    top: var(--drawn-top);
+    width: var(--drawn-width);
+    height: var(--drawn-height);
+    z-index: var(--tooltip-z-index);
+    pointer-events: none;
+    border: 1px solid var(--canvas-selection-ring-color);
+    background: var(--accent-1-10);
+}

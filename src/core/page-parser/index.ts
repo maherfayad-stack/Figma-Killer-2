@@ -44,9 +44,10 @@ export {
   WORKSPACE_MAX_FILE_BYTES,
   WORKSPACE_MAX_FILES,
   isPrototypeShellPath,
+  listWorkspaceDirectories,
   listWorkspaceFiles,
-  listWorkspaceSourceFiles,
 } from './workspaceFiles'
+export { isWorkspaceSourceFilePath, listWorkspaceSourceFiles } from './workspaceSourceFiles'
 export {
   UNWRITABLE_WORKSPACE_DIR_NAMES,
   comparableWorkspaceRel,

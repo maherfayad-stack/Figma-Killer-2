@@ -53,8 +53,8 @@ import { createProject, loadSourceFile, resolveJsxChildRange } from '@core/ast-c
 import { ELEMENT_MOVED_REASON, withSourceLocation, type SourceFingerprintExpectations } from '@core/page-tree'
 import { refusalFor } from './studioEditRefusals'
 import { editNamedNodeIds, resolveEditIdentities } from './studioEditIdentity'
-import { studioEditFile, studioEditLocation } from './studioEditRouting'
-import type { StudioEdit, StudioEditBatchResult, StudioEditRefusal } from './studioEditSchemas'
+import { studioEditFile, studioEditLocation, type SourceTargetScope } from './studioEditRouting'
+import type { StudioEdit, StudioEditBatchOptions, StudioEditBatchResult, StudioEditRefusal } from './studioEditSchemas'
 import { applyStudioEditBatch } from './studioWriteback'
 import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { withProjectWriteLock } from './studio/projectWriteLock'
@@ -115,9 +115,9 @@ interface ActedOn {
 }
 
 /** Which elements of the file BEFORE the step the step acted on — they are not followed by order. */
-function actedOnBefore(edit: StudioEdit, file: string, sourceFile: SourceFile, dir: string): ActedOn[] {
-  const location = studioEditLocation(dir, edit.nodeId)
-  if (!location || studioEditFile(dir, edit.nodeId) !== file) return []
+function actedOnBefore(edit: StudioEdit, file: string, sourceFile: SourceFile, dir: string, scope: SourceTargetScope): ActedOn[] {
+  const location = studioEditLocation(dir, edit.nodeId, scope)
+  if (!location || studioEditFile(dir, edit.nodeId, scope) !== file) return []
   const removesTarget =
     edit.kind === 'move' ||
     edit.kind === 'reparent' ||
@@ -192,8 +192,8 @@ function readTexts(files: Iterable<string>): Map<string, Buffer | null> {
 }
 
 /** Every absolute file an edit can write: the files its node ids decode to (a transplant's destination included). */
-function filesOf(dir: string, edit: StudioEdit): string[] {
-  return editNamedNodeIds(edit).map((nodeId) => studioEditFile(dir, nodeId)).filter((file): file is string => file !== null)
+function filesOf(dir: string, edit: StudioEdit, scope: SourceTargetScope): string[] {
+  return editNamedNodeIds(edit).map((nodeId) => studioEditFile(dir, nodeId, scope)).filter((file): file is string => file !== null)
 }
 
 function readdress(edit: StudioEdit, rename: (nodeId: string) => string): StudioEdit {
@@ -236,6 +236,7 @@ export function applyStudioEditSequence(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations = {},
+  options: StudioEditBatchOptions = {},
 ): StudioEditBatchResult {
   const unsupported = edits.find((edit) => !SEQUENCE_KINDS.has(edit.kind))
   if (unsupported) {
@@ -246,9 +247,9 @@ export function applyStudioEditSequence(
 
   // P1-A/P1-D, once, against the files as the caller read them.
   // A throwaway project: each step below is its own batch, with its own (WB-25).
-  const identity = resolveEditIdentities(dir, edits, expect, createProject())
+  const identity = resolveEditIdentities(dir, edits, expect, createProject(), options)
   if (identity.moved.length > 0) {
-    return refused(edits, identity.moved.map((entry) => entry.refusal), edits.flatMap((edit) => filesOf(dir, edit)))
+    return refused(edits, identity.moved.map((entry) => entry.refusal), edits.flatMap((edit) => filesOf(dir, edit, options)))
   }
 
   // Every id any edit names is FOLLOWED from here on, keyed by the id the
@@ -261,7 +262,7 @@ export function applyStudioEditSequence(
     sent.forEach((nodeId, i) => current.set(nodeId, now[i] ?? nodeId))
   }
 
-  const originals = readTexts(new Set(edits.flatMap((edit) => filesOf(dir, edit))))
+  const originals = readTexts(new Set(edits.flatMap((edit) => filesOf(dir, edit, options))))
   const lineCountBefore = new Map([...originals].map(([file, bytes]) => [file, bytes ? bytes.toString('utf8').split('\n').length : -1]))
   const touched = new Set<string>()
   const created: { key: string; nodeId: string }[] = []
@@ -292,7 +293,7 @@ export function applyStudioEditSequence(
       ], [...touched, ...originals.keys()])
     }
     const step = readdress(edit, (nodeId) => current.get(nodeId) ?? nodeId)
-    const stepFiles = [...new Set(filesOf(dir, step))]
+    const stepFiles = [...new Set(filesOf(dir, step, options))]
     for (const file of stepFiles) if (!originals.has(file)) originals.set(file, existsSync(file) ? readFileSync(file) : null)
     const project = createProject()
     const before = new Map(stepFiles.filter((file) => existsSync(file)).map((file) => [file, loadSourceFile(project, file)]))
@@ -301,7 +302,7 @@ export function applyStudioEditSequence(
     // against the files it read, and every id since then is where the order
     // follower put it — an identity read off the file this step is about to
     // write would only ever agree with itself.
-    const result = applyStudioEditBatch(dir, [step], {})
+    const result = applyStudioEditBatch(dir, [step], {}, options)
     for (const file of result.touchedFiles) touched.add(file)
     sharedComponents ||= result.sharedComponents
     if (result.written === 0 || result.refusals.length > 0) {
@@ -321,12 +322,12 @@ export function applyStudioEditSequence(
       if (!existsSync(file)) continue
       const afterFile = loadSourceFile(afterProject, file)
       const placedHere = placed
-        .map((nodeId) => (studioEditFile(dir, nodeId) === file ? studioEditLocation(dir, nodeId) : null))
+        .map((nodeId) => (studioEditFile(dir, nodeId, options) === file ? studioEditLocation(dir, nodeId, options) : null))
         .filter((location): location is NonNullable<typeof location> => location !== null)
       const followed: { key: string; nodeId: string; offset: number }[] = []
       const follow = (key: string, nodeId: string): void => {
-        if (studioEditFile(dir, nodeId) !== file) return
-        const location = studioEditLocation(dir, nodeId)
+        if (studioEditFile(dir, nodeId, options) !== file) return
+        const location = studioEditLocation(dir, nodeId, options)
         const offset = location ? offsetOf(beforeFile, location.line, location.col) : null
         if (offset !== null) followed.push({ key, nodeId, offset })
       }
@@ -336,7 +337,7 @@ export function applyStudioEditSequence(
       const moved = followThroughStep(
         beforeFile,
         afterFile,
-        actedOnBefore(step, file, beforeFile, dir),
+        actedOnBefore(step, file, beforeFile, dir, options),
         actedOnAfter(step, afterFile, placedHere),
         followed.map((entry) => entry.offset),
       )
@@ -404,6 +405,7 @@ export function applyStudioEditSequenceLocked(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations = {},
+  options: StudioEditBatchOptions = {},
 ): Promise<StudioEditBatchResult> {
-  return withProjectWriteLock(dir, () => applyStudioEditSequence(dir, edits, expect))
+  return withProjectWriteLock(dir, () => applyStudioEditSequence(dir, edits, expect, options))
 }

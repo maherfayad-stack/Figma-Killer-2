@@ -161,7 +161,7 @@ export function createMoveSequenceActions(
       if (!moved) return
       for (const move of moves) broadcastOptimisticMove(move.nodeId, move.parentId, move.index)
       if (edits.length === 0) return // a CMS / Visual Component tree: patch-replay undo is exact
-      const rollback = trackStructuralTreeCommit(helpers, topBefore) ?? undefined
+      const rollback = trackStructuralTreeCommit(helpers, topBefore, moves.map((move) => move.nodeId)) ?? undefined
       tagStructuralGesture(set, { gesture: 'moves', undo, redo: [...moves] })
       void commitStudioSequence(edits, 'Move refused', rollback ? { rollback } : {})
     },

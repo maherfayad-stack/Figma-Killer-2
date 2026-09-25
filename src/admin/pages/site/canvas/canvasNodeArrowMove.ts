@@ -54,7 +54,7 @@ import {
   resolveCanvasAxisFromStyle,
 } from '@core/studio-runtime'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { listFrameAdapterRegistrations } from './frameAdapter/canvasFrameAdapterRegistry'
+import { measureInRenderingFrame } from './canvasSelectionMeasure'
 import type { NodeMeasurement } from './frameAdapter/FrameDocumentAdapter'
 
 /** An offset a nudge may write — a key of the element's `style={{…}}` object, so camelCase. */
@@ -329,11 +329,12 @@ export function stepSelectionAmongSiblings(nodeIds: readonly string[], step: -1 
   store.stepSiblings([...nodeIds], steps)
 }
 
-const OWN_PROPERTIES = ['position', 'direction', 'left', 'right', 'top', 'bottom']
-const LAYOUT_PROPERTIES = ['display', 'flex-direction', 'grid-auto-flow', 'grid-template-columns', 'grid-template-rows', 'direction']
+/** The computed properties `readOwn` and `readLayout` read — kebab-case, the wire's spelling. */
+export const OWN_PROPERTIES = ['position', 'direction', 'left', 'right', 'top', 'bottom']
+export const LAYOUT_PROPERTIES = ['display', 'flex-direction', 'grid-auto-flow', 'grid-template-columns', 'grid-template-rows', 'direction']
 const MEASURED_PROPERTIES = [...new Set([...OWN_PROPERTIES, ...LAYOUT_PROPERTIES])]
 
-function readOwn(measurement: NodeMeasurement | undefined): ArrowTargetStyle {
+export function readOwn(measurement: NodeMeasurement | undefined): ArrowTargetStyle {
   const style = measurement?.computedStyle ?? {}
   return {
     // A node with no element of its own (a component call site, rendered as a
@@ -347,7 +348,7 @@ function readOwn(measurement: NodeMeasurement | undefined): ArrowTargetStyle {
   }
 }
 
-function readLayout(chain: readonly (NodeMeasurement | undefined)[]): ArrowParentLayout | null {
+export function readLayout(chain: readonly (NodeMeasurement | undefined)[]): ArrowParentLayout | null {
   for (const ancestor of chain) {
     const style = ancestor?.computedStyle
     if (!ancestor?.rect || !style || style.display === 'contents') continue
@@ -383,29 +384,14 @@ export async function measureArrowTargets(
   const chains = new Map(
     nodeIds.map((nodeId) => [nodeId, getAncestors(tree, nodeId).map((ancestor) => ancestor.id).reverse()] as const),
   )
-  const refIds = [...new Set(nodeIds.flatMap((nodeId) => [nodeId, ...(chains.get(nodeId) ?? [])]))]
-  const refs = refIds.map((nodeId) => ({ nodeId }))
-  const registrations = [...listFrameAdapterRegistrations().values()].sort(
-    (a, b) => Number(b.breakpointId === preferredBreakpointId) - Number(a.breakpointId === preferredBreakpointId),
-  )
-  const answers = await Promise.all(
-    registrations.map((registration) =>
-      registration.adapter.measure(refs, MEASURED_PROPERTIES).catch((_err: unknown) => {
-        // A bridge frame that does not answer in time (its dev server is
-        // reloading) simply is not the frame this press reads.
-        return null
-      }),
-    ),
-  )
+  const refIds = nodeIds.flatMap((nodeId) => [nodeId, ...(chains.get(nodeId) ?? [])])
   const [firstId] = nodeIds
   const firstParentId = firstId ? chains.get(firstId)?.[0] : undefined
   // The frame that renders the first layer — or, for a layer with no element
   // of its own, its parent — is the frame showing this page.
-  const answer = answers.find((candidate) =>
-    candidate?.some((measurement) => measurement.rect && (measurement.nodeId === firstId || measurement.nodeId === firstParentId)),
-  )
-  if (!answer) return null
-  const byId = new Map(answer.map((measurement) => [measurement.nodeId, measurement]))
+  const anchors = [firstId, firstParentId].filter((id): id is string => id !== undefined)
+  const byId = await measureInRenderingFrame(refIds, MEASURED_PROPERTIES, preferredBreakpointId, anchors)
+  if (!byId) return null
   const measured = new Map<string, ArrowTargetMeasurement>()
   for (const nodeId of nodeIds) {
     const chain = (chains.get(nodeId) ?? []).map((id) => byId.get(id))

@@ -1118,7 +1118,7 @@ The unknown-HOC read is page-only on purpose. It is not Tier D — no branch is 
 
 ## Local assets
 
-`GET /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>` serves an imported page's own images.
+`GET /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>` serves an imported page's own images. The same route answers `?dir=<abs>&url=<site-root URL>` (P5-B2): a literal `src="/hero.png"` in a portal (design) frame, which is an `about:srcdoc` document on the ADMIN origin and would otherwise load `/hero.png` from Studio's own server. `siteUrlWorkspaceCandidates` (`assetSiteUrl.ts`, the inverse of THE site-URL rule) maps the URL to `<appRoot>/public/<path>`, then the dev-only `<appRoot>/<path>` (never `/public/<path>` itself — no framework serves that); each candidate still goes through the one read guard. The canvas asks for it at render time only — `canvasProjectAssetUrl.ts` resolves node `src`/`srcSet`/`poster`, inline `url()`s and (through `canvasFrameCss.ts`) every injected stylesheet's `url()`s; the store and the source keep `/hero.png`. The capture page's token-gated twin (`/admin/api/agent-capture/asset`) takes the same two shapes.
 
 `resolveImageAssetImport` (`assetImports.ts`) resolves a local image import to a `studio-asset:<workspace-rel>` sentinel; `rewriteStudioAssetSentinels` turns that into the URL above once `dir` is in scope. The load pipeline calls that rewrite, which lives in `server/handlers/studioAsset.ts` beside the endpoint rather than in the pure converter, because the query-param shape belongs with the endpoint that owns it.
 
@@ -1131,7 +1131,7 @@ Two deliberate narrowings versus `?raw`:
 
 A resolved `src` **locks its node**, like every other resolved value: `src={esimChip}` binds to an import, and writing an `/admin/api/...` URL over that expression would delete the binding — the JSX itself is never a writeback target. `codeProps` still names `src` for exactly this reason.
 
-`resolveStudioAssetResponse` rejects absolute and UNC paths, `..` traversal on either separator, anything under `EXCLUDED_WORKSPACE_DIR_NAMES`, and symlink escapes. Everything rejected is a 404.
+`resolveStudioAssetResponse` rejects absolute and UNC paths, `..` traversal on either separator, anything under `EXCLUDED_WORKSPACE_DIR_NAMES` (case-folded, through `resolveWorkspaceReadPath`), and symlink escapes, and serves only an image, font, audio or video file (`isEmbeddableMediaPath`, judged on the requested name AND the real path a link lands on) — never source, config or HTML. Every response carries `INERT_FILE_CSP` (`default-src 'none'; sandbox`) and `nosniff`, which is what keeps an SVG inert when opened directly. Everything rejected is a 404.
 
 ### The import is editable, at its origin (WS-8.3)
 
@@ -1444,7 +1444,7 @@ Because `text`/`imports` are strings the client sends — and this is the one co
 
 ### Commit shape
 
-Structural edits are **one-shot commits** (`commitStudioMoves` / `commitStudioDelete` in `studioSaveRequests.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
+Structural edits are **one-shot commits** (`commitStudioMove` / `commitStudioSequence` / `commitStudioDelete` in `studioStructuralCommits.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
 
 ### Measured on the real corpus
 
@@ -1655,7 +1655,7 @@ own dominant ending on every write**. It is installed on every disk-backed
 | Factory | Where |
 |---|---|
 | `createProject()` | `src/core/ast-codemods/locateJsxElement.ts` — every single-file codemod |
-| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load (built once per project directory and kept by `server/handlers/studio/workspaceProject.ts`, which re-reads only the files whose `size:mtimeMs` moved) AND every codemod handed that project. Its file list is `listWorkspaceSourceFiles` — the download walk minus Studio's own `prototype/` shell, whose generated runtime bundle is never parsed as source |
+| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load (built once per project directory and kept by `server/handlers/studio/workspaceProject.ts`, which re-reads only the files whose `size:mtimeMs` moved) AND every codemod handed that project. Its file list is `listWorkspaceSourceFiles` (`workspaceSourceFiles.ts`) — the download walk minus Studio's own `prototype/` shell, whose generated runtime bundle is never parsed as source, and minus every build-tool config (`vite.config.*`, `*.config.*`, `.*rc.*`: they run in Node, no page renders them, and as roots they pulled the whole toolchain's declarations into the program). `maxNodeModuleJsDepth` is pinned to 0, so a package's JS implementation never enters the program |
 | `parsePageFile`'s default project | `src/core/page-parser/parsePageFile.ts` |
 | the probe projects | `packageManifest.ts`, `figmaCodeConnect.ts`, `prototypeCodeFlow.ts` |
 

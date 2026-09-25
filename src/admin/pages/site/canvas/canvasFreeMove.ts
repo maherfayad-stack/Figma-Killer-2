@@ -42,11 +42,24 @@
  * CSSOM, converts it to `inset-inline-start` (`cssPropertyName`). This used
  * to write the kebab key into the source (P2-D's finding, fixed in P2-C).
  *
+ * ## Which offsets it writes (P5-E, IX-21)
+ *
+ * The ones the source AUTHORED, not always `left`/`top`. A layer anchored by
+ * `right: 24px` that gained a `left` from a drag carries both, and the next
+ * width change moves the wrong edge — or, with a `width: auto`, stretches it.
+ * So an already-positioned layer moves through the same plan the arrow-key
+ * nudge uses (`planNudge` over `authoredOffsets`): `right` alone moves as
+ * `right`, `left` + `right` (a stretched layer) both move, `bottom` moves as
+ * `bottom`. A `left: 50%` + `translate(-50%)` centring moves as `left`, from
+ * its USED px value, so the translate still centres it where it lands. Only a
+ * layer that becomes absolute in this gesture (⌘-drag from flow) has nothing
+ * authored, and takes `left` (`insetInlineStart` under RTL) and `top`.
+ *
  * ## Snapping
  *
  * Free movement without alignment is worse than reordering, so the moved rect
  * snaps to its SIBLINGS' edges and centres, and to its PARENT's padding and
- * content box (edges and centre — P2-E / IX-5b, `canvasSnapPeers.ts`), through
+ * content box (edges and centre — P2-E / IX-5b, `snapPeerRules.ts`), through
  * `computeSnap` — the same pure resolver board furniture already uses, at the
  * same "closest wins, at most one snap per axis" contract. Peers are read once
  * from the drag session's candidate index (plus one computed-style read for
@@ -56,14 +69,24 @@
  * The threshold is SCREEN px (IX-5a): `snapThresholdAtZoom` of the session's
  * live zoom, re-read every frame, so the pull feels the same at 50% and 400%.
  *
- * Everything below is pure except `readFreeMoveBase` (which reads computed
- * style) and `previewFreeMove` / `clearFreeMovePreview` (which write one
+ * Everything below is pure except `resolveFreeMove` (which reads computed
+ * style and layout) and `previewFreeMove` / `clearFreeMovePreview` (which write one
  * element's own inline style, the same preview-then-commit shape
  * `useElementResizeDrag` uses — preview dropped BEFORE the store commit, so
  * React's re-render is the last thing to touch the property).
  */
 import { registry } from '@core/module-engine'
-import { inlineOffsetProperty, isPositionedFreely, type InlineOffsetProperty } from '@core/studio-runtime'
+import {
+  computeSnap,
+  cssPropertyName,
+  inlineOffsetProperty,
+  isPositionedFreely,
+  parentSnapRects,
+  readBoxInsets,
+  snapThresholdAtZoom,
+  type SnapGuide,
+  type SnapRect,
+} from '@core/studio-runtime'
 import {
   explainStaticParentConstraint,
   getNodeHtmlTag,
@@ -76,29 +99,24 @@ import {
   presentStructuralRefusal,
   STRUCTURAL_REFUSAL_TITLE,
 } from '@site/store/slices/site/structuralSourceEdits'
-import { computeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { cssPropertyName } from './elementResizeSizing'
-import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
+import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
 
 export interface FreeMovePlan {
   /** The element whose own inline style the gesture writes. */
   element: HTMLElement
-  inlineProperty: InlineOffsetProperty
   /**
-   * `+1` for `left`, `-1` for `insetInlineStart`: a drag to visual-right
-   * increases `left` but DECREASES the distance from an RTL inline start.
+   * The offsets the gesture moves, each from its value at drag start — the
+   * authored ones (IX-21, see the module doc), or `left`/`top` for a layer
+   * that only becomes absolute now.
    */
-  inlineSign: 1 | -1
-  /** The property's value at drag start, in frame-space px. */
-  baseInline: number
-  baseTop: number
+  offsets: NudgePlan
   /**
    * The element is not positioned yet, so the commit must also write
-   * `position: absolute` — see this module's doc for why writing `left`/`top`
-   * alone would be a no-op.
+   * `position: absolute` — see this module's doc for why writing the offsets
+   * alone would be a no-op. Both axes are written then, moved or not.
    */
   needsAbsolute: boolean
   /** Sibling rects plus the parent's padding / content box, frame space, measured once. */
@@ -120,10 +138,11 @@ export type FreeMoveResolution =
   | { ok: true; plan: FreeMovePlan }
   | { ok: false; refusal: FreeMoveRefusal }
 
-/** One frame of a free move: where the element goes, and what to draw. */
+/** One frame of a free move: how far the element has gone, and what to draw. */
 export interface FreeMoveStep {
-  inline: number
-  top: number
+  /** The SNAPPED visual delta since drag start, frame px. */
+  dx: number
+  dy: number
   guides: SnapGuide[]
   /** The snapped rect, in frame space — what the ghost and guides are drawn against. */
   rect: SnapRect
@@ -138,32 +157,63 @@ export interface FreeMoveStyleInput {
   position: string
   direction: string
   left: string
+  right: string
   top: string
-  insetInlineStart: string
+  bottom: string
 }
 
 /**
  * Whether a ⌘-drag may write a position onto an element with this computed
- * style inside a parent with that one, and which property it would write.
+ * style inside a parent with that one — and whether it must also write
+ * `position: absolute`. `null` refuses.
  *
  * Pure. The DOM half (finding the element, the parent, and the sibling rects)
  * is {@link resolveFreeMove}.
  */
 export function planFreeMoveProperties(
-  own: FreeMoveStyleInput,
+  own: Pick<FreeMoveStyleInput, 'position'>,
   parentPosition: string,
-): { inlineProperty: InlineOffsetProperty; inlineSign: 1 | -1; needsAbsolute: boolean } | null {
+): { needsAbsolute: boolean } | null {
   const alreadyFree = isPositionedFreely(own.position)
   // `fixed` is contained by the viewport, not by the parent, so the parent's
   // own position is not a question for it.
   if (!alreadyFree && parentPosition === 'static') return null
+  return { needsAbsolute: !alreadyFree }
+}
 
-  const inlineProperty = inlineOffsetProperty(own.direction)
-  return {
-    inlineProperty,
-    inlineSign: inlineProperty === 'left' ? 1 : -1,
-    needsAbsolute: !alreadyFree,
-  }
+/** The layout facts `planFreeMoveOffsets` reads off the element — plain numbers, so it is testable without layout. */
+export interface FreeMoveElementBox {
+  offsetLeft: number
+  offsetTop: number
+  offsetWidth: number
+  /** The offset parent's `clientWidth` — its padding box, the containing block of an absolute child. */
+  containerWidth: number
+}
+
+/**
+ * The offsets a free move writes, and their values at drag start.
+ *
+ * An already-positioned element: the AUTHORED offsets (IX-21), each from its
+ * used px value — the same `planNudge` the arrow keys use, so a drag and a
+ * nudge can never write different properties for one layer.
+ *
+ * An element becoming absolute now: `left` (`insetInlineStart` under RTL) and
+ * `top`, from where layout put it inside its offset parent — which IS its
+ * containing block once it is absolute — so it does not jump on the first
+ * pixel. Under RTL the inline start is the containing block's RIGHT edge.
+ */
+export function planFreeMoveOffsets(
+  box: FreeMoveElementBox,
+  own: FreeMoveStyleInput,
+  authored: ReadonlySet<NudgeOffsetProperty>,
+  needsAbsolute: boolean,
+): NudgePlan {
+  if (!needsAbsolute) return planNudge(own, authored)
+  const horizontal: NudgeTerm =
+    inlineOffsetProperty(own.direction) === 'left'
+      ? { property: 'left', sign: 1, base: box.offsetLeft }
+      : { property: 'insetInlineStart', sign: -1, base: box.containerWidth - box.offsetLeft - box.offsetWidth }
+  return { horizontal: [horizontal], vertical: [{ property: 'top', sign: 1, base: box.offsetTop }] }
 }
 
 interface ResolveFreeMoveInput {
@@ -196,8 +246,9 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
     position: computed.position,
     direction: computed.direction,
     left: computed.left,
+    right: computed.right,
     top: computed.top,
-    insetInlineStart: computed.insetInlineStart,
+    bottom: computed.bottom,
   }
 
   // An already-absolute element moves freely with no modifier at all — its
@@ -251,12 +302,22 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
     peers.push(snapRectOf(candidate.rect))
   }
 
+  const node = tree.nodes[nodeId]
+  const authored = node
+    ? authoredOffsets(node, useEditorStore.getState().site?.styleRules)
+    : new Set<NudgeOffsetProperty>()
+  const box: FreeMoveElementBox = {
+    offsetLeft: element.offsetLeft,
+    offsetTop: element.offsetTop,
+    offsetWidth: element.offsetWidth,
+    containerWidth: (element.offsetParent as HTMLElement | null)?.clientWidth ?? 0,
+  }
   return {
     ok: true,
     plan: {
       element,
-      ...properties,
-      ...readFreeMoveBase(element, own, properties.inlineProperty),
+      offsets: planFreeMoveOffsets(box, own, authored, properties.needsAbsolute),
+      needsAbsolute: properties.needsAbsolute,
       peers,
       rect: snapRectOf(rect),
     },
@@ -267,36 +328,6 @@ const ZERO_INSETS = { top: 0, right: 0, bottom: 0, left: 0 }
 
 function snapRectOf(rect: CanvasRect): SnapRect {
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
-}
-
-/** The property's current value in px, or `0` when it is `auto` / unreadable. */
-function lengthOrZero(value: string): number {
-  const parsed = Number.parseFloat(value)
-  return Number.isFinite(parsed) ? parsed : 0
-}
-
-/**
- * The offset the gesture starts from.
- *
- * Prefers the property the write will actually target, so a drag continues
- * from where the source already says the element is. Falls back to the
- * element's own offset inside its offset parent — which IS its containing
- * block, both for an element that is already absolute and for one that is
- * about to become absolute — for the `auto` case, so an element positioned
- * only by flow does not jump to the container's corner on the first pixel.
- */
-export function readFreeMoveBase(
-  element: HTMLElement,
-  style: FreeMoveStyleInput,
-  inlineProperty: InlineOffsetProperty,
-): { baseInline: number; baseTop: number } {
-  const rawInline = inlineProperty === 'left' ? style.left : style.insetInlineStart
-  const inlineAuto = Number.isNaN(Number.parseFloat(rawInline))
-  const topAuto = Number.isNaN(Number.parseFloat(style.top))
-  return {
-    baseInline: inlineAuto ? element.offsetLeft : lengthOrZero(rawInline),
-    baseTop: topAuto ? element.offsetTop : lengthOrZero(style.top),
-  }
 }
 
 /**
@@ -317,16 +348,29 @@ export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number, zoom: n
   }
   const snapped = computeSnap(moved, plan.peers, snapThresholdAtZoom(zoom))
   // The snap is expressed as a correction to the rect; the same correction
-  // applies to the offset, because the two differ only by the constant
-  // distance between the containing block and the frame's origin.
-  const snappedDx = snapped.x - plan.rect.x
-  const snappedDy = snapped.y - plan.rect.y
+  // applies to every offset, because each differs from the rect's edge only
+  // by a constant for the length of the gesture.
   return {
-    inline: plan.baseInline + snappedDx * plan.inlineSign,
-    top: plan.baseTop + snappedDy,
+    dx: snapped.x - plan.rect.x,
+    dy: snapped.y - plan.rect.y,
     guides: snapped.guides,
     rect: { x: snapped.x, y: snapped.y, width: moved.width, height: moved.height },
   }
+}
+
+/**
+ * The offsets at this step, as a React style patch: every term of an axis
+ * that moved — both axes for an element becoming absolute, which has no
+ * offsets of its own yet.
+ */
+function offsetsPatch(plan: FreeMovePlan, step: FreeMoveStep): Record<string, string> {
+  const patch: Record<string, string> = {}
+  const write = (terms: readonly NudgeTerm[], delta: number) => {
+    for (const term of terms) patch[term.property] = `${Math.round(term.base + term.sign * delta)}px`
+  }
+  if (plan.needsAbsolute || step.dx !== 0) write(plan.offsets.horizontal, step.dx)
+  if (plan.needsAbsolute || step.dy !== 0) write(plan.offsets.vertical, step.dy)
+  return patch
 }
 
 /**
@@ -340,8 +384,9 @@ export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number, zoom: n
  */
 export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
   if (plan.needsAbsolute) plan.element.style.setProperty('position', 'absolute')
-  plan.element.style.setProperty(cssPropertyName(plan.inlineProperty), `${Math.round(step.inline)}px`)
-  plan.element.style.setProperty('top', `${Math.round(step.top)}px`)
+  for (const [property, value] of Object.entries(offsetsPatch(plan, step))) {
+    plan.element.style.setProperty(cssPropertyName(property), value)
+  }
 }
 
 /**
@@ -353,8 +398,9 @@ export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
  * never seen.
  */
 export function clearFreeMovePreview(plan: FreeMovePlan): void {
-  plan.element.style.removeProperty(cssPropertyName(plan.inlineProperty))
-  plan.element.style.removeProperty('top')
+  for (const term of [...plan.offsets.horizontal, ...plan.offsets.vertical]) {
+    plan.element.style.removeProperty(cssPropertyName(term.property))
+  }
   if (plan.needsAbsolute) plan.element.style.removeProperty('position')
 }
 
@@ -365,8 +411,7 @@ export function freeMoveStylePatch(
 ): Record<string, string> {
   return {
     ...(plan.needsAbsolute ? { position: 'absolute' } : {}),
-    [plan.inlineProperty]: `${Math.round(step.inline)}px`,
-    top: `${Math.round(step.top)}px`,
+    ...offsetsPatch(plan, step),
   }
 }
 

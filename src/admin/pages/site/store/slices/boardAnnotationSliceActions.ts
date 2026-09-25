@@ -265,6 +265,8 @@ export function createAnnotationActions(set: Set, get: Get): AnnotationActions {
       if (state.selectedNodeIds.length > 0 || state.selectedNodeId !== null) state.clearSelection()
       if (state.selectedFrameIds.length > 0) state.clearFrameSelection()
       if (state.selectedAnnotations.length > 0) set({ selectedAnnotations: [] })
+      // P5-G — loose layers on the free canvas are a fourth selection list.
+      if (state.selectedCanvasLayerIds.length > 0) set({ selectedCanvasLayerIds: [] })
     },
   }
 }

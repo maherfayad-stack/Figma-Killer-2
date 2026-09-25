@@ -113,12 +113,23 @@ const WRITE_GATED_BEFORE_THE_SPLIT: Readonly<Record<string, readonly CoreCapabil
  *     gate — `ai.tools.write` + `studio.write`, `sideEffects: 'write'`, on
  *     both agent paths and in the registry. Its siblings `studio_find_icon`,
  *     `studio_list_assets` and `studio_list_fonts` are reads and are NOT here.
+ *   - P4-G (AI-21): `studio_lint` runs the project's own ESLint, which loads
+ *     the project's config and plugins — project code, the
+ *     `studio_render_reference` risk class. Gated the same way:
+ *     `ai.tools.write` + `studio.run.project`, and the project's tier checked
+ *     in the handler. It changes nothing, so it is an observer to the loop
+ *     (`sideEffects: 'none'`).
+ *   - P4-G (AI-23): `studio_delegate` runs subagents that write their pages'
+ *     files, so it carries the file tools' gate (`ai.tools.write` +
+ *     `studio.write`) and is a `'write'` to the loop. HTTP agent surface only.
  */
 const WRITE_GATED_ADDED_SINCE: Readonly<Record<string, readonly CoreCapability[]>> = {
   studio_arrange_frames: ['studio.write'],
+  studio_delegate: ['studio.write'],
   studio_edit_file: ['studio.write'],
   studio_edit_files: ['studio.write'],
   studio_find_image: ['studio.write'],
+  studio_lint: ['studio.run.project'],
   studio_set_tokens: ['studio.write'],
   studio_write_file: ['studio.write'],
 }
@@ -134,6 +145,7 @@ const WRITE_GATED_OBSERVERS = [
   'studio_compare',
   'studio_measure_element',
   'studio_typecheck',
+  'studio_lint',
   'studio_export_frames',
   'studio_render_reference',
 ]

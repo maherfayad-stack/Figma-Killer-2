@@ -293,6 +293,88 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     expect(received).toEqual([{ type: 'resize:commit', nodeId: 'row:1:1#1', patch: { width: '240px', height: '96px' } }])
   })
 
+  // canvas-23 / canvas-26 — what a live frame's resize cannot read itself
+  // crosses with the target: the stored sizing markers untouched, the snap
+  // peers as wire refs, the zoom as is.
+  it('setResizeTarget carries the sizing markers and the snap peers as wire refs', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['list:1:1', 'row:1:1#0', 'row:1:1#1'] })
+    adapters.push(adapter)
+    adapter.setResizeTarget(
+      { nodeId: 'row:1:1#1' },
+      { proportional: false, sizing: { flex: '1' }, snap: { siblings: [{ nodeId: 'row:1:1#0' }], parent: { nodeId: 'list:1:1' }, zoom: 0.5 } },
+    )
+    expect(stub.posted.at(-1)!.message).toEqual({
+      type: 'setResizeTarget',
+      ref: { nodeId: 'row:1:1', occurrenceIndex: 1 },
+      proportional: false,
+      sizing: { flex: '1' },
+      snap: { siblings: [{ nodeId: 'row:1:1', occurrenceIndex: 0 }], parent: { nodeId: 'list:1:1', occurrenceIndex: 0 }, zoom: 0.5 },
+    })
+  })
+
+  it('emits a resize:commit carrying the Fixed companions, and refuses a patch key the wire does not know', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['box:1:1'] })
+    adapters.push(adapter)
+    const received: unknown[] = []
+    adapter.on('resize:commit', (msg) => received.push(msg))
+    stub.dispatch(toOutboundEnvelope({ type: 'resize:commit', nodeId: 'box:1:1', occurrenceIndex: 0, patch: { width: '240px', flex: '0 1 auto', alignSelf: null } }))
+    stub.dispatch({ source: 'studio-live-runtime', direction: 'to-parent', message: { type: 'resize:commit', nodeId: 'box:1:1', occurrenceIndex: 0, patch: { width: '240px', onClick: 'x' } } })
+    expect(received).toEqual([{ type: 'resize:commit', nodeId: 'box:1:1', patch: { width: '240px', flex: '0 1 auto', alignSelf: null } }])
+  })
+
+  it('emits resize:guides as the frame reported them', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN })
+    adapters.push(adapter)
+    const received: unknown[] = []
+    adapter.on('resize:guides', (msg) => received.push(msg))
+    const guides = [{ axis: 'x' as const, position: 210, start: 0, end: 50 }]
+    stub.dispatch(toOutboundEnvelope({ type: 'resize:guides', guides }))
+    stub.dispatch(toOutboundEnvelope({ type: 'resize:guides', guides: [] }))
+    expect(received).toEqual([{ type: 'resize:guides', guides }, { type: 'resize:guides', guides: [] }])
+  })
+
+  // store-17 — a rollback puts a live frame's optimistic hide/move back.
+  it('optimistic.revert posts the wire refs of every node, and nothing for none', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['row:1:1#0', 'row:1:1#1', 'box:2:1'] })
+    adapters.push(adapter)
+    const before = stub.posted.length
+    adapter.optimistic.revert([])
+    expect(stub.posted.length).toBe(before)
+    adapter.optimistic.revert(['row:1:1#1', 'box:2:1'])
+    expect(stub.posted.at(-1)!.message).toEqual({
+      type: 'optimistic.revert',
+      refs: [
+        { nodeId: 'row:1:1', occurrenceIndex: 1 },
+        { nodeId: 'box:2:1', occurrenceIndex: 0 },
+      ],
+    })
+  })
+
+  // canvas-24 — a double-click names the nearest node the tree KNOWS, like a click.
+  it('text:editStart walks the ancestor chain to the nearest known node', () => {
+    const stub = makeStubChannel()
+    const adapter = new BridgeFrameAdapter({ channel: stub.channel, frameOrigin: FRAME_ORIGIN, nodeIdsInTreeOrder: ['pages/Home.tsx:5:7'] })
+    adapters.push(adapter)
+    const editStarts: unknown[] = []
+    adapter.on('text:editStart', (msg) => editStarts.push(msg))
+    stub.dispatch(
+      toOutboundEnvelope({
+        type: 'text:editStart',
+        nodeId: 'design-system/components/Button.jsx:99:6',
+        occurrenceIndex: 0,
+        ancestors: [
+          { nodeId: 'design-system/components/Button.jsx:99:6', occurrenceIndex: 0 },
+          { nodeId: 'pages/Home.tsx:5:7', occurrenceIndex: 0 },
+        ],
+      }),
+    )
+    expect(editStarts).toEqual([{ type: 'text:editStart', nodeId: 'pages/Home.tsx:5:7' }])
+  })
+
   // `speed-01` — a properties-panel style commit/preview, translated the same
   // canonical -> wire way every other optimistic op is.
   it('optimistic.style posts the wire ref and patch untouched, with className carried through when present', () => {
@@ -346,7 +428,7 @@ describe('BridgeFrameAdapter — canonical <-> wire occurrenceIndex translation'
     adapter.on('text:commit', (msg) => commits.push(msg))
     adapter.on('text:cancel', (msg) => cancels.push(msg))
 
-    stub.dispatch(toOutboundEnvelope({ type: 'text:editStart', nodeId: 'row:1:1', occurrenceIndex: 1 }))
+    stub.dispatch(toOutboundEnvelope({ type: 'text:editStart', nodeId: 'row:1:1', occurrenceIndex: 1, ancestors: [{ nodeId: 'row:1:1', occurrenceIndex: 1 }] }))
     stub.dispatch(toOutboundEnvelope({ type: 'text:commit', nodeId: 'row:1:1', occurrenceIndex: 1, text: 'typed text' }))
     stub.dispatch(toOutboundEnvelope({ type: 'text:cancel', nodeId: 'row:1:1', occurrenceIndex: 0 }))
 

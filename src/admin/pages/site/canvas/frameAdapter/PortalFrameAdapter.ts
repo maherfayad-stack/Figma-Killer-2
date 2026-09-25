@@ -40,6 +40,7 @@ import type {
   NodeRect,
   NodeRef,
   OptimisticDomOps,
+  ResizeTargetOptions,
   Unsubscribe,
 } from './FrameDocumentAdapter'
 
@@ -149,10 +150,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       if (!el || !parent) return
       parent.insertBefore(el, parent.children[index] ?? null)
     },
-    text: (nodeId, text) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (el) el.textContent = text
-    },
     // `speed-01` — a documented no-op. The store write this call previews/
     // commits already re-renders the portal tree through React on the SAME
     // tick; a second DOM write here would be a redundant paint racing the
@@ -160,6 +157,9 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
     // for skipping portal adapters on insert/delete/move.
     style: () => {},
     clearStyle: () => {},
+    // store-17 — a documented no-op: a portal frame's DOM is React's render of
+    // the tree, and the rollback that calls this already replayed the tree.
+    revert: () => {},
   }
 
   constructor(doc: Document) {
@@ -357,7 +357,7 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
    * in-frame handles this call drives exist for the cross-origin bridge; a
    * second set here would be two sets of handles on one element.
    */
-  setResizeTarget(_ref: NodeRef | null, _options: { proportional: boolean }): void {}
+  setResizeTarget(_ref: NodeRef | null, _options: ResizeTargetOptions): void {}
 
   /**
    * `live-18` — a documented no-op. Nothing in portal mode ever emits

@@ -4,8 +4,9 @@
  *
  * One gesture, one write, one toast. The whole point of this module is that
  * every way the gesture can fail is decided HERE, before a byte is uploaded:
- * a drop on the empty board, a drop with no image in it, a drop onto nothing
- * that can hold an image, a ⌘-drop into a container that is not positioned.
+ * a drop with no image in it, a drop onto nothing that can hold an image, a
+ * ⌘-drop into a container that is not positioned, and — on a canvas with no
+ * free canvas (the CMS editor) — a drop on the empty board.
  * Each returns a refusal with a sentence, and none of them touches the network
  * or the user's repository.
  *
@@ -24,8 +25,10 @@
  *     files. ⌘/Ctrl places the run ABSOLUTELY at the pointer, K6's rule
  *     (IMG-9, `canvasImageDropPlacement.ts`).
  *
- * The EMPTY BOARD is not a frame: a drop there refuses here (free-canvas
- * placement is P5-G's). This module only answers for drops onto frames.
+ * The EMPTY BOARD of a Studio board is the FREE CANVAS (P5-G): every image
+ * released there becomes a loose layer, never part of a page
+ * (`kind: 'canvas'`), and no modifier changes that. Without a free canvas
+ * (the CMS editor) the empty board refuses.
  *
  * ## Why the position is resolved as an INSERT
  *
@@ -128,6 +131,7 @@ export type CanvasImageDropAction =
 export type CanvasFileDropPlan =
   | {
       ok: true
+      kind: 'frame'
       pageId: string
       /** The images, in the order they were dropped. */
       files: File[]
@@ -135,6 +139,12 @@ export type CanvasFileDropPlan =
       skipped: File[]
       action: CanvasImageDropAction
     }
+  /**
+   * P5-G — released over the empty board of a Studio board: each image becomes
+   * a loose layer on the free canvas, the first centred on `at` (board units).
+   * Never written into a page.
+   */
+  | { ok: true; kind: 'canvas'; files: File[]; skipped: File[]; at: { x: number; y: number } }
   | { ok: false; refusal: CanvasFileDropRefusal }
 
 /**
@@ -333,6 +343,13 @@ export interface CanvasFileDropInput {
   transform: CanvasTransform | null
   /** The page tree a frame renders — the caller's one store read. */
   readPage: (pageId: string) => NodeTree<PageNode> | null
+  /**
+   * P5-G — the free canvas, when this canvas is a Studio board: the board's
+   * client origin and painted zoom (`readBoardOrigin`), which is all it takes
+   * to turn the drop point into a board point. Absent (a CMS canvas),
+   * the empty board still refuses: there is nowhere to put the image.
+   */
+  freeCanvas?: { left: number; top: number; zoom: number } | null
 }
 
 /**
@@ -353,6 +370,19 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
 
   const board = measureBoardDropSurfaces(input.transform)
   const surface = canvasSurfaceAtPoint(board, input.point)
+  if (!surface && input.freeCanvas) {
+    const zoom = input.freeCanvas.zoom > 0 ? input.freeCanvas.zoom : 1
+    return {
+      ok: true,
+      kind: 'canvas',
+      files,
+      skipped,
+      at: {
+        x: (input.point.x - input.freeCanvas.left) / zoom,
+        y: (input.point.y - input.freeCanvas.top) / zoom,
+      },
+    }
+  }
   if (!surface || !surface.pageId) {
     return { ok: false, refusal: CANVAS_FILE_DROP_REFUSAL.noFrame }
   }
@@ -379,7 +409,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   if (!intent.ok) return { ok: false, refusal: intent.refusal }
 
   const action = intent.action
-  if (action.kind !== 'insert') return { ok: true, pageId: surface.pageId, files, skipped, action }
+  if (action.kind !== 'insert') return { ok: true, kind: 'frame', pageId: surface.pageId, files, skipped, action }
 
   // IMG-9 — the width the intrinsic size is clamped to: the container's own
   // content box, read once, now that the drop is certain.
@@ -387,6 +417,7 @@ export function planCanvasFileDrop(input: CanvasFileDropInput): CanvasFileDropPl
   const box = container.ok ? measureContainer(container.node.id) : null
   return {
     ok: true,
+    kind: 'frame',
     pageId: surface.pageId,
     files,
     skipped,

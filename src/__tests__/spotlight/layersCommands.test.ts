@@ -97,7 +97,8 @@ describe('Spotlight layer commands', () => {
     await runLayerCommand('layers.selectParent', ['vc-a'])
     expect(useEditorStore.getState().selectedNodeId).toBe('vc-root')
 
-    await runLayerCommand('layers.selectFirstChild', ['vc-root'])
-    expect(useEditorStore.getState().selectedNodeId).toBe('vc-a')
+    // P5-E (IX-7) — every child, not just the first.
+    await runLayerCommand('layers.selectChildren', ['vc-root'])
+    expect(useEditorStore.getState().selectedNodeIds).toEqual(['vc-a', 'vc-b'])
   })
 })

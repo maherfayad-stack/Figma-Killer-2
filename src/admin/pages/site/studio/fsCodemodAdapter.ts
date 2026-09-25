@@ -35,7 +35,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type Page, type SiteDocument } from '@core/page-tree'
+import { type SiteDocument } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
@@ -54,7 +54,7 @@ import { editOutcomeKey, refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
-import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
+import { orderStreamedPages, StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
 import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline, resetLoadedValues } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
 import { watchOpenPageForCssDestination } from './openPageWatch'
@@ -84,6 +84,9 @@ import { collectNodeDiffEdits } from './nodeDiffWriteback'
 import { notifyRowTemplateWrites } from './rowTemplateWrites'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
+
+/** A load that carried no `canvasLayers` (a CMS load): the free canvas is empty. */
+const NO_CANVAS_LAYERS: readonly never[] = []
 
 /**
  * Remembered from the last load so saveSite can tell the server which folder
@@ -205,16 +208,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // between "server has an answer" and "client has usable bytes".
     type StudioLoadStreamLine = Static<typeof StudioLoadStreamLineSchema>
     let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
-    const pages: Page[] = []
+    const pageLines: Array<StudioLoadStreamLine & { kind: 'page' }> = []
     await ndjsonRequest('/admin/api/studio/load', {
       lineSchema: StudioLoadStreamLineSchema,
       query: { ...(overrideDir ? { dir: overrideDir } : {}), stream: 1 },
       onLine: (line) => {
         if (line.kind === 'meta') meta = line
-        else pages.push(line.page)
+        else pageLines.push(line)
       },
     })
     if (!meta) throw new Error('Studio load stream produced no metadata line.')
+    // P6-B — lines arrive in viewport order; the site keeps page order.
+    const pages = orderStreamedPages(pageLines)
     const {
       dir,
       projectName,
@@ -228,6 +233,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       trust,
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
+      canvasLayers: loadedCanvasLayers,
     } = meta
     // ERR-14 — the automatic stylesheet choices are this project's; a load of
     // a DIFFERENT project starts without them (a resync keeps them).
@@ -262,6 +268,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // misdirect a real diff in the new one. `watchLocalizedPagesForBaseline`
     // is idempotent — safe to call on every load, only subscribes once.
     useEditorStore.getState().resetLocalizedPages()
+    // P5-G — the free canvas's loose layers, kept apart from `site.pages` by
+    // construction (`canvasLayerSlice.ts`): they never enter the document below.
+    useEditorStore.getState().setCanvasLayers(loadedCanvasLayers ?? NO_CANVAS_LAYERS)
     resetLocalizedTextBaseline()
     watchLocalizedPagesForBaseline()
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per

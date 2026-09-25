@@ -1,7 +1,8 @@
 /**
  * studioLoadStreamSchema — the wire shape of `GET /admin/api/studio/load?stream=1`
  * (WS-5.5): a `kind: 'meta'` line (everything except `pages`) first, then one
- * `kind: 'page'` line per page. The non-streamed, single-JSON-envelope shape
+ * `kind: 'page'` line per page, in viewport order, each carrying its `index`
+ * in the page order (P6-B). The non-streamed, single-JSON-envelope shape
  * of this same endpoint (used by tests and any HTTP tooling that just wants
  * one response) is documented server-side by `StudioLoadResult`/`studio.ts`'s
  * load route — this schema only needs to describe the wire shape a CLIENT
@@ -17,7 +18,8 @@
  * cycle even for a schema that never touches the store.
  */
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { ConditionDefSchema, PageSchema, StyleRuleSchema } from '@core/page-tree'
+import { ConditionDefSchema, PageSchema, StyleRuleSchema, type Page } from '@core/page-tree'
+import { CanvasLayerIdSchema } from '@core/studio-board'
 import { TrustTierSchema } from './studioProjectTrust'
 import { StyleRuleSourceSchema } from './styleRuleWriteback'
 import { StyledRuleSourceSchema } from './styledRuleSources'
@@ -77,6 +79,21 @@ const StudioLoadWarningSchema = Type.Union([
 ])
 
 export type StudioLoadWarning = Static<typeof StudioLoadWarningSchema>
+
+/**
+ * P5-G — one loose layer on the free canvas, as `/load` carries it. Mirrors
+ * `CanvasLayerLoad` in `server/handlers/studio/studioLoadContract.ts`. The
+ * layer id is validated against the one id grammar here too, so nothing the
+ * client later builds from it (a page id, a `canvas-layer-*` edit) can carry
+ * a malformed one.
+ */
+export const CanvasLayerLoadSchema = Type.Object({
+  layerId: CanvasLayerIdSchema,
+  pageId: Type.String(),
+  page: PageSchema,
+})
+
+export type CanvasLayerLoad = Static<typeof CanvasLayerLoadSchema>
 
 export const StudioLoadStreamLineSchema = Type.Union([
   Type.Object({
@@ -141,11 +158,35 @@ export const StudioLoadStreamLineSchema = Type.Union([
      * `meta` rather than as a top-level stream line.
      */
     missingPageIds: Type.Optional(Type.Array(Type.String())),
+    /**
+     * P5-G — the free canvas's loose layers, ALWAYS the full set (a narrowed
+     * load included), each a parsed `.studio/canvas/<id>.tsx`. They ride the
+     * meta line rather than the `page` lines on purpose: the client stores them
+     * apart from `site.pages` (`canvasLayerSlice.ts`), which is what keeps them
+     * out of every page list, publish and preview. `Type.Optional` for the
+     * fixture-lines reason `projectKey` gives.
+     */
+    canvasLayers: Type.Optional(Type.Array(CanvasLayerLoadSchema)),
   }),
   Type.Object({
     kind: Type.Literal('page'),
     page: PageSchema,
+    /**
+     * P6-B — this page's position in the project's page order. Page lines
+     * arrive in VIEWPORT order (the frames a person sees first, first), so a
+     * client places each page by `index`, never by arrival — see
+     * `studioLoadResponse.ts` and {@link orderStreamedPages}.
+     */
+    index: Type.Integer({ minimum: 0 }),
   }),
 ])
 
 export type StudioLoadStreamLine = Static<typeof StudioLoadStreamLineSchema>
+
+/**
+ * The page lines of one load stream, in the project's page order — the order
+ * a load's `pages` array has always had, whatever order the lines arrived in.
+ */
+export function orderStreamedPages(lines: readonly Extract<StudioLoadStreamLine, { kind: 'page' }>[]): Page[] {
+  return [...lines].sort((a, b) => a.index - b.index).map((line) => line.page)
+}

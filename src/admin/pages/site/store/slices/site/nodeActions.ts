@@ -304,7 +304,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       if (deleted && plan.commit) {
         // ERR-6 — taken before the tag below clears the entry's patches: they
         // are what puts the element back if the write does not land.
-        const rollback = trackStructuralTreeCommit(helpers, topBefore)
+        const rollback = trackStructuralTreeCommit(helpers, topBefore, plan.commit)
         void commitStudioDelete(plan.commit, rollback ?? undefined)
         // `live-07` — same-tick paint for a live (bridge) frame; portal
         // frames already got theirs from the tree mutation above.
@@ -505,7 +505,7 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // is taken back through this entry's own inverse patches.
       const rollback =
         moved && (commit?.destinationParentNodeId || commit?.anchorNodeId)
-          ? (trackStructuralTreeCommit(helpers, topBefore) ?? undefined)
+          ? (trackStructuralTreeCommit(helpers, topBefore, [primaryId]) ?? undefined)
           : undefined
       // Tagged only when a SOURCE write is actually issued: a CMS or Visual
       // Component tree has no file to disagree with, so patch-replay undo

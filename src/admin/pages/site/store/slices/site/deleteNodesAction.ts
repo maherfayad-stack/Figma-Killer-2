@@ -162,7 +162,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     if (plan.commit && inverseTemplate) {
       // ERR-6 — taken before the tag below clears the entry's patches: they
       // are what puts the elements back if the write does not land.
-      const rollback = trackStructuralTreeCommit(helpers, topBefore)
+      const rollback = trackStructuralTreeCommit(helpers, topBefore, plan.commit)
       void commitStudioDelete(plan.commit, rollback ?? undefined)
       // `live-07` — same-tick paint for a live (bridge) frame, one call per
       // deleted id (a multi-select delete can span several source-derived

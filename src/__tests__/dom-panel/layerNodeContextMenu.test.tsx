@@ -728,9 +728,16 @@ describe('LayerNodeContextMenu — Hide / Unhide', () => {
     const menu = screen.getByRole('menu', { name: 'Node options' })
     const children = Array.from(menu.children)
 
-    expect(children[0].textContent).toBe('Hide')
+    // The label, without the item's shortcut keycaps (P5-E, UX-22): those are
+    // `aria-hidden` and read from the keybinding registry.
+    const label = (element: Element) => {
+      const copy = element.cloneNode(true) as Element
+      for (const hidden of copy.querySelectorAll('[aria-hidden="true"]')) hidden.remove()
+      return copy.textContent
+    }
+    expect(label(children[0])).toBe('Hide')
     expect(children[1].getAttribute('aria-hidden')).toBe('true')
-    expect(children[2].textContent).toBe('Rename')
+    expect(label(children[2])).toBe('Rename')
   })
 
   it('shows Unhide for a hidden node and marks it visible when clicked', () => {

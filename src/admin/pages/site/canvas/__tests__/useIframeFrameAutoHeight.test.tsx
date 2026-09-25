@@ -81,7 +81,7 @@ describe('useIframeFrameAutoHeight — mutation-triggered rescan cost', () => {
     const { iframe, frameDoc, textNode, getScanCount } = setUpFrame()
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), isLive: false }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), fitToContent: true }))
 
     // The initial mount measurement runs the scan exactly once.
     const afterMountScans = getScanCount()
@@ -119,7 +119,7 @@ describe('useIframeFrameAutoHeight — mutation-triggered rescan cost', () => {
     const { iframe, frameDoc, getScanCount } = setUpFrame()
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), isLive: false }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: frameDoc, adapter: makeAdapter(frameDoc), fitToContent: true }))
     const afterMountScans = getScanCount()
 
     const newNode = frameDoc.createElement('div')
@@ -173,7 +173,7 @@ describe('useIframeFrameAutoHeight — bridge-mode branch', () => {
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
     const adapter = makeBridgeAdapter()
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, isLive: false }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, fitToContent: true }))
 
     const dispatch = (adapter as unknown as { __dispatch: (data: unknown) => void }).__dispatch
     dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 950 }))
@@ -182,13 +182,13 @@ describe('useIframeFrameAutoHeight — bridge-mode branch', () => {
     iframe.remove()
   })
 
-  it('does nothing while isLive is true', () => {
+  it('does nothing when the frame does not fit to content (live, or a fixed surface)', () => {
     const iframe = document.createElement('iframe')
     document.body.appendChild(iframe)
     const iframeRef = { current: iframe } as RefObject<HTMLIFrameElement | null>
     const adapter = makeBridgeAdapter()
 
-    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, isLive: true }))
+    renderHook(() => useIframeFrameAutoHeight({ iframeRef, iframeDoc: null, adapter, fitToContent: false }))
 
     const dispatch = (adapter as unknown as { __dispatch: (data: unknown) => void }).__dispatch
     dispatch(toOutboundEnvelope({ type: 'frame:resize', height: 950 }))

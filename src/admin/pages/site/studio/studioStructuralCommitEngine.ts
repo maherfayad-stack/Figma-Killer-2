@@ -13,6 +13,8 @@ import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
+import { isUnreachableFailure } from '@core/http'
+import type { CanvasLayerPlacementChange } from '@core/studio-board'
 import type { PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
@@ -23,7 +25,6 @@ import {
   type StructuralWriteOutcome,
 } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
-import { isUnreachableFailure } from '@core/http'
 import { postEditsRetryingUnreachable } from './structuralWriteRetry'
 import { captureIdentities, type IdentityCapture } from './sourceIdentity'
 import { elementMovedNodeIds, replanAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
@@ -46,7 +47,7 @@ export interface StructuralCommitOptions {
    * pushed an entry, and TAGGED it with this same template, before the commit
    * that reveals the answer even started.
    */
-  undo?: { label: string; template: StructuralInverseTemplate }
+  undo?: { label: string; template: StructuralInverseTemplate; placements?: CanvasLayerPlacementChange[] } // P5-G — see `StructuralSourceGesture.placements`
   /**
    * `store-15` — set only by `delete`. Its tree mutation (and history entry)
    * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
@@ -271,6 +272,7 @@ function resolvePendingHistory(
       ...(options.sequence ? { sequence: true as const } : {}),
       inverseTemplate: options.undo.template,
       inverse: resolveStructuralInverse(options.undo.template, outcome),
+      ...(options.undo.placements ? { placements: [...options.undo.placements] } : {}),
     },
   }
 }

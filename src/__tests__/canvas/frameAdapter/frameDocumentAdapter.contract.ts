@@ -127,13 +127,14 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       const { adapter, existingRef, cleanup } = makeHarness()
       try {
         expect(() => adapter.optimistic.insert('contract-new', existingRef.nodeId, 0, 'div', 'hi')).not.toThrow()
-        expect(() => adapter.optimistic.text('contract-new', 'updated')).not.toThrow()
         // Moves the newly-inserted node back under the SAME parent — moving a
         // node to be its own child (`existingRef` as both mover and target)
         // is nonsensical and correctly throws in a real DOM; this exercises
         // the real "move within a valid, distinct parent" case instead.
         expect(() => adapter.optimistic.move('contract-new', existingRef.nodeId, 0)).not.toThrow()
         expect(() => adapter.optimistic.delete('contract-new')).not.toThrow()
+        // store-17 — a rollback's revert.
+        expect(() => adapter.optimistic.revert(['contract-new'])).not.toThrow()
       } finally {
         cleanup()
       }

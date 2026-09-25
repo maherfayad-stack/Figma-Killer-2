@@ -66,6 +66,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
       'lifetime from the shortcut layer.',
   ],
   [
+    'canvas/useSpacingHandleDrag.ts',
+    'P5-E (IX-17) — the padding / gap handle drag: ⇧ / ⌥ change which sides it writes and Escape cancels it, bound on the frame document AND the parent for the length of that one gesture only — the same exemption as the resize drag, for its sibling handles.',
+  ],
+  [
     'canvas/CanvasTreeLadderOverlay.tsx',
     'The Alt-HOLD hover ladder binds Arrow/Enter/Escape in every frame ' +
       'document AND the parent, only while the ladder is actually showing. It ' +
@@ -95,6 +99,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
   [
     'canvas/useCanvasReorderDrag.ts',
     'S2 — Shift constrains the axis and Escape abandons the drag, read by the session that owns the pointer, bound for the length of that one gesture. A cancel must be handled by the session and by nothing else, which is exactly the in-flight-gesture exemption above.',
+  ],
+  [
+    'canvas/BoardCanvasLayer/useCanvasLayerPointer.ts',
+    'P5-G — Escape abandons a loose-layer drag on the free canvas and puts every layer back, bound only for the length of that one gesture: the same in-flight-gesture exemption as the element and frame drags.',
   ],
   [
     'canvas/BoardFramesLayer/useBoardFrameMoveDrag.ts',

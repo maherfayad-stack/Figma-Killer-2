@@ -36,6 +36,11 @@
  * INSIDE Studio unless `boardMode` is `prototype`, so their cost on a normal
  * editing session is one store read each.
  *
+ * P5-G — `BoardCanvasLayer` (the free canvas's loose layers) mounts FIRST, so
+ * its surface paints below the frames and every annotation (OD-FC-2); its rings
+ * (`BoardCanvasLayerChrome`) mount right after the frames, so a selected loose
+ * layer's ring shows even where a frame covers it.
+ *
  * `BoardCommentsLayer` mounts LAST of all. A review pin has to stay clickable
  * over frames, notes, docs, snap guides, ruler guides and flow connectors
  * alike — it is the only thing on the board that is ABOUT the board rather
@@ -43,6 +48,8 @@
  * a stack of layers that all render `null` outside Studio.
  */
 import { BoardFramesLayer } from './BoardFramesLayer/BoardFramesLayer'
+import { BoardCanvasLayer } from './BoardCanvasLayer/BoardCanvasLayer'
+import { BoardCanvasLayerChrome } from './BoardCanvasLayer/BoardCanvasLayerChrome'
 import { BoardNotesLayer } from './BoardNotesLayer/BoardNotesLayer'
 import { BoardDocsLayer } from './BoardDocsLayer/BoardDocsLayer'
 import { BoardGuidesLayer } from './BoardGuidesLayer/BoardGuidesLayer'
@@ -54,7 +61,9 @@ import { BoardCommentsLayer } from './BoardCommentsLayer/BoardCommentsLayer'
 export function StudioBoardLayers() {
   return (
     <>
+      <BoardCanvasLayer />
       <BoardFramesLayer />
+      <BoardCanvasLayerChrome />
       <BoardNotesLayer />
       <BoardDocsLayer />
       <BoardGuidesLayer />

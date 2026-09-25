@@ -13,19 +13,27 @@ for everything else.
 ```
 GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
    └─ loadStudioPages()                          studioPageLoad.ts
-        0. workspace fingerprint memo (W9-5)     studio/studioLoadMemo.ts
-           Whole-result memo per `dir`, keyed on a `relPath:size:mtimeMs`
-           signature of every source-relevant file (plus `.studio/meta.json`,
-           which `listWorkspaceFiles` excludes). A hit skips steps 1-9
-           entirely: ~26 ms → ~2.5 ms on a 36-page project, which is what an
-           agent turn's 4+ redundant loads used to cost. A narrowed load
-           (`options.pageIds`) runs the same full compute, stores it, and
-           filters `pages` on the way out.
+        0. whole-result memo (W9-5, P6-B)        studio/studioLoadMemo.ts
+           Per loaded project (`loadedProjects.ts`: ONE LRU of 4 projects
+           shared by the memo, the parse cache's memory tier and the kept
+           Project, each project owning one `projectChangeFeed.ts`
+           subscription to P1-D's watcher). A hit needs: the feed (settled —
+           a Studio write since the watcher's last walk forces a walk now)
+           reported no source-relevant file; every file the result was built
+           from (route deps, stylesheets, tsconfig, package.json) has the same
+           stamp; the route list is unchanged; `.studio/meta.json` is
+           unchanged minus `lastOpenedAt`. No whole-project walk on a hit.
+           An untrusted feed (overflow) falls back to a SHA-256 fingerprint.
+           The `/load` route reads the SHARED result
+           (`loadStudioPagesShared`, never mutate); every other caller gets a
+           clone. A narrowed load runs the full compute and filters `pages`.
         0b. kept ts-morph Project per dir          studio/workspaceProject.ts
-           `withWorkspaceProject(dir, fn)` — ONE `createWorkspaceProject`
-           per project directory for the life of the process, synced to the
-           disk before every use (a moved `size:mtimeMs` re-reads that file,
-           new files are added, deleted and in-memory files removed) and
+           `withWorkspaceProject(dir, (handle) => …)` — ONE
+           `createWorkspaceProject` per loaded project, synced from the change
+           feed (only reported files re-stamped; a full walk only when the
+           feed cannot vouch). The handle's `resyncStale(files)` re-checks
+           every file a parse read, so a watcher that lags never produces a
+           cached page built from old text (`routeParse.ts` re-parses), and
            serialized per dir so a sync never forgets nodes under a parse in
            flight. Any change also calls `resetParserCaches()` (the four
            cross-file memos in `@core/page-parser`). This is what took the
@@ -35,6 +43,13 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
            regression to refuse. A moved `tsconfig.json` stamp REBUILDS it
            (aliases are read once, at construction); an unparseable one
            builds without it and reports `tsconfig-unreadable` (WB-23).
+           A load answered from the parse cache never builds the TS program,
+           so every load ends by queueing `prewarmWorkspaceProgram` (reads
+           `getTypeChecker().compilerObject` — the bare `getTypeChecker()` is
+           a lazy wrapper that builds nothing) and draining the parse cache's
+           queued disk writes (`scheduleParseCacheWrites`, also flushed at
+           process exit and on LRU eviction). Both run ~50 ms after the load,
+           never inside it.
         1. discoverPageFiles(pagesDir)           studioProjects.ts
         1b. discoverStories + buildStoryRouteEntries
                                                  studio/story{Discovery,Pages}.ts
@@ -583,7 +598,7 @@ when it copied and `relocated` when it moved — the two have different undos.
 Both id lists are on the `/save` response.
 
 **Commit shape.** Structural edits are one-shot commits
-(`commitStudioMoves` / `commitStudioDelete` / `commitStudioDuplicate` /
+(`commitStudioMove` / `commitStudioSequence` / `commitStudioDelete` / `commitStudioDuplicate` /
 `commitStudioGroup` / `commitStudioUngroup` / … in
 `studioStructuralCommits.ts`), like
 asset/detach/swap — never the `saveSite` diff, which has no notion of parent or

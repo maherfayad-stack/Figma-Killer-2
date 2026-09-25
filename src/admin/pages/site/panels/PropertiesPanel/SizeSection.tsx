@@ -3,7 +3,7 @@
  *
  * docs/features/inspector.md, G2 (F30/F31): width and height are
  * `AddablePropertyField`s that fold their own sizing intent — `Fixed` /
- * `Hug contents` / `Fill container`, resolved through `elementSizing.ts` —
+ * `Hug contents` / `Fill container`, resolved through `elementSizingRules.ts` —
  * into their own dropdown, rather than a separate always-on segmented row.
  * `min`/`max` width and height are not fields at all until asked for (Law 3,
  * `docs/features/inspector.md` §1): each starts life as an
@@ -70,7 +70,7 @@ import {
   sizingUnavailableReason,
   type SizingMode,
   type SizingParentLayout,
-} from './elementSizing'
+} from '@core/studio-runtime'
 import styles from './SizeSection.module.css'
 
 /** Marks are 13px to match the in-field glyphs the generic rows draw. */
@@ -97,7 +97,7 @@ interface SizeSectionProps {
   /**
    * The selected element's REAL parent layout (`useSizingParentLayout`), or
    * `null` when it can't be read. Fixed / Hug / Fill are meaningless without
-   * it — see `elementSizing.ts` — so `null` leaves every axis on Fixed and
+   * it — see `elementSizingRules.ts` — so `null` leaves every axis on Fixed and
    * disables the other two modes with `parentLayoutReason` as the reason.
    */
   parentLayout?: SizingParentLayout | null

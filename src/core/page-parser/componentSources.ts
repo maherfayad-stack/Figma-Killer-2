@@ -35,7 +35,7 @@ import { NewLineKind, Node, Project, type SourceFile } from 'ts-morph'
 import type { ParsedPage } from './types'
 import { isDesignSystemPath } from './designSystemDir'
 import { EolPreservingFileSystem } from './eolFileSystem'
-import { listWorkspaceSourceFiles } from './workspaceFiles'
+import { listWorkspaceSourceFiles } from './workspaceSourceFiles'
 
 export type ComponentSource =
   | { kind: 'local'; file: string }
@@ -119,7 +119,12 @@ function newWorkspaceProject(tsConfigFilePath: string | undefined): Project {
   return new Project({
     useInMemoryFileSystem: false,
     skipAddingFilesFromTsConfig: true,
-    compilerOptions: { allowJs: true },
+    // `maxNodeModuleJsDepth: 0`: a package's JS IMPLEMENTATION never enters
+    // the program, whatever the workspace tsconfig says. `allowJs` is on for
+    // the user's own `.js`/`.jsx`, and with a tsconfig that also raises this
+    // depth TypeScript would parse every untyped dependency's source (and
+    // its imports) as part of the project. Declarations still resolve.
+    compilerOptions: { allowJs: true, maxNodeModuleJsDepth: 0 },
     // The user's repo may be a CRLF checkout. `EolPreservingFileSystem` hands
     // ts-morph LF-only text so a page tree cannot depend on which way Git
     // checked the repo out, and puts each file's own ending back at the one

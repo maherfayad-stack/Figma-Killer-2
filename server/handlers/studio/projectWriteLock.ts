@@ -240,6 +240,26 @@ export function studioWriteSessionCovers(dir: string, atMs: number, slackMs: num
   return false
 }
 
+/**
+ * Whether Studio has held (or still holds) a write session on the project at
+ * `realRoot` that ended at or after wall-clock `sinceMs` — i.e. whether Studio
+ * may have written something a scan taken at `sinceMs` did not see.
+ * `projectWatch.ts`'s `settleProjectChanges` asks this before a load trusts
+ * the watcher's snapshot: a Studio write is followed straight away by the
+ * board's own resync, faster than the watcher's debounce would report it
+ * (P6-B).
+ *
+ * `realRoot` must already be the project's real path (the watcher's root —
+ * what {@link lockKey} would return). This runs before every load, and the
+ * `realpathSync` inside `lockKey` was a quarter of a warm load's memo check.
+ */
+export function studioWroteSince(realRoot: string, sinceMs: number): boolean {
+  for (const session of writeSessions.get(realRoot) ?? []) {
+    if (session.end === null || session.end >= sinceMs) return true
+  }
+  return false
+}
+
 /** `true` when someone is currently writing to this project. Test/diagnostic only — never a precondition, because the answer is stale the instant it is read. */
 export function isProjectWriteLocked(dir: string): boolean {
   return locks.get(lockKey(dir))?.locked === true

@@ -11,7 +11,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { assetSiteUrlResolver } from '../studio/assetSiteUrl'
+import { assetSiteUrlResolver, siteUrlWorkspaceCandidates } from '../studio/assetSiteUrl'
 import { resolveAppRoot } from '../studio/appRoot'
 
 let tmpDir: string
@@ -126,5 +126,58 @@ describe('assetSiteUrlResolver — a hostile file name cannot escape the URL', (
       const out = src(hostile)
       expect(out).toMatch(/^\/[A-Za-z0-9._~%-]+(\/[A-Za-z0-9._~%-]+)*$/)
     }
+  })
+})
+
+/**
+ * P5-B2 — the inverse: a site-root URL the page's source writes
+ * (`src="/hero.png"`) back to the project files a dev server answers it with.
+ * The design frame's asset request goes through this, so it must agree with
+ * the forward rule on every file the forward rule names.
+ */
+describe('siteUrlWorkspaceCandidates — the inverse of the site-URL rule', () => {
+  beforeEach(() => write('package.json', JSON.stringify({ name: 'app', devDependencies: { vite: '^5.0.0' } })))
+
+  it('looks in public/ first, then in the source tree (the dev-only case)', () => {
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/hero.png')).toEqual(['public/hero.png', 'hero.png'])
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/src/assets/EN-2.png')).toEqual([
+      'public/src/assets/EN-2.png',
+      'src/assets/EN-2.png',
+    ])
+  })
+
+  it('round-trips every URL the forward rule writes, percent-encoding included', () => {
+    const forward = assetSiteUrlResolver(tmpDir)
+    for (const rel of ['public/hero.png', "public/a'), url(evil.png), url('.png", 'public/my photo (1).png', 'src/assets/x.png']) {
+      const src = forward(rel)!.src
+      expect(siteUrlWorkspaceCandidates(tmpDir, src)).toContain(rel)
+    }
+  })
+
+  it('never offers the public directory under its own name, in any case', () => {
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/public/hero.png')).toEqual(['public/public/hero.png'])
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/PUBLIC/hero.png')).toEqual(['public/PUBLIC/hero.png'])
+  })
+
+  it('drops the query and fragment', () => {
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/hero.png?v=2#x')).toEqual(['public/hero.png', 'hero.png'])
+  })
+
+  it('answers nothing for anything that is not a site-root path', () => {
+    for (const url of ['hero.png', './hero.png', '//evil.example/x.png', '/\\evil.example/x.png', 'https://x/y.png', '/', '/%E0%A4%A', '']) {
+      expect(siteUrlWorkspaceCandidates(tmpDir, url)).toEqual([])
+    }
+  })
+
+  it('decodes a smuggled `..` into a real `..` segment, for the read guard to refuse', () => {
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/%2E%2E/secret.png')).toEqual(['public/../secret.png', '../secret.png'])
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/..%2Fsecret.png')).toEqual(['public/../secret.png', '../secret.png'])
+  })
+
+  it("maps into a monorepo APP's public/, not the project dir's", () => {
+    fs.rmSync(path.join(tmpDir, 'package.json'))
+    write('web/package.json', JSON.stringify({ name: 'web', devDependencies: { vite: '^5.0.0' } }))
+    expect(resolveAppRoot(tmpDir)).toBe(path.resolve(tmpDir, 'web'))
+    expect(siteUrlWorkspaceCandidates(tmpDir, '/hero.png')).toEqual(['web/public/hero.png', 'web/hero.png'])
   })
 })
