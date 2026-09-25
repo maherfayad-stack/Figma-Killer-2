@@ -49,7 +49,13 @@ interface UseCanvasTreeLadderOverlayArgs {
   portalMode: CanvasOverlayPortalMode
   show: boolean
   hoveredNodeId: string | null
-  hoveredBreakpointOrigin: string | null
+  /**
+   * Whether the current hover came from THIS frame (its breakpoint, and its
+   * board frame when it carries one). A boolean rather than the hover's origin
+   * id: board frames of one width share a breakpoint id, so an id-valued read
+   * changed for every mounted frame at once whenever the hover moved.
+   */
+  hoverOriginatesHere: boolean
   /**
    * This frame's selection. Used for ONE thing: deciding whether the OTHER
    * Alt-hover gesture — K5's `MeasureLayer` — owns this hold instead. See
@@ -72,14 +78,21 @@ export function useCanvasTreeLadderOverlay({
   portalMode,
   show,
   hoveredNodeId,
-  hoveredBreakpointOrigin,
+  hoverOriginatesHere,
   selectedNodeIds,
 }: UseCanvasTreeLadderOverlayArgs): CanvasTreeLadderOverlayResult {
-  const activePage = useEditorStore(selectActiveCanvasPage)
-  const styleRules = useEditorStore((s) => s.site?.styleRules ?? EMPTY_STYLE_RULES)
-  const visualComponents = useEditorStore((s) => s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS)
-  const treeLadderRef = useRef<HTMLDivElement>(null)
   const [inspectActive, setInspectActive] = useState(false)
+  // Read only while the ladder is armed (Alt held over this frame). Every
+  // mounted frame runs this hook, and the active page is a new object after
+  // every keystroke: subscribed unconditionally, a keystroke re-rendered the
+  // selection chrome of every frame on the board and re-attached this hook's
+  // listeners in each (P6-C).
+  const activePage = useEditorStore((s) => (inspectActive ? selectActiveCanvasPage(s) : null))
+  const styleRules = useEditorStore((s) => (inspectActive ? (s.site?.styleRules ?? EMPTY_STYLE_RULES) : EMPTY_STYLE_RULES))
+  const visualComponents = useEditorStore((s) =>
+    inspectActive ? (s.site?.visualComponents ?? EMPTY_VISUAL_COMPONENTS) : EMPTY_VISUAL_COMPONENTS,
+  )
+  const treeLadderRef = useRef<HTMLDivElement>(null)
   const [inspectSuppressed, setInspectSuppressed] = useState(false)
   const [inspectAnchorNodeId, setInspectAnchorNodeId] = useState<string | null>(null)
   const [treeLadderHighlightedNodeId, setTreeLadderHighlightedNodeId] = useState<string | null>(null)
@@ -195,7 +208,7 @@ export function useCanvasTreeLadderOverlay({
       if (event.key === 'Alt') {
         setInspectActive(true)
         setInspectSuppressed(false)
-        if (hoveredNodeId && hoveredBreakpointOrigin === breakpointId) {
+        if (hoveredNodeId && hoverOriginatesHere) {
           setInspectAnchorNodeId(hoveredNodeId)
           setTreeLadderHighlightedNodeId(null)
         }
@@ -282,7 +295,7 @@ export function useCanvasTreeLadderOverlay({
     commitTreeLadderSelection,
     effectiveTreeLadderHighlightedNodeId,
     explicitHighlightNodeId,
-    hoveredBreakpointOrigin,
+    hoverOriginatesHere,
     hoveredNodeId,
     inspectAnchorNodeId,
     breakpointId,
