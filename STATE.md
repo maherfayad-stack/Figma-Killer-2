@@ -78,7 +78,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### mcp-32 — P4-G: lint, HTTP subagents, model routing, short tool descriptions (AI-21, AI-23, AI-25, AI-29)
 - **Agent:** mcp-tooling · **Branch:** `feat/agent-routing-and-lint` off `a92df2d3` · **PR:** #255 (draft, base `feat/canvas-excellence`; long form, security note and tool table in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying — security-guard review APPROVE-WITH-NITS (both nits fixed below); trunk merged (incl. #256), gates in the PR body
+- **Stage:** verifying — security-guard review APPROVE-WITH-NITS (both nits fixed below); trunk merged (incl. #256) at `5e9058a0`; build + lint clean, full suite in chunks: only the 2 pre-existing architecture failures (`module-size-budgets` on `agentCheckpoints.ts`, bundle freshness on bun 1.3.6 — green on 1.3.13)
 - **Tools added:**
   - `studio_lint` — `server`; `ai.tools.write` + `studio.run.project` AND the project at `run-project` (`checkTrustTier`); `sideEffects: none`; both agent paths + registry. Input `{ dir?, paths?[≤50] }`. Below Tier 2: `trust-tier-required` "…linting runs its own ESLint config and plugins, which needs the highest tier". Also `eslint-not-installed`, `no-eslint-config`, `lint-invocation-error`, `lint-timed-out`.
   - `studio_delegate` — `server`; `ai.tools.write` + `studio.write`; `sideEffects: write`; HTTP agent surface only (`studioHttpAgentTools`), not in the MCP catalog. Input `{ tasks: [{ page, brief }] ≤4 }`. No runner: `delegation-unavailable` "There is no chat turn with an open project to run subagents in." Also `overlapping-ownership`, `not-owned` (a child writing outside its page's `.tsx` + `.module.css`).
