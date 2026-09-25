@@ -333,6 +333,7 @@ Deep imports into these engine modules are enforced by `src/__tests__/architectu
 - `@core/studio-anchor` — the comment anchor model. `resolve.ts` is the one place that decides whether a comment still points at anything
 - `@core/studio-prototype` — authored links plus the flow map derived from the project's own navigation code; `codeFlow.ts`'s AST rules are what the connector layer and the panel both read
 - `@core/studio-runtime` — the live-frame runtime bridge. `runtime.ts` is built to one standalone ESM file served to a real browser, and the four rule modules it shares with the portal-mode canvas injectors (`hoverSuppressionRules` / `scrollUnrollRules` / `animationFreezeRules` / `selectionChromeCss`) must stay ONE implementation each
+- `@core/vector` — the pure vector engine behind SVG on the canvas (path data, curve geometry, and the ONE markup ⇄ JSX attribute-name table and same-document-fragment reference policy that the parser, the SVG importer, the sanitizer and the canvas renderer share). A deep import is how a second, drifted copy of either gets made
 
 Note: `@core/framework-schema` is a dependency of both `@core/page-tree` (for `FrameworkSettingsSchema` and `GeneratedClassMetadataSchema`) and `@core/framework` (for the persisted data shapes). This arrangement keeps the module graph one-directional — the engine depends on the schema leaf, not on the page tree. Any other module barrel is still a convention without a gate; treat deep imports in those as drift and migrate them to the barrel as part of whatever change you're making.
 

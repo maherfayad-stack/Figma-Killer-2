@@ -268,6 +268,31 @@ describe('an inline <svg> written as JSX', () => {
     )
   })
 
+  it('writes React aliases of namespaced and lowercase attributes as the markup names a browser reads', () => {
+    // `xlinkHref` is React's spelling of `xlink:href`, not of `xlink-href`;
+    // the parse used to dash every capital, so a sprite's `<use>` pointed at
+    // nothing on the canvas. The name table is now the one `@core/vector`
+    // shares with the SVG importer, so markup → JSX → markup is an identity.
+    write(
+      'pages/Sprite.jsx',
+      [
+        'export default function Sprite() {',
+        '  return (',
+        '    <svg xmlnsXlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8" tabIndex={-1}>',
+        '      <use xlinkHref="#dot" /><text xmlSpace="preserve">a</text>',
+        '    </svg>',
+        '  )',
+        '}',
+        '',
+      ].join('\n'),
+    )
+
+    expect(svgOf(parse('pages/Sprite.jsx'))).toBe(
+      '<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 8 8" tabindex="-1">'
+      + '<use xlink:href="#dot"/><text xml:space="preserve">a</text></svg>',
+    )
+  })
+
   it('resolves computed geometry, including Math constants', () => {
     write(
       'pages/Ring.jsx',

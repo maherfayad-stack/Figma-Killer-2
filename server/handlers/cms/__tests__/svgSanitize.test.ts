@@ -123,3 +123,62 @@ describe('sanitizeSvgBytes — the #248 review payloads', () => {
     expect(out).toContain('<rect')
   })
 })
+
+describe('sanitizeSvgBytes — the review-248 follow-ups (P5-D SVG-2)', () => {
+  const NS = 'xmlns="http://www.w3.org/2000/svg"'
+
+  it.each([
+    `<!DOCTYPE svg [<!ENTITY x "<h:script xmlns:h='http://www.w3.org/1999/xhtml'>alert(1)</h:script>">]><svg ${NS}>&x;<rect/></svg>`,
+    `<!DOCTYPE svg [<!ENTITY a "lol"><!ENTITY b "&a;&a;&a;&a;"><!ENTITY c "&b;&b;&b;&b;">]><svg ${NS}><text>&c;</text><rect/></svg>`,
+    `<!doctype svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg ${NS}><rect/></svg>`,
+    `<svg ${NS}><!ENTITY stray "x"><rect/></svg>`,
+  ])('removes a DOCTYPE and every entity declaration: %s', (input) => {
+    const out = clean(input).toLowerCase()
+    expect(out).not.toContain('<!doctype')
+    expect(out).not.toContain('<!entity')
+    expect(out).not.toContain('alert(1)')
+    expect(out).toContain('<rect')
+  })
+
+  it.each([
+    `<svg ${NS} xmlns:h="http://www.w3.org/1999/xhtml"><h:iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"/><rect/></svg>`,
+    `<svg ${NS} xmlns:h="http://www.w3.org/1999/xhtml"><h:iframe srcdoc="&lt;script&gt;alert(1)&lt;/script&gt;"></h:iframe><rect/></svg>`,
+    `<svg ${NS}><g><div xmlns="http://www.w3.org/1999/xhtml"><iframe src="javascript:alert(1)"></iframe></div></g><rect/></svg>`,
+    `<svg ${NS}><x:object xmlns:x="http&#58;//www.w3.org/1999/xhtml" data="data:text/html,alert(1)"></x:object><rect/></svg>`,
+    `<svg ${NS}><h:embed xmlns:h="http://www.w3.org/1999/xhtml" src="evil.swf"/><h:meta http-equiv="refresh" content="0;url=javascript:alert(1)"/><rect/></svg>`,
+    `<svg ${NS}><g srcdoc="alert(1)"/><rect/></svg>`,
+  ])('removes XHTML embedding elements, srcdoc and the XHTML namespace: %s', (input) => {
+    const out = clean(input).toLowerCase()
+    expect(out).not.toMatch(/<\/?(?:[\w.-]+:)?(?:iframe|object|embed|meta)\b/)
+    expect(out).not.toContain('srcdoc')
+    expect(out).not.toContain('1999/xhtml')
+    expect(out).not.toContain('alert(1)')
+    expect(out).toContain('<rect')
+  })
+
+  it.each([
+    `<?xml version="1.0"?><?xml-stylesheet type="text/xsl" href="#x"?><svg ${NS}><rect/></svg>`,
+    `<?xml-stylesheet type="text/xsl" href="https://evil.test/x.xsl"?><svg ${NS}><rect/></svg>`,
+    `<?XML-STYLESHEET href="x.xsl"?><svg ${NS}><rect/></svg>`,
+    `<svg ${NS}><?php echo 1 ?><rect/></svg>`,
+  ])('removes every processing instruction but the XML declaration: %s', (input) => {
+    const out = clean(input).toLowerCase()
+    expect(out).not.toContain('stylesheet')
+    expect(out).not.toContain('<?php')
+    expect(out).toContain('<rect')
+  })
+
+  it('keeps the XML declaration, <metadata>, and an XHTML-free foreign namespace', () => {
+    const input = `<?xml version="1.0" encoding="UTF-8"?><svg ${NS} xmlns:xlink="http://www.w3.org/1999/xlink"><metadata>m</metadata><rect/></svg>`
+    const out = clean(input)
+    expect(out).toContain('<?xml version="1.0" encoding="UTF-8"?>')
+    expect(out).toContain('<metadata>m</metadata>')
+    expect(out).toContain('xmlns:xlink="http://www.w3.org/1999/xlink"')
+  })
+
+  it('agrees with the canvas sanitizer on a same-document href: kept, and a script scheme dropped', () => {
+    const out = clean(`<svg ${NS}><defs><path id="a" d="M0 0"/></defs><use href="#a"/><use href="javascript:alert(1)"/></svg>`)
+    expect(out).toContain('<use href="#a"/>')
+    expect(out).not.toContain('javascript:')
+  })
+})

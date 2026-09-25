@@ -1568,10 +1568,17 @@ element without mutating the DOM or the body), a `MutationObserver` over the
 frame document, capture-phase `scroll` inside the frame, the adapter's
 `frame:resize` (bridge mode's only signal — its document is unreachable), a
 parent-window resize (which also invalidates the anchor), and the component's
-own effects for selection change and the committed pan/zoom.
+own effects for selection change, the committed pan/zoom, and a **hover target**
+change.
 
-Three things are easy to get wrong here:
+Four things are easy to get wrong here:
 
+- **A tracked-target change that mutates no page DOM is invisible to every
+  observer.** Hover moving straight from one node to another (body → main → an
+  icon) writes only to the ring, and the mutation observer filters that as
+  chrome, so the hover ring kept the FIRST node's box under the new id until
+  the hover-target effect existed (`breakpointOverlayHoverRingFollowsTarget.test.tsx`).
+  Any new input that retargets a ring must call `schedule()` itself.
 - **`transformRef` cannot tell you a pan STARTED.** It is mutated in place and
   never changes identity, so the only way to learn from it is to poll — the
   loop this work order deleted. That is why `canvasViewportActivity.ts` exists,
