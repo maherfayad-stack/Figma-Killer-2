@@ -15,6 +15,7 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import { cleanup, fireEvent, render, waitFor } from '@testing-library/react'
 import { makeNode } from '../../../../../../__tests__/fixtures'
+import { createFakeUploadXhr } from '../../../studio/__tests__/fakeUploadXhr'
 import { ImageSourceSection } from '../ImageSourceSection'
 
 const PROP = 'src'
@@ -26,60 +27,42 @@ interface SeenRequest {
 
 let seen: SeenRequest[] = []
 const savedFetch = globalThis.fetch
-const savedXhr = globalThis.XMLHttpRequest
 const savedCreateObjectURL = URL.createObjectURL
 const savedRevokeObjectURL = URL.revokeObjectURL
 
 /** What `asset-drop` answers: the file landed in `public/`, served at `/new.png`. */
-function dropResponse(): Response {
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      mode: 'public',
-      relPath: 'public/new.png',
-      src: '/new.png',
-      width: 640,
-      height: 480,
-      deduped: false,
-    }),
-    { status: 200, headers: { 'content-type': 'application/json' } },
-  )
+function dropBody() {
+  return {
+    ok: true,
+    mode: 'public',
+    relPath: 'public/new.png',
+    src: '/new.png',
+    width: 640,
+    height: 480,
+    deduped: false,
+  }
 }
 
 /**
- * A stand-in for the XHR upload client's transport. Answers the way the real
+ * A stand-in for the one XHR upload transport (`apiUploadRequest`). Answers
+ * `asset-drop` with the landing above, and anything else the way the real
  * `asset-upload` does for a bare upload: the file lands in `src/assets/`.
  */
-class FakeXhr {
-  status = 0
-  response: unknown = null
-  responseType = ''
-  withCredentials = false
-  upload = { onprogress: null as ((event: ProgressEvent) => void) | null }
-  onload: (() => void) | null = null
-  onerror: (() => void) | null = null
-  onabort: (() => void) | null = null
-  private url = ''
-  open(_method: string, url: string) {
-    this.url = url
-  }
-  abort() {}
-  send() {
-    seen.push({ transport: 'xhr', url: this.url })
-    this.status = 200
-    this.response = { ok: true, relPath: 'src/assets/new.png', src: null, width: 640, height: 480, deduped: false }
-    queueMicrotask(() => this.onload?.())
-  }
-}
+const fakeXhr = createFakeUploadXhr((url) => {
+  seen.push({ transport: 'xhr', url })
+  return url.startsWith('/admin/api/studio/asset-drop')
+    ? { status: 200, body: dropBody() }
+    : { status: 200, body: { ok: true, relPath: 'src/assets/new.png', src: null, width: 640, height: 480, deduped: false } }
+})
 
 beforeEach(() => {
   seen = []
   globalThis.fetch = (async (input: RequestInfo | URL) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
     seen.push({ transport: 'fetch', url })
-    return dropResponse()
+    return new Response(JSON.stringify(dropBody()), { status: 200, headers: { 'content-type': 'application/json' } })
   }) as typeof fetch
-  globalThis.XMLHttpRequest = FakeXhr as unknown as typeof XMLHttpRequest
+  fakeXhr.install()
   URL.createObjectURL = () => 'blob:preview'
   URL.revokeObjectURL = () => {}
 })
@@ -87,7 +70,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup()
   globalThis.fetch = savedFetch
-  globalThis.XMLHttpRequest = savedXhr
+  fakeXhr.restore()
   URL.createObjectURL = savedCreateObjectURL
   URL.revokeObjectURL = savedRevokeObjectURL
 })

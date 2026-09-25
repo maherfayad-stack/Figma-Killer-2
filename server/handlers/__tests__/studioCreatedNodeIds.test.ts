@@ -92,6 +92,28 @@ describe('applyStudioEditBatch — createdNodeIds', () => {
     expect(result.createdNodeIds).toEqual([idOfTag('Chip')])
   })
 
+  it('P5-B IMG-2 — names EVERY element of a one-edit sibling run, in order, in one write', () => {
+    writePage()
+    const result = applyStudioEditBatch(tmpDir, [
+      {
+        kind: 'insert',
+        nodeId: idIn(PAGE, 'section'),
+        anchorNodeId: idIn(PAGE, 'p', 1),
+        position: 'after',
+        name: 'img',
+        props: { src: '/a.png', alt: 'a' },
+        siblings: [
+          { name: 'img', props: { src: '/b.png', alt: 'b' } },
+          { name: 'img', props: { src: '/c.png', alt: 'c' } },
+        ],
+      },
+    ])
+
+    expect(result.written).toBe(1)
+    expect(result.createdNodeIds).toEqual([idOfTag('img', 1), idOfTag('img', 2), idOfTag('img', 3)])
+    expect(readPage()).toContain('<p>first</p>\n      <img src="/a.png" alt="a" />\n      <img src="/b.png" alt="b" />\n      <img src="/c.png" alt="c" />\n      <p>second</p>')
+  })
+
   it('names the COPY a duplicate wrote, never the original', () => {
     writePage()
     const original = idIn(PAGE, 'p')
