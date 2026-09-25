@@ -19,7 +19,7 @@
  * a nudge burst still waiting to post, so ⌘Z undoes it rather than racing it.
  */
 import { useEffect, useRef, type MutableRefObject } from 'react'
-import { moveAnchor, serializePathModel, type PathModel } from '@core/vector'
+import { moveAnchor, type PathModel } from '@core/vector'
 import { useEditorKeyScope } from '../useEditorKeyDispatcher'
 import { exitVectorEdit, getVectorEditTarget } from './vectorEditState'
 import type { VectorPart } from './vectorEditParts'
@@ -52,13 +52,15 @@ interface NudgeBurst {
 }
 
 export interface VectorEditKeysInput {
-  partsRef: MutableRefObject<VectorPart[]>
   selectionRef: MutableRefObject<VectorSelection | null>
-  repaint: () => void
+  /** The part as it stands now. */
+  readPart: (part: number) => VectorPart | undefined
+  /** Show `model` on the part: the overlay and the real element (the layer owns the parts). */
+  previewPart: (part: number, model: PathModel) => void
   commitPart: (part: number, startModel: PathModel, startD: string, label: string) => void
 }
 
-export function useVectorEditKeys({ partsRef, selectionRef, repaint, commitPart }: VectorEditKeysInput): void {
+export function useVectorEditKeys({ selectionRef, readPart, previewPart, commitPart }: VectorEditKeysInput): void {
   const burstRef = useRef<NudgeBurst | null>(null)
 
   const flushNudge = () => {
@@ -77,24 +79,23 @@ export function useVectorEditKeys({ partsRef, selectionRef, repaint, commitPart 
 
   const nudge = (dx: number, dy: number): boolean => {
     const selection = selectionRef.current
-    const part = selection ? partsRef.current[selection.part] : undefined
+    const part = selection ? readPart(selection.part) : undefined
     if (!selection || !part) return false
-    let burst = burstRef.current
-    if (burst && (burst.part !== selection.part || burst.segment !== selection.segment)) {
+    let previous = burstRef.current
+    if (previous && (previous.part !== selection.part || previous.segment !== selection.segment)) {
       flushNudge()
-      burst = null
+      previous = null
     }
-    burst ??= { part: selection.part, segment: selection.segment, startModel: part.model, startD: part.d, dx: 0, dy: 0, timer: null }
-    burst.dx += dx
-    burst.dy += dy
-    const model = moveAnchor(burst.startModel, burst.segment, applyLinear(part.toLocal, { x: burst.dx, y: burst.dy }))
-    part.model = model
-    part.d = serializePathModel(model, { decimals: part.decimals }).d
-    part.element.setAttribute('d', part.d)
-    repaint()
-    if (burst.timer !== null) clearTimeout(burst.timer)
-    burst.timer = setTimeout(() => flushRef.current(), NUDGE_COMMIT_MS)
+    if (previous?.timer != null) clearTimeout(previous.timer)
+    const base = previous ?? { part: selection.part, segment: selection.segment, startModel: part.model, startD: part.d, dx: 0, dy: 0 }
+    const burst: NudgeBurst = {
+      ...base,
+      dx: base.dx + dx,
+      dy: base.dy + dy,
+      timer: setTimeout(() => flushRef.current(), NUDGE_COMMIT_MS),
+    }
     burstRef.current = burst
+    previewPart(burst.part, moveAnchor(burst.startModel, burst.segment, applyLinear(part.toLocal, { x: burst.dx, y: burst.dy })))
     return true
   }
 

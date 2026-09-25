@@ -196,6 +196,28 @@ describe('vector edit mode', () => {
     expect(getVectorEditTarget()).toBeNull()
   })
 
+  it('a burst of arrow nudges is ONE write, posted after the last press', async () => {
+    const { hit, path } = enter()
+    renderHook(() => useEditorKeyDispatcher())
+    await act(async () => {
+      fireEvent.pointerDown(hit, { pointerId: 1, button: 0, clientX: 130, clientY: 70 })
+      fireEvent.pointerUp(hit, { pointerId: 1, clientX: 130, clientY: 70 })
+    })
+    for (let i = 0; i < 5; i += 1) {
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', shiftKey: true, bubbles: true, cancelable: true }))
+      })
+    }
+    // 5 × 10 CSS px right is 25 local units at this part's scale of 2.
+    expect(path.getAttribute('d')).toBe('M0 0L35 0L10 10')
+    expect(saves).toHaveLength(0)
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 500))
+    })
+    expect(saves).toHaveLength(1)
+    expect((saves[0] as { edits: { set: unknown }[] }).edits[0]!.set).toEqual({ d: 'M0 0L35 0L10 10' })
+  })
+
   it('leaves the mode when something else is selected', () => {
     enter()
     act(() => {

@@ -46,6 +46,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### canvas-30 — P5-D part 2: SVG part stamps, the `svg-attr` edit, vector edit mode, the pen
+- **Agent:** canvas-engineer · **Branch:** `feat/svg-draw-and-edit` · **PR:** draft against `feat/canvas-excellence` (see the PR body for the long form) · **Updated:** 2026-09-26
+- **Stage:** verifying → done pending security review and owner dogfood.
+- **Goal:** ROADMAP P5-D SVG-3, SVG-4, the select/move/edit-points half of SVG-6, the pen of SVG-7, and SVG-9's budgets.
+- **Scope (canvas files):** `canvas/BoardVectorLayer/*` (new: layer, CSS, parts, geometry, state, entry, keys, penPath), `canvas/CanvasPenToolLayer.tsx`, `canvas/CanvasArmedToolLayer.tsx` (new), `canvas/CanvasRoot.tsx`, `canvas/StudioBoardLayers.tsx`, `canvas/useCanvasNodeInteraction.ts`, `canvas/useCanvasToolShortcuts.ts`, `canvas/canvasDrawTool.ts`, `canvas/editorKeyDispatcher.ts`, `store/slices/canvasSlice.ts` (type only), `spotlight/keybindingTools.ts`. Parser/server: `inlineSvg.ts`, `jsxLiteralAttribute.ts`, `setSvgPartAttributes.ts`, `studioSvgWriteback.ts`, `studioStructuralDispatch.ts` (extracted), `studioEditRouting.ts`, `studioEditIdentity.ts`, `@core/vector` (`svgPartStamps`, `svgAttributeWrites`).
+- **Done:**
+  - SVG-3: every element under a literal `<svg>` is stamped `data-studio-svg-part` / `-code`; every exit strips (`svg-part-stamps-stripped.test.ts`).
+  - SVG-4: `svg-attr` kind; server-side containment/tag/spread/expression guards; one shared attribute rule with the importer.
+  - Vector edit mode: double-click → anchors/handles in board space; drag = one `/save`, one undo, 0 React commits per move; arrow nudge = one write per burst.
+  - Pen (`P`): one `<svg>` insert (or a free-canvas layer on the empty board) per path.
+  - e2e `studio-vector.e2e.ts` 5/5 in real Chromium; added to the `e2e-budgets` slice.
+- **Decisions:** the mode lives in a module store (`vectorEditState.ts`), not the editor store; icon-prop svgs are not stamped; an `svg-attr` whose host P1-D would re-address refuses `element-moved` instead of guessing the part.
+- **Landmines (height × injectors × events):**
+  - The mirrored `d` write lands in user DOM under `beginCanvasGesture()`; outside a gesture it would wake `PortalFrameAdapter`'s attribute observer and the overlay measure scheduler per frame.
+  - A re-applied `__html` recreates every inner element: never hold a part element across a markup change, re-query by `data-studio-svg-part`.
+  - An SVG root's overflow paints but is not reliably hit-testable: the edit layer fits its own box + viewBox to the hit targets.
+  - Playwright's `boundingBox()` misreports a path inside a nested svg viewport (4 vs 8 px); measure with `getBoundingClientRect` in the page.
+  - A nudge burst posts 400 ms after the last key; a ⌘Z inside that window flushes it first, but the write is async (queued).
+- **Next:** security-guard review (attack surface in the PR body); owner dogfood `canvas-30`; follow-ups: pencil/line/arrow, delete/insert anchor, Enter to enter edit mode, hide the ring/handles while editing, drawing a path INTO an existing svg, SVG-5 (after P5-A), SVG-8.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -60,6 +80,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry in the archive
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry in the archive
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
+
+**SVG (P5-D)**
+- `canvas-30` · `/admin/site` on a copy of `test4` with an inline icon svg, zoom 100% / 25% / 400%, 1 frame · double-click the svg → anchors on its points at ~8 px; drag one → one `POST /save`, only that segment changes in the `.tsx`, ⌘Z restores it byte-for-byte; P + clicks + ⏎ inside the frame → one new `<svg stroke="currentColor">`. Script: the PR body
 
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry

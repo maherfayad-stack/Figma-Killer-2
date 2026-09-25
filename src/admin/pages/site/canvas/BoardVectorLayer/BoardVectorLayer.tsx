@@ -39,7 +39,7 @@
  * graphic disappearing. A click that is not on an anchor falls through to the
  * frame, where it selects — which, unless it selects this same svg, leaves.
  */
-import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { moveAnchor, moveHandle, serializePathModel, type PathModel, type Point } from '@core/vector'
 import { pushToast } from '@ui/components/Toast'
 import { cn } from '@ui/cn'
@@ -123,9 +123,10 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   }, [markup, selectedNodeId, target.hostNodeId])
 
   // (Re)measure after every commit that changed the host's markup: a
-  // re-applied `__html` recreated every inner element.
-  useLayoutEffect(() => {
-    if (markup === null) return
+  // re-applied `__html` recreated every inner element. Measuring needs the
+  // committed DOM, so it is an effect; the state it sets is the measurement's
+  // answer (an effect event), not a value derivable during render.
+  const measure = useEffectEvent(() => {
     const resolution = resolveVectorHost(target.frameId, target.hostNodeId)
     if (!resolution.ok) {
       pushToast({ kind: 'warning', title: 'Cannot edit points', body: resolution.message, location: 'site-editor' })
@@ -134,6 +135,9 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     }
     partsRef.current = resolution.value.parts
     setPartKeys(resolution.value.parts.map((part) => part.part))
+  })
+  useLayoutEffect(() => {
+    if (markup !== null) measure()
   }, [markup, target.frameId, target.hostNodeId])
 
   const half = (px: number) => px / (zoom > 0 ? zoom : 1)
@@ -253,15 +257,24 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     )
   }
 
-  const moveSelection = (part: VectorPart, drag: DragState, deltaBoard: Point) => {
-    const delta = applyLinear(part.toLocal, drag.shift ? constrainTo45(deltaBoard) : deltaBoard)
-    const model = drag.handle === null
-      ? moveAnchor(drag.startModel, drag.segment, delta)
-      : moveHandle(drag.startModel, drag.segment, drag.handle, delta)
+  /** Show `model` on part `index`: its source-preserving `d` on the overlay AND the real element (D6). */
+  const previewPart = (index: number, model: PathModel) => {
+    const part = partsRef.current[index]
+    if (!part) return
     part.model = model
     part.d = serializePathModel(model, { decimals: part.decimals }).d
     part.element.setAttribute('d', part.d) // D6 — the real shape follows the pointer
     paintActive()
+  }
+
+  const moveSelection = (part: VectorPart, drag: DragState, deltaBoard: Point) => {
+    const delta = applyLinear(part.toLocal, drag.shift ? constrainTo45(deltaBoard) : deltaBoard)
+    previewPart(
+      drag.part,
+      drag.handle === null
+        ? moveAnchor(drag.startModel, drag.segment, delta)
+        : moveHandle(drag.startModel, drag.segment, drag.handle, delta),
+    )
   }
 
   const applyDrag = () => {
@@ -362,9 +375,9 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   }
 
   useVectorEditKeys({
-    partsRef,
     selectionRef,
-    repaint: () => paintRef.current(),
+    readPart: (index) => partsRef.current[index],
+    previewPart,
     commitPart,
   })
 

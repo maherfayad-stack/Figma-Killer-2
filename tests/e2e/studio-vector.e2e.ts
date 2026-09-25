@@ -145,7 +145,7 @@ async function overlayAnchors(page: Page): Promise<AnchorFacts> {
 }
 
 /** Where the in-frame path's local points actually are on screen: its own CTM, then the (scaled) iframe. */
-async function pathPointsOnScreen(page: Page, frame: Locator, svgNodeId: string, points: readonly { x: number; y: number }[], zoom: number) {
+async function pathPointsOnScreen(frame: Locator, svgNodeId: string, points: readonly { x: number; y: number }[], zoom: number) {
   const iframeBox = (await visibleCanvasIframe(frame).boundingBox())!
   const local = await canvasContentFrame(frame)
     .locator(`[data-node-id="${svgNodeId}"] path`)
@@ -179,7 +179,7 @@ test.describe('SVG-9 — vector edit mode and the pen, measured', () => {
       await expect
         .poll(async () => {
           const facts = await overlayAnchors(page)
-          const actual = await pathPointsOnScreen(page, frame, ICON_SVG, iconPoints, facts.zoom)
+          const actual = await pathPointsOnScreen(frame, ICON_SVG, iconPoints, facts.zoom)
           if (facts.overlay.length !== actual.length) return Number.POSITIVE_INFINITY
           return Math.max(...facts.overlay.map((o, i) => Math.hypot(o.x - actual[i]!.x, o.y - actual[i]!.y)))
         }, { message: `anchors off the path at ${pct}%`, timeout: 10_000 })
