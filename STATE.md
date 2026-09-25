@@ -118,6 +118,25 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Tests (each failed with its fix disabled in place):** `studio-runtime/{liveFrameParity (5), resizeHandles (+5), elementResizeSizing (+2), messages (+3)}`, `canvas/frameAdapter/BridgeFrameAdapter (+5)`, `editor-store/undoTellsTheTruth (+3)`, `canvas/canvasHoverOffStore (+2)`, `canvas/useBridgeSelectionChrome (+1)`. e2e `tests/e2e/live-frame-parity.e2e.ts` (store-17, badge, flex, snap on a live SMS frame).
 - **Next:** owner dogfood (Pending dogfood → `canvas-37`). P5-G/B/D regenerate the bundle after this lands.
 
+### perf-16 — P6-B client half: stream the board in (PERF-7, speed-07)
+- **Agent:** perf-hunter · **Branch:** `perf/stream-the-board-in` off `ef23f78a` · draft PR (base `feat/canvas-excellence`), long form + all runs in its body · **Updated:** 2026-09-26 · (perf-15 left to P6-C, running in parallel)
+- **Stage:** PR open (draft). Gates in the PR body.
+- **Done:** (1) a first open hands the store its pages AS THEY ARRIVE (`studio/studioProjectLoad.ts`, split out of `fsCodemodAdapter.ts`; `LoadSiteOptions.progress` in `@core/persistence/types`; store side `streamedLoadSlice.ts`); frames whose page is still on the wire paint `PendingBoardFrame`; `/load`'s meta line carries `pageList` (replaces `pageCount`). (2) The sidecar read starts WITH `/load`; the token extraction runs AFTER it, unwaited, and is adopted as part of the read (`adoptLoadedFramework`). (3) The board's own chunk (`studioBoardLayersChunk.ts`) is preloaded with the editor body instead of after it. (4) React's dev double-mount now aborts the superseded load request. Timeline marks: `studio:load:first-page|open|complete`.
+- **Numbers** (e2e, Vite DEV server, warm, ms from navigation; before = trunk `ef23f78a` in a side worktree, interleaved; ±15 % machine noise):
+
+| | 40-page before → after | 1,000-file before → after |
+|---|---|---|
+| `/load` start → first byte | 178, 152 → 95, 98 | 210 → 161 |
+| board frames after canvas root | 1065, 961 → 0, 0 | 2284 → 0 |
+| first frame painted | 5315, 5602 → 4485, 5190 | 5428 → 4510 |
+| cold first frame painted | 11826, 10275 → 8486, 8100 | 18702 → 14895 |
+
+- **Budgets:** `tests/e2e/studio-board-load.e2e.ts` (added to `e2e-budgets`): warm first paint < 6 s, and board frames ≤ 300 ms after the canvas root (ORDER budget; before = ~1 s, so it fails on the old code).
+- **Decisions:** pages are APPENDED while streaming (undo patches address pages by position); page order is restored at the end only when the undo stack is empty. The first delivery waits for the page `loadSite` opens on (home, else first), so the active page is unchanged. Re-reads of an open project still take one whole document.
+- **Landmines / tried and did NOT help:** (1) running the token POST beside `/load` made it WORSE — its 150–590 ms of synchronous server work held `/load`'s first byte back (152 → 523 ms; 1,000 files 210 → 1940 ms). (2) Streaming alone did not move the dev first paint (5315/5602 → 5287): the critical path was the board chunk and the frame mount. (3) The server cannot emit a page before the whole parse: the registry's class ids are last-wins across all pages' stylesheets.
+- **Found, not fixed:** the ten on-screen frames' trees commit in ONE transition (diag: start 3148 → commits 4465–4521 ms), so the first frame cannot paint before the tenth — canvas-engineer. Token extraction re-runs and rewrites `framework.json` on every open (server-engineer). No in-flight dedupe in `memoizedStudioLoad`.
+- **Next:** orchestrator merge; owner dogfood in the PR body.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
