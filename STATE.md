@@ -11,6 +11,18 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### store-20 — P6-A: reconcile after writes (PERF-6)
+- **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
+- **Stage:** verifying — gates run in chunks; results and pre-existing failures in the PR body.
+- **Slices touched:** `site/lifecycleActions.ts` (`patchPages`, and `createSite`/`loadSite`/`clearSite` clear the render keys), `site/reparseNodeFollow.ts` (optional `alignments` input, shared). New `site/rereadRenderKeys.ts`, `canvas/nodeRenderKeys.ts` (off-store), `@core/utils/replaceEqualDeep`. No new selector; no new mutation (a re-read is not an edit: no history entry, no coalesce key).
+- **Done:**
+  - `patchPages` applies a re-read by value: each re-read page, `styleRules` and `conditions` go through `replaceEqualDeep`, so a deep-equal node, rule, registry or page keeps its object. A prop write re-renders one `NodeRenderer`, not the whole page, and restyles no frame (was 12 of 12).
+  - A renumbered node keeps its React key: `rereadRenderKeys.ts` aligns each changed re-read page (`alignPageTrees`) and carries keys through `nodeRenderKeys.ts`; `NodeRenderer` and `CanvasComposedTree` key children by `nodeRenderKey(pageId, id)`. A move remounts nothing (was 297 of 300). The follower reuses the alignment.
+  - Bench: `bench:editor-store` "Post-write re-sync" (`scripts/bench/lib/postWriteResync.ts`), counts are a budget; before/after table in its doc.
+- **Decisions:** always align a changed page (an unchanged id SET is not a shortcut: a move among same-size siblings permutes addresses). Keys are per page and unique among siblings (minted key when a new node takes an address a moved one carries).
+- **Landmines:** (1) a shared parent whose child keys changed is COPIED (`rereadRenderKeys.ts`), or it would not re-render and keep stale keys — test `nodeRendererPostWriteRerender.test.tsx` "permutes". (2) Only frames with `CanvasPageContext` carry keys. (3) The move pays ~2.5 ms more in the store (one alignment) to save 297 remounts.
+- **Next:** orchestrator merges. Collision: `lifecycleActions.ts` (serial; P1-B/P3-E in). P3-D (#250) touches the structural commit path, not `patchPages`.
+
 ### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
 - **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
 - **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
