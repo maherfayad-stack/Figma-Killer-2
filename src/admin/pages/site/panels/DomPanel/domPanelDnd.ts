@@ -1,4 +1,4 @@
-import type { Page } from '@core/page-tree'
+import { isResolvedByInstanceDetach, type Page } from '@core/page-tree'
 import {
   previewStructuralMove,
   resolvePageTreeDropTarget,
@@ -103,6 +103,7 @@ export function resolveDomDropTarget({
  */
 export function previewDomDropRefusal(page: Page, target: DomDropTarget): DomDropRefusal | null {
   const preview = previewStructuralMove(page, target.draggedIds, target.parentId, target.index)
-  if (preview.ok) return null
+  // OD-7 — written to THIS instance of a shared component, not refused.
+  if (preview.ok || isResolvedByInstanceDetach(preview.refusal.reason)) return null
   return { overId: target.overId, message: preview.refusal.message }
 }

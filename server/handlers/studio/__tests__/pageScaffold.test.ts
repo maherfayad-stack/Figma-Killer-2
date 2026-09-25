@@ -129,6 +129,17 @@ describe('autoPlaceBoardFrame', () => {
     const file = readBoardsFile()
     expect(file.boards[0]!.frames[0]).toMatchObject({ pageId: 'home', x: 0, y: 0, width: 500, height: 400 })
   })
+
+  it('P5-F / IX-13 — a frame drawn with the board tool lands where it was drawn, at the drawn size', () => {
+    writeStudioMeta(tmpDir, { frameDefaults: { width: 500, height: 400 } })
+    autoPlaceBoardFrame(tmpDir, 'first')
+    autoPlaceBoardFrame(tmpDir, 'drawn', undefined, { x: 2400, y: -300, width: 390, height: 844 })
+    autoPlaceBoardFrame(tmpDir, 'clicked', undefined, { x: 3000, y: 10 })
+    const frames = readBoardsFile().boards[0]!.frames
+    expect(frames.find((f) => f.pageId === 'drawn')).toMatchObject({ x: 2400, y: -300, width: 390, height: 844 })
+    // A click carries no size: the project default applies, at the click point.
+    expect(frames.find((f) => f.pageId === 'clicked')).toMatchObject({ x: 3000, y: 10, width: 500, height: 400 })
+  })
 })
 
 describe('scaffoldedPageRootNodeId', () => {

@@ -18,8 +18,9 @@
  * being lifted in one surface and forgotten in another.
  */
 import { chooseGroupWrapperTag } from '@core/utils/htmlContentModel'
-import { isSourceDerivedNodeId, isStudioPageRootId } from './sourceNodeId'
+import { isSourceDerivedNodeId, isStudioPageRootId, loopTemplateNodeId } from './sourceNodeId'
 import { getParent } from './selectors'
+import { createScratchTree, moveOnScratch, planMoveSequence, type SequencedMove } from './moveSequence'
 import {
   refusePlacement,
   refuseStructuralEdit,
@@ -45,6 +46,14 @@ export interface StructuralMoveCommit {
   /** The existing child to land beside, or `null` to append as the last child (reparent only). */
   anchorNodeId: string | null
   position: 'before' | 'after'
+  /**
+   * ERR-16 — the new container is written in ANOTHER file than the element.
+   * A same-file reparent cannot say that honestly (the markup would land where
+   * the names it reads do not exist), so the write is a `transplant`, which
+   * carries the imports the markup needs and refuses by name when a local it
+   * reads cannot travel.
+   */
+  crossFile?: true
 }
 
 /**
@@ -111,7 +120,11 @@ export function previewStructuralMove(
   // this; inventing a refusal for it would explain the wrong thing.
   if (!node || !newParent) return { ok: true, commit: null }
 
-  const multi = nodeIds.length > 1
+  // P3-D — several elements are several single-element moves, each asked
+  // against the tree the previous one leaves (`moveSequence.ts`). The answer
+  // is the first refusal, or "writes" with no single commit to name: the
+  // store plans and posts the whole sequence itself.
+  if (nodeIds.length > 1) return previewMoveSequence(tree, planMoveSequence(tree, nodeIds, newParentId, newIndex))
 
   // "Same parent?" read off the child list rather than the denormalised
   // `parentId` pointer: the list is the thing the move is actually about, and
@@ -132,12 +145,15 @@ export function previewStructuralMove(
     const container = resolveSourceContainer(tree, newParentId)
     if (!container.ok) return { ok: false, refusal: container.refusal }
 
-    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node, multi })
-    if (refusal) return { ok: false, refusal }
+    const refusal = refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })
+    // ERR-16 — across files the move is a transplant (see `crossFile`), which
+    // is its own honest write; every other refusal stands.
+    if (refusal && refusal.reason !== 'cross-file') return { ok: false, refusal }
     return {
       ok: true,
       commit: {
         nodeId,
+        ...(refusal ? { crossFile: true as const } : {}),
         destinationParentNodeId: container.node.id,
         // `newIndex` counts the DROP PARENT's children. When the container had
         // to be re-resolved (the page root became the page's root element), that
@@ -161,20 +177,58 @@ export function previewStructuralMove(
   const next = reordered[index + 1]
   if (next !== undefined) candidates.push({ anchorNodeId: next, position: 'before' })
 
+  // WB-22 — when a neighbour is a `.map` row, the list as a whole is a place
+  // the file can name: landing right after its LAST row is "after the list",
+  // right before its FIRST row is "before the list". (Between two rows of one
+  // list there is no such place — every row is one piece of source.) The
+  // codemod resolves the row's template to its `{items.map(…)}` container.
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
+  if (previousList && previousList !== nextList) candidates.push({ anchorNodeId: previousList, position: 'after' })
+  if (nextList && nextList !== previousList) candidates.push({ anchorNodeId: nextList, position: 'before' })
+
   let firstRefusal: StructuralRefusal | null = null
   for (const candidate of candidates) {
     const refusal = refuseStructuralEdit({
       kind: 'reorder',
       node,
       anchor: tree.nodes[candidate.anchorNodeId] ?? { id: candidate.anchorNodeId },
-      multi,
     })
     if (!refusal) return { ok: true, commit: isSourceDerivedNodeId(nodeId) ? { nodeId, ...candidate } : null }
     firstRefusal ??= refusal
   }
 
-  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null, multi })
+  // WB-22 — no neighbour to name, but the element lands LAST: "append to my
+  // own parent" is a position the reparent form already writes (with no
+  // anchor it appends after the last written child).
+  if (next === undefined && firstRefusal?.reason === 'no-sibling-anchor' && isSourceDerivedNodeId(nodeId)) {
+    const container = resolveSourceContainer(tree, newParentId)
+    if (container.ok && !refuseStructuralEdit({ kind: 'reparent', node, destination: container.node })) {
+      return {
+        ok: true,
+        commit: { nodeId, destinationParentNodeId: container.node.id, anchorNodeId: null, position: 'after' },
+      }
+    }
+  }
+
+  const refusal = firstRefusal ?? refuseStructuralEdit({ kind: 'reorder', node, anchor: null })
   return refusal ? { ok: false, refusal } : { ok: true, commit: null }
+}
+
+/**
+ * P3-D — whether every step of a move sequence would write: each asked with
+ * {@link previewStructuralMove} against the scratch tree the steps before it
+ * leave. The first refusal, or `ok` with no single commit (a sequence has
+ * one per step; the store builds them itself when it commits).
+ */
+export function previewMoveSequence(tree: NodeTree<PageNode>, moves: readonly SequencedMove[]): StructuralMovePreview {
+  const scratch = createScratchTree(tree)
+  for (const move of moves) {
+    const step = previewStructuralMove(scratch, [move.nodeId], move.parentId, move.index)
+    if (!step.ok) return step
+    moveOnScratch(scratch, move)
+  }
+  return { ok: true, commit: null }
 }
 
 /**
@@ -256,6 +310,12 @@ export function resolveContainerAnchor(
   if (addressable(previous)) return { anchorNodeId: previous!, position: 'after' }
   const next = children[index]
   if (addressable(next)) return { anchorNodeId: next!, position: 'before' }
+  // WB-22 — beside a `.map` list's edge, the list itself is the anchor (see
+  // `previewStructuralMove`).
+  const previousList = previous === undefined ? null : loopTemplateNodeId(previous)
+  const nextList = next === undefined ? null : loopTemplateNodeId(next)
+  if (previousList && previousList !== nextList && addressable(previousList)) return { anchorNodeId: previousList, position: 'after' }
+  if (nextList && nextList !== previousList && addressable(nextList)) return { anchorNodeId: nextList, position: 'before' }
   return { anchorNodeId: null, position: 'after' }
 }
 
@@ -383,9 +443,8 @@ export function previewStructuralGroup(
     }
   }
 
-  const multi = nodes.length > 1
   for (const node of nodes) {
-    const refusal = refuseStructuralEdit({ kind: 'group', node, multi })
+    const refusal = refuseStructuralEdit({ kind: 'group', node })
     if (refusal) return { ok: false, refusal, nodeId: node.id }
   }
 

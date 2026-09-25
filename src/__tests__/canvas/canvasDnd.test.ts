@@ -206,10 +206,10 @@ describe('canvasDnd', () => {
     expect(atLowZoom.target?.position).toBe('before')
   })
 
-  it('previews a source-writeback refusal WHILE the pointer is still down (G5) — a shared-component reorder', () => {
-    // Two shared-component (inlined) siblings under a plain container — a
-    // structurally VALID drop position (real container, real index), but the
-    // WRITE would refuse: an inlined node's markup lives in another file.
+  // OD-7 (P3-D) — a reorder inside a shared component is written to THIS
+  // instance (detach, then move), so the preview shows a drop line. It used to
+  // refuse `shared-component` here.
+  it('shows a drop line for a reorder inside a shared component — it applies to this instance (OD-7)', () => {
     const inlinedA = 'pages/Home.tsx:10:4~ui/Card.tsx:2:4'
     const inlinedB = 'pages/Home.tsx:12:4~ui/Card.tsx:2:4'
     const tree = page({
@@ -219,33 +219,44 @@ describe('canvasDnd', () => {
       [inlinedB]: node(inlinedB, 'base.text'),
     })
     const overB = candidate(inlinedB, 1, { left: 0, top: 0, width: 100, height: 100 })
-
     const result = resolveCanvasDropTarget({
       tree,
       draggedId: inlinedA,
       draggedIds: [inlinedA],
       candidates: [overB],
-      // Bottom of the rect -> 'after' zone -> a real, non-no-op reorder target.
+      point: { x: 50, y: 96 },
+      canHaveChildren,
+    })
+    expect(result.invalid).toBeNull()
+    expect(result.target).not.toBeNull()
+  })
+
+  it('previews a source-writeback refusal WHILE the pointer is still down (G5) — a .map row', () => {
+    // A `.map` row: a structurally VALID drop position (real container, real
+    // index), but the WRITE would refuse — one piece of source renders every row.
+    const rowA = 'pages/Home.tsx:10:4#0'
+    const rowB = 'pages/Home.tsx:10:4#1'
+    const tree = page({
+      root: node('root', 'base.body', ['container']),
+      container: node('container', 'base.container', [rowA, rowB]),
+      [rowA]: node(rowA, 'base.text'),
+      [rowB]: node(rowB, 'base.text'),
+    })
+    const overB = candidate(rowB, 1, { left: 0, top: 0, width: 100, height: 100 })
+
+    const result = resolveCanvasDropTarget({
+      tree,
+      draggedId: rowA,
+      draggedIds: [rowA],
+      candidates: [overB],
       point: { x: 50, y: 96 },
       canHaveChildren,
     })
 
-    // The tree-shape resolver alone would have returned a valid target here
-    // (real container, real index) — the refusal only appears once
-    // `previewStructuralMove` is consulted.
     expect(result.target).toBeNull()
-    expect(result.invalid?.overId).toBe(inlinedB)
-    expect(result.invalid?.constraint?.explanation).toContain('shared component')
-    // The whole constraint, not just its sentence: the overlay shows the
-    // reason during the drag, and `origin`/`actions` are what any surface
-    // AFTER the drop needs to offer a way forward. Both trace to the DRAGGED
-    // element, not the candidate under the pointer — and for an inlined node
-    // that is the COMPONENT'S own file (`decodeSourceNodeId` reads a composite
-    // id's last segment), which is exactly where the user has to go to move
-    // this markup.
+    expect(result.invalid?.overId).toBe(rowB)
     expect(result.invalid?.constraint?.scope).toBe('gesture')
-    expect(result.invalid?.constraint?.reason).toBe('shared-component')
-    expect(result.invalid?.constraint?.origin?.rel).toBe('ui/Card.tsx')
+    expect(result.invalid?.constraint?.reason).toBe('list-row')
   })
 
   it('does not invent a refusal for an ordinary CMS (nanoid) node — refusal previews are studio-only', () => {

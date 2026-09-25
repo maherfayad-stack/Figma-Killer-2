@@ -30,6 +30,17 @@
  *    outermost thing the component returns. Deleting it leaves `return ;`, a
  *    file that no longer parses.
  *
+ * ## A conditional element goes with its condition (WB-20)
+ *
+ * `{cond && <X/>}` renders `<X/>` or nothing, so deleting `<X/>` removes the
+ * whole `{…}` container: what is left would otherwise be `{cond && }`, which
+ * does not parse, and there is no other state to keep. A ternary BRANCH
+ * (`{cond ? <X/> : <Y/>}`) is replaced with `null` instead, because the other
+ * branch is a state the user did not delete. Either way the element is gone in
+ * every state, which is what deleting it on the canvas means. A `.map` row
+ * still refuses `expression-child` — see `resolveJsxChildRange`'s
+ * `'conditional'` unit.
+ *
  * ## Deliberately does NOT tidy up after itself
  *
  * A codemod that collapses a now-empty parent or reformats the gap it left is
@@ -79,14 +90,21 @@ export interface DeletedJsxText {
   wholeLine: boolean
 }
 
-export type DeleteJsxElementResult = { ok: true; removed: DeletedJsxText } | { ok: false; refusal: DeleteJsxRefusal }
+/**
+ * `removed` is `null` for a ternary branch replaced with `null` (WB-20): the
+ * delete rewrote an expression rather than cutting a child, so there are no
+ * child bytes to hand back.
+ */
+export type DeleteJsxElementResult =
+  | { ok: true; removed: DeletedJsxText | null }
+  | { ok: false; refusal: DeleteJsxRefusal }
 
 export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxElementResult {
   const { file, line, col } = params
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  const target = resolveJsxChildRange(sourceFile, line, col)
+  const target = resolveJsxChildRange(sourceFile, line, col, 'conditional')
   if (!target.ok) return { ok: false, refusal: { reason: target.reason, message: target.message } }
 
   const verbatim = verbatimSourceText(sourceFile, file)
@@ -100,6 +118,15 @@ export function deleteJsxElement(params: DeleteJsxElementParams): DeleteJsxEleme
     }
   }
 
+  const branch = target.range.ternaryBranch
+  if (branch) {
+    // The other state stays; this one renders nothing from now on. There are
+    // no bytes an undo could re-insert as a CHILD here — the branch is not
+    // one — so `removed` is not reported, and the undo refuses by name
+    // (`reinsert-deleted` needs every deleted element's bytes).
+    writeVerbatimSource(sourceFile, file, verbatim.slice(0, branch.start) + 'null' + verbatim.slice(branch.end))
+    return { ok: true, removed: null }
+  }
   const removed = verbatim.slice(target.range.start, target.range.end)
   writeVerbatimSource(sourceFile, file, verbatim.slice(0, target.range.start) + verbatim.slice(target.range.end))
   return { ok: true, removed: { text: removed, wholeLine: target.range.wholeLine } }

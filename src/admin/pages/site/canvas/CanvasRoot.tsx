@@ -42,6 +42,7 @@ import { CanvasNotch } from './CanvasNotch'
 import { CanvasModeToggle } from './CanvasModeToggle'
 import { CanvasContextSelector } from './CanvasContextSelector'
 import { CanvasRulers } from './CanvasRulers/CanvasRulers'
+import { BoardDrawPagePicker } from './BoardFramesLayer/BoardDrawPagePicker'
 import { CanvasSelectionContext, CanvasViewportActionsContext } from './CanvasContexts'
 // Class / user-stylesheet injectors are now mounted per breakpoint frame
 // (inside each iframe's document) by `IframeFrameSurface`. CanvasRoot no
@@ -645,6 +646,8 @@ export function CanvasRoot(props: CanvasRootProps) {
             </Suspense>
           )}
           {!isLive && editable && <SelectionStyleCommandHost />}
+          {/* P5-F / IX-13 — the board tool's page picker, at the release point. */}
+          {!isLive && editable && <BoardDrawPagePicker />}
 
           {/*
           Plugin-registered canvas overlays. Mounted after the transform

@@ -206,6 +206,25 @@ export const SELECTION_CHROME_RULES = `
 [data-canvas-resize-handle="w"] { left: 0; }
 [data-canvas-resize-handle="e"] { left: 100%; }
 
+/* P5-F / IX-25 - rotation zones: invisible squares just OUTSIDE each corner
+   handle, so pressing on the corner still resizes and pressing a little
+   beyond it rotates (Figma's and Penpot's placement). Portal-mode only. */
+[data-canvas-rotate-handle] {
+  position: absolute;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  pointer-events: auto;
+  touch-action: none;
+  cursor: grab !important;
+}
+[data-canvas-rotate-handle="nw"] { top: 0;    left: 0;    margin: -19px 0 0 -19px; }
+[data-canvas-rotate-handle="ne"] { top: 0;    left: 100%; margin: -19px 0 0 5px; }
+[data-canvas-rotate-handle="se"] { top: 100%; left: 100%; margin: 5px 0 0 5px; }
+[data-canvas-rotate-handle="sw"] { top: 100%; left: 0;    margin: 5px 0 0 -19px; }
+[data-canvas-rotating] [data-canvas-rotate-handle] { cursor: grabbing !important; }
+
 /* IX-18 - the W x H badge, centred under the element, shown only while a
    resize drag is live (the frame carries data-canvas-resizing for exactly
    that long). A child of the frame, so it rides the frame's own placement

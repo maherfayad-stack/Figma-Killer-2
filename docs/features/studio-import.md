@@ -1414,10 +1414,10 @@ Until `struct-01` the `StudioEdit` union carried value kinds only, and `saveSite
 | `shared-component` | an inlined id: the markup lives in the component's own file, so moving it here moves every instance. (Stricter than the VALUE rule, which writes and warns — a drag says "move THIS one", and there is no way to honour that.) |
 | `route-chrome` | a Next `layout`/`template`, composed into every route below it |
 | `code-placed` | the parser recorded a structural `lockReason` (spread, dynamic child) |
-| `multi-select` (wrap) | one wrapper around several elements is one write spanning all of their ranges, and in the code they may not be neighbours — `wrapJsxElement` writes around ONE element's own range |
+| ~~`multi-select` (wrap)~~ | P3-D: a wrap of several elements is a group (one container around their run) |
 | `reparent` | asked with no container to write into, or with one that is not an ordinary element. **Not** a blanket refusal any more: W4-1 |
 | `cross-file` (reparent) | the new parent is in another module, where the values the markup reads do not exist |
-| `multi-select` | several elements REORDERED at once. A multi DELETE is allowed — `applyStudioEditBatch` orders bottom-to-top, so no removal can move another's line |
+| ~~`multi-select`~~ (move) | P3-D: several elements moved at once are single-element moves applied in order, one `/save` sequence (`studioEditSequence.ts`). `multi-select` is still the reason a non-adjacent group and a multi-element cross-frame drop give |
 | `cross-file`, `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file |
 
 ### The codemods
@@ -1436,7 +1436,7 @@ W4-1 added three more, all holding the same byte-exactness standard (the AST LOC
 
 It cannot live inside `deleteJsxElement`, for two reasons that both come from the batch. **Line arithmetic:** `orderStudioEditsForApply` applies a batch bottom-to-top precisely so one edit can never move another's pending `line:col`, and an import sits at the TOP of the file — cutting its line mid-batch reintroduces that exact hazard from above. **Correctness:** a binding used by two elements deleted in the same batch is orphaned by neither one alone, so asked per edit each looks at the other's still-present markup and concludes the import is live. So `applyStudioEditBatch` snapshots which bindings each delete-touched file references BEFORE anything is written, and prunes the ones that stopped being referenced after everything has landed. A binding that was ALREADY unused is left exactly where the user left it — that line is theirs, not something this edit created.
 
-Both share `jsxChildRange.ts`, which is where the byte-exactness lives: **the AST only LOCATES; the write is a splice of the original bytes**, and it refuses outright (`stale-source`) if the text on disk is not the text ts-morph parsed. A whole-line element moves with its indentation and trailing newline; an element sharing a line moves alone; mixing the two refuses (`mixed-indentation`) rather than reformatting code the user did not touch. Their AST-only refusals: `not-siblings`, `expression-child` (the element is produced by `{cond && <X/>}` — `parser-06` leaves those nodes unlocked, correctly, because their VALUES are editable, so this is the check that keeps their POSITION honest), `no-jsx-parent` (it is what the component returns; deleting it leaves `return ;`).
+Both share `jsxChildRange.ts`, which is where the byte-exactness lives: **the AST only LOCATES; the write is a splice of the original bytes**, and it refuses outright (`stale-source`) if the text on disk is not the text ts-morph parsed. A whole-line element moves with its indentation and trailing newline; an element sharing a line moves alone; when the two meet (P3-D, WB-21) the moved element takes the anchor's shape — its own line beside a whole-line anchor, one space apart beside an inline one — and a group whose run starts or ends mid-line is split there so the container owns its lines. Their AST-only refusals: `not-siblings`, `expression-child` (the element is produced by `{cond && <X/>}` — `parser-06` leaves those nodes unlocked, correctly, because their VALUES are editable, so this is the check that keeps their POSITION honest), `no-jsx-parent` (it is what the component returns; deleting it leaves `return ;`).
 
 ### `reinsertJsxSource.ts` — ⌘Z puts a delete back (`store-15`)
 
@@ -1450,7 +1450,7 @@ Because `text`/`imports` are strings the client sends — and this is the one co
 
 ### Commit shape
 
-Structural edits are **one-shot commits** (`commitStudioMoves` / `commitStudioDelete` in `studioSaveRequests.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
+Structural edits are **one-shot commits** (`commitStudioMove` / `commitStudioSequence` / `commitStudioDelete` in `studioStructuralCommits.ts`), like asset/detach/swap — never the `saveSite` diff, which has no notion of parent or order and is the reason this gap existed. The store refuses everything decidable from ids before mutating; the residual AST refusals arrive after the optimistic mutation, so every outcome ends in a reload — a successful write shifted every `line:col` below it, and a refused one has to be taken back.
 
 ### Measured on the real corpus
 

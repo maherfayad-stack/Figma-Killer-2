@@ -23,6 +23,12 @@ export const SaveBodySchema = Type.Object({
    * `element-moved` instead of writing to a neighbour. See `studioEditIdentity.ts`.
    */
   expect: Type.Optional(SourceFingerprintExpectationsSchema),
+  /**
+   * P3-D — apply `edits` IN ORDER, each against the files the previous ones
+   * left, all or nothing (`studioEditSequence.ts`). Absent: an ordinary batch,
+   * ordered bottom-to-top, whose edits must be independent.
+   */
+  sequence: Type.Optional(Type.Literal(true)),
 })
 
 /**

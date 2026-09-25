@@ -192,6 +192,22 @@ export function relocateCapturedIds(
 }
 
 /**
+ * ERR-8 — the one position in `rel` the board last read holding an element
+ * with this `fingerprint`, or `null` when there is none or more than one. A
+ * paste uses it to find what it copied after an edit above renumbered the
+ * file; a guess between two identical elements is not an answer.
+ */
+export function findUniqueLocation(rel: string, fingerprint: string): string | null {
+  let found: string | null = null
+  for (const identity of identities.values()) {
+    if (identity.fingerprint !== fingerprint || relOfLocation(identity.location) !== rel) continue
+    if (found !== null) return null
+    found = identity.location
+  }
+  return found
+}
+
+/**
  * Resolves `true` the next time the board reads pages from disk (a narrow
  * patch or a full load — {@link noteBoardRead}), `false` after `timeoutMs`
  * with no read. Register BEFORE triggering the re-read: a narrow resync

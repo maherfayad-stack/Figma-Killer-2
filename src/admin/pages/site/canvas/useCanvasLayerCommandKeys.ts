@@ -1,7 +1,8 @@
 /**
  * useCanvasLayerCommandKeys — the `node` rung's handler for P5-E's layer
  * commands: ⌥A ⌥D ⌥W ⌥S ⌥H ⌥V align (IX-20), ⌘⇧] / ⌘⇧[ front / back (IX-9),
- * ⇧A flex layout (IX-10), ⌘⌥C / ⌘⌥V copy / paste style (IX-props).
+ * ⇧A flex layout (IX-10), ⌘⌥C / ⌘⌥V copy / paste style (IX-props), and
+ * P5-F's quick styles: 0–9 opacity, ⇧H / ⇧V flip (`layerQuickStyles.ts`).
  *
  * Scoped by INTENT (a layer is selected), like Delete in
  * `useCanvasNodeShortcuts`, so the keys work after a click into the
@@ -16,10 +17,11 @@
 import type { AlignEdge } from '@ui/components/AlignBar'
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
-import { ALIGN_COMMANDS } from '@admin/spotlight/keybindingLayerCommands'
+import { ALIGN_COMMANDS, opacityDigit } from '@admin/spotlight/keybindingLayerCommands'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { alignSelection } from './layerAlign'
 import { copySelectionStyle, moveSelectionToEnd, pasteSelectionStyle, toggleFlexLayout } from './layerCommands'
+import { flipSelection, setSelectionOpacity } from './layerQuickStyles'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
 /** The keyboard's command, if `event` is one of them. Registry order; first match wins. */
@@ -32,6 +34,12 @@ function commandFor(event: KeyboardEvent): (() => void) | null {
   if (getKeybindingForCommand('layers.toggleFlexLayout')?.match(event)) return () => void toggleFlexLayout()
   if (getKeybindingForCommand('layers.copyStyle')?.match(event)) return copySelectionStyle
   if (getKeybindingForCommand('layers.pasteStyle')?.match(event)) return pasteSelectionStyle
+  if (getKeybindingForCommand('layers.flipHorizontal')?.match(event)) return () => flipSelection('x')
+  if (getKeybindingForCommand('layers.flipVertical')?.match(event)) return () => flipSelection('y')
+  if (getKeybindingForCommand('layers.opacity')?.match(event)) {
+    const digit = opacityDigit(event)
+    return digit === null ? null : () => setSelectionOpacity(digit)
+  }
   return null
 }
 
@@ -40,8 +48,8 @@ export function useCanvasLayerCommandKeys(editable: boolean, isLive: boolean): v
     'node',
     () => !isLive && editable && useEditorStore.getState().selectedNodeId !== null,
     (event) => {
-      // Only a modified key can be one of these: a bare letter costs nothing.
-      if (!event.altKey && !event.shiftKey && !event.metaKey && !event.ctrlKey) return false
+      // A bare key can only be an opacity digit: a bare letter costs nothing.
+      if (!event.altKey && !event.shiftKey && !event.metaKey && !event.ctrlKey && opacityDigit(event) === null) return false
       if (isTextInputTarget(event.target)) return false
       if (isInsideKeyOwningOverlay(event.target)) return false
       const run = commandFor(event)

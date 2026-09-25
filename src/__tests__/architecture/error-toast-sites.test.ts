@@ -55,7 +55,7 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   ['admin/pages/site/canvas/PackageComponentPlaceholder.tsx', 1],
   ['admin/pages/site/canvas/StyleCompileConsentBanner/StyleCompileConsentBanner.tsx', 2],
   // A PNG the clipboard refused.
-  ['admin/pages/site/canvas/useCopyAsPngShortcut.ts', 1],
+  ['admin/pages/site/canvas/copyAsPng.ts', 1],
   // P5-B: the image drop's own actions — a drop where NO image could land.
   ['admin/pages/site/store/slices/site/imageDropActions.ts', 1],
   // Inspector: explicit detach/swap/export/copy actions.
@@ -143,6 +143,9 @@ describe('red-toast policy (P3-A)', () => {
     const writePath = [
       'admin/pages/site/studio/refusalToasts.ts',
       'admin/pages/site/studio/studioStructuralCommits.ts',
+      // The shared structural commit body, split out of the file above.
+      'admin/pages/site/studio/studioStructuralCommitEngine.ts',
+      'admin/pages/site/store/slices/site/instanceOnlyGesture.ts',
       'admin/pages/site/studio/studioSaveRequests.ts',
       'admin/pages/site/studio/studioAssetEdit.ts',
       'admin/pages/site/studio/structuralCommitQueue.ts',
