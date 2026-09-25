@@ -98,24 +98,3 @@ export function listWorkspaceFiles(dir: string): string[] {
   walk(dir, '')
   return results.sort()
 }
-
-/** The file kinds `createWorkspaceProject` hands to ts-morph — what the parser can read as a module. */
-const WORKSPACE_SOURCE_FILE_RE = /\.(tsx?|jsx?)$/i
-
-/**
- * Every file the workspace-wide ts-morph `Project` should contain, as POSIX
- * paths relative to `dir`, in deterministic order: `listWorkspaceFiles`
- * narrowed to `.ts/.tsx/.js/.jsx` and minus Studio's own preview shell
- * (`isPrototypeShellPath`). The shell is Studio's scaffold, not the user's
- * app, and its generated runtime bundle is megabytes of minified JS — walking
- * it as source is exactly the failure `PROTOTYPE_SHELL_DIR`'s doc describes,
- * and parsing it cost more than every real page put together.
- *
- * ONE selection rule, consulted both when the `Project` is first built and
- * every time `server/handlers/studio/workspaceProject.ts` brings a kept
- * `Project` back in step with the disk — so the two can never disagree about
- * which files exist.
- */
-export function listWorkspaceSourceFiles(dir: string): string[] {
-  return listWorkspaceFiles(dir).filter((relPath) => WORKSPACE_SOURCE_FILE_RE.test(relPath) && !isPrototypeShellPath(relPath))
-}
