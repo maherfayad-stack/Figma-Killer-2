@@ -314,7 +314,11 @@ export function prewarmWorkspaceProgram(dir: string): void {
     prewarmPending.delete(key)
     if (!slots.has(key)) return // evicted meanwhile — nothing to warm
     withWorkspaceProject(key, async ({ project }) => {
-      project.getTypeChecker()
+      // `getTypeChecker()` alone is a lazy ts-morph wrapper that builds
+      // nothing — measured 0 ms, and the edit after it still paid the whole
+      // program. Reading `compilerObject` is what creates the program and
+      // the checker (binding every file).
+      void project.getTypeChecker().compilerObject
     }).catch((err: unknown) => console.error('[studio:workspaceProject] program prewarm failed:', err))
   }, PREWARM_DELAY_MS)
   timer.unref?.()
