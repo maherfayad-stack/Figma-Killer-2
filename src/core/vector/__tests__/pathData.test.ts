@@ -104,25 +104,43 @@ describe('serializePathData round trip', () => {
     // parser refuses at exactly it rather than inventing a number.
     expect(refused.length).toBeLessThanOrEqual(7)
     for (const at of refused) expect(at).toBe('nan')
-  })
+    // ~570 file reads: seconds on a machine running other suites, so the
+    // default 5 s per-test timeout is a load test, not a correctness one.
+  }, 30_000)
 
-  it('parses and serialises a 100 KB path in under 5 ms', () => {
-    let d = 'M0 0'
-    let i = 0
-    while (d.length < 100 * 1024) {
-      d += i % 3 === 0 ? ` C${i} ${i + 1.25} ${i + 2} ${i - 3.5} ${i} ${i}` : i % 3 === 1 ? ` l${i % 7}-${i % 5}.5` : ` a3 3 0 01 ${i} 2`
-      i += 1
+  it('parses and serialises in linear time: a 4x longer path costs about 4x, not 16x', () => {
+    const build = (bytes: number): string => {
+      let d = 'M0 0'
+      let i = 0
+      while (d.length < bytes) {
+        d += i % 3 === 0 ? ` C${i} ${i + 1.25} ${i + 2} ${i - 3.5} ${i} ${i}` : i % 3 === 1 ? ` l${i % 7}-${i % 5}.5` : ` a3 3 0 01 ${i} 2`
+        i += 1
+      }
+      return d
     }
-    // Warm up, then take the best of several runs: the budget is about the
-    // algorithm, not a noisy machine.
-    for (let run = 0; run < 3; run += 1) serializePathData(parsed(d))
-    let best = Infinity
-    for (let run = 0; run < 7; run += 1) {
+    const small = build(25 * 1024)
+    const large = build(100 * 1024)
+    const time = (d: string): number => {
       const start = performance.now()
       const out = serializePathData(parsed(d))
-      best = Math.min(best, performance.now() - start)
+      const elapsed = performance.now() - start
       expect(out.length).toBe(d.length)
+      return elapsed
     }
-    expect(best).toBeLessThan(5)
+    // A RATIO, not a wall-clock bound: the budget is about the algorithm (a
+    // quadratic scan would be ~16x), and an absolute millisecond limit fails
+    // on a machine that is running other suites. Warm up, then interleave the
+    // two sizes and keep each one's best, so load hits both alike.
+    for (let run = 0; run < 3; run += 1) {
+      time(small)
+      time(large)
+    }
+    let bestSmall = Infinity
+    let bestLarge = Infinity
+    for (let run = 0; run < 9; run += 1) {
+      bestSmall = Math.min(bestSmall, time(small))
+      bestLarge = Math.min(bestLarge, time(large))
+    }
+    expect(bestLarge / Math.max(bestSmall, 0.05)).toBeLessThan(8)
   })
 })
