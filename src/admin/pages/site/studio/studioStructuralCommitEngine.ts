@@ -195,7 +195,7 @@ async function commitStructuralBody(
         createdNodeIds: result.createdNodeIds ?? [],
         relocatedNodeIds: result.relocatedNodeIds ?? [],
         removed: result.removed ?? [],
-        prunedImports: result.prunedImports ?? [],
+        undoToken: result.undoToken ?? null,
       }
       await resyncBoardAfterWrite(result.touchedFiles ?? [], {
         structuralOutcome: {

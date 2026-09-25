@@ -21,15 +21,19 @@
  * its own narrow sub-router.
  *
  *   POST /admin/api/studio/extract-component  body: { dir?, nodeId }
- *     -> `{ ok: true, newFile, newComponentName }` on success — the SAME
- *        call site now points at the copy (an ordinary `swap`-shaped
- *        structural rewrite under the hood), so the client reloads exactly
- *        the way it does for a successful swap.
+ *     -> `{ ok: true, newFile, newComponentName, undoToken? }` on success —
+ *        the SAME call site now points at the copy (an ordinary
+ *        `swap`-shaped structural rewrite under the hood), so the client
+ *        reloads exactly the way it does for a successful swap. `undoToken`
+ *        (P3-F) names the undo-journal entry that puts the call site back
+ *        and removes the copy: the editor posts it as a `restore` edit.
  *     -> `{ ok: false, reason, message }` on refusal (`not-a-component`,
  *        `unresolvable`, `copy-exists`) — never a silent no-op.
  */
 import { join } from 'node:path'
 import { extractComponentCopy } from '@core/ast-codemods'
+import { withProjectWriteLock } from './projectWriteLock'
+import { captureUndoPreImage, recordUndoJournal } from './undoJournal'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { badRequest, jsonResponse, readValidatedBody, internalServerError } from '../../http'
 import { resolveProjectDir, rethrowProjectDirRefusal } from '../studioProjects'
@@ -65,17 +69,26 @@ export async function tryServeStudioExtractComponent(req: Request, _url: URL, pa
       })
     }
 
-    const result = extractComponentCopy({
-      file: join(dir, target.rel),
-      line: target.line,
-      col: target.col,
-      workspaceRoot: dir,
+    const file = join(dir, target.rel)
+    // Under the project write lock like every other writer — a git verb must
+    // never see half of it — which is also what makes the journal's
+    // pre-image and the write one step.
+    const outcome = await withProjectWriteLock(dir, () => {
+      const preImage = captureUndoPreImage([file])
+      const result = extractComponentCopy({ file, line: target.line, col: target.col, workspaceRoot: dir })
+      if (!result.ok) return { result }
+      return { result, undoToken: recordUndoJournal(dir, preImage, [join(dir, ...result.newFile.split('/'))]) }
     })
-
+    const { result } = outcome
     if (!result.ok) {
       return jsonResponse({ ok: false, reason: result.refusal.reason, message: result.refusal.message })
     }
-    return jsonResponse({ ok: true, newFile: result.newFile, newComponentName: result.newComponentName })
+    return jsonResponse({
+      ok: true,
+      newFile: result.newFile,
+      newComponentName: result.newComponentName,
+      ...(outcome.undoToken ? { undoToken: outcome.undoToken } : {}),
+    })
   } catch (err) {
     rethrowProjectDirRefusal(err)
     return internalServerError('[studio:extractComponent]', err)

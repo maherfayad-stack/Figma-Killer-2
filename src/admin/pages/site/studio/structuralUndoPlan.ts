@@ -11,8 +11,8 @@
  * reparse silently wins. The undo has to be the inverse WRITE.
  *
  * The family this module covers — insert, duplicate, wrap, group, ungroup,
- * paste, transplant, the `<img>` an OS file drop becomes, and (`store-15`)
- * DELETE — never even reaches the patch stack for its UNDO: `delete` itself
+ * paste, transplant, the `<img>` an OS file drop becomes, DELETE, and the
+ * instance rewrites (detach, swap, extract) — never even reaches the patch stack for its UNDO: `delete` itself
  * still mutates the tree eagerly, for the same-tick optimistic removal
  * `broadcastOptimisticDelete` exists for, but that mutation's own patches are
  * never replayed (see `structuralHistory.ts`'s `tagStructuralGesture`, which
@@ -25,8 +25,7 @@
  *
  * ## The inverse is expressed in the edit kinds that already exist
  *
- * No `revert` edit kind, and no file snapshot. Every inverse here is something
- * the writeback protocol can already say:
+ * Where the protocol can say it, the inverse is an ordinary edit:
  *
  * | gesture | inverse |
  * |---|---|
@@ -35,7 +34,14 @@
  * | ungroup | `group` the children it released, back into the same container |
  * | transplant (move) | `transplant` back to the parent it left |
  * | transplant (copy) | `delete` the copy it created |
- * | delete | `reinsert-source` each element back where it was |
+ * | delete / detach / swap / extract | `restore` the undo-journal entry the write recorded |
+ *
+ * The last row is the exception, and the only one: what those four replace is
+ * source text no edit kind describes (the deleted element's bytes, the call
+ * site a detach inlined). The server keeps what the files were
+ * (`server/handlers/studio/undoJournal.ts`, P3-F) and reports a token; the
+ * inverse names that token. It applies only while every file is exactly what
+ * the write left, so it can never overwrite a later change.
  *
  * That is why a codemod reporting the ids it CREATED (`store-13`) and the ids
  * it RELOCATED are both preconditions for undo: the inverse cannot be written
@@ -100,39 +106,13 @@ export type StructuralInverseTemplate =
       /** Which child it was. The SIBLING to anchor against is resolved from the live tree at undo time — see {@link anchorTransplantBack}. */
       index: number
     }
-  | {
-      /**
-       * `store-15` — the inverse of a `delete`: one `reinsert-source` edit
-       * per deleted node, written back to `parentNodeId` at `index` — both
-       * captured from the live tree BEFORE the delete, at gesture time
-       * (`captureDeleteOrigin`), the only moment the pre-delete position is
-       * still known. `nodeId` is the deleted element's OWN original id,
-       * carried only to look up its bytes in the outcome's `removed` list —
-       * it names nothing to write to.
-       */
-      kind: 'reinsert-deleted'
-      // A plain mutable array, not `readonly` — a history entry lives inside
-      // the Mutative draft the store commits it through, and `Draft<T>`
-      // cannot narrow a `readonly` array to a drafted one. Same reasoning as
-      // `StructuralSourceGesture.forward`/`.inverse` just below.
-      nodes: { nodeId: string; parentNodeId: string; index: number }[]
-    }
-  | {
-      /**
-       * P3-D (OD-7) — the inverse of a `detach`: the markup that replaced the
-       * call site goes (`delete` of what the detach CREATED — the batch's
-       * prune pass takes the imports it added with it), and the call site's
-       * own bytes go back where they were (`reinsert-source` at the slot
-       * captured before the detach, with the component import the detach's
-       * prune pass reported). One batch: the delete is below the parent's own
-       * tag, so the batch's bottom-to-top order applies it first.
-       */
-      kind: 'reinsert-detached'
-      /** The call site's id when the detach was made — the key its `removed` bytes are reported under. */
-      callSiteNodeId: string
-      parentNodeId: string
-      index: number
-    }
+  /**
+   * P3-F — the inverse of a one-shot write (delete, detach, swap, extract):
+   * `restore` the undo-journal entry its batch recorded. Nothing to capture at
+   * gesture time — the token is the write's own answer
+   * (`StructuralWriteOutcome.undoToken`), and a redo's write records a fresh one.
+   */
+  | { kind: 'restore-journal' }
   | {
       /**
        * P5-B (IMG-3) — an inverse that is fully known at gesture time,
@@ -159,28 +139,31 @@ export type StructuralInverseTemplate =
    */
   | { kind: 'canvas-layer-lift-back'; layerId: string; parentNodeId: string; index: number }
 
-/** One `delete` edit's own discarded bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
+/** One `canvas-layer-delete`'s module bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
 export interface StructuralRemovedText {
   nodeId: string
   text: string
   wholeLine: boolean
 }
 
-/** One file's pruned imports — `StructuralWriteOutcome.prunedImports`'s own shape. */
-export interface StructuralPrunedImports {
-  /** Workspace-relative POSIX path — the same shape `structuralEditNodeIds` derives a node id's file as. */
-  file: string
-  declarations: readonly string[]
-}
-
 /** What a landed structural write reported about the elements it touched. */
 export interface StructuralWriteOutcome {
   createdNodeIds: readonly string[]
   relocatedNodeIds: readonly string[]
-  /** `store-15` — every `delete` edit's own discarded bytes. Empty when the batch deleted nothing. */
+  /** P5-G — every `canvas-layer-delete`'s module bytes. Empty when the batch removed no layer. */
   removed: readonly StructuralRemovedText[]
-  /** `store-15` — every file whose import a `delete`'s prune pass removed. Empty when nothing was pruned. */
-  prunedImports: readonly StructuralPrunedImports[]
+  /** P3-F — the undo-journal token for a journaled one-shot write; `null` when the batch recorded none. */
+  undoToken: string | null
+}
+
+/** The synthetic id a `restore` edit is reported under — it addresses no element (`studioEditSchemas.ts`). */
+function restoreEditNodeId(token: string): string {
+  return `undo-journal:${token}`
+}
+
+/** The `restore` edit that puts back the write behind `token`. */
+export function restoreEdit(token: string): StructuralEditPayload {
+  return { kind: 'restore', nodeId: restoreEditNodeId(token), token }
 }
 
 /**
@@ -232,27 +215,12 @@ export function resolveStructuralInverse(
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
     }
-    case 'reinsert-detached': {
-      const [inlined] = outcome.createdNodeIds
-      const callSite = outcome.removed.find((entry) => entry.nodeId === template.callSiteNodeId)
-      if (inlined === undefined || !callSite) return null
-      const imports = outcome.prunedImports.find((entry) => entry.file === fileOfNodeId(template.parentNodeId))?.declarations ?? []
-      return [
-        { kind: 'delete', nodeId: inlined },
-        {
-          kind: 'reinsert-source',
-          nodeId: template.parentNodeId,
-          index: template.index,
-          text: callSite.text,
-          ...(imports.length > 0 ? { imports: [...imports] } : {}),
-        },
-      ]
-    }
+    case 'restore-journal':
+      return outcome.undoToken === null ? null : [restoreEdit(outcome.undoToken)]
     case 'canvas-layer-delete':
       return [{ kind: 'canvas-layer-delete', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId }]
     case 'canvas-layer-restore-removed': {
-      // All or nothing, for `reinsert-deleted`'s reason: restoring two of three
-      // layers silently drops the third.
+      // All or nothing: restoring two of three layers silently drops the third.
       const byNodeId = new Map(outcome.removed.map((r) => [r.nodeId, r] as const))
       const texts = template.layerIds.map((layerId) => byNodeId.get(canvasLayerEditNodeId(layerId))?.text)
       if (texts.some((text) => text === undefined)) return null
@@ -277,49 +245,13 @@ export function resolveStructuralInverse(
       if (root === undefined) return null
       return [{ kind: 'canvas-layer-place', nodeId: root, layerId: template.layerId, parentNodeId: template.parentNodeId }]
     }
-    case 'reinsert-deleted': {
-      // `null` — not "skip the ones we can" — the moment ANY deleted node's
-      // bytes did not come back: an undo that restores three of four elements
-      // silently drops the fourth, which is worse than refusing the whole
-      // step (`reissueStructuralSourceEdits`'s own "unsupported" sentence).
-      const byNodeId = new Map(outcome.removed.map((r) => [r.nodeId, r] as const))
-      if (!template.nodes.every((n) => byNodeId.has(n.nodeId))) return null
-
-      // A file's pruned imports are attached to exactly ONE reinsert edit
-      // targeting that file — never every one of them, or the import would be
-      // written back once per restored sibling. Which one carries it does not
-      // matter: `reinsert-source`'s import edit always lands after the file's
-      // last import, independent of which child position it rode in on.
-      const importsByFile = new Map(outcome.prunedImports.map((p) => [p.file, [...p.declarations]] as const))
-
-      // Ascending index WITHIN one parent, so the server's bottom-to-top
-      // ordering (which sorts by the PARENT's own line:col, and preserves
-      // array order for ties) applies each parent's siblings back in the
-      // order they left: restoring the earlier index first is always safe,
-      // because a still-missing later sibling only ever "past the end"s.
-      const ordered = [...template.nodes].sort((a, b) => a.index - b.index)
-
-      return ordered.map(({ nodeId, parentNodeId, index }) => {
-        const removedText = byNodeId.get(nodeId)!
-        const imports = importsByFile.get(fileOfNodeId(parentNodeId))
-        if (imports) importsByFile.delete(fileOfNodeId(parentNodeId))
-        return {
-          kind: 'reinsert-source',
-          nodeId: parentNodeId,
-          index,
-          text: removedText.text,
-          ...(imports && imports.length > 0 ? { imports } : {}),
-        }
-      })
-    }
   }
 }
 
 /**
  * The workspace-relative file a `rel:line:col` node id names — everything
- * before the `line:col` tail. Exported so `structuralSourceHistory.ts`'s own
- * id-validity check reads the same file a `reinsert-deleted` template's
- * `prunedImports` lookup does, rather than a second, parallel derivation.
+ * before the `line:col` tail. `structuralSourceHistory.ts` names the file an
+ * unresolved id belongs to with it.
  */
 export function fileOfNodeId(nodeId: string): string {
   return nodeId.split(':').slice(0, -2).join(':') || nodeId
@@ -345,6 +277,16 @@ const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
  */
 export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
   return edit.kind === 'asset'
+}
+
+/**
+ * True for a `restore` (P3-F): its `nodeId` is a journal entry's synthetic
+ * key, never an element, so "is that id still on the board" does not apply.
+ * Its own guard is the server's compare-and-swap: it refuses `restore-stale`
+ * unless every file is exactly what the write left.
+ */
+export function addressesJournalEntry(edit: StructuralEditPayload): boolean {
+  return edit.kind === 'restore'
 }
 
 /** Every node id one edit payload names, `nodeId` first — the order a reader would look for them. */
@@ -402,27 +344,6 @@ export function remapInverseTemplate(
 ): StructuralInverseTemplate {
   if (template.kind === 'transplant-back' || template.kind === 'canvas-layer-lift-back') {
     return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
-  }
-  if (template.kind === 'reinsert-detached') {
-    return {
-      ...template,
-      callSiteNodeId: remap.get(template.callSiteNodeId) ?? template.callSiteNodeId,
-      parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId,
-    }
-  }
-  if (template.kind === 'reinsert-deleted') {
-    // Both ids, not just `parentNodeId`: `nodeId` is the key `resolveStructuralInverse`
-    // looks up in the outcome's `removed` list, and that list is keyed by
-    // whatever `nodeId` the LATEST `delete` edit (itself remapped alongside
-    // `forward`, generically, by `remapStructuralEditIds`) actually carries.
-    return {
-      ...template,
-      nodes: template.nodes.map((n) => ({
-        nodeId: remap.get(n.nodeId) ?? n.nodeId,
-        parentNodeId: remap.get(n.parentNodeId) ?? n.parentNodeId,
-        index: n.index,
-      })),
-    }
   }
   return template
 }

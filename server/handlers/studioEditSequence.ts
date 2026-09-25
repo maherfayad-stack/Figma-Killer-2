@@ -67,7 +67,6 @@ const SEQUENCE_KINDS = new Set<StudioEdit['kind']>([
   'delete',
   'duplicate',
   'insert',
-  'reinsert-source',
   'wrap',
   'group',
   'ungroup',
@@ -220,7 +219,6 @@ function refused(edits: readonly StudioEdit[], refusals: StudioEditRefusal[], to
     createdNodeIds: [],
     relocatedNodeIds: [],
     removed: [],
-    prunedImports: [],
     fingerprints: [],
     retargeted: [],
   }
@@ -268,7 +266,9 @@ export function applyStudioEditSequence(
   const created: { key: string; nodeId: string }[] = []
   const relocated = new Map<string, string>()
   const removed: StudioEditBatchResult['removed'] = []
-  const prunedImports: StudioEditBatchResult['prunedImports'] = []
+  // P3-F — a sequence is not a one-shot write: its undo is the gesture's own
+  // inverse, so its steps record no journal entry (they would be orphans).
+  const stepOptions: StudioEditBatchOptions = { ...options, journal: undefined }
   let sharedComponents = false
 
   const restore = (): void => {
@@ -302,7 +302,7 @@ export function applyStudioEditSequence(
     // against the files it read, and every id since then is where the order
     // follower put it — an identity read off the file this step is about to
     // write would only ever agree with itself.
-    const result = applyStudioEditBatch(dir, [step], {}, options)
+    const result = applyStudioEditBatch(dir, [step], {}, stepOptions)
     for (const file of result.touchedFiles) touched.add(file)
     sharedComponents ||= result.sharedComponents
     if (result.written === 0 || result.refusals.length > 0) {
@@ -313,7 +313,6 @@ export function applyStudioEditSequence(
       ], [...touched, ...originals.keys()])
     }
     for (const entry of result.removed) removed.push({ ...entry, nodeId: edit.nodeId })
-    prunedImports.push(...result.prunedImports)
 
     // Follow every id the sequence still cares about through this step.
     const placed = [...result.relocatedNodeIds, ...result.createdNodeIds]
@@ -390,7 +389,6 @@ export function applyStudioEditSequence(
     createdNodeIds: created.map((entry) => entry.nodeId),
     relocatedNodeIds: [...relocated.values()],
     removed,
-    prunedImports,
     fingerprints: [],
     retargeted: identity.retargeted,
   }

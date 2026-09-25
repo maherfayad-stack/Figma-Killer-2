@@ -21,66 +21,15 @@
 import { deleteNode, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticDelete } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
-import type { StructuralInverseTemplate } from '@site/studio/structuralUndoPlan'
 import { depthInTree, resolveActiveTreeTarget } from './helpers'
 import { groupNodeIdsByPage } from './nodeTreeGrouping'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { resolvePreviewTargets } from './structuralOptimism'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
-import { captureDeleteOrigin, tagStructuralGesture, type StructuralHistoryDeleteOrigin } from './structuralHistory'
+import { tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import type { SiteSlice, SiteSliceHelpers } from './types'
-
-/**
- * `store-15` — the pre-delete `{parentId, index}` for every id `plan.commit`
- * names, or `null` when even one of them could not be captured.
- *
- * `null` rather than a partial list: an undo that restores three of four
- * deleted elements and silently drops the fourth is worse than one that says
- * it cannot restore any of them (`structuralUndoPlan.ts`'s own
- * `reinsert-deleted` case makes the identical call from the outcome side).
- *
- * Looks each id up in its OWN page — a multi-select delete can span board
- * frames (WS-7.3), so an id in `plan.commit` is not guaranteed to belong to
- * `target.tree`.
- */
-function captureDeleteOrigins(
-  cur: { site: { pages: readonly NodeTree<PageNode>[] } | null },
-  target: { tree: NodeTree<PageNode> },
-  ids: readonly string[],
-): readonly StructuralHistoryDeleteOrigin[] | null {
-  const origins: StructuralHistoryDeleteOrigin[] = []
-  for (const id of ids) {
-    const tree = target.tree.nodes[id] ? target.tree : cur.site?.pages.find((page) => page.nodes[id])
-    const origin = tree ? captureDeleteOrigin(tree, id) : null
-    if (!origin) return null
-    origins.push(origin)
-  }
-  return origins
-}
-
-/**
- * `store-15` — this gesture's ⌘Z, as a template: `reinsert-deleted` when every
- * deleted node's pre-delete position was captured, `unsupported` otherwise —
- * an outcome-independent question, unlike `wrap`/`group`'s templates, because
- * a delete's parent/index are known BEFORE the write, not learned from it.
- */
-function deleteInverseTemplate(
-  cur: { site: { pages: readonly NodeTree<PageNode>[] } | null },
-  target: { tree: NodeTree<PageNode> },
-  ids: readonly string[],
-): StructuralInverseTemplate {
-  const origins = captureDeleteOrigins(cur, target, ids)
-  if (!origins) {
-    return {
-      kind: 'unsupported',
-      message:
-        'One of these elements’ positions could not be recorded for undo — its container has no place in the file of its own (it may be the whole of what this page returns). Use your editor’s undo or `git` to bring it back.',
-    }
-  }
-  return { kind: 'reinsert-deleted', nodes: origins.map(({ nodeId, parentId, index }) => ({ nodeId, parentNodeId: parentId, index })) }
-}
 
 /** Leaves first: sort by depth DESC against a frozen tree. */
 function orderLeavesFirst(tree: NodeTree<PageNode>, ids: readonly string[]): string[] {
@@ -139,10 +88,6 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       return
     }
 
-    // `store-15` — captured against the tree as it is RIGHT NOW, the last
-    // moment before the mutation below removes these nodes from it.
-    const inverseTemplate = plan.commit ? deleteInverseTemplate(cur, target, plan.commit) : null
-
     const topBefore = cur._historyPast.at(-1)
     let deleted: boolean
     if (target.vc) {
@@ -159,7 +104,7 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
     }
 
     if (!deleted) return
-    if (plan.commit && inverseTemplate) {
+    if (plan.commit) {
       // ERR-6 — taken before the tag below clears the entry's patches: they
       // are what puts the elements back if the write does not land.
       const rollback = trackStructuralTreeCommit(helpers, topBefore, plan.commit)
@@ -168,17 +113,17 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
       // deleted id (a multi-select delete can span several source-derived
       // nodes, unlike the single-node `deleteNode` action).
       for (const id of plan.commit) broadcastOptimisticDelete(id)
-      // `store-15` — folded into the `source` family: `inverse` is `null`
-      // until the commit above reports what it discarded (`fill`, drained by
-      // `usePersistence.ts`). Tagging the entry the tree mutation above
-      // already pushed, not pushing a second one — see `structuralHistory.ts`'s
-      // own doc for why this gesture keeps its eager tree mutation.
+      // Folded into the `source` family: `inverse` is `null` until the commit
+      // above reports its undo-journal token (P3-F, `fill`). Tagging the entry
+      // the tree mutation above already pushed, not pushing a second one — see
+      // `structuralHistory.ts`'s own doc for why this gesture keeps its eager
+      // tree mutation.
       tagStructuralGesture(set, {
         gesture: 'source',
         source: {
           label: plan.commit.length === 1 ? 'Delete' : `Delete ${plan.commit.length} elements`,
           forward: plan.commit.map((nodeId) => ({ kind: 'delete', nodeId })),
-          inverseTemplate,
+          inverseTemplate: { kind: 'restore-journal' },
           inverse: null,
         },
       })

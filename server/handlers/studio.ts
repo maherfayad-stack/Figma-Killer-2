@@ -482,10 +482,14 @@ export async function tryServeStudio(
         createdNodeIds,
         relocatedNodeIds,
         removed,
-        prunedImports,
         fingerprints,
         retargeted,
-      } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, { canvasLayers: 'allow' })
+        undoToken,
+      } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, {
+        canvasLayers: 'allow',
+        // P3-F — the editor's own batches are the ones ⌘Z can restore.
+        journal: true,
+      })
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
       // WB-12 — `refusals` names WHY each edit that did not write didn't (a
@@ -520,17 +524,15 @@ export async function tryServeStudio(
         // path to strip.
         createdNodeIds,
         relocatedNodeIds,
-        // `store-15` — what a `delete` took out: the element's own bytes and
-        // the imports its prune pass retired, which are the ONLY material ⌘Z
-        // has to put it back with. The same lesson as the two fields above:
-        // the batch computed them, and a route that lists its fields by hand
-        // forwarded neither, so every undo of a delete resolved to "Studio
-        // could not work out how to take this back" while the code that could
-        // sat one layer down. `studioSaveRoute.test.ts` holds this now.
-        // `removed` is keyed by the edit's own workspace-relative node id and
-        // `prunedImports.file` is already workspace-relative — nothing to strip.
+        // P5-G — what a `canvas-layer-delete` took out, for its own undo.
+        // Keyed by the edit's own node id — nothing to strip.
         removed,
-        prunedImports,
+        // P3-F — the undo-journal token for a delete/detach/swap/extract, the
+        // ONLY thing its ⌘Z has to name. The lesson `store-15` learned here:
+        // this route lists its fields by hand, and a field the batch computed
+        // but the route never forwarded made every undo refuse while every
+        // batch test passed. `studioSaveRoute.test.ts` holds it.
+        ...(undoToken ? { undoToken } : {}),
         // P1-A — each landed value write's new identity, keyed by its own
         // workspace-relative node id, so the board's next edit to the same
         // element is not refused `element-moved` by this one.

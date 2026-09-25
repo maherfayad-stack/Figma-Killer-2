@@ -7,7 +7,7 @@
  * against temp fixture files without a full Request/Response round trip.
  *
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
- * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'move' |
+ * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'detach' | 'swap' | 'restore' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
  * 'reparent' | 'transplant' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
@@ -63,7 +63,6 @@ import {
   setStyledDeclaration,
   swapComponentInstance,
   syncProjectWithDisk,
-  type DeletedJsxText,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
@@ -71,6 +70,7 @@ import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
+import { applyRestoreEdit, openBatchUndoJournal } from './studioBatchUndoJournal'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -203,6 +203,8 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
   }
 
+  // P3-F — a restore names a journal entry, never a location.
+  if (edit.kind === 'restore') return applyRestoreEdit(dir, edit)
   // P5-G — the free canvas's kinds address a layer by id (three never decode).
   if (isCanvasLayerEdit(edit)) return applyCanvasLayerEdit(dir, edit, (nodeId) => studioEditLocation(dir, nodeId, scope))
   const target = studioEditLocation(dir, edit.nodeId, scope)
@@ -328,7 +330,6 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     }
     case 'move':
     case 'delete':
-    case 'reinsert-source':
     case 'insert':
     case 'duplicate':
     case 'wrap':
@@ -375,17 +376,14 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         applied: true,
         ...(result.created === undefined ? {} : { created: result.created }),
         ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
-        ...(result.removed === undefined ? {} : { removed: result.removed }),
       }
     }
     case 'detach': {
-      // P3-D (OD-7) — the import is retired by this batch's prune pass (see
-      // `removesMarkup` below), which also REPORTS it; with the call site's
-      // own bytes (`removed`) and what replaced it (`created`) that is the
-      // whole of ⌘Z (`reinsert-detached`).
+      // P3-D (OD-7) — the import is retired by this batch's prune pass
+      // (`studioBatchImportPrune.ts`); ⌘Z is the undo journal's `restore`.
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true, ...(result.created ? { created: [result.created] } : {}), removed: result.removed }
+      return { applied: true, ...(result.created ? { created: [result.created] } : {}) }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -476,6 +474,8 @@ export function applyStudioEditBatch(
   // A refused edit's file is still reported: the caller re-reads exactly these
   // to recover from an `element-moved` refusal.
   const touchedFiles = studioEditsTouchedFiles(dir, [...ordered, ...identity.moved.map((entry) => entry.edit)], scope)
+  // P3-F — before any byte is written: a one-shot write's pre-image, and a restore's own files.
+  const journal = openBatchUndoJournal(dir, edits, touchedFiles, options)
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
     lineCountBefore.set(file, countLines(file))
@@ -496,10 +496,8 @@ export function applyStudioEditBatch(
   const createdPositions: CreatedNodePosition[] = []
   // `store-14` — the same, for the elements a batch MOVED rather than made.
   const relocatedPositions: CreatedNodePosition[] = []
-  // `store-15` — every `delete` edit's own discarded bytes, keyed by the
-  // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
-  // that produced it.
-  const removed: (DeletedJsxText & { nodeId: string })[] = []
+  // P5-G — every `canvas-layer-delete`'s module bytes, keyed by the edit's own `nodeId`.
+  const removed: StudioEditBatchResult['removed'] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
   const syntaxRefusal = createSyntaxGuard(dir, scope)
   const canvasLayerScope = createCanvasLayerScope(options.canvasLayers, identifyLayerTarget) // P5-G — agents never write loose layers
@@ -508,7 +506,7 @@ export function applyStudioEditBatch(
   // after the loop for the same reason the import prune runs there.
   const moduleImports = createModuleImportPlan()
   for (const edit of ordered) {
-    const brokenTarget = canvasLayerScope(edit) ?? syntaxRefusal(edit)
+    const brokenTarget = canvasLayerScope(edit) ?? journal.refuse(edit) ?? syntaxRefusal(edit)
     if (brokenTarget) {
       refusals.push(brokenTarget)
       continue
@@ -566,7 +564,9 @@ export function applyStudioEditBatch(
     }
   }
 
-  const prunedImports = importPrune.prune()
+  importPrune.prune()
+  // P3-F — after the prune and the module imports: the entry is what the files are NOW.
+  const undoToken = journal.commit(written, promoteDetails.map((detail) => detail.newFile))
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns
@@ -611,11 +611,11 @@ export function applyStudioEditBatch(
     addSlotPropDetails: asSent(addSlotPropDetails),
     touchedFiles: [...touchedFiles],
     removed: asSent(removed),
-    prunedImports,
     fingerprints: asSent(fingerprints),
     retargeted: identity.retargeted,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
     relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
+    ...(undoToken ? { undoToken } : {}),
   }
 }
 
