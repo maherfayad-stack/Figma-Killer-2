@@ -94,7 +94,12 @@ async function pasteSvg(source: ClipboardSvgSource, target: InsertTarget): Promi
     markup = source.kind === 'text' ? source.markup : await source.file.text()
   } catch (err) {
     console.error('[canvas-paste] reading the pasted SVG failed:', err)
-    pushToast({ kind: 'error', title: PASTE_TITLE, body: 'Studio could not read the SVG on the clipboard.', location: 'site-editor' })
+    pushToast({
+      kind: 'warning',
+      title: PASTE_TITLE,
+      body: 'Studio could not read the SVG on the clipboard. Copy it again, or drop the file onto a frame.',
+      location: 'site-editor',
+    })
     return
   }
 
