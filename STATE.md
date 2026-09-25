@@ -11,7 +11,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### canvas-39 — P5-F: canvas backlog (snapping to guides and spacing, multi-select move and resize, Hug, rotation, B, quick keys)
+### canvas-40 — P5-F: canvas backlog (snapping to guides and spacing, multi-select move and resize, Hug, rotation, B, quick keys)
 - **Agent:** canvas-engineer · **Branch:** `feat/canvas-snapping-and-backlog` off `1c939ab0` · **PR:** #268 (draft, base `feat/canvas-excellence`; long form, tests, dogfood in its body) · **Updated:** 2026-09-26 (trunk `df627418` merged)
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Closes:** IX-5c, IX-5d, IX-5e, IX-6f, IX-6g, IX-22, IX-25, IX-13, UX-8, UX-9 (frame size, Copy as PNG, snap toggles; no board background — the model has none), IX-misc partly (0–9 opacity, ⇧H/⇧V flip). **Follow-ups:** IX-23 (grid cell drops need a parser-side `grid-row`/`grid-column` write), the rest of IX-misc (⌥N/⇧G aliases, ⌘⇧E, `\`, ⌥L/⌥I, g-d/g-v, Z, font keys, ⇧⏎ multi, ⌘D offset memory), group snapping/rotation/Hug.
@@ -83,7 +83,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 - `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
-- `canvas-39` · `/admin/site` on `test4`, one frame, 100% · equal-spacing pills on an absolute drag; ⌘' / ⌘⇧' (zoom menu shows them); ⇧-select two → one handle box, drag scales both; double-click an edge → Hug; rotate from outside a corner with ⇧; 5 / 0 / ⇧H; B-drag on the empty board → page picker, frame at the drawn rect. Script: the PR body
+- `canvas-40` · `/admin/site` on `test4`, one frame, 100% · equal-spacing pills on an absolute drag; ⌘' / ⌘⇧' (zoom menu shows them); ⇧-select two → one handle box, drag scales both; double-click an edge → Hug; rotate from outside a corner with ⇧; 5 / 0 / ⇧H; B-drag on the empty board → page picker, frame at the drawn rect. Script: the PR body
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
