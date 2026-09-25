@@ -55,7 +55,7 @@ export function writeListRowPlan(
   }
   const { edit, label, select } = plan
   const before = rowIdsOf(get(), edit.nodeId)
-  void commitStudioListItem(edit, title, { label, template: inverseTemplate(edit) }, (outcome) => {
+  void commitStudioListItem({ ...edit }, title, { label, template: inverseTemplate(edit) }, (outcome) => {
     const state = get()
     // The array's `[` as the write left it (a delete's import prune moves it).
     const arrayNow = outcome.listArrays.find((entry) => entry.nodeId === edit.nodeId)?.to ?? edit.nodeId

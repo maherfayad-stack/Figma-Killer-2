@@ -254,7 +254,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
       // The page has the markup now; a move takes the layer off the canvas.
       const removed = edit.copy ? undefined : { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false }
-      return { applied: true, created: locations(result.created), createdIn: edit.parentNodeId, ...(removed ? { removed } : {}) }
+      return { applied: true, created: locations(result.created), createdIn: edit.parentNodeId, ...(removed ? { removed: [removed] } : {}) }
     }
     case 'canvas-layer-lift': {
       const origin = locate(edit.nodeId)

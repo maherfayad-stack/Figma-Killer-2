@@ -192,11 +192,31 @@ export function listRowSourceFor(
   }
 }
 
-/** Stamps each root node one iteration rendered with its row's source. */
-export function stampListRows(nodes: Record<string, ParsedNode>, rootIds: readonly string[], listRow: ListRowSource): void {
+/**
+ * Stamps each root node one iteration rendered with its row's source.
+ *
+ * A row root whose array is editable is UNLOCKED when the loop was its only
+ * lock (`loopReason`): its place in the list is written through the array,
+ * so the structural lock — "the source does not place this" — is no longer
+ * true of it. Everything inside the row stays locked (one piece of JSX
+ * renders it in every row), and so does a root locked for its own reason (a
+ * spread). The gestures the array cannot express still refuse by the id
+ * (`list-row`), which never depended on this flag.
+ */
+export function stampListRows(
+  nodes: Record<string, ParsedNode>,
+  rootIds: readonly string[],
+  listRow: ListRowSource,
+  loopReason: string,
+): void {
   for (const id of rootIds) {
     const node = nodes[id]
-    if (node) node.listRow = listRow
+    if (!node) continue
+    node.listRow = listRow
+    if (listRow.kind === 'array' && node.lockReason === loopReason) {
+      node.locked = false
+      delete node.lockReason
+    }
   }
 }
 

@@ -307,8 +307,9 @@ function expandStaticLoop(expr: Node, ctx: ParseContext): string[] | undefined {
     }
     // Locked with a reason naming the item, not the generic dynamic-surface
     // message: the row IS resolved, it just has no isolated place to write to.
-    const roots = collectJsx(body, iterationCtx, true, `item ${index + 1} of ${loop.sourceText}`)
-    stampListRows(ctx.nodes, roots, listRowOf(index, roots.length))
+    const reason = `item ${index + 1} of ${loop.sourceText}`
+    const roots = collectJsx(body, iterationCtx, true, reason)
+    stampListRows(ctx.nodes, roots, listRowOf(index, roots.length), reason)
     ids.push(...roots)
   })
   return ids

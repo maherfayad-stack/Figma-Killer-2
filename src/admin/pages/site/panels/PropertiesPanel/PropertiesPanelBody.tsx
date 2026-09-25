@@ -38,7 +38,7 @@
 import { EmptyState } from '@ui/components/EmptyState'
 import { useEditorPermissions } from '@site/editorPermissionsContext'
 import type { AnyModuleDefinition } from '@core/module-engine'
-import { describeStructuralRefusal, hasWritableSourceLocation, refusePlacement } from '@core/page-tree'
+import { describeStructuralRefusal, hasWritableSourceLocation, listRowArrayOf, refusePlacement } from '@core/page-tree'
 import type { StyleRule, PageNode } from '@core/page-tree'
 import type { VisualComponent } from '@core/visualComponents'
 import type { ActiveDocument } from '../../store/slices/uiSlice'
@@ -231,6 +231,7 @@ export function PropertiesPanelBody(props: PropertiesPanelBodyProps): React.Reac
             textOrigin={selectedNode.textOrigin}
             sharedWith={sharedTextOriginCount}
             hasWritableLocation={hasWritableSourceLocation(selectedNode.id)}
+            listRowArray={listRowArrayOf(selectedNode) ?? undefined}
             constraint={structuralConstraint}
             nodeId={selectedNodeId ?? undefined}
           />
