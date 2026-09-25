@@ -48,16 +48,11 @@
 import { FRAME_WIDTH, FRAME_HEIGHT, type Board, type BoardGuide } from '@core/studio-board'
 import { findSpacingSnap, spacingSegments, type SnapSpacing } from './snapSpacing'
 import type { SnapPreferences } from './snapPreferences'
+import type { SnapRect } from './snapRect'
 
 export type { SnapSpacing } from './snapSpacing'
 
-/** A furniture rect in board-space units (top-left + size). */
-export interface SnapRect {
-  x: number
-  y: number
-  width: number
-  height: number
-}
+export type { SnapRect } from './snapRect'
 
 /**
  * A guide line to draw at board-space `position` on `axis`, spanning

@@ -25,6 +25,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Height × gestures:** every handle gesture (resize, group, rotate) now freezes through `handleDragSession`; a new handle gesture must use it, not copy it.
   - Ruler guides reach frame space through the transform layer's rect top-left (= board 0,0 because `transform-origin: 0 0`).
 - **Found, not fixed:** in the PR body.
+- **Verification:** build + lint clean; unit suite in locked chunks after merging trunk `69397b64`: only pre-existing fails (`module-size-budgets` on `agentCheckpoints.ts`, bundle freshness on Bun 1.3.6 — passes on 1.3.13) plus three load timeouts that pass alone. SitePage cap raised 41.3 → 41.7 KB (audited: the zoom menu's snap rows). e2e: new spec 6/6, `element-resize` 5/5, `snapping-and-measuring` 10/10, `canvas-tools-and-handles` 5/5.
 - **Next:** owner dogfood (script in the PR body); orchestrator review.
 - **Human action needed:** dogfood: `test4`, `/admin/site`, static tier, one frame, 100% — equal-spacing pills on an absolute drag, ⌘'/⌘⇧' in the zoom menu, ⇧-select two layers → one handle box, double-click an edge, rotate from outside a corner with ⇧, 5 / 0 / ⇧H, B-drag on the empty board.
 

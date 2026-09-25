@@ -36,7 +36,7 @@
  *
  * Pure: no React, no DOM, no store.
  */
-import type { SnapRect } from './boardSnapping'
+import type { SnapRect } from './snapRect'
 
 type Axis = 'x' | 'y'
 
