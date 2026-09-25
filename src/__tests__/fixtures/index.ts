@@ -72,6 +72,9 @@ export function makeNode(overrides: Partial<PageNode> & { id?: string } = {}): P
     dynamicBindings: overrides.dynamicBindings,
     propBindings: overrides.propBindings,
     textOrigin: overrides.textOrigin,
+    // P5-B — an import-bound image's import position; dropped here, no test
+    // could reach the image-replace path that repoints the import.
+    assetOrigin: overrides.assetOrigin,
     // Track F2 — studio-import provenance fields, previously dropped by this
     // factory (silently: a test passing `lockReason` got a node with none).
     // Needed by any test exercising `refuseStructuralEdit`/`isPropWritableToSource`/

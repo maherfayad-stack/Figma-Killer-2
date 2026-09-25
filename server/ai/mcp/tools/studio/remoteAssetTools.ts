@@ -7,9 +7,8 @@
  * type, magic bytes), and `agentWriteSupport.ts`'s `landAgentAsset` for the
  * landing (the agent write gate, the project lock, `assetLanding.ts`).
  *
- * `execution: 'server'` — unlike `studio_upload_asset` (browser-bridged,
- * because the model hands it bytes the BROWSER then POSTs as multipart form
- * data), there is nothing here the live editor needs to mediate: the fetch,
+ * `execution: 'server'` — like `studio_upload_asset`, there is nothing here
+ * the live editor needs to mediate: the fetch,
  * the sniff, the sanitize, and the write are all plain filesystem/network
  * operations this process can do directly, the same posture every other
  * headless Studio write tool (`studio_apply_edits`, `studio_create_page`,

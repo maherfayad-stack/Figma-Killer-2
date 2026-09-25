@@ -58,6 +58,7 @@
  */
 import { existsSync, mkdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { isUnlinkedWorkspacePath } from '@core/page-parser'
 import { joinAppRoot } from './appRoot'
 import { reprobeProjectProfile, resolveProjectProfilePersisting } from './projectProbe'
 import type { ProjectProfile } from './projectProfileSchema'
@@ -537,6 +538,14 @@ export function generateStudioProjectGuide(dir: string): GenerateGuideResult {
 
     for (const target of buildGuideFiles(dir, profile)) {
       const absPath = join(dir, target.relPath)
+      // Never read or written through a link (security review of #233, F7):
+      // a `.claude` junction pointing out of the project would otherwise put
+      // `settings.local.json` and every guide file wherever it points. Such a
+      // target is skipped and not recorded — nothing of Studio's is there.
+      if (!isUnlinkedWorkspacePath(dir, absPath)) {
+        skipped.push(target.relPath)
+        continue
+      }
       const contentHash = sha256(target.content)
       const existing = readTextCapped(absPath, 1_000_000)
 
