@@ -91,13 +91,14 @@ function boxDistance(actual: Box | null, expected: Box | null): number {
 }
 
 /**
- * Wait for a ring to settle on `expected`. The overlay positions rings in its
- * own measure pass, so the first read after the pointer arrives can still be
- * the box of whatever the pointer crossed on the way (the frame's `main`).
+ * Wait for a ring to settle on `target`'s CURRENT box. Both are re-read on
+ * every poll: the overlay positions rings in its own measure pass, and the
+ * board itself may move under the pointer (the first click into a frame
+ * re-frames the canvas on it), so a box captured before the gesture is stale.
  */
-async function expectRingOn(ring: Locator, expected: Box | null, tolerance: number, label: string): Promise<void> {
+async function expectRingOn(ring: Locator, target: Locator, tolerance: number, label: string): Promise<void> {
   await expect
-    .poll(async () => boxDistance(await ring.boundingBox(), expected), { message: `${label} never settled on the <svg>`, timeout: 10_000 })
+    .poll(async () => boxDistance(await ring.boundingBox(), await target.boundingBox()), { message: `${label} never settled on the <svg>`, timeout: 10_000 })
     .toBeLessThanOrEqual(tolerance)
 }
 
@@ -177,20 +178,20 @@ test.describe('SVG-0 — a literal <svg> is the node, with the box the app gives
     expect(svgBox).not.toBeNull()
 
     await page.mouse.move(svgBox!.x + svgBox!.width / 2, svgBox!.y + svgBox!.height / 2)
-    // Hover lands on the <svg> node itself — not on a Studio wrapper, and not
-    // on its parent. Only the TARGET is asserted: the ring's rect is not,
-    // because of a pre-existing overlay bug unrelated to SVG. A hover that
-    // moves from one node to another inside a frame (every entry into a
-    // child) schedules no measure pass, so the ring keeps the first node's
-    // box. The same happens on a plain <div> (see the PR's "Found, not fixed").
+    // Hover lands on the <svg> node itself (not a Studio wrapper, not its
+    // parent), and the ring is the svg's box. The pointer reaches it through
+    // `body` and `main`, so this is also the regression case for a hover that
+    // moves between nodes without a measure pass (the ring used to keep
+    // `body`'s 1024x800 box under the svg's id).
     const hoverRing = content.locator('[data-canvas-hover-ring="true"]').first()
     await expect(hoverRing).toHaveAttribute('data-canvas-overlay-node-id', ROW_SVG, { timeout: 10_000 })
+    await expectRingOn(hoverRing, svg, 3, 'hover ring')
 
     await clickInFrame(page, svg)
     await expect(svg).toHaveAttribute('data-canvas-selected', 'true', { timeout: 10_000 })
     const selectionRing = content.locator(SELECTION_RING).first()
     await expect(selectionRing).toBeVisible({ timeout: 10_000 })
-    await expectRingOn(selectionRing, svgBox, 3, 'selection ring')
+    await expectRingOn(selectionRing, svg, 3, 'selection ring')
     // An inline `<svg>` is a replaced element CSS sizes, so the resize offer
     // no longer refuses it.
     await expect(content.locator('[data-canvas-resize-handle="e"]')).toBeVisible({ timeout: 15_000 })

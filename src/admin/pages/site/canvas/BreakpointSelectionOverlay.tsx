@@ -319,6 +319,18 @@ export function BreakpointSelectionOverlay({
   // highlight becomes the hover ring target so keyboard navigation is visible.
   const hoverRingNodeId = treeLadder.hoverNodeId ?? hoveredNodeId
   const showHover = Boolean(hoverRingNodeId) && !selectedNodeIds.includes(hoverRingNodeId ?? '')
+  // A hover TARGET change is a measure trigger, exactly like a selection
+  // change above. Without it, hover moving from one node straight to another
+  // (every pointer entry into a child: body → main → the svg) scheduled no
+  // pass — no observer sees it (the ring's own attribute write is filtered as
+  // selection chrome), so the ring kept the FIRST node's box, usually
+  // `body`'s whole frame, under the new node's id. (Hover off → on with
+  // nothing selected happened to work only because it re-creates the
+  // scheduler, whose first act is a pass.)
+  const hoverTargetId = showHover ? hoverRingNodeId : null
+  useEffect(() => {
+    schedulerRef.current?.schedule()
+  }, [hoverTargetId])
   const reorderDrag = useCanvasReorderDrag({
     viewportRef,
     iframeElement,
