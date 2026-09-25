@@ -105,7 +105,15 @@ interface CanvasRootProps {
   editable?: boolean
 }
 
-export function CanvasRoot({ editable = true }: CanvasRootProps) {
+export function CanvasRoot(props: CanvasRootProps) {
+  // Not `{ editable = true }` in the signature: the React Compiler this repo
+  // runs (babel-plugin-react-compiler 1.0 on Babel 8) cannot lower a default
+  // inside a destructuring pattern, and it skips the whole component when it
+  // meets one. Uncompiled, `CanvasRoot` rebuilt its context values on every
+  // render, so each click and keystroke re-rendered the selection chrome of
+  // every mounted frame (P6-C). `compiled-hot-components.test.ts` keeps it
+  // compiled.
+  const editable = props.editable ?? true
   const transformLayerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -291,7 +299,13 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
         lastCenteredKeyRef.current = centerKey
         return
       }
-      if (attempts++ >= MAX_ATTEMPTS) return
+      // `attempts += 1`, not `attempts++`: the React Compiler cannot lower an
+      // update expression on a variable a closure captures, and it skips the
+      // WHOLE component when it meets one — which left `CanvasRoot` unmemoized
+      // and handed every frame's selection chrome a new viewport-actions context
+      // on every click and keystroke (P6-C).
+      if (attempts >= MAX_ATTEMPTS) return
+      attempts += 1
       timerId = setTimeout(tryCenter, RETRY_MS)
     }
     tryCenter()

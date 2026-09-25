@@ -31,6 +31,7 @@ bun run bench:agent-turn    # chat-turn server cost: guide, first stream line, M
 bun run bench:agent-models  # REAL billed agent turns per candidate model — needs ANTHROPIC_API_KEY + STUDIO_BENCH_SPEND=1
 bun run bench:browser       # real Chromium via Playwright — opt-in
 bun run bench:studio-board  # canvas perf gate — runs the Playwright spec, opt-in
+bun run bench:studio-load   # /load warm path on a generated 1,000-file repo (gated)
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
 ```
 
@@ -151,6 +152,21 @@ Groups 1–3 are offline and deterministic: no network, no browser, no database,
 Fixture: a fresh copy of `studio-workspace/__canonical-fixture` into `.tmp/benchmarks/` — **never** mutates anything under `studio-workspace/`. Self-skips with an `unavailable` row if it does not exist.
 
 The telemetry group also prints the **per-(role, model)** table from the `kind: "turn"` lines every real turn writes (AI-25) — the numbers model routing is judged by.
+
+### studio-load (gated)
+Audit `01-perf.md` §3 item 12 (PERF-8), ROADMAP P6-C. Generates a 1,000-file repository into `.tmp/benchmarks/studio-load/` (40 pages, 200 components, 600 utility modules, 100 JSON files, 60 stylesheets — P6-B's `thousand` corpus) and calls `loadStudioPagesShared` + `JSON.stringify`, which is all `GET /admin/api/studio/load` does, in process.
+
+Two rows are **gates** (`STUDIO_LOAD_BUDGETS_MS`; a row reading `OVER` fails the bench): the **warm load median** (nothing changed since the last load) and the **longest event-loop block** during a warm load (measured by a 1 ms interval probe — a warm load is mostly synchronous `stat`s, so this is what a request queued behind it waits). Recorded, not gated: the cold load, the longest block in the 3 s after it (the deferred program prewarm and parse-store writes), and a load after one page edit.
+
+| row | P6-C calibration (this Windows box, loaded) | budget |
+|---|---|---|
+| warm load, median | 31.5 ms (p95 47 ms) | 80 ms |
+| warm load, longest block (median) | 31.1 ms (worst 61 ms) | 80 ms |
+| cold load | 3.57 s | — |
+| longest block in the 3 s after a cold load | 380 ms | — |
+| load after one page edit | 934 ms | — |
+
+`bun run bench:studio-load`.
 
 ### agent-models (opt-in, spends API credit)
 The measurement behind model routing (AI-25, `server/ai/routing/modelRouting.ts`). Runs **real** API-key agent turns — the production system prompt, the HTTP tool surface including `studio_delegate`, the Anthropic driver and the shared tool loop — once per model in `MODEL_BENCH_CANDIDATES` (`claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `claude-fable-5-1`) per brief, each against a fresh copy of the canonical fixture:

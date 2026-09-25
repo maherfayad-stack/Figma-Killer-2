@@ -8,6 +8,7 @@ import {
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
  * The edit and load budgets on the LARGE board — ROADMAP P6-C, audit
@@ -26,16 +27,68 @@ import { visibleCanvasIframe } from './helpers/canvasIframe'
  *
  * The board opens with autosave off, so a text edit stays in memory; a ⌘D is
  * a structural write and always lands in the file.
+ *
+ * ## Two bundles, two sets of numbers
+ *
+ * CI runs this spec twice: on the dev server (every test), and against the
+ * production bundle (`E2E_VITE_MODE=preview`, `scripts/lib/e2eStack.ts`) for
+ * the tests tagged `@production-bundle`. Development React renders several
+ * times slower (dev-only element validation, owner stacks) and loads the
+ * editor as hundreds of separate modules, so a dev number is a regression
+ * ratchet and the production number is the product. Each budget below states
+ * both, with the runs it was calibrated on (medians, this Windows box, under
+ * the shared multi-agent load; before = the trunk with P6-A, after = P6-C).
  */
+const PRODUCTION = E2E_VITE_MODE === 'preview'
 
-/** PLACEHOLDER budgets — calibrated from this spec's own runs (P6-C PR). */
-const BUDGET_INSPECTOR_KEYSTROKE_TO_PAINT_MEDIAN_MS = 1000
-const BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS = 1000
-const BUDGET_DUPLICATE_NODE_RENDERS = 100_000
-const BUDGET_POST_EDIT_CLICK_LONG_TASK_MS = 10_000
-const BUDGET_HEAP_GROWTH_MB = 10_000
-const BUDGET_DETACHED_DOCUMENTS = 1000
-const BUDGET_FIRST_FRAME_INTERACTIVE_WARM_MS = 100_000
+/**
+ * **Keystroke in the inspector's Text field -> the canvas painted it**, median
+ * of 12. before -> after P6-C: dev 115 -> 80 ms (spread 75-101), production
+ * 32 -> 28-33 ms (26-49). The cut was the Assets panel, which re-rendered 46
+ * cards and ~130 buttons on every keystroke through insert hooks that
+ * subscribed to the page they only read on insert.
+ */
+const BUDGET_INSPECTOR_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 120
+/** **Inline edit on the canvas** — keydown to the frame after its `input`. Dev 112 -> 86 ms (81-159), production 36 -> 29 ms (26-50). */
+const BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS = PRODUCTION ? 50 : 130
+/**
+ * **⌘D: `NodeRenderer` renders + mounts until the write has landed and been
+ * reconciled.** A node id IS its source position, so duplicating an element
+ * re-addresses every element after it in the same file: ~345 of the ~2,490
+ * mounted nodes get a new id and must re-render (P6-A keeps their keys, so
+ * they are not REMOUNTED — mounts went 270 -> 1). Measured 345 / 1 in every
+ * run since P6-A. The budget is the edited page and nothing else: a
+ * regression that re-renders the other frames reads ~2,490.
+ */
+const BUDGET_DUPLICATE_NODE_RENDERS = 450
+/** **⌘D -> the copy painted on the canvas.** Dev ~190-230 ms, production 111-136 ms. */
+const BUDGET_DUPLICATE_TO_PAINT_MS = PRODUCTION ? 250 : 400
+/**
+ * **A click 700 ms after an edit: no long task other than the click's own.**
+ * PERF-5's shape — a poster rasterized ~600 ms into the pause, landing on the
+ * next click — is gone since P2-I, and measured gone here: nothing after the
+ * click's own task in any run. The click's own task is the click -> ring
+ * budget's business (`canvas-feel-budgets.e2e.ts`); in production it is not a
+ * long task at all (no task over 50 ms in the whole second).
+ */
+const BUDGET_LONG_TASK_AFTER_THE_CLICK_MS = 50
+/**
+ * **Memory after 20 pan cycles and 50 edits.** Detached documents (the
+ * page's `Documents` minus its `Frames`, after two forced GCs): 1 in every
+ * run, before and after — one constant document, not a leak. Heap growth
+ * +27-30 MB, most of it the pool holding more frames at the end (9 -> 17
+ * frames) plus their posters.
+ */
+const BUDGET_DETACHED_DOCUMENTS = 2
+const BUDGET_HEAP_GROWTH_MB = 60
+/**
+ * **First frame interactive, warm** (WS-5.5: < 2 s for a 40-page repo on a
+ * warm cache). Production 1.29-1.68 s. The dev server serves the editor as
+ * ~2,000 separate modules and loads the canvas's lazy chunks only after
+ * `/load`, so the dev number (3.96-4.55 s) is a ratchet on the product's own
+ * work, not the target.
+ */
+const BUDGET_FIRST_FRAME_INTERACTIVE_WARM_MS = PRODUCTION ? 2000 : 7000
 
 const KEYSTROKE_SAMPLES = 12
 const TARGET_PAGE_ID = largeBoardPageId(0)
@@ -82,7 +135,7 @@ async function inspectorFieldHolding(page: Page, text: string): Promise<Locator>
 test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
   test.setTimeout(240_000)
 
-  test('keystroke -> paint: the inspector Text field updates the canvas within budget', async ({ page }) => {
+  test('keystroke -> paint: the inspector Text field updates the canvas within budget', { tag: '@production-bundle' }, async ({ page }) => {
     const { content } = await open(page)
     const heading = content.locator('.block__heading').nth(1)
     await clickInFrame(page, heading)
@@ -129,7 +182,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     expect(median(samples)).toBeLessThan(BUDGET_INSPECTOR_KEYSTROKE_TO_PAINT_MEDIAN_MS)
   })
 
-  test('keystroke -> paint: inline text editing on the canvas stays within budget', async ({ page }) => {
+  test('keystroke -> paint: inline text editing on the canvas stays within budget', { tag: '@production-bundle' }, async ({ page }) => {
     const { content } = await open(page)
     const heading = content.locator('.block__heading').nth(1)
     const box = await heading.boundingBox()
@@ -162,12 +215,14 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     expect(median(samples)).toBeLessThan(BUDGET_INLINE_KEYSTROKE_TO_PAINT_MEDIAN_MS)
   })
 
-  test('a structural write (⌘D) re-renders only what changed', async ({ page }) => {
+  test('a structural write (⌘D) re-renders only what changed', { tag: '@production-bundle' }, async ({ page }) => {
     await installReactRenderCounter(page)
     const { canvasRoot, content } = await open(page)
     const headings = content.locator('.block__heading')
     const before = await headings.count()
-    await clickInFrame(page, headings.nth(1))
+    const target = headings.nth(1)
+    const nodeId = await target.getAttribute('data-node-id')
+    await clickInFrame(page, target)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })
     await page.waitForTimeout(600)
     const mountedNodes = await page.evaluate(() =>
@@ -176,12 +231,36 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
         0,
       ),
     )
+    // keydown in the editor document -> the frame holds one more heading ->
+    // the next animation frame; one clock, as in the keystroke cases.
+    await page.evaluate(
+      ({ id, count }) => {
+        const iframe = Array.from(document.querySelectorAll<HTMLIFrameElement>('iframe[title^="Canvas frame"]')).find((f) =>
+          f.contentDocument?.querySelector(`[data-node-id="${id}"]`),
+        )
+        const doc = iframe?.contentDocument
+        if (!doc?.body) throw new Error(`node ${id} is in no mounted frame`)
+        const state = { downAt: 0, paintAt: 0, observer: null as MutationObserver | null }
+        ;(window as unknown as { __p6cDup: typeof state }).__p6cDup = state
+        document.addEventListener('keydown', () => { if (state.downAt === 0) state.downAt = performance.now() }, { capture: true, once: true })
+        state.observer = new MutationObserver(() => {
+          if (state.paintAt !== 0 || doc.querySelectorAll('.block__heading').length <= count) return
+          state.observer?.disconnect()
+          requestAnimationFrame(() => { state.paintAt = performance.now() })
+        })
+        state.observer.observe(doc.body, { subtree: true, childList: true })
+      },
+      { id: nodeId, count: before },
+    )
     await canvasRoot.focus()
     await resetRenderCounts(page)
-    const startedAt = Date.now()
     await page.keyboard.press('Control+d')
     await expect(headings).toHaveCount(before + 1, { timeout: 30_000 })
-    const shownMs = Date.now() - startedAt
+    const shownMs = await page.evaluate(async () => {
+      const state = (window as unknown as { __p6cDup: { downAt: number; paintAt: number } }).__p6cDup
+      for (let wait = 0; wait < 200 && state.paintAt === 0; wait += 1) await new Promise((r) => setTimeout(r, 10))
+      return state.downAt > 0 && state.paintAt > 0 ? state.paintAt - state.downAt : -1
+    })
     // The write lands, the board re-reads the page it wrote, and the result is
     // reconciled into the store (`patchPages`) — the part PERF-6 is about.
     await page.waitForTimeout(4000)
@@ -189,11 +268,19 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     const nodeRenders = counts.renders.NodeRenderer ?? 0
     const nodeMounts = counts.mounts.NodeRenderer ?? 0
     annotate('⌘D: mounted canvas nodes', String(mountedNodes))
-    annotate('⌘D: duplicate on screen after', `${shownMs}ms`)
+    annotate('⌘D -> copy painted', `${shownMs.toFixed(0)}ms`)
     annotate('⌘D: NodeRenderer renders / mounts', `${nodeRenders} / ${nodeMounts}`)
     annotate('⌘D: commits', String(counts.commits))
     annotate('⌘D: top renders', topRenders(counts))
-    expect(nodeRenders + nodeMounts).toBeLessThan(BUDGET_DUPLICATE_NODE_RENDERS)
+    expect(shownMs, 'the copy never painted').toBeGreaterThan(0)
+    expect(shownMs).toBeLessThan(BUDGET_DUPLICATE_TO_PAINT_MS)
+    // A production bundle's component names are minified, so the render count
+    // is asserted on the dev pass only — and there it must have counted
+    // something, or the counter is blind and the budget below is a comment.
+    if (!PRODUCTION) {
+      expect(nodeRenders + nodeMounts, 'the render counter saw no NodeRenderer at all').toBeGreaterThan(0)
+      expect(nodeRenders + nodeMounts).toBeLessThan(BUDGET_DUPLICATE_NODE_RENDERS)
+    }
   })
 
   test('a click after an edit and a pause is not followed by a long task', async ({ page }) => {
@@ -232,10 +319,15 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
         ),
       clickAt,
     )
-    const worst = tasks.reduce((max, t) => Math.max(max, t.duration), 0)
+    // The click's own task starts within a few ms of the click (it is the
+    // pointer events' dispatch); everything after it is what PERF-5 is about.
+    const ownTask = tasks.find((t) => t.start - clickAt < 50) ?? null
+    const after = tasks.filter((t) => t !== ownTask)
+    const worstAfter = after.reduce((max, t) => Math.max(max, t.duration), 0)
     annotate('post-edit click: long tasks in the next 1 s', tasks.map((t) => `+${(t.start - clickAt).toFixed(0)}ms ${t.duration.toFixed(0)}ms`).join(', ') || '(none)')
-    annotate('post-edit click: worst long task', `${worst.toFixed(0)}ms`)
-    expect(worst).toBeLessThan(BUDGET_POST_EDIT_CLICK_LONG_TASK_MS)
+    annotate('post-edit click: the click task itself', ownTask ? `${ownTask.duration.toFixed(0)}ms` : '(not a long task)')
+    annotate('post-edit click: worst long task after it', `${worstAfter.toFixed(0)}ms`)
+    expect(after.filter((t) => t.duration >= BUDGET_LONG_TASK_AFTER_THE_CLICK_MS)).toEqual([])
   })
 
   test('memory: 20 pan cycles and 50 edits leave no detached documents and a bounded heap', async ({ page }) => {
@@ -292,7 +384,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     expect(end.heapMb - start.heapMb).toBeLessThan(BUDGET_HEAP_GROWTH_MB)
   })
 
-  test('first frame interactive, warm: a reopened 40-page board has a clickable frame within budget', async ({ page }) => {
+  test('first frame interactive, warm: a reopened 40-page board has a clickable frame within budget', { tag: '@production-bundle' }, async ({ page }) => {
     // First open warms the server's load memo and parse cache, and the
     // browser's module cache — "warm" in WS-5.5's sense.
     await open(page)
