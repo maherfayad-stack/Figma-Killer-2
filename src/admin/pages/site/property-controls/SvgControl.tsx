@@ -20,6 +20,7 @@ import { Suspense, lazy, useState } from 'react'
 import type { ControlProps } from './shared'
 import { useEditorStore } from '@site/store/store'
 import { sanitizeSvg } from '@core/sanitize'
+import { stripSvgPartStamps } from '@core/vector'
 import type { CmsMediaAsset } from '@core/persistence/cmsMedia'
 import { ControlRow } from '@ui/components/ControlRow'
 import { Button } from '@ui/components/Button'
@@ -51,7 +52,8 @@ export function SvgControl({
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const markup = sanitizeSvg(value)
+  // SVG-3 — what the user sees (and "Edit code" opens) is their graphic, not Studio's part stamps.
+  const markup = sanitizeSvg(stripSvgPartStamps(value))
 
   const openEditor = () => {
     if (!selectedNodeId) return

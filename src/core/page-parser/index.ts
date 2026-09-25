@@ -82,6 +82,7 @@ export {
 export type { ComponentSource, ExportedDeclaration, WorkspaceProjectWarning } from './componentSources'
 export { EolPreservingFileSystem, eolFileSystemOf, projectLineEnding } from './eolFileSystem'
 export { LITERAL_FINGERPRINT_LABEL, jsxElementFingerprint, literalFingerprint } from './sourceFingerprint'
+export { isLiteralJsxAttribute } from './jsxLiteralAttribute'
 export {
   inlineLocalComponents,
   resolveCallTarget,

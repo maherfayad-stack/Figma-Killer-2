@@ -15,6 +15,7 @@ import { registry } from '@core/module-engine'
 import type { ModuleDefinition } from '@core/module-engine'
 import { ImageSolidIcon } from 'pixel-art-icons/icons/image-solid'
 import { Value } from '@core/utils/typeboxHelpers'
+import { stripSvgPartStamps } from '@core/vector'
 import { SvgEditor } from './SvgEditor'
 import { resolveSvgHostTag } from './hostTag'
 import { SvgPropsSchema, type SvgStoredProps } from './props'
@@ -59,8 +60,9 @@ export const SvgModule: ModuleDefinition<SvgStoredProps> = {
   render: (props) => {
     // `props.svg` was already sanitised at the escapeProps boundary; this is
     // the final, safe markup. An a11y label, when present, is added to the
-    // root element so the inline graphic announces itself.
-    const markup = String(props.svg ?? '')
+    // root element so the inline graphic announces itself. The parser's part
+    // stamps (SVG-3) are Studio bookkeeping and never reach a published page.
+    const markup = stripSvgPartStamps(String(props.svg ?? ''))
     if (!markup.trim()) return { html: '' }
 
     const label = String(props.title ?? '').trim()
