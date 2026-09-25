@@ -59,6 +59,20 @@ function unpinSmsFrameHeight(dir: string): void {
   fs.writeFileSync(file, `${JSON.stringify(boards, null, 2)}\n`)
 }
 
+/**
+ * Whether the copy can boot a LIVE frame at all: Tier 2 needs a lockfile
+ * (`liveCapability.ts`) and an installed tree with Vite in it
+ * (`devServer.ts`). The tracked `test4` has neither — committing an installed
+ * tree is what `.gitignore`'s studio-workspace section forbids — so on a clean
+ * checkout every case here skips with that reason instead of timing out on a
+ * bridge iframe that can never appear. An owner's local `test4` with
+ * `node_modules` runs them.
+ */
+const LOCKFILES = ['bun.lock', 'bun.lockb', 'package-lock.json', 'pnpm-lock.yaml', 'yarn.lock']
+function canBootLiveFrame(dir: string): boolean {
+  return fs.existsSync(path.join(dir, 'node_modules', 'vite')) && LOCKFILES.some((file) => fs.existsSync(path.join(dir, file)))
+}
+
 const readSms = () => fs.readFileSync(path.join(fixture.dir, 'pages', 'SMS.tsx'), 'utf8')
 
 interface Box {
@@ -93,6 +107,7 @@ interface LiveSms {
 /** The SMS frame once its BRIDGE iframe (the real app) has taken over from the fallback. */
 async function openLiveSms(page: Page): Promise<LiveSms> {
   test.skip(!fixture.ready, 'studio-workspace/test4 is not on disk')
+  test.skip(!canBootLiveFrame(fixture.dir), 'test4 has no lockfile + installed Vite, so no live frame can boot (see canBootLiveFrame)')
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = page.locator('[data-page-id="sms"]').first()
   await expect(frame, 'the test4 board has no SMS frame').toBeAttached({ timeout: 30_000 })
