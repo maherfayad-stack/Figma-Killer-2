@@ -12,7 +12,7 @@
  * host-config rule (which itself imports `./workspaceFiles`).
  */
 import { isHostConfigFileName } from './workspaceWriteScope'
-import { isPrototypeShellPath, listWorkspaceFiles } from './workspaceFiles'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, isPrototypeShellPath, listWorkspaceFiles } from './workspaceFiles'
 
 /** The file kinds `createWorkspaceProject` hands to ts-morph — what the parser can read as a module. */
 const WORKSPACE_SOURCE_FILE_RE = /\.(tsx?|jsx?)$/i
@@ -42,11 +42,21 @@ const WORKSPACE_SOURCE_FILE_RE = /\.(tsx?|jsx?)$/i
  * nothing in the app reaches stop costing anything.
  */
 export function listWorkspaceSourceFiles(dir: string): string[] {
-  return listWorkspaceFiles(dir).filter(isWorkspaceSourcePath)
+  return listWorkspaceFiles(dir).filter(isWorkspaceSourceFilePath)
 }
 
-function isWorkspaceSourcePath(relPath: string): boolean {
+/**
+ * The same rule for ONE workspace-relative POSIX path — whether
+ * `listWorkspaceSourceFiles` would list it (were it a real, non-symlinked
+ * file). `server/handlers/studio/workspaceProject.ts` asks it of each path the
+ * project watcher reports, so a kept `Project` synced from a change list
+ * contains exactly the files a full walk would have given it (P6-B) — a
+ * build-tool config the watcher sees change included.
+ */
+export function isWorkspaceSourceFilePath(relPath: string): boolean {
   if (!WORKSPACE_SOURCE_FILE_RE.test(relPath) || isPrototypeShellPath(relPath)) return false
-  const name = relPath.slice(relPath.lastIndexOf('/') + 1)
-  return !isHostConfigFileName(name)
+  const segments = relPath.split('/')
+  return segments.every((segment) => segment !== '' && segment !== '.' && segment !== '..') &&
+    !segments.slice(0, -1).some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment.toLowerCase())) &&
+    !isHostConfigFileName(segments[segments.length - 1]!)
 }

@@ -146,7 +146,7 @@ describe('saveSite → narrow board resync', () => {
             paletteHiddenModuleIds: [],
             pageCount: pages.length,
           },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(lines.map((line) => JSON.stringify(line)).join('\n') + '\n', { status: 200 })
       }

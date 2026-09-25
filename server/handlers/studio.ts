@@ -294,7 +294,7 @@ import type { SiteFontsSettings } from '@core/fonts'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { buildStudioDownloadResponse } from './studioDownload'
 import { resolveStudioAssetResponse } from './studioAsset'
-import { loadStudioPages } from './studioPageLoad'
+import { loadStudioPagesShared } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
@@ -350,10 +350,10 @@ export async function tryServeStudio(
       const projectName = projectDisplayName(dir)
       const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
-      // The filter reaches the compute: `loadStudioPages` skips the per-page
-      // convert for every route not asked for, while the meta below stays a
-      // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
-      const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
+      // The filter narrows the pages, while the meta below stays the full,
+      // project-wide result. See `studioLoadResponse.ts`. SHARED, not cloned
+      // (P6-B): this route only serialises it — see `loadStudioPagesShared`.
+      const loaded = await loadStudioPagesShared(dir, { pageIds: pageIdsParam })
       const { pages, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline

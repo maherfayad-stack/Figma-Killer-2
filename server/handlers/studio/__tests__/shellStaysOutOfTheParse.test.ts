@@ -18,7 +18,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { createWorkspaceProject, listWorkspaceSourceFiles } from '@core/page-parser'
+import { createWorkspaceProject, isWorkspaceSourceFilePath, listWorkspaceSourceFiles } from '@core/page-parser'
 import { ensurePrototypeShell } from '../prototypeShell'
 
 let tmpDir: string
@@ -77,6 +77,14 @@ describe('the workspace parse program', () => {
     write('tailwind.config.js', 'export default {}\n')
     write('.eslintrc.cjs', 'module.exports = {}\n')
     expect(programFiles()).toEqual(['components/Card.tsx', 'pages/Home.tsx'])
+  })
+
+  it('gives the watcher-driven sync the same answer, one path at a time', () => {
+    expect(isWorkspaceSourceFilePath('pages/Home.tsx')).toBe(true)
+    expect(isWorkspaceSourceFilePath('vite.config.js')).toBe(false)
+    expect(isWorkspaceSourceFilePath('packages/web/vite.config.ts')).toBe(false)
+    expect(isWorkspaceSourceFilePath('prototype/studioRuntime.generated.js')).toBe(false)
+    expect(isWorkspaceSourceFilePath('Node_Modules/vite/index.js')).toBe(false)
   })
 
   it('still follows the declarations a user file imports', () => {

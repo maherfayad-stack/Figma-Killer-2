@@ -47,7 +47,7 @@ export {
   listWorkspaceDirectories,
   listWorkspaceFiles,
 } from './workspaceFiles'
-export { listWorkspaceSourceFiles } from './workspaceSourceFiles'
+export { isWorkspaceSourceFilePath, listWorkspaceSourceFiles } from './workspaceSourceFiles'
 export {
   UNWRITABLE_WORKSPACE_DIR_NAMES,
   comparableWorkspaceRel,

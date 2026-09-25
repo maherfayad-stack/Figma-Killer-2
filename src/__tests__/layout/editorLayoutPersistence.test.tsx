@@ -250,7 +250,7 @@ describe('AdminCanvasLayout — Studio site hydration gate', () => {
           paletteHiddenModuleIds: [],
           pageCount: 1,
         })
-        const pageLine = JSON.stringify({ kind: 'page', page })
+        const pageLine = JSON.stringify({ kind: 'page', page, index: 0 })
         return new Response(`${metaLine}\n${pageLine}\n`, {
           status: 200,
           headers: { 'content-type': 'application/x-ndjson' },
