@@ -73,7 +73,8 @@ function roundTrip(edits: StudioEdit[]): void {
   const back = applyStudioEditBatch(dir, [restore(forward.undoToken!)], {}, EDITOR)
   expect(back.refusals).toEqual([])
   expect(back.written).toBe(1)
-  expect(back.shifted).toBe(true)
+  // Every other frame reading the file is stale — the board re-reads it.
+  expect(back.sharedComponents).toBe(true)
   expect(back.touchedFiles).toEqual([abs('pages/Home.tsx')])
   expect(read('pages/Home.tsx')).toBe(PAGE)
 }
