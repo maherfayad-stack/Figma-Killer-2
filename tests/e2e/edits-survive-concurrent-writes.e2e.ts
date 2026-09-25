@@ -1,8 +1,8 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -113,8 +113,8 @@ test.describe('P3-E — an unsaved canvas edit survives the writes that land bef
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
     const nodeAt = (occurrence: number) =>
       content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'p', occurrence)}"]`).first()
     await expect(nodeAt(3)).toHaveText('Three', { timeout: 30_000 })
