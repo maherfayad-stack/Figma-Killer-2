@@ -446,8 +446,8 @@ interface Fixture {
   /**
    * A test id that appears only once the selection has settled. The Component
    * section's rows come from the project's component catalog, fetched after
-   * the section mounts: measured before it lands, F5 shows the call site's
-   * two props instead of the three the component declares.
+   * the section mounts: measured before it lands, F5 shows a placeholder per
+   * call-site prop (two) instead of the three rows the component declares.
    */
   settledTestId?: string
 }

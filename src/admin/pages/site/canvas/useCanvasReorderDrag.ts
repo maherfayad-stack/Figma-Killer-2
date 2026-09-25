@@ -69,6 +69,7 @@ import { paintCanvasDrag } from './canvasDragPainter'
 import { clearFreeMovePreview } from './canvasFreeMove'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 import { useCanvasBodyDragTrigger } from './useCanvasBodyDragTrigger'
+import { useInFrameMarquee } from './useInFrameMarquee'
 import { subscribeReparseFollow, type NodeIdFollower } from '@site/store/slices/site/reparseNodeFollow'
 import { clearCanvasPointerRelay, markCanvasPointerRelay } from './canvasPointerRelay'
 import { guardDragSession } from '@core/studio-runtime'
@@ -560,6 +561,9 @@ export function useCanvasReorderDrag({
     frameId,
     beginDrag,
   })
+  // P5-E (IX-16, OD-6) — a press on the page ROOT that travels is a marquee,
+  // not a drag (the root never moves). Same document, same gate.
+  useInFrameMarquee({ enabled: bodyDragEnabled, overlayRoot, frameId })
 
   useEffect(() => resetDrag, [resetDrag])
 

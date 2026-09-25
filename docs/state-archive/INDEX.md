@@ -5,8 +5,19 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 245 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 256 entries, archived 2026-09-23, newest first
 
+- 2026-09-25 · `perf-13` · P6-B server half: fast warm load (PR #263) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-34` · P5-B2: images show in design frames (PR #262) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `mcp-32` · P4-G: lint, HTTP subagents, model routing (PR #255) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-29` · P5-E: tools and handles (PR #261) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `panel-46` · found along the way (PR #259) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-28` · P5-B: drop images onto the canvas (PR #258) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `sec-24` · security hardening follow-ups (PR #256) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `test-07` · green baseline (PR #257) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `store-19` · P3-E: edits survive concurrent writes (PR #254) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `infra-02` · P0-I: CI on one pinned Bun (PR #253) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `docs-15` · P0: consolidate the docs (PR #225) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `docs-16` · clean stale references (PR #252) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `mcp-31` · P4-F: trust and panel (PR #251) · [`2026-09.md`](2026-09.md)
 - 2026-09-23 · `mcp-30` · P4-E: assets for the agent (PR #248) · [`2026-09.md`](2026-09.md)

@@ -25,12 +25,14 @@
  *       `?pageIds=<comma-separated ids>` narrows `pages` to that subset (meta
  *       stays full); unmatched ids report via `missingPageIds` — see `studio/studioLoadResponse.ts`.
  *
- *   GET  /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>
- *       Serves one workspace-relative asset file (an imported page's local
- *       images — §5) through the existing static-file pipeline. The
+ *   GET  /admin/api/studio/asset?dir=<abs>&(path=<workspace-rel>|url=<site-root>)
+ *       Serves one project image/font/media file — an imported page's local
+ *       images (§5, `path`), or a literal `src="/x.png"` a design frame
+ *       resolves against the project's `public/` (P5-B2, `url`) — through
+ *       the existing static-file pipeline. The
  *       resolution + adversarial-input guarding (absolute/UNC paths, `..`
- *       traversal on either separator, excluded dir names, symlink escape)
- *       lives in `resolveStudioAssetResponse` — see
+ *       traversal on either separator, excluded dir names, symlink escape,
+ *       media-only MIME) lives in `resolveStudioAssetResponse` — see
  *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
  *       404 on anything rejected or missing.
  *
@@ -293,12 +295,11 @@ import { readStudioFontsFile, readStudioFrameworkFile, writeStudioFontsFile, wri
 import type { SiteFontsSettings } from '@core/fonts'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { buildStudioDownloadResponse } from './studioDownload'
-import { resolveStudioAssetResponse } from './studioAsset'
-import { loadStudioPages } from './studioPageLoad'
+import { readStudioAssetTarget, resolveStudioAssetResponse } from './studioAsset'
+import { loadStudioPagesShared } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
 import { applyStudioEditBatchLocked } from './studioWriteback'
-import { projectPublicRoot } from './studio/assetSiteUrl'
 import { withIdempotentReplay } from './studio/idempotentReplay'
 import { registeredMcpServerProjectKey } from '../ai/drivers/registeredMcpServers'
 import { syncStoryBoardFrames } from './studio/boardFrames'
@@ -351,10 +352,10 @@ export async function tryServeStudio(
       const projectName = projectDisplayName(dir)
       const pageIdsParam = parseStudioLoadPageIdsParam(url.searchParams.get('pageIds')) // see studioLoadResponse.ts
       if (pageIdsParam === null) return badRequest('invalid pageIds query param')
-      // The filter reaches the compute: `loadStudioPages` skips the per-page
-      // convert for every route not asked for, while the meta below stays a
-      // full, fresh project-wide recompute. See `studioLoadResponse.ts`.
-      const loaded = await loadStudioPages(dir, { pageIds: pageIdsParam })
+      // The filter narrows the pages, while the meta below stays the full,
+      // project-wide result. See `studioLoadResponse.ts`. SHARED, not cloned
+      // (P6-B): this route only serialises it — see `loadStudioPagesShared`.
+      const loaded = await loadStudioPagesShared(dir, { pageIds: pageIdsParam })
       const { pages, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings } = loaded
       // W5-3 — a story that parsed into a page but has no frame is invisible.
       // Placed here rather than inside `loadStudioPages` so the parse pipeline
@@ -410,11 +411,9 @@ export async function tryServeStudio(
       // interleaved server-side parsing — that would need `loadStudioStyles`'s
       // site-wide class-id registry to resolve per-page, which this change
       // does not attempt.
-      // A design canvas displays a site-root image through the asset route (display only).
-      const publicRoot = projectPublicRoot(dir)
       if (url.searchParams.get('stream') === '1') {
         return ndjsonResponse(studioLoadStreamLines({
-          dir, projectName, publicRoot, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
+          dir, projectName, canvasLayers, componentSources, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, projectKey, paletteHiddenModuleIds, pages, missingPageIds,
         }))
       }
 
@@ -423,7 +422,6 @@ export async function tryServeStudio(
         projectName,
         pages,
         canvasLayers,
-        publicRoot,
         componentSources,
         styleRules,
         styleRuleSources,
@@ -445,9 +443,9 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/asset' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const rawPath = url.searchParams.get('path')
-      if (!rawPath) return new Response('Not found', { status: 404 })
-      const response = await resolveStudioAssetResponse(dir, rawPath, req)
+      const target = readStudioAssetTarget(url.searchParams)
+      if (!target) return new Response('Not found', { status: 404 })
+      const response = await resolveStudioAssetResponse(dir, target, req)
       return response ?? new Response('Not found', { status: 404 })
     } catch (err) {
       rethrowProjectDirRefusal(err)

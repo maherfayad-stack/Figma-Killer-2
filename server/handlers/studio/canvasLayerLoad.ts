@@ -7,7 +7,7 @@
  * A loose layer's content has to resolve the way it would inside a frame —
  * the same evaluator, the same local-component inlining, the same stylesheet
  * registry — or dragging it into a frame would change what it looks like. So
- * each module goes through `parseRouteFile`, the one per-file parse every
+ * each module goes through `parseRouteFileThroughCache` (`routeEntryParse.ts`), the one per-file parse every
  * file-per-page route uses, and joins the load's style pass
  * (`studioPageLoad.ts` feeds these entries to `loadStudioStyles`, so a CSS
  * Module a layer imports is registered and renders on the canvas).
@@ -23,11 +23,10 @@
  * Tier 0 parses; nothing here runs the module. The discovery is
  * `canvasLayerFiles.ts`'s, which refuses a `.studio/canvas` that is a link.
  */
-import type { Project } from 'ts-morph'
 import { join } from 'node:path'
 import { canvasLayerPageId, canvasLayerRelPath, type CanvasLayerId } from '@core/studio-board'
 import { listCanvasLayerIds } from './canvasLayerFiles'
-import { parseRouteFile } from './routeFileParse'
+import { parseRouteFileThroughCache, type RouteParseContext } from './routeEntryParse'
 import type { RoutePageEntry } from './routePageEntry'
 
 /** One layer module, parsed, in the shape the load's style and convert passes take. */
@@ -46,28 +45,23 @@ export function canvasLayerIdFromCacheRoute(route: string): CanvasLayerId | null
   return match ? (match[1] as CanvasLayerId) : null
 }
 
-export function buildCanvasLayerEntries(
-  dir: string,
-  project: Project,
-  preferredKey: string | undefined,
-  cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
-): CanvasLayerRouteEntry[] {
+export function buildCanvasLayerEntries(dir: string, context: RouteParseContext): CanvasLayerRouteEntry[] {
   const entries: CanvasLayerRouteEntry[] = []
   for (const layerId of listCanvasLayerIds(dir)) {
     const relFile = canvasLayerRelPath(layerId)
     try {
-      const { expanded, componentSources } = parseRouteFile({
-        file: join(dir, ...relFile.split('/')),
-        cacheKey: `${dir}::${canvasLayerCacheRoute(layerId)}`,
-        dir,
-        project,
-        preferredKey,
-        cssModuleClassMaps,
-        configHash,
-      })
+      const outcome = parseRouteFileThroughCache(context, canvasLayerCacheRoute(layerId), join(dir, ...relFile.split('/')))
       const pageId = canvasLayerPageId(layerId)
-      entries.push({ layerId, expanded, componentSources, pageId, slug: pageId, title: layerId, relFile })
+      entries.push({
+        layerId,
+        expanded: outcome.result.expanded,
+        componentSources: outcome.result.componentSources,
+        dependencies: outcome.dependencies,
+        pageId,
+        slug: pageId,
+        title: layerId,
+        relFile,
+      })
     } catch (err) {
       // A module edited outside Studio into something the parser cannot read
       // is left off the board rather than failing the whole load; its

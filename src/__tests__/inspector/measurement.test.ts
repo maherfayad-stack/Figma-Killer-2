@@ -761,6 +761,15 @@ describe('P2-H — informative text meets WCAG AA (UX-15)', () => {
       const text = luminanceOver(tokenColour('--text-subtle', theme), panel)
       expect(contrast(text, luminanceOver(panel, panel))).toBeGreaterThanOrEqual(4.5)
     })
+
+    // The FLOATING inspector paints `--bg-surface` (`PropertiesPanel.module.css`
+    // `.panel`), not `--bg-body`. Dark `#787878` measured 3.9:1 there (P2-H's
+    // own landmine, `panel-45`): AA on the docked panel, not on the floating one.
+    it(`--text-subtle reads at 4.5:1 on the floating panel (${theme})`, () => {
+      const panel = tokenColour('--bg-surface', theme)
+      const text = luminanceOver(tokenColour('--text-subtle', theme), panel)
+      expect(contrast(text, luminanceOver(panel, panel))).toBeGreaterThanOrEqual(4.5)
+    })
   }
 
   it('no inspector module paints text in --text-disabled outside a disabled or placeholder rule', () => {

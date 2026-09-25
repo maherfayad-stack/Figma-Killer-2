@@ -48,7 +48,7 @@ function CanvasContextMenuHarness() {
     >
       {open && (
         <CanvasLayerContextMenu
-          position={{ x: 100, y: 200, nodeId: 'container-node' }}
+          position={{ x: 100, y: 200, nodeId: 'container-node', layerIdsUnderPointer: [] }}
           onClose={() => setOpen(false)}
           actions={{
             requestDeleteNode: noop,

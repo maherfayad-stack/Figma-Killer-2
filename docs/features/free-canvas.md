@@ -60,9 +60,10 @@ can take. `canvas-layer-isolation.test.ts` holds the literal to that module.
 
 ## Load (FC-1)
 
-`studioPageLoad.ts` parses every layer module with `parseRouteFile` — the same
-per-file parse, evaluator budget, local-component inlining and parse cache a
-page gets (`studio/routeFileParse.ts`, `studio/canvasLayerLoad.ts`). Layers
+`studioPageLoad.ts` parses every layer module with `parseRouteFileThroughCache`
+(`studio/routeEntryParse.ts`) — the same per-file parse, evaluator budget,
+local-component inlining and P6-B parse cache a file-per-page route gets, under
+the cache route `canvas-layer:<id>` (`studio/canvasLayerLoad.ts`). Layers
 join the load's style pass, so a CSS Module a layer imports is registered.
 
 They are returned in **`StudioLoadResult.canvasLayers`, never in `pages`**. A
@@ -203,9 +204,9 @@ not pressable (the frame is on top) — reach them by moving the frame.
 - *Pressing a loose layer activates the board breakpoint* (`'studio'`): a frame
   offers itself as a drop target only while it is the active breakpoint
   (`BreakpointSelectionOverlay`), which only a click INTO a frame used to set.
-- *A site-root image renders on a design canvas through the asset route*
-  (`studio/studioPublicAssets.ts`, display only): `/hero.png` names nothing on
-  the admin origin a `srcDoc` iframe lives on. `/load` carries `publicRoot`.
+- *A site-root image renders on a design canvas through the asset route* —
+  P5-B2's `canvasProjectAssetUrl.ts`, which every portal document (frames and
+  the free-canvas surface) resolves node props through at render time.
 
 **One history entry holds both halves.** A create, place, lift or delete is a
 structural source gesture (`canvasLayerCommits.ts` → `commitStructural`) whose

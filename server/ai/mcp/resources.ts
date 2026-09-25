@@ -16,6 +16,8 @@
  * avoid should get a rule here too.
  */
 
+import { STUDIO_TOOL_NOTES_TEXT } from './toolNotes'
+
 export interface McpResourceDef {
   uri: string
   name: string
@@ -157,6 +159,14 @@ export const MCP_RESOURCES: readonly McpResourceDef[] = [
       'How to write React that Studio\'s static parser imports faithfully — module-scope data, literal classNames, one return per component, ?raw icon imports, provider placement, and the direction/colour-scheme rules the canvas previews against. Read once, write conformant code thereafter.',
     mimeType: 'text/markdown',
     text: STUDIO_GUIDELINES_TEXT,
+  },
+  {
+    uri: 'studio://tool-notes',
+    name: 'Studio tool notes',
+    description:
+      'The long-form rules for tools whose descriptions are kept short: every studio_apply_edits kind and refusal, and how studio_export_frames renders. Read it when a description points here.',
+    mimeType: 'text/markdown',
+    text: STUDIO_TOOL_NOTES_TEXT,
   },
 ]
 

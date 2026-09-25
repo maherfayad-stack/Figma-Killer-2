@@ -65,8 +65,10 @@ import {
   type StaticEvalOptions,
 } from '@core/page-parser'
 import type { Project } from 'ts-morph'
-import { getCachedRouteParse, setCachedRouteParse } from './pageParseCache'
+import type { RouteCacheScope } from './pageParseCache'
 import type { RoutePageEntry } from './routePageEntry'
+import { parseRouteThroughCache } from './routeParse'
+import type { WorkspaceProjectHandle } from './workspaceProject'
 import type { DiscoveredStory } from './storyDiscovery'
 
 /**
@@ -92,9 +94,9 @@ export const STORY_CALL_SITE_LOCK_REASON = 'a Storybook story, declared as args 
  */
 const STORY_ROUTE_KEY_PREFIX = 'story:'
 
-/** The `pageParseCache` key for one story — see {@link STORY_ROUTE_KEY_PREFIX}. */
-function storyCacheKey(dir: string, pageId: string): string {
-  return `${dir}::${STORY_ROUTE_KEY_PREFIX}${pageId}`
+/** The `pageParseCache` route key for one story — see {@link STORY_ROUTE_KEY_PREFIX}. */
+function storyRouteKey(pageId: string): string {
+  return `${STORY_ROUTE_KEY_PREFIX}${pageId}`
 }
 
 /**
@@ -131,22 +133,20 @@ export function storyPageIdFromRoutePath(routePath: string): string | null {
  * stories, widen everything" it had to assume while stories recorded nothing.
  */
 export function buildStoryRouteEntries(
-  dir: string,
-  project: Project,
+  scope: RouteCacheScope,
+  workspace: WorkspaceProjectHandle,
   stories: readonly DiscoveredStory[],
-  preferredKey: string | undefined,
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined,
-  configHash: string,
 ): RoutePageEntry[] {
+  const { dir, preferredKey } = scope
+  const { project } = workspace
   const entries: RoutePageEntry[] = []
 
   for (const story of stories) {
-    const cacheKey = storyCacheKey(dir, story.summary.pageId)
-    const cached = getCachedRouteParse(cacheKey, configHash)
-    let built: BuiltStory | undefined
-    if (cached) {
-      built = { expanded: cached.expanded, componentSources: cached.componentSources }
-    } else {
+    // A skipped story (the parse returns `null`) is deliberately NOT cached:
+    // "this produced nothing" is the one answer worth recomputing, since the
+    // file it depends on is exactly what a user fixes next.
+    const outcome = parseRouteThroughCache(scope, workspace, storyRouteKey(story.summary.pageId), () => {
       // WB-2 — every file a value was read out of, recorded with the rest.
       const readFiles = new Set<string>()
       const evalOptions: StaticEvalOptions = {
@@ -160,28 +160,22 @@ export function buildStoryRouteEntries(
         story.body.kind === 'jsx'
           ? buildJsxStory(dir, project, story, story.body.fn, evalOptions)
           : buildArgsStory(dir, project, story, story.body, evalOptions)
-      built = fresh
-      // A skipped story is deliberately NOT cached: "this produced nothing"
-      // is the one answer worth recomputing, since the file it depends on is
-      // exactly what a user fixes next.
-      if (fresh) {
-        setCachedRouteParse(
-          cacheKey,
-          configHash,
-          [story.absFile, ...fresh.dependencyFiles, ...readFiles],
-          { expanded: fresh.expanded, componentSources: fresh.componentSources },
-        )
+      if (!fresh) return null
+      return {
+        result: { expanded: fresh.expanded, componentSources: fresh.componentSources },
+        dependencyFiles: [story.absFile, ...fresh.dependencyFiles, ...readFiles],
       }
-    }
-    if (!built) continue
+    })
+    if (!outcome) continue
 
     entries.push({
-      expanded: built.expanded,
+      expanded: outcome.result.expanded,
       pageId: story.summary.pageId,
       slug: story.summary.pageId,
       title: story.summary.frameTitle,
       relFile: story.relFile,
-      componentSources: built.componentSources,
+      componentSources: outcome.result.componentSources,
+      dependencies: outcome.dependencies,
     })
   }
 

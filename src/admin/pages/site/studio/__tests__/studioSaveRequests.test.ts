@@ -80,7 +80,7 @@ describe('commitStructural (via commitStudioMoves / commitStudioDelete / commitS
         const pages = opts.loadPagesFor?.[key] ?? []
         const lines = [
           { kind: 'meta', dir: '/tmp/studio-test', projectName: 'studio-test', componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', trust: 'static', paletteHiddenModuleIds: [], pageCount: pages.length },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', { status: 200 })
       }

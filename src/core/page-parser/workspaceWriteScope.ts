@@ -320,8 +320,13 @@ export function realWorkspaceRel(root: string, target: string): string | null {
  * no excluded directory on it either: a link named like source
  * (`assets -> ../.git`) is refused by where it lands, not by what it is
  * called.
+ *
+ * `real` is the real path this check already resolved and approved. A caller
+ * that needs to know what the file really is (the asset route's MIME gate)
+ * reads it here instead of resolving again: a second `realpath` is both a
+ * repeat syscall and a window in which a link can be swapped.
  */
-export function resolveWorkspaceReadPath(root: string, rawRel: string): { rel: string; abs: string } | null {
+export function resolveWorkspaceReadPath(root: string, rawRel: string): { rel: string; abs: string; real: string } | null {
   if (rawRel.length === 0 || rawRel.includes('\0')) return null
   if (isAbsolute(rawRel) || /^[a-zA-Z]:/.test(rawRel) || rawRel.startsWith('\\\\') || rawRel.startsWith('//')) return null
   const segments = rawRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
@@ -341,7 +346,7 @@ export function resolveWorkspaceReadPath(root: string, rawRel: string): { rel: s
   const realRel = relative(realRoot, realTarget)
   if (realRel === '' || isAbsolute(realRel) || realRel === '..' || realRel.startsWith(`..${sep}`)) return null
   if (excludedWorkspaceSegment(realRel) !== null) return null
-  return { rel, abs }
+  return { rel, abs, real: realTarget }
 }
 
 /**

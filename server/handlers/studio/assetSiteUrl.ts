@@ -59,7 +59,7 @@ export interface AssetSiteUrl {
 export function assetSiteUrlResolver(dir: string): (relPath: string) => AssetSiteUrl | null {
   const appRootRel = relative(resolve(dir), resolveAppRoot(dir)).split(sep).join('/')
   const appPrefix = appRootRel === '' ? '' : `${appRootRel}/`
-  const publicPrefix = `${projectPublicRootFrom(appRootRel)}/`
+  const publicPrefix = `${appPrefix}${PUBLIC_DIR}/`
 
   return (relPath) => {
     if (relPath.startsWith(publicPrefix) && relPath.length > publicPrefix.length) {
@@ -75,17 +75,50 @@ export function assetSiteUrlResolver(dir: string): (relPath: string) => AssetSit
 }
 
 /**
- * The project-relative POSIX path of the directory served at the site root —
- * `public`, or `apps/web/public` in a monorepo. The `/load` response carries
- * it so a design canvas can DISPLAY a site-root `<img src="/hero.png">` through
- * the authenticated asset route (`studioPublicAssets.ts`); nothing writes it.
+ * The inverse of {@link assetSiteUrlResolver}: the PROJECT-relative paths a
+ * site-root URL may name, in the order the project's own dev server looks
+ * them up. What a design frame asks the asset route for when the page says
+ * `<img src="/hero.png">` (P5-B2): the admin origin serves nothing at
+ * `/hero.png`, the project does.
+ *
+ *   1. `<appRoot>/public/<path>` — the one directory every recognised
+ *      framework serves from the site root (and where `asset-drop` lands);
+ *   2. `<appRoot>/<path>` — the dev-only case (`buildSafe: false` above): a
+ *      dev server that serves its source tree (Vite) answers `/src/a.png`.
+ *      Not offered for a path that starts with `public/`, compared
+ *      case-folded: no framework serves the public directory under its own
+ *      name, so `/public/a.png` is a broken URL and the canvas must show it
+ *      broken rather than hide the mistake.
+ *
+ * `siteUrl` is CLIENT INPUT. This function only turns it into candidate
+ * strings — it never touches the filesystem and does not decide what may be
+ * read. Every candidate still goes through `resolveWorkspaceReadPath`, which
+ * refuses `..`, absolute and UNC forms, excluded directories (case-folded)
+ * and a link that lands outside the project. A `..` smuggled in here as
+ * `/%2E%2E/x` or `/..%2Fx` decodes to a `..` segment the guard refuses.
+ *
+ * Anything that is not a site-root path (`//host/x`, `/\host`, a relative
+ * `a.png`, an absolute `https:` URL), an undecodable escape, or an empty path
+ * yields no candidates. The query and fragment are dropped — a cache-busting
+ * `?v=2` names the same file.
  */
-export function projectPublicRoot(dir: string): string {
-  return projectPublicRootFrom(relative(resolve(dir), resolveAppRoot(dir)).split(sep).join('/'))
-}
+export function siteUrlWorkspaceCandidates(dir: string, siteUrl: string): string[] {
+  if (!siteUrl.startsWith('/') || siteUrl.startsWith('//') || siteUrl.startsWith('/\\')) return []
+  const pathPart = siteUrl.slice(1).split(/[?#]/, 1)[0] ?? ''
+  let decoded: string
+  try {
+    decoded = decodeURIComponent(pathPart)
+  } catch {
+    return []
+  }
+  if (decoded.length === 0) return []
 
-function projectPublicRootFrom(appRootRel: string): string {
-  return appRootRel === '' ? PUBLIC_DIR : `${appRootRel}/${PUBLIC_DIR}`
+  const appRootRel = relative(resolve(dir), resolveAppRoot(dir)).split(sep).join('/')
+  const appPrefix = appRootRel === '' ? '' : `${appRootRel}/`
+  const candidates = [`${appPrefix}${PUBLIC_DIR}/${decoded}`]
+  const firstSegment = decoded.split(/[\\/]/, 1)[0] ?? ''
+  if (firstSegment.toLowerCase() !== PUBLIC_DIR) candidates.push(`${appPrefix}${decoded}`)
+  return candidates
 }
 
 /**

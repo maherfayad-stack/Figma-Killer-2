@@ -29,10 +29,16 @@ const ComponentsResponseSchema = Type.Object({
   components: Type.Array(LocalComponentSpecSchema),
 })
 
-/** Never mutated — a stable empty-array identity for the "not loaded yet" / "fetch failed" case (`selectorStability`). */
-const EMPTY_CATALOG: readonly LocalComponentSpec[] = []
-
-let cache: { dir: string | undefined; promise: Promise<LocalComponentSpec[]> } | null = null
+/**
+ * The in-flight or settled catalog for one workspace dir. `settled` is set
+ * when the promise resolves, so a panel mounting AFTER that reads the catalog
+ * on its first render instead of drawing its loading state for one frame.
+ */
+let cache: {
+  dir: string | undefined
+  promise: Promise<LocalComponentSpec[]>
+  settled: readonly LocalComponentSpec[] | null
+} | null = null
 
 /**
  * Fetches the current project's component catalog, cached per workspace dir.
@@ -52,8 +58,18 @@ export function fetchLocalComponentCatalog(): Promise<LocalComponentSpec[]> {
       console.error('[componentCatalog] fetch failed:', err)
       return []
     })
-  cache = { dir, promise }
+  const entry = { dir, promise, settled: null as readonly LocalComponentSpec[] | null }
+  cache = entry
+  void promise.then((list) => {
+    entry.settled = list
+  })
   return promise
+}
+
+/** The catalog for the current project if it has already arrived, else `null`. Never fetches. */
+function settledLocalComponentCatalog(): readonly LocalComponentSpec[] | null {
+  const dir = studioWriteDir() ?? undefined
+  return cache && cache.dir === dir ? cache.settled : null
 }
 
 /** Drops the cached catalog — call after an edit that changes which components exist (e.g. a future "promote to component"). */
@@ -62,13 +78,15 @@ export function invalidateLocalComponentCatalog(): void {
 }
 
 /**
- * React hook wrapper: the catalog for the CURRENT project, or the frozen
- * `EMPTY_CATALOG` while loading/on failure. One fetch per mount (the
- * underlying promise is cached by dir, so re-mounting the same panel for a
- * different node in the same project is free).
+ * React hook wrapper: the catalog for the CURRENT project, `[]` when the
+ * fetch failed, or `null` while it is still in flight — a caller must not
+ * guess a prop's control before the catalog says what the prop IS (a union
+ * drawn as a text box, then swapped for a dropdown, `panel-44`). One fetch per
+ * project (the promise is cached by dir, and a settled catalog is read on the
+ * first render, so re-mounting the panel for another node costs nothing).
  */
-export function useLocalComponentCatalog(): readonly LocalComponentSpec[] {
-  const [components, setComponents] = useState<readonly LocalComponentSpec[]>(EMPTY_CATALOG)
+export function useLocalComponentCatalog(): readonly LocalComponentSpec[] | null {
+  const [components, setComponents] = useState<readonly LocalComponentSpec[] | null>(settledLocalComponentCatalog)
   useEffect(() => {
     let cancelled = false
     fetchLocalComponentCatalog().then((list) => {

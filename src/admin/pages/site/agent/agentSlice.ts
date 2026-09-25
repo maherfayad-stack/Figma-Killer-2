@@ -104,6 +104,7 @@ async function ensureConversationId(
     creds.credentialId,
     creds.modelId,
     agentProjectDir(),
+    creds.modelSource,
     signal,
   )
   signal.throwIfAborted()
@@ -219,6 +220,7 @@ export function createAgentSlice(
     agentConversationId: null,
     agentActiveCredentialId: null,
     agentActiveModelId: null,
+    agentModelPicked: false,
     agentConversations: [],
     agentUsage: emptyConversationUsage(),
     isAgentConversationPending: false,
@@ -433,6 +435,8 @@ export function createAgentSlice(
       set({
         agentActiveCredentialId: credentialId,
         agentActiveModelId: modelId,
+        // A pick is a choice: this conversation's turns are never routed (AI-25).
+        agentModelPicked: true,
         agentError: null,
       })
       if (!currentId) return  // staged for the next conversation-create call

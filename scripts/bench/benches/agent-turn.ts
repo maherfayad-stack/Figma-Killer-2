@@ -636,6 +636,7 @@ async function telemetrySections(dir: string): Promise<{ sections: BenchSection[
   }
 
   const summaries = summarizeToolLatency(entries)
+  const modelRows = await modelRoleRows(candidates)
   const rows: BenchRow[] = summaries.slice(0, 15).map((s) => ({
     label: s.tool,
     inputs: { calls: s.count },
@@ -691,8 +692,31 @@ async function telemetrySections(dir: string): Promise<{ sections: BenchSection[
         rows: budgetRows,
         ...(over > 0 ? { highlights: [`${over} recorded turn${over === 1 ? '' : 's'} exceeded its budget — see worstTool on each.`] } : {}),
       },
+      {
+        title: 'Recorded turn telemetry — per (role, model)',
+        intro:
+          'The kind:"turn" lines (AI-25): which model ran which kind of turn, wall clock (model time included), p50 tokens and tool calls, and the share of finished turns that ended in an error. This is what model routing (server/ai/routing/modelRouting.ts) is judged by; bench:agent-models produces the same table from controlled briefs.',
+        rows: modelRows.length > 0 ? modelRows : [{ label: '(no turn lines yet)', metrics: { n: '0' } }],
+      },
     ],
   }
+}
+
+/** The per-(role, model) table from the turn summaries in `dirs`. */
+async function modelRoleRows(dirs: readonly string[]): Promise<BenchRow[]> {
+  const { readAgentTurnSummaries, summarizeTurnsByModel } = await import('../../../server/handlers/studio/agentTurnLog')
+  return summarizeTurnsByModel(dirs.flatMap((dir) => readAgentTurnSummaries(dir))).map((s) => ({
+    label: `${s.role} · ${s.model}`,
+    inputs: { turns: s.turns },
+    metrics: {
+      p50: fmtMs(s.p50Ms),
+      p95: fmtMs(s.p95Ms),
+      tokensIn: fmtNum(s.p50PromptTokens),
+      tokensOut: fmtNum(s.p50CompletionTokens),
+      tools: String(s.p50ToolCalls),
+      errorRate: `${Math.round(s.errorRate * 100)}%`,
+    },
+  }))
 }
 
 /** Every project directory under `studio-workspace/`, for the telemetry read. Never written to, never copied — this is the one place in this bench that looks at real user data, and it only reads one JSONL. */

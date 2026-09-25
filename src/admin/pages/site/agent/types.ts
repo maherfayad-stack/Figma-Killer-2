@@ -180,6 +180,23 @@ interface RoutingEvent extends AgentRoutedTurn {
 }
 
 /**
+ * Which model this turn runs on and why (AI-25), emitted by the chat handler
+ * on every path. Display only. See `server/ai/routing/modelRouting.ts`.
+ */
+export interface AgentRoutedModel {
+  /** `pinned`: the user's pick. `routed`: moved to a cheaper model for the job. `default`: the conversation's own model. */
+  mode: 'pinned' | 'routed' | 'default'
+  modelId: string
+  /** build, creative, smallEdit or question. */
+  role: string
+  reason: string
+}
+
+interface ModelRoutingEvent extends AgentRoutedModel {
+  type: 'modelRouting'
+}
+
+/**
  * The provider was momentarily unable and the server is re-sending the same
  * request (AI-8, `server/ai/drivers/http/providerRetry.ts`). A quiet status,
  * never an error: the turn is still alive.
@@ -204,6 +221,7 @@ export type ServerStreamEvent =
   | ContextEvent
   | ReasoningEvent
   | RoutingEvent
+  | ModelRoutingEvent
   | RetryingEvent
   | DoneEvent
   | ErrorEvent

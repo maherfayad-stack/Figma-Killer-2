@@ -36,7 +36,7 @@ type InlineStyleActions = Pick<
  * this property" means — the single-node path is what every existing test and
  * the publisher already encode.
  */
-function applyInlineStylePatch(
+export function applyInlineStylePatch(
   node: PageNode,
   patch: Record<string, string | number | null | undefined>,
 ): boolean {

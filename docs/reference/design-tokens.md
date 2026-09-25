@@ -126,7 +126,7 @@ Five tones, each a different meaning level.
 | `--text-bright`      | `#f4f4f5` | Titles, headings, KPIs         |
 | `--text`             | `#ededed` | Primary body text              |
 | `--text-muted`   | `#a1a1aa` | Labels, secondary UI           |
-| `--text-subtle`       | `#787878` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
+| `--text-subtle`       | `#888888` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
 | `--text-disabled`      | `#52525b` | Disabled controls and placeholders only — never text the user must read |
 
 Add a new text tone only by adding a new token here.

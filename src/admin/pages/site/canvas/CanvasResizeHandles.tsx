@@ -29,6 +29,7 @@ import { findNodeById } from './InPlaceInspector/findNodeById'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
 import { useElementResizeDrag } from './useElementResizeDrag'
+import { CanvasSpacingHandles } from './CanvasSpacingHandles'
 
 interface CanvasResizeHandlesProps {
   /** The single selected node. May not be resizable — `canOfferResize` decides. */
@@ -85,6 +86,11 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
       data-canvas-resize-frame="true"
       data-canvas-overlay-node-id={nodeId}
     >
+      {/* P5-E (IX-17) — padding and gap bands of a flex / grid container,
+          riding this same frame (so the one ring measurement places them).
+          FIRST, so the resize strips paint over them where the two meet at
+          an edge: the edge is the size, the inside is the padding. */}
+      {iframeDoc && target && <CanvasSpacingHandles nodeId={nodeId} iframeDoc={iframeDoc} target={target} />}
       {RESIZE_HANDLES.map((handle) => (
         <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
       ))}

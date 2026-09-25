@@ -44,6 +44,7 @@ function countingMemo() {
       const files = (site as unknown as { files: { content: string }[] }).files
       return files.map((f) => f.content).join('\n')
     },
+    resolveAssets: (css) => css,
     rewriteScheme: (css) => {
       counts.rewriteScheme++
       return `${css}\n/* scheme */`

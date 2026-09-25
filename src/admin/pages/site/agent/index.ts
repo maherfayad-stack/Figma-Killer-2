@@ -64,6 +64,8 @@ export type { AgentRevertResult, AgentTurnChanges, AgentTurnFileChange, AgentTur
 // from `agentRoutedTurn` — the panel reads them, it never computes the label.
 export {
   agentSessionControlsInitialState,
+  routedModelLabel,
+  routedModelTitle,
   routedTurnLabel,
   routedTurnTitle,
 } from './agentSessionControls'
