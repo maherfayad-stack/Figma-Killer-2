@@ -77,7 +77,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
 
 ### panel-46 — "Found along the way": six small bugs other bundles recorded
-- **Agent:** panel-designer · **Branch:** `fix/found-along-the-way` off `65f5026d` · **PR:** draft, base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-25
+- **Agent:** panel-designer · **Branch:** `fix/found-along-the-way` off `65f5026d` · **PR:** #259 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-25
 - **Stage:** done (draft PR open; owner dogfood and `CLAUDE.md` review below)
 - **Done:**
   1. `StyleWriteLockContext` now has a provider: `StyleSurface` wraps the mounted sections with `partialStyleWriteLock(model.inlineWriteReach)`. `SelectionModel.blockedPropertyCounts` → `inlineWriteReach` (built by `buildInlineStyleWriteReach`; `null` for one layer or a class target). A partial `ClassPropertyRow` underlines its label (dotted `--warning`). Dead `blockedStyleWriteLock` deleted.
