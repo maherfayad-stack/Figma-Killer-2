@@ -17,8 +17,10 @@ import {
 import { canvasFrameCss } from '@site/canvas/canvasFrameCss'
 
 const DIR = 'C:\\work\\studio-workspace\\shop'
-const EDITOR: ProjectAssetUrlScope = { route: '/admin/api/studio/asset', query: `dir=${encodeURIComponent(DIR)}` }
-const CAPTURE: ProjectAssetUrlScope = { route: '/admin/api/agent-capture/asset', query: 'token=t0k' }
+/** The admin page a portal frame inherits its base URL from. */
+const BASE = 'http://studio.test/admin/site'
+const EDITOR: ProjectAssetUrlScope = { route: '/admin/api/studio/asset', query: `dir=${encodeURIComponent(DIR)}`, base: BASE }
+const CAPTURE: ProjectAssetUrlScope = { route: '/admin/api/agent-capture/asset', query: 'token=t0k', base: BASE }
 
 const editorUrl = (url: string) => `/admin/api/studio/asset?dir=${encodeURIComponent(DIR)}&url=${encodeURIComponent(url)}`
 
@@ -30,25 +32,71 @@ describe('projectAssetUrl', () => {
   })
 
   it('omits the scope query when there is none (no project chosen yet: the server falls back)', () => {
-    expect(projectAssetUrl('/hero.png', { route: '/admin/api/studio/asset', query: '' })).toBe(
+    expect(projectAssetUrl('/hero.png', { route: '/admin/api/studio/asset', query: '', base: BASE })).toBe(
       '/admin/api/studio/asset?url=%2Fhero.png',
     )
   })
 
-  it('leaves everything that is not a site-root URL exactly as written', () => {
+  it('leaves another origin and every non-http(s) scheme exactly as written', () => {
     for (const value of [
       'https://cdn.example/x.png',
       'data:image/png;base64,AAAA',
-      'blob:http://localhost/123', // a drop's optimistic ghost
-      'hero.png',
-      './hero.png',
-      '../hero.png',
+      'blob:http://studio.test/123', // a drop's optimistic ghost: SAME origin, still left alone
       '//evil.example/x.png', // protocol-relative: another HOST
       '/\\evil.example/x.png', // the WHATWG parser reads this as protocol-relative too
+      'http://studio.test:8080/admin/x', // another PORT is another origin
       '',
       '#frag',
     ]) {
       expect(projectAssetUrl(value, EDITOR)).toBe(value)
+    }
+  })
+
+  it('forwards a relative URL as written; the server resolves site-root URLs only, so it 404s', () => {
+    // Resolved against the admin page these would be `/admin/hero.png` and
+    // friends: a request on the admin origin page content must never make.
+    for (const value of ['hero.png', './hero.png', '../hero.png', 'api/studio/save']) {
+      expect(projectAssetUrl(value, EDITOR)).toBe(editorUrl(value))
+    }
+  })
+
+  /**
+   * Security review of #262, nit 1: the `/uploads/` skip was a RAW prefix
+   * test, so a value that merely starts with `/uploads/` but normalizes
+   * elsewhere passed through untouched and became a cookie-carrying GET.
+   */
+  it('judges /uploads/ on the NORMALIZED path: /uploads/../admin/… is rewritten, never passed through', () => {
+    expect(projectAssetUrl('/uploads/../admin/api/studio/save', EDITOR)).toBe(editorUrl('/admin/api/studio/save'))
+    expect(projectAssetUrl('/uploads/%2e%2e/admin/api/x', EDITOR)).toBe(editorUrl('/admin/api/x'))
+    expect(projectAssetUrl('/uploads/./%2E%2E/_studio/mcp', EDITOR)).toBe(editorUrl('/_studio/mcp'))
+  })
+
+  it('rewrites a same-origin ABSOLUTE or protocol-relative URL into the admin origin too', () => {
+    expect(projectAssetUrl('http://studio.test/admin/api/studio/save', EDITOR)).toBe(editorUrl('/admin/api/studio/save'))
+    expect(projectAssetUrl('//studio.test/_studio/mcp?x=1', EDITOR)).toBe(editorUrl('/_studio/mcp?x=1'))
+    expect(projectAssetUrl('HTTP://STUDIO.TEST/uploads/../admin/x', EDITOR)).toBe(editorUrl('/admin/x'))
+  })
+
+  it('no same-origin value reaches /admin/ or /_studio/ except the scope route itself', () => {
+    const hostile = [
+      '/admin/api/studio/save',
+      '/uploads/../admin/api/x',
+      '/uploads/%2e%2e/admin/api/x',
+      '/uploads/..%2fadmin/x',
+      '/_studio/mcp',
+      '/uploads/../_studio/mcp',
+      'http://studio.test/admin/x',
+      '//studio.test/admin/x',
+      '/\\studio.test/admin/x',
+      '../api/studio/save',
+      '/admin/api/studio/asset/../save',
+      '/admin/api/studio/asset%2F..%2Fsave',
+    ]
+    for (const value of hostile) {
+      const out = projectAssetUrl(value, EDITOR)
+      const requested = new URL(out, BASE)
+      if (requested.origin !== new URL(BASE).origin) continue
+      expect(requested.pathname === EDITOR.route || !/^\/(admin|_studio)\//.test(requested.pathname)).toBe(true)
     }
   })
 
@@ -86,6 +134,15 @@ describe('projectAssetCssUrls', () => {
     const out = projectAssetCssUrls(css, EDITOR)
     expect(out).toContain(`url("${editorUrl('/fonts/x.woff2')}") format("woff2")`)
     expect(out).toContain(`url("${editorUrl('/top.png')}"), linear-gradient(red, blue), url(https://cdn/x.png)`)
+  })
+
+  it('decodes CSS escapes before judging: url(\\2f admin/…) is /admin/…, not a pass-through', () => {
+    const out = projectAssetCssUrls('.x{background:url(\\2f admin/api/studio/save)}', EDITOR)
+    expect(out).toBe(`.x{background:url("${editorUrl('/admin/api/studio/save')}")}`)
+    const quoted = projectAssetCssUrls(".x{background:url('\\2f uploads\\2f ..\\2f admin/x')}", EDITOR)
+    expect(quoted).toBe(`.x{background:url("${editorUrl('/admin/x')}")}`)
+    const escapedSlash = projectAssetCssUrls('.x{background:url(\\/admin/x)}', EDITOR)
+    expect(escapedSlash).toBe(`.x{background:url("${editorUrl('/admin/x')}")}`)
   })
 
   it('returns the SAME text when nothing is site-root', () => {

@@ -74,7 +74,6 @@
  * the file is the project's, not Studio's, and must never act as a document
  * on this origin. That is what keeps an SVG inert when opened directly.
  */
-import { realpathSync } from 'node:fs'
 import { STUDIO_ASSET_SENTINEL, resolveWorkspaceReadPath } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
 import { inertFileResponse, isEmbeddableMediaPath, serveStaticFile } from '../static'
@@ -112,7 +111,9 @@ export async function resolveStudioAssetResponse(
     if (!target) continue
     // The first file that EXISTS decides; a non-media file ends the request
     // rather than letting a later rule serve something else under its name.
-    if (!isEmbeddableMediaPath(target.rel) || !isEmbeddableMediaPath(realpathSync.native(target.abs))) return null
+    // `target.real` is the path the guard itself resolved and approved; no
+    // second lookup, so no window to swap a link in between (review of #262).
+    if (!isEmbeddableMediaPath(target.rel) || !isEmbeddableMediaPath(target.real)) return null
     return serveContainedFile(dir, target.rel, req)
   }
   return null
