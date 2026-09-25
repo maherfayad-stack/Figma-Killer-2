@@ -64,6 +64,9 @@ export function writeListRowPlan(
     const selected = select.map((index) => after[index]).filter((id): id is string => id !== undefined)
     if (selected.length === 1) state.selectNode(selected[0]!)
     else if (selected.length > 1) state.selectMany(selected)
+    // A deleted row's id now names the row that slid into its index: keeping
+    // the selection would select a row the user never picked.
+    else if (edit.op.kind === 'remove') state.clearSelection()
   })
 }
 

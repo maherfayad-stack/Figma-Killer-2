@@ -159,11 +159,14 @@ describe('OD-8 — a row gesture writes the array, and one ⌘Z takes it back', 
   })
 
   it('delete: the element goes from the array, and ⌘Z writes its own text back at its index', async () => {
+    store().selectNode(ROW(1))
     store().deleteNode(ROW(1))
     await settle()
     expect(posted[0]).toEqual([{ kind: 'list-item', nodeId: ARRAY, length: 3, op: { kind: 'remove', indices: [1] } }])
     expect(items).toEqual([`'todo'`, `'done'`])
     expect(store()._historyPast).toHaveLength(1)
+    // ROW(1) now names the row that slid into index 1 — it must not stay selected.
+    expect(store().selectedNodeIds).toEqual([])
 
     store().undo()
     await settle()
