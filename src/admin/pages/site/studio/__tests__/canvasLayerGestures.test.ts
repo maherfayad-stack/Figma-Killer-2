@@ -149,7 +149,7 @@ describe('free-canvas gestures', () => {
             pageCount: pages.length,
             canvasLayers: lastAnswer.layers ?? [],
           },
-          ...pages.map((p) => ({ kind: 'page', page: p })),
+          ...pages.map((p, index) => ({ kind: 'page', page: p, index })),
         ]
         return new Response(lines.map((line) => JSON.stringify(line)).join('\n') + '\n', { status: 200 })
       }
