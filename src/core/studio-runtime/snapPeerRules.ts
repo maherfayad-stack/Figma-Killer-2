@@ -1,5 +1,5 @@
 /**
- * canvasSnapPeers — what an element snaps TO: its siblings, and its parent's
+ * snapPeerRules — what an element snaps TO: its siblings, and its parent's
  * own edges and centre (P2-E / IX-5b).
  *
  * K6 snapped a free move to siblings only. An element dragged towards the
@@ -24,7 +24,7 @@
  * Pure except {@link readBoxInsets}, the one computed-style read, taken once
  * at the start of a gesture.
  */
-import type { SnapRect } from './boardSnapping'
+import type { SnapRect } from './snapRules'
 
 /** One set of four side lengths, in CSS px. */
 export interface SideLengths {

@@ -104,7 +104,7 @@ import type {
   NoteColor,
   PreviewAxes,
 } from '@core/studio-board'
-import { snapGuidesEqual, type SnapGuide } from '@site/canvas/boardSnapping'
+import { snapGuidesEqual, type SnapGuide } from '@core/studio-runtime'
 import {
   createBoard,
   createBoardsFile,

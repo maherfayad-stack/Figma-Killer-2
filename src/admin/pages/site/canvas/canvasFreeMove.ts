@@ -59,7 +59,7 @@
  *
  * Free movement without alignment is worse than reordering, so the moved rect
  * snaps to its SIBLINGS' edges and centres, and to its PARENT's padding and
- * content box (edges and centre — P2-E / IX-5b, `canvasSnapPeers.ts`), through
+ * content box (edges and centre — P2-E / IX-5b, `snapPeerRules.ts`), through
  * `computeSnap` — the same pure resolver board furniture already uses, at the
  * same "closest wins, at most one snap per axis" contract. Peers are read once
  * from the drag session's candidate index (plus one computed-style read for
@@ -76,7 +76,17 @@
  * React's re-render is the last thing to touch the property).
  */
 import { registry } from '@core/module-engine'
-import { inlineOffsetProperty, isPositionedFreely } from '@core/studio-runtime'
+import {
+  computeSnap,
+  cssPropertyName,
+  inlineOffsetProperty,
+  isPositionedFreely,
+  parentSnapRects,
+  readBoxInsets,
+  snapThresholdAtZoom,
+  type SnapGuide,
+  type SnapRect,
+} from '@core/studio-runtime'
 import {
   explainStaticParentConstraint,
   getNodeHtmlTag,
@@ -89,12 +99,9 @@ import {
   presentStructuralRefusal,
   STRUCTURAL_REFUSAL_TITLE,
 } from '@site/store/slices/site/structuralSourceEdits'
-import { computeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { cssPropertyName } from './elementResizeSizing'
-import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
 import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
 
 export interface FreeMovePlan {

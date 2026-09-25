@@ -77,6 +77,7 @@ import { useIsNodeSelected } from './canvasNodeSelection'
 import { nodeRenderKey } from './nodeRenderKeys'
 import { mergePreviewedInlineStyles } from './canvasNodeInlineStyle'
 import { findEnclosingComponentRef, findEnclosingInstance, resolveInstanceEntry, type AnnotatedPageNode } from './canvasSelectionUtils'
+import { canvasNodeIdEnteredOnLeave } from './canvasHoverHandoff'
 import { useLoopPreviewItems } from './useLoopPreviewItems'
 import styles from './NodeRenderer.module.css'
 
@@ -520,7 +521,9 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       }
     },
     onMouseEnter: () => handleNodeHover(nodeId),
-    onMouseLeave: () => handleNodeHover(null),
+    // Hand the hover to the node the pointer went INTO — a leave into the
+    // parent brings the parent no `mouseenter` (`canvasHoverHandoff.ts`).
+    onMouseLeave: (e: { relatedTarget: EventTarget | null }) => handleNodeHover(canvasNodeIdEnteredOnLeave(e.relatedTarget)),
   }
 
   // Inline editing: this node's element becomes the contentEditable surface.

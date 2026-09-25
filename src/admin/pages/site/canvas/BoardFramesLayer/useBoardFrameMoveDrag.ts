@@ -29,7 +29,8 @@
 import { useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { collectPeerRects, computeSnap, snapThresholdAtZoom } from '../boardSnapping'
+import { collectPeerRects } from '../boardSnapping'
+import { computeSnap, snapThresholdAtZoom } from '@core/studio-runtime'
 
 interface DragState {
   pointerId: number

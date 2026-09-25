@@ -159,8 +159,8 @@ describe('useBridgeFrameInteraction', () => {
         <Harness adapter={first.adapter} />
       </CanvasSelectionContext.Provider>,
     )
-    // pointer, wheel, resize:commit, text:editStart, key, blur, text:commit, text:cancel
-    expect(first.subscriptions()).toBe(8)
+    // pointer, wheel, resize:commit, resize:guides, text:editStart, key, blur, text:commit, text:cancel
+    expect(first.subscriptions()).toBe(9)
     view.unmount()
     expect(first.subscriptions()).toBe(0)
   })

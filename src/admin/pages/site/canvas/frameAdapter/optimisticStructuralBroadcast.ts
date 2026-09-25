@@ -104,3 +104,15 @@ export function broadcastOptimisticStyle(nodeId: string, patch: Record<string, s
 export function broadcastOptimisticStyleClear(nodeId: string): void {
   for (const adapter of bridgeAdapters()) adapter.optimistic.clearStyle(nodeId)
 }
+
+/**
+ * store-17 — the structural write behind an optimistic delete/move of
+ * `nodeIds` did not land, so no HMR will reconcile any bridge frame: every
+ * one puts those nodes' optimistic hide or move back now. Called by
+ * `structuralCommitRollback.ts` beside the tree's own inverse replay. Same
+ * broadcast-and-let-absent-frames-no-op mechanism as above.
+ */
+export function broadcastOptimisticRevert(nodeIds: readonly string[]): void {
+  if (nodeIds.length === 0) return
+  for (const adapter of bridgeAdapters()) adapter.optimistic.revert(nodeIds)
+}

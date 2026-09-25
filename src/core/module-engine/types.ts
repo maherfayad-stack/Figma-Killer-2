@@ -257,7 +257,8 @@ export interface NodeWrapperProps {
   onContextMenu?: (e: SyntheticMouseEvent) => void
   onKeyDown?: (e: SyntheticKeyboardEvent) => void
   onMouseEnter?: () => void
-  onMouseLeave?: () => void
+  /** Carries `relatedTarget`: the canvas hands the hover to the node the pointer went into (`canvasHoverHandoff.ts`). */
+  onMouseLeave?: (e: SyntheticLeaveEvent) => void
 }
 
 // Loose synthetic-event types so plugin module authors aren't forced to
@@ -273,6 +274,8 @@ type SyntheticKeyboardEvent = SyntheticMouseEvent & {
   key: string
 }
 type SyntheticFocusEvent = SyntheticMouseEvent
+/** A pointer leaving an element — where it went is the one field a leave handler reads. */
+type SyntheticLeaveEvent = { relatedTarget: EventTarget | null }
 
 // ---------------------------------------------------------------------------
 // Module Definition — the canonical contract every module must satisfy

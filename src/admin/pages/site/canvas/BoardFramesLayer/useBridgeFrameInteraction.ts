@@ -96,7 +96,10 @@
  *
  * Resize commit → the frame previewed the drag itself (`resizeHandles.ts`);
  * the parent makes the ONE write, `setNodeInlineStyles`, the portal path's
- * `useElementResizeDrag` makes for the same gesture.
+ * `useElementResizeDrag` makes for the same gesture — the size and the Fixed
+ * companions the frame planned from the markers `useBridgeSelectionChrome`
+ * sent it (canvas-23). Resize guides (canvas-26) → painted in this frame's
+ * drag layer, exactly where a portal drag paints its own.
  *
  * `text:editStart`/`text:commit`/`text:cancel` (`live-18`) → the frame asks
  * (a double-click landed on a stamped element), the store decides through
@@ -132,6 +135,7 @@ import { readCanvasPointerRelay } from '../canvasPointerRelay'
 import type { FrameDocumentAdapter, FrameRuntimeEvent } from '../frameAdapter/FrameDocumentAdapter'
 import { listFrameAdapters } from '../frameAdapter/canvasFrameAdapterRegistry'
 import { iframeLocalPointToParentClientPoint } from '../iframeEventCoordinates'
+import { paintResizeGuides, resolveResizeGuideSurface } from '../elementResizeGuides'
 
 export interface BridgeFrameInteractionOptions {
   breakpointId: string
@@ -319,6 +323,11 @@ export function useBridgeFrameInteraction(adapter: FrameDocumentAdapter | null, 
       }),
       adapter.on('resize:commit', (event) => {
         useEditorStore.getState().setNodeInlineStyles(event.nodeId, event.patch)
+      }),
+      // canvas-26 — the frame snapped; its guides paint where a portal drag's
+      // do, in this frame's parent-document drag layer (`[]` clears them).
+      adapter.on('resize:guides', (event) => {
+        paintResizeGuides(resolveResizeGuideSurface(frameElementOf(adapter)), event.guides)
       }),
       // `live-18` — the frame asks, the store decides (the SAME predicate the
       // portal double-click handler's `startInlineEdit` applies), the reply

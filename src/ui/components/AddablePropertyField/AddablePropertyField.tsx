@@ -70,7 +70,7 @@ export interface AddablePropertyFieldMode {
    * `alignDisabledReasons` uses. A mode the user can't have should still be
    * visible and should say why; silently dropping it from the menu teaches
    * nothing. `SizeSection` uses this for Hug/Fill when the selected
-   * element's parent layout can't be read (`elementSizing.ts`).
+   * element's parent layout can't be read (`elementSizingRules.ts`).
    */
   disabledReason?: string
 }

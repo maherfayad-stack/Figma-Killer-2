@@ -70,10 +70,18 @@ export {
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
   OptimisticStylePatchSchema,
+  OptimisticRevertMessageSchema,
+  OPTIMISTIC_REVERT_MAX,
+  RESIZE_SNAP_SIBLINGS_MAX,
+  ResizeCommitMessageSchema,
+  ResizeCommitPatchSchema,
+  ResizeGuidesMessageSchema,
+  ResizeSizingMarkersSchema,
+  ResizeSnapContextSchema,
+  SetResizeTargetMessageSchema,
   OptimisticMessageSchema,
   RuntimeModeSchema,
   ReadyMessageSchema,
@@ -109,6 +117,9 @@ export {
   type NodeMeasurement,
   type TextEditReplyMessage,
   type DropCandidateWire,
+  type ResizeCommitPatch,
+  type ResizeSizingMarkers,
+  type ResizeSnapContext,
 } from './messages'
 
 export { installInlineTextEdit, type InlineTextEditController, type InlineTextEditOptions } from './inlineTextEdit'
@@ -229,6 +240,60 @@ export {
 
 export { inlineOffsetProperty, isPositionedFreely, readResizeBoxStart } from './elementResizeMeasure'
 
+export {
+  SIZING_OPTIONS,
+  currentSizingMode,
+  sizingAxisRole,
+  sizingPatch,
+  sizingUnavailableReason,
+  FLEX_MAIN_FIXED_VALUE,
+  type SizingAxis,
+  type SizingAxisRole,
+  type SizingFlexCascade,
+  type SizingMode,
+  type SizingModeOption,
+  type SizingParentLayout,
+  type SizingPatch,
+} from './elementSizingRules'
+
+export {
+  cssPropertyName,
+  planResizeSizing,
+  readClearedValues,
+  readSizingParentLayout,
+  resizeInlinePatch,
+  stylesheetPreviewDeclarations,
+  type ResizeInlinePatch,
+  type ResizeSizingPlan,
+} from './elementResizeSizing'
+
+export {
+  SNAP_THRESHOLD_SCREEN_PX,
+  computeEdgeSnap,
+  computeSnap,
+  snapGuidesEqual,
+  snapThresholdAtZoom,
+  type EdgeSnap,
+  type SnapGuide,
+  type SnapRect,
+  type SnapResult,
+} from './snapRules'
+
+export { parentSnapRects, readBoxInsets, type BoxInsets, type SideLengths } from './snapPeerRules'
+
+export {
+  flowStartAnchored,
+  readResizeSnapInput,
+  resizeSnapEdges,
+  snapRectOf,
+  snapResizeDelta,
+  type FlowLayoutInput,
+  type RectSource,
+  type ResizeSnapEdges,
+  type ResizeSnapInput,
+  type ResizeSnapStep,
+} from './elementResizeSnapRules'
+
 export { PRIMARY_BUTTON_MASK, guardDragSession, type DragSessionGuardOptions } from './dragSessionGuard'
 
 export {
@@ -242,6 +307,7 @@ export {
   installResizeHandles,
   type ResizeHandlesController,
   type ResizeHandlesOptions,
+  type ResizeTargetContext,
   type ResizeTargetRef,
 } from './resizeHandles'
 

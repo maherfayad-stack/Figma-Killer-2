@@ -17,12 +17,14 @@
  *     layer writes the width alone, an E drag moves `right` in by the growth;
  *   - `left` + `right` (a stretched layer) both follow their edges.
  *
- * Portal frames only, like the snapping: the live runtime's handles do not
- * have the node's authored styles on their side of the wire.
+ * Portal frames only. A live frame's resize snaps and plans its flex/align
+ * companions from what `setResizeTarget` sends (`resizeTargetContext.ts`),
+ * but the authored OFFSETS are not on that wire yet, so a live W-drag on a
+ * right-anchored layer still writes `left`.
  */
 import type { ResizeBoxStart, ResizeStep } from '@core/studio-runtime'
 import type { NudgePlan, NudgeTerm } from './canvasNodeArrowMove'
-import type { ResizeInlinePatch } from './elementResizeSizing'
+import type { ResizeInlinePatch } from '@core/studio-runtime'
 
 /** The offset keys the shared rules may put in a patch — replaced wholesale here. */
 const RULE_OFFSET_KEYS = ['left', 'insetInlineStart', 'top'] as const
