@@ -146,7 +146,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Hold ⇧ over a container: "Set as background"; release adds a background layer (Fill section shows it). Hold ⌘ over a `position: relative` container: the image lands at the pointer; over a static one, the "make it relative" dialog.
   5. ⌘K → "Insert image…": pick two files; they land right after the selected layer.
 ### canvas-29 — P5-D (first half): SVG-0, SVG-1, SVG-2
-- **Agent:** parser-surgeon, finished by canvas-engineer · **Branch:** `feat/svg-renders-as-itself` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, test/proof table in its body) · **Updated:** 2026-09-25
+- **Agent:** parser-surgeon, finished by canvas-engineer · **Branch:** `feat/svg-renders-as-itself` off `25681dcb` · **PR:** #264 (draft, base `feat/canvas-excellence`; long form, sanitizer paths, threat list and proof table in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open; needs a security-guard review of SVG-2 before merge)
 - **Goal:** ROADMAP §9 P5-D SVG-0/1/2 (`docs/audits/2026-09-23-studio-audit/08-svg.md` §2 defects 1 and 4, §9). SVG-3 onward not started.
 - **Done:**
