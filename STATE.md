@@ -13,7 +13,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### store-20 — P6-A: reconcile after writes (PERF-6)
 - **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
-- **Stage:** verifying — gates run in chunks; results and pre-existing failures in the PR body.
+- **Stage:** done, awaiting merge — build + lint green; `bun test` (chunked) adds no failure (pre-existing + load timeouts triaged in the PR body); e2e `studio-board-perf` 2 failures reproduce with the change disabled.
 - **Slices touched:** `site/lifecycleActions.ts` (`patchPages`, and `createSite`/`loadSite`/`clearSite` clear the render keys), `site/reparseNodeFollow.ts` (optional `alignments` input, shared). New `site/rereadRenderKeys.ts`, `canvas/nodeRenderKeys.ts` (off-store), `@core/utils/replaceEqualDeep`. No new selector; no new mutation (a re-read is not an edit: no history entry, no coalesce key).
 - **Done:**
   - `patchPages` applies a re-read by value: each re-read page, `styleRules` and `conditions` go through `replaceEqualDeep`, so a deep-equal node, rule, registry or page keeps its object. A prop write re-renders one `NodeRenderer`, not the whole page, and restyles no frame (was 12 of 12).
