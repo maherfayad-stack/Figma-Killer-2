@@ -726,6 +726,20 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   own `public/` — the one directory every framework serves from the site root,
   and therefore the only one that can back a literal `<img src>`. See that
   module's doc for why `src/assets/` cannot.
+- **A portal frame loads that `src` through the asset route (P5-B2).** The
+  frame is `about:srcdoc` on the ADMIN origin, so `/x.png` would load from
+  Studio's server and show broken (the `width`/`height` box hid it).
+  `canvasProjectAssetUrl.ts` rewrites site-root URLs to
+  `/admin/api/studio/asset?dir=…&url=/x.png` at render time, at exactly two
+  sinks: `NodeRenderer` (props `src`/`srcSet`/`poster` and the inline style,
+  every module at once) and `canvasFrameCss.ts` (the one canvas-only CSS pass
+  every project-CSS injector runs: asset URLs → viewport pin → dark scheme).
+  The store keeps `/x.png` — an image replace reads `props.src` to tell a
+  literal from an import. Left alone: absolute, `data:`, `blob:` (ghosts),
+  relative, the scope's own route, and `/uploads/` (the admin's CMS media,
+  whose responsive variants are already loadable). The capture page sets a
+  token scope instead (`setCaptureProjectAssetScope`). Bridge frames never
+  render through here and need nothing: the project's dev server answers.
 
 ---
 
@@ -1691,7 +1705,8 @@ document, so an unedited imported rule must be emitted or it is simply absent.
 shape cannot come back.
 
 `canvasUserStylesheetCss.ts` also **reorders** the chain
-(`collect → rewritePrefersColorScheme → resolveViewportUnits`) so the
+(`collect → resolveAssets → rewritePrefersColorScheme → resolveViewportUnits`;
+`resolveAssets` is `canvasFrameCss.ts`'s asset-URL pass, P5-B2) so the
 frame-invariant half comes first. The two transforms commute — the resolver
 touches only `<number><viewport-unit>` tokens in declarations, the rewrite
 touches only selectors and the `@media` prelude — verified byte-for-byte over

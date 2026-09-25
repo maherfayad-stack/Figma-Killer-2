@@ -22,6 +22,15 @@ const MIME_TYPES: Record<string, string> = {
   '.woff2': 'font/woff2',
   '.ttf': 'font/ttf',
   '.otf': 'font/otf',
+  '.avif': 'image/avif',
+  '.bmp': 'image/bmp',
+  '.ico': 'image/x-icon',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
+  '.ogv': 'video/ogg',
+  '.mov': 'video/quicktime',
 }
 
 // Mime types worth compressing. Already-compressed binary formats (woff2, png,
@@ -51,6 +60,18 @@ const compressionCache = new Map<string, CachedCompression>()
 
 function contentType(path: string): string {
   return MIME_TYPES[extname(path).toLowerCase()] ?? 'application/octet-stream'
+}
+
+/**
+ * Whether `path` names a file a page EMBEDS rather than runs or reads: an
+ * image, a font, audio or video, by the same extension table
+ * `serveStaticFile` types its response with. The project asset route
+ * (`studioAsset.ts`) serves nothing else, so it can never hand the admin
+ * origin a project's source, config or HTML — only the kinds of file an
+ * `<img>`, a CSS `url()`, an `@font-face` or a `<video>` loads.
+ */
+export function isEmbeddableMediaPath(path: string): boolean {
+  return /^(?:image|font|audio|video)\//.test(contentType(path))
 }
 
 function resolveStaticPath(root: string, pathname: string): string | null {

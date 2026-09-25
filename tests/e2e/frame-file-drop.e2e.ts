@@ -330,6 +330,93 @@ async function dropGeneratedImages(
   }, images)
 }
 
+/**
+ * P5-B2 — the image must LOAD, not just take up space.
+ *
+ * A design frame is an `about:srcdoc` document on the ADMIN origin, so the
+ * `src="/x.png"` a drop writes (a site-root URL into the project's `public/`)
+ * used to load from Studio's own server, which has nothing there. The box was
+ * right — the `<img>` carries `width`/`height` — so every size assertion above
+ * passed while the picture itself was broken. `naturalWidth` is what tells a
+ * decoded image from a broken one; it is 0 for the latter.
+ */
+async function loadedNaturalWidth(image: Locator): Promise<number> {
+  return image.evaluate((element) => {
+    const img = element as HTMLImageElement
+    return img.complete ? img.naturalWidth : -1
+  })
+}
+
+test.describe('an image in public/ loads in a design frame (P5-B2)', () => {
+  test.setTimeout(240_000)
+
+  test('a dropped PNG decodes in the design frame, and the source still says the site-root URL', async ({ page }) => {
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    const contentFrame = await firstMountedFrame(page, canvasRoot)
+
+    await dropGeneratedImages(contentFrame, '.home__body', [{ name: 'loaded.png', width: 48, height: 32, colour: '#c60' }])
+    await expect
+      .poll(() => readPage(), { timeout: 60_000, message: 'the dropped image never reached the source' })
+      .toContain('<img src="/loaded.png"')
+
+    const image = contentFrame.locator('img[src*="loaded.png"]')
+    await expect(image).toHaveCount(1, { timeout: 60_000 })
+    await expect
+      .poll(() => loadedNaturalWidth(image), {
+        timeout: 30_000,
+        message:
+          'the dropped image is in the frame but did not decode: its site-root src resolved against the admin ' +
+          'origin instead of the project (naturalWidth 0 = broken image)',
+      })
+      .toBe(48)
+    // The store and the source keep the site-root URL; only the frame's
+    // DOM asks the asset route for it.
+    expect(readPage()).toContain('<img src="/loaded.png"')
+  })
+
+  test('an <img src="/…"> already in the source loads too, and so does a url() in the page CSS', async ({ page }) => {
+    fs.writeFileSync(path.join(publicDir(), 'existing.png'), Buffer.from(PNG_BASE64, 'base64'))
+    fs.writeFileSync(
+      pagePath(),
+      FIXTURE_PAGE.replace(
+        '<h1 className="home__title">Drop target</h1>',
+        '<h1 className="home__title">Drop target</h1>\n      <img src="/existing.png" alt="existing" />\n      <div className="home__banner" />',
+      ),
+    )
+    fs.writeFileSync(
+      path.join(fixture.dir, 'pages', 'home.css'),
+      `${FIXTURE_CSS}\n.home__banner {\n  width: 10px;\n  height: 10px;\n  background-image: url('/existing.png');\n}\n`,
+    )
+
+    const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
+    const contentFrame = await firstMountedFrame(page, canvasRoot)
+
+    const image = contentFrame.locator('img[src*="existing.png"]')
+    await expect(image).toHaveCount(1, { timeout: 60_000 })
+    await expect
+      .poll(() => loadedNaturalWidth(image), { timeout: 30_000, message: 'a literal public/ image is broken in the design frame' })
+      .toBe(1)
+
+    // The stylesheet's url() goes to the same route; load what the COMPUTED
+    // style points at and check it decodes.
+    const banner = contentFrame.locator('.home__banner')
+    await expect(banner).toHaveCount(1, { timeout: 60_000 })
+    const bannerWidth = await banner.evaluate(async (element) => {
+      const match = /url\("?([^")]+)"?\)/.exec(getComputedStyle(element).backgroundImage)
+      if (!match) return -1
+      const probe = new Image()
+      probe.src = match[1]!
+      try {
+        await probe.decode()
+      } catch {
+        return 0
+      }
+      return probe.naturalWidth
+    })
+    expect(bannerWidth, "the page CSS's url('/existing.png') did not load in the design frame").toBe(1)
+  })
+})
+
 test.describe('dragging several image files onto a design frame (P5-B)', () => {
   test.setTimeout(300_000)
 

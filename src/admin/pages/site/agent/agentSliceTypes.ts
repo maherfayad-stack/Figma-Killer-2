@@ -1,7 +1,7 @@
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import type { AiToolOutput, AiUserContentBlock } from '@core/ai'
 import type { ConversationView } from '@admin/ai/api'
-import type { AgentMessage, AgentRoutedTurn } from './types'
+import type { AgentMessage, AgentRoutedModel, AgentRoutedTurn } from './types'
 import type { AgentPermissionRequest, PermissionBehavior } from './permissionPrompt'
 import type { AgentRevertResult, AgentTurnChanges } from './agentTurnChangeTypes'
 
@@ -50,6 +50,13 @@ export interface AgentSlice {
   agentConversationId: string | null
   agentActiveCredentialId: string | null
   agentActiveModelId: string | null
+  /**
+   * True once the user picked the staged model in the model picker; false
+   * while it is Studio's default. Sent when a conversation is created
+   * (`modelSource`), because only a default model is ever routed to a cheaper
+   * one for the job (AI-25, `server/ai/routing/modelRouting.ts`).
+   */
+  agentModelPicked: boolean
   agentConversations: ConversationView[]
   agentUsage: AgentConversationUsage
   /** True while a history load/delete can replace the active conversation. */
@@ -93,6 +100,12 @@ export interface AgentSlice {
    * read-only rather than a second, competing control.
    */
   agentRoutedTurn: AgentRoutedTurn | null
+  /**
+   * Which model the LAST turn ran on, and why (AI-25). Null until the server
+   * reports one. Read-only like `agentRoutedTurn`: the model picker is the
+   * only control, and picking a model turns routing off for the conversation.
+   */
+  agentRoutedModel: AgentRoutedModel | null
 
   /** WS-12 §5.1 session controls — `claudeCli`-only, every other driver ignores both. Initial values + the "never persists" reasoning live in `agentSessionControls.ts`. */
   agentEffort: 'low' | 'medium' | 'high' | 'xhigh' | 'max' | null

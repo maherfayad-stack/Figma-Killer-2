@@ -1,124 +1,125 @@
 /**
- * studioLoadMemo — W9-5 lever 1: **one real `loadStudioPages` per turn.**
+ * studioLoadMemo — W9-5 lever 1, reworked by P6-B (PERF-8): one real
+ * `loadStudioPages` per change, and a repeat load that costs `stat`s of the
+ * files the load actually read — not a walk of the whole project.
  *
- * `pageParseCache.ts` (read it first) already makes the expensive half — the
- * per-route ts-morph parse and §7 evaluator pass — reusable across calls. What
- * it does NOT make reusable is everything `loadStudioPages` does AROUND those
- * parses: `createWorkspaceProject`, `compileProjectStyles`, the page/story
- * directory walks, `loadStudioStyles`' site-wide class-id registry, and the
- * per-page `parsedPageToSitePage` convert. On a 36-page project that residue
- * measured ~26 ms, and an agent turn pays it once in the live digest, again in
- * `studio_compare`, again in `studio_screenshot`/`studio_quality_check`, and
- * again in whatever fidelity tool runs next — all against a project that did
- * not change between them.
+ * `pageParseCache.ts` (read it first) makes the expensive half — the per-route
+ * ts-morph parse and §7 evaluator pass — reusable across calls. What it does
+ * NOT make reusable is everything `loadStudioPages` does AROUND those parses:
+ * the `Project` sync, `compileProjectStyles`, the page/story directory walks,
+ * `loadStudioStyles`' site-wide class-id registry, and the per-page
+ * `parsedPageToSitePage` convert. An agent turn pays that in the live digest,
+ * again in `studio_compare`, again in `studio_screenshot`/`studio_quality_check`,
+ * and the board pays it on every resync — against a project that did not
+ * change in between. This memo keeps the WHOLE `StudioLoadResult` per project.
  *
- * This memo caches the WHOLE `StudioLoadResult` for a `dir`, so a repeat load
- * costs a fingerprint check plus a clone (~2.5 ms measured) instead of ~26 ms.
+ * ## Validity
  *
- * ## Validity: a workspace fingerprint, not a dependency set
+ * Before P6-B the answer to "did anything change" was a fingerprint over every
+ * source-relevant file: a walk plus a `stat` of each, synchronously, on every
+ * load (27 ms on a 1,000-file repo, blocking every other request), and folded
+ * into a 32-bit hash that `"Aa"`/`"BB"` could collide. Now a memo hit needs
+ * ALL of these, cheapest first:
  *
- * `pageParseCache` records a per-route dependency set because it caches ONE
- * route and must invalidate precisely. This memo caches the whole project, so
- * "did anything at all change" is the only question, and the cheapest honest
- * answer is a fingerprint over every source-relevant file in the workspace:
- * `relPath:size:mtimeMs` for every `.ts/.tsx/.js/.jsx/.mjs/.cjs/.css/.scss/
- * .sass/.less/.json/.svg` file `listWorkspaceFiles` walks, plus `.studio/meta.json`
- * explicitly (`.studio` is in `EXCLUDED_WORKSPACE_DIR_NAMES`, and meta.json
- * decides `pagesDir`, the preview locale, the framework profile, the trust
- * tier and whether stories are on).
+ *   1. **The project watcher saw nothing relevant.** The loaded project's
+ *      change feed (`projectChangeFeed.ts`, P1-D's watcher, every origin) has
+ *      reported no {@link FINGERPRINTED_EXTENSIONS} file since the memo was
+ *      computed — a page added or deleted, a stylesheet or `tailwind.config.ts`
+ *      edited, a `package.json` dependency changed, a story file appeared.
+ *      The feed is settled first (`ProjectChangeFeed.settle`): pending events
+ *      are flushed, and a Studio write since the watcher last looked forces it
+ *      to look now, so a save followed straight away by the board's resync is
+ *      never answered from before the save.
+ *   2. **Every file the result was built from is unchanged** — the stamps of
+ *      every route's dependencies (`routeParse.ts`: what the parse read, and
+ *      what it found missing), every stylesheet the registry read, and the
+ *      tsconfig and `package.json`. This does not trust the watcher at all: a
+ *      page is never served from here once a file it read has moved, even if
+ *      `fs.watch` dropped the event (on Windows it drops them in bursts).
+ *   3. **The route list is unchanged** — the pages directory re-listed, so a
+ *      page file added a moment ago is never missing, whatever the watcher has
+ *      delivered yet.
+ *   4. **`.studio/meta.json` is unchanged** in every field that decides a
+ *      parse — see {@link NON_PARSE_META_FIELDS}.
  *
- * That is deliberately BROADER than `pageParseCache`'s per-route dependency
- * set: it catches a page file added or deleted, a stylesheet edited, a
- * `tailwind.config.ts` change, a `package.json` dependency change, and the
- * transitive local-component edits `pageParseCache`'s documented one-level
- * limitation misses. A memo hit therefore never serves anything staler than
- * a fresh call would have computed. Measured cost on a 100-file project:
- * ~0.7 ms.
+ * When the feed cannot vouch at all (the watch failed or overflowed, P1-D's
+ * rule), 1 falls back to the old whole-project fingerprint — SHA-256 now.
  *
- * ## Why the result is cloned on the way out
+ * What only rule 1 covers is a change to a file the load did not read and
+ * that is not a route: a new component file an existing import could now
+ * resolve to (the parse cache records that absence too, `routeParse.ts`), a
+ * style toolchain config, a story file. The watcher reports those within
+ * milliseconds; `projectChangeFeed.ts` documents the backstop for an event
+ * the OS drops outright.
  *
- * Callers receive `Page` objects they are free to mutate (`loadStudioPages`
- * itself mutates them via `rewriteStudioAssetSentinels`). Handing two callers
- * the same object graph would make one tool's edit visible to the next, which
- * is a correctness bug, not a perf trade. `structuredClone` of a 36-page
- * result measured ~1.8 ms — an order of magnitude under the ~26 ms it saves —
- * so the memo always clones both in and out.
+ * ## Shared, and cloned only on request
+ *
+ * `loadStudioPages` hands callers `Page` objects they are free to mutate, so
+ * it clones the memoized result (`structuredClone`, 31 ms of a 39 ms warm
+ * load on a 40-page, 3 MB board). The `/load` route only SERIALISES the
+ * result, so it reads the shared one (`loadStudioPagesShared`) and skips the
+ * clone. The memo stores what it computed without cloning: the compute
+ * builds fresh objects every time.
  *
  * ## Every load stores the FULL result
  *
  * A narrowed load (`options.pageIds`, the canvas's targeted reload) runs the
  * same compute and converts every route — narrowing happens on the way out,
  * by filtering `pages`. So the result it computed IS the project-wide truth,
- * it is stored like any other, and the full load that follows a canvas
- * resync is a memo hit rather than a second parse.
+ * and the full load that follows a canvas resync is a memo hit.
  *
- * In-memory, process-scoped, one entry per `dir` — same posture as
- * `pageParseCache.ts` and the kept ts-morph `Project` in `workspaceProject.ts`.
+ * One entry per loaded project, forgotten with it (`loadedProjects.ts`' LRU).
  */
-import { readFileSync, statSync } from 'node:fs'
-import { join } from 'node:path'
+import { readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import { listWorkspaceFiles } from '@core/page-parser'
+import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
+import { onLoadedProjectEvicted, retainLoadedProject } from './loadedProjects'
 import type { StudioLoadResult } from './studioLoadContract'
 
 /**
  * Extensions whose content can change what `loadStudioPages` returns. `svg`
- * (WB-2) because a `?raw` icon import's VALUE is the file's text — the parse
- * cache records the file as a dependency, and that is only worth anything if
- * this memo lets the load reach it.
+ * (WB-2) because a `?raw` icon import's VALUE is the file's text.
  */
 const FINGERPRINTED_EXTENSIONS = /\.(tsx?|jsx?|mjs|cjs|css|scss|sass|less|json|svg)$/i
 
 /**
  * `.studio/meta.json` fields that change WITHOUT changing a load result, and
- * must therefore be excluded from the fingerprint.
+ * must therefore be excluded from its stamp.
  *
  * `lastOpenedAt` is the whole reason this list exists. `GET /admin/api/studio/
  * load` stamps it through `recordProjectOpened` on its way in — and the board
- * calls that same route to re-sync after EVERY structural edit. Fingerprinting
- * the file by mtime therefore guaranteed a different fingerprint on every
- * single load, so the memo below could never hit once, and every duplicate,
- * insert, wrap and group paid a full cold `computeStudioPages` (~600 ms on a
- * two-page project, measured) for work the previous gesture had already done.
- * The memo was correct; it was being invalidated by its own reader.
+ * calls that same route to re-sync after EVERY structural edit. Stamping the
+ * file by mtime therefore guaranteed a miss on every single load, and every
+ * duplicate, insert, wrap and group paid a full cold `computeStudioPages`
+ * (~600 ms on a two-page project, measured) for work the previous gesture had
+ * already done. The memo was correct; it was being invalidated by its own
+ * reader.
  *
- * `trustAutoPromotedAt` is here for the same reason and not because it has
- * ever been observed to bite: it is a timestamp beside a boolean latch, and
- * `trustAutoPromoted` — the field that actually decides anything — is NOT
- * excluded, so the promotion itself still invalidates.
+ * `trustAutoPromotedAt` is here for the same reason: it is a timestamp beside
+ * a boolean latch, and `trustAutoPromoted` — the field that actually decides
+ * anything — is NOT excluded, so the promotion itself still invalidates.
  *
- * The list is an EXCLUDE list, not an include list, deliberately: a new
- * parse-relevant field added to `StudioMeta` is covered automatically, and
- * only a field someone consciously names here can ever be ignored. Under-
- * invalidating serves stale source; over-invalidating only costs time.
+ * An EXCLUDE list, not an include list, deliberately: a new parse-relevant
+ * field added to `StudioMeta` is covered automatically, and only a field
+ * someone consciously names here can ever be ignored.
  */
 const NON_PARSE_META_FIELDS = new Set(['lastOpenedAt', 'trustAutoPromotedAt'])
 
 /**
- * Inside `EXCLUDED_WORKSPACE_DIR_NAMES`, so `listWorkspaceFiles` never reports
- * it — but it decides pagesDir, locale, framework, trust and stories, so it is
- * fingerprinted by CONTENT (minus the fields above) rather than by mtime.
+ * Inside `EXCLUDED_WORKSPACE_DIR_NAMES` (so neither the watcher nor
+ * `listWorkspaceFiles` reports it) — but it decides pagesDir, locale,
+ * framework, trust and stories, so it is compared by CONTENT (minus the fields
+ * above) on every load.
  */
 const META_RELATIVE_PATH = '.studio/meta.json'
-
-function fileStamp(absFile: string): string {
-  try {
-    const stat = statSync(absFile)
-    return `${stat.size}:${stat.mtimeMs}`
-  } catch {
-    return 'missing'
-  }
-}
 
 /**
  * `.studio/meta.json`'s contribution: its parsed content with the fields above
  * removed, re-serialised with sorted keys so a rewrite that only reorders them
- * is not mistaken for a change.
- *
- * Reading and parsing rather than stat-ing is affordable precisely because it
- * is ONE small file — and it is the only way to tell "the trust tier moved"
- * apart from "the board re-synced". Unreadable or malformed falls back to the
- * raw bytes, which is the conservative answer: a file this function cannot
- * understand must still invalidate when it changes.
+ * is not mistaken for a change. Unreadable or malformed falls back to the raw
+ * bytes: a file this function cannot understand must still invalidate when it
+ * changes.
  */
 function metaStamp(dir: string): string {
   const absFile = join(dir, ...META_RELATIVE_PATH.split('/'))
@@ -141,9 +142,10 @@ function metaStamp(dir: string): string {
 }
 
 /**
- * A cheap, non-cryptographic signature of every file in `dir` whose content
- * could change a load result. Changes only need to be DETECTED, never
- * resisted — same posture as `pageParseCache.ts`'s `hashWorkspaceConfig`.
+ * A collision-safe signature of every file in `dir` whose content could change
+ * a load result: `relPath:size:mtimeMs` for each {@link FINGERPRINTED_EXTENSIONS}
+ * file `listWorkspaceFiles` walks, plus `.studio/meta.json`'s {@link metaStamp}.
+ * The fallback for a project whose watcher cannot vouch — see this module's doc.
  */
 export function workspaceLoadFingerprint(dir: string): string {
   const parts: string[] = []
@@ -152,31 +154,82 @@ export function workspaceLoadFingerprint(dir: string): string {
     parts.push(`${relPath}:${fileStamp(join(dir, ...relPath.split('/')))}`)
   }
   parts.push(`${META_RELATIVE_PATH}:${metaStamp(dir)}`)
-  const payload = parts.join('\n')
-  let hash = 0
-  for (let i = 0; i < payload.length; i++) hash = (hash * 31 + payload.charCodeAt(i)) | 0
-  return `${parts.length}:${hash.toString(36)}`
+  return digestOf(parts)
 }
 
-const memo = new Map<string, { fingerprint: string; result: StudioLoadResult }>()
+/** What a compute hands the memo: the result, and what it was built from. */
+export interface ComputedStudioLoad {
+  result: StudioLoadResult
+  /** The stamp of every file the result was built from, or `null` when it must not be memoized (a file moved while it was computed). */
+  dependencies: ReadonlyMap<string, string> | null
+}
+
+/** How a memoized load is checked and recomputed — supplied by `studioPageLoad.ts`, which knows how the project's routes are discovered. */
+export interface StudioLoadComputation {
+  compute: () => Promise<ComputedStudioLoad>
+  /** The project's route files as the load discovers them, joined — rule 3 of this module's doc. */
+  routeListing: () => string
+}
+
+interface MemoEntry {
+  /** Change-feed position when the compute began. */
+  cursor: number
+  /** Present only when the feed could not vouch at compute time — the fallback. */
+  fingerprint: string | null
+  metaStamp: string
+  routeListing: string
+  dependencies: ReadonlyMap<string, string>
+  result: StudioLoadResult
+}
+
+const memo = new Map<string, MemoEntry>()
+onLoadedProjectEvicted((key) => memo.delete(key))
+
+function isStillValid(entry: MemoEntry, dir: string, computation: StudioLoadComputation, changedSince: ReadonlySet<string> | null): boolean {
+  if (changedSince === null) {
+    if (entry.fingerprint === null || workspaceLoadFingerprint(dir) !== entry.fingerprint) return false
+  } else {
+    for (const rel of changedSince) if (FINGERPRINTED_EXTENSIONS.test(rel)) return false
+  }
+  return (
+    metaStamp(dir) === entry.metaStamp &&
+    stampsUnchanged(entry.dependencies) &&
+    computation.routeListing() === entry.routeListing
+  )
+}
 
 /**
- * The memoized FULL load result for `dir`, or `null` when the memo is cold or
- * anything in the workspace moved. Always a fresh clone — see this module's
- * doc for why aliasing would be a correctness bug.
+ * `dir`'s FULL load result — the memoized one when every rule in this
+ * module's doc holds, otherwise freshly computed (and memoized when it can
+ * be). The SHARED object: callers must not mutate it (see this module's doc).
  */
-export function getMemoizedStudioLoad(dir: string, fingerprint: string): StudioLoadResult | null {
-  const entry = memo.get(dir)
-  if (!entry || entry.fingerprint !== fingerprint) return null
-  return structuredClone(entry.result)
-}
+export async function memoizedStudioLoad(dir: string, computation: StudioLoadComputation): Promise<StudioLoadResult> {
+  const key = resolve(dir)
+  const { project, release } = retainLoadedProject(key)
+  try {
+    await project.changes.settle()
+    const entry = memo.get(key)
+    if (entry && isStillValid(entry, key, computation, project.changes.changesSince(entry.cursor))) return entry.result
 
-/** Stores a FULL load result (never a narrowed one — see this module's doc) against the fingerprint the workspace had when it was computed. */
-export function setMemoizedStudioLoad(dir: string, fingerprint: string, result: StudioLoadResult): void {
-  memo.set(dir, { fingerprint, result: structuredClone(result) })
+    const cursor = project.changes.cursor()
+    const fingerprint = project.changes.changesSince(cursor) === null ? workspaceLoadFingerprint(key) : null
+    const stamp = metaStamp(key)
+    const routeListing = computation.routeListing()
+    const { result, dependencies } = await computation.compute()
+    if (dependencies) memo.set(key, { cursor, fingerprint, metaStamp: stamp, routeListing, dependencies, result })
+    else memo.delete(key)
+    return result
+  } finally {
+    release()
+  }
 }
 
 /** Test-only: drop every memoized load so a test does not leak state into the next one. */
 export function clearStudioLoadMemo(): void {
   memo.clear()
+}
+
+/** Test/diagnostic only: whether `dir` has a memoized load at all (valid or not). */
+export function hasMemoizedStudioLoad(dir: string): boolean {
+  return memo.has(resolve(dir))
 }

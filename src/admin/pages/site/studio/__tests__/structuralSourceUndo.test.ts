@@ -188,7 +188,7 @@ describe('a structural source write is one undo step', () => {
             paletteHiddenModuleIds: [],
             pageCount: pages.length,
           },
-          ...pages.map((p) => ({ kind: 'page', page: p })),
+          ...pages.map((p, index) => ({ kind: 'page', page: p, index })),
         ]
         return new Response(lines.map((line) => JSON.stringify(line)).join('\n') + '\n', { status: 200 })
       }

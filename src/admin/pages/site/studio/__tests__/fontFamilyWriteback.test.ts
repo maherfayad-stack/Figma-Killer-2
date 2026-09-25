@@ -79,7 +79,7 @@ describe('font-family write-back', () => {
         const { pages, ...meta } = body as { pages: unknown[]; [k: string]: unknown }
         const lines = [
           { kind: 'meta', styleRuleSources: {}, styledStyleRuleSources: {}, authoredCss: '', ...meta, pageCount: pages.length },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(lines.map((l) => JSON.stringify(l)).join('\n') + '\n', {
           status: 200,

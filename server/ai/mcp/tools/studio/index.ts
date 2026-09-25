@@ -39,6 +39,7 @@ import { studioExtractReferenceAssetMcpTools } from './extractReferenceAsset'
 import { studioQualityCheckMcpTools } from './qualityCheck'
 import { studioVariantMcpTools } from './variantTools'
 import { studioTypecheckMcpTools } from './typecheck'
+import { studioLintMcpTools } from './lintTool'
 import { studioCommentMcpTools } from './commentTools'
 import { studioGitMcpTools } from './gitTools'
 import { studioPageDiagnosticsMcpTools } from './pageDiagnostics'
@@ -51,6 +52,7 @@ export const studioMcpTools: AiTool[] = [
   ...studioQualityCheckMcpTools,
   ...studioVariantMcpTools,
   ...studioTypecheckMcpTools,
+  ...studioLintMcpTools,
   ...studioExtractReferenceAssetMcpTools,
   ...studioProjectMcpTools,
   ...studioFileReadMcpTools,

@@ -1150,4 +1150,18 @@ export const pgMigrations: Migration[] = [
         on git_credentials (user_id, provider);
     `,
   },
+  {
+    // AI-25 — WHY a conversation carries its model id: 'default' (Studio's
+    // default, never picked) or 'chosen' (the user picked it). Model routing
+    // (`server/ai/routing/modelRouting.ts`) may move a turn of a 'default'
+    // conversation to a cheaper model for the job, and never touches a
+    // 'chosen' one — a router that "improves on" a deliberate pick is one the
+    // user has to fight. Nullable and additive: every row from before this
+    // column reads as NULL, which the store maps to 'chosen', so no existing
+    // conversation starts being routed on upgrade.
+    id: '024_ai_conversation_model_source',
+    sql: `
+      alter table ai_conversations add column model_source text;
+    `,
+  },
 ]

@@ -69,7 +69,7 @@ repositories (headless reads) / live editor store (`bridge` tools)
 | `tools/publishTool.ts` | `site_publish` — explicit server-side full-site publish through `publishDraftSite`, including the Layer-A static slot and MCP audit metadata. |
 | `tools/studioImportTool.ts` | `studio_import_project` — thin adapter over the Phase 7B GitHub import engine (`server/handlers/studioGithubImport.ts`); fetches a repo into its own `studio-workspace/<owner>-<repo>` project folder and summarizes the discovered pages. |
 | `tools/studio/` | WS-9 Studio tool family — project/board orientation, bulk edits, codemods, and the fidelity report. See "Studio tools (WS-9)" below. |
-| `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`. |
+| `resources.ts` | Static MCP **resources** (not tools) — `studio://guidelines`, and `studio://tool-notes` (`toolNotes.ts`): the long-form rules for tools whose descriptions are held to 900 characters (AI-29). |
 | `editorBridge.ts` | Per-user live workspace bridge registry + `createEditorBridgeStream`; `bridge` tools route to the owner's open Site workspace. |
 | `handlers/editorBridge.ts` | `GET /admin/api/ai/editor-bridge?scope=site&dir=<project>` — the capability-gated NDJSON stream the workspace holds open. The bridge registers under `site:${projectKey}` (W10), and the server derives that key from the VALIDATED `dir` — a client that could name its own key could name another project's. A missing or uncontained `dir` yields 400, never a bridge on a guessed project. |
 | `capture/` | **Headless agent capture (W4-2A, extended by W9-6).** `captureSession.ts` (open + settle + validate one capture page — the five steps both drivers share), `captureFrames.ts` (headless-first / live-bridge-fallback routing), `headlessCapture.ts` (the rasterising driver), `headlessFrameInspect.ts` (the QUESTION-asking driver behind `studio_computed_styles` / `studio_measure_element`), `browserPool.ts` (one warm Chromium, N pages — shared with `studio_render_reference`; `prewarmCaptureBrowser` launches it on project open, W9-5), `captureRoute.ts` + `capturePayload.ts` + `captureToken.ts` (the `/admin/agent-capture` surface and its single-purpose grant), `captureOrigin.ts` (which origin to navigate to). See "Headless capture" below. |
@@ -258,8 +258,8 @@ visually by exporting them as images and comparing them to the live one"):
 
 - `studio_render_reference` — **Tier 2**, `execution:'server'`, `requiresWrite`, `sideEffects:'cache'`
   + `studio.run.project` **and** the target project at `run-project` trust.
-  This is the only Studio tool that EXECUTES the project's own code, and it is
-  the only one with two independent gates: the capability answers "may this
+  It and `studio_lint` (below) are the two Studio tools that EXECUTE the
+  project's own code, and the two with two independent gates: the capability answers "may this
   caller run project code at all", the project's own `.studio/meta.json` tier
   answers "may THIS project be run". The handler checks the second via
   `checkTrustTier` (`server/handlers/studio/trustGate.ts`) — the same helper
@@ -288,6 +288,18 @@ visually by exporting them as images and comparing them to the live one"):
   reused across calls for the same project and torn down after
   `idleTimeoutMs` of inactivity (default 2 min). A boot failure returns
   `ok:false` with the captured stdout/stderr tail, never a synthetic result.
+
+- `studio_lint` (AI-21) — **Tier 2**, `execution:'server'`, `requiresWrite`, `sideEffects:'none'`
+  + `studio.run.project` **and** the target project at `run-project` trust,
+  checked with the same `checkTrustTier`. It runs the project's own ESLint,
+  whose config is a module the project wrote and whose plugins are packages
+  it installed — loading them runs them. The process is the project's own
+  `eslint` bin run directly (`handlers/studio/projectPackageBin.ts`, the
+  security-hardening bundle's `viteLaunch.ts` rule for the dev server): never
+  `<pm> run lint` (which runs `prelint`), never `npx`; the config pinned with
+  `--config` to one inside the project; no `--fix`/`--cache`/output file;
+  targets contained and passed as absolute paths; minimal env, capped output,
+  120 s. Details: `docs/features/agent.md` → "Reading the built screen".
 - `studio_diff_frames` — headless, `execution:'server'`, no
   `requiredCapabilities` (a pure read/compute over two caller-supplied PNGs).
   Deliberately generic (two base64 PNGs in, not coupled to the other two
@@ -791,7 +803,7 @@ Two consequences worth knowing when reading the driver:
 - `server/ai/mcp/publishTool.test.ts` — explicit MCP publish rebuilds and swaps the real static CSS/HTML slot and records connector audit metadata.
 - `server/ai/mcp/tools/studioImportTool.test.ts` — capability gating, the `dir`-stripping input schema, the imported-pages summary helper, and an end-to-end handler run against a stubbed global `fetch` (no real network calls); `server/handlers/__tests__/studioGithubImport.test.ts` covers the underlying import engine itself.
 - `server/ai/mcp/tools/studio/{projectTools,editTools,fidelityReport}.test.ts` — orientation/edit/fidelity tool handlers against temp fixture projects; `fidelityCodes.test.ts` — doc ⇄ code parity gate against `docs/features/studio-import.md`'s table.
-- `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read.
+- `server/ai/mcp/resources.test.ts` — `studio://guidelines` resource listing/read; every tool whose description points at `studio://tool-notes` has a section there.
 - `server/ai/mcp/capture/captureToken.test.ts` — grant scoping (project + page set), immediate revocation, expiry, and that a caller cannot widen a grant after minting it.
 - `server/ai/mcp/capture/captureFrames.test.ts` — the routing decision: headless first, bridge fallback, `source:'live'`/`'headless'` overrides, and that a both-paths failure names BOTH reasons instead of blaming a missing board.
 - `server/ai/mcp/capture/headlessFrameInspect.test.ts` — the frame-inspect driver: that the readiness poll happens BEFORE the inspect call, that the request crosses as a JSON string literal the page can parse back, that the grant is revoked however the call ends, and that an unvalidatable response is refused rather than trusted. Chromium is faked; the token, the settle session and both validations are real.

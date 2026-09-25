@@ -39,6 +39,7 @@ import { healthBench } from './benches/health'
 import { browserBench } from './benches/browser'
 import { snapshotTokensBench } from './benches/snapshot-tokens'
 import { agentTurnBench } from './benches/agent-turn'
+import { agentModelsBench } from './benches/agent-models'
 import { studioBoardBench } from './studioBoard.bench'
 
 const REPO_ROOT = resolve(import.meta.dir, '../..')
@@ -50,7 +51,9 @@ const REPO_ROOT = resolve(import.meta.dir, '../..')
 // its own disposable e2e stack and needs Chromium installed
 // (`bun run bench:browser:install`) plus a couple of minutes; `snapshot-tokens` needs
 // ANTHROPIC_API_KEY + a seeded .tmp/dev.db and makes network calls to
-// count_tokens. Run them explicitly, e.g. `bun run bench --only=studio-board`.
+// count_tokens. `agent-models` runs REAL billed agent turns and refuses to
+// start without ANTHROPIC_API_KEY and STUDIO_BENCH_SPEND=1. Run them
+// explicitly, e.g. `bun run bench --only=studio-board`.
 const DEFAULT_BENCHES: readonly BenchModule[] = [
   bundleBench,
   publisherBench,
@@ -69,6 +72,7 @@ const ALL_BENCHES: readonly BenchModule[] = [
   browserBench,
   studioBoardBench,
   snapshotTokensBench,
+  agentModelsBench,
 ]
 
 interface CliFlags {

@@ -118,6 +118,14 @@ export const ServerStreamEventSchema = Type.Union([
     reason: Type.String(),
   }),
   Type.Object({
+    // Which model this turn runs on — see `AgentRoutedModel` in ./types.
+    type: Type.Literal('modelRouting'),
+    mode: Type.Union([Type.Literal('pinned'), Type.Literal('routed'), Type.Literal('default')]),
+    modelId: Type.String(),
+    role: Type.String(),
+    reason: Type.String(),
+  }),
+  Type.Object({
     type: Type.Literal('retrying'),
     attempt: Type.Number(),
     maxAttempts: Type.Number(),
@@ -413,6 +421,15 @@ export async function processStreamEvent(
           ...(event.shape ? { shape: event.shape } : {}),
           reason: event.reason,
         }
+      })
+      break
+    }
+
+    case 'modelRouting': {
+      // Display only, like `routing`: the composer chip names a turn that ran
+      // on a cheaper model than the conversation's, with the router's reason.
+      set((state) => {
+        state.agentRoutedModel = { mode: event.mode, modelId: event.modelId, role: event.role, reason: event.reason }
       })
       break
     }
