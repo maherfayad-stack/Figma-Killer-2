@@ -11,6 +11,27 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### perf-13 — P6-B server half: fast warm load (PERF-7 persistence, PERF-8)
+- **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR (see branch), base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
+- **Stage:** verifying. The client streaming half of P6-B is OUT of scope (not started).
+- **Done:** signed on-disk parse cache (`.studio/cache/parse/`, `parseCacheStore.ts`, parser-code digest); `/load` memo invalidated from P1-D's watcher (`projectChangeFeed.ts`) instead of walk+stat; 4-project LRU (`loadedProjects.ts`); SHA-256 not a 32-bit hash; viewport parse order; absence dependencies; route reads the shared memo result (no clone).
+- **A/B** (`.tmp/p6b-bench/ab-modes.sh`, interleaved vs trunk, medians, loaded machine; 40-page `large` / 1,000-file `thousand`):
+
+| | large base → branch | thousand base → branch |
+|---|---|---|
+| restart (new process) | 2765 → 649 ms | 3093 → 1260 ms |
+| warm, `/load` route | 54.8 → 18.0 ms | 117.6 → 46.8 ms |
+| warm, tool (clone) | 51.7 → 55.3 ms (noise, see PR) | 55.8 → 40.6 ms |
+| cold (empty store, 8 pairs) | 2590 → 2478 ms | 3527 → 3625 ms (pairs −369…+170) |
+| page edit | 463 → 442 ms | 1565 → 1375 ms |
+| dependency edit | 194 → 201 ms | 1466 → 1382 ms |
+
+- **This session's fixes (were regressions):** (1) prewarm called `getTypeChecker()`, a lazy ts-morph wrapper that builds nothing (0 ms measured) — page edit was 0.65 → 2.5 s; now reads `.compilerObject`. (2) disk-store writes (hash+JSON+HMAC+write, 170–350 ms of a cold load) now drain 50 ms after the load (`scheduleParseCacheWrites`), at exit, and on LRU eviction. (3) parser digest reads each file once, resolves each specifier once (100 → 55 ms). (4) no `realpathSync` per load in settle (`rootByDir`, `studioWroteSince(realRoot)`).
+- **Budgets/tests:** `workspaceProject.test.ts` prewarm-binds (fails on the lazy call); `studioLoadWarmCache.test.ts` write-is-deferred (fails on inline write); `pageParseCache.test.ts` moved-before-drain.
+- **Landmines:** (1) after a restart load the prewarm blocks the event loop ~1.8 s (large) — same total as the old in-load build, moved after the response. (2) Deferring the whole store-write was needed; trimming it (memoising digests, cheaper JSON) was not enough. (3) Tried and dropped: skipping `consistentStamps`' re-stat for Project-held files — it guards `rememberSourceTexts` (P1-D) from recording text the parse did not read. (4) This machine's bench noise is ±10 %; trust interleaved pairs only.
+- **Found, not fixed:** `ensurePrototypeShell` runs on every load, ~8 ms of a 25 ms warm load (realpath + read-compare of shell files).
+- **Next:** orchestrator reviews and merges. Collision: `studioPageLoad.ts`, `workspaceProject.ts`, `projectWatch.ts`.
+
 ### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
 - **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
 - **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
