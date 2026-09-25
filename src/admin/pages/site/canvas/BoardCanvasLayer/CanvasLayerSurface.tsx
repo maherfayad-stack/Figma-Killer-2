@@ -90,15 +90,15 @@ interface CanvasLayerSurfaceProps {
   pages: Readonly<Record<string, Page>>
   /** Published for the pointer hook: the wrapper it lifts, and the document its hosts live in. */
   surfaceElementRef: RefObject<HTMLDivElement | null>
-  surfaceDocumentRef: RefObject<Document | null>
+  onSurfaceDocument: (doc: Document | null) => void
 }
 
-export function CanvasLayerSurface({ boardId, area, layers, pages, surfaceElementRef, surfaceDocumentRef }: CanvasLayerSurfaceProps) {
+export function CanvasLayerSurface({ boardId, area, layers, pages, surfaceElementRef, onSurfaceDocument }: CanvasLayerSurfaceProps) {
   const [doc, setDoc] = useState<Document | null>(null)
 
   const handleSurface = (handle: IframeFrameSurfaceHandle | null) => {
     const next = handle?.contentDocument ?? null
-    surfaceDocumentRef.current = next
+    onSurfaceDocument(next)
     setDoc(next)
   }
 

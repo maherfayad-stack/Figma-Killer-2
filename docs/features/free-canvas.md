@@ -181,6 +181,24 @@ only when it lands on a loose layer's measured box, in the capture phase; every
 other press reaches the marquee and the pan unchanged. Layers under a frame are
 not pressable (the frame is on top) — reach them by moving the frame.
 
+**Three rules the e2e found, each load-bearing:**
+- *Board coordinates come from ONE read.* `BoardCanvasLayer`'s `.layer`
+  (`data-studio-board-origin`) is 1000 px wide and zero tall at board (0, 0);
+  its client rect gives the board origin AND the painted zoom
+  (`readBoardOrigin`). The drop, the hit test and the lift all use it — never a
+  transform ref or the store's debounced zoom beside it.
+- *"On the empty board" is what is under the pointer* (`isEmptyBoardTarget`:
+  the canvas root or the transform layer). A frame's registered drop viewport
+  can extend past its clipped box (the iframe grows to content), so the
+  registry's rects over-report frames. An OS file drop relayed out of a frame
+  is never a free-canvas drop, even if that frame's surface is not registered.
+- *Pressing a loose layer activates the board breakpoint* (`'studio'`): a frame
+  offers itself as a drop target only while it is the active breakpoint
+  (`BreakpointSelectionOverlay`), which only a click INTO a frame used to set.
+- *A site-root image renders on a design canvas through the asset route*
+  (`studio/studioPublicAssets.ts`, display only): `/hero.png` names nothing on
+  the admin origin a `srcDoc` iframe lives on. `/load` carries `publicRoot`.
+
 **One history entry holds both halves.** A create, place, lift or delete is a
 structural source gesture (`canvasLayerCommits.ts` → `commitStructural`) whose
 entry also carries the placement change (`StructuralSourceGesture.placements`).

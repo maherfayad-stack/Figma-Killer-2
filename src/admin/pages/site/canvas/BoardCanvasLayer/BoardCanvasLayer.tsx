@@ -107,7 +107,9 @@ export function BoardCanvasLayer() {
           layers={visible}
           pages={pages}
           surfaceElementRef={surfaceElementRef}
-          surfaceDocumentRef={surfaceDocumentRef}
+          onSurfaceDocument={(doc) => {
+            surfaceDocumentRef.current = doc
+          }}
         />
       ) : null}
     </div>
