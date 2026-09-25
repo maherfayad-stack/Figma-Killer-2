@@ -36,9 +36,8 @@
  * that is what the package manager ran — else this Bun, which is also what
  * `bun run` falls back to on a host without Node (the Docker image).
  */
-import { readFileSync } from 'node:fs'
-import { delimiter, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { isRealpathContained } from './workspacePackageResolve'
+import { delimiter, join } from 'node:path'
+import { appRootToProjectDir, packageBinRuntime, resolveProjectPackageBin } from './projectPackageBin'
 
 /** `npx vite …`, `bunx vite …`, `pnpm exec vite …`, `yarn vite …` → the tokens after `vite`. `null` for anything else. */
 export function viteArgsFromScript(command: string): string[] | null {
@@ -50,41 +49,6 @@ export function viteArgsFromScript(command: string): string[] | null {
   }
   if (tokens[index] !== 'vite') return null
   return tokens.slice(index + 1)
-}
-
-/** The directories from `appRoot` up to and including `projectDir`. `appRoot` is already contained in it (`resolveAppRoot`). */
-function appRootToProjectDir(appRoot: string, projectDir: string): string[] {
-  const root = resolve(projectDir)
-  const out: string[] = []
-  let current = resolve(appRoot)
-  for (;;) {
-    out.push(current)
-    if (current === root) return out
-    const rel = relative(root, current)
-    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return out
-    const parent = dirname(current)
-    if (parent === current) return out
-    current = parent
-  }
-}
-
-/** The `vite` bin script the project installed, real-path contained in `projectDir`, or `null`. */
-export function resolveProjectViteBin(appRoot: string, projectDir: string): string | null {
-  for (const dir of appRootToProjectDir(appRoot, projectDir)) {
-    const pkgDir = join(dir, 'node_modules', 'vite')
-    let manifest: unknown
-    try {
-      manifest = JSON.parse(readFileSync(join(pkgDir, 'package.json'), 'utf8'))
-    } catch {
-      continue
-    }
-    const bin: unknown = typeof manifest === 'object' && manifest !== null ? (manifest as Record<string, unknown>).bin : undefined
-    const rel = typeof bin === 'string' ? bin : typeof bin === 'object' && bin !== null ? (bin as Record<string, unknown>).vite : undefined
-    if (typeof rel !== 'string' || rel.length === 0) return null
-    const script = resolve(pkgDir, rel)
-    return isRealpathContained(script, projectDir) ? script : null
-  }
-  return null
 }
 
 export type ViteLaunch =
@@ -100,11 +64,11 @@ export function viteLaunch(
   appRoot: string,
   projectDir: string,
   scriptCommand: string,
-  runtime: string = Bun.which('node') ?? process.execPath,
+  runtime: string = packageBinRuntime(),
 ): ViteLaunch {
   const args = viteArgsFromScript(scriptCommand)
   if (args === null) return { ok: false, error: 'The dev script is not a vite invocation, so Studio does not run it.' }
-  const bin = resolveProjectViteBin(appRoot, projectDir)
+  const bin = resolveProjectPackageBin(appRoot, projectDir, 'vite', 'vite')
   if (bin === null) {
     return { ok: false, error: 'Vite is not installed in this project. Install its dependencies (Dependencies panel), then open Live again.' }
   }

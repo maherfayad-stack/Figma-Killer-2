@@ -28,6 +28,7 @@ bun run bench:plugin        # QuickJS sandbox boot / hostCall / dispose
 bun run bench:footprint     # repo / node_modules / SLOC stats
 bun run bench:health        # fallow + jscpd + madge snapshot
 bun run bench:agent-turn    # chat-turn server cost: guide, first stream line, MCP, capture, compare
+bun run bench:agent-models  # REAL billed agent turns per candidate model — needs ANTHROPIC_API_KEY + STUDIO_BENCH_SPEND=1
 bun run bench:browser       # real Chromium via Playwright — opt-in
 bun run bench:studio-board  # canvas perf gate — runs the Playwright spec, opt-in
 bun run bench:browser:install   # one-time Chromium download (~92 MiB)
@@ -147,6 +148,16 @@ Everything a Studio chat turn costs **on the server** — the guide it regenerat
 Groups 1–3 are offline and deterministic: no network, no browser, no database, no real `claude` binary. Group 4 needs a built `dist/` (for the capture entry) and a Chromium Playwright can launch, and the capture routes are served **in-process** (`lib/captureHost.ts`) because a capture grant lives in the memory of the process that minted it. Without either, group 4 reports `skipped` with the reason instead of failing the suite — `bun run build` provides the `dist/`, `bun run bench:browser:install` the browser.
 
 Fixture: a fresh copy of `studio-workspace/__canonical-fixture` into `.tmp/benchmarks/` — **never** mutates anything under `studio-workspace/`. Self-skips with an `unavailable` row if it does not exist.
+
+The telemetry group also prints the **per-(role, model)** table from the `kind: "turn"` lines every real turn writes (AI-25) — the numbers model routing is judged by.
+
+### agent-models (opt-in, spends API credit)
+The measurement behind model routing (AI-25, `server/ai/routing/modelRouting.ts`). Runs **real** API-key agent turns — the production system prompt, the HTTP tool surface including `studio_delegate`, the Anthropic driver and the shared tool loop — once per model in `MODEL_BENCH_CANDIDATES` (`claude-opus-5-5`, `claude-sonnet-5`, `claude-haiku-4-5-20251001`, `claude-fable-5-1`) per brief, each against a fresh copy of the canonical fixture:
+
+- **creative** — a from-scratch checkout screen, graded by `studio_quality_check`'s finding count and a grey-fill scan of its stylesheet (a labelled heuristic for placeholder boxes — read the files before trusting it);
+- **match** — only when `STUDIO_BENCH_MATCH_REFERENCE=<path to a PNG>` is set: the image is attached and registered as the page's reference, and the turn is graded by `studio_compare`.
+
+It reports `skipped` unless **both** `ANTHROPIC_API_KEY` and `STUDIO_BENCH_SPEND=1` are set, and it is never in the default suite. Output: the report rows, `.tmp/benchmarks/agent-models.json`, and the per-(role, model) table from the turn telemetry the runs wrote. Nothing is changed automatically — a person reads the numbers and edits `MODEL_ROUTING_TABLE`.
 
 ### browser (opt-in)
 Boots the production server, spawns Chromium via Playwright (uses Playwright's pinned chromium-headless-shell — install once with `bun run bench:browser:install`), then runs a battery of cold-load and interactive scenarios. Authenticated admin scenarios run only when `STUDIO_BENCH_ADMIN_EMAIL` and `STUDIO_BENCH_ADMIN_PASSWORD` are set; without them the bench records the login-screen load and unauthenticated idle frame stability.

@@ -39,9 +39,10 @@
  */
 import { createHash } from 'node:crypto'
 import type { AiMessage } from '../runtime/types'
+import { MODEL_ROUTING_TABLE } from '../routing/modelRouting'
 
-/** The utility model the audit assigns to compaction (06 §4 "Model defaults"). */
-export const COMPACTION_MODEL_ID = 'claude-haiku-4-5-20251001'
+/** The utility model, from the one routing table (`routing/modelRouting.ts`, AI-25). */
+export const COMPACTION_MODEL_ID = MODEL_ROUTING_TABLE.utility
 /** Compact once the replayed history is estimated past this share of the window. */
 export const COMPACTION_THRESHOLD = 0.6
 /** The newest turns (a user message and everything after it) always replay verbatim. */

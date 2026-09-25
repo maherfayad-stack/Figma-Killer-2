@@ -40,6 +40,7 @@
 import type { AiTool } from '../types'
 import { studioMcpTools } from '../../mcp/tools/studio'
 import { studioAgentFileWriteTools } from '../../mcp/tools/studio/fileWriteTools'
+import { studioDelegateTool } from '../../mcp/tools/studio/delegateTool'
 import { STUDIO_AGENT_TOOL_NAMES, STUDIO_HTTP_AGENT_FILE_TOOL_NAMES } from './agentToolNames'
 
 const byName = new Map([...studioMcpTools, ...studioAgentFileWriteTools].map((tool) => [tool.name, tool]))
@@ -62,11 +63,14 @@ export const studioAgentTools: AiTool[] = STUDIO_AGENT_TOOL_NAMES.map(resolveAge
 /**
  * What the in-canvas agent gets on an HTTP driver: everything above, plus the
  * file tools an HTTP driver has no native equivalent of (P4-C, AI-2 — see
- * `STUDIO_HTTP_AGENT_FILE_TOOL_NAMES`).
+ * `STUDIO_HTTP_AGENT_FILE_TOOL_NAMES`), plus `studio_delegate` (AI-23), the
+ * HTTP drivers' counterpart of the CLI's native `Task`. It is not in the
+ * external MCP catalog: it runs on the chat turn's own driver and credential.
  */
 export const studioHttpAgentTools: AiTool[] = [
   ...studioAgentTools,
   ...STUDIO_HTTP_AGENT_FILE_TOOL_NAMES.map(resolveAgentTool),
+  studioDelegateTool,
 ]
 
 export { STUDIO_AGENT_TOOL_NAMES, STUDIO_HTTP_AGENT_FILE_TOOL_NAMES, agentFileAccessFor } from './agentToolNames'

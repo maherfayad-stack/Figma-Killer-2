@@ -315,17 +315,20 @@ Reply briefly after acting: what you made and the decisions behind it (one line 
 }
 
 /**
- * The CLI path's "Parallel work" section — the `Task` fan-out and its
- * safety contract (`studio-agent-subagent-contract.test.ts`). Only the CLI
- * holds `Task`; the HTTP prompt says so instead of describing a tool it lacks.
+ * The "Parallel work" section — the fan-out and its safety contract
+ * (`studio-agent-subagent-contract.test.ts`). The CLI fans out with its native
+ * `Task`; an HTTP driver offered `studio_delegate` (AI-23) fans out with that,
+ * under the SAME ownership contract, which `delegateRunner.ts` enforces on
+ * each child's writes. An HTTP turn without it is told to go one screen at a
+ * time instead of being described a tool it lacks.
  */
-const CLI_PARALLEL_WORK = `# Parallel work
+const CLI_FAN_OUT = `MORE THAN ONE SCREEN MEANS MORE THAN ONE AGENT. Building three screens one after another is three times the wall clock for no reason — they share no file. When the ask covers two or more screens, fan out with Task and build them at the same time. This is the default, not an optimisation to consider.
 
-MORE THAN ONE SCREEN MEANS MORE THAN ONE AGENT. Building three screens one after another is three times the wall clock for no reason — they share no file. When the ask covers two or more screens, fan out with Task and build them at the same time. This is the default, not an optimisation to consider.
+subagent_type is ALWAYS 'general-purpose'. Never any other value. An unrecognised subagent_type does not error — it silently runs the built-in agent anyway, and you get back a confident report of work that never happened. That has already occurred here: ten files reported written in detail, every one still an untouched scaffold.`
 
-subagent_type is ALWAYS 'general-purpose'. Never any other value. An unrecognised subagent_type does not error — it silently runs the built-in agent anyway, and you get back a confident report of work that never happened. That has already occurred here: ten files reported written in detail, every one still an untouched scaffold.
+const HTTP_FAN_OUT = `MORE THAN ONE SCREEN MEANS MORE THAN ONE AGENT. Building three screens one after another is three times the wall clock for no reason — they share no file. When the ask covers two or more screens, fan out with studio_delegate: ONE call, one task per page, and the subagents build them at the same time. This is the default, not an optimisation to consider. Each subagent's writes outside its own two files are refused, so the rule below is enforced, not only asked for.`
 
-Each delegated prompt must stand alone. The subagent does not see this conversation, the brief, or what you decided — only the text you send it. Give it the page name, the exact files it owns, the reference id to measure against, the design system components to use, and what the screen contains. A prompt that says "build the SignUp screen as discussed" gets you a guess.
+const SHARED_PARALLEL_CONTRACT = `Each delegated prompt must stand alone. The subagent does not see this conversation, the brief, or what you decided — only the text you send it. Give it the page name, the exact files it owns, the reference id to measure against, the design system components to use, and what the screen contains. A prompt that says "build the SignUp screen as discussed" gets you a guess.
 
 OWNERSHIP, and it is absolute. One agent per page. That agent owns exactly two files:
 
@@ -336,7 +339,21 @@ Nothing else. It does not touch another page, and two agents never share a file,
 
 EVERY SHARED FILE IS YOURS ALONE — the i18n dictionary, shared components, package.json, design tokens, the board. Do all of it BEFORE you fan out: create all the pages, add every translation key all the screens will need, install every dependency, register every reference. Two agents adding keys to one dictionary at the same time will destroy each other's work, and the loser is silent. After the fan-out, you do the measuring: studio_compare each screen, and fix or re-delegate.
 
-Sequential is correct for exactly one thing: work where a later screen genuinely depends on an earlier one's output. Say so in one line when that happens; otherwise fan out.
+Sequential is correct for exactly one thing: work where a later screen genuinely depends on an earlier one's output. Say so in one line when that happens; otherwise fan out.`
+
+const CLI_PARALLEL_WORK = `# Parallel work
+
+${CLI_FAN_OUT}
+
+${SHARED_PARALLEL_CONTRACT}
+
+`
+
+const HTTP_PARALLEL_WORK = `# Parallel work
+
+${HTTP_FAN_OUT}
+
+${SHARED_PARALLEL_CONTRACT}
 
 `
 
@@ -379,9 +396,11 @@ function fileSurfaceText(access: AgentFileAccess, offered: ReadonlySet<string>):
     howYouEdit: `You edit the repo with Studio's file tools, and they are how you do essentially everything. studio_list_files and studio_grep find things, studio_read_file reads a file and returns its hash, and studio_get_node_source turns a node id into its file, line and code. ${writeLine} They reach only the open project's own source — never .studio/, .claude/, .git/, node_modules/ or a credential file. A screen is a component file and a stylesheet: write them. The project's conventions — its pages directory, its styling mechanism, its design system — are in CLAUDE.md at the project root, which Studio keeps current.`,
     useWhatYouHave: "1. USE WHAT YOU ALREADY HAVE. Read the project's CLAUDE.md once, with studio_read_file, at the start of the turn: it names the pages directory, the styling mechanism and the design system, and points at the design-system reference files under .claude/. The live board and selection state and the registered design references are already in front of you. Do not re-derive any of it with more tool calls.",
     oneWrite: canWrite ? 'ONE studio_write_file per file' : 'one pass',
-    parallelWork: HTTP_ONE_SCREEN_AT_A_TIME,
+    parallelWork: offered.has('studio_delegate') ? HTTP_PARALLEL_WORK : HTTP_ONE_SCREEN_AT_A_TIME,
     ceiling: 'three rounds before it you are told so — finish, verify, report — and at the ceiling your tools are switched off for one last reply, which must say what you did, what is verified, and what is left.',
-    taskNote: ' There are no subagents on this path either.',
+    taskNote: offered.has('studio_delegate')
+      ? ' (You DO have studio_delegate — see "Parallel work" — but a subagent holds no shell either.)'
+      : ' There are no subagents on this path either.',
   }
 }
 

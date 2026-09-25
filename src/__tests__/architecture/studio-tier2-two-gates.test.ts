@@ -83,6 +83,8 @@ describe('Tier-2 Studio tools — gate 2: the project\'s own trust tier', () => 
         join(REPO_ROOT, 'server', 'ai', 'mcp', 'tools', 'studio', 'referenceRender.ts'),
         'utf8',
       ),
+      // AI-21 — ESLint loads the project's config and plugins: project code.
+      studio_lint: readFileSync(join(REPO_ROOT, 'server', 'ai', 'mcp', 'tools', 'studio', 'lintTool.ts'), 'utf8'),
     }
     for (const tool of tier2Tools) {
       const source = sources[tool.name]
@@ -108,7 +110,13 @@ describe('Tier-2 Studio tools — gate 2: the project\'s own trust tier', () => 
   it('the tool description tells the caller about BOTH gates', () => {
     // A weaker model only ever sees the description. A refusal it was not
     // warned about reads as a broken tool and gets retried.
-    expect(referenceRenderTool.description).toContain('studio.run.project')
-    expect(referenceRenderTool.description).toContain('trust-tier-required')
+    for (const tool of tier2Tools) {
+      expect(tool.description, tool.name).toContain('studio.run.project')
+      expect(tool.description, tool.name).toContain('trust-tier-required')
+    }
+  })
+
+  it('studio_lint is one of the Tier-2 tools (AI-21)', () => {
+    expect(tier2Tools.map((t) => t.name)).toContain('studio_lint')
   })
 })

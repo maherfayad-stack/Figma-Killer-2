@@ -256,6 +256,53 @@ export interface ToolContext {
    * client) — such a tool must answer without one.
    */
   readonly bridge?: AiBrowserBridge
+  /**
+   * The chat turn's subagent runner (`studio_delegate`, AI-23), mirroring
+   * `ToolContextBase.delegate` — where it is set. `undefined` everywhere but
+   * an HTTP-driver turn with a project open, and inside a subagent.
+   */
+  readonly delegate?: DelegateRunner
+}
+
+// ---------------------------------------------------------------------------
+// Subagents (`studio_delegate`, AI-23) — the runner's contract lives here,
+// in the leaf, so `ToolContext` can carry it without importing the runner
+// (`server/ai/delegation/delegateRunner.ts`), which imports this file.
+// ---------------------------------------------------------------------------
+
+export interface DelegateTask {
+  /** The page's component file, project-relative, as `resolveAgentFilePath` spelled it. */
+  readonly page: string
+  /** Every path this child may write: the page file and its `.module.css`. */
+  readonly owned: readonly string[]
+  readonly brief: string
+}
+
+export interface DelegateTaskResult {
+  readonly page: string
+  readonly ok: boolean
+  readonly model: string
+  /** The child's own final reply, capped. */
+  readonly report: string
+  readonly filesWritten: string[]
+  readonly toolCalls: number
+  readonly rounds: number
+  /** Present when the child did not finish cleanly. */
+  readonly stopped?: 'error' | 'aborted'
+  readonly error?: string
+}
+
+/**
+ * What one `studio_delegate` call got: the children ran, or the turn's
+ * delegation budget refused the call before any child started (the runner's
+ * per-turn caps — `delegateRunner.ts`).
+ */
+export type DelegateRunOutcome =
+  | { readonly ran: true; readonly results: DelegateTaskResult[] }
+  | { readonly ran: false; readonly reason: string }
+
+export interface DelegateRunner {
+  run(tasks: readonly DelegateTask[], ctx: ToolContext): Promise<DelegateRunOutcome>
 }
 
 // ---------------------------------------------------------------------------
@@ -341,6 +388,13 @@ export type AiStreamEvent =
    * that it moved.
    */
   | { type: 'routing'; mode: 'pinned' | 'auto'; effort: string; shape?: string; reason: string }
+  /**
+   * Which MODEL this turn runs on and why (AI-25, `routing/modelRouting.ts`) —
+   * emitted once by the chat handler, before the provider is called, on every
+   * path. Display only, for the same reason as `routing`: a turn moved to a
+   * cheaper model must be visible, or it reads as the model having a bad day.
+   */
+  | { type: 'modelRouting'; mode: 'pinned' | 'routed' | 'default'; modelId: string; role: string; reason: string }
   /**
    * The provider was momentarily unable (a rate limit, an overload, a 5xx, a
    * dropped connection) and the HTTP tool loop is about to re-send the same
