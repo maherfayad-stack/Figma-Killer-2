@@ -8,6 +8,7 @@ import {
   openFixtureBoard,
   readToastRecorder,
   removeFixtureProject,
+  sourceNodeId,
   startToastRecorder,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -51,6 +52,9 @@ const FIXTURE_PAGE = `export default function Home() {
 `
 
 const PAGE_REL = 'pages/Home.jsx'
+// By source id, not class: a class with no stylesheet rule is not rendered on the canvas.
+const TITLE = `[data-node-id="${sourceNodeId(FIXTURE_PAGE, PAGE_REL, 'h1')}"]`
+const BODY = `[data-node-id="${sourceNodeId(FIXTURE_PAGE, PAGE_REL, 'p')}"]`
 let fixture: FixtureProject
 const readPage = () => fs.readFileSync(path.join(fixture.dir, ...PAGE_REL.split('/')), 'utf8')
 const landedPngs = () => fs.readdirSync(path.join(fixture.dir, 'public')).filter((name) => name.endsWith('.png'))
@@ -104,7 +108,7 @@ async function withToasts<T>(page: Page, run: () => Promise<T>): Promise<T> {
   try {
     return await run()
   } catch (error) {
-    throw new Error(`${String(error)}\ntoasts: ${JSON.stringify(await readToastRecorder(page))}`)
+    throw new Error(`${String(error)}\ntoasts: ${JSON.stringify(await readToastRecorder(page))}`, { cause: error })
   }
 }
 
@@ -113,7 +117,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('an image on the OS clipboard pastes as an <img>: bytes in public/, the element after the selection', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator('.home__body').first())
+    await clickInFrame(page, frame.locator(BODY).first())
     await copyImageToOsClipboard(page)
 
     await page.keyboard.press('Control+v')
@@ -129,7 +133,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('a copied layer pastes as the layer — ⌘C marked the OS clipboard through the copy event', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator('.home__title').first())
+    await clickInFrame(page, frame.locator(TITLE).first())
     await page.keyboard.press('Control+c')
 
     // The copy event wrote the Studio marker onto the real OS clipboard.
@@ -141,7 +145,7 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
     })
     expect(html, 'the copy wrote no Studio marker to the OS clipboard').toMatch(/data-studio-nodes="\d+"/)
 
-    await clickInFrame(page, frame.locator('.home__body').first())
+    await clickInFrame(page, frame.locator(BODY).first())
     await page.keyboard.press('Control+v')
 
     await withToasts(page, () =>
@@ -157,11 +161,11 @@ test.describe('P5-A — ⌘V is driven by the paste event', () => {
 
   test('an image copied AFTER a layer wins the next ⌘V — the clipboard holds something newer', async ({ page }) => {
     const frame = await openHome(page)
-    await clickInFrame(page, frame.locator('.home__title').first())
+    await clickInFrame(page, frame.locator(TITLE).first())
     await page.keyboard.press('Control+c')
     await copyImageToOsClipboard(page)
 
-    await clickInFrame(page, frame.locator('.home__body').first())
+    await clickInFrame(page, frame.locator(BODY).first())
     await page.keyboard.press('Control+v')
 
     await withToasts(page, async () => {
