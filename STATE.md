@@ -167,7 +167,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 
 ### canvas-34 — Live-frame parity: resize, snap, rollback, double-click and hover in Tier 2 frames
-- **Agent:** canvas-engineer · **Branch:** `fix/live-frame-parity` off `25681dcb`, trunk `74425627` merged · **PR:** PRNUM (draft), base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-25
+- **Agent:** canvas-engineer · **Branch:** `fix/live-frame-parity` off `25681dcb`, trunk `74425627` merged · **PR:** #265 (draft), base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open; owner dogfood below). Renumbered from `canvas-28`, which #258 also took.
 - **Goal:** gestures fixed in static frames in Phases 1–2 behave the same in live (Tier 2, Vite) frames: canvas-23, canvas-26, store-17, canvas-24, perf-12's hover note.
 - **Done:**
