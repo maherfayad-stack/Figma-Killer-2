@@ -49,7 +49,8 @@
  * ALSO what the publisher's `generateClassCSS` calls to build the real
  * published stylesheet. All three CSS strings this injector produces (the
  * main registry, the hover-preview overlay, the forced-state overlay) are
- * therefore piped through `rewritePrefersColorScheme` on the way into the
+ * therefore piped through `rewritePrefersColorScheme` (with the rest of
+ * `canvasFrameCss`'s canvas-only transforms) on the way into the
  * `<style>` tag — CANVAS-SIDE ONLY, after generation, never inside
  * `generateClassCSS`/`createStyleRuleCssEmitter` itself. `@core/publisher` is
  * not touched: a real browser DOES support `prefers-color-scheme` correctly
@@ -70,9 +71,9 @@ import { selectorStatePseudo } from '@site/cssStatePseudo'
 import { CanvasFrameAdapterContext } from './CanvasContexts'
 import { registryBackgroundImagePaths } from './canvasBackgroundImagePaths'
 import { generateCanvasClassCSS, generateForcedStateCSS, generatePreviewClassCSS } from './canvasClassCss'
-import { resolveViewportUnitsForCanvas, type CanvasViewport } from './resolveViewportUnits'
+import type { CanvasViewport } from './resolveViewportUnits'
 import { CANVAS_CSS_LAYER_ORDER, USER_AUTHORED_LAYER } from './canvasCssLayers'
-import { rewritePrefersColorScheme } from './darkSchemeCssTransform'
+import { canvasFrameCss } from './canvasFrameCss'
 
 interface ClassStyleInjectorProps {
   /**
@@ -137,10 +138,6 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
   useEffect(() => {
     if (!adapter) return
 
-    // Pin viewport units to the frame viewport (canvas-only) so class styles
-    // using `vh`/`vmax`/… don't feed the iframe's grow-to-content height loop.
-    const forCanvas = (css: string) => (viewport ? resolveViewportUnitsForCanvas(css, viewport) : css)
-
     const generated = generateCanvasClassCSS(
       classes ?? EMPTY_STYLE_RULES,
       breakpoints,
@@ -164,7 +161,9 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
     // unclassed heading, a table, a link — look BETTER than what a real
     // browser renders, which is exactly the "did I actually style this" case
     // a user is most likely to be checking.
-    const css = rewritePrefersColorScheme(forCanvas(generated))
+    // Canvas-only: project asset URLs, viewport units pinned to the frame (so
+    // `vh` can't feed the grow-to-content height loop), previewed scheme.
+    const css = canvasFrameCss(generated, viewport)
     adapter.applyOverlay(
       STYLE_TAG_ID,
       css
@@ -207,9 +206,7 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       breakpointId: previewClassStyles.breakpointId ?? null,
       styles: previewClassStyles.styles,
     }, { mediaAssets: responsiveMediaAssets })
-    const resolvedPreviewCss = rewritePrefersColorScheme(
-      viewport ? resolveViewportUnitsForCanvas(previewCss, viewport) : previewCss,
-    )
+    const resolvedPreviewCss = canvasFrameCss(previewCss, viewport)
     // Keep in the same @layer so the doubled-selector preview rule still wins
     // over the regular class rule within the layer (higher specificity). No
     // need to repeat CANVAS_CSS_LAYER_ORDER here — the main effect above
@@ -250,9 +247,7 @@ export function ClassStyleInjector({ viewport }: ClassStyleInjectorProps = {}) {
       inflight,
       { mediaAssets: responsiveMediaAssets },
     )
-    const resolved = rewritePrefersColorScheme(
-      viewport ? resolveViewportUnitsForCanvas(forcedCss, viewport) : forcedCss,
-    )
+    const resolved = canvasFrameCss(forcedCss, viewport)
     adapter.applyOverlay(FORCE_STATE_STYLE_TAG_ID, resolved ? `@layer ${USER_AUTHORED_LAYER} {\n${resolved}\n}` : '')
   }, [
     adapter,

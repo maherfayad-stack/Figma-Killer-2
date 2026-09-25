@@ -41,20 +41,22 @@ const EXCLUDED_SPELLINGS = ['.GIT/config', '.Git/config', 'Node_Modules/pkg/inde
 
 describe('the project asset route (GET /admin/api/studio/asset)', () => {
   it('still serves an ordinary project file', async () => {
-    const res = await resolveStudioAssetResponse(dir, 'src/assets/logo.png', new Request('http://x/'))
+    const res = await resolveStudioAssetResponse(dir, { path: 'src/assets/logo.png' }, new Request('http://x/'))
     expect(res?.status).toBe(200)
   })
 
   for (const spelling of EXCLUDED_SPELLINGS) {
     it(`refuses ${spelling}`, async () => {
       if (!caseInsensitiveFs) return
-      expect(await resolveStudioAssetResponse(dir, spelling, new Request('http://x/'))).toBeNull()
+      expect(await resolveStudioAssetResponse(dir, { path: spelling }, new Request('http://x/'))).toBeNull()
     })
   }
 
   it('refuses a link named like source that lands in .git', async () => {
+    // An IMAGE inside .git, so the media-only gate cannot be what refuses it.
+    writeFileSync(join(dir, '.git', 'hook.png'), 'png')
     symlinkSync(join(dir, '.git'), join(dir, 'src', 'pics'), 'junction')
-    expect(await resolveStudioAssetResponse(dir, 'src/pics/config', new Request('http://x/'))).toBeNull()
+    expect(await resolveStudioAssetResponse(dir, { path: 'src/pics/hook.png' }, new Request('http://x/'))).toBeNull()
   })
 })
 

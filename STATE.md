@@ -205,6 +205,22 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   4. Hold ⇧ over a container: "Set as background"; release adds a background layer (Fill section shows it). Hold ⌘ over a `position: relative` container: the image lands at the pointer; over a static one, the "make it relative" dialog.
   5. ⌘K → "Insert image…": pick two files; they land right after the selected layer.
 
+### canvas-34 — P5-B2: dropped (and every literal public/) image shows in design frames
+- **Agent:** canvas-engineer · **Branch:** `fix/dropped-images-show-in-design-frames` off `fea4f125` · **PR:** #262 (draft), base `feat/canvas-excellence` (attack surface for the security review in its body) · **Updated:** 2026-09-25
+- **Stage:** verifying (draft PR open; security review + owner dogfood)
+- **Goal:** closes canvas-28's "Found, not fixed": a portal frame is `about:srcdoc` on the ADMIN origin, so `src="/x.png"` loaded from Studio's server and showed broken (the `width`/`height` box hid it from every size assertion).
+- **Done:** ONE route, two shapes: `GET /admin/api/studio/asset?dir=…&url=/x.png` beside the existing `&path=` (`readStudioAssetTarget`: exactly one). `siteUrlWorkspaceCandidates` (`assetSiteUrl.ts`, inverse of THE site-URL rule): `<appRoot>/public/x`, then dev-only `<appRoot>/x`, never `/public/x`; each candidate through the shared `resolveWorkspaceReadPath` (no second guard). New media-only gate on BOTH shapes and the capture twin (`isEmbeddableMediaPath`, on the requested name and the realpath). Canvas: `canvasProjectAssetUrl.ts` resolves at render time only — `NodeRenderer` (`src`/`srcSet`/`poster` + inline style, every module at once) and `canvasFrameCss.ts`, the one canvas CSS pass every project-CSS injector now runs (assets → viewport pin → dark scheme; was hand-composed at 4 sites). Capture page uses a token scope.
+- **Decisions:** store/source keep `/x.png` (image replace reads `props.src` to tell literal from import). `/uploads/` is left to the admin origin (CMS media variants are emitted after resolution); a project's `public/uploads/x` still shows broken — PR body. Route declaration unchanged (`routeCapabilities.ts` already declares `/admin/api/studio/asset`, read `site.read`, no mutate).
+- **Files touched (canvas):** `canvas/{NodeRenderer, AuthoredCssInjector, ClassStyleInjector, canvasUserStylesheetCss, canvasProjectAssetUrl (new), canvasFrameCss (new)}`, `studio/projectAssets` (export `STUDIO_ASSET_ROUTE`), `agentCapture/main`. Server: `studioAsset.ts`, `studio/assetSiteUrl.ts`, `static.ts`, `studio.ts`, `ai/mcp/capture/captureRoute.ts`.
+- **Landmines:**
+  - **Injectors × assets:** any new injector carrying PROJECT CSS must go through `canvasFrameCss` (or `canvasUserStylesheetCss`'s staged memo), or its `url('/x')`s break again in design frames while the others work.
+  - **Events/DOM × src:** a portal frame's `<img>.src` is now the asset-route URL, not the source's. Read `props.src` from the store, never the DOM, to learn what the source says (`renderEvidence.ts` reports the resolved one — correct for "did it load").
+  - **Bridge frames** render nothing through here; do not "fix" them the same way — the dev server answers `/x.png` and `/admin/api/…` would 404 on its origin.
+  - The route no longer serves `.json`/`.css`/`.js`/`.html` by `path=` either. Nothing in the tree asked for them; a future caller that needs source must use a different, declared route.
+- **Gates:** build + lint clean; `bun test` chunks green except pre-existing (`agentCheckpoints` size, bundle freshness on 1.3.6, two load-flakes that pass alone). e2e `frame-file-drop -g P5-B2` 2/2 pass; both FAIL with the canvas rewrite disabled (`naturalWidth` 0).
+- **Human action needed:** security review (PR body table) + dogfood: `test4`, Design view, 100%, one frame — drop a PNG: the picture shows (not a broken icon) and the source/inspector still say `/<name>.png`; ⇧-drop paints a background; a Fill `public/` image paints in every frame.
+- **Next:** IMG ledger work (canvas-28 Next); relative `url(./a.png)` in project CSS is still resolved against the admin origin (needs the stylesheet's own path) — PR body.
+
 ## Blocked
 
 *One line per item: id · question · who decides · since.*

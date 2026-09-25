@@ -25,12 +25,14 @@
  *       `?pageIds=<comma-separated ids>` narrows `pages` to that subset (meta
  *       stays full); unmatched ids report via `missingPageIds` — see `studio/studioLoadResponse.ts`.
  *
- *   GET  /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>
- *       Serves one workspace-relative asset file (an imported page's local
- *       images — §5) through the existing static-file pipeline. The
+ *   GET  /admin/api/studio/asset?dir=<abs>&(path=<workspace-rel>|url=<site-root>)
+ *       Serves one project image/font/media file — an imported page's local
+ *       images (§5, `path`), or a literal `src="/x.png"` a design frame
+ *       resolves against the project's `public/` (P5-B2, `url`) — through
+ *       the existing static-file pipeline. The
  *       resolution + adversarial-input guarding (absolute/UNC paths, `..`
- *       traversal on either separator, excluded dir names, symlink escape)
- *       lives in `resolveStudioAssetResponse` — see
+ *       traversal on either separator, excluded dir names, symlink escape,
+ *       media-only MIME) lives in `resolveStudioAssetResponse` — see
  *       `server/handlers/studioAsset.ts`'s module doc for the full rationale.
  *       404 on anything rejected or missing.
  *
@@ -293,7 +295,7 @@ import { readStudioFontsFile, readStudioFrameworkFile, writeStudioFontsFile, wri
 import type { SiteFontsSettings } from '@core/fonts'
 import type { FrameworkSettings } from '@core/framework-schema'
 import { buildStudioDownloadResponse } from './studioDownload'
-import { resolveStudioAssetResponse } from './studioAsset'
+import { readStudioAssetTarget, resolveStudioAssetResponse } from './studioAsset'
 import { loadStudioPages } from './studioPageLoad'
 import { prewarmCaptureBrowser } from '../ai/mcp/capture/browserPool'
 import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from './studio/studioLoadResponse'
@@ -440,9 +442,9 @@ export async function tryServeStudio(
   if (pathname === '/admin/api/studio/asset' && req.method === 'GET') {
     try {
       const dir = resolveProjectDir(url.searchParams.get('dir'))
-      const rawPath = url.searchParams.get('path')
-      if (!rawPath) return new Response('Not found', { status: 404 })
-      const response = await resolveStudioAssetResponse(dir, rawPath, req)
+      const target = readStudioAssetTarget(url.searchParams)
+      if (!target) return new Response('Not found', { status: 404 })
+      const response = await resolveStudioAssetResponse(dir, target, req)
       return response ?? new Response('Not found', { status: 404 })
     } catch (err) {
       rethrowProjectDirRefusal(err)
