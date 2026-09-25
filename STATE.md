@@ -11,41 +11,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### perf-13 — P6-B server half: fast warm load (PERF-7 persistence, PERF-8)
-- **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR #263, base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
-- **Stage:** PR open (draft); gates green except pre-existing. The client streaming half of P6-B is OUT of scope (not started).
-- **Done:** signed on-disk parse cache (`.studio/cache/parse/`, `parseCacheStore.ts`, parser-code digest); `/load` memo invalidated from P1-D's watcher (`projectChangeFeed.ts`) instead of walk+stat; 4-project LRU (`loadedProjects.ts`); SHA-256 not a 32-bit hash; viewport parse order; absence dependencies; route reads the shared memo result (no clone).
-- **A/B** (`.tmp/p6b-bench/ab-modes.sh`, interleaved vs trunk, medians, loaded machine; 40-page `large` / 1,000-file `thousand`):
-
-| | large base → branch | thousand base → branch |
-|---|---|---|
-| restart (new process) | 2765 → 649 ms | 3093 → 1260 ms |
-| warm, `/load` route | 54.8 → 18.0 ms | 117.6 → 46.8 ms |
-| warm, tool (clone), 7 pairs | 62.0 → 54.5 ms; 6 s after load 65.9 → 65.7 | 55.8 → 40.6 ms |
-| cold (empty store, 8 pairs) | 2590 → 2478 ms | 3527 → 3625 ms (pairs −369…+170) |
-| page edit | 463 → 442 ms | 1565 → 1375 ms |
-| dependency edit | 194 → 201 ms | 1466 → 1382 ms |
-
-- **This session's fixes (were regressions):** (1) prewarm called `getTypeChecker()`, a lazy ts-morph wrapper that builds nothing (0 ms measured) — page edit was 0.65 → 2.5 s; now reads `.compilerObject`. (2) disk-store writes (hash+JSON+HMAC+write, 170–350 ms of a cold load) now drain 50 ms after the load (`scheduleParseCacheWrites`), at exit, and on LRU eviction. (3) parser digest reads each file once, resolves each specifier once (100 → 55 ms). (4) no `realpathSync` per load in settle (`rootByDir`, `studioWroteSince(realRoot)`).
-- **Budgets/tests:** `workspaceProject.test.ts` prewarm-binds (fails on the lazy call); `studioLoadWarmCache.test.ts` write-is-deferred (fails on inline write); `pageParseCache.test.ts` moved-before-drain.
-- **Landmines:** (1) after a restart load the prewarm blocks the event loop ~1.8 s (large) — same total as the old in-load build, moved after the response. (2) Deferring the whole store-write was needed; trimming it (memoising digests, cheaper JSON) was not enough. (3) Tried and dropped: skipping `consistentStamps`' re-stat for Project-held files — it guards `rememberSourceTexts` (P1-D) from recording text the parse did not read. (4) This machine's bench noise is ±10 %; trust interleaved pairs only.
-- **Also:** `studioPageLoad.ts` passed the 700-line budget; its per-route half moved to `studio/routeEntryParse.ts` (listed in `parserCodeDigest.ts`'s `ENTRY_FILES`).
-- **Found, not fixed:** (1) `ensurePrototypeShell` runs on every load, ~8 ms of a 25 ms warm load. (2) The shell's generated root `vite.config.js` is a workspace source file, so it enters every kept `Project` and drags `vite`/`@types/node` into the program: 86 → 288 files on `__canonical-fixture`, and `canonicalPageCheck.test.ts` 2.5 s → 9.9 s once a server-ai test has generated the shell there (a timeout flake under load, on trunk too).
-- **Next:** orchestrator reviews and merges. Collision: `studioPageLoad.ts`, `workspaceProject.ts`, `projectWatch.ts`.
-
-### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
-- **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
-- **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
-- **Slices touched:** `site/lifecycleActions.ts` (`loadSite`, `patchPages`) + new `site/unsavedEditRebase.ts`. No new selector; no new mutation (no history entry, no coalesce key — a re-read is not an edit).
-- **Done:**
-  - ERR-9: a re-read REBASES unsaved edits instead of discarding them, on both reload paths, whoever wrote the file. `loadedValuesBaseline.ts` files the baseline each re-read replaced under its own `pages` array (`baselineBeforeRead`); the store diffs against it, aligns the pre-edit tree with the fresh one (`alignPageTrees`, then P1-A identity), writes local values onto the fresh nodes (per node all-or-nothing; never over a value now in code or a literal that moved/changed), keeps the page marked and `hasUnsavedChanges` true. The "an agent" toast is gone; a loss says its cause. `usePersistence` no longer clears the flag after a full reload.
-  - WB-9: `setJsxText` writes raw JSX text, keeps surrounding whitespace, re-wraps over the original lines; `{"…"}` only when needed or already used, in its own quote. WB-10: `setJsxStyle` keeps the object's quote and layout; `setJsxProp` keeps the attribute quote. Shared `ast-codemods/stringSpelling.ts`.
-  - WB-25: one ts-morph project per batch (`syncProjectWithDisk` before each edit), position-indexed `findJsxElementAtLocation`. 40 edits, 1,500 elements, under the lock: prop 17.4 s → 1.4 s, text 19.5 s → 0.8 s, style 20.5 s → 1.3 s (medians) (this machine; audit: 3.8 s).
-  - WB-32: locale JSON splices the value span; a created key re-serializes in the file's indent/EOL/final newline.
-- **Decisions:** local wins on a plain-value conflict (same answer as P1-D's flush-first save); an origin-backed (literal) value never wins a conflict. A page list no Studio read produced has no baseline and is adopted as-is.
-- **Landmines:** (1) `baselineBeforeRead` is keyed by array IDENTITY — a caller that copies `pages` between the fetch and `patchPages`/`loadSite` silently loses the rebase. (2) Structural codemods still get their own project (one write per gesture). (3) Old tests asserted `{"…"}` text spellings; updated.
-- **Next:** orchestrator merges. Collision: `lifecycleActions.ts` is serial with P6-A (P1-B already in).
-
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -80,168 +45,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Gates (Windows, bun 1.3.6):** build, lint and `tsc -b` clean. `bun test`: 16 fail, and every one reproduces on the speed-line baseline `e15c4c88` (the ROADMAP §13 "Baseline"). No e2e run.
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
-
-### docs-15 — P0: consolidate the docs (ROADMAP P0-A … P0-H)
-- **Agent:** studio-scribe · **Branch:** `docs/p0-consolidate-docs` off `386e1d00` · **PR:** #225 (draft, base `feat/canvas-excellence`) · **Updated:** 2026-09-23
-- **Stage:** verifying (draft PR open; owner review needed, see Human action)
-- **Goal:** one living plan, one decisions file, a `STATE.md` under 400 lines with nothing lost, a header on every doc, and no reference to a dead doc path.
-- **Done:** eight commits, one per bundle, plus a merge of the trunk (P1-A/B/C/G) before the last one.
-  - A: `docs/CONVENTIONS.md` (header line, trust levels, plan and archive doc types).
-  - B: seven code-cited plans + `STUDIO-SPEED-PLAN.md` → `docs/archive/plans/` (names unchanged); three uncited plans deleted after harvest; new `docs/decisions.md`, `docs/features/{trust-tiers,live-canvas,design-system}.md`, `docs/archive/README.md`; D2 target in `canvas-dnd.md`; CMS traps in `architecture.md`; ROADMAP §13 filled.
-  - C: this file 20,036 → about 165 lines; `docs/state-archive/2026-09.md` (214 entries verbatim, plus the P1-A/B/C/G entries `store-16`, `parser-p1a`, `parser-15`, `sec-23` folded in from PR bodies #219–#222), `INDEX.md` (218 + 153 lines, count parity), `docs/e2e/dogfood-backlog.md`.
-  - D: `handoff-protocol.md`. E: 52 `inspector-disclosure.md` refs, 3 gate messages, 11 agent files, dead paths. F: CLAUDE.md, BRIEF, `docs/README.md` (the doc map), README, AGENTS. G: 65 headers + 73 historical headers; C15, C16, C22. H: `doc-headers.test.ts`.
-- **Decisions:** archived plans keep their filenames so ~200 code-comment citations still resolve; `Verified: not yet` marks every doc nobody has checked since headers were added (honest, not a date); ROADMAP §2 now indexes the decisions and `docs/decisions.md` holds their text.
-- **Landmines:**
-  - `.claude/agents/studio-scribe.md` still routes "intent" to `STUDIO-IMPORT-V2-PLAN.md`: it is this agent's own configuration, so it was left for the owner.
-  - `CLAUDE.md` and ten `.claude/agents/*.md` files were edited only where the moves broke a reference; the broader rule-book trim ROADMAP P0-F describes was not done (it needs the owner, not an agent request).
-  - ~~The Docker images and templates kept `studio-workspace/` outside every volume.~~ Fixed by P1-H (#228, `server-28`).
-- **Verification:** see the PR body (`bun run build`, `bun run lint`, `bun test`, with the triage of every failure).
-- **Human action needed:** review the `CLAUDE.md` and `.claude/agents/` diffs before merging (an agent's request cannot authorise rule-book changes); fix `studio-scribe.md` line 30.
-
-### panel-46 — "Found along the way": six small bugs other bundles recorded
-- **Agent:** panel-designer · **Branch:** `fix/found-along-the-way` off `65f5026d` · **PR:** #259 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-25
-- **Stage:** done (draft PR open; owner dogfood and `CLAUDE.md` review below)
-- **Done:**
-  1. `StyleWriteLockContext` now has a provider: `StyleSurface` wraps the mounted sections with `partialStyleWriteLock(model.inlineWriteReach)`. `SelectionModel.blockedPropertyCounts` → `inlineWriteReach` (built by `buildInlineStyleWriteReach`; `null` for one layer or a class target). A partial `ClassPropertyRow` underlines its label (dotted `--warning`). Dead `blockedStyleWriteLock` deleted.
-  2. Dark `--text-subtle` `#787878` → `#888888` (floating `--bg-surface` 3.9 → 4.9:1; docked 5.9:1).
-  3. `optimistic.text` deleted from `OptimisticDomOps` and both adapters.
-  4. `renderIconReference` (built-in DS): teaches `?raw` from `design-system/icons/…` for every icon (the load copies it in).
-  5. `CLAUDE.md` → "UI error handling" states the P3-A policy + `error-toast-sites.test.ts`.
-  6. `useLocalComponentCatalog()` returns `null` in flight; `ComponentSection` draws disabled skeleton rows per call-site prop; a settled catalog is read on first render.
-- **Tests (each failed with its fix disabled in place):** `styleSurfacePartialWrite.test.tsx` (new, 4), `measurement.test.ts` (+floating AA), `projectGuide.test.ts` (icon guide), `componentSection.test.tsx` (+2).
-- **Tokens:** changed dark `--text-subtle`; none added.
-- **Verification:** trunk `fea4f125` merged cleanly. `bun run build` and `bun run lint` clean. Chunked suite under the lock (`--parallel=1`): `src/__tests__/architecture` + rest (only the flaky `publicSdkExports`, which passes alone), `src/core` (117 files, 1689 pass, 0 fail), `server/handlers/studio` (82 files, 1205 pass, 0 fail); the bundle's own 8 test files pass after the merge.
-- **Landmines:**
-  - Only `ClassPropertyRow` reads the lock. `ScrubInput` fields (W/H, X/Y, rotation angle) don't; `MultiSelectTargetBar` states their counts above the sections.
-  - The runtime half of `optimistic.text` (`messages.ts` schema, `runtime.ts` case, `applyOptimisticText`, the generated bundle) is left for `live`, which owns `runtime.ts`.
-  - Nothing in the app provides a `blocked` lock; the state stays for `classPropertyRowWriteLock.test.tsx`'s row contract.
-- **Human action needed:** dogfood on `test4`, `/admin/site`: (1) shift-select two `.map` rows whose `transform`/`style` comes from row data plus one static element, then hover a row the notice names: its label has a dotted amber underline and the tooltip reads "Writes to 1 of 3 selected layers — 2 are set from an expression in code."; (2) dark theme, floating inspector: captions/units readable; (3) reload, select a component instance with a union prop: grey placeholders, then a dropdown — never a text box first; (4) owner review of the `CLAUDE.md` diff.
-### mcp-32 — P4-G: lint, HTTP subagents, model routing, short tool descriptions (AI-21, AI-23, AI-25, AI-29)
-- **Agent:** mcp-tooling · **Branch:** `feat/agent-routing-and-lint` off `a92df2d3` · **PR:** #255 (draft, base `feat/canvas-excellence`; long form, security note and tool table in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying — security-guard review APPROVE-WITH-NITS (both nits fixed below); trunk merged (incl. #256) at `5e9058a0`; build + lint clean, full suite in chunks: only the 2 pre-existing architecture failures (`module-size-budgets` on `agentCheckpoints.ts`, bundle freshness on bun 1.3.6 — green on 1.3.13)
-- **Tools added:**
-  - `studio_lint` — `server`; `ai.tools.write` + `studio.run.project` AND the project at `run-project` (`checkTrustTier`); `sideEffects: none`; both agent paths + registry. Input `{ dir?, paths?[≤50] }`. Below Tier 2: `trust-tier-required` "…linting runs its own ESLint config and plugins, which needs the highest tier". Also `eslint-not-installed`, `no-eslint-config`, `lint-invocation-error`, `lint-timed-out`.
-  - `studio_delegate` — `server`; `ai.tools.write` + `studio.write`; `sideEffects: write`; HTTP agent surface only (`studioHttpAgentTools`), not in the MCP catalog. Input `{ tasks: [{ page, brief }] ≤4 }`. No runner: `delegation-unavailable` "There is no chat turn with an open project to run subagents in." Also `overlapping-ownership`, `not-owned` (a child writing outside its page's `.tsx` + `.module.css`).
-- **Done:**
-  - AI-29: every tool description ≤ 900 chars (26 trimmed; `studio_apply_edits` 7,215 → 893), gate `tool-description-length.test.ts`; long form for two external-only tools in the new MCP resource `studio://tool-notes`.
-  - AI-21: `projectLint.ts` runs the project's own `eslint` bin directly (`projectPackageBin.ts`, mirrors `viteLaunch.ts`: no `<pm> run`, no `npx`), config pinned inside the project, no `--fix`/`--cache`, minimal env, capped, 120 s.
-  - AI-23: `server/ai/delegation/` — one child tool loop per page, concurrent, ownership enforced on the real write tools, children billed at their own model (`addConversationUsageTotals`), checkpointed in the parent turn, no bridge, cannot re-delegate. HTTP prompt gets a "Parallel work" section sharing the CLI's ownership paragraphs.
-  - Review nit D1: per-turn delegation budget in the runner (one runner per chat turn) — ≤2 `studio_delegate` calls, ≤8 children, ≤150 child rounds (each child reserves its cap + the summary round up front); over it refuses `delegation-budget-exhausted` before any child runs.
-  - Review nit L1: Plan mode holds every Tier-2 tool (declares `studio.run.project`: `studio_lint`, `studio_render_reference`) with the writes until a plan is approved — `toolDispatch.ts` `heldUntilPlanApproved`.
-  - After the #256 merge, `viteLaunch.ts` resolves `vite` through `resolveProjectPackageBin` (one lookup, not two).
-  - AI-25: `routing/modelRouting.ts` (one table; compaction reads it), migration 024 `ai_conversations.model_source`, routing only for default Anthropic conversations, only down a tier, only to a listed model; `modelRouting` stream event + chip label; `kind: 'turn'` telemetry lines (`turnTelemetry.ts`); `bench:agent-models` (real billed turns, needs `ANTHROPIC_API_KEY` + `STUDIO_BENCH_SPEND=1`). **Nothing measured**: no paid turn was run.
-- **Decisions:** the CLI is not model-routed (static aliases, warm pool keyed to one model). `claude-fable-5-1` holds no role until benched. Routing never moves a turn UP a tier, so an admin's Sonnet default stays Sonnet.
-- **Landmines:**
-  - `chat.ts` guards moved to `server/ai/chatTurnGuards.ts` (tests import from there).
-  - `ConversationRecord.modelSource` is required; `createConversation` (client) takes `modelSource`.
-  - #256 merged in: its `writeFileAtomic`, content refusal, `landAgentAsset` and checkpoint-before-write order are untouched; the delegate's wrapped writes call those same handlers. `studio_apply_edits`' short description now names #258-era `siblings`; the long form is in `studio://tool-notes`.
-  - `module-size-budgets` fails on `agentCheckpoints.ts` (789 lines, P4-F, pre-existing on the trunk).
-- **Next:** merge; the owner runs `bench:agent-models` before changing the routing table.
-- **Human action needed:** dogfood (below); run the bench with a key when ready to pay for ~8 turns.
-
-### infra-02 — P0-I: CI runs `bun run test` on one pinned Bun
-- **Agent:** studio-implementer · **Branch:** `chore/ci-pin-bun-and-run-tests` off `25681dcb` · **PR:** #253 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
-- **Stage:** done (draft PR open)
-- **Goal:** re-land #86's CI half: `bun run test` (isolated workers) instead of bare `bun test`, on a pinned Bun.
-- **Done:** `engines.bun` = exact `1.3.13`; every `setup-bun` step reads it (`bun-version-file: package.json`); Dockerfile `oven/bun:1.3.13`. `ci.yml` `test` and `release.yml` run `bun run test --shard=N/10` as a 10-runner matrix; new `generated-fresh` job runs `studio-runtime:sync` + `bootstrap:sync` on Linux, fails on drift and uploads `regenerated-bundles`. Both studio-runtime bundles regenerated with bun 1.3.13 from an LF export. New gate `architecture/bun-version-pinned.test.ts`. Docs: `docs/architecture.md` → "Bun is pinned to one exact version", `architecture-tests.md`.
-- **Decisions:** 1.3.13, because (a) Bun 1.3.6 and 1.3.11 have no `--parallel`/`--shard`: they silently ignore them, so `bun run test` there IS bare `bun test`; (b) 1.3.11 and 1.3.13 emit byte-identical bundles, 1.3.6 does not. Exact pin, not a range, because `Bun.build` bytes differ between patch releases.
-- **Landmines:** the owner's bun 1.3.6 fails `studio-runtime-bundle-fresh` against the (correct) regenerated bundles and runs the suite un-isolated. Fix: install 1.3.13 (`powershell -c "& ([scriptblock]::Create((irm bun.sh/install.ps1))) -Version 1.3.13"`). The committed `vitePluginBundle.ts` was stale on SOURCE (missing `SourceOriginSchema`), not only on version. Any bundle that edits `src/core/studio-runtime/*` conflicts on the one-line generated files: resolve by regenerating (or take CI's artifact).
-- **Human action needed:** upgrade local Bun to 1.3.13. `ci.yml` only triggers on PRs to `main`, so this runs for the first time when the trunk PR goes to `main`.
-- **Verification:** `actionlint` 1.7.12 clean on both workflows (they cannot run locally). Build and lint clean. The new gate fails 3/3 with the old pins. Suite in 11 locked chunks (bun 1.3.6): 15 fail, all baseline (freshness, optimistic broadcast ×4, bridge measurement ×5, render_reference ×4, liveOrigin WS). The freshness gate passes on 1.3.13 and 1.3.11. Shard 1/10 on 1.3.13 `--parallel=4`: 141 files, 5.2 GB peak, 127 s.
-- **Next:** orchestrator review.
-
-### canvas-29 — P5-E: tools and handles (armed draw tools, padding/gap handles, align, layer commands)
-- **Agent:** canvas-engineer · **Branch:** `feat/canvas-tools-and-handles` off `25681dcb` (trunk merged to `74425627`) · **PR:** #261 (draft, base `feat/canvas-excellence`; long form, test list and dogfood in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying (draft PR open; owner dogfood below)
-- **Closes:** IX-12 (OD-5), IX-17, IX-20, IX-21, IX-7, IX-10, IX-props, IX-16 (OD-6), IX-26, IX-27, UX-22, UX-23. IX-9 single layer (multi → after P3-D's `moveNodesInSequence`). IX-8 was already wired by speed-06 (verified, unchanged).
-- **Canvas files touched:** `CanvasRoot`, `CanvasDrawToolLayer` (+css, new), `canvasDrawTool` (new), `useCanvasToolShortcuts`, `useCanvasSelectionKeyboard`, `canvasTextEditStart` (new), `createdNodeFollowUp` (new), `CanvasResizeHandles`, `CanvasSpacingHandles` + `spacingHandleRules` + `spacingHandleMeasure` + `useSpacingHandleDrag` + `canvasSpacingChromeCss` (new), `CanvasSelectionOverlayInjector`, `useElementResizeDrag`, `elementResizeAnchoring` (new), `canvasFreeMove`, `canvasNodeArrowMove`, `canvasSelectionMeasure` (new), `layerAlign` / `layerCommands` / `useCanvasLayerCommandKeys` (new), `selectionStyleCommands` + `SelectionStyleCommandHost` (new), `useInFrameMarquee` + `inFrameMarquee` (new), `useCanvasReorderDrag`, `canvasNodesUnderPoint` (new), `useCanvasLayerContextMenu`, `CanvasLayerContextMenu`, `CanvasNotch`, `SelectionToolbar`. Also `spotlight/keybindings*` (+`keybindingTools`, `keybindingLayerCommands`), `LayerNodeContextMenu` (+`LayerArrangeMenuItems`), store `canvasSlice`, `selectionTraversalActions`, `styleRule/assignmentActions` (`applyNodeStyles`), UI `Tooltip` / `Button` / `ContextMenuItem` (`shortcut`).
-- **Decisions:** draw tools draw on a parent-document layer (works over live frames too, adds no canvas DOM); a drawn box/ellipse gets Figma's `#d9d9d9` fill; FRONT = last child (paint order), so ⌘⇧] and ⌘] point at opposite ends of the Layers list (recorded in the conflict register); ⌥ letters match on `event.code`; E is an alias of O; ⌘↑/⌘↓ aliases for ±1 were NOT added (Penpot's ⌘↑ = forward would contradict K4's "up = earlier"). ⇧K runs P5-B's `insert.image` through the generic dispatcher (gated on `site.structure.edit`); K alone stays the scale tool. SitePage budget raised 40.6 → 41.3 KB, audited against a trunk build (+586 B: +7 preload entries for the new shared canvas chunks, ZoomControls' `tooltipShortcut`).
-- **P5-G seam:** `registerBoardDrawHandler` in `canvasDrawTool.ts` receives empty-board draws in board units.
-- **Landmines:**
-  - **Events × injectors:** the spacing-band CSS is appended to the portal chrome sheet (unlayered, `!important` only on `cursor`, like the resize handles). The band drag and the in-frame marquee both claim presses inside the overlay root / page root with capture listeners on the frame document; the marquee skips targets inside `[data-studio-canvas-overlay-root]` because the page root can be `<body>` itself.
-  - **Height:** the spacing drag holds `canvasGesture` until the queued commit runs (a layout effect after pointerup), so the frame refit waits one extra commit.
-  - **Events × store:** `SelectionStyleCommandHost` runs queued writes in a LAYOUT effect; a command that clears a DOM preview must do it inside the command, never in the pointerup.
-  - ⌘C / ⌘V now reject ⌥ (Ctrl+Alt+V used to paste a layer and a style in one press).
-  - `createdNodeFollowUp` snapshots every node id when armed (one pass per T-draw / ⇧A group).
-- **Found, not fixed:** in the PR body.
-- **Verification:** build clean (96 s once it held the lock; the earlier hang after "2622 modules transformed" did not reproduce in two runs); lint clean. Unit suite in 16 locked chunks after the merge: only fails are pre-existing `module-size-budgets` (`agentCheckpoints.ts`) and bundle freshness on local Bun 1.3.6. e2e `canvas-tools-and-handles` 5/5 after the merge (element-resize 4/4, node-arrow-keys 7/7). SitePage budget raised with the audit; two load flakes (`authStepUp`, `canonicalPageCheck`) pass alone.
-- **Next:** owner dogfood (script in the PR body, 11 steps); orchestrator review.
-- **Human action needed:** dogfood: `test4`, `/admin/site`, static tier, SMS frame, 100%; R-drag, T-click-type, padding ⇧/⌥ drags, ⌥A on the `.banner`, ⇧A, ⌘⌥C/⌘⌥V, right-click "Select layer", ⇧K.
-
-### test-07 — Green baseline: the 16 pre-existing unit failures and the broken e2e specs
-- **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** #257 (draft, base `feat/canvas-excellence`; per-failure table in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying (draft PR open)
-- **Goal:** the baseline every bundle reports shows no pre-existing red, so a real regression is visible.
-- **Done (unit):**
-  - `structuralOptimisticBroadcast` ×4, `useBridgeComputedValues` ×4, `fillSection` ×1: their stub channels never said `ready`, and `BridgeFrameAdapter.post` queues every message until it does. The stubs now announce `ready`, like `optimisticStructuralBroadcast.test.ts`.
-  - `referenceRender` ×4: since `live-16` a dev server writes to `options.logPath` and the manager tails that file; the fake filled `stdout`, so every boot hit the 30 s race. The fake now writes to the log file; each test gets its own `STUDIO_DEV_SERVER_STATE_DIR` and stops its server.
-  - `liveOrigin` WebSocket: **product fix** in `server/liveOrigin.ts`. Bun's `upgrade` already echoes the first offered subprotocol; passing it in `headers` too sent the header twice on Bun 1.3.6 (1.3.13 de-duplicates), and a checking client refuses that (1002). Proven on both Bun versions; a raw-handshake test asserts one header.
-  - `withWorkspaceProject` Windows path: already fixed on the trunk by P1-C; passes.
-  - Bundle freshness: not regenerated (P0-I owns the Bun pin). The gate now names the running Bun and the first differing line, and says whether it is Bun's runtime helpers, a cwd-relative `// node_modules/` comment, or real drift.
-- **Done (e2e):** `tests/e2e/helpers/canvasIframe.ts` (`visibleCanvasIframe`, `canvasContentFrame`, `liveBridgeIframe`, `settleCanvasFrameMode`, `selectionRings`) replaces every bare `frameLocator` in 30 files. Fixed-name fixtures are emptied in place (`emptyFixtureDir`): EPERM reproduced with `--repeat-each=2`. `readBoardCounts` counts per board frame (`mountedFrames`). studio-feel ⌘D now asserts five copies in the file and zero toast cards (P3-A removed success toasts; the queue removed the refusal).
-- **Landmines:** in the e2e workspace a fixture's Vite resolves from this repo's `node_modules`, so Tier-2 frames really go live some seconds into a spec. A portal frame draws its selection ring inside its iframe, a live frame in the editor document: settle first.
-- **Verified:** chunked unit suite (16 chunks, `--parallel=1`, under the lock): 1 failure left, bundle freshness (P0-I). e2e: `structural-writeback` 5/5 with `--repeat-each=2` (failed on EPERM with the old helper); `studio-feel` 5 pass + 1 pre-existing conditional skip.
-- **Found, not fixed:** Tier-2 frames never get a poster (perf-06 Phase B), so `studio-board-perf`'s WS-5.3 poster criterion still fails on the default tier; its virtualization counts now pass. `studio-feel-phase0` still waits for success toasts P3-A removed (⌘D, Alt+drag, ⌘G, save chip). The runtime bundles were built by two different Bun versions and one from a different cwd.
-- **Next:** orchestrator review; P0-I regenerates the bundles on the pinned Bun.
-### sec-24 — security hardening follow-ups (mcp-28 / mcp-30 open items, P1-E2 found-not-fixed)
-- **Agent:** security-guard · **Branch:** `fix/security-hardening-followups` off `25681dcb` · **PR:** #256 (draft, base `feat/canvas-excellence`; the item | threat | fix | test table and the adversarial inputs are in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; review #256 B1 fixed, needs security-guard re-review of it)
-- **Goal:** close the follow-ups that reviews #233 and #248 deferred, each with a test that failed with its fix disabled in place.
-- **Done:**
-  - `ssrfGuard.ts` parses addresses to bytes: NAT64, SIIT, IPv4-compatible, 6to4, Teredo, doc/benchmark ranges, multicast, broadcast; fails closed. The plugin gated fetch now PINS the connection to the validated address (it re-resolved before: DNS rebinding).
-  - CSP: `appendContentSecurityPolicy` adds each policy separately (a route's `frame-ancestors` can no longer win).
-  - `studio_upload_asset` is a server tool on `landAgentAsset` (agent gate, lock, turn log); browser half deleted.
-  - Scaffolds never write through a link: `isUnlinkedWorkspacePath` (Studio-owned files: shell, guide, design-system, `.studio`), lstat + `wx` for page/i18n/seed. The shell used to overwrite a linked `vite.config.js` target on first open.
-  - One read decoder `resolveWorkspaceReadPath` (asset route + edit targets), case-folded; git paths, archive entries, workspace walk fold case.
-  - R1 residuals in `hostConfigImports.ts` + a new CONTENT half of the one gate (`agentContentRefusal`: adding a Tailwind `@plugin`/`@config` needs the user).
-  - `devServer.ts` runs the project's own Vite bin (`viteLaunch.ts`); `predev`/`postdev` never run (measured on `__vite-live-fixture`: they did under `bun run dev` and `npm run dev`).
-  - Guide generator: prune only where Studio's manifest exists and the hash matches; nothing through a link.
-  - `writeFileAtomic` for agent overwrites (temp + fsync + rename; EPERM retry then in place; mode kept).
-  - Review #256 B1 fixed: `parseTailwindLoadDirectives` reads `@plugin`/`@config` the way tailwindcss@4 does (comments stripped, ANY wrapping, since Tailwind takes `params.slice(1,-1)`); the content gate judges EVERY agent text write (`<style>` in .html/.vue/.svelte too); the closure scan uses the same parser. Nits: EPERM in-place fallback never follows a link (O_NOFOLLOW, lstat on Windows); `gitOperations` exclusion is case-folded.
-- **Decisions:** exec Vite directly rather than `--ignore-scripts` (pnpm/yarn/bun differ; no shell at all now); Node runtime kept (fidelity), Bun only without Node. TEST-NET ranges are blocked, so tests that used 203.0.113.x as "public" now use 93.184.216.34.
-- **Landmines:**
-  - P4-F (#251) is in the trunk; the merge (`a5855b96`) kept both sides: the checkpoint pre-image is taken BEFORE `writeFileAtomic`, and the hook runs the content refusal beside `agentWriteRefusal` before its pre-image capture. Keep that order.
-  - Dev-server test fixtures need an installed stub Vite: `writeViteProject` (`viteLaunch.testHelpers.ts`).
-  - `checkContent` now takes `before` (the file's current text, `null` for new).
-- **Found, not fixed:** git clone keeps a repo's own `.studio/` (possibly a link) — every `.studio` store writes through it; Vite under Node binds `::1` for `localhost` while `devServerOutput` pins `127.0.0.1` (pre-existing; scaffolded configs pin the host). Details in the PR.
-- **Verification:** build + lint clean (before and after merging the trunk `c5dac965`+, which brought P4-F). Full suite in sequential locked chunks; every failure is pre-existing: studio-runtime bundle freshness; `module-size-budgets` (trunk's `agentCheckpoints.ts`, 789 lines, not touched here); 4 `studio_render_reference` dev-server timeouts (reproduced with this PR's spawn change reverted in place); bridge measurement (`useBridgeComputedValues` x4, `FillSection`); optimistic broadcast x4; liveOrigin WebSocket. Flaky under load, pass alone: `assetLanding` concurrent-process landing, `publicSdkExports`. No e2e: server-only change; the live dev-server path was run for real on `__vite-live-fixture` instead.
-- **Next:** security-guard re-review.
-### canvas-28 — P5-B: drop images onto the canvas (IMG-2, 3, 7, 8, 9; IX-img)
-- **Agent:** canvas-engineer · **Branch:** `feat/drop-images-onto-the-canvas` off `25681dcb` · **PR:** #258 (draft), base `feat/canvas-excellence` (long form, dogfood script and "Found, not fixed" in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; owner dogfood below)
-- **Done:** N dropped images are ONE `insert` edit (`InsertEditSchema.siblings`, `insertJsxElement` writes a run in one splice and reports every created id, all or none): one write, one resync, one ⌘Z. Drop ON an `<img>` replaces it (⌥ inserts): literal `src` → `asset-drop` + `updateNodeProps`; import-bound → `asset-upload` beside the old file + `kind:'asset'` via `commitStudioAssetReplace` with the new undo template `known`. Ghost per file from its object URL (`previewOptimisticInsertRun`) + XHR progress into `--studio-upload-progress`. `width`/`height` = intrinsic, clamped to the container content box. ⌘-drop = K6 absolute (static parent refuses with K6's dialog). ⇧-drop = top background layer, inline; refused when a class owns the background. "Insert image…" command (`insert.image`) = picker, images land beside the selection. **Fixed on the way:** drop surfaces registered only for the ACTIVE frame, so an OS file drop onto a not-yet-clicked frame always refused "Drop onto a frame" (found by the e2e; `BreakpointSelectionOverlay` now gates registration on the permission alone). And the canvas `<img>` ignored the authored `width`/`height` (`base.image`'s `ImageEditor` now renders them), so the canvas never showed the size the source says.
-- **Decisions:** one XHR upload client, `@core/http`'s `apiUploadRequest` (reuses `retryPlanFor`/replay key/envelope/schema); `dropStudioAsset`, `uploadStudioAsset`, `uploadDesignReference` moved onto it. `commitStructural` + options moved to `studio/studioStructuralCommitEngine.ts` (size gate). Server `created` is a list end to end (`StructuralEditOutcome`, `StudioEditApplyOutcome`).
-- **Files touched (canvas):** `modules/base/image/ImageEditor`, `canvas/{canvasFileDrop, canvasFileDragPreview, useCanvasFileDrop, canvasFrameDragRelay, EditorChromeInjector, BreakpointSelectionOverlay, canvasImageDropPlacement (new), canvasImagePicker (new), canvasUploadProgress (new)}`. Also `store/slices/site/{imageDropActions, imageDropShapes (new), structuralOptimism, structuralSourceHistory, types, nodeActions}`, `studio/{studioStructuralCommits, studioStructuralCommitEngine (new), structuralUndoPlan, dropStudioAsset, uploadStudioAsset, uploadDesignReference, projectAssets}`, `core/http/{uploadRequest (new), apiClient, index}`, `core/ast-codemods/insertJsxElement`, `server/handlers/{studioStructuralWriteback, studioEditSchemas, studioWriteback}`, `spotlight/{commands/images (new), builtinCommands}`.
-- **Landmines:**
-  - **Events × history:** the drop HOLDS the structural queue (`beginStructuralCommit`) from before the upload until `commitStructural`'s own end; a drop where nothing lands releases it itself. Any new early return in `dropImagesIntoPage` after the begin must call `endStructuralCommit()` or every later structural gesture queues forever.
-  - **Injectors × events:** the ghost's uploading look is an UNLAYERED `EditorChromeInjector` rule on `img[data-studio-uploading]`; the progress property is written imperatively on the element (React does not own it). The relay now copies `altKey/shiftKey/metaKey/ctrlKey` — a relay that drops them silently changes what a drop means.
-  - **Events × registration:** a board frame is a drop surface whether or not it is active (it used to be active-only). Anything that assumes "registered surface ⇒ active frame" is wrong now; the file drop activates its own page.
-  - **Height:** none — but the ghost carries an inline `max-width: 100%` so a large photo cannot stretch the frame before its clamped size is written.
-  - The ghost rollback checks its ids are still on the page first: a page replaced by an outside resync mid-upload is settled, never patched.
-  - Portal (design) frames render a literal `src="/x.png"` against the ADMIN origin, so a dropped image shows broken there until something serves the project's `public/` to design frames (Found, not fixed — PR body). Live (Tier 2) frames are fine.
-- **Next:** ⇧K binding → `insert.image` (P5-E owns `keybindings.ts`); IMG-4 paste (after P5-A), IMG-5 URL drag (OD-13, security review), IMG-6 Assets images section, IMG-10 import convention, IMG-11 ledger.
-- **Human action needed:** dogfood in the **Design** view (live frames take no file drops yet — PR body), `/admin/site` on `test4`, 100% zoom, one frame; dropped images show broken-but-correctly-sized in design frames (the `public/` gap):
-  1. Drag three PNGs from the desktop onto the frame: three ghosts appear at once and fill left to right while uploading; one save; `public/` gets three files; one ⌘Z removes all three `<img>`s.
-  2. Drag a 4000 px photo into a 390 px-wide container: the written `width` is ≤ the container, aspect kept.
-  3. Drag one PNG onto an existing `<img>`: it is outlined and the chip says "Replace image"; release swaps the image; ⌘Z restores the old one. Hold ⌥: it inserts beside instead.
-  4. Hold ⇧ over a container: "Set as background"; release adds a background layer (Fill section shows it). Hold ⌘ over a `position: relative` container: the image lands at the pointer; over a static one, the "make it relative" dialog.
-  5. ⌘K → "Insert image…": pick two files; they land right after the selected layer.
-
-### canvas-34 — P5-B2: dropped (and every literal public/) image shows in design frames
-- **Agent:** canvas-engineer · **Branch:** `fix/dropped-images-show-in-design-frames` off `fea4f125` · **PR:** #262 (draft), base `feat/canvas-excellence` (attack surface for the security review in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying (draft PR open; security review + owner dogfood)
-- **Goal:** closes canvas-28's "Found, not fixed": a portal frame is `about:srcdoc` on the ADMIN origin, so `src="/x.png"` loaded from Studio's server and showed broken (the `width`/`height` box hid it from every size assertion).
-- **Done:** ONE route, two shapes: `GET /admin/api/studio/asset?dir=…&url=/x.png` beside the existing `&path=` (`readStudioAssetTarget`: exactly one). `siteUrlWorkspaceCandidates` (`assetSiteUrl.ts`, inverse of THE site-URL rule): `<appRoot>/public/x`, then dev-only `<appRoot>/x`, never `/public/x`; each candidate through the shared `resolveWorkspaceReadPath` (no second guard). New media-only gate on BOTH shapes and the capture twin (`isEmbeddableMediaPath`, on the requested name and the realpath). Canvas: `canvasProjectAssetUrl.ts` resolves at render time only — `NodeRenderer` (`src`/`srcSet`/`poster` + inline style, every module at once) and `canvasFrameCss.ts`, the one canvas CSS pass every project-CSS injector now runs (assets → viewport pin → dark scheme; was hand-composed at 4 sites). Capture page uses a token scope.
-- **Decisions:** store/source keep `/x.png` (image replace reads `props.src` to tell literal from import). `/uploads/` is left to the admin origin (CMS media variants are emitted after resolution); a project's `public/uploads/x` still shows broken — PR body. Route declaration unchanged (`routeCapabilities.ts` already declares `/admin/api/studio/asset`, read `site.read`, no mutate).
-- **Files touched (canvas):** `canvas/{NodeRenderer, AuthoredCssInjector, ClassStyleInjector, canvasUserStylesheetCss, canvasProjectAssetUrl (new), canvasFrameCss (new)}`, `studio/projectAssets` (export `STUDIO_ASSET_ROUTE`), `agentCapture/main`. Server: `studioAsset.ts`, `studio/assetSiteUrl.ts`, `static.ts`, `studio.ts`, `ai/mcp/capture/captureRoute.ts`.
-- **Landmines:**
-  - **Injectors × assets:** any new injector carrying PROJECT CSS must go through `canvasFrameCss` (or `canvasUserStylesheetCss`'s staged memo), or its `url('/x')`s break again in design frames while the others work.
-  - **Events/DOM × src:** a portal frame's `<img>.src` is now the asset-route URL, not the source's. Read `props.src` from the store, never the DOM, to learn what the source says (`renderEvidence.ts` reports the resolved one — correct for "did it load").
-  - **Bridge frames** render nothing through here; do not "fix" them the same way — the dev server answers `/x.png` and `/admin/api/…` would 404 on its origin.
-  - The route no longer serves `.json`/`.css`/`.js`/`.html` by `path=` either. Nothing in the tree asked for them; a future caller that needs source must use a different, declared route.
-- **Gates:** build + lint clean; `bun test` chunks green except pre-existing (`agentCheckpoints` size, bundle freshness on 1.3.6, two load-flakes that pass alone). e2e `frame-file-drop -g P5-B2` 2/2 pass; both FAIL with the canvas rewrite disabled (`naturalWidth` 0).
-- **Human action needed:** security review (PR body table) + dogfood: `test4`, Design view, 100%, one frame — drop a PNG: the picture shows (not a broken icon) and the source/inspector still say `/<name>.png`; ⇧-drop paints a background; a Fill `public/` image paints in every frame.
-- **Next:** IMG ledger work (canvas-28 Next); relative `url(./a.png)` in project CSS is still resolved against the admin origin (needs the stylesheet's own path) — PR body.
 
 ## Blocked
 
@@ -351,16 +154,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
-- `docs-16` — docs: 29 stale plan citations repointed, duplicate rows removed, agent-refs brought up to P1–P4, inspector §G12/§9.4 current; owner reviews the CLAUDE.md and studio-scribe.md edits — #252 — 2026-09-23
-- `mcp-31` — P4-F: per-turn checkpoints with Revert turn / per-file revert (hash-verified, CAS, gated), streaming tool progress, Haiku compaction, `studio_propose_plan`; security re-review approved — #251 — 2026-09-23
-- `mcp-30` — P4-E: `studio_find_icon`, `studio_find_image` (Pexels, attribution), fonts/assets lists, a vouched-host fetch policy, a sandbox CSP on served SVG/HTML; security re-review approved — #248 — 2026-09-23
-- `parser-18` — P3-C: call-site and origin writes, automatic stylesheet choice, winning-declaration CSS edits, @container/@supports, spread-safe styles, className wraps, alias imports, .map row templates (OD-8 style) — #247 — 2026-09-23
-- `canvas-27` — P2-C2: arrows, ⌥↑/↓ and ⌘[/] move a whole multi-selection as one undo and one write; grid ↑/↓ move a row; bulk-action audit — #246 — 2026-09-23
-- `perf-12` — P2-I: hover off the store, keyed selection, stable selection context; hover worst frame 169–183 → 21–33 ms, warm click → ring 292–440 → 78–85 ms; cold-click A/B: no P2-A regression — #245 — 2026-09-23
-- `store-18` — P3-A: per-edit save outcomes (successes commit, refusals named and re-sent), save-time refusals warn with "Open in code", no success toasts on gestures, chrome error boundaries; error toast sites 128 → 104, pinned — #244 — 2026-09-23
-- `canvas-26` — P2-E: one snap threshold (8 screen px ÷ zoom), parent edges/padding/centre snap, resize edges snap (static frames), drop outlines the landing container, Alt measures to the parent; OD-15 arrows after a Layers click — #243 — 2026-09-23
-- `canvas-25` — P2-C: arrows nudge an absolute layer 1/10 px or reorder a flow child, one undo + one write per held key; free move writes camelCase `insetInlineStart` — #242 — 2026-09-23
-- `mcp-29` — P4-D: one rewritten prompt for both paths (craft rubric, self-critique, real content, no eSIM facts), archetypes, component snippets, multi-width screenshots, `studio_arrange_frames`, `studio_set_tokens`, selection digest — #241 — 2026-09-23
+- `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
+- `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
+- `mcp-32` — P4-G: `studio_lint`, `studio_delegate` (per-turn caps 2 calls / 8 children / 150 rounds), model routing, short tool descriptions, run-project tools held in plan mode; security approved — #255 — 2026-09-25
+- `canvas-29` — P5-E: armed draw tools, padding/gap handles, align, layer commands, ⇧K insert image, 12 IX/UX items — #261 — 2026-09-25
+- `panel-46` — sweep: style-lock partial writes, dark --text-subtle contrast, icon guide, late component catalog, CLAUDE.md toast rule (owner reviews) — #259 — 2026-09-25
+- `canvas-28` — P5-B: N images = one insert/undo, drop on img replaces (⌥ beside), ⇧ background, upload ghosts, natural size clamped, ⌘ at pointer, Insert image… command — #258 — 2026-09-25
+- `sec-24` — security: SSRF pinning, separate admin CSP, server-side upload asset, link-safe scaffolds, case-folded read guard, Vite spawned directly (no predev), atomic writes, Tailwind @plugin/@config gate; approved after 3 B1 rounds — #256 — 2026-09-25
+- `test-07` — green baseline: 15 of 16 pre-existing unit failures fixed (stub ready, log-file dev server, liveOrigin double subprotocol), canvasIframe e2e helper — #257 — 2026-09-25
+- `store-19` — P3-E: edits rebase over outside writes and queued ⌘D; nothing typed is lost — #254 — 2026-09-25
+- `infra-02` — P0-I: CI runs `bun run test` on Bun 1.3.13 — #253 — 2026-09-25
 
 ---
 
