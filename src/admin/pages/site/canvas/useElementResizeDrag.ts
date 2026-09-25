@@ -40,7 +40,9 @@
  * the element's `box-sizing` means (IX-6a), ⇧ / ⌥ are read from every move
  * and every modifier key change (IX-6c), and a `position: absolute | fixed`
  * element's W/N handles also move its offset so the opposite edge stays put
- * (IX-6d). Every axis the drag writes also carries the inspector's Fixed
+ * (IX-6d) — the offsets the source ANCHORS it by, so a `right`-anchored layer
+ * keeps `right` and never gains a `left` (IX-21, `elementResizeAnchoring.ts`).
+ * Every axis the drag writes also carries the inspector's Fixed
  * switch (`elementResizeSizing.ts`), so a flex item's `flex: 1` cannot swallow
  * the width (IX-6b).
  *
@@ -83,6 +85,8 @@ import {
   type ResizeHandle,
 } from '@core/studio-runtime'
 import { createInlineStylePreview, planResizeSizing, resizeInlinePatch } from './elementResizeSizing'
+import { anchorResizePatch } from './elementResizeAnchoring'
+import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { nodeVisualRect } from './canvasDomGeometry'
 import type { SnapGuide } from './boardSnapping'
 import {
@@ -164,6 +168,11 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         const node = findNodeById(state, nodeId)
         const stored = node?.inlineStyles ?? NO_INLINE_STYLES
         const plan = planResizeSizing(view, target, start, stored)
+        // IX-21 — which offsets a positioned layer is anchored by, read once.
+        const anchors: NudgePlan | null = start.offsets && node
+          ? planNudge(view.getComputedStyle(target), authoredOffsets(node, state.site?.styleRules))
+          : null
+        const patchAt = (step: typeof last) => anchorResizePatch(resizeInlinePatch(start, step, plan), start, step, anchors)
         const preview = createInlineStylePreview(target)
         const startX = event.clientX
         const startY = event.clientY
@@ -222,7 +231,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         let pendingFrame: number | null = null
         const applyPending = () => {
           pendingFrame = null
-          preview.apply(resizeInlinePatch(start, last, plan) ?? {})
+          preview.apply(patchAt(last) ?? {})
           paintResizeGuides(guideSurface, guides)
         }
         const step = () => {
@@ -299,7 +308,7 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
           // one event handler, so the browser paints once and the
           // intermediate state is never seen.
           preview.clear()
-          const patch = commit ? resizeInlinePatch(start, last, plan) : null
+          const patch = commit ? patchAt(last) : null
           if (patch) {
             useEditorStore.getState().setNodeInlineStyles(
               nodeId,

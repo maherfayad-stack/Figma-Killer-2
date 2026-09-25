@@ -331,6 +331,21 @@ export interface StyleRuleSlice {
    */
   addNodeClasses(nodeId: string, classIds: string[]): void
 
+  /**
+   * P5-E (IX-props) — paste style: per node, an inline-style patch AND classes
+   * to add, in ONE history entry however many nodes (OD-16). Each node's
+   * inline patch is all-or-nothing against its source (a code-valued key
+   * skips that node's patch, as `setNodesInlineStylesPerNode` does); ambient
+   * rules and classes a node already carries are skipped.
+   */
+  applyNodeStyles(
+    entries: ReadonlyArray<{
+      nodeId: string
+      inlinePatch: Record<string, string | number | null>
+      addClassIds: readonly string[]
+    }>,
+  ): void
+
   /** Remove a classId from a node's classIds (no-op if not present). */
   removeNodeClass(nodeId: string, classId: string): void
 

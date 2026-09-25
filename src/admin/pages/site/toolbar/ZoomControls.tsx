@@ -48,7 +48,7 @@ import { PlusIcon } from 'pixel-art-icons/icons/plus'
 import { ArrowsScaleIcon } from 'pixel-art-icons/icons/arrows-scale'
 import { Button } from '@ui/components/Button'
 import { ContextMenu, ContextMenuItem, ContextMenuSeparator } from '@ui/components/ContextMenu'
-import { formatShortcut, getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { formatShortcut, getKeybindingForCommand, shortcutLabelFor } from '@admin/spotlight/keybindings'
 import styles from './Toolbar.module.css'
 
 /**
@@ -137,7 +137,8 @@ export function ZoomControls() {
         iconOnly
         aria-label="Zoom out"
         aria-keyshortcuts="-"
-        tooltip={isLive ? LIVE_ZOOM_REASON : 'Zoom out (−)'}
+        tooltip={isLive ? LIVE_ZOOM_REASON : 'Zoom out'}
+        tooltipShortcut={isLive ? undefined : shortcutLabelFor('canvas.zoomOut')}
         disabled={isLive}
         onClick={handleZoomOut}
       >
@@ -236,7 +237,8 @@ export function ZoomControls() {
         iconOnly
         aria-label="Zoom in"
         aria-keyshortcuts="="
-        tooltip={isLive ? LIVE_ZOOM_REASON : 'Zoom in (+)'}
+        tooltip={isLive ? LIVE_ZOOM_REASON : 'Zoom in'}
+        tooltipShortcut={isLive ? undefined : shortcutLabelFor('canvas.zoomIn')}
         disabled={isLive}
         onClick={handleZoomIn}
       >
@@ -251,11 +253,8 @@ export function ZoomControls() {
         iconOnly
         aria-label="Zoom to fit"
         aria-keyshortcuts={FIT_BINDING?.ariaKeyshortcuts}
-        tooltip={
-          canFit
-            ? `Zoom to fit${FIT_BINDING ? ` (${formatShortcut(FIT_BINDING.shortcut)})` : ''}`
-            : fitReason
-        }
+        tooltip={canFit ? 'Zoom to fit' : fitReason}
+        tooltipShortcut={canFit ? shortcutLabelFor('canvas.zoomToFit') : undefined}
         disabled={!canFit}
         onClick={() => viewportCommands?.zoomToFit()}
         data-testid="toolbar-zoom-fit-btn"

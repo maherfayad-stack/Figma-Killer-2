@@ -122,6 +122,16 @@
     color: currentColor;
 }
 
+/* UX-22 — the item's shortcut, right-aligned and dimmed: the verb is what
+   you read, the keys are what you learn. Pushed to the row's end like the
+   checkmark below. */
+.itemShortcut {
+    margin-inline-start: auto;
+    padding-inline-start: var(--space-l);
+    flex-shrink: 0;
+    opacity: 0.6;
+}
+
 /* Trailing checkmark on a `selected` ContextMenuItem — pushed to the row's
    end regardless of how many other children (labels, meta clusters) sit
    before it. */

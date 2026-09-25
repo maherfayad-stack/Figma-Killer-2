@@ -34,8 +34,8 @@
  * Studio follows Figma's shortcut meanings. Penpot (the reference clone the
  * audit compared against: `docs/audits/2026-09-23-studio-audit/04-interactions.md`
  * §1) disagrees on a handful of keys. Each row is decided ONCE, here, so no
- * bundle re-litigates it. P2-B owns this file for Phase 2; P2-C, P2-E, P5-C,
- * P5-D and P5-E append a row when they bind a contested key.
+ * bundle re-litigates it. P2-B owned this file for Phase 2, P5-E for its wave;
+ * P5-C and P5-D append a row when they bind a contested key.
  *
  *   Key        | Penpot meaning              | Studio meaning                  | Why
  *   -----------|-----------------------------|---------------------------------|-------------------------------------
@@ -80,9 +80,27 @@
  *   ↑ / ↓ on a | swap with the cell above /  | OD-16: move by the resolved     | ← / → still step one cell; the
  *   grid child | below                       | column count (one row); none    | last row does not wrap
  *              |                             | past the last row               |
+ *   R O E T F  | draw tools (armed)          | the same (P5-E, OD-5): armed;   | E is Penpot's ellipse key, an alias
+ *              |                             | a click or drag INSIDE a frame  | of Figma's O. ⏎ while armed still
+ *              |                             | inserts; one draw disarms       | inserts at the selection
+ *   ↵          | text → edit; group → all    | the same (P5-E, IX-7); was      | Tab walks siblings, ⏎ goes down,
+ *              | children                    | "select the first child"        | ⇧⏎ up (every selected layer)
+ *   ⌥A ⌥D ⌥W   | align left / right / top /  | the same (P5-E, IX-20). ⌥H / ⌥V | ⇧H / ⇧V stay reserved for flip.
+ *   ⌥S ⌥H ⌥V   | bottom / h-centre / v-centre| are the centres, not flip       | Matched on `code` (⌥A is 'å' on Mac)
+ *   ⌘⇧] ⌘⇧[    | bring to front / send back  | the same: LAST / FIRST child    | Front follows PAINT order; ⌘] / ⌘[
+ *   ⌘⇧↑ ⌘⇧↓    | (Penpot aliases)            | (P5-E, IX-9)                    | follow the Layers list (earlier =
+ *              |                             |                                 | up). Opposite ends on purpose
+ *   ⇧A         | toggle flex layout          | the same (P5-E, IX-10); 2+      | Figma's "add auto layout"
+ *              |                             | layers are grouped first        |
+ *   ⌘⌥C ⌘⌥V    | copy / paste properties     | copy / paste style (P5-E)       | ⌘C / ⌘V now reject ⌥
+ *   ⇧K         | (unbound)                   | place an image (P5-B's picker)  | Figma's; K alone is the scale tool
+ *   ⇧-drag on  | axis pair of paddings;      | the same (P5-E, IX-17)          | Pointer modifiers, on the `?` sheet
+ *   a padding  | ⌥-drag all four             |                                 | as `canvas.spacingHandles`
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'
+import { LAYER_COMMAND_KEYBINDINGS } from './keybindingLayerCommands'
+import { TOOL_KEYBINDINGS } from './keybindingTools'
 import { VIEWPORT_KEYBINDINGS } from './keybindingViewport'
 
 // The binding SHAPE lives one module over so the gesture rows can name it
@@ -92,7 +110,7 @@ export type { KeyEventLike, KeybindingDefinition } from './keybindingShape'
 export { isPlatformMac, formatShortcut } from './keybindingShape'
 import type { KeyEventLike, KeybindingDefinition } from './keybindingShape'
 import type { CommandId } from './types'
-import { isPlatformMac } from './keybindingShape'
+import { formatShortcut, isPlatformMac } from './keybindingShape'
 
 export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // ── Global ──────────────────────────────────────────────────────────────────
@@ -199,7 +217,8 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     // below, and without this guard the same keystroke ALSO copied the node to
     // the layer clipboard — two commands, one press, in an order decided by
     // whichever listener happened to be registered first.
-    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && e.key.toLowerCase() === 'c',
+    // `!e.altKey` since P5-E: ⌘⌥C is `layers.copyStyle` (`keybindingLayerCommands.ts`).
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'c',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -215,7 +234,9 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   {
     commandId: 'layers.paste',
     shortcut: { mac: '⌘V', win: 'Ctrl+V' },
-    match: (e) => (e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'v',
+    // `!e.altKey` since P5-E: ⌘⌥V is `layers.pasteStyle`, and without the
+    // guard one press pasted the layer AND its style.
+    match: (e) => (e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === 'v',
     scope: 'canvas',
     ignoreInEditableField: true,
   },
@@ -307,8 +328,12 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   // capture phase), and both must fire from ANYWHERE — the generic dispatcher
   // requires focus to still be inside the canvas / layer tree, which one
   // click into the Properties panel ends for the session.
+  //
+  // P5-E (IX-7) — Penpot's and Figma's meaning: ↵ on a text layer starts
+  // typing; on a container it selects ALL its children (was: the first one).
+  // ⇧↵ selects the parent of EVERY selected layer.
   {
-    commandId: 'layers.selectFirstChild',
+    commandId: 'layers.selectChildren',
     shortcut: { mac: '↵', win: 'Enter' },
     ariaKeyshortcuts: 'Enter',
     match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key === 'Enter',
@@ -400,112 +425,10 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
-  // ── Tools (bare-letter tool switches — Figma's own T / F / C) ───────────
-  // Bare letters, no modifier: these are the muscle-memory keys every design
-  // tool binds, and the cost of getting them wrong is high (a stray `c` while
-  // typing must never arm a canvas tool). Two guards, both enforced by
-  // `useCanvasToolShortcuts`: `ignoreInEditableField` stands them down inside
-  // any input/textarea/contenteditable — which covers the reply box, every
-  // inspector field, the agent prompt, and canvas inline text editing — and
-  // each `match` rejects every modifier, so ⌘C stays copy and ⌘T stays "new
-  // browser tab". Virtual ids: inserting at the selection is a canvas gesture,
-  // not a palette action, so `displayName` is the help-screen label.
-  {
-    commandId: 'tools.text',
-    displayName: 'Insert text',
-    shortcut: { mac: 'T', win: 'T' },
-    ariaKeyshortcuts: 'T',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 't',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.frame',
-    displayName: 'Insert container',
-    shortcut: { mac: 'F', win: 'F' },
-    ariaKeyshortcuts: 'F',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.comment',
-    displayName: 'Comment',
-    shortcut: { mac: 'C', win: 'C' },
-    ariaKeyshortcuts: 'C',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'c',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // V — the move tool (IX-11). Not a toggle like H / K: it is the way HOME,
-  // so it puts away the hand and scale tools AND disarms the comment tool.
-  // Pressing it with nothing armed is a harmless no-op.
-  {
-    commandId: 'tools.move',
-    displayName: 'Move tool (puts every other tool away)',
-    shortcut: { mac: 'V', win: 'V' },
-    ariaKeyshortcuts: 'V',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'v',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // `K4` — the four Figma tool letters Studio was missing. Same two guards as
-  // T / F / C above: `ignoreInEditableField` plus a `match` that rejects every
-  // modifier, so ⌘K stays the palette, ⌘R stays rename and ⌘H/⌘O stay the
-  // browser's. All four are LATCHED TOGGLES on their own key — pressing H
-  // again puts the hand tool away. A latched tool with no way back out from
-  // the keyboard is how a canvas ends up feeling stuck, and Escape is not
-  // reliably available here (the selection ladder claims it first whenever
-  // anything is selected — see `editorKeyDispatcher.ts`).
-  {
-    commandId: 'tools.hand',
-    displayName: 'Hand tool (drag to pan)',
-    shortcut: { mac: 'H', win: 'H' },
-    ariaKeyshortcuts: 'H',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'h',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.scale',
-    displayName: 'Scale tool (resize proportionally)',
-    shortcut: { mac: 'K', win: 'K' },
-    ariaKeyshortcuts: 'K',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'k',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  // R and O are Figma's rectangle and ellipse. Studio's document is a React
-  // tree, not a shape canvas, so both insert a `base.container` — the box every
-  // layout is built from — as the NEXT SIBLING of the selection rather than
-  // arming a draw gesture. `O` adds `border-radius: 50%` inline, which is what
-  // an ellipse IS in CSS. `F` stays "container inside the selection", so the
-  // pair is genuinely distinct: F nests, R/O extend the row you are in.
-  {
-    commandId: 'tools.rectangle',
-    displayName: 'Insert a box beside the selection',
-    shortcut: { mac: 'R', win: 'R' },
-    ariaKeyshortcuts: 'R',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'r',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
-
-  {
-    commandId: 'tools.ellipse',
-    displayName: 'Insert a round box beside the selection',
-    shortcut: { mac: 'O', win: 'O' },
-    ariaKeyshortcuts: 'O',
-    match: (e) => !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'o',
-    scope: 'canvas',
-    ignoreInEditableField: true,
-  },
+  // ── Tools (V T F C H K R O/E — `keybindingTools.ts`) ─────────────────
+  // Bare letters that pick what a drag means; R / O / T / F arm the draw
+  // tools (P5-E, IX-12). Moved to their own module in P5-E.
+  ...TOOL_KEYBINDINGS,
 
   // ── Export (copy the selection as an image) ──────────────────────
   // ⌘⇧C / Ctrl+Shift+C — Figma's own "copy as PNG". Virtual id: exporting the
@@ -606,6 +529,9 @@ export const KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ── Layer commands (P5-E) — align, front / back, flex, copy / paste style ─
+  ...LAYER_COMMAND_KEYBINDINGS,
+
   ...GESTURE_KEYBINDINGS,
 ]
 
@@ -648,4 +574,15 @@ const KEYBINDINGS_MAP = new Map<string, KeybindingDefinition>(
  */
 export function getKeybindingForCommand(commandId: CommandId): KeybindingDefinition | undefined {
   return KEYBINDINGS_MAP.get(commandId)
+}
+
+/**
+ * P5-E (UX-22, UX-23) — the platform label for a command's shortcut, for a
+ * tooltip or a menu item's keycaps; `undefined` when the command has no key.
+ * The one way chrome spells a shortcut, so a label can never drift from the
+ * key that actually fires.
+ */
+export function shortcutLabelFor(commandId: CommandId): string | undefined {
+  const binding = KEYBINDINGS_MAP.get(commandId)
+  return binding ? formatShortcut(binding.shortcut) : undefined
 }

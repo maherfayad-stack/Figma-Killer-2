@@ -66,6 +66,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
       'lifetime from the shortcut layer.',
   ],
   [
+    'canvas/useSpacingHandleDrag.ts',
+    'P5-E (IX-17) — the padding / gap handle drag: ⇧ / ⌥ change which sides it writes and Escape cancels it, bound on the frame document AND the parent for the length of that one gesture only — the same exemption as the resize drag, for its sibling handles.',
+  ],
+  [
     'canvas/CanvasTreeLadderOverlay.tsx',
     'The Alt-HOLD hover ladder binds Arrow/Enter/Escape in every frame ' +
       'document AND the parent, only while the ladder is actually showing. It ' +

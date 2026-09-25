@@ -51,11 +51,19 @@ type CanvasView = 'design' | 'live'
  *   lock; a drag then keeps the element's aspect ratio and writes BOTH `width`
  *   and `height`.
  *
+ * - a DRAW tool (P5-E, IX-12, OD-5) — R / O (and E) / T / F arm it. Inside a
+ *   frame a hover previews where the element will land (the insertion-drag
+ *   drop line), a click inserts it there, and a drag also gives it the drawn
+ *   `width` / `height`. T then opens the text for typing. The tool puts
+ *   itself away after one draw, like Figma's; V, Escape or the same key again
+ *   put it away sooner. See `canvas/canvasDrawTool.ts`.
+ *
  * Deliberately NOT merged with `commentToolActive`: commenting is available to
  * a read-only reviewer and is a different kind of arming (it consumes the next
- * click), while these three change what an ordinary drag means.
+ * click), while these change what an ordinary drag means.
  */
-export type CanvasTool = 'move' | 'hand' | 'scale'
+export type DrawTool = 'rectangle' | 'ellipse' | 'text' | 'frame'
+export type CanvasTool = 'move' | 'hand' | 'scale' | DrawTool
 
 interface CanvasSlice {
   zoom: number

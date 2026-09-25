@@ -75,8 +75,8 @@ describe('viewport-01 keybindings', () => {
     expect(binding.match(key({ key: '0', metaKey: true, altKey: true }))).toBe(false)
   })
 
-  it('Enter selects the first child, Shift+Enter the parent — never each other', () => {
-    const child = getKeybindingForCommand('layers.selectFirstChild')!
+  it('Enter selects the children, Shift+Enter the parent — never each other', () => {
+    const child = getKeybindingForCommand('layers.selectChildren')!
     const parent = getKeybindingForCommand('layers.selectParent')!
 
     expect(child.match(key({ key: 'Enter' }))).toBe(true)
