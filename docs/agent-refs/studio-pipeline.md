@@ -43,6 +43,13 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
            regression to refuse. A moved `tsconfig.json` stamp REBUILDS it
            (aliases are read once, at construction); an unparseable one
            builds without it and reports `tsconfig-unreadable` (WB-23).
+           A load answered from the parse cache never builds the TS program,
+           so every load ends by queueing `prewarmWorkspaceProgram` (reads
+           `getTypeChecker().compilerObject` — the bare `getTypeChecker()` is
+           a lazy wrapper that builds nothing) and draining the parse cache's
+           queued disk writes (`scheduleParseCacheWrites`, also flushed at
+           process exit and on LRU eviction). Both run ~50 ms after the load,
+           never inside it.
         1. discoverPageFiles(pagesDir)           studioProjects.ts
         1b. discoverStories + buildStoryRouteEntries
                                                  studio/story{Discovery,Pages}.ts

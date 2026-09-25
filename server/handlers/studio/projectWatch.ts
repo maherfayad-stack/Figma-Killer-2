@@ -201,6 +201,13 @@ interface ProjectWatch {
 
 const watches = new Map<string, ProjectWatch>()
 
+/**
+ * `resolve(dir)` → the real root its watch was started on, while subscribed.
+ * `settleProjectChanges` runs before every load (P6-B's memo), and a
+ * `realpathSync` there was a third of a warm load's own work on Windows.
+ */
+const rootByDir = new Map<string, string>()
+
 function realRoot(dir: string): string {
   const resolved = resolve(dir)
   try {
@@ -346,6 +353,7 @@ export function subscribeProjectChanges(
     pw = startWatch(root, options.strategy ?? 'auto')
     watches.set(root, pw)
   }
+  rootByDir.set(resolve(dir), root)
   pw.listeners.add(listener)
   const owned = pw
   let subscribed = true
@@ -357,6 +365,7 @@ export function subscribeProjectChanges(
     if (owned.timer) clearTimeout(owned.timer)
     owned.close()
     if (watches.get(root) === owned) watches.delete(root)
+    for (const [key, value] of rootByDir) if (value === root) rootByDir.delete(key)
   }
 }
 
@@ -380,7 +389,7 @@ export function subscribeProjectChanges(
  * has nothing to trust.
  */
 export function settleProjectChanges(dir: string, options: { maxSnapshotAgeMs: number }): boolean {
-  const pw = watches.get(realRoot(dir))
+  const pw = watches.get(rootByDir.get(resolve(dir)) ?? realRoot(dir))
   if (!pw) return false
   const stale =
     pw.timer !== null ||

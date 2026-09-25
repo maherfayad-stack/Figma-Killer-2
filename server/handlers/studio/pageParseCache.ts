@@ -59,6 +59,8 @@
  * disk hit re-hashes every dependency (a file is re-read only when its stamp
  * moved since this process last hashed it), and only then is promoted into
  * memory. The store's own doc covers why the file is treated as untrusted.
+ * Entries are WRITTEN after the load, not during it — see "Disk writes
+ * happen after the load" below.
  *
  * ## The race rule
  *
