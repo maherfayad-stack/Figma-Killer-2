@@ -1,5 +1,5 @@
 /**
- * keybindingTools — the bare-letter TOOL keys: V T F C H K R O (E).
+ * keybindingTools — the bare-letter TOOL keys: V T F C H K R O (E) P.
  *
  * Moved out of `keybindings.ts` in P5-E, when the armed draw tools (IX-12,
  * OD-5) and the layer commands pushed that file past the 700-line ceiling.
@@ -26,6 +26,15 @@
  * Each is a toggle on its own key, V / Escape put it away, and a draw puts it
  * away by itself. ⏎ with a tool armed still inserts at the selection, so a
  * keyboard-only user is never stranded (`useCanvasToolShortcuts`).
+ *
+ * ## The pen (P5-D, SVG-7)
+ *
+ * P arms the pen, Figma's key. Clicks place corner points, a drag places a
+ * smooth one (⌥ breaks the handles' symmetry, ⇧ snaps to 45°), clicking the
+ * first point closes the path, and ⏎ / Escape finish it — ONE new inline
+ * `<svg>`, one write. ⌘Z inside a path takes back the last point. P again, or
+ * V, puts it away. (⇧P / ⇧C, the pencil, is a follow-up; OD-10 D2 reserves
+ * them.)
  */
 import type { KeybindingDefinition } from './keybindingShape'
 
@@ -125,6 +134,16 @@ export const TOOL_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⇧K', win: 'Shift+K' },
     ariaKeyshortcuts: 'Shift+K',
     match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'k',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'tools.pen',
+    displayName: 'Pen — click for corners, drag for curves, ⏎ to finish',
+    shortcut: { mac: 'P', win: 'P' },
+    ariaKeyshortcuts: 'P',
+    match: (e) => noModifier(e) && e.key.toLowerCase() === 'p',
     scope: 'canvas',
     ignoreInEditableField: true,
   },

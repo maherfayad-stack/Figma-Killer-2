@@ -41,6 +41,7 @@ import { useEditorStore } from '@site/store/store'
 import { followPrototypeLinkAt, releasePrototypePress } from '@site/studio/playNavigation'
 import { clientPointToEditorDoc } from './canvasDomGeometry'
 import { setCanvasHover } from './canvasHover'
+import { tryEnterVectorEdit } from './BoardVectorLayer/vectorEditEntry'
 import { canvasClickSelectionMode } from './canvasSelectionUtils'
 
 export interface CanvasNodeInteractionOptions {
@@ -301,6 +302,8 @@ export function useCanvasNodeInteraction(options: CanvasNodeInteractionOptions):
   ) => {
     e.stopPropagation()
     if (options.isLive || !options.editable || !options.canEditContent) return
+    // P5-D — an inline <svg> opens vector edit mode (its points), not a text edit.
+    if (tryEnterVectorEdit(nodeId, frameId ?? null)) return
     // WS-10 §4.4 (Phase 4) — `frameId` lets the session resolve/mutate the
     // RIGHT tree when it belongs to a locale-variant board frame (a "duplicate
     // as variant" sibling shares this node id — trap #2). See

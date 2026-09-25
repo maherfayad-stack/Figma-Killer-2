@@ -21,7 +21,7 @@
 import { canvasLayerEditNodeId, type CanvasLayerPlacementChange } from '@core/studio-board'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { commitStructural } from './studioStructuralCommitEngine'
-import type { InsertPropValue } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
 
 /** A new layer's root element — `insert`'s element fields. */
 export interface CanvasLayerElement {
@@ -29,7 +29,8 @@ export interface CanvasLayerElement {
   importSpecifier?: string
   designSystemImport?: true
   props?: Record<string, InsertPropValue>
-  children?: string
+  /** Text, or child elements (P5-D: a drawn `<svg>`'s `<path>`). */
+  children?: string | readonly SlotJsxNode[]
 }
 
 interface CanvasLayerCommitBase {
