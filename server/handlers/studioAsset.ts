@@ -1,15 +1,30 @@
 /**
- * studioAsset — resolves and serves one workspace-relative asset file for
- * `GET /admin/api/studio/asset?dir=<abs>&path=<workspace-rel>` (§5.3): the
- * images an imported page's `<img src={…}/>` resolves to via
- * `STUDIO_ASSET_SENTINEL` (see `server/handlers/studio.ts`'s module doc for
- * how the sentinel gets rewritten into this endpoint's URL shape in the first
- * place). Split out of `studio.ts` as its own module because the security
- * reasoning below is a complete, self-contained unit — nothing about it
- * depends on routing or on any other studio endpoint.
+ * studioAsset — resolves and serves one project asset file for
+ * `GET /admin/api/studio/asset?dir=<abs>&(path=<workspace-rel>|url=<site-root>)`
+ * (§5.3), and for the capture page's token-gated twin
+ * (`/admin/api/agent-capture/asset`, `captureRoute.ts`). The request names the
+ * file in one of two ways ({@link StudioAssetTarget}):
  *
- * `path` is fully attacker-controlled (it comes straight off the query
- * string), so every check here is adversarial, not just a happy-path guard.
+ *  - `path` — a workspace-relative path: the images an imported page's
+ *    `<img src={…}/>` resolves to via `STUDIO_ASSET_SENTINEL` (see
+ *    `server/handlers/studio.ts`'s module doc for how the sentinel gets
+ *    rewritten into this endpoint's URL shape), a picker thumbnail;
+ *  - `url` — a SITE-ROOT URL as the page's source writes it, `src="/hero.png"`
+ *    (P5-B2). A design frame is served by the admin origin, which has nothing
+ *    at `/hero.png`; the canvas asks for it here instead
+ *    (`canvasProjectAssetUrl.ts`), and `siteUrlWorkspaceCandidates`
+ *    (`assetSiteUrl.ts`, the inverse of THE site-URL rule) maps it to the
+ *    project files the project's own dev server would answer with.
+ *
+ * One route, not two: both shapes end in the same guard, the same MIME gate
+ * and the same inert headers, so there is one place to audit. Split out of
+ * `studio.ts` as its own module because the security reasoning below is a
+ * complete, self-contained unit — nothing about it depends on routing or on
+ * any other studio endpoint.
+ *
+ * Both `path` and `url` are fully attacker-controlled (they come straight off
+ * the query string), so every check here is adversarial, not just a
+ * happy-path guard.
  * They live in ONE decoder, `resolveWorkspaceReadPath` (`@core/page-parser`),
  * shared with `studioEditTargets.ts` so the two read paths cannot drift:
  *
@@ -45,21 +60,66 @@
  *    exist (or a broken symlink) fails `realpathSync` and falls through to
  *    the caller's 404, which is the correct outcome either way.
  *
+ *  - Only an EMBEDDABLE file is served: an image, a font, audio or video
+ *    (`isEmbeddableMediaPath`), judged on the requested name AND on the real
+ *    path a link resolves to, so `logo.png -> ../src/config.ts` is refused.
+ *    Everything this route exists for is loaded by an `<img>`, a CSS `url()`,
+ *    an `@font-face` or a `<video>`; nothing it exists for is source, config
+ *    or HTML, and the route is not a way to read those.
+ *
  * Serving itself is delegated to `serveStaticFile` (`server/static.ts`),
  * which already owns MIME typing, compression, and range handling — this
- * function decides whether `path` is allowed to reach it, and stamps the
+ * function decides whether the request is allowed to reach it, and stamps the
  * response with `INERT_FILE_CSP` (`default-src 'none'; sandbox`, `nosniff`):
  * the file is the project's, not Studio's, and must never act as a document
- * on this origin.
+ * on this origin. That is what keeps an SVG inert when opened directly.
  */
+import { realpathSync } from 'node:fs'
 import { STUDIO_ASSET_SENTINEL, resolveWorkspaceReadPath } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
-import { inertFileResponse, serveStaticFile } from '../static'
+import { inertFileResponse, isEmbeddableMediaPath, serveStaticFile } from '../static'
+import { siteUrlWorkspaceCandidates } from './studio/assetSiteUrl'
 
-export async function resolveStudioAssetResponse(dir: string, rawPath: string, req: Request): Promise<Response | null> {
-  const target = resolveWorkspaceReadPath(dir, rawPath)
-  if (!target) return null
-  const segments = target.rel.split('/')
+/** What one asset request names: a workspace-relative `path`, or a site-root `url` as the page's source writes it. */
+export type StudioAssetTarget = { path: string } | { url: string }
+
+/**
+ * Reads the request shape off a query string: exactly one of `path` / `url`,
+ * non-empty. Both, or neither, is no request at all (`null` → the caller's
+ * 404) — an ambiguous request is never guessed at.
+ */
+export function readStudioAssetTarget(params: URLSearchParams): StudioAssetTarget | null {
+  const path = params.get('path')
+  const url = params.get('url')
+  if (path && !url) return { path }
+  if (url && !path) return { url }
+  return null
+}
+
+export async function resolveStudioAssetResponse(
+  dir: string,
+  request: StudioAssetTarget,
+  req: Request,
+): Promise<Response | null> {
+  const candidates = 'path' in request ? [request.path] : siteUrlWorkspaceCandidates(dir, request.url)
+  for (const candidate of candidates) {
+    // The guard answers `null` for a missing file and for a refused one
+    // alike, so either falls through to the next candidate. That is safe
+    // because the candidates differ only by a fixed, server-chosen prefix
+    // (`public/` or none): a `..`, an absolute form or an excluded segment in
+    // the client's part is refused in every one of them.
+    const target = resolveWorkspaceReadPath(dir, candidate)
+    if (!target) continue
+    // The first file that EXISTS decides; a non-media file ends the request
+    // rather than letting a later rule serve something else under its name.
+    if (!isEmbeddableMediaPath(target.rel) || !isEmbeddableMediaPath(realpathSync.native(target.abs))) return null
+    return serveContainedFile(dir, target.rel, req)
+  }
+  return null
+}
+
+async function serveContainedFile(dir: string, rel: string, req: Request): Promise<Response | null> {
+  const segments = rel.split('/')
 
   // `serveStaticFile` decodes its `pathname` argument once (it expects a raw
   // URL path component) — but `rawPath` already went through one decode via
