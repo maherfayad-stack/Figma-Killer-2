@@ -84,7 +84,7 @@ export async function collectProjectTokenSources(dir: string): Promise<TokenCssS
   }
 
   try {
-    const entrySheets = await withWorkspaceProject(dir, async (project) => collectEntryStylesheets(project, dir))
+    const entrySheets = await withWorkspaceProject(dir, async ({ project }) => collectEntryStylesheets(project, dir))
     for (const sheet of entrySheets) {
       if (!RAW_READABLE_STYLESHEET_RE.test(sheet.relPath)) continue
       const css = readCappedFile(sheet.absPath)

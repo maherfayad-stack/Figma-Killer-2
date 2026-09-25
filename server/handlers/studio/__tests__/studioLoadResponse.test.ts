@@ -5,8 +5,11 @@
  * `server/handlers/__tests__/studio.test.ts`.
  */
 import { describe, expect, it } from 'bun:test'
+import * as fs from 'node:fs'
+import * as os from 'node:os'
+import * as path from 'node:path'
 import type { Page } from '@core/page-tree'
-import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam } from '../studioLoadResponse'
+import { missingStudioLoadPageIds, parseStudioLoadPageIdsParam, studioLoadStreamLines } from '../studioLoadResponse'
 
 function stubPage(id: string): Page {
   return {
@@ -68,5 +71,37 @@ describe('missingStudioLoadPageIds', () => {
     // every call, so a page the client has never loaded is converted and
     // returned like any other as soon as the caller names its id.
     expect(missingStudioLoadPageIds([stubPage('contact')], ['contact'])).toEqual([])
+  })
+})
+
+describe('studioLoadStreamLines — P6-B viewport order', () => {
+  it('emits page lines in board reading order, each carrying its index in the page order', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'studio-load-stream-'))
+    try {
+      fs.mkdirSync(path.join(dir, '.studio'))
+      // Discovery order a, b, c, d — the board shows d top-left, then b, then c;
+      // a has no frame at all.
+      fs.writeFileSync(path.join(dir, '.studio', 'boards.json'), JSON.stringify({
+        version: 1,
+        boards: [{ id: 'b1', name: 'B', frames: [
+          { id: 'f-c', pageId: 'c', x: 0, y: 900, width: 100, height: 100 },
+          { id: 'f-b', pageId: 'b', x: 1200, y: 0, width: 100, height: 100 },
+          { id: 'f-d', pageId: 'd', x: 0, y: 0, width: 100, height: 100 },
+        ], notes: [], docs: [], guides: [] }],
+      }))
+      const pages = ['a', 'b', 'c', 'd'].map(stubPage)
+      const lines: Record<string, unknown>[] = []
+      for await (const line of studioLoadStreamLines({
+        dir, projectName: 'p', pages, componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {},
+        conditions: [], vendorCss: '', authoredCss: '', warnings: [], trust: 'static', projectKey: null,
+        paletteHiddenModuleIds: [], missingPageIds: undefined,
+      })) lines.push(line)
+
+      expect(lines[0]).toMatchObject({ kind: 'meta', pageCount: 4 })
+      const pageLines = lines.slice(1).map((line) => [(line.page as Page).id, line.index])
+      expect(pageLines).toEqual([['d', 3], ['b', 1], ['c', 2], ['a', 0]])
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true })
+    }
   })
 })

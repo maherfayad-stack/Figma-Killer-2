@@ -56,7 +56,7 @@ function stubLoadStream(pages: unknown[], meta: MetaOverrides = {}): void {
     pageCount: pages.length,
     ...meta,
   }
-  const body = [line, ...pages.map((page) => ({ kind: 'page', page }))]
+  const body = [line, ...pages.map((page, index) => ({ kind: 'page', page, index }))]
     .map((l) => JSON.stringify(l))
     .join('\n') + '\n'
   globalThis.fetch = (async () => new Response(body, { status: 200 })) as typeof fetch

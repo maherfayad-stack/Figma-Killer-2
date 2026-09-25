@@ -35,7 +35,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type Page, type SiteDocument } from '@core/page-tree'
+import { type SiteDocument } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
@@ -54,7 +54,7 @@ import { editOutcomeKey, refusedEditKeys } from './editOutcomes'
 import { elementMovedNodeIds, retryAfterElementMoved, warnElementMoved } from './elementMovedRecovery'
 import { structuralEditNodeIds } from './structuralUndoPlan'
 import { resyncBoardAfterWrite } from './studioBoardResync'
-import { StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
+import { orderStreamedPages, StudioLoadStreamLineSchema, type ComponentSource } from './studioLoadStreamSchema'
 import { commitClassIdsBaseline, commitNodeValuesBaseline, dropNodeValuesBaseline, resetLoadedValues } from './loadedValuesBaseline'
 import { collectClassNameEdits } from './classNameWriteback'
 import { watchOpenPageForCssDestination } from './openPageWatch'
@@ -205,16 +205,18 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // between "server has an answer" and "client has usable bytes".
     type StudioLoadStreamLine = Static<typeof StudioLoadStreamLineSchema>
     let meta: (StudioLoadStreamLine & { kind: 'meta' }) | null = null
-    const pages: Page[] = []
+    const pageLines: Array<StudioLoadStreamLine & { kind: 'page' }> = []
     await ndjsonRequest('/admin/api/studio/load', {
       lineSchema: StudioLoadStreamLineSchema,
       query: { ...(overrideDir ? { dir: overrideDir } : {}), stream: 1 },
       onLine: (line) => {
         if (line.kind === 'meta') meta = line
-        else pages.push(line.page)
+        else pageLines.push(line)
       },
     })
     if (!meta) throw new Error('Studio load stream produced no metadata line.')
+    // P6-B — lines arrive in viewport order; the site keeps page order.
+    const pages = orderStreamedPages(pageLines)
     const {
       dir,
       projectName,
