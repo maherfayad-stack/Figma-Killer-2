@@ -187,7 +187,7 @@ export interface CanvasLayerEditOutcome {
   applied: true
   created?: readonly CreatedJsxLocation[]
   createdIn?: string
-  removed?: DeletedJsxText
+  removed?: readonly DeletedJsxText[]
 }
 
 /**
@@ -226,7 +226,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       return { applied: true, created: locations(built.module.root), createdIn: layerNodeId }
     }
     case 'canvas-layer-delete':
-      return { applied: true, removed: { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false } }
+      return { applied: true, removed: [{ text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false }] }
     case 'canvas-layer-restore':
       writeNewCanvasLayerFile(dir, edit.layerId, edit.text)
       return { applied: true }

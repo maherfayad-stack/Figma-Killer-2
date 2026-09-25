@@ -485,6 +485,7 @@ export async function tryServeStudio(
         prunedImports,
         fingerprints,
         retargeted,
+        listArrays,
       } = await (body.sequence ? applyStudioEditSequenceLocked : applyStudioEditBatchLocked)(dir, edits, body.expect ?? {}, { canvasLayers: 'allow' })
 
       if (skipped > 0) console.error(`[studio] save: ${written} written, ${skipped} skipped`)
@@ -538,6 +539,8 @@ export async function tryServeStudio(
         // P1-D — the edits whose element was re-found after its file changed
         // on disk, and where each was written. Plain workspace-relative ids.
         retargeted,
+        // OD-8 — where each `list-item` edit's array is now (⌘Z of a row delete addresses it there).
+        listArrays,
       })
     } catch (err) {
       return studioRouteFailure(err)

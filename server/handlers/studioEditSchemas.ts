@@ -47,6 +47,7 @@ import {
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
 import { CanvasLayerEditSchemas } from './studioCanvasLayerWriteback'
+import { ListItemEditSchema } from './studioListItemWriteback'
 import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -271,6 +272,8 @@ export const StudioEditSchema = Type.Union([
   DetachEditSchema,
   SwapEditSchema,
   ...StructuralEditSchemas,
+  // OD-8 — a `.map` row's structure, written to its array (`studioListItemWriteback.ts`).
+  ListItemEditSchema,
   ...SlotEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
@@ -369,11 +372,14 @@ export interface StudioEditApplyOutcome {
    */
   relocatedIn?: string
   /**
-   * `store-15` — populated only for a successful `delete`: the exact bytes it
-   * discarded, so `applyStudioEditBatch` can report them keyed by the edit's
-   * own `nodeId` for an undo to reinsert later.
+   * `store-15` — populated for a successful `delete` (and `detach`, a
+   * canvas-layer delete): the exact bytes it discarded, so
+   * `applyStudioEditBatch` can report them keyed by the edit's own `nodeId`
+   * for an undo to reinsert later. A LIST since OD-8: a `list-item` remove
+   * discards several array elements in one edit, reported in ascending index
+   * order.
    */
-  removed?: DeletedJsxText
+  removed?: readonly DeletedJsxText[]
 }
 
 /**
@@ -535,4 +541,12 @@ export interface StudioEditBatchResult {
    * (`PrunedImportsResult.declarations`). Empty when nothing was pruned.
    */
   prunedImports: { file: string; declarations: string[] }[]
+  /**
+   * OD-8 — where each `list-item` edit's array literal is after the WHOLE
+   * batch: `nodeId` as sent, `to` its `rel:line:col` now. The array's own
+   * edits never move its `[`, but a remove's import prune (or any write above
+   * it in the batch) does, and ⌘Z of that remove must address the array where
+   * it now is. Empty when the batch held no `list-item` edit that wrote.
+   */
+  listArrays: { nodeId: string; to: string }[]
 }

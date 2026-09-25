@@ -127,6 +127,13 @@ export const StudioSaveResponseSchema = Type.Object({
    */
   relocatedNodeIds: Type.Optional(Type.Array(Type.String())),
   /**
+   * OD-8 — where each `list-item` edit's array literal is after the batch
+   * (`nodeId` as sent, `to` now): a row delete's import prune can move it,
+   * and its ⌘Z addresses it there. `Type.Optional`, same tolerant-rollout
+   * reasoning as the fields above.
+   */
+  listArrays: Type.Optional(Type.Array(Type.Object({ nodeId: Type.String(), to: Type.String() }))),
+  /**
    * `store-15` — every `delete` edit in the batch that SUCCEEDED, with the
    * exact bytes it discarded, keyed by the edit's own `nodeId` — `delete`'s
    * ⌘Z (`reinsert-source`) is built from these once the resync lands.

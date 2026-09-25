@@ -34,6 +34,7 @@ import {
   wrapNodes,
   isPropPatchWritableToSource,
   isPropWritableToSource,
+  planListRowRemove,
 } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import { subtreeHasOutlet, treeHasOutlet } from '@core/templates'
@@ -53,6 +54,7 @@ import { createMoveSequenceActions } from './moveSequenceActions'
 import { duplicateNodeWithScopedClasses } from './duplicateWithScopedClasses'
 import { resolvePreviewTargets } from './structuralOptimism'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
+import { writeListRowPlan } from './listRowSourceWrites'
 import { captureDeleteOrigin, captureMoveOrigin, tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
 import { createStudioSourceWrites } from './studioSourceWrites'
@@ -277,6 +279,10 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
       // `struct-01` — refuse BEFORE mutating, so a delete the source cannot
       // take never removes the element from the canvas either.
       const tree = readTree()
+      // OD-8 — a `.map` row is deleted from its array, not from the JSX.
+      const rowNode = tree?.nodes[nodeId]
+      const rows = rowNode ? planListRowRemove([rowNode]) : null
+      if (rows) return writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
       const plan = planSourceDelete([tree?.nodes[nodeId]])
       if (!plan.ok) {
         presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {
@@ -476,6 +482,8 @@ export function createNodeActions(helpers: SiteSliceHelpers): NodeActions {
         })
         return
       }
+      // OD-8 — rows reorder their array; the board's re-read moves them.
+      if (plan?.ok && plan.listRow) return writeListRowPlan({ ok: true, ...plan.listRow }, STRUCTURAL_REFUSAL_TITLE.move, { get, set })
       // ERR-16 — the new container is written in another file: a transplant,
       // which leaves the tree alone (the resync brings the element in) and
       // records its own undo, exactly as a cross-frame drop does.
