@@ -120,6 +120,10 @@ docs/superpowers/
 # the inputs (server/handlers/studio/styleCompile.ts). Pure derived output —
 # regenerated on demand, and committing it only produces churn in every diff.
 **/.studio/cache/
+# Agent turn checkpoints (server/handlers/studio/agentCheckpoints.ts) — the
+# pre- and post-image of every file an agent turn wrote, so the user can revert
+# the turn. Per account, machine-local, never source.
+**/.studio/agent-checkpoints/
 # Design references (server/handlers/studio/designReferenceStore.ts) —
 # durable, addressable-by-id copies of a design comp (typically a Figma
 # export) an agent measures a Studio frame against. Unlike every OTHER entry

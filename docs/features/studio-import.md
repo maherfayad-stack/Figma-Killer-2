@@ -828,7 +828,7 @@ How each piece knows:
 | Substitution | `buildSubstitutionEnv` hands each call-site value's origin along (`Substitution.origin`: the literal attribute, or the call site's own `resolvedProps[k].origin` when it passed `{c.key}`), and `toStaticValue` binds the parameter to a literal CARRYING it — so the evaluator's existing rule applies: `{title}` and `{title \|\| 'Untitled'}` keep it, `` {`${title}!`} `` does not |
 | Inlined node | `applySubstitutions` records `textOrigin` (text) or `resolvedProps[k].origin` (props) on every node it fills. A nested call site (`<SectionHeading title={heading}/>` inside `RecipeCard`) gets the same origin on its own `resolvedProps.title`, so two hops still land on the page's literal |
 | Save | `nodeDiffWriteback.ts` writes every origin-backed value as `kind: 'literal'` — `textOrigin`, a flat prop's `resolvedProps` origin, and (new) an instance's `callSiteProps:<name>` origin; and it does so BEFORE the location guard, so a `.map` row's prop that read its own array element writes its own string (it used to pass the store's gate and then be dropped here in silence) |
-| Codemod | `setStringLiteral` spells a JSX ATTRIBUTE literal as JSX does: raw in the attribute's quote, the other quote when the value contains the first, else `{"…"}` (a JSX attribute has no backslash escapes and decodes HTML entities — JSON-escaping it doubled backslashes and ended the attribute at the first `"`) |
+| Codemod | `setStringLiteral` spells a JSX ATTRIBUTE literal as JSX does: raw in the attribute's quote, the other quote when the value contains the first, else a `{"…"}` container in the attribute's quote (`stringSpelling.ts`, shared with `setJsxText`/`setJsxStyle` since P3-E) (a JSX attribute has no backslash escapes and decodes HTML entities — JSON-escaping it doubled backslashes and ended the attribute at the first `"`) |
 | Panel | `SharedComponentNotice` adds "Its text is set outside the component, so a text edit is written to <file:line> instead" — the rest of the element (classes, styles) still writes the component |
 
 Refused, by having no origin: a component's destructure DEFAULT (`eyebrow = 'Featured'` feeds every call site that omits the prop — an edit there would change instances nobody touched), a literal on a call site inside a `.map` row, and any computed value.
@@ -1668,7 +1668,9 @@ themselves: `@core/css-codemods`' `preservingLineEndings` wraps `setDeclaration`
 `removeDeclaration`, `insertRule`, `insertKeyframes`,
 `setDeclarationAtKeyframe` and `removeDeclarationAtKeyframe`, and
 `extractStringsToDictionary` / `translationWrite.ts` detect-and-restore around
-their own in-memory `Project`.
+their own in-memory `Project`. A `locales/*.json` write (WB-32) replaces only an
+existing value's bytes, and re-serializes a created key with the file's own
+indentation, line ending and final newline.
 
 ### Why normalise rather than preserve through
 
@@ -1812,6 +1814,8 @@ here once it is genuinely detectable.
 ---
 
 ## Testing
+
+**Test files are outside `tsc -b`.** `tsconfig.app.json` excludes `src/__tests__` and every `*.test.ts(x)`, and `tsconfig.node.json` excludes `server/**/__tests__` and `server/**/*.test.ts(x)`, so `bun run build` never type-checks a unit test (only `tests/e2e`, which the root `tsconfig.json` references, is checked). A fixture with the wrong shape, or an import of a path another branch deleted, builds green and surfaces only when `bun test` runs that file. Run the tests you touched; the build is not a substitute.
 
 | Area | Test |
 |---|---|

@@ -30,8 +30,8 @@ afterEach(() => {
 const PNG_BYTES = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0])
 const SVG_WITH_SCRIPT = new TextEncoder().encode('<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script><circle r="5"/></svg>')
 
-/** A real, non-blocked public address — TEST-NET-3 (RFC 5737), never routable. */
-const PUBLIC_IP = '203.0.113.10'
+/** A public address (not in any blocked range; TEST-NET ranges are blocked since the F5 follow-up). No test connects to it: `fetchImpl` is stubbed. */
+const PUBLIC_IP = '93.184.216.34'
 
 /** Labelled `application/octet-stream` unless a test says otherwise: the type that makes no claim, so the sniff alone decides. */
 function okResponse(bytes: Uint8Array, headers: Record<string, string> = { 'content-type': 'application/octet-stream' }): Response {
@@ -179,7 +179,7 @@ describe('fetchRemoteAsset — untrusted URL, adversarial', () => {
   it('a network failure is reported plainly, not thrown, and never leaks the raw connection error', async () => {
     const result = await fetchRemoteAsset(dir, 'https://cdn.example.com/x.png', undefined, {
       fetchImpl: async () => {
-        throw new Error('connect ECONNREFUSED 203.0.113.10:443')
+        throw new Error('connect ECONNREFUSED 93.184.216.34:443')
       },
       resolveHostAddresses: publicResolver(),
     })
@@ -187,7 +187,7 @@ describe('fetchRemoteAsset — untrusted URL, adversarial', () => {
     if (result.ok) return
     // The raw connection-error detail (address, port, errno) must never reach the caller.
     expect(result.error).not.toContain('ECONNREFUSED')
-    expect(result.error).not.toContain('203.0.113.10')
+    expect(result.error).not.toContain('93.184.216.34')
   })
 
   it('still refuses a traversal-shaped targetDir — the write side stays containment-checked regardless of transport', async () => {

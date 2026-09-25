@@ -245,7 +245,8 @@ export function applyStudioEditSequence(
   }
 
   // P1-A/P1-D, once, against the files as the caller read them.
-  const identity = resolveEditIdentities(dir, edits, expect)
+  // A throwaway project: each step below is its own batch, with its own (WB-25).
+  const identity = resolveEditIdentities(dir, edits, expect, createProject())
   if (identity.moved.length > 0) {
     return refused(edits, identity.moved.map((entry) => entry.refusal), edits.flatMap((edit) => filesOf(dir, edit)))
   }

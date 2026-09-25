@@ -2,6 +2,7 @@ import { extname, resolve, sep } from 'node:path'
 import { brotliCompressSync, constants as zlibConstants } from 'node:zlib'
 import { readdirSync } from 'node:fs'
 import { SESSION_COOKIE_NAME } from './auth/tokens'
+import { appendContentSecurityPolicy } from './securityHeaders'
 
 const MIME_TYPES: Record<string, string> = {
   '.css': 'text/css; charset=utf-8',
@@ -572,10 +573,15 @@ const INERT_UPLOAD_MIMES = new Set([
  */
 export const INERT_FILE_CSP = "default-src 'none'; sandbox"
 
-/** Stamp {@link INERT_FILE_CSP} and `nosniff` onto a user/project file response's headers. The one copy of that rule. */
+/**
+ * Stamp {@link INERT_FILE_CSP} and `nosniff` onto a user/project file
+ * response's headers. The one copy of that rule. The policy is ADDED, never
+ * set: a policy already on the response stays enforced beside it
+ * (`appendContentSecurityPolicy`).
+ */
 export function setInertFileHeaders(headers: Headers): void {
   headers.set('x-content-type-options', 'nosniff')
-  headers.set('content-security-policy', INERT_FILE_CSP)
+  appendContentSecurityPolicy(headers, INERT_FILE_CSP)
 }
 
 /** {@link setInertFileHeaders} on a copy of `response`. */

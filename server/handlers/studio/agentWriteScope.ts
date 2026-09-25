@@ -51,14 +51,16 @@
  * property being defended is narrower and is the one A10 relies on: *the
  * agent* cannot manufacture its own consent.
  */
+import { readFileSync } from 'node:fs'
 import { isAbsolute, relative, resolve, sep } from 'node:path'
 import {
   hostExecutedWorkspaceFile,
+  isSecretBearingFileName,
   realpathAllowingMissing,
   studioShellWorkspaceFile,
   unwritableWorkspaceSegment,
 } from '@core/page-parser'
-import { hostConfigImportedBy } from './hostConfigImports'
+import { hostConfigImportedBy, tailwindLoadDirectives } from './hostConfigImports'
 
 /**
  * The forbidden segment in `candidate`, if it has one — measured RELATIVE to
@@ -181,5 +183,93 @@ export function agentWriteRefusal(filePath: string, cwd: string): AgentWriteRefu
         + '.tsx, .ts, .css and assets stay yours to write.',
     }
   }
+  // Key material and credential stores (`credentials.json`, `*.key`, `id_rsa`,
+  // `.pgpass`, `*.tfvars`, `.dev.vars`, …). The HTTP file tools refused these
+  // through their own read/write rule while the CLI hook did not, so the two
+  // paths disagreed (review of #251, F2). Checked after `needs-user`, so an env
+  // file keeps that answer. Real path too: a link named `x.ts` onto a key is a key.
+  for (const [base, candidate] of pairs) {
+    const rel = relativeInside(base, candidate)
+    const name = rel?.split(sep).at(-1)
+    if (!name || !isSecretBearingFileName(name)) continue
+    return {
+      code: 'protected-path',
+      message:
+        `Refused: "${filePath}" is a credential file (key material or a credential store), which no agent may read or write. `
+        + 'Tell the user what it should contain and let them write it.',
+    }
+  }
   return null
+}
+
+/**
+ * The CONTENT half of the one agent write gate: why this change to
+ * `filePath` must be refused, or `null`. `before` is what the file holds now
+ * (`null` for a new file), `after` what it would hold.
+ *
+ * A stylesheet is the agent's to write — but in a Tailwind project an
+ * `@plugin "./x.js"` or `@config "./x.js"` directive makes the next build load
+ * that module in Node, and both the stylesheet and a `.js` file beside it are
+ * ordinary agent writes. Two of them would be the zero-click host execution
+ * the path half exists to close (security re-review of #233, R1). So a write
+ * that ADDS such a directive — relative or a package name — needs the user;
+ * one that keeps the directives a file already has, and edits the rest, does
+ * not. What an existing directive loads is protected by the path half
+ * (`hostConfigImports.ts`).
+ *
+ * Every agent text write is judged, not only `.css`: a `<style>` block in
+ * `index.html`, a `.vue` or a `.svelte` file reaches Tailwind through Vite
+ * just the same. And a directive is recognised the way Tailwind reads it —
+ * any wrapping around the path, comments dropped (`parseTailwindLoadDirectives`,
+ * security review of #256, B1) — never only in its quoted spelling.
+ *
+ * Both write paths ask it: the HTTP tools before every write
+ * (`agentWriteSupport.ts`' `checkContent`), and the CLI's `PreToolUse` hook
+ * with the Write or Edit tool's own input ({@link agentToolInputContentRefusal}).
+ */
+export function agentContentRefusal(filePath: string, before: string | null, after: string): AgentWriteRefusal | null {
+  const had = tailwindLoadDirectives(before ?? '')
+  const added = tailwindLoadDirectives(after).filter((directive) => {
+    const index = had.indexOf(directive)
+    if (index === -1) return true
+    had.splice(index, 1)
+    return false
+  })
+  if (added.length === 0) return null
+  return {
+    code: 'needs-user',
+    message:
+      `Not written: this change to "${filePath}" adds ${added.join(', ')}, which makes the next Tailwind build load that module in Node on the user's machine. `
+      + 'Show the user the exact change and ask them to make or approve it, then carry on — the rest of the file stays yours to write.',
+  }
+}
+
+/** The Write/Edit tool input the CLI hands a `PreToolUse` hook — only the fields the content gate reads. */
+export interface AgentToolWriteInput {
+  readonly content?: string
+  readonly old_string?: string
+  readonly new_string?: string
+}
+
+/**
+ * {@link agentContentRefusal} for the CLI hook: a `Write` compares its whole
+ * `content` with the file on disk, an `Edit` its `new_string` with its
+ * `old_string`.
+ */
+export function agentToolInputContentRefusal(filePath: string, cwd: string, input: AgentToolWriteInput | undefined): AgentWriteRefusal | null {
+  if (!input) return null
+  if (typeof input.content === 'string') {
+    return agentContentRefusal(filePath, currentTextOrNull(isAbsolute(filePath) ? filePath : resolve(cwd, filePath)), input.content)
+  }
+  if (typeof input.new_string === 'string') return agentContentRefusal(filePath, input.old_string ?? '', input.new_string)
+  return null
+}
+
+/** The file's text, or `null` when there is none to read (a new file). */
+function currentTextOrNull(abs: string): string | null {
+  try {
+    return readFileSync(abs, 'utf8')
+  } catch {
+    return null
+  }
 }

@@ -161,6 +161,14 @@ const InsertEditSchema = Type.Object({
   designSystemImport: Type.Optional(DesignSystemImportSchema),
   children: Type.Optional(Type.Union([Type.String(), Type.Array(InsertNodeSchema)])),
   props: Type.Optional(InsertPropsSchema),
+  /**
+   * P5-B (IMG-2) — more new elements written immediately AFTER this one, in
+   * order, in the same write: dropping three images is ONE insert of three
+   * siblings, one resync and one undo step, not three queued inserts. Each
+   * entry is the same node shape `children` carries. `createdNodeIds` reports
+   * every one of them, in order.
+   */
+  siblings: Type.Optional(Type.Array(InsertNodeSchema, { minItems: 1 })),
 })
 
 /**
@@ -391,13 +399,13 @@ export function resolveDesignSystemImports<TProps>(
  * Applied, or refused with a reason the caller turns into a
  * `StudioEditRefusalError`.
  *
- * `created` (`store-13`) is the tag-name `line:col` of the element this write
- * brought into existence — an `insert`'s new child, a `duplicate`'s copy, a
- * `wrap`/`group`'s container. Absent for the kinds that create nothing
- * (`move`, `delete`, `reparent`, `ungroup`), and `null` when the codemod wrote
- * but could not confirm the position against the re-parsed file. The caller
- * mints the node id from it; see `createdJsxLocation.ts` for why it is never
- * guessed at.
+ * `created` (`store-13`) is the tag-name `line:col` of every element this
+ * write brought into existence, in source order — an `insert`'s new child (or
+ * its run of siblings, P5-B IMG-2), a `duplicate`'s copy, a `wrap`/`group`'s
+ * container. Absent for the kinds that create nothing (`move`, `delete`,
+ * `reparent`, `ungroup`), and empty when the codemod wrote but could not
+ * confirm the position against the re-parsed file. The caller mints the node
+ * ids from it; see `createdJsxLocation.ts` for why it is never guessed at.
  *
  * `relocated` (`store-14`) is the same coordinate for the elements this write
  * MOVED rather than made — a `move`/`reparent`'s element in its new slot, an
@@ -410,8 +418,13 @@ export function resolveDesignSystemImports<TProps>(
  * the batch result for an undo to reinsert later.
  */
 export type StructuralEditOutcome =
-  | { ok: true; created?: CreatedJsxLocation | null; relocated?: readonly CreatedJsxLocation[]; removed?: DeletedJsxText }
+  | { ok: true; created?: readonly CreatedJsxLocation[]; relocated?: readonly CreatedJsxLocation[]; removed?: DeletedJsxText }
   | { ok: false; reason: string; message: string }
+
+/** A single-element codemod's `created` in the outcome's list shape: its one location, or nothing when it could not confirm one. */
+function createdList(created: CreatedJsxLocation | null): CreatedJsxLocation[] {
+  return created ? [created] : []
+}
 
 /** The structural edit kinds, for the caller's `kind`-based branching. */
 export function isStructuralEditKind(kind: string): kind is StructuralEdit['kind'] {
@@ -484,8 +497,8 @@ export function applyTransplantEdit(
   // by deleting what it made, a move by transplanting the element home — and
   // `resolveStructuralInverse` reads exactly one of them per template.
   return edit.copy
-    ? { ok: true, created: result.created }
-    : { ok: true, relocated: result.created ? [result.created] : [] }
+    ? { ok: true, created: createdList(result.created) }
+    : { ok: true, relocated: createdList(result.created) }
 }
 
 /**
@@ -559,7 +572,7 @@ export function applyStructuralEdit(
     }
     case 'reinsert-source': {
       const result = reinsertJsxSource({ ...loc, index: edit.index, text: edit.text, imports: edit.imports ?? [] })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'insert': {
       // `importSpecifier`/`children` are spread conditionally rather than
@@ -572,6 +585,10 @@ export function applyStructuralEdit(
         edit.children === undefined || typeof edit.children === 'string'
           ? edit.children
           : resolveDesignSystemImports(edit.children, targetRel)
+      // P5-B (IMG-2) — the run's other elements resolve their design-system
+      // imports against the same file, through the same resolver `children`
+      // uses, because they are written into it in the same splice.
+      const siblings = edit.siblings ? resolveDesignSystemImports(edit.siblings, targetRel) : undefined
       const result = insertJsxElement({
         ...loc,
         ...(anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
@@ -579,6 +596,7 @@ export function applyStructuralEdit(
         props: edit.props,
         ...(importSpecifier === undefined ? {} : { importSpecifier }),
         ...(children === undefined ? {} : { children }),
+        ...(siblings === undefined ? {} : { siblings }),
       })
       return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
     }
@@ -602,7 +620,7 @@ export function applyStructuralEdit(
         ...(destination ? { destinationLine: destination.line, destinationCol: destination.col } : {}),
         ...(destination && anchor ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position } : {}),
       })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'wrap': {
       const wrapperSpecifier = resolveNodeImport(edit, targetRel)
@@ -611,7 +629,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'group': {
       // The run's REST arrive as their own decoded locations (`siblings`) —
@@ -634,7 +652,7 @@ export function applyStructuralEdit(
         name: edit.name,
         ...(wrapperSpecifier === undefined ? {} : { importSpecifier: wrapperSpecifier }),
       })
-      return result.ok ? { ok: true, created: result.created } : { ok: false, ...result.refusal }
+      return result.ok ? { ok: true, created: createdList(result.created) } : { ok: false, ...result.refusal }
     }
     case 'ungroup': {
       const result = unwrapJsxElement(loc)

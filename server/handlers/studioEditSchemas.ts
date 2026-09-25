@@ -332,15 +332,17 @@ export interface StudioEditApplyOutcome {
   promoteDetail?: StudioPromoteComponentDetail
   addSlotPropDetail?: StudioAddSlotPropDetail
   /**
-   * `store-13` — the tag-name `line:col` of the element this edit brought into
-   * existence (`insert`/`duplicate`/`wrap`/`group`), measured against the file
-   * as it stands the moment that edit finished. Absent for every kind that
-   * creates nothing, and `null` when the codemod wrote but could not confirm
-   * the position. A LOCATION, not a node id: minting the id needs the
-   * workspace-relative path and the batch's final line count, and both are
-   * `applyStudioEditBatch`'s to know — see `StudioEditBatchResult.createdNodeIds`.
+   * `store-13` — the tag-name `line:col` of every element this edit brought
+   * into existence (`insert`/`duplicate`/`wrap`/`group`), in source order,
+   * measured against the file as it stands the moment that edit finished. A
+   * LIST because one `insert` can write a run of siblings (P5-B IMG-2: three
+   * dropped images are one edit). Absent for every kind that creates nothing,
+   * and EMPTY when the codemod wrote but could not confirm the positions. A
+   * LOCATION, not a node id: minting the id needs the workspace-relative path
+   * and the batch's final line count, and both are `applyStudioEditBatch`'s
+   * to know — see `StudioEditBatchResult.createdNodeIds`.
    */
-  created?: CreatedJsxLocation | null
+  created?: readonly CreatedJsxLocation[]
   /**
    * Which node id's FILE `created` is measured against, when that is not this
    * edit's own. Only `transplant` (D2 G3) sets it: the element it creates

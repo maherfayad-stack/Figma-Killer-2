@@ -12,10 +12,10 @@
  * asset/detach/swap/slot commits next door post one edit and read one answer;
  * they share this module's wire shape, not its reload contract.
  *
- * `commitStructural` (`commitStructural.ts`) is the shared body, and its doc
- * comment is the authoritative account of the reload gate — read that before
- * changing when a commit reloads. What a landed write does to the board is
- * `studioBoardResync.ts`'s call, not this module's.
+ * `commitStructural` (`studioStructuralCommitEngine.ts`) is the shared body,
+ * and its doc comment is the authoritative account of the reload gate — read
+ * that before changing when a commit reloads. What a landed write does to the
+ * board is `studioBoardResync.ts`'s call, not this module's.
  *
  * Two neighbours own the halves that used to live here:
  *  - `structuralCommitQueue.ts` — only one of these is on the wire at a time,
@@ -26,7 +26,7 @@
  */
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import { commitStructural, type StructuralCommitOptions } from './commitStructural'
+import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
 import { dissolveWrapperTemplate, type StructuralEditPayload, type StructuralWriteOutcome } from './structuralUndoPlan'
 import type { InsertPropValue } from './studioSaveRequests'
 
@@ -434,6 +434,15 @@ export async function commitStudioInsert(insert: {
   props: Record<string, InsertPropValue>
   /** Literal text written as the element's only child, e.g. `<p>Heading</p>`. */
   children?: string
+  /**
+   * P5-B (IMG-2) — more intrinsic elements written right AFTER this one, in
+   * order, in the SAME write (`InsertEditSchema.siblings`): three dropped
+   * images are one insert, one resync and one undo step, whose inverse deletes
+   * all three (`delete-created` reads every created id).
+   */
+  siblings?: readonly { name: string; props: Record<string, InsertPropValue> }[]
+  /** What ⌘Z names this step. Defaults to `Add <name>`. */
+  undoLabel?: string
   optimistic?: OptimisticPreviewHandle
 }): Promise<void> {
   await commitStructural(
@@ -450,14 +459,35 @@ export async function commitStudioInsert(insert: {
         ...(insert.designSystemImport === undefined ? {} : { designSystemImport: insert.designSystemImport }),
         ...(insert.children === undefined ? {} : { children: insert.children }),
         props: insert.props,
+        ...(insert.siblings && insert.siblings.length > 0 ? { siblings: insert.siblings.map((node) => ({ ...node })) } : {}),
       },
     ],
     'Add refused',
     {
-      undo: { label: `Add ${insert.name}`, template: { kind: 'delete-created' } },
+      undo: { label: insert.undoLabel ?? `Add ${insert.name}`, template: { kind: 'delete-created' } },
       ...(insert.optimistic ? { optimistic: insert.optimistic } : {}),
     },
   )
+}
+
+/**
+ * P5-B (IMG-3) — an image dropped onto an IMPORT-BOUND `<img src={hero}>`:
+ * the import is repointed at the newly landed file (`kind: 'asset'`,
+ * `setImportSpecifier`), never the JSX, so the binding survives.
+ *
+ * Through the structural commit rather than `saveStudioAssetEdit` for one
+ * reason: undo. The inverse is known now — point the import back at the file
+ * it named before — so the gesture records it (`known`) and ⌘Z posts it
+ * through the same route. `originNodeId` is `PageNode.assetOrigin`'s own
+ * `rel:line:col` (the import's specifier literal), as for every asset edit.
+ */
+export async function commitStudioAssetReplace(originNodeId: string, assetPath: string, previousAssetPath: string): Promise<void> {
+  await commitStructural([{ kind: 'asset', nodeId: originNodeId, assetPath }], 'Replace image refused', {
+    undo: {
+      label: 'Replace image',
+      template: { kind: 'known', inverse: [{ kind: 'asset', nodeId: originNodeId, assetPath: previousAssetPath }] },
+    },
+  })
 }
 
 /**

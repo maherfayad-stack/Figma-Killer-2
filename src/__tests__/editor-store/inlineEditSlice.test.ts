@@ -2,7 +2,7 @@
  * Inline text edit slice tests — session lifecycle, live-commit coalescing
  * (one undo entry per burst), Escape-cancel via single undo, and start
  * guards (non-editable modules, link-with-children, non-string props).
- * Spec: docs/superpowers/specs/2026-06-10-inline-text-editing-design.md
+ * Contract: docs/agent-refs/canvas-internals.md → "Inline text editing"
  */
 import { describe, it, expect, beforeEach, spyOn } from 'bun:test'
 import { useEditorStore } from '@site/store/store'

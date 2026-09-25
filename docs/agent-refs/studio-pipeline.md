@@ -257,6 +257,20 @@ anything pending first (so those edits are re-found server-side), then calls
 `resyncBoardAfterWrite(files)` — the same narrow-or-full re-read Studio's own
 writes use, which P1-B's follower then maps the selection through.
 
+Limits of the watcher, each by construction:
+
+- **No open tab, no watcher.** `subscribeProjectChanges` starts the one watcher
+  per project for its first subscriber (`server/ai/mcp/outsideEditReload.ts`, fed
+  by the editor bridge stream) and closes it when the last one leaves.
+- **An event is a hint, never a file list.** `fs.watch` on Windows drops most of
+  a burst and names directories; the watcher diffs a `size:mtime` snapshot to
+  learn what changed.
+- **A Studio writer that does not hold the project write lock reads as
+  `outside`** (for example `translationWrite.ts`, `i18nScaffold.ts`,
+  `pageDelete.ts`) and costs one redundant re-read.
+- **The remembered texts behind re-location are per process.** After a server
+  restart the first stale edit refuses `element-moved` as before.
+
 ---
 
 ## The value evaluator — tiers are the boundary
@@ -316,10 +330,14 @@ second page to read a dictionary never records the module behind it.
 | **`tag` has its own edit kind + codemod** | Routing it through `setJsxProp` added a literal `tag="section"` attribute and left the element a `<div>` — 140 fake controls on one corpus |
 | **Path containment in the decoder** | `rel` arrives from the client inside `nodeId`; the save route builds `join(dir, rel)` |
 | **`loadSite` keeps the currently-open page** when the incoming site still has its id | Resetting to home mid-edit reads as the canvas moving on its own |
+| **A re-read rebases unsaved edits; it never discards them** (ERR-9, `store/slices/site/unsavedEditRebase.ts`) | Both reload paths, whoever wrote the file (the user's own save or structural commit, an agent, an outside editor). The re-read files the save-diff baseline it replaced under its own `pages` array (`loadedValuesBaseline.ts`'s `baselineBeforeRead`); the store diffs its pages against it, aligns the pre-edit tree with the fresh one, and writes each unsaved value onto the element's new node — local wins, per node all-or-nothing, never over a value that is now code or a literal that moved/changed. The page stays marked, autosave writes the carried edits. It used to vanish with a toast blaming "an agent" |
 | **Two instances' `style`/`class` edits MERGE** (WB-7, `studioEditMerge.ts`) | Every instance of a shared component writes to one `line:col`; keeping the last dropped the other instance's declarations/tokens while `written` reported both. A genuine conflict (one prop, two values) is still last-wins, and a merged edit's refusal is reported for every instance behind it |
 | **A file that does not parse is never written** (WB-24, `studioSyntaxGuard.ts`) | TypeScript recovers a tree from a broken file; a codemod would locate and splice into a guess. Refused as `syntax-error`, naming the line; the load flags the page in `warnings` |
 | **A `literal` edit is shared** | A dictionary key is shared by design; the resync narrows to the routes that recorded the origin file (WB-2) |
 | **A write keeps the file's line endings** | The user's repo may be a CRLF checkout (Git's Windows default). `EolPreservingFileSystem` (`@core/page-parser`) hands ts-morph LF-only text and re-applies the file's own ending on write; the CSS codemods do the same at their text boundary. Formatting-preserving includes `\r\n` |
+| **A value write changes the value and nothing around it** (WB-9/WB-10, `ast-codemods/stringSpelling.ts`) | `setJsxText` writes raw JSX text when raw text reads back as exactly the value (no `{}<>`, no decodable `&name;`), keeps the whitespace around it byte-for-byte, and re-wraps a value over the same source lines a multi-line text had — so a copy edit shifts no node id and needs no re-read. A `{"…"}` container stays one, in its own quote. `setJsxStyle` writes in the object's own quote (the file's, via its first import, for a new object) and appends a key in the object's layout — same line when one-line, own line with the siblings' indent and trailing-comma habit when multi-line. `setJsxProp` keeps an attribute's own quote and uses a container only for what raw attribute text cannot say (shared `jsxAttributeSpelling`). Every `{"…"}` it used to write turned a one-word edit into a diff nobody would write by hand, and a collapsed multi-line text forced a whole-page resync |
+| **One ts-morph project per batch** (WB-25) | `applyStudioEditBatch` opens each file once and hands the VALUE codemods, the identity guard and `fingerprintAfterWrite` the same `Project`; `syncProjectWithDisk` refreshes it from disk and forgets wrapped nodes before every edit (so a codemod that refused halfway through its tree leaves nothing for the next edit to save). `findJsxElementAtLocation` is position-indexed (`getDescendantAtPos`, then walk up) instead of walking every descendant. 40 prop edits to a 1,500-element page, under the write lock: ~17 s → ~1.4 s on the machine it was measured on (audit: 3.8 s). Structural kinds keep their own projects |
+| **A locale JSON keeps its formatting** (WB-32, `translationWrite.ts`) | An existing string value is replaced by its byte span only; a created key re-serializes with the file's own indentation, line ending and final newline |
 
 Codemods live in `src/core/ast-codemods/` and preserve the file's quote style
 and formatting. Edits apply **bottom-to-top** so earlier writes don't shift
@@ -546,7 +564,7 @@ reformats an untouched sibling is a defect.
 
 **The four that CREATE also say where (`store-13`).** `insertJsxElement`,
 `duplicateJsxElement`, `wrapJsxElement` and `wrapJsxElements` return
-`created: { line, col } | null` alongside `ok: true` — the new element's own
+`created: { line, col } | null` alongside `ok: true` (`insertJsxElement` returns a LIST, `created: { line, col }[]` — P5-B IMG-2's `siblings` write a RUN of new elements after the first in the same splice, and every one is reported in order, all or none) — the new element's own
 tag-name position, derived from the byte range they spliced
 (`createdJsxLocation.ts`) and then VERIFIED by re-locating an element there in
 the re-parsed file. `null` means "written, but the position could not be

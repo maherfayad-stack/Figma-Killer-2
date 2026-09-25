@@ -473,23 +473,6 @@ export const StudioPageDiagnosticsInputSchema = Type.Object({
 })
 
 // ---------------------------------------------------------------------------
-// studio_upload_asset (WS-12 §6.1) — browser-bridged: the browser already
-// knows which project is open and POSTs to the EXISTING
-// POST /admin/api/studio/asset-upload endpoint (assetUpload.ts) as real
-// multipart form data — this wraps that endpoint, it does not reimplement
-// its validation (magic-number sniffing, containment, collision-safe naming).
-// ---------------------------------------------------------------------------
-
-export const StudioUploadAssetInputSchema = Type.Object({
-  imageBase64: Type.String({ minLength: 1, description: 'Base64-encoded image bytes to land into the project as a new file.' }),
-  mimeType: Type.Union(
-    [Type.Literal('image/png'), Type.Literal('image/jpeg'), Type.Literal('image/webp')],
-    { description: 'Declared type — the server sniffs the actual bytes and refuses a mismatch, this is only a hint.' },
-  ),
-  targetDir: Type.Optional(Type.String({ description: 'Workspace-relative directory to write into. Defaults to src/assets. Pass the directory an existing import already points at when replacing that import\'s target.' })),
-})
-
-// ---------------------------------------------------------------------------
 // studio_list_components / studio_find_component — the design-system
 // COMPONENT catalog, headless. Unlike every schema above, both tools are
 // `execution: 'server'` with no live-store dependency at all (see
@@ -572,5 +555,23 @@ export const StudioFetchRemoteAssetInputSchema = Type.Object({
   targetDir: Type.Optional(
     Type.String({ maxLength: 1024, description: 'Project-relative folder to land the image in. Defaults to src/assets. Use public/... when the image must be referenced by URL (a CSS url() or a literal src) and survive a production build. Refused where an agent may not write (.studio, .git, prototype/).' }),
   ),
+})
+
+// ---------------------------------------------------------------------------
+// studio_upload_asset (WS-12 §6.1) — a server tool
+// (`server/ai/mcp/tools/studio/uploadAssetTool.ts`): the bytes land through
+// `landAgentAsset`, the same agent write gate, project lock and landing
+// contract as studio_fetch_remote_asset (review of #248, F6).
+// ---------------------------------------------------------------------------
+
+export const StudioUploadAssetInputSchema = Type.Object({
+  dir: Type.Optional(Type.String({ description: DIR_INPUT_DESCRIPTION })),
+  // 25 MB of bytes is 34,952,534 base64 characters; the handler re-checks the decoded size.
+  imageBase64: Type.String({ minLength: 1, maxLength: 35_000_000, description: 'Base64-encoded image bytes to land into the project as a new file.' }),
+  mimeType: Type.Union(
+    [Type.Literal('image/png'), Type.Literal('image/jpeg'), Type.Literal('image/webp')],
+    { description: 'Declared type. The bytes are sniffed and must match it; a mismatch is refused and nothing is written.' },
+  ),
+  targetDir: Type.Optional(Type.String({ maxLength: 1024, description: 'Project-relative folder to land the image in. Defaults to src/assets. Pass the folder an existing import already points at when replacing that import\'s target. Refused where an agent may not write (.studio, .git, prototype/).' })),
 })
 

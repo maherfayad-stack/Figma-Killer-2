@@ -51,7 +51,7 @@
  */
 import { dirname, join, resolve } from 'node:path'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES } from '@core/page-parser'
+import { WORKSPACE_MAX_FILE_BYTES, WORKSPACE_MAX_FILES, excludedWorkspaceSegment } from '@core/page-parser'
 import { toArrayBuffer } from '../../binary'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
@@ -99,7 +99,9 @@ export function isSafeRelPath(relPath: string): boolean {
       segment !== '.' &&
       segment !== '..' &&
       !segment.includes(':') &&
-      !EXCLUDED_WORKSPACE_DIR_NAMES.has(segment),
+      // Case-folded, trailing dots dropped: an entry `.GIT/hooks/…` lands in
+      // `.git/hooks/` on Windows and macOS.
+      excludedWorkspaceSegment(segment) === null,
   )
 }
 

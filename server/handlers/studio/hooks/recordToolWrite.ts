@@ -20,9 +20,16 @@
  * variable the CLI inherited from `claudeCli.ts` and passes down to every
  * hook it spawns — see `agentUserScope.ts` for why the account cannot come
  * from the generated hook command instead.
+ *
+ * It also records the write's POST-image into the turn's checkpoint
+ * (`agentCheckpoints.ts`, AI-7) — what the agent left, which a later revert
+ * compares the file against before it restores anything. The pre-image was
+ * taken by the `PreToolUse` hook (`denyControlPlaneWrite.ts`).
  */
+import { resolve } from 'node:path'
 import { appendTurnWrite } from '../turnWriteLog'
 import { studioAgentUserKeyFromEnv } from '../agentUserScope'
+import { conversationCheckpointKeyFromEnv, recordAgentPostImage } from '../agentCheckpoints'
 
 interface PostToolUseInput {
   readonly tool_input?: { readonly file_path?: string }
@@ -36,7 +43,10 @@ async function main(): Promise<void> {
     const filePath = input.tool_input?.file_path
     const dir = input.cwd
     if (!filePath || !dir) return
-    appendTurnWrite(dir, studioAgentUserKeyFromEnv(), filePath)
+    const userKey = studioAgentUserKeyFromEnv()
+    appendTurnWrite(dir, userKey, filePath)
+    const conversationKey = conversationCheckpointKeyFromEnv()
+    if (conversationKey !== null) recordAgentPostImage(dir, userKey, conversationKey, resolve(dir, filePath))
   } catch (err) {
     console.error('[studio/hooks/recordToolWrite]', err)
   }

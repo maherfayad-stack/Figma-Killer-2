@@ -1,8 +1,13 @@
 /**
- * commitStructural — the shared body of every structural commit: flush, post,
- * settle or take back, re-sync. Split out of `studioStructuralCommits.ts`
- * (P3-D) at the module-size ceiling, along the seam that file already drew:
- * that one says WHAT each gesture posts, this one says what posting means.
+ * studioStructuralCommitEngine — the one body every structural commit runs
+ * (`commitStructural`): flush the autosave, post the batch, report what the
+ * source refused, settle or roll back what the gesture already did, and re-sync
+ * the board with disk only when a write landed.
+ *
+ * Split out of `studioStructuralCommits.ts` (P5-B, at the module-size gate's
+ * prompting) along the line that module's own doc already drew: the VERBS
+ * (move, insert, wrap, …) say WHAT to post and what its ⌘Z is; this engine is
+ * HOW every one of them is posted. One reload contract, one refusal channel.
  */
 import { pushToast } from '@ui/components/Toast'
 import { flushEditorSave } from '@site/hooks/editorSaveRef'
@@ -269,4 +274,3 @@ function resolvePendingHistory(
     },
   }
 }
-

@@ -22,9 +22,10 @@ describe('self-host docker config', () => {
   it('defines a production Docker image that builds assets before runtime startup', () => {
     const dockerfile = readFileSync('Dockerfile', 'utf8')
 
-    expect(dockerfile).toContain('FROM oven/bun:1.3.11 AS build')
+    // The tag itself is gated by architecture/bun-version-pinned.test.ts (it must equal engines.bun).
+    expect(dockerfile).toMatch(/^FROM oven\/bun:\S+ AS build$/m)
     expect(dockerfile).toContain('RUN bun run build')
-    expect(dockerfile).toContain('FROM oven/bun:1.3.11 AS runtime')
+    expect(dockerfile).toMatch(/^FROM oven\/bun:\S+ AS runtime$/m)
     expect(dockerfile).toContain('ARG STUDIO_VERSION=dev')
     expect(dockerfile).toContain('LABEL org.opencontainers.image.version="${STUDIO_VERSION}"')
     expect(dockerfile).toContain('CMD ["bun", "run", "server/index.ts"]')

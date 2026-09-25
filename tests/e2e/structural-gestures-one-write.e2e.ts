@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page, type Request } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   frameForPage,
@@ -127,8 +127,8 @@ async function openHome(page: Page) {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = await frameForPage(page, canvasRoot, 'home')
   await panIntoView(page, canvasRoot, frame)
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-  return { canvasRoot, frame, content: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
+  await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+  return { canvasRoot, frame, content: canvasContentFrame(frame) }
 }
 
 test.describe('P3-D — structural refusals become writes', () => {
@@ -180,7 +180,7 @@ test.describe('P3-D — structural refusals become writes', () => {
 
     // The paste target is picked on the Home frame itself: that activates Home.
     const home = await frameForPage(page, canvasRoot, 'home')
-    const d = home.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR).locator(`[data-node-id="${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}"]`).first()
+    const d = canvasContentFrame(home).locator(`[data-node-id="${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}"]`).first()
     await panIntoView(page, canvasRoot, d, 80)
     await clickInFrame(page, d)
     await expect(tree.getByTestId(`dom-tree-item-${sourceNodeId(HOME_PAGE, HOME, 'p', 4)}`)).toHaveAttribute('aria-selected', 'true')

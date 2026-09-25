@@ -47,6 +47,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import type { EditorStore } from '@site/store/types'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
+  addressesSourceLiteral,
   anchorTransplantBack,
   fileOfNodeId,
   structuralEditNodeIds,
@@ -215,6 +216,7 @@ function unresolvedNodeIds(
 ): string[] {
   const missing: string[] = []
   for (const edit of edits) {
+    if (addressesSourceLiteral(edit)) continue
     for (const id of structuralEditNodeIds(edit)) {
       if (!state._nodeIdToPageIds.has(id) && !missing.includes(id)) missing.push(id)
     }
