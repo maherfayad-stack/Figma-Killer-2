@@ -188,9 +188,14 @@ test.describe('SVG-9 — vector edit mode and the pen, measured', () => {
       // Chrome is screen-sized: select an anchor and measure its square.
       const first = (await overlayAnchors(page)).overlay[1]!
       await page.mouse.click(first.x, first.y)
-      const active = await page.locator('[data-vector-active]').boundingBox()
-      expect(active, `no active anchor at ${pct}%`).not.toBeNull()
-      expect(Math.abs(active!.width - 8)).toBeLessThanOrEqual(1.5)
+      // The element's own client rect: Playwright's `boundingBox()` reports a
+      // different box for an SVG path inside a nested svg viewport.
+      const activeWidth = await page.evaluate(() => {
+        const el = document.querySelector('[data-vector-active]')
+        return el ? el.getBoundingClientRect().width : null
+      })
+      expect(activeWidth, `no active anchor at ${pct}%`).not.toBeNull()
+      expect(Math.abs(activeWidth! - 8), `anchor square at ${pct}%`).toBeLessThanOrEqual(1.5)
     }
   })
 
@@ -273,9 +278,11 @@ test.describe('SVG-9 — vector edit mode and the pen, measured', () => {
     const saves = savesOn(page)
     const spacer = canvasContentFrame(frame).locator('.spacer').first()
     await expect(spacer).toBeVisible({ timeout: 30_000 })
+    await panIntoView(page, canvasRoot, spacer)
     const box = (await spacer.boundingBox())!
     await canvasRoot.focus()
     await page.keyboard.press('p')
+    await expect(page.locator('[data-canvas-draw-layer="pen"]')).toBeVisible()
     await page.mouse.click(box.x + 20, box.y + 10)
     await page.mouse.click(box.x + 120, box.y + 10)
     await page.mouse.click(box.x + 120, box.y + 30)

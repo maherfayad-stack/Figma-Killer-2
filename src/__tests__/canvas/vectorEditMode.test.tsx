@@ -19,6 +19,8 @@ import { useEditorStore } from '@site/store/store'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { BoardVectorLayer } from '@site/canvas/BoardVectorLayer/BoardVectorLayer'
 import { enterVectorEdit, exitVectorEdit, getVectorEditTarget } from '@site/canvas/BoardVectorLayer/vectorEditState'
+import { PortalFrameAdapter } from '@site/canvas/frameAdapter/PortalFrameAdapter'
+import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { makeNode, makePage, makeSite } from '../fixtures'
 
 const HOST = 'src/Icon.tsx:3:6'
@@ -73,7 +75,10 @@ function mountFrame(): SVGPathElement {
   const path = doc.querySelector('path') as unknown as SVGPathElement
   // viewBox scale 2, offset (10, 20) inside the frame.
   ;(path as unknown as { getScreenCTM: () => unknown }).getScreenCTM = () => ({ a: 2, b: 0, c: 0, d: 2, e: 10, f: 20 })
+  // The portal adapter is how the canvas reaches a frame's document (never a raw reach-in).
+  registerFrameAdapter(iframe, new PortalFrameAdapter(doc), 'desktop')
   cleanupDom = () => {
+    unregisterFrameAdapter(iframe)
     origin.remove()
     frame.remove()
   }

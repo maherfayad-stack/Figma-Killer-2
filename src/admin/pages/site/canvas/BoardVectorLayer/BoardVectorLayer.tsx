@@ -42,6 +42,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { moveAnchor, moveHandle, serializePathModel, type PathModel, type Point } from '@core/vector'
 import { pushToast } from '@ui/components/Toast'
+import { cn } from '@ui/cn'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
 import { commitSvgPartAttributes } from '@site/studio/svgPartCommits'
 import { beginCanvasGesture, endCanvasGesture } from '../canvasGesture'
@@ -105,6 +106,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   const [selection, setSelection] = useState<VectorSelection | null>(null)
 
   const partsRef = useRef<VectorPart[]>([])
+  const svgRef = useRef<SVGSVGElement | null>(null)
   const outlineRefs = useRef<(SVGPathElement | null)[]>([])
   const anchorsRef = useRef<SVGPathElement | null>(null)
   const activeRef = useRef<SVGPathElement | null>(null)
@@ -184,7 +186,36 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     anchorsRef.current?.setAttribute('d', squaresPathData(anchors.map((a) => a.board), half(ANCHOR_HALF_PX)))
     const hits = [...anchors.map((a) => a.board), ...selectedHandles().map((h) => h.board)]
     hitRef.current?.setAttribute('d', squaresPathData(hits, half(HIT_HALF_PX)))
+    fitToPoints(hits)
     paintActive()
+  }
+
+  /**
+   * Size the svg's own box to the hit targets (board units, `viewBox` equal to
+   * the box, so a coordinate is still a board unit). Content outside an svg's
+   * box PAINTS with `overflow: visible` but is not reliably hit-testable, and
+   * the hit targets are what must be.
+   */
+  const fitToPoints = (points: readonly Point[]) => {
+    const svg = svgRef.current
+    if (!svg || points.length === 0) return
+    const pad = half(HIT_HALF_PX) * 2
+    let minX = Infinity
+    let minY = Infinity
+    let maxX = -Infinity
+    let maxY = -Infinity
+    for (const p of points) {
+      minX = Math.min(minX, p.x)
+      minY = Math.min(minY, p.y)
+      maxX = Math.max(maxX, p.x)
+      maxY = Math.max(maxY, p.y)
+    }
+    const box = { x: minX - pad, y: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 }
+    svg.setAttribute('viewBox', `${box.x} ${box.y} ${box.width} ${box.height}`)
+    svg.style.setProperty('--vector-x', `${box.x}px`)
+    svg.style.setProperty('--vector-y', `${box.y}px`)
+    svg.style.setProperty('--vector-w', `${box.width}px`)
+    svg.style.setProperty('--vector-h', `${box.height}px`)
   }
   const paintRef = useRef(paint)
   // Refs are synced after render (never during it), then everything is painted.
@@ -338,7 +369,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   })
 
   return (
-    <svg className={styles.layer} data-board-vector-layer="edit" aria-hidden="true">
+    <svg ref={svgRef} className={cn(styles.layer, styles.fitted)} data-board-vector-layer="edit" aria-hidden="true">
       {partKeys.map((key, index) => (
         <path
           key={key}

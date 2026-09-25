@@ -20,6 +20,20 @@
     pointer-events: none;
 }
 
+/* Edit mode: the box is fitted to the hit targets (`BoardVectorLayer`'s
+   `fitToPoints`), with a viewBox equal to it, so coordinates stay board units
+   AND the targets sit inside the box, where hit testing is reliable. */
+.fitted {
+    --vector-x: 0px;
+    --vector-y: 0px;
+    --vector-w: 1px;
+    --vector-h: 1px;
+    left: var(--vector-x);
+    top: var(--vector-y);
+    width: var(--vector-w);
+    height: var(--vector-h);
+}
+
 .outline,
 .penPath {
     fill: none;

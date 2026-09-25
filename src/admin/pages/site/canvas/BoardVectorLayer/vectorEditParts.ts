@@ -28,6 +28,7 @@ import {
   type Point,
 } from '@core/vector'
 import { findBoardOrigin } from '../BoardCanvasLayer/canvasLayerGeometry'
+import { resolvePortalDocument } from '../frameAdapter/resolvePortalDocument'
 import { affineScale, composeAffine, invertAffine, translation, type Affine } from './vectorGeometry'
 
 /** Past this many anchors the canvas is the wrong editor — the refusal says "open it in code". */
@@ -72,13 +73,9 @@ function frameIframes(frameId: string | null): HTMLIFrameElement[] {
 export function findVectorHost(frameId: string | null, hostNodeId: string): { iframe: HTMLIFrameElement; host: Element } | null {
   const selector = `[data-node-id="${escapeAttribute(hostNodeId)}"]`
   for (const iframe of frameIframes(frameId)) {
-    let doc: Document | null = null
-    try {
-      doc = iframe.contentDocument
-    } catch (_err) {
-      doc = null // cross-origin: a live frame's document is not ours to read
-    }
-    const host = doc?.querySelector(selector)
+    // Portal frames only: a live bridge frame's document is not ours to read,
+    // and `resolvePortalDocument` is the one sanctioned reach-in.
+    const host = resolvePortalDocument(iframe)?.querySelector(selector)
     if (host) return { iframe, host }
   }
   return null
