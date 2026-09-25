@@ -11,7 +11,8 @@
  * same checklist and waits for the answer: approved, or revise (with the
  * steps the user struck, or a request to keep planning). Until a plan is
  * approved in the turn, the tool loop refuses every `sideEffects: 'write'`
- * call with `plan-not-approved` (`toolDispatch.ts`) — the mode is enforced,
+ * call and every Tier-2 tool (`heldUntilPlanApproved`) with
+ * `plan-not-approved` (`toolDispatch.ts`) — the mode is enforced,
  * not merely described.
  *
  * Server execution with a browser round trip, like the CLI's permission
@@ -44,7 +45,7 @@ export const proposePlanTool: AiTool = {
   execution: 'server',
   sideEffects: 'none',
   description:
-    'Plan mode: show the user your plan as a checklist and wait for approval BEFORE writing anything. Call it once you know what you will change, with one concrete step per entry. Returns { approved: true } — carry out exactly the approved plan — or { approved: false, feedback } — revise the plan as the feedback says and call this again. Every file write is refused with plan-not-approved until a plan is approved.',
+    'Plan mode: show the user your plan as a checklist and wait for approval BEFORE writing anything. Call it once you know what you will change, with one concrete step per entry. Returns { approved: true } — carry out exactly the approved plan — or { approved: false, feedback } — revise the plan as the feedback says and call this again. Every file write, and every tool that runs the project\'s own code (studio_lint, studio_render_reference), is refused with plan-not-approved until a plan is approved.',
   inputSchema: ProposePlanInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { steps } = input as { steps: string[] }

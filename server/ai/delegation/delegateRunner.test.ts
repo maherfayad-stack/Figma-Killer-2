@@ -10,11 +10,15 @@ import * as path from 'node:path'
 import { projectsRootDir } from '../../handlers/studioProjects'
 import { readAgentTurnSummaries } from '../../handlers/studio/agentTurnLog'
 import type { AiProvider, AiResolvedCredential, AiStreamRequest } from '../drivers/types'
-import type { AiStreamEvent, AiTool, DelegateRunner, ToolContext } from '../runtime/types'
+import type { AiStreamEvent, AiTool, DelegateRunOutcome, DelegateRunner, DelegateTaskResult, ToolContext } from '../runtime/types'
 import { studioAgentFileWriteTools } from '../mcp/tools/studio/fileWriteTools'
 import { studioDelegateTool } from '../mcp/tools/studio/delegateTool'
 import { studioHttpAgentTools } from '../tools/studio'
-import { childTools, createDelegateRunner, ownedWriteTool, type DelegateUsage } from './delegateRunner'
+import {
+  CHILD_MAX_TOOL_ROUNDS, DELEGATION_LIMITS, MAX_CHILD_ROUNDS_PER_TURN, MAX_CHILDREN_PER_TURN, MAX_DELEGATE_CALLS_PER_TURN, MIN_CHILD_ROUNDS,
+  childTools, createDelegateRunner, createDelegationBudget, ownedWriteTool, type DelegateUsage,
+} from './delegateRunner'
+import { TOOL_REFUSAL_CODES } from '@core/ai'
 
 type Result = { ok: boolean; code?: string; [key: string]: unknown }
 
@@ -125,6 +129,11 @@ function fakeAnthropic(onStream: (req: AiStreamRequest) => AsyncIterable<AiStrea
   return { driver, credentials: { id: `cred-${Math.random()}`, providerId: 'anthropic', authMode: 'apiKey', apiKey: 'k', baseUrl: null } }
 }
 
+function ran(outcome: DelegateRunOutcome): DelegateTaskResult[] {
+  if (!outcome.ran) throw new Error(`expected the children to run, got: ${outcome.reason}`)
+  return outcome.results
+}
+
 describe('the runner', () => {
   it('runs every child at the same time, on the subagent model, and returns each report, usage and telemetry', async () => {
     const requests: AiStreamRequest[] = []
@@ -150,10 +159,10 @@ describe('the runner', () => {
       systemPrompt: ['prefix', 'suffix'], tools: studioHttpAgentTools,
       recordUsage: async (usage, modelId) => { usages.push({ usage, modelId }) },
     })
-    const results = await runner.run([
+    const results = ran(await runner.run([
       { page: 'pages/A.tsx', owned: ['pages/A.tsx', 'pages/A.module.css'], brief: 'Build page A with a hero and a list.' },
       { page: 'pages/B.tsx', owned: ['pages/B.tsx', 'pages/B.module.css'], brief: 'Build page B with a form and a footer.' },
-    ], ctx())
+    ], ctx()))
 
     expect(results.map((r) => ({ page: r.page, ok: r.ok, model: r.model, report: r.report, toolCalls: r.toolCalls }))).toEqual([
       { page: 'pages/A.tsx', ok: true, model: 'claude-sonnet-5', report: 'Built the page; it typechecks.', toolCalls: 1 },
@@ -181,7 +190,7 @@ describe('the runner', () => {
       driver, credentials, providerId: 'anthropic', conversationModelId: 'claude-opus-5-5', modelSource: 'chosen',
       systemPrompt: ['p'], tools: [], recordUsage: async () => {},
     })
-    const [result] = await runner.run([{ page: 'pages/A.tsx', owned: ['pages/A.tsx'], brief: 'Build page A with care.' }], ctx())
+    const [result] = ran(await runner.run([{ page: 'pages/A.tsx', owned: ['pages/A.tsx'], brief: 'Build page A with care.' }], ctx()))
     expect(result!.model).toBe('claude-opus-5-5')
   })
 
@@ -194,19 +203,66 @@ describe('the runner', () => {
       yield { type: 'text', text: 'fine' } as AiStreamEvent
     })())
     const runner = createDelegateRunner({ driver, credentials, providerId: 'anthropic', conversationModelId: 'claude-opus-5-5', modelSource: 'chosen', systemPrompt: ['p'], tools: [], recordUsage: async () => {} })
-    const results = await runner.run([
+    const results = ran(await runner.run([
       { page: 'pages/A.tsx', owned: ['pages/A.tsx'], brief: 'please fail at this one' },
       { page: 'pages/B.tsx', owned: ['pages/B.tsx'], brief: 'this one works fine' },
-    ], ctx())
+    ], ctx()))
     expect(results[0]).toMatchObject({ ok: false, stopped: 'error', error: 'provider exploded' })
     expect(results[1]).toMatchObject({ ok: true, report: 'fine' })
+  })
+})
+
+describe('the per-turn delegation budget', () => {
+  const task = (page: string) => ({ page, owned: [page], brief: `Build ${page} in full, please.` })
+
+  it('allows two full calls, gives the second what is left of the round budget, and refuses a third before any child starts', async () => {
+    const maxRounds: number[] = []
+    const { driver, credentials } = fakeAnthropic((req) => (async function* () {
+      maxRounds.push(req.maxToolRounds!)
+      yield { type: 'text', text: 'done' } as AiStreamEvent
+    })())
+    const runner = createDelegateRunner({ driver, credentials, providerId: 'anthropic', conversationModelId: 'claude-opus-5-5', modelSource: 'chosen', systemPrompt: ['p'], tools: [], recordUsage: async () => {} })
+    const four = (prefix: string) => [1, 2, 3, 4].map((n) => task(`pages/${prefix}${n}.tsx`))
+
+    expect(ran(await runner.run(four('A'), ctx()))).toHaveLength(4)
+    expect(maxRounds).toEqual([CHILD_MAX_TOOL_ROUNDS, CHILD_MAX_TOOL_ROUNDS, CHILD_MAX_TOOL_ROUNDS, CHILD_MAX_TOOL_ROUNDS])
+    expect(ran(await runner.run(four('B'), ctx()))).toHaveLength(4)
+    // Every child reserves its cap plus the loop's one summary round, and the sum stays under the ceiling.
+    const second = maxRounds.slice(4)
+    expect(second.every((r) => r >= MIN_CHILD_ROUNDS && r < CHILD_MAX_TOOL_ROUNDS)).toBe(true)
+    expect(maxRounds.reduce((sum, r) => sum + r + 1, 0)).toBeLessThanOrEqual(MAX_CHILD_ROUNDS_PER_TURN)
+
+    const third = await runner.run([task('pages/C.tsx')], ctx())
+    expect(third.ran).toBe(false)
+    expect(maxRounds).toHaveLength(8)
+  })
+
+  it('refuses past the children cap and past the round budget, and a refused call spends nothing', () => {
+    const budget = createDelegationBudget({ ...DELEGATION_LIMITS, calls: 10 })
+    expect(budget.reserve(4)).toMatchObject({ ok: true })
+    expect(budget.reserve(MAX_CHILDREN_PER_TURN - 3)).toMatchObject({ ok: false, reason: expect.stringContaining(`${MAX_CHILDREN_PER_TURN} one turn may start`) })
+    expect(budget.reserve(4)).toMatchObject({ ok: true })
+
+    const tight = createDelegationBudget({ calls: 10, children: 100, rounds: 30 })
+    expect(tight.reserve(1)).toEqual({ ok: true, childMaxRounds: CHILD_MAX_TOOL_ROUNDS })
+    // 5 rounds left: one more child would get 4, under the floor.
+    expect(tight.reserve(1)).toMatchObject({ ok: false, reason: expect.stringContaining(`under ${MIN_CHILD_ROUNDS} rounds`) })
+  })
+
+  it('studio_delegate turns an over-budget call into delegation-budget-exhausted, and the code states the real limits', async () => {
+    const runner: DelegateRunner = { run: async () => ({ ran: false, reason: 'This turn already delegated 2 times.' }) }
+    const result = (await studioDelegateTool.handler!({ tasks: [{ page: 'pages/Checkout.tsx', brief: 'Build the checkout page in full.' }] }, ctx({ delegate: runner }))) as Result
+    expect(result).toMatchObject({ ok: false, code: 'delegation-budget-exhausted' })
+    expect(String(result.error)).toContain('already delegated 2 times')
+    const meaning = TOOL_REFUSAL_CODES['delegation-budget-exhausted'].meaning
+    for (const limit of [MAX_DELEGATE_CALLS_PER_TURN, MAX_CHILDREN_PER_TURN, MAX_CHILD_ROUNDS_PER_TURN]) expect(meaning).toContain(String(limit))
   })
 })
 
 describe('studio_delegate', () => {
   function recordingRunner(): { runner: DelegateRunner; seen: unknown[] } {
     const seen: unknown[] = []
-    return { seen, runner: { run: async (tasks) => { seen.push(tasks); return [] } } }
+    return { seen, runner: { run: async (tasks) => { seen.push(tasks); return { ran: true, results: [] } } } }
   }
 
   it('gives each task its page and that page\'s stylesheet, and nothing else', async () => {

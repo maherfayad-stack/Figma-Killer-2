@@ -19,6 +19,10 @@
  * so the tool is not in the external catalog, and a call without a runner
  * refuses `delegation-unavailable` rather than pretending.
  *
+ * The turn-wide caps (calls, children, child rounds) are the runner's, since
+ * the runner is what lives for the whole turn; this file maps its refusal to
+ * `delegation-budget-exhausted`.
+ *
  * Write-gated like the file tools it hands out (`ai.tools.write` +
  * `studio.write`), and `sideEffects: 'write'`: the loop runs it on its own,
  * never beside another write, and plan mode refuses it until a plan is
@@ -28,7 +32,7 @@ import { Type } from '@core/utils/typeboxHelpers'
 import { toolRefusal } from '@core/ai'
 import type { AiTool, DelegateTask, ToolContext } from '../../../runtime/types'
 import { AGENT_PATH_MAX_CHARS, resolveAgentFilePath } from '../../../../handlers/studio/agentFileAccess'
-import { DELEGATE_TOOL_NAME } from '../../../delegation/delegateRunner'
+import { DELEGATE_TOOL_NAME, MAX_DELEGATE_CALLS_PER_TURN } from '../../../delegation/delegateRunner'
 import { pathRefusal } from './fileReadTools'
 
 /** Children per call. Each is a full agent loop on the user's key. */
@@ -67,7 +71,7 @@ export const studioDelegateTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    `Build up to ${MAX_DELEGATE_TASKS} pages at once: one subagent per page, running at the same time, each owning exactly its page file and that page's .module.css (any other write is refused not-owned). Do every shared change first yourself — translation keys, shared components, tokens, dependencies, references — because subagents cannot touch them. Each brief must stand alone: the subagent sees nothing of this conversation. Returns { results[]: { page, ok, model, report, filesWritten, toolCalls, rounds, stopped? } } once all finish; then check each page yourself (studio_screenshot or studio_compare). Refusals: overlapping-ownership (two tasks, one page), invalid-input (not a .tsx/.jsx page), path-outside-project, protected-path, needs-user, delegation-unavailable. Requires studio.write.`,
+    `Build up to ${MAX_DELEGATE_TASKS} pages at once: one subagent per page, running at the same time, each owning exactly its page file and that page's .module.css (any other write is refused not-owned). Do every shared change first yourself — translation keys, shared components, tokens, dependencies, references — because subagents cannot touch them. Each brief must stand alone: the subagent sees nothing of this conversation. Returns { results[]: { page, ok, model, report, filesWritten, toolCalls, rounds, stopped? } } once all finish; then check each page yourself (studio_screenshot or studio_compare). At most ${MAX_DELEGATE_CALLS_PER_TURN} calls per turn. Refusals: overlapping-ownership (two tasks, one page), invalid-input (not a .tsx/.jsx page), path-outside-project, protected-path, needs-user, delegation-unavailable, delegation-budget-exhausted. Requires studio.write.`,
   inputSchema: DelegateInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { tasks } = input as { tasks: Array<{ page: string; brief: string }> }
@@ -100,7 +104,12 @@ export const studioDelegateTool: AiTool = {
       resolved.push({ page: page.rel, owned: [page.rel, styles.rel], brief: task.brief })
     }
 
-    const results = await ctx.delegate.run(resolved, ctx)
-    return { ok: true, results }
+    const outcome = await ctx.delegate.run(resolved, ctx)
+    if (!outcome.ran) {
+      return toolRefusal('delegation-budget-exhausted', outcome.reason, {
+        remedy: 'Build the remaining pages yourself, one after another.',
+      })
+    }
+    return { ok: true, results: outcome.results }
   },
 }

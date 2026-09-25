@@ -292,8 +292,17 @@ export interface DelegateTaskResult {
   readonly error?: string
 }
 
+/**
+ * What one `studio_delegate` call got: the children ran, or the turn's
+ * delegation budget refused the call before any child started (the runner's
+ * per-turn caps — `delegateRunner.ts`).
+ */
+export type DelegateRunOutcome =
+  | { readonly ran: true; readonly results: DelegateTaskResult[] }
+  | { readonly ran: false; readonly reason: string }
+
 export interface DelegateRunner {
-  run(tasks: readonly DelegateTask[], ctx: ToolContext): Promise<DelegateTaskResult[]>
+  run(tasks: readonly DelegateTask[], ctx: ToolContext): Promise<DelegateRunOutcome>
 }
 
 // ---------------------------------------------------------------------------

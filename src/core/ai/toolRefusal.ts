@@ -196,7 +196,7 @@ export const TOOL_REFUSAL_CODES = {
   },
   'plan-not-approved': {
     retryable: false,
-    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs. Call studio_propose_plan with the steps and wait for the user\'s approval.',
+    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs, and no tool that runs the project\'s own code (studio_lint, studio_render_reference). Call studio_propose_plan with the steps and wait for the user\'s approval.',
   },
   'stale-anchor': {
     retryable: false,
@@ -339,6 +339,10 @@ export const TOOL_REFUSAL_CODES = {
   'delegation-unavailable': {
     retryable: false,
     meaning: 'Delegation runs only inside a chat turn on an API-key driver with a project open; this call has none (an external client, or a subagent, which cannot delegate further). Do the work yourself.',
+  },
+  'delegation-budget-exhausted': {
+    retryable: false,
+    meaning: 'This turn has spent its delegation budget: at most 2 studio_delegate calls, 8 subagents and 150 subagent rounds per turn, so a runaway turn cannot spend without bound on the user\'s key. Nothing from this call ran. Build the remaining pages yourself.',
   },
   'strict-mode-stand-in-refused': {
     retryable: false,

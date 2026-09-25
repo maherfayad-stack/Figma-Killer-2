@@ -33,8 +33,29 @@
  *     `claude-sonnet-5` on a default Anthropic conversation, the
  *     conversation's own model otherwise (a user's pick is never overridden).
  *   - **Bounds:** {@link CHILD_MAX_TOOL_ROUNDS} rounds each (the loop's own
- *     wind-down and summary round apply), the turn's abort signal, and at most
- *     `MAX_DELEGATE_TASKS` children per call (the tool's schema).
+ *     wind-down and summary round apply), the turn's abort signal, at most
+ *     `MAX_DELEGATE_TASKS` children per call (the tool's schema), and the
+ *     turn's delegation budget below.
+ *
+ * ## The per-turn budget
+ *
+ * Each child is a full agent loop on the user's key, and the parent may call
+ * `studio_delegate` in any round — so without a turn-wide bound, one turn (an
+ * injected one included) could spend its round cap × 4 children × 24 rounds.
+ * The runner is created once per chat turn, so it holds the turn's budget and
+ * reserves from it before any child starts:
+ *
+ *   - at most {@link MAX_DELEGATE_CALLS_PER_TURN} `studio_delegate` calls;
+ *   - at most {@link MAX_CHILDREN_PER_TURN} children across them;
+ *   - at most {@link MAX_CHILD_ROUNDS_PER_TURN} child rounds across them. A
+ *     child's round cap is `min(CHILD_MAX_TOOL_ROUNDS, its share of what is
+ *     left − 1)`, and it reserves that cap plus the loop's one summary round —
+ *     the most it can spend — so the sum can never pass the ceiling. A share
+ *     under {@link MIN_CHILD_ROUNDS} is refused rather than handed a child too
+ *     short to finish a page.
+ *
+ * A call over any of them is refused whole (`delegation-budget-exhausted`),
+ * before anything runs; the parent builds the rest itself.
  *
  * ## Cost and record
  *
@@ -56,6 +77,14 @@ import { resolveAgentFilePath } from '../../handlers/studio/agentFileAccess'
 export const DELEGATE_TOOL_NAME = 'studio_delegate'
 /** Child round ceiling — enough to write, look, fix and verify one screen. */
 export const CHILD_MAX_TOOL_ROUNDS = 24
+/** `studio_delegate` calls one parent turn may make. */
+export const MAX_DELEGATE_CALLS_PER_TURN = 2
+/** Children one parent turn may start, across all its calls (two full calls of 4). */
+export const MAX_CHILDREN_PER_TURN = 8
+/** Child provider rounds one parent turn may spend, summary rounds included (six full-length children). */
+export const MAX_CHILD_ROUNDS_PER_TURN = 150
+/** A child granted fewer rounds than this could not finish a page; the call is refused instead. */
+export const MIN_CHILD_ROUNDS = 6
 /** The report a child hands back is cut here; the files are the real result. */
 const MAX_REPORT_CHARS = 4_000
 
@@ -169,9 +198,56 @@ function childContext(ctx: ToolContext): ToolContextBase {
   return { ...base }
 }
 
-export function createDelegateRunner(params: CreateDelegateRunnerParams): DelegateRunner {
+/** A turn's delegation budget: what is left of it, and one call's reservation against it. */
+export interface DelegationBudget {
+  /** Reserves `taskCount` children; the per-child round cap, or why the call is refused. Reserving is synchronous. */
+  reserve(taskCount: number): { ok: true; childMaxRounds: number } | { ok: false; reason: string }
+}
+
+export interface DelegationLimits {
+  readonly calls: number
+  readonly children: number
+  readonly rounds: number
+}
+
+export const DELEGATION_LIMITS: DelegationLimits = {
+  calls: MAX_DELEGATE_CALLS_PER_TURN,
+  children: MAX_CHILDREN_PER_TURN,
+  rounds: MAX_CHILD_ROUNDS_PER_TURN,
+}
+
+export function createDelegationBudget(limits: DelegationLimits = DELEGATION_LIMITS): DelegationBudget {
+  let calls = 0
+  let children = 0
+  let rounds = 0
+  return {
+    reserve(taskCount) {
+      if (calls >= limits.calls) {
+        return { ok: false, reason: `This turn already delegated ${calls} times, the most one turn may (${limits.calls}).` }
+      }
+      if (children + taskCount > limits.children) {
+        return { ok: false, reason: `This turn has started ${children} subagents; ${taskCount} more would pass the ${limits.children} one turn may start.` }
+      }
+      const share = Math.floor((limits.rounds - rounds) / taskCount) - 1
+      const childMaxRounds = Math.min(CHILD_MAX_TOOL_ROUNDS, share)
+      if (childMaxRounds < MIN_CHILD_ROUNDS) {
+        return { ok: false, reason: `This turn's subagents have reserved ${rounds} of the ${limits.rounds} rounds one turn may spend on them; ${taskCount} more would get under ${MIN_CHILD_ROUNDS} rounds each.` }
+      }
+      calls += 1
+      children += taskCount
+      rounds += taskCount * (childMaxRounds + 1)
+      return { ok: true, childMaxRounds }
+    },
+  }
+}
+
+export function createDelegateRunner(params: CreateDelegateRunnerParams, limits: DelegationLimits = DELEGATION_LIMITS): DelegateRunner {
+  // One runner per chat turn (`handlers/chat.ts`), so this is the turn's budget.
+  const budget = createDelegationBudget(limits)
   return {
     async run(tasks, ctx) {
+      const grant = budget.reserve(tasks.length)
+      if (!grant.ok) return { ran: false, reason: grant.reason }
       const available = params.modelSource === 'default' && params.providerId === 'anthropic'
         ? await availableModelIds(params.driver, params.credentials, ctx.signal)
         : null
@@ -183,7 +259,8 @@ export function createDelegateRunner(params: CreateDelegateRunnerParams): Delega
         availableModelIds: available,
       })
       const modelCapabilities = await resolveModelCapabilities(params.driver, params.credentials, route.modelId)
-      return Promise.all(tasks.map((task) => runChild(params, task, ctx, route, modelCapabilities)))
+      const results = await Promise.all(tasks.map((task) => runChild(params, task, ctx, route, modelCapabilities, grant.childMaxRounds)))
+      return { ran: true, results }
     },
   }
 }
@@ -194,6 +271,7 @@ async function runChild(
   ctx: ToolContext,
   route: ModelRoute,
   modelCapabilities: AiStreamRequest['modelCapabilities'],
+  maxToolRounds: number,
 ): Promise<DelegateTaskResult> {
   const written = new Set<string>()
   const prompt = [...params.systemPrompt]
@@ -209,7 +287,7 @@ async function runChild(
     bridge: NO_BOARD_BRIDGE,
     toolContextBase: childContext(ctx),
     workspaceDir: ctx.workspaceDir,
-    maxToolRounds: CHILD_MAX_TOOL_ROUNDS,
+    maxToolRounds,
   }
   const telemetry = createTurnTelemetry({
     dir: ctx.workspaceDir ?? null,
