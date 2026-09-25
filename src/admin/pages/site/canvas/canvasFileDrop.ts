@@ -61,10 +61,10 @@ import { buildFrameCandidateIndex, indexLocalPoint, type ClientPoint } from './c
 import {
   measureDropContainer,
   resolveAbsolutePlacement,
-  type AbsoluteImagePlacement,
   type DropContainerBox,
 } from './canvasImageDropPlacement'
 import { resolvePortalDocument } from './frameAdapter/resolvePortalDocument'
+import type { AbsoluteImagePlacement } from '@site/store/slices/site/imageDropShapes'
 import type { CanvasTransform } from './math'
 
 export type CanvasFileDropRefusalReason =
