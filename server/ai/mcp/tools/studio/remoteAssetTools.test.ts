@@ -41,7 +41,7 @@ function ctx(overrides: Partial<ToolContext> = {}): ToolContext {
 function recordingDeps(calls: string[]): FetchRemoteAssetDeps {
   return {
     allowLoopback: false,
-    resolveHostAddresses: async () => ['203.0.113.10'],
+    resolveHostAddresses: async () => ['93.184.216.34'],
     fetchImpl: (async (input: string | URL) => {
       calls.push(String(input))
       return new Response(PNG_BYTES, { status: 200, headers: { 'content-type': 'image/png' } })

@@ -31,7 +31,9 @@ import { publicOriginIsHttps } from './auth/security'
  *       · `object-src 'none'` — blocks `<object>` / `<embed>` plugin content
  *         (the admin never embeds either).
  *     A policy the route already set (a user or project file served with
- *     `INERT_FILE_CSP`) is kept, with these three appended — never replaced.
+ *     `INERT_FILE_CSP`) is kept, and the admin policy is added as a SECOND
+ *     policy ({@link appendContentSecurityPolicy}) — never replaced, and never
+ *     merged into the route's.
  *
  *   A `script-src` / `style-src` policy is deliberately NOT set here yet: the
  *   admin ships an inline `<script type="importmap">` the plugin runtime needs,
@@ -45,7 +47,27 @@ import { publicOriginIsHttps } from './auth/security'
  * @param res      The raw Response from the route handler.
  * @param pathname URL pathname of the incoming request.
  */
-const ADMIN_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+export const ADMIN_CSP = "frame-ancestors 'none'; base-uri 'self'; object-src 'none'"
+
+/**
+ * Add `policy` to a response's Content-Security-Policy as its OWN policy,
+ * keeping every policy already there. Several policies on one response are
+ * all enforced — the browser allows only what every one of them allows — so a
+ * policy added here can only tighten the response.
+ *
+ * Merging instead (`route; admin`) makes ONE policy, and inside one policy
+ * only the FIRST occurrence of a directive counts: a route that set its own
+ * `frame-ancestors *` would have silently won over the admin's
+ * `frame-ancestors 'none'` (review of #248, re-review item 1). `Headers#append`
+ * joins the values with a comma, which is the HTTP spelling of "two policies".
+ * Adding a policy that is already present is a no-op, so a response that
+ * passes through two layers carries each policy once.
+ */
+export function appendContentSecurityPolicy(headers: Headers, policy: string): void {
+  const present = (headers.get('content-security-policy') ?? '').split(',').map((entry) => entry.trim())
+  if (present.includes(policy)) return
+  headers.append('content-security-policy', policy)
+}
 
 export function applySecurityHeaders(res: Response, pathname: string): Response {
   const headers = new Headers(res.headers)
@@ -70,12 +92,12 @@ export function applySecurityHeaders(res: Response, pathname: string): Response 
   // A framed CMS admin is a clickjacking vector for one-click publish/delete.
   if (pathname.startsWith('/admin')) {
     headers.set('x-frame-options', 'DENY')
-    // A route that already set a policy keeps it, with the admin directives
-    // appended. `/admin/api/studio/asset` serves a project's own files with
-    // `INERT_FILE_CSP` (`static.ts`); overwriting it here is exactly how a
-    // project SVG ran script with the admin session (review of #248, F1).
-    const routePolicy = headers.get('content-security-policy')
-    headers.set('content-security-policy', routePolicy ? `${routePolicy}; ${ADMIN_CSP}` : ADMIN_CSP)
+    // A route that already set a policy keeps it, and the admin policy is
+    // added beside it, both enforced. `/admin/api/studio/asset` serves a
+    // project's own files with `INERT_FILE_CSP` (`static.ts`); overwriting it
+    // here is exactly how a project SVG ran script with the admin session
+    // (review of #248, F1).
+    appendContentSecurityPolicy(headers, ADMIN_CSP)
   }
 
   return new Response(res.body, {

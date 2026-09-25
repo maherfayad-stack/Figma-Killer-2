@@ -14,8 +14,7 @@
  *     explicitly wants the live tab's own unsaved state. They never REQUIRE
  *     a board;
  *   - `bridge` tools (structure edits, HTML/CSS authoring, design tokens,
- *     page lifecycle, code assets, live-frame reads, the session-authenticated
- *     asset upload) need the connector owner's open Site workspace via the
+ *     page lifecycle, code assets, live-frame reads) need the connector owner's open Site workspace via the
  *     live editor bridge (`./editorBridge`). If that workspace is not
  *     connected, the call returns a clear scope-specific error.
  *
