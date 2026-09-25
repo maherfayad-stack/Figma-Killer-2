@@ -28,7 +28,7 @@
  * ## Snapping (P2-E / IX-6e)
  *
  * The edge under the cursor snaps to its siblings' and its parent's edges and
- * centres — `elementResizeSnap.ts` says which edge that is (only one the drag
+ * centres — `elementResizeSnapRules.ts` says which edge that is (only one the drag
  * really moves), reads the peers once at pointerdown, and snaps the POINTER
  * delta before `resizeElementBox` sees it. The guides are painted in the
  * frame's parent-document drag layer in the same rAF as the preview.
@@ -87,37 +87,30 @@ import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import {
   MIN_ELEMENT_SIZE,
+  planResizeSizing,
   readResizeBoxStart,
+  readResizeSnapInput,
   RESIZE_ACTIVE_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_SIZE_BADGE_ATTR,
   resizeElementBox,
-  resizeStartStep,
-  writeSizeBadge,
-  type ResizeHandle,
-} from '@core/studio-runtime'
-import {
-  createInlineStylePreview,
   hugPatchForHandle,
-  planResizeSizing,
   readSizingParentLayout,
   resizeInlinePatch,
-} from './elementResizeSizing'
-import { sizingUnavailableReason } from '@site/panels/PropertiesPanel/elementSizing'
+  resizeSnapEdges,
+  sizingUnavailableReason,
+  resizeStartStep,
+  snapResizeDelta,
+  writeSizeBadge,
+  type ResizeHandle,
+  type SnapGuide,
+} from '@core/studio-runtime'
+import { createInlineStylePreview } from './elementResizeInlinePreview'
 import { pushToast } from '@ui/components/Toast'
 import { anchorResizePatch } from './elementResizeAnchoring'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { nodeVisualRect } from './canvasDomGeometry'
-import type { SnapGuide } from './boardSnapping'
-import {
-  iframeZoom,
-  paintResizeGuides,
-  readResizeSnapInput,
-  resizeGuideLines,
-  resizeSnapEdges,
-  resolveResizeGuideSurface,
-  snapResizeDelta,
-} from './elementResizeSnap'
+import { iframeZoom, paintResizeGuides, resizeGuideLines, resolveResizeGuideSurface } from './elementResizeGuides'
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
@@ -249,8 +242,8 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         const snapInput = readResizeSnapInput({
           view,
           element: target,
-          siblingIds: (parentNode?.children ?? []).filter((id) => id !== nodeId),
-          parentId: parentNode?.id ?? null,
+          siblings: (parentNode?.children ?? []).filter((id) => id !== nodeId),
+          parent: parentNode?.id ?? null,
           resolveElement: (id) => presentedElementForNode(iframeDoc, id),
           resolveRect: (element) => {
             const rect = nodeVisualRect(element)

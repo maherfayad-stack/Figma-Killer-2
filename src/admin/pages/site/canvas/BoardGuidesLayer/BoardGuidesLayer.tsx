@@ -19,7 +19,7 @@
 import type { CSSProperties } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectBoardSnapGuides, selectBoardSnapSpacings } from '@site/store/slices/boardSelectors'
-import { formatSpacing } from '../snapSpacing'
+import { formatSpacing } from '@core/studio-runtime'
 import styles from './BoardGuidesLayer.module.css'
 
 export function BoardGuidesLayer() {

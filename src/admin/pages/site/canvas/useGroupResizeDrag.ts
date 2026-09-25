@@ -27,28 +27,25 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import {
+  planResizeSizing,
   readResizeBoxStart,
+  resizeInlinePatch,
   RESIZE_ACTIVE_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_SIZE_BADGE_ATTR,
   writeSizeBadge,
   type ResizeBoxStart,
   type ResizeHandle,
+  type ResizeInlinePatch,
+  type ResizeSizingPlan,
+  type SnapRect,
 } from '@core/studio-runtime'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import {
-  createInlineStylePreview,
-  planResizeSizing,
-  resizeInlinePatch,
-  type InlineStylePreview,
-  type ResizeInlinePatch,
-  type ResizeSizingPlan,
-} from './elementResizeSizing'
+import { createInlineStylePreview, type InlineStylePreview } from './elementResizeInlinePreview'
 import { anchorResizePatch } from './elementResizeAnchoring'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { groupUnionRect, memberResizeStep, resizeGroupBox, type GroupResizeMember } from './groupResize'
-import type { SnapRect } from './boardSnapping'
 import { startHandleDrag } from './handleDragSession'
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */

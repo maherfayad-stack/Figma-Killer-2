@@ -1,16 +1,18 @@
 /**
- * IX-6b — what a canvas resize writes besides the size, and how its preview
- * gives the element back.
+ * IX-6b — what a canvas resize writes besides the size, for both hosts: the
+ * portal drag and the live frame's own handles. The portal's inline preview
+ * is `elementResizeInlinePreview.test.ts`.
  */
 import { afterEach, describe, expect, it } from 'bun:test'
 import {
-  createInlineStylePreview,
   cssPropertyName,
   planResizeSizing,
+  readClearedValues,
   readSizingParentLayout,
   resizeInlinePatch,
-} from '@site/canvas/elementResizeSizing'
-import type { ResizeBoxStart } from '@core/studio-runtime'
+  stylesheetPreviewDeclarations,
+  type ResizeBoxStart,
+} from '@core/studio-runtime'
 
 const FLOW: ResizeBoxStart = { width: 200, height: 40, insetWidth: 0, insetHeight: 0, offsets: null }
 
@@ -70,32 +72,26 @@ describe('planResizeSizing + resizeInlinePatch', () => {
   })
 })
 
-describe('createInlineStylePreview', () => {
-  it('restores every touched property to what it found, including one it cleared', () => {
-    const target = mount('', 'flex: 1 1 0; width: 200px')
-    const preview = createInlineStylePreview(target)
-    preview.apply({ flex: undefined, width: '240px' })
-    expect(target.style.getPropertyValue('flex-grow')).toBe('')
-    expect(target.style.width).toBe('240px')
-    preview.clear()
+describe('readClearedValues + stylesheetPreviewDeclarations — a stylesheet preview of a clear', () => {
+  it('spells a cleared `flex` as the longhands the cascade gives without the inline one', () => {
+    const target = mount('display: flex; flex-direction: row', 'flex: 1 1 0; width: 200px')
+    const plan = planResizeSizing(window, target, FLOW, { flex: '1 1 0' })
+    const cleared = readClearedValues(window, target, plan)
+    expect(cleared).toEqual({ 'flex-grow': '0', 'flex-shrink': '1', 'flex-basis': 'auto' })
+    // The probe gave the element back.
     expect(target.style.getPropertyValue('flex-grow')).toBe('1')
-    expect(target.style.width).toBe('200px')
+    const patch = resizeInlinePatch(FLOW, { width: 240, height: 40, inline: null, top: null }, plan)!
+    expect(stylesheetPreviewDeclarations(patch, cleared)).toEqual([
+      ['flex-grow', '0'],
+      ['flex-shrink', '1'],
+      ['flex-basis', 'auto'],
+      ['width', '240px'],
+    ])
   })
 
-  it('restores a property a later step stopped writing', () => {
-    const target = mount('', 'width: 200px; height: 40px')
-    const preview = createInlineStylePreview(target)
-    preview.apply({ width: '240px', height: '48px' })
-    preview.apply({ width: '250px' })
-    expect(target.style.height).toBe('40px')
-    expect(target.style.width).toBe('250px')
-  })
-
-  it('clears before it sets, so a cleared longhand cannot undo a set shorthand', () => {
-    const target = mount('', 'flex-grow: 2')
-    const preview = createInlineStylePreview(target)
-    preview.apply({ flex: '0 1 auto', flexGrow: undefined })
-    expect(target.style.getPropertyValue('flex-grow')).toBe('0')
+  it('reads nothing when the plan clears nothing', () => {
+    const target = mount('display: block', 'width: 200px')
+    expect(readClearedValues(window, target, planResizeSizing(window, target, FLOW, {}))).toEqual({})
   })
 })
 

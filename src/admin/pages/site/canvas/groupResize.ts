@@ -34,8 +34,8 @@ import {
   type ResizeHandle,
   type ResizeModifiers,
   type ResizeStep,
+  type SnapRect,
 } from '@core/studio-runtime'
-import type { SnapRect } from './boardSnapping'
 
 /** One selected layer at pointerdown: its border box (frame-document px) and its CSS box. */
 export interface GroupResizeMember {

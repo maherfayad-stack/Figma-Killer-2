@@ -170,3 +170,61 @@ describe('store actions that drop the selection drop the hover too', () => {
     useEditorStore.getState().setPlayMode(false)
   })
 })
+
+// perf-12's side note — a `mouseleave` from a child into its parent fires on
+// the child only; the parent never gets a `mouseenter` (the pointer never
+// left it). The leave hands the hover to where the pointer went.
+describe('a leave hands the hover to the node the pointer went into', () => {
+  function setupNestedPage() {
+    const root = makeNode({ id: 'root', moduleId: 'base.body', children: ['card'] })
+    const card = makeNode({ id: 'card', moduleId: 'base.container', children: ['label'] })
+    const label = makeNode({ id: 'label', moduleId: 'base.text', props: { text: 'Label', tag: 'p' } })
+    useEditorStore.setState({
+      site: makeSite({ pages: [makePage({ id: 'page-1', rootNodeId: 'root', nodes: { root, card, label } })] }),
+      activePageId: 'page-1',
+      activeDocument: null,
+      activeBreakpointId: 'desktop',
+      selectedNodeId: null,
+      selectedNodeIds: [],
+      selectedNodeFrameId: null,
+      playMode: false,
+    } as Parameters<typeof useEditorStore.setState>[0])
+  }
+
+  it('child → parent: the parent keeps the hover', async () => {
+    setupNestedPage()
+    render(
+      <DndContext>
+        <CanvasRoot />
+      </DndContext>,
+    )
+    const card = await waitForCanvasNode('card')
+    const label = await waitForCanvasNode('label')
+    act(() => {
+      fireEvent.mouseEnter(card)
+      fireEvent.mouseEnter(label)
+    })
+    expect(getCanvasHover()?.nodeId).toBe('label')
+    act(() => {
+      fireEvent.mouseLeave(label, { relatedTarget: card })
+    })
+    expect(getCanvasHover()?.nodeId).toBe('card')
+  })
+
+  it('leaving the frame altogether still clears it', async () => {
+    setupNestedPage()
+    render(
+      <DndContext>
+        <CanvasRoot />
+      </DndContext>,
+    )
+    const label = await waitForCanvasNode('label')
+    act(() => {
+      fireEvent.mouseEnter(label)
+    })
+    act(() => {
+      fireEvent.mouseLeave(label, { relatedTarget: null })
+    })
+    expect(getCanvasHover()).toBeNull()
+  })
+})

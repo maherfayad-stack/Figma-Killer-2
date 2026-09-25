@@ -268,17 +268,6 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     expect(to?.querySelector('[data-node-id="item"]')).not.toBeNull()
   })
 
-  it('text sets textContent, never innerHTML', () => {
-    document.body.innerHTML = `<div data-node-id="t1">old</div>`
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-
-    bridge.handleMessage({ type: 'optimistic.text', nodeId: 't1', occurrenceIndex: 0, text: '<b>bold</b>' })
-
-    const el = document.querySelector('[data-node-id="t1"]')
-    expect(el?.textContent).toBe('<b>bold</b>')
-    expect(el?.querySelector('b')).toBeNull()
-  })
 })
 
 // `speed-01` — a properties-panel style commit/scrub previewed in-frame
@@ -1081,7 +1070,7 @@ describe('createStudioRuntimeBridge — inline text edit', () => {
     el.dispatchEvent(dbl)
     expect(dbl.defaultPrevented).toBe(true)
     expect(messages(posted).filter((m) => m.type === 'text:editStart')).toEqual([
-      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 },
+      { type: 'text:editStart', nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0, ancestors: [{ nodeId: 'pages/Home.tsx:5:2', occurrenceIndex: 0 }] },
     ])
     // Not yet contentEditable — the parent hasn't replied.
     expect(el.getAttribute('contenteditable')).toBeNull()

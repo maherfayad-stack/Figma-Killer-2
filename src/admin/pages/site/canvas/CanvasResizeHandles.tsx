@@ -73,6 +73,7 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
     moduleId: node?.moduleId ?? null,
     hasOwnElement: target !== null,
     display,
+    localName: target?.localName ?? '',
   })
 
   useElementResizeDrag({
@@ -160,6 +161,7 @@ export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: C
       moduleId: moduleIds[index] || null,
       hasOwnElement: target !== null,
       display: target ? (iframeDoc.defaultView?.getComputedStyle(target).display ?? '') : '',
+      localName: target?.localName ?? '',
     })
   })
 

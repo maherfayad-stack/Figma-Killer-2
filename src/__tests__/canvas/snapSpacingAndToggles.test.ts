@@ -1,18 +1,20 @@
 /**
  * P5-F — the snap vocabulary beyond alignment: equal spacing and its pills
  * (IX-5d), ruler guides in a frame's space (IX-5c), the two toggles (IX-5e)
- * and the Shift axis lock. All pure: `snapSpacing.ts`, `boardSnapping.ts`,
- * `canvasSnapPeers.ts`.
+ * and the Shift axis lock. All pure: `@core/studio-runtime`'s `snapRules.ts`,
+ * `snapSpacingRules.ts`, `snapPeerRules.ts`, and `canvas/boardSnapping.ts`.
  */
 import { describe, expect, it } from 'bun:test'
 import {
   computeSnap,
-  snapBoardFurniture,
+  findSpacingSnap,
+  formatSpacing,
+  guideLinesInSpace,
   snapSourcesFor,
+  spacingSegments,
   type SnapRect,
-} from '@site/canvas/boardSnapping'
-import { findSpacingSnap, formatSpacing, spacingSegments } from '@site/canvas/snapSpacing'
-import { guideLinesInSpace } from '@site/canvas/canvasSnapPeers'
+} from '@core/studio-runtime'
+import { snapBoardFurniture } from '@site/canvas/boardSnapping'
 import { DEFAULT_SNAP_PREFERENCES } from '@site/canvas/snapPreferences'
 import { createBoard } from '@core/studio-board'
 

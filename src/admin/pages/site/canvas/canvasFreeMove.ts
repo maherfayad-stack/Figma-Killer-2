@@ -59,7 +59,7 @@
  *
  * Free movement without alignment is worse than reordering, so the moved rect
  * snaps to its SIBLINGS' edges and centres, and to its PARENT's padding and
- * content box (edges and centre — P2-E / IX-5b, `canvasSnapPeers.ts`), through
+ * content box (edges and centre — P2-E / IX-5b, `snapPeerRules.ts`), through
  * `computeSnap` — the same pure resolver board furniture already uses, at the
  * same "closest wins, at most one snap per axis" contract. Peers are read once
  * from the drag session's candidate index (plus one computed-style read for
@@ -82,7 +82,21 @@
  * React's re-render is the last thing to touch the property).
  */
 import { registry } from '@core/module-engine'
-import { inlineOffsetProperty, isPositionedFreely } from '@core/studio-runtime'
+import {
+  computeSnap,
+  inlineOffsetProperty,
+  isPositionedFreely,
+  parentSnapRects,
+  readBoxInsets,
+  snapSourcesFor,
+  snapThresholdAtZoom,
+  type SnapGuide,
+  type SnapLine,
+  type SnapOptions,
+  type SnapRect,
+  type SnapSourceToggles,
+  type SnapSpacing,
+} from '@core/studio-runtime'
 import {
   explainStaticParentConstraint,
   getNodeHtmlTag,
@@ -95,22 +109,10 @@ import {
   presentStructuralRefusal,
   STRUCTURAL_REFUSAL_TITLE,
 } from '@site/store/slices/site/structuralSourceEdits'
-import {
-  computeSnap,
-  snapSourcesFor,
-  snapThresholdAtZoom,
-  type SnapGuide,
-  type SnapLine,
-  type SnapOptions,
-  type SnapRect,
-  type SnapSpacing,
-} from './boardSnapping'
-import type { SnapPreferences } from './snapPreferences'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { createInlineStylePreview, type InlineStylePreview } from './elementResizeSizing'
-import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
+import { createInlineStylePreview, type InlineStylePreview } from './elementResizeInlinePreview'
 import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
 
 /** One layer a free move writes: its element, the offsets it moves, and whether it becomes absolute. */
@@ -268,7 +270,7 @@ interface ResolveFreeMoveInput {
   /** The board's ruler guides, already in this frame's space (`guideLinesInSpace`). */
   guideLines: readonly SnapLine[]
   /** The user's snap toggles at the start of the gesture. */
-  preferences: SnapPreferences
+  preferences: SnapSourceToggles
 }
 
 type MemberResolution =

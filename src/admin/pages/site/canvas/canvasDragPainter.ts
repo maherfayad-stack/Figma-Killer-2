@@ -37,13 +37,12 @@
  * Each write is also skipped when the value is unchanged, so a pointer that
  * moves inside one drop zone costs nothing after the first frame.
  */
-import type { SnapGuide, SnapSpacing } from './boardSnapping'
+import { formatSpacing, type SnapGuide, type SnapSpacing } from '@core/studio-runtime'
 import type { CanvasDragPaintTarget, CanvasInvalidDropTarget, CanvasRect } from './canvasDnd'
 import type { ClientPoint } from './canvasDragSession'
 import type { CanvasReflowShift } from './canvasReflowPreview'
 import { REFLOW_SHIFT_LIMIT } from './canvasReflowPreview'
 import { prefersReducedMotion } from './playbackMotion'
-import { formatSpacing } from './snapSpacing'
 import {
   dropIndicatorStyle,
   pointStyle,

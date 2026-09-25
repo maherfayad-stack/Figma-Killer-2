@@ -34,7 +34,7 @@
  * `textContent`, never restructures it, and never removes it from the DOM.
  */
 import { TEXT_EDIT_MAX_LENGTH, type OutboundRuntimeMessage, type RuntimeMode, type TextEditReplyMessage } from './messages'
-import { nearestNodeOccurrence } from './nodeDom'
+import { stampedAncestors } from './nodeDom'
 import { findNthNodeById, type NodeIdOccurrence } from './nodeIdIndexing'
 import { SELECTION_OVERLAY_ROOT_ID } from './selectionChromeCss'
 
@@ -98,7 +98,13 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
   const { doc, getMode, post } = options
   const view = doc.defaultView ?? window
 
-  let pending: NodeIdOccurrence | null = null
+  /**
+   * The outstanding request's stamped chain, innermost first (canvas-24). The
+   * parent answers with whichever of these it resolved the double-click to —
+   * the innermost stamp, or the nearest ancestor its tree knows — so a reply
+   * naming ANY ref in the chain answers it, and names the element to edit.
+   */
+  let pending: NodeIdOccurrence[] | null = null
   let session: EditSession | null = null
 
   function isInsideSession(target: EventTarget | null): boolean {
@@ -138,19 +144,20 @@ export function installInlineTextEdit(options: InlineTextEditOptions): InlineTex
     if (session || pending) return // one edit request outstanding at a time
     const target = ev.target instanceof Element ? ev.target : null
     if (isRuntimeChrome(target)) return
-    const occurrence = nearestNodeOccurrence(doc, target)
+    const chain = stampedAncestors(doc, target)
+    const occurrence = chain[0]
     if (!occurrence) return
     // Speculatively claims the gesture — a refusal (the parent's reply below)
     // is a silent no-op, exactly matching the portal editor's own silence for
     // a container double-click.
     ev.preventDefault()
     ev.stopPropagation()
-    pending = occurrence
-    post({ type: 'text:editStart', nodeId: occurrence.nodeId, occurrenceIndex: occurrence.occurrenceIndex })
+    pending = chain
+    post({ type: 'text:editStart', nodeId: occurrence.nodeId, occurrenceIndex: occurrence.occurrenceIndex, ancestors: chain })
   }
 
   function handleReply(message: TextEditReplyMessage): void {
-    if (!pending || pending.nodeId !== message.nodeId || pending.occurrenceIndex !== message.occurrenceIndex) return
+    if (!pending?.some((ref) => ref.nodeId === message.nodeId && ref.occurrenceIndex === message.occurrenceIndex)) return
     pending = null
     if (!message.allowed) return
     const element = findNthNodeById(doc, message.nodeId, message.occurrenceIndex)

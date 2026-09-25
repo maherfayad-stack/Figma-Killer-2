@@ -1,5 +1,5 @@
 /**
- * canvasSnapPeers — what an element snaps TO: its siblings, and its parent's
+ * snapPeerRules — what an element snaps TO: its siblings, and its parent's
  * own edges and centre (P2-E / IX-5b).
  *
  * K6 snapped a free move to siblings only. An element dragged towards the
@@ -30,12 +30,13 @@
  * its rect's top-left IS board (0, 0) at any pan and zoom) and the frame
  * space's origin and scale. Read once per gesture: a drag never pans the
  * frame relative to the board, so the converted lines hold for its length.
+ * Reading the board's origin is the editor's (`canvas/boardSnapping.ts`
+ * `readBoardScreenOrigin`) — a live frame's runtime has no board to read.
  *
- * Pure except {@link readBoxInsets} and {@link readBoardScreenOrigin}, the
- * reads taken once at the start of a gesture.
+ * Pure except {@link readBoxInsets}, the one computed-style read, taken once
+ * at the start of a gesture.
  */
-import { canvasTransformLayerOf, canvasZoomOf } from './canvasZoom'
-import type { SnapLine, SnapRect } from './boardSnapping'
+import type { SnapLine, SnapRect } from './snapRules'
 
 /** One set of four side lengths, in CSS px. */
 export interface SideLengths {
@@ -128,17 +129,4 @@ export function guideLinesInSpace(lines: readonly SnapLine[], board: ScreenSpace
     const origin = line.axis === 'x' ? space.originX : space.originY
     return { axis: line.axis, position: (client - origin) / scale }
   })
-}
-
-/**
- * The board's screen space, read off the canvas transform layer `element`
- * sits in (a frame's viewport or iframe). `null` outside a board canvas — a
- * live view, a test — where there are no ruler guides to convert.
- */
-export function readBoardScreenOrigin(element: Element | null): ScreenSpace | null {
-  if (!(element instanceof HTMLElement)) return null
-  const layer = canvasTransformLayerOf(element)
-  if (!layer) return null
-  const rect = layer.getBoundingClientRect()
-  return { originX: rect.left, originY: rect.top, scale: canvasZoomOf(layer) }
 }

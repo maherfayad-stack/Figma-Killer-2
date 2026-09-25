@@ -36,6 +36,13 @@ import {
   subscriberSweepBreaches,
   type SubscriberSweepScenario,
 } from '../lib/canvasSubscriberSweep'
+import {
+  FULL_RESYNC_SHAPE,
+  POST_WRITE_RESYNC_BUDGETS,
+  postWriteResyncBreaches,
+  runPostWriteResync,
+  type PostWriteResyncScenario,
+} from '../lib/postWriteResync'
 
 // Load the live editor store. Imports `@admin/state/adminUi` which is
 // admin-shell only, but the actions themselves don't touch the DOM.
@@ -521,6 +528,46 @@ export const editorStoreBench: BenchModule = {
         resetStore(useStore)
       }
     }
+    // ---- Post-write re-sync (PERF-6, budget 8) --------------------------------
+    // What ONE `patchPages` re-read makes the canvas do: NodeRenderer
+    // re-renders and remounts, and frame restyles. Deterministic counts,
+    // asserted against `POST_WRITE_RESYNC_BUDGETS`. See `lib/postWriteResync.ts`.
+    log.step('Post-write re-sync (40 pages x 300 nodes, 12 mounted frames)')
+    const resyncRows: BenchRow[] = []
+    let resyncBreaches: string[]
+    {
+      const shape = { ...FULL_RESYNC_SHAPE, iterations: ctx.quick ? 10 : FULL_RESYNC_SHAPE.iterations }
+      const label = `${fmtNum(shape.pages)} pages x ${fmtNum(shape.nodesPerPage)} nodes, ${shape.mountedFrames} mounted frames`
+      try {
+        const resync = await runPostWriteResync(shape)
+        resyncBreaches = postWriteResyncBreaches(resync)
+        for (const scenario of Object.keys(resync.scenarios) as PostWriteResyncScenario[]) {
+          const { counts, patchMs } = resync.scenarios[scenario]
+          const budget = POST_WRITE_RESYNC_BUDGETS[scenario](shape)
+          const within = counts.rerenders <= budget.rerenders && counts.remounts <= budget.remounts && counts.restyles <= budget.restyles
+          resyncRows.push({
+            label: `${scenario} — ${label}`,
+            inputs: { style_rules: shape.styleRules },
+            metrics: {
+              rerenders: `${counts.rerenders} (budget ${budget.rerenders})`,
+              remounts: `${counts.remounts} (budget ${budget.remounts})`,
+              restyles: `${counts.restyles} (budget ${budget.restyles})`,
+              patch_median: fmtMs(patchMs.p50),
+              patch_p95: fmtMs(patchMs.p95),
+              verdict: within ? 'within' : 'OVER',
+            },
+          })
+          log.detail(
+            `    ${scenario.padEnd(10)} rerenders=${counts.rerenders} remounts=${counts.remounts} restyles=${counts.restyles} patch median=${fmtMs(patchMs.p50)}`,
+          )
+        }
+      } catch (err) {
+        resyncRows.push(unavailableRow(`post-write re-sync — ${label}`, err))
+        resyncBreaches = [`the re-sync bench did not complete: ${err instanceof Error ? err.message : String(err)}`]
+      } finally {
+        resetStore(useStore)
+      }
+    }
     // ---- Undo coalescing burst ----------------------------------------------
     log.step('Undo coalescing burst (single-prop typing burst + retained history)')
     const coalesceRows: BenchRow[] = []
@@ -626,13 +673,19 @@ export const editorStoreBench: BenchModule = {
           rows: subscriberSweepRows,
         },
         {
+          title: 'Post-write re-sync (budget 8)',
+          intro:
+            'What ONE `patchPages` re-read of a written page makes the canvas do on a 40-page x 300-node board with 12 mounted frames (audit 01-perf PERF-6): NodeRenderer re-renders, remounts (a lost React key), and frame restyles (a new style-registry object). `propEdit` changes one text prop; `move` moves a subtree to the front, renumbering every `rel:line:col` id it passes. Counts are deterministic and asserted against POST_WRITE_RESYNC_BUDGETS; a row reading OVER fails the bench.',
+          rows: resyncRows,
+        },
+        {
           title: 'Undo coalescing burst',
           intro:
             'A long single-prop typing burst on one text node — the Properties-panel per-keystroke path, which coalesces into a single undo entry. `history_bytes` is the JSON size of the retained `_historyPast` stack after the burst: what one typing session keeps pinned in memory.',
           rows: coalesceRows,
         },
       ],
-      ...(sweepBreaches.length > 0 ? { budgetFailures: sweepBreaches } : {}),
+      ...(sweepBreaches.length + resyncBreaches.length > 0 ? { budgetFailures: [...sweepBreaches, ...resyncBreaches] } : {}),
     }
   },
 }

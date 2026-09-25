@@ -44,6 +44,7 @@
  * later ⌘Z hit the same refusal and nothing before it could be undone.
  */
 import type { NodeTree, PageNode } from '@core/page-tree'
+import { canvasLayerIdFromRel, canvasLayerPageId, isCanvasLayerEditNodeId } from '@core/studio-board'
 import type { EditorStore } from '@site/store/types'
 import { commitStudioStructuralReissue } from '@site/studio/studioStructuralCommits'
 import {
@@ -180,7 +181,12 @@ export function reissueStructuralSourceEdits(
     }
   }
 
-  void commitStudioStructuralReissue(edits, direction, label, rollback)
+  // P5-G — a canvas-layer gesture's placement half moves with its write, and
+  // comes back if the write does not land.
+  const placements = entry.source.placements
+  const side = direction === 'undo' ? 'before' : 'after'
+  const posted = placements && placements.length > 0 ? withPlacements(get, placements, side, rollback) : rollback
+  void commitStudioStructuralReissue(edits, direction, label, posted)
   return { kind: 'posted', pendingCommitId: rollback.id }
 }
 
@@ -194,10 +200,32 @@ function parentChildIds(
   state: Pick<EditorStore, 'site' | '_nodeIdToPageIds'>,
   template: StructuralSourceHistory['source']['inverseTemplate'],
 ): readonly string[] {
-  if (template.kind !== 'transplant-back') return []
+  if (template.kind !== 'transplant-back' && template.kind !== 'canvas-layer-lift-back') return []
   const pageId = state._nodeIdToPageIds.get(template.parentNodeId)?.[0]
   const page: NodeTree<PageNode> | undefined = state.site?.pages.find((candidate) => candidate.id === pageId)
   return page?.nodes[template.parentNodeId]?.children ?? []
+}
+
+/**
+ * P5-G — put a canvas-layer gesture's placements on `side` now, and return a
+ * rollback that puts them back on the other side if the re-issued write does
+ * not land, before handing on to the stack's own.
+ */
+function withPlacements(
+  get: SiteSliceHelpers['get'],
+  placements: NonNullable<StructuralSourceHistory['source']['placements']>,
+  side: 'before' | 'after',
+  rollback: StructuralCommitRollback,
+): StructuralCommitRollback {
+  get().applyCanvasLayerPlacements(placements, side)
+  return {
+    id: rollback.id,
+    settle: rollback.settle,
+    rollback: (failure) => {
+      get().applyCanvasLayerPlacements(placements, side === 'before' ? 'after' : 'before')
+      rollback.rollback(failure)
+    },
+  }
 }
 
 /**
@@ -212,14 +240,26 @@ function parentChildIds(
  */
 function unresolvedNodeIds(
   edits: readonly StructuralEditPayload[],
-  state: Pick<EditorStore, '_nodeIdToPageIds'>,
+  state: Pick<EditorStore, '_nodeIdToPageIds' | 'canvasLayerPages'>,
 ): string[] {
   const missing: string[] = []
   for (const edit of edits) {
     if (addressesSourceLiteral(edit)) continue
     for (const id of structuralEditNodeIds(edit)) {
-      if (!state._nodeIdToPageIds.has(id) && !missing.includes(id)) missing.push(id)
+      if (!state._nodeIdToPageIds.has(id) && !onFreeCanvas(state, id) && !missing.includes(id)) missing.push(id)
     }
   }
   return missing
+}
+
+/**
+ * P5-G — an id a canvas-layer edit names that the board still has, outside
+ * `site.pages`: the synthetic `canvas-layer:<id>` a create/delete/restore
+ * addresses (it names a layer, never a position), or a node inside a loose
+ * layer's own module, looked up in that layer's tree.
+ */
+function onFreeCanvas(state: Pick<EditorStore, 'canvasLayerPages'>, id: string): boolean {
+  if (isCanvasLayerEditNodeId(id)) return true
+  const layerId = canvasLayerIdFromRel(fileOfNodeId(id))
+  return layerId !== null && Boolean(state.canvasLayerPages[canvasLayerPageId(layerId)]?.nodes[id])
 }

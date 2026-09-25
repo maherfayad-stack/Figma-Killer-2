@@ -1,14 +1,15 @@
 /**
- * snapSpacing — equal-spacing snap and its distance pills (P5-F, IX-5d).
+ * snapSpacingRules — equal-spacing snap and its distance pills (P5-F, IX-5d).
  *
- * Alignment snapping (`computeSnap`'s edge/centre match) answers "is this edge
+ * Alignment snapping (`snapRules.ts`'s `computeSnap` edge/centre match) answers "is this edge
  * on that edge". A designer laying out a row of cards asks a second question
  * just as often: "is this gap the same as that gap". Penpot answers it in
  * `ui/workspace/viewport/snap_distances.cljs` (the pink distance segments) and
  * `main/snap.cljs:145-250`; Figma draws the same pink pills. This is the same
  * segment algorithm, over the same flat `SnapRect[]` peer list alignment uses,
  * so board furniture, a free move inside a frame and a loose layer on the
- * empty board (P5-G) all get it from one place.
+ * empty board (P5-G) all get it from one place — and it lives in
+ * `@core/studio-runtime` with the rest of the snap engine.
  *
  * ## The model, per axis (x shown; y is the transpose)
  *
@@ -36,7 +37,7 @@
  *
  * Pure: no React, no DOM, no store.
  */
-import type { SnapRect } from './snapRect'
+import type { SnapRect } from './snapRectRules'
 
 type Axis = 'x' | 'y'
 

@@ -21,6 +21,7 @@ import { createSaveTrackingSlice } from './slices/saveTrackingSlice'
 import { createBoardSlice } from './slices/boardSlice'
 import { createCommentsSlice } from './slices/commentsSlice'
 import { createPrototypeSlice } from './slices/prototypeSlice'
+import { createCanvasLayerSlice } from './slices/canvasLayerSlice'
 import { selectActiveBoard } from './slices/boardSelectors'
 import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
@@ -90,6 +91,7 @@ export const useEditorStore = create<EditorStore>()(
         ...createBoardSlice(...args),
         ...createCommentsSlice(...args),
         ...createPrototypeSlice(...args),
+        ...createCanvasLayerSlice(...args),
         ...createLocalizedPageSlice(...args),
       }),
       { enableAutoFreeze: true },
@@ -392,6 +394,11 @@ export function lookupCanvasPageById(site: SiteDocument, pageId: string): Page |
  */
 export const selectCanvasPageFor = (s: EditorStore, pageId: string | null, frameId?: string | null): Page | null => {
   if (!pageId) return selectActiveCanvasPage(s)
+  // P5-G — a loose layer on the free canvas renders its own module's tree,
+  // held apart from `site.pages` (`canvasLayerSlice.ts`). One keyed read: its
+  // `canvas:<id>` page id can never be a route's, so this cannot shadow a page.
+  const layerPage = s.canvasLayerPages[pageId]
+  if (layerPage) return layerPage
   // `hasAnyKey` FIRST, before `selectActiveBoard`: the locale branch can only
   // ever return something when a locale-variant page has actually been
   // fetched, and on a single-locale board (every board, until someone

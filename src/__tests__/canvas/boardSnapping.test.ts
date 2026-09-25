@@ -1,17 +1,11 @@
 /**
- * boardSnapping.ts — pure function unit tests.
+ * boardSnapping.ts + `@core/studio-runtime`'s snapRules.ts — pure function unit tests.
  *
  * @see src/admin/pages/site/canvas/boardSnapping.ts
  */
 import { describe, it, expect } from 'bun:test'
-import {
-  computeSnap,
-  collectPeerRects,
-  rulerGuideLines,
-  SNAP_THRESHOLD_SCREEN_PX,
-  snapThresholdAtZoom,
-  type SnapRect,
-} from '@site/canvas/boardSnapping'
+import { collectPeerRects, rulerGuideLines } from '@site/canvas/boardSnapping'
+import { computeSnap, SNAP_THRESHOLD_SCREEN_PX, snapThresholdAtZoom, type SnapRect } from '@core/studio-runtime'
 import { createBoard, type BoardGuide } from '@core/studio-board'
 
 const THRESHOLD = 8

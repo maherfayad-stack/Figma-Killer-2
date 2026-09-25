@@ -43,6 +43,7 @@
 import { extname } from 'node:path'
 import { subscribeProjectChanges, type ProjectChange, type ProjectChangeBatch } from '../../handlers/studio/projectWatch'
 import { pushStudioDiskChange } from './tools/studio/liveReloadPush'
+import { CANVAS_LAYER_DIR } from '@core/studio-board'
 
 /** How long the watcher outlives the last tab — longer than a bridge lease renewal's reconnect gap. */
 export const LINGER_MS = 15_000
@@ -54,7 +55,7 @@ const BOARD_INPUT = new Set(['.tsx', '.ts', '.jsx', '.js', '.mjs', '.cjs', '.mts
 const NOT_BOARD_INPUT = new Set(['package-lock.json'])
 
 function isBoardInput(change: ProjectChange): boolean {
-  if (change.rel.startsWith('.studio/canvas/')) return true
+  if (change.rel.startsWith(`${CANVAS_LAYER_DIR}/`)) return true
   const name = change.rel.slice(change.rel.lastIndexOf('/') + 1)
   return BOARD_INPUT.has(extname(name).toLowerCase()) && !NOT_BOARD_INPUT.has(name)
 }

@@ -43,7 +43,7 @@ import {
 } from '@site/panels/PropertiesPanel/rotateValue'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { createInlineStylePreview } from './elementResizeSizing'
+import { createInlineStylePreview } from './elementResizeInlinePreview'
 import { startHandleDrag } from './handleDragSession'
 
 /** ⇧ snaps the angle to multiples of this. */

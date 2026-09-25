@@ -77,6 +77,8 @@ import {
 import { memoizedStudioLoad, type ComputedStudioLoad } from './studio/studioLoadMemo'
 import { prewarmWorkspaceProgram, withWorkspaceProject, type WorkspaceProjectHandle } from './studio/workspaceProject'
 import { collectLoadWarnings } from './studio/loadWarnings'
+import { buildCanvasLayerEntries } from './studio/canvasLayerLoad'
+import { listCanvasLayerIds } from './studio/canvasLayerFiles'
 import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
 // for its result shape — see `studioLoadContract.ts` for why they live apart.
@@ -235,7 +237,7 @@ async function computeStudioPages(dir: string): Promise<ComputedStudioLoad> {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) {
     return {
-      result: { pages: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] },
+      result: { pages: [], canvasLayers: [], componentSources: {}, styleRules: {}, styleRuleSources: {}, styledStyleRuleSources: {}, conditions: [], vendorCss: '', authoredCss: '', stories: [], warnings: [] },
       dependencies: new Map(),
     }
   }
@@ -329,16 +331,21 @@ async function computeStudioPagesWith(
   const stories = discoverProjectStories(dir, project, pageEntries, meta.stories?.enabled !== false)
   const storyEntries = buildStoryRouteEntries(context.scope, workspace, stories, compiledStyles.moduleClassMaps)
   const routeEntries = [...pageEntries, ...storyEntries]
+  // P5-G — the free canvas's layer modules, parsed like pages (same parse,
+  // same style pass, same convert) and returned APART from them, in
+  // `canvasLayers`. See `studio/canvasLayerLoad.ts`.
+  const canvasLayerEntries = buildCanvasLayerEntries(dir, context)
+  const parsedEntries = [...routeEntries, ...canvasLayerEntries]
 
   const componentSources: Record<string, ComponentSource> = {}
-  for (const entry of routeEntries) Object.assign(componentSources, entry.componentSources)
+  for (const entry of parsedEntries) Object.assign(componentSources, entry.componentSources)
 
   // §6 — read every stylesheet the pages import, in cascade order, plus the
   // WS-2.1 compiled blob (Tailwind/Sass/PostCSS output, rewritten CSS Modules)
   // and W4-4's CSS-in-JS templates.
-  const cssInJsTemplates = cssInJsTemplatesOf(routeEntries)
+  const cssInJsTemplates = cssInJsTemplatesOf(parsedEntries)
   const { styleRules, conditions, classIdsByName, sources: styleRuleSources, authoredCss, stylesheetFiles } = await loadStudioStyles(
-    routeEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
+    parsedEntries.map(({ expanded, relFile }) => ({ parsed: expanded, relFile })),
     project,
     dir,
     cssInJsExtraCss(compiledStyles.css, cssInJsTemplates),
@@ -353,7 +360,7 @@ async function computeStudioPagesWith(
   // cheap stage, and converting all of them is what lets `loadStudioPages`
   // memoize this result as the project-wide truth and answer the NEXT load
   // — full or narrowed — without parsing anything.
-  const pages = routeEntries.map(({ expanded, pageId, slug, title }) => {
+  const convert = ({ expanded, pageId, slug, title }: RoutePageEntry): Page => {
     const page = parsedPageToSitePage(expanded, {
       pageId,
       slug,
@@ -370,7 +377,9 @@ async function computeStudioPagesWith(
     // a real fetchable URL now that `dir` is in scope.
     rewriteStudioAssetSentinels(page, dir)
     return page
-  })
+  }
+  const pages = routeEntries.map(convert)
+  const canvasLayers = canvasLayerEntries.map((entry) => ({ layerId: entry.layerId, pageId: entry.pageId, page: convert(entry) }))
 
   // Only the stories that actually BECAME a page are reported — a story whose
   // materialization degraded to nothing (`buildStoryRouteEntries` skips it)
@@ -383,6 +392,7 @@ async function computeStudioPagesWith(
   return {
     result: {
       pages,
+      canvasLayers,
       componentSources,
       styleRules,
       styleRuleSources,
@@ -397,7 +407,7 @@ async function computeStudioPagesWith(
       warnings: collectLoadWarnings(dir, project, workspace.warnings, routeEntries),
     },
     dependencies: loadDependencies(
-      routeEntries,
+      parsedEntries,
       [...stylesheetFiles, join(dir, 'tsconfig.json'), join(dir, 'package.json')],
       context.scope,
     ),
@@ -408,9 +418,12 @@ async function computeStudioPagesWith(
 function routeListing(dir: string): string {
   const pagesDir = projectPagesDir(dir)
   if (!existsSync(pagesDir)) return ''
-  return readStudioMeta(dir).profile?.framework === 'next-app'
-    ? discoverAppRouterRoutes(pagesDir).map(({ relPath }) => relPath).join('\n')
-    : discoverPageFiles(pagesDir).join('\n')
+  const routes = readStudioMeta(dir).profile?.framework === 'next-app'
+    ? discoverAppRouterRoutes(pagesDir).map(({ relPath }) => relPath)
+    : discoverPageFiles(pagesDir)
+  // P5-G — a load also returns every loose layer, so a layer module created or
+  // deleted is a listing change exactly like a new or deleted route file.
+  return [...routes, ...listCanvasLayerIds(dir)].join('\n')
 }
 
 /**

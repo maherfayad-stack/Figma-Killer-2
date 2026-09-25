@@ -9,7 +9,9 @@
  * write. A drop that IS good is ONE store action (`runCanvasFileDropPlan`):
  * insert N images as one write, replace an image's source, or set a
  * background — the upload, the optimistic ghost and the write are the
- * store's (`imageDropActions.ts`).
+ * store's (`imageDropActions.ts`). Released over the EMPTY board of a Studio
+ * board, the images become loose layers on the free canvas instead (P5-G,
+ * `landOnCanvas`).
  *
  * ## The answer arrives before release
  *
@@ -51,7 +53,9 @@
 import { useEffect, useRef } from 'react'
 import { pushToast } from '@ui/components/Toast'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
-import { IMAGE_DROP_TITLE } from '@site/store/slices/site/imageDropActions'
+import { getErrorMessage } from '@core/utils/errorMessage'
+import { IMAGE_DROP_TITLE, altTextFor, reportUnlanded } from '@site/store/slices/site/imageDropActions'
+import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
 import { paintCanvasDrag } from './canvasDragPainter'
 import type { ClientPoint } from './canvasDragSession'
@@ -71,6 +75,7 @@ import {
 } from './canvasFileDrop'
 import { presentFreeMoveRefusal } from './canvasFreeMove'
 import { paintCanvasUploadProgress } from './canvasUploadProgress'
+import { findBoardOrigin, isEmptyBoardTarget } from './BoardCanvasLayer/canvasLayerGeometry'
 import type { CanvasTransform } from './math'
 
 interface UseCanvasFileDropOptions {
@@ -92,6 +97,7 @@ export function useCanvasFileDrop({
   const hintLayerRef = useRef<HTMLDivElement | null>(null)
   const sessionRef = useRef<CanvasFileDragSession | null>(null)
   const pointRef = useRef<ClientPoint>({ x: 0, y: 0 })
+  const targetRef = useRef<EventTarget | null>(null)
   const factsRef = useRef<DroppedFileFacts>({ types: [] })
   const modifiersRef = useRef<CanvasFileDropModifiers>(NO_DROP_MODIFIERS)
   const hintOriginRef = useRef<ClientPoint | null>(null)
@@ -129,6 +135,7 @@ export function useCanvasFileDrop({
         readPage,
         hintLayer: hintLayerRef.current,
         hintOrigin: hintOriginRef.current,
+        freeCanvas: isEmptyBoardTarget(targetRef.current) && findBoardOrigin() !== null,
       })
       // Only one layer ever carries chrome — the frame's or the board's. Clear
       // the one being left BEFORE writing the new one, the same discipline the
@@ -149,6 +156,7 @@ export function useCanvasFileDrop({
       if (event.dataTransfer) event.dataTransfer.dropEffect = 'copy'
 
       pointRef.current = { x: event.clientX, y: event.clientY }
+      targetRef.current = event.target
       factsRef.current = facts
       modifiersRef.current = dropModifiersOf(event)
       if (!sessionRef.current) {
@@ -177,6 +185,11 @@ export function useCanvasFileDrop({
         modifiers: dropModifiersOf(event),
         transform: transformRef?.current ?? null,
         readPage,
+        // P5-G — only a drop on the empty board itself is a free-canvas drop. A
+        // drop relayed out of a frame arrives targeted at that frame's iframe,
+        // and must never fall through to the canvas even if the frame's drop
+        // surface is not registered (a frame mid-mount).
+        freeCanvas: isEmptyBoardTarget(event.target) ? findBoardOrigin() : null,
       })
       runCanvasFileDropPlan(plan)
     }
@@ -207,7 +220,8 @@ export function useCanvasFileDrop({
  * Carry out a planned drop: a refusal is one toast (or, for a ⌘-drop into a
  * static container, K6's one-click refusal dialog), and an accepted drop is
  * one store action. The upload, the ghost and the write are the store's
- * (`imageDropActions.ts`), so this is the only place a plan is dispatched.
+ * (`imageDropActions.ts`, and `landOnCanvas` below for the free canvas), so
+ * this is the only place a plan is dispatched.
  */
 export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
   if (!plan.ok) {
@@ -237,6 +251,11 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     })
   }
 
+  if (plan.kind === 'canvas') {
+    void landOnCanvas(plan.files, plan.at)
+    return
+  }
+
   const store = useEditorStore.getState()
   const { action } = plan
   if (action.kind === 'replace') {
@@ -256,4 +275,44 @@ export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
     absolute: action.absolute,
     paintProgress: paintCanvasUploadProgress,
   })
+}
+
+/** How far each further image of a multi-file free-canvas drop steps from the one before, in board units (IMG-9's cascade). */
+const CANVAS_DROP_CASCADE = 24
+
+/**
+ * Images dropped on the empty board (P5-G): each one's bytes land exactly as a
+ * frame drop's do (the project's `public/`, through `asset-drop`), and each
+ * becomes its own loose layer at its intrinsic size — the size the landing
+ * route read from the header bytes — the first centred on the drop point and
+ * every further one cascaded down-right. One structural commit per layer, in
+ * drop order; the layers appearing is the answer, so a landing that succeeds
+ * raises no toast. Files that fail to land are reported in ONE toast through
+ * the frame drop's own `reportUnlanded` (a warning when some landed, an error
+ * only when none did), and the rest still land.
+ */
+async function landOnCanvas(files: readonly File[], at: { x: number; y: number }): Promise<void> {
+  const failures: { name: string; message: string }[] = []
+  let landedCount = 0
+  for (const [index, file] of files.entries()) {
+    let landed: DroppedStudioAsset
+    try {
+      landed = await dropStudioAsset(file)
+    } catch (err) {
+      console.error('[canvas-file-drop] landing a dropped image on the free canvas failed:', err)
+      failures.push({ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') })
+      continue
+    }
+    const size = landed.width !== null && landed.height !== null && landed.width > 0 && landed.height > 0
+      ? { width: landed.width, height: landed.height }
+      : null
+    landedCount += 1
+    const offset = index * CANVAS_DROP_CASCADE
+    const centre = { x: at.x + offset, y: at.y + offset }
+    useEditorStore.getState().createCanvasLayer(
+      { name: 'img', props: { src: landed.src, alt: altTextFor(file), ...(size ? { width: size.width, height: size.height } : {}) } },
+      size ? { x: centre.x - size.width / 2, y: centre.y - size.height / 2 } : centre,
+    )
+  }
+  reportUnlanded(failures, landedCount)
 }

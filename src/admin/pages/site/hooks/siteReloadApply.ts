@@ -49,6 +49,7 @@ export function applyStructuralWriteOutcome(outcome: PendingStructuralOutcome | 
  * avoid.
  */
 export function applySitePagesPatch(detail: CmsSitePagesPatchDetail): void {
+  if (detail.canvasLayers) useEditorStore.getState().setCanvasLayers(detail.canvasLayers)
   useEditorStore.getState().patchPages({
     pages: detail.pages,
     removedPageIds: detail.removedPageIds,

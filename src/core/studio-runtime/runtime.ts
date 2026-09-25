@@ -37,10 +37,10 @@
  *     TypeBox schema runs, so a same-shaped message from an unrelated
  *     `postMessage` sender (React DevTools, a browser extension) is dropped
  *     without ever reaching a handler.
- *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML`, and
- *     refuse a dangerous tag name case-insensitively before
- *     `createElement` runs — see `optimisticDomOps.ts`, which owns all four
- *     mutations and is deliberately small enough to audit at a glance.
+ *   - `optimistic.insert` never touches `innerHTML`, and refuses a dangerous
+ *     tag name case-insensitively before `createElement` runs — see
+ *     `optimisticDomOps.ts`, which owns every structural preview
+ *     mutation and is deliberately small enough to audit at a glance.
  *   - The outbound `error` channel (Z5) carries only bounded plain text, no
  *     HTML and no node id, capped and rate-limited at this honest sender
  *     (`runtimeErrorTaps.ts`). A same-realm forger can still post directly,
@@ -68,8 +68,8 @@ import {
   applyOptimisticDelete,
   applyOptimisticInsert,
   applyOptimisticMove,
-  applyOptimisticText,
   revertOptimisticDom,
+  revertOptimisticNodes,
   sweepOptimisticGhosts,
 } from './optimisticDomOps'
 import { applyOptimisticStyle, clearOptimisticStyle, revertAllOptimisticStyle } from './optimisticStyle'
@@ -364,12 +364,19 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   }
 
   // ---- resize handles (`live-13`) — drawn and dragged here, committed by the parent ----
+  let resizeGestureActive = false
   const resize = installResizeHandles({
     doc,
     view,
     ensureOverlayRoot,
     resolveTarget: (target) => findByNodeId(doc, target.nodeId, target.occurrenceIndex),
     onCommit: (target, patch) => postOutbound({ type: 'resize:commit', nodeId: target.nodeId, occurrenceIndex: target.occurrenceIndex, patch }),
+    onGuides: (guides) => postOutbound({ type: 'resize:guides', guides: [...guides] }),
+    // No height report while the badge hangs under the element (canvas-23) — one after.
+    onGestureChange: (active) => {
+      resizeGestureActive = active
+      if (!active) scheduleFrameResize()
+    },
     onPreview: scheduleReposition,
   })
 
@@ -498,7 +505,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
   let frameFitPassesUsed = 0
   let lastReportedHeight: number | null = null
   function reportFrameHeight(): void {
-    if (!doc.body || mode !== 'design') return
+    if (!doc.body || mode !== 'design' || resizeGestureActive) return
     const fitted = resolveFrameFitHeight({
       pinnedHeight,
       scrollDeficits: collectScrollDeficits(doc),
@@ -509,7 +516,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       frameFitPassesUsed += 1
       doc.body.style.height = `${fitted}px`
     }
+    // Chrome is not content (canvas-23): handles and the W×H badge hang past
+    // an element at the body's bottom edge. Hidden for the read, same task.
+    const chrome = overlayRoot?.isConnected ? overlayRoot : null
+    if (chrome) chrome.style.display = 'none'
     const height = doc.body.scrollHeight
+    if (chrome) chrome.style.display = ''
     if (height === lastReportedHeight) return
     lastReportedHeight = height
     postOutbound({ type: 'frame:resize', height })
@@ -569,7 +581,7 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
         applyMode(message.mode)
         return
       case 'setResizeTarget':
-        resize.setTarget(message.ref, message.proportional)
+        resize.setTarget(message.ref, message.proportional, { sizing: message.sizing ?? {}, snap: message.snap ?? null })
         return
       case 'text:edit':
         textEdit.handleReply(message)
@@ -583,8 +595,9 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'optimistic.move':
         applyOptimisticMove(doc, message.nodeId, message.occurrenceIndex, message.parentNodeId, message.parentOccurrenceIndex, message.index)
         return
-      case 'optimistic.text':
-        applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
+      case 'optimistic.revert':
+        revertOptimisticNodes(doc, message.refs)
+        scheduleReposition()
         return
       case 'optimistic.style':
         applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`

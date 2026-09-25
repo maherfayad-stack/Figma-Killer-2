@@ -24,8 +24,8 @@ import {
 } from '@site/canvas/canvasFreeMove'
 import { authoredOffsets, type NudgeOffsetProperty } from '@site/canvas/canvasNodeArrowMove'
 import { isPositionedFreely } from '@core/studio-runtime'
-import { SNAP_THRESHOLD_SCREEN_PX } from '@site/canvas/boardSnapping'
-import { createInlineStylePreview } from '@site/canvas/elementResizeSizing'
+import { SNAP_THRESHOLD_SCREEN_PX } from '@core/studio-runtime'
+import { createInlineStylePreview } from '@site/canvas/elementResizeInlinePreview'
 
 function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput {
   return {

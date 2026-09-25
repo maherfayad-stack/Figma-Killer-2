@@ -22,7 +22,7 @@ import { createBoard } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { resolveFreeMove, stepFreeMove, type FreeMovePlan } from '@site/canvas/canvasFreeMove'
 import { DEFAULT_SNAP_PREFERENCES } from '@site/canvas/snapPreferences'
-import { createInlineStylePreview } from '@site/canvas/elementResizeSizing'
+import { createInlineStylePreview } from '@site/canvas/elementResizeInlinePreview'
 import { useAnnotationInteraction } from '@site/canvas/useAnnotationInteraction'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import { paintCanvasDrag } from '@site/canvas/canvasDragPainter'
@@ -34,7 +34,7 @@ import {
   resizeSnapEdges,
   snapResizeDelta,
   type FlowLayoutInput,
-} from '@site/canvas/elementResizeSnap'
+} from '@core/studio-runtime'
 import {
   registerFrameAdapter,
   unregisterFrameAdapter,
