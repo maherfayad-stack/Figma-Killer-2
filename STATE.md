@@ -107,11 +107,11 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** orchestrator review.
 
 ### canvas-29 — P5-E: tools and handles (armed draw tools, padding/gap handles, align, layer commands)
-- **Agent:** canvas-engineer · **Branch:** `feat/canvas-tools-and-handles` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, test list and dogfood in its body) · **Updated:** 2026-09-24
+- **Agent:** canvas-engineer · **Branch:** `feat/canvas-tools-and-handles` off `25681dcb` (trunk merged to `74425627`) · **PR:** PR_URL (draft, base `feat/canvas-excellence`; long form, test list and dogfood in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open; owner dogfood below)
 - **Closes:** IX-12 (OD-5), IX-17, IX-20, IX-21, IX-7, IX-10, IX-props, IX-16 (OD-6), IX-26, IX-27, UX-22, UX-23. IX-9 single layer (multi → after P3-D's `moveNodesInSequence`). IX-8 was already wired by speed-06 (verified, unchanged).
 - **Canvas files touched:** `CanvasRoot`, `CanvasDrawToolLayer` (+css, new), `canvasDrawTool` (new), `useCanvasToolShortcuts`, `useCanvasSelectionKeyboard`, `canvasTextEditStart` (new), `createdNodeFollowUp` (new), `CanvasResizeHandles`, `CanvasSpacingHandles` + `spacingHandleRules` + `spacingHandleMeasure` + `useSpacingHandleDrag` + `canvasSpacingChromeCss` (new), `CanvasSelectionOverlayInjector`, `useElementResizeDrag`, `elementResizeAnchoring` (new), `canvasFreeMove`, `canvasNodeArrowMove`, `canvasSelectionMeasure` (new), `layerAlign` / `layerCommands` / `useCanvasLayerCommandKeys` (new), `selectionStyleCommands` + `SelectionStyleCommandHost` (new), `useInFrameMarquee` + `inFrameMarquee` (new), `useCanvasReorderDrag`, `canvasNodesUnderPoint` (new), `useCanvasLayerContextMenu`, `CanvasLayerContextMenu`, `CanvasNotch`, `SelectionToolbar`. Also `spotlight/keybindings*` (+`keybindingTools`, `keybindingLayerCommands`), `LayerNodeContextMenu` (+`LayerArrangeMenuItems`), store `canvasSlice`, `selectionTraversalActions`, `styleRule/assignmentActions` (`applyNodeStyles`), UI `Tooltip` / `Button` / `ContextMenuItem` (`shortcut`).
-- **Decisions:** draw tools draw on a parent-document layer (works over live frames too, adds no canvas DOM); a drawn box/ellipse gets Figma's `#d9d9d9` fill; FRONT = last child (paint order), so ⌘⇧] and ⌘] point at opposite ends of the Layers list (recorded in the conflict register); ⌥ letters match on `event.code`; E is an alias of O; ⌘↑/⌘↓ aliases for ±1 were NOT added (Penpot's ⌘↑ = forward would contradict K4's "up = earlier").
+- **Decisions:** draw tools draw on a parent-document layer (works over live frames too, adds no canvas DOM); a drawn box/ellipse gets Figma's `#d9d9d9` fill; FRONT = last child (paint order), so ⌘⇧] and ⌘] point at opposite ends of the Layers list (recorded in the conflict register); ⌥ letters match on `event.code`; E is an alias of O; ⌘↑/⌘↓ aliases for ±1 were NOT added (Penpot's ⌘↑ = forward would contradict K4's "up = earlier"). ⇧K runs P5-B's `insert.image` through the generic dispatcher (gated on `site.structure.edit`); K alone stays the scale tool. SitePage budget raised 40.6 → 41.3 KB, audited against a trunk build (+586 B: +7 preload entries for the new shared canvas chunks, ZoomControls' `tooltipShortcut`).
 - **P5-G seam:** `registerBoardDrawHandler` in `canvasDrawTool.ts` receives empty-board draws in board units.
 - **Landmines:**
   - **Events × injectors:** the spacing-band CSS is appended to the portal chrome sheet (unlayered, `!important` only on `cursor`, like the resize handles). The band drag and the in-frame marquee both claim presses inside the overlay root / page root with capture listeners on the frame document; the marquee skips targets inside `[data-studio-canvas-overlay-root]` because the page root can be `<body>` itself.
@@ -120,7 +120,10 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - ⌘C / ⌘V now reject ⌥ (Ctrl+Alt+V used to paste a layer and a style in one press).
   - `createdNodeFollowUp` snapshots every node id when armed (one pass per T-draw / ⇧A group).
 - **Found, not fixed:** in the PR body.
-- **Human action needed:** dogfood (PR body): `test4`, `/admin/site`, static tier, SMS frame, 100%; R-drag, T-click-type, padding ⇧/⌥ drags, ⌥A on the `.banner`, ⇧A, ⌘⌥C/⌘⌥V, right-click "Select layer".
+- **Verification:** build clean (96 s once it held the lock; the earlier hang after "2622 modules transformed" did not reproduce in two runs); lint clean. Unit suite in 16 locked chunks after the merge: only fails are pre-existing `module-size-budgets` (`agentCheckpoints.ts`) and bundle freshness on local Bun 1.3.6. e2e `canvas-tools-and-handles` E2E_RESULT.
+- **Next:** owner dogfood (script in the PR body, 11 steps); orchestrator review.
+- **Human action needed:** dogfood: `test4`, `/admin/site`, static tier, SMS frame, 100%; R-drag, T-click-type, padding ⇧/⌥ drags, ⌥A on the `.banner`, ⇧A, ⌘⌥C/⌘⌥V, right-click "Select layer", ⇧K.
+
 ### test-07 — Green baseline: the 16 pre-existing unit failures and the broken e2e specs
 - **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** #257 (draft, base `feat/canvas-excellence`; per-failure table in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open)
@@ -197,6 +200,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
+- `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
