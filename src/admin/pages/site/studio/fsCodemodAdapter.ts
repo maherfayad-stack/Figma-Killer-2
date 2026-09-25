@@ -234,7 +234,8 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     } = meta
     // ERR-14 — the automatic stylesheet choices are this project's; a load of
     // a DIFFERENT project starts without them (a resync keeps them).
-    if (dir !== cssDestinationMemoryDir) resetCssDestinationMemory()
+    const sameProject = dir === cssDestinationMemoryDir
+    if (!sameProject) resetCssDestinationMemory()
     cssDestinationMemoryDir = dir
     setStudioLoadedDir(dir)
     componentSources = sources
@@ -245,8 +246,10 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     setStudioLoadWarnings(loadWarnings)
     setStudioTrustTier(trust)
     setStudioProjectKey(projectKey ?? null)
-    // Baseline for the save-time diff — see `loadedValuesBaseline.ts`.
-    resetLoadedValues(pages)
+    // Baseline for the save-time diff — see `loadedValuesBaseline.ts`. A
+    // re-read of the project already open keeps the baseline it replaces, so
+    // the store can rebase the user's unsaved edits onto these pages (ERR-9).
+    resetLoadedValues(pages, { sameProject })
     // `style-02` — a fresh document is a fresh set of refusals to report.
     resetRefusalToasts()
     // `panel-02` (WS-6.3) — the CSS write-back map + its diff baseline.

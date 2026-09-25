@@ -53,6 +53,7 @@ import { existsSync } from 'node:fs'
 import {
   createImportPruneSession,
   createModuleImportPlan,
+  createProject,
   detachComponentInstance,
   isPrunableSourceFile,
   setImportSpecifier,
@@ -64,11 +65,13 @@ import {
   setStringLiteral,
   setStyledDeclaration,
   swapComponentInstance,
+  syncProjectWithDisk,
   type DeletedJsxText,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
 import type { SourceFingerprintExpectations } from '@core/page-tree'
-import { applyCssEdit, cssCreateImportTarget } from './studioCssWriteback'
+import type { Project } from 'ts-morph'
+import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
@@ -78,7 +81,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
-import { applyCanvasLayerEdit, canvasLayerTouchedFiles, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
+import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createCanvasLayerScope } from './studioCanvasLayerScope'
 import { createSyntaxGuard } from './studioSyntaxGuard'
 import { expandMergedOutcomes } from './studioEditMerge'
@@ -132,6 +135,7 @@ import {
   orderStudioEditsForApply,
   studioEditFile,
   studioEditLocation,
+  studioEditsTouchedFiles,
   type StudioEditLocation,
 } from './studioEditRouting'
 
@@ -163,20 +167,31 @@ import {
  * shape) now live in `studioEditSchemas.ts`, alongside every other RESPONSE
  * type this module builds and returns — see that module's own doc for why.
  */
-export function applyStudioEdit(dir: string, edit: StudioEdit, moduleImports?: ModuleImportPlan): StudioEditApplyOutcome {
+export function applyStudioEdit(dir: string, edit: StudioEdit, batch?: StudioEditBatchContext): StudioEditApplyOutcome {
   // P3-C (WB-18) — a batch passes ITS plan and adds the reserved imports after
   // its last edit; a lone edit has nothing pending below it, so it adds them now.
-  const plan = moduleImports ?? createModuleImportPlan()
+  const plan = batch?.moduleImports ?? createModuleImportPlan()
   try {
-    const outcome = dispatchStudioEdit(dir, edit, plan)
-    if (!moduleImports) plan.apply()
+    const outcome = dispatchStudioEdit(dir, edit, plan, batch?.project)
+    if (!batch?.moduleImports) plan.apply()
     return outcome
   } catch (err) {
     throw refusalFromCodemodError(edit, err) ?? err
   }
 }
 
-function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: ModuleImportPlan): StudioEditApplyOutcome {
+/**
+ * What one edit shares with its batch. `project` is WB-25: one ts-morph project
+ * per batch, re-synced with the disk before each edit (`syncProjectWithDisk`),
+ * instead of a parse per VALUE codemod — 40 edits to a 1,500-element page took
+ * 3.8 s in the audit, all under the write lock. Structural kinds keep their own.
+ */
+export interface StudioEditBatchContext {
+  moduleImports: ModuleImportPlan
+  project: Project
+}
+
+function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: ModuleImportPlan, project?: Project): StudioEditApplyOutcome {
   // WS-6.3 — a CSS edit's target is a FILE + SELECTOR (`edit.file`/
   // `edit.selector`), never the nodeId-encoded `rel:line:col` every other
   // kind decodes below; `edit.nodeId` here is a synthesized, non-decodable
@@ -209,11 +224,11 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // WB-11 — an attribute holding code refuses `binding-overwrite` rather
       // than baking a literal over the binding (`studioEditRefusals.ts`).
       const prop = edit.prop.startsWith('callSiteProps:') ? edit.prop.slice('callSiteProps:'.length) : edit.prop
-      setJsxProp({ ...loc, prop, value: edit.value })
+      setJsxProp({ ...loc, prop, value: edit.value, project })
       return { applied: true }
     }
     case 'text':
-      setJsxText({ ...loc, text: edit.text })
+      setJsxText({ ...loc, text: edit.text, project })
       return { applied: true }
     case 'styled': {
       // W4-4 Phase B. `loc` is the `styled.…` TAG, not a JSX element — the
@@ -228,6 +243,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         property: edit.property,
         value: edit.value,
         ...(edit.atRule ? { atRule: edit.atRule } : {}),
+        project,
       })
       if (!outcome.ok) throw new StudioEditRefusalError(outcome.reason, outcome.message)
       // `changed: false` means the template already says exactly this — the
@@ -240,7 +256,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // (`studioEditRefusals.ts`). Since P3-C (WB-17) that is only a removal
       // from an expression `style`, a value that is not an object, or a
       // shorthand key: a spread or an identifier is written, not refused.
-      setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}) })
+      setJsxStyle({ ...loc, style: edit.style, ...(edit.remove ? { remove: edit.remove } : {}), project })
       return { applied: true }
     case 'class': {
       // Track B2 — the real write behind Phase 0 item 0.6's honesty-only
@@ -259,12 +275,12 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       if (add === null || remove === null) return { applied: false, unwritable: 'stylesheet-unavailable' } // never guess
       // WB-18 — a CSS Module this file does not import yet is written against a
       // binding reserved in the batch's plan, imported after the last edit.
-      const result = setJsxClassName({ ...loc, add, remove, pendingModuleImports: moduleImports.forFile(loc.file) })
+      const result = setJsxClassName({ ...loc, add, remove, pendingModuleImports: moduleImports.forFile(loc.file), project })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
       return { applied: true }
     }
     case 'literal':
-      setStringLiteral({ ...loc, value: edit.text })
+      setStringLiteral({ ...loc, value: edit.text, project })
       return { applied: true }
     case 'asset': {
       // `target` here is the IMPORT's own location (assetOrigin), decoded by
@@ -274,11 +290,11 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       const assetPath = resolveContainedRefPath(dir, edit.assetPath)
       if (assetPath === null) return { applied: false, unwritable: 'asset-unavailable' } // never guess
       const specifier = relativeImportSpecifier(target.rel, assetPath)
-      setImportSpecifier({ ...loc, specifier })
+      setImportSpecifier({ ...loc, specifier, project })
       return { applied: true }
     }
     case 'tag':
-      setJsxTagName({ ...loc, tag: edit.tag })
+      setJsxTagName({ ...loc, tag: edit.tag, project })
       return { applied: true }
     case 'transplant': {
       // D2 G3 — the ONE structural kind whose destination is deliberately in a
@@ -450,36 +466,15 @@ export function applyStudioEditBatch(
   // a byte, and before ordering — a re-addressed edit sorts by where it will
   // actually write. See `studioEditIdentity.ts`.
   const locate = (nodeId: string) => studioEditLocation(dir, nodeId)
-  const identity = resolveEditIdentities(dir, edits, expect)
+  // WB-25 — one ts-morph project for the whole batch; see `StudioEditBatchContext`.
+  const project = createProject()
+  const identity = resolveEditIdentities(dir, edits, expect, project)
   const ordered = orderStudioEditsForApply(dedupeStudioEdits(dir, identity.runnable))
   const sharedComponents = edits.some((edit) => isSharedSourceNodeId(edit.nodeId, edit.kind))
 
-  const touchedFiles = new Set<string>()
   // A refused edit's file is still reported: the caller re-reads exactly these
   // to recover from an `element-moved` refusal.
-  for (const edit of [...ordered, ...identity.moved.map((entry) => entry.edit)]) {
-    const file = studioEditFile(dir, edit.nodeId)
-    if (file) touchedFiles.add(file)
-    // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
-    // edit itself rewrites `pageFile`'s import list — a real line-count
-    // change downstream code needs to see, exactly like every OTHER kind's
-    // decoded location. Added explicitly rather than through
-    // `studioEditFile` because this kind's write target is a FILE +
-    // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
-    if (edit.kind === 'css' && edit.op === 'create') {
-      const importer = cssCreateImportTarget(dir, edit)
-      if (importer) touchedFiles.add(join(dir, importer))
-    }
-    // D2 G3 — a transplant writes TWO files, and only the origin is named by
-    // `edit.nodeId`. The destination has to be in this set or the batch's
-    // line-count-shift check would report `shifted: false` for a write that
-    // moved every id in the file the element landed in.
-    if (edit.kind === 'transplant') {
-      const destination = studioEditFile(dir, edit.parentNodeId)
-      if (destination) touchedFiles.add(destination)
-    }
-    for (const file of canvasLayerTouchedFiles(dir, edit, locate)) touchedFiles.add(file)
-  }
+  const touchedFiles = studioEditsTouchedFiles(dir, [...ordered, ...identity.moved.map((entry) => entry.edit)])
   const lineCountBefore = new Map<string, number>()
   for (const file of touchedFiles) {
     lineCountBefore.set(file, countLines(file))
@@ -560,8 +555,9 @@ export function applyStudioEditBatch(
       refusals.push(brokenTarget)
       continue
     }
+    syncProjectWithDisk(project)
     try {
-      const outcome = applyStudioEdit(dir, edit, moduleImports)
+      const outcome = applyStudioEdit(dir, edit, { moduleImports, project })
       if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
       if (isSlotPreviewOutcome(outcome)) {
         // E2.2 — a deliberate `add-slot-prop` preview: `ok`, nothing written,
@@ -577,7 +573,7 @@ export function applyStudioEditBatch(
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
         if (outcome.removed) removed.push({ nodeId: edit.nodeId, ...outcome.removed })
-        const identity = fingerprintAfterWrite(dir, edit)
+        const identity = fingerprintAfterWrite(dir, edit, project)
         if (identity) fingerprints.push(identity)
       } else {
         refusals.push(refusalForUnwritable(edit, outcome))

@@ -1545,7 +1545,7 @@ describe('applyStudioEdit — the class kind, module tokens', () => {
         "import styles from './Recipe.module.css'",
         'export function Recipe() {',
         '  return <section>',
-        '    <h2>{"Stew"}</h2>',
+        '    <h2>Stew</h2>', // WB-9 — raw text stays raw
         '    <p className={styles.step}>Simmer</p>',
         '  </section>',
         '}',

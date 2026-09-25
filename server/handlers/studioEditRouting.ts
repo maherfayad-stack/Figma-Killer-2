@@ -23,10 +23,11 @@ import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
 import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
+import { cssCreateImportTarget } from './studioCssWriteback'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
-import { isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
+import { canvasLayerTouchedFiles, isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
 import type { StudioEdit } from './studioEditSchemas'
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
@@ -188,7 +189,7 @@ export function isWritableSourceRel(rel: string): boolean {
  * judged by where it really lands. The agent's native writes
  * (`agentWriteScope.ts`), CSS writeback and asset landing never consult it,
  * and a batch run for an agent refuses every canvas-layer target
- * (`studioCanvasLayerWriteback.ts`'s `refuseAgentCanvasLayerEdit`). Nothing
+ * (`studioCanvasLayerScope.ts`'s `createCanvasLayerScope`). Nothing
  * else belongs in this list without its own security review.
  */
 const STUDIO_AUTHORED_SOURCE_PATTERNS: readonly RegExp[] = [CANVAS_LAYER_REL_PATTERN]
@@ -398,4 +399,37 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
 export function studioEditFile(dir: string, nodeId: string): string | null {
   const loc = studioEditLocation(dir, nodeId)
   return loc ? join(dir, loc.rel) : null
+}
+
+/**
+ * Every absolute file `edits` write — what a batch compares line counts over
+ * (`shifted`) and reports as `touchedFiles` for the caller to re-read.
+ */
+export function studioEditsTouchedFiles(dir: string, edits: readonly StudioEdit[]): Set<string> {
+  const touchedFiles = new Set<string>()
+  for (const edit of edits) {
+    const file = studioEditFile(dir, edit.nodeId)
+    if (file) touchedFiles.add(file)
+    // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
+    // edit itself rewrites `pageFile`'s import list — a real line-count
+    // change downstream code needs to see, exactly like every OTHER kind's
+    // decoded location. Added explicitly rather than through
+    // `studioEditFile` because this kind's write target is a FILE +
+    // SELECTOR pair, never a `rel:line:col` (see `CssEditSchema`'s doc).
+    if (edit.kind === 'css' && edit.op === 'create') {
+      const importer = cssCreateImportTarget(dir, edit)
+      if (importer) touchedFiles.add(join(dir, importer))
+    }
+    // D2 G3 — a transplant writes TWO files, and only the origin is named by
+    // `edit.nodeId`. The destination has to be in this set or the batch's
+    // line-count-shift check would report `shifted: false` for a write that
+    // moved every id in the file the element landed in.
+    if (edit.kind === 'transplant') {
+      const destination = studioEditFile(dir, edit.parentNodeId)
+      if (destination) touchedFiles.add(destination)
+    }
+    // P5-G — a loose layer's module, and the page a `canvas-layer-place` lands in.
+    for (const file of canvasLayerTouchedFiles(dir, edit, (id) => studioEditLocation(dir, id))) touchedFiles.add(file)
+  }
+  return touchedFiles
 }

@@ -346,17 +346,20 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     const atWorkingZoom = await readBoardCounts(page)
     annotate('board frames', String(atWorkingZoom.boardFrames))
     annotate('live iframes @ working zoom', String(atWorkingZoom.liveIframes))
+    annotate('mounted frames @ working zoom', String(atWorkingZoom.mountedFrames))
     annotate('posters rendered', String(atWorkingZoom.posters))
     annotate('plain placeholders', String(atWorkingZoom.placeholders))
     annotate('DOM nodes', String(atWorkingZoom.domNodes))
 
     expect(atWorkingZoom.boardFrames).toBeGreaterThan(1)
     // The load-bearing assertion: an offscreen frame must NOT hold a live
-    // iframe. Pre-WS-5.3 this number equalled `boardFrames`.
-    expect(atWorkingZoom.liveIframes).toBeLessThan(atWorkingZoom.boardFrames)
-    // Every frame is either live or showing a placeholder/poster — no frame
+    // iframe. Pre-WS-5.3 this number equalled `boardFrames`. Counted per
+    // FRAME (`readBoardCounts`' doc): a Tier-2 frame mounts a hidden bridge
+    // iframe beside its fallback, so raw iframes over-count mounted frames.
+    expect(atWorkingZoom.mountedFrames).toBeLessThan(atWorkingZoom.boardFrames)
+    // Every frame is either mounted or showing a placeholder/poster — no frame
     // may be silently blank.
-    expect(atWorkingZoom.liveIframes + atWorkingZoom.posters + atWorkingZoom.placeholders).toBe(
+    expect(atWorkingZoom.mountedFrames + atWorkingZoom.posters + atWorkingZoom.placeholders).toBe(
       atWorkingZoom.boardFrames,
     )
 
@@ -398,7 +401,7 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     // store-commit debounce, which forces a commit (and therefore a
     // virtualization pass) between wheel ticks rather than leaving it to
     // scheduling luck. A trackpad with inertia does exactly this.
-    const liveBeforeZoom = (await readBoardCounts(page)).liveIframes
+    const liveBeforeZoom = (await readBoardCounts(page)).mountedFrames
     const zoom = await profileGesture(page, async () => {
       await page.keyboard.down('Control')
       for (let i = 0; i < 12; i += 1) {
@@ -412,8 +415,8 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
     // after the gesture stops. (This used to credit a `useStaggeredFrameMounts`
     // that `perf-01` reverted and never existed in the tree afterwards.)
     await page.waitForTimeout(800)
-    const liveAfterZoom = (await readBoardCounts(page)).liveIframes
-    annotate('live iframes across zoom', `${liveBeforeZoom} -> ${liveAfterZoom}`)
+    const liveAfterZoom = (await readBoardCounts(page)).mountedFrames
+    annotate('mounted frames across zoom', `${liveBeforeZoom} -> ${liveAfterZoom}`)
     // If this gesture did not actually mount anything, the frame times below
     // are measuring an idle canvas and prove nothing about the mount path.
     expect(liveAfterZoom).toBeGreaterThan(liveBeforeZoom)

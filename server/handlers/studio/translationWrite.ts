@@ -30,11 +30,20 @@
  * value is code the panel could not have displayed honestly in the first
  * place, and replacing it with a string would silently change behaviour —
  * the same posture `insertJsxIntoSlotProp` takes on an ambiguous slot.
+ *
+ * ## A locale JSON keeps its own formatting (WB-32)
+ *
+ * `locales/<locale>.json` is a file in the user's repo too. Changing a key
+ * that already holds a string replaces that value's bytes and nothing else;
+ * creating a key re-serializes with the file's own indentation (tabs or its
+ * space width), line ending and final newline. It used to be written with
+ * `JSON.stringify(…, null, 2)` and `\n` every time, so a one-key edit in a
+ * tab-indented or CRLF file showed up as a whole-file diff.
  */
 import { writeFileSync } from 'node:fs'
 import { applyLineEnding, detectLineEnding, toLf } from '@core/utils/lineEndings'
 import { join } from 'node:path'
-import { IndentationText, Node, Project, QuoteKind, type ObjectLiteralExpression } from 'ts-morph'
+import { IndentationText, Node, Project, QuoteKind, ts, type ObjectLiteralExpression } from 'ts-morph'
 import { readTextCapped } from './cappedFileRead'
 import { findLocaleRootLiteral, readTranslationCatalog, MAX_DICTIONARY_BYTES } from './translationCatalog'
 
@@ -152,7 +161,34 @@ function setNested(target: Record<string, unknown>, segments: readonly string[],
   return true
 }
 
-/** Sets `locale.key` in a `locales/<locale>.json` file. */
+/**
+ * The byte span of the string VALUE at `segments` in a JSON document, or
+ * `null` when there is none to replace — a key missing at any level, or a
+ * value that is not a string. Read through TypeScript's JSON parser, which
+ * keeps positions; `JSON.parse` has already vouched for the text.
+ */
+function jsonStringValueSpan(text: string, segments: readonly string[]): { start: number; end: number } | null {
+  const document = ts.parseJsonText('locale.json', text)
+  let current: ts.Expression | undefined = document.statements[0]?.expression
+  for (const segment of segments) {
+    if (!current || !ts.isObjectLiteralExpression(current)) return null
+    const property: ts.ObjectLiteralElementLike | undefined = current.properties.find(
+      (candidate) =>
+        ts.isPropertyAssignment(candidate) && ts.isStringLiteral(candidate.name) && candidate.name.text === segment,
+    )
+    current = property && ts.isPropertyAssignment(property) ? property.initializer : undefined
+  }
+  if (!current || !ts.isStringLiteral(current)) return null
+  return { start: current.getStart(document), end: current.getEnd() }
+}
+
+/** The indentation unit a JSON file already uses — its first indented line's — or two spaces. */
+function jsonIndentation(text: string): string {
+  const indented = /\n([ \t]+)\S/.exec(text)
+  return indented ? indented[1]! : '  '
+}
+
+/** Sets `locale.key` in a `locales/<locale>.json` file, in the file's own formatting (WB-32). */
 function writeLocaleJson(absDir: string, locale: string, key: string, value: string): TranslationWriteResult {
   const absFile = join(absDir, `${locale}.json`)
   const text = readTextCapped(absFile, MAX_DICTIONARY_BYTES)
@@ -172,10 +208,21 @@ function writeLocaleJson(absDir: string, locale: string, key: string, value: str
     }
   }
 
-  if (!setNested(parsed, key.split('.'), value)) {
+  const segments = key.split('.')
+  if (!setNested(parsed, segments, value)) {
     return { ok: false, message: `"${key}" collides with a non-object value in ${locale}.json.` }
   }
-  writeFileSync(absFile, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
+  if (text === undefined) {
+    writeFileSync(absFile, `${JSON.stringify(parsed, null, 2)}\n`, 'utf8')
+    return { ok: true }
+  }
+  const span = jsonStringValueSpan(text, segments)
+  if (span) {
+    writeFileSync(absFile, text.slice(0, span.start) + JSON.stringify(value) + text.slice(span.end), 'utf8')
+    return { ok: true }
+  }
+  const serialized = JSON.stringify(parsed, null, jsonIndentation(toLf(text))) + (/\n\s*$/.test(text) ? '\n' : '')
+  writeFileSync(absFile, applyLineEnding(serialized, detectLineEnding(text)), 'utf8')
   return { ok: true }
 }
 

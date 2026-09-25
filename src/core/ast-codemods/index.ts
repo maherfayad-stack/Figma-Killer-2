@@ -190,6 +190,7 @@ export {
   JsxElementNotFoundError,
   loadSourceFile,
   resolveJsxWholeElement,
+  syncProjectWithDisk,
 } from './locateJsxElement'
 export type { JsxLocation, JsxOpeningLikeElement } from './locateJsxElement'
 export { readSourceFingerprintAt } from './sourceFingerprintAt'

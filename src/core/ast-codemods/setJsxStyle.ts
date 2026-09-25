@@ -34,10 +34,22 @@
  * as before: the parser never reads a key out of a spread (see
  * `extractInlineStyles`), so the canvas never offered one to remove.
  *
+ * ## Formatting (WB-10)
+ *
+ * A write changes the value and nothing around it. A string value is spelled
+ * in the quote the object's own string values already use (the file's, for an
+ * object with none — `stringSpelling.ts`), an existing value is replaced in
+ * place, and an appended key follows the object's layout: on the same line in
+ * a one-line object, and on its own line — indented like its siblings, with
+ * the object's trailing-comma habit — in a multi-line one. It used to come
+ * back double-quoted, and ts-morph's printer indented appended keys by its own
+ * idea of the file, so one colour change rewrote lines the user never touched.
+ *
  * See `locateJsxElement.ts` for the (line, col) → node resolution algorithm.
  */
-import { Node, Project, type Expression, type ObjectLiteralElementLike, type ObjectLiteralExpression } from 'ts-morph'
+import { Node, Project, type Expression, type ObjectLiteralElementLike, type ObjectLiteralExpression, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
+import { jsStringSpelling, preferredQuote, quoteOf, type Quote } from './stringSpelling'
 
 export interface SetJsxStyleParams {
   file: string
@@ -77,18 +89,27 @@ function buildPropertyName(key: string): string {
   return IDENTIFIER_RE.test(key) ? key : JSON.stringify(key)
 }
 
-/** Numbers serialize as-is; strings as double-quoted JS string literals. */
-function buildPropertyValueText(value: string | number): string {
-  return typeof value === 'number' ? String(value) : JSON.stringify(value)
+/** Numbers serialize as-is; strings as JS string literals in `quote`. */
+function buildPropertyValueText(value: string | number, quote: Quote): string {
+  return typeof value === 'number' ? String(value) : jsStringSpelling(value, quote)
 }
 
-function buildEntriesText(style: Record<string, string | number>): string[] {
-  return Object.entries(style).map(([key, value]) => `${buildPropertyName(key)}: ${buildPropertyValueText(value)}`)
+function buildEntriesText(style: Record<string, string | number>, quote: Quote): string[] {
+  return Object.entries(style).map(([key, value]) => `${buildPropertyName(key)}: ${buildPropertyValueText(value, quote)}`)
 }
 
 /** Builds a full `style={{ ... }}` attribute initializer (braces included). */
-function buildStyleInitializerText(style: Record<string, string | number>): string {
-  return `{{ ${buildEntriesText(style).join(', ')} }}`
+function buildStyleInitializerText(style: Record<string, string | number>, quote: Quote): string {
+  return `{{ ${buildEntriesText(style, quote).join(', ')} }}`
+}
+
+/** The quote `object`'s own string values are written in, or the file's when it has none. */
+function objectQuote(object: ObjectLiteralExpression, sourceFile: SourceFile): Quote {
+  for (const member of object.getProperties()) {
+    const initializer = Node.isPropertyAssignment(member) ? member.getInitializer() : undefined
+    if (initializer && Node.isStringLiteral(initializer)) return quoteOf(initializer)
+  }
+  return preferredQuote(sourceFile)
 }
 
 /**
@@ -152,6 +173,7 @@ function mergeIntoObjectLiteral(
   style: Record<string, string | number>,
   remove: readonly string[],
   path: string,
+  quote: Quote,
 ): PendingEntry[] {
   const appends: PendingEntry[] = []
   for (const key of remove) {
@@ -167,7 +189,7 @@ function mergeIntoObjectLiteral(
   }
 
   for (const [key, value] of Object.entries(style)) {
-    const valueText = buildPropertyValueText(value)
+    const valueText = buildPropertyValueText(value, quote)
     const writers = membersWriting(object, key)
     if (writers.some(({ member }) => !Node.isPropertyAssignment(member))) {
       // Shorthand property (`{ color }`) — fail closed rather than guess at
@@ -190,20 +212,37 @@ function mergeIntoObjectLiteral(
 }
 
 /**
- * Appends entries at the end of `object` — after every spread. A one-line
- * object stays one line (`addPropertyAssignment` would reflow `{ ...base,
- * color: 'red' }` over three), by inserting the text after its last member;
- * a multi-line or empty one is left to ts-morph's own formatting.
+ * Appends entries at the end of `object` — after every spread — in the
+ * object's own layout (WB-10). A one-line object stays one line
+ * (`addPropertyAssignment` would reflow `{ ...base, color: 'red' }` over
+ * three). A multi-line one gets one line per entry, indented like its last
+ * member and ending the way that member ends — with or without a trailing
+ * comma. Only an EMPTY object is left to ts-morph, having no layout to copy.
  */
 function appendEntries(object: ObjectLiteralExpression, entries: readonly PendingEntry[]): void {
   if (entries.length === 0) return
   const last = object.getProperties().at(-1)
-  if (last && !object.getText().includes('\n')) {
-    const text = entries.map(({ name, initializer }) => `, ${name}: ${initializer}`).join('')
-    object.getSourceFile().insertText(last.getEnd(), text)
+  if (!last) {
+    object.addPropertyAssignments([...entries])
     return
   }
-  object.addPropertyAssignments([...entries])
+  const sourceFile = object.getSourceFile()
+  if (!object.getText().includes('\n')) {
+    const text = entries.map(({ name, initializer }) => `, ${name}: ${initializer}`).join('')
+    sourceFile.insertText(last.getEnd(), text)
+    return
+  }
+  const fullText = sourceFile.getFullText()
+  const lineStart = fullText.lastIndexOf('\n', last.getStart() - 1) + 1
+  const indent = /^[ \t]*/.exec(fullText.slice(lineStart))![0]
+  const afterLast = fullText.slice(last.getEnd(), object.getEnd())
+  const trailingComma = /^\s*,/.test(afterLast)
+  const lines = entries.map(({ name, initializer }) => `\n${indent}${name}: ${initializer}`)
+  if (trailingComma) {
+    sourceFile.insertText(last.getEnd() + afterLast.indexOf(',') + 1, lines.map((line) => `${line},`).join(''))
+  } else {
+    sourceFile.insertText(last.getEnd(), lines.map((line) => `,${line}`).join(''))
+  }
 }
 
 export function setJsxStyle(params: SetJsxStyleParams): void {
@@ -221,7 +260,7 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
     // set either — a removal-only request on a bare element is a no-op, not a
     // reason to mint an empty `style={{}}`.
     if (Object.keys(style).length === 0) return
-    element.addAttribute({ name: 'style', initializer: buildStyleInitializerText(style) })
+    element.addAttribute({ name: 'style', initializer: buildStyleInitializerText(style, preferredQuote(sourceFile)) })
     sourceFile.saveSync()
     return
   }
@@ -266,12 +305,12 @@ export function setJsxStyle(params: SetJsxStyleParams): void {
       )
     }
     if (Object.keys(style).length === 0) return
-    existingAttribute.setInitializer(`{{ ...${operand}, ${buildEntriesText(style).join(', ')} }}`)
+    existingAttribute.setInitializer(`{{ ...${operand}, ${buildEntriesText(style, preferredQuote(sourceFile)).join(', ')} }}`)
     sourceFile.saveSync()
     return
   }
 
-  const appends = mergeIntoObjectLiteral(expression, style, remove, path)
+  const appends = mergeIntoObjectLiteral(expression, style, remove, path, objectQuote(expression, sourceFile))
 
   // Every property gone: an empty `style={{}}` is noise the user did not
   // write, so the attribute goes with the last declaration in it.
