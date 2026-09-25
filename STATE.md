@@ -88,14 +88,15 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** orchestrator review.
 
 ### canvas-33 — P5-G: the free canvas (OD-14) — loose layers on the empty board
-- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk `a92df2d3` merged in) · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, gesture table in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying. **Needs security-guard review (FC-1/FC-2)** before merge.
-- **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board). Doc: `docs/features/free-canvas.md`.
+- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk through `fea4f125` merged in) · **PR:** PR_URL (draft, base `feat/canvas-excellence`; long form, threat list, reviewer file list, gesture table in its body) · **Updated:** 2026-09-25
+- **Stage:** verifying (draft PR open). **Needs security-guard review (FC-1/FC-2)** before merge — the PR body lists every file that touches the filesystem or untrusted input.
+- **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board, reconciled with P5-B's multi-file drop: one loose layer per image, intrinsic size from the landing route, cascaded 24 px; failures through P5-B's `reportUnlanded`). Doc: `docs/features/free-canvas.md`.
 - **Decisions:**
   - Agent: native Write/Edit into `.studio/` stay refused; `studio_apply_edits` refuses every canvas-layer kind and every layer-module target (`canvas-layer-agent`) — only `/save` passes `canvasLayers: 'allow'`.
   - The surface takes NO input: `pointer-events: none`; layers are hit-tested from the board (`useCanvasLayerPointer`), so no gap forwarding exists to go wrong.
   - A loose layer is selected as a whole (a 4th selection list). Inspector editing of its content is FC-7.
   - `canvas-layer-restore` accepts client text (undo), exclusive-create, ≤ 512 KB — same trust as `reinsert-source`.
+  - `CanvasFileDropPlan` is `kind: 'frame'` (P5-B's action) | `kind: 'canvas'`; modifiers never apply on the empty board. A multi-file canvas drop is one undo step PER layer (FC-6 follow-up).
 - **Canvas files touched:** `canvas/BoardCanvasLayer/*` (new), `StudioBoardLayers`, `IframeFrameSurface` + contract (`sizing`), `useIframeFrameAutoHeight` (`isLive` → `fitToContent`), `canvasFileDrop`, `canvasFileDragPreview`, `useCanvasFileDrop`, `canvasDragCommit`, `useCanvasReorderDrag`, `boardSnapping`.
 - **Landmines (height × injectors × events):**
   - The surface uses `sizing: 'fixed'`: auto-height is OFF there, and its body gets inline `margin: 0`/transparent background. A change to `applyIframeBodyReset` that pins body size must not assume every canvas iframe fits to content.
@@ -103,6 +104,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `useCanvasLayerPointer` claims a root press with `stopImmediatePropagation` in CAPTURE; the marquee (`useMarqueeSelection`) must stay a non-capture listener or it will start under a layer press.
   - Pending marks are released after the RESYNC, not at `settle` — otherwise a heal between write and re-read drops a fresh placement.
   - A full `CMS_SITE_RELOAD_EVENT` re-reads `boards.json` over an unsaved placement (pre-existing for every board edit); layer writes resync narrowly (`reloadScope` maps layer files), and the heal re-places a module that lost its placement.
+  - Events × drop: a free-canvas file drop is decided by the drop's TARGET (`isEmptyBoardTarget`), not by the frame hit test — a drop relayed out of a frame arrives targeted at the iframe element and must never fall through to the canvas. Keep the relay dispatching on the iframe element.
+  - Structural commits now live in `studioStructuralCommitEngine.ts` (trunk refactor); the `placements` undo delta rides `StructuralCommitOptions.undo` there.
 - **Next:** FC-7 panels/inspector, FC-8 MCP tools, FC-9 group, FC-10 budgets; FC-6 pieces ride P5-A/P5-D/P5-E (`createCanvasLayer`).
 - **Human action needed:** dogfood (PR body checklist).
 
