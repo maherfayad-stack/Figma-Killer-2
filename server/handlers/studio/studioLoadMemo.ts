@@ -71,7 +71,7 @@
  * One entry per loaded project, forgotten with it (`loadedProjects.ts`' LRU).
  */
 import { join, resolve } from 'node:path'
-import { STUDIO_STORE_DIR, readStudioStoreText } from './studioStore'
+import { readStudioStoreText, studioStoreProjectRel } from './studioStore'
 import { STUDIO_META_FILE } from './studioMeta'
 import { listWorkspaceFiles } from '@core/page-parser'
 import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
@@ -113,7 +113,7 @@ const NON_PARSE_META_FIELDS = new Set(['lastOpenedAt', 'trustAutoPromotedAt'])
  * framework, trust and stories, so it is compared by CONTENT (minus the fields
  * above) on every load.
  */
-const META_RELATIVE_PATH = `${STUDIO_STORE_DIR}/${STUDIO_META_FILE}`
+const META_RELATIVE_PATH = studioStoreProjectRel(STUDIO_META_FILE)
 
 /**
  * `.studio/meta.json`'s contribution: its parsed content with the fields above

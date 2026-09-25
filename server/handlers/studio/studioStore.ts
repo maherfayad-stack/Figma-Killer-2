@@ -97,6 +97,15 @@ export function studioStorePath(dir: string, rel: string): string {
 }
 
 /**
+ * `.studio/<rel>` as a project-relative POSIX path — a NAME for a caller that
+ * hands it to another helper (the static-file server, a fingerprint label),
+ * never a path to open on its own.
+ */
+export function studioStoreProjectRel(rel: string): string {
+  return [STUDIO_STORE_DIR, ...storeSegments(rel)].join('/')
+}
+
+/**
  * Whether `.studio/<rel>` is reached from `dir` through plain directory entries
  * only, with none at `rel` itself — true for an entry that does not exist yet
  * but whose existing ancestors are all plain.
@@ -114,26 +123,43 @@ function logRefusedRead(dir: string, rel: string): void {
   console.warn(`[studio:store] .studio/${rel} is reached through a link; Studio ignores it.`)
 }
 
-/** The absolute path, or `null` when anything from `.studio` down is a link (logged once per path). */
-function readablePath(dir: string, rel: string): string | null {
-  const abs = studioStorePath(dir, rel)
-  if (isUnlinkedWorkspacePath(dir, abs)) return abs
-  logRefusedRead(dir, rel)
-  return null
-}
-
 function isMissing(err: unknown): boolean {
   const code = (err as NodeJS.ErrnoException | undefined)?.code
   return code === 'ENOENT' || code === 'ENOTDIR' || code === 'EISDIR'
 }
 
+/**
+ * The entry at `.studio/<rel>` and its `lstat`, or `null` when there is
+ * nothing there or the way to it runs through a link (logged once per path).
+ *
+ * Absent is answered first and cheaply — one `lstat`, no realpath chain. A
+ * read of nothing discloses nothing, and the public share route asks this of
+ * every project on disk for every unknown token. Only an entry that EXISTS
+ * (a dangling link included: `lstat` sees the link) pays the full link check,
+ * and it pays it before a byte of it is read.
+ */
+function readableEntry(dir: string, rel: string): { abs: string; stat: Stats } | null {
+  const abs = studioStorePath(dir, rel)
+  let stat: Stats
+  try {
+    stat = lstatSync(abs)
+  } catch (err) {
+    if (isMissing(err)) return null
+    throw err
+  }
+  if (!isUnlinkedWorkspacePath(dir, abs)) {
+    logRefusedRead(dir, rel)
+    return null
+  }
+  return { abs, stat }
+}
+
 /** The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent, not a file, or reached through a link. */
 export function readStudioStoreBytes(dir: string, rel: string): Buffer<ArrayBuffer> | null {
-  const abs = readablePath(dir, rel)
-  if (abs === null) return null
+  const entry = readableEntry(dir, rel)
+  if (entry === null || !entry.stat.isFile()) return null
   try {
-    if (!lstatSync(abs).isFile()) return null
-    return readFileSync(abs)
+    return readFileSync(entry.abs)
   } catch (err) {
     if (isMissing(err)) return null
     throw err
@@ -169,15 +195,8 @@ export function readStudioStoreDocument<T>(dir: string, rel: string, parse: (raw
 
 /** The `lstat` of a plain file at `.studio/<rel>`, or `null` (absent, a directory, or reached through a link). */
 export function statStudioStoreFile(dir: string, rel: string): Stats | null {
-  const abs = readablePath(dir, rel)
-  if (abs === null) return null
-  try {
-    const stat = lstatSync(abs)
-    return stat.isFile() ? stat : null
-  } catch (err) {
-    if (isMissing(err)) return null
-    throw err
-  }
+  const entry = readableEntry(dir, rel)
+  return entry !== null && entry.stat.isFile() ? entry.stat : null
 }
 
 /**
@@ -185,10 +204,10 @@ export function statStudioStoreFile(dir: string, rel: string): Stats | null {
  * the listing is left out; the directory itself absent or linked is `[]`.
  */
 export function listStudioStoreDir(dir: string, rel: string): Dirent[] {
-  const abs = readablePath(dir, rel)
-  if (abs === null) return []
+  const found = readableEntry(dir, rel)
+  if (found === null || !found.stat.isDirectory()) return []
   try {
-    return readdirSync(abs, { withFileTypes: true }).filter((entry) => entry.isFile() || entry.isDirectory())
+    return readdirSync(found.abs, { withFileTypes: true }).filter((entry) => entry.isFile() || entry.isDirectory())
   } catch (err) {
     if (isMissing(err)) return []
     throw err

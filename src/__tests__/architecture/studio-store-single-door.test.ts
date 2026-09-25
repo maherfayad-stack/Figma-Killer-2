@@ -12,7 +12,8 @@
  * a board drag overwrote whatever `.studio/boards.json` pointed at.
  *
  * So a server module may not SPELL a `.studio` path: no string or template
- * literal that is `.studio` or starts with `.studio/`, and no use of
+ * literal that is `.studio` or starts with `.studio/` (or `/.studio/`, the
+ * form a static-file helper takes), and no use of
  * `STUDIO_STORE_DIR`, outside the door and the few named exceptions below.
  * A store names its file relative to `.studio` (`'boards.json'`) and hands it
  * to the door. Comments are not code and are not scanned; a literal that only
@@ -43,15 +44,15 @@ const ALLOWED: ReadonlyMap<string, string> = new Map([
 const STORE_DIR_ALLOWED: ReadonlyMap<string, string> = new Map([
   ['server/handlers/studio/studioStore.ts', 'The door itself.'],
   ['server/handlers/studio/archiveIngest.ts', 'Asks whether a fresh import target already has a `.studio` entry, and refuses if so. It reads no store.'],
-  ['server/handlers/studio/studioLoadMemo.ts', 'A label in the load fingerprint; the read itself goes through the door.'],
 ])
 
 function isTestFile(rel: string): boolean {
   return /\.test\.tsx?$/.test(rel) || rel.includes('/__tests__/') || /testHelpers?\.ts$/.test(rel)
 }
 
+/** `.studio`, `.studio/…`, or the URL-ish `/.studio/…` a static-file helper takes. */
 function spellsStudioPath(text: string): boolean {
-  return text === '.studio' || text.startsWith('.studio/')
+  return /^\/?\.studio(?:\/|$)/.test(text)
 }
 
 interface Hit {

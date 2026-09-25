@@ -10,9 +10,9 @@
  *          for an expected condition, matching `compileProjectStyles`'s own
  *          "never throws, warnings/refusals only" contract.
  *   GET  /admin/api/studio/component-bundle?dir=<abs>&hash=<hash>
- *       Serves the built `.js` file at `url` above — same containment
- *       posture as `studioAsset.ts` (belt-and-braces realpath containment),
- *       applied to `.studio/cache/bundle-<hash>.js` specifically (which
+ *       Serves the built `.js` file at `url` above, and only when nothing
+ *       from `.studio` down to it is a link (`studioStore.ts` — the canvas
+ *       runs this file), applied to `.studio/cache/bundle-<hash>.js` specifically (which
  *       `resolveStudioAssetResponse` itself would REFUSE, since `.studio` is
  *       in `EXCLUDED_WORKSPACE_DIR_NAMES` — this route exists precisely
  *       because that endpoint is deliberately not the right tool for a
@@ -101,7 +101,7 @@ import { buildPackageManifest, resolvePackageDtsEntry, resolvePackageTsxEntry } 
 import { ComponentSpecSchema, type ComponentSpec } from './packageManifestSchema'
 import { resolveProjectProfile } from './projectProbe'
 import { ProbeWarningSchema, type ProbeWarning } from './projectProfileSchema'
-import { isStudioStorePathUnlinked, makeStudioStoreDir, readStudioStoreJson, statStudioStoreFile, studioStorePath, writeStudioStoreJson } from './studioStore'
+import { isStudioStorePathUnlinked, makeStudioStoreDir, readStudioStoreJson, statStudioStoreFile, studioStorePath, studioStoreProjectRel, writeStudioStoreJson } from './studioStore'
 import { runCappedSubprocess, minimalSubprocessEnv } from './subprocessRunner'
 import { DEFAULT_TRUST_TIER, readStudioMeta, type TrustTier } from './studioMeta'
 import type { ComponentBundleTask, ComponentBundleWorkerResult } from './componentBundleWorker'
@@ -331,9 +331,10 @@ export async function tryServeStudioComponentBundle(req: Request, url: URL, path
       if (!hash || !BUNDLE_HASH_RE.test(hash)) return new Response('Not found', { status: 404 })
 
       // The canvas runs this file: never serve one a link put there (`studioStore.ts`).
-      if (!isStudioStorePathUnlinked(dir, cacheFileRels(hash).js)) return new Response('Not found', { status: 404 })
+      const { js } = cacheFileRels(hash)
+      if (!isStudioStorePathUnlinked(dir, js)) return new Response('Not found', { status: 404 })
 
-      const served = await serveStaticFile(dir, `/.studio/cache/bundle-${hash}.js`, req)
+      const served = await serveStaticFile(dir, `/${studioStoreProjectRel(js)}`, req)
       return served ?? new Response('Not found', { status: 404 })
     } catch (err) {
       rethrowProjectDirRefusal(err)
