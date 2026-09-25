@@ -13,11 +13,14 @@
  *
  * ## Pre-flight write lock
  *
- * A row reads `useStyleWriteLock()` — the reason, if any, that declarations
- * typed into the ENCLOSING style target cannot reach the user's source
- * (`classCssWritability.ts`, provided by `StyleSurface` around the class
- * block). When one is present the row renders every control `disabled`, drops
- * its remove button, and carries the reason as its `title`.
+ * A row reads `useStyleWriteLock()` (`StyleSurface` provides it around the
+ * mounted sections). A `blocked` lock — declarations typed into the ENCLOSING
+ * style target cannot reach the user's source — renders every control
+ * `disabled`, drops the remove button, and carries the reason as the row's
+ * `title`. A `partial` lock — a multi-selection where some layers compute this
+ * property in code — leaves the row editable and carries its count ("Writes
+ * to 3 of 5 selected layers — 2 are set from an expression in code.") as the
+ * `title` and `data-write-partial`.
  *
  * This is deliberately a *pre-flight* gate, not a post-hoc report: the same
  * fact used to be discovered only by the save, ~2 s later, as a toast listing
@@ -589,6 +592,7 @@ export function ClassPropertyRow({
         !isSet && styles.propertyRowUnset,
         inherited && styles.propertyRowInherited,
         writeLocked && styles.propertyRowLocked,
+        !writeLocked && writeLockReason !== null && styles.propertyRowPartial,
       )}
       data-state={isSet ? 'set' : 'unset'}
       data-inherited={inherited ? 'true' : undefined}

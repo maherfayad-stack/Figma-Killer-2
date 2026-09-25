@@ -208,12 +208,12 @@ Charts:
 | `--text-bright`      | `#f4f4f5` | Titles, headings, KPIs         |
 | `--text`             | `#ededed` | Primary body text              |
 | `--text-muted`   | `#a1a1aa` | Labels, secondary UI           |
-| `--text-subtle`       | `#787878` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
+| `--text-subtle`       | `#888888` | Captions, units, counts, empty states — the quietest INFORMATIVE text |
 | `--text-disabled`      | `#52525b` | Disabled controls and placeholders only — never text the user must read |
 
 These five are the entire text palette. Add a new tone only by adding a new token.
 
-`--text-disabled` is about 2.7:1 on `--bg-body`: fine for a control you cannot use, below WCAG AA for anything you are meant to read. A caption, a unit, a prop description, an empty-state sentence or a row count is informative and uses `--text-subtle` (4.8:1 dark, 4.9:1 light on `--bg-body`). The light theme's `--text-subtle` is `#5b6270` rather than Tailwind's gray-500 for exactly this reason: gray-500 measured 3.9:1 on the light `--bg-body` the docked sidebars sit on (P2-H, UX-15). `measurement.test.ts` gates both the ratio and the inspector's own modules.
+`--text-disabled` is about 2.7:1 on `--bg-body`: fine for a control you cannot use, below WCAG AA for anything you are meant to read. A caption, a unit, a prop description, an empty-state sentence or a row count is informative and uses `--text-subtle` (5.9:1 dark, 4.9:1 light on `--bg-body`; 4.9:1 dark on the floating panel's `--bg-surface`, which the old dark `#787878` missed at 3.9:1). The light theme's `--text-subtle` is `#5b6270` rather than Tailwind's gray-500 for exactly this reason: gray-500 measured 3.9:1 on the light `--bg-body` the docked sidebars sit on (P2-H, UX-15). `measurement.test.ts` gates both the ratio and the inspector's own modules.
 
 ### Typography tokens — fluid size scale
 
