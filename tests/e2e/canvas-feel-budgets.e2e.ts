@@ -1,11 +1,9 @@
 import { expect, test, type Frame, type Locator, type Page } from '@playwright/test'
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
-import { largeBoardPageId, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
+import { largeBoardPageId, openLargeBoardAtWorkingZoom, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import {
   SELECTION_RING,
   clickInFrame,
-  frameForPage,
-  openFixtureBoard,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
@@ -101,8 +99,6 @@ const POSTER_CAPTURE_MEASURE = 'studio:poster-capture'
 
 /** The frame every case works in: the first one, which `Ctrl+0` brings on screen. */
 const TARGET_PAGE_ID = largeBoardPageId(0)
-/** A frame renders about this wide at the working zoom — ~4 columns of the 5-column board on screen. */
-const WORKING_FRAME_WIDTH_PX = 420
 
 test.use({ viewport: { width: 1920, height: 1080 } })
 
@@ -121,38 +117,9 @@ function annotate(label: string, value: string): void {
   console.log(`[p2-a] ${label}: ${value}`)
 }
 
-/** Ctrl+wheel out until the target frame renders at most `maxWidthPx` wide. */
-async function zoomOutUntil(page: Page, canvasRoot: Locator, target: Locator, maxWidthPx: number): Promise<void> {
-  for (let attempt = 0; attempt < 16; attempt += 1) {
-    const box = await target.boundingBox()
-    if (box && box.width <= maxWidthPx) return
-    const rootBox = await canvasRoot.boundingBox()
-    if (!rootBox) throw new Error('zoomOutUntil: the canvas root has no bounding box')
-    await page.mouse.move(rootBox.x + rootBox.width / 2, rootBox.y + rootBox.height / 2)
-    await page.keyboard.down('Control')
-    await page.mouse.wheel(0, 120)
-    await page.keyboard.up('Control')
-    await page.waitForTimeout(120)
-  }
-}
-
-/**
- * Open the corpus, zoom out to the working zoom with the first frame centred,
- * and let the mount pool fill. Returns the first frame's content `Frame`.
- */
-async function openAtWorkingZoom(page: Page): Promise<{ canvasRoot: Locator; frameEl: Locator; content: Frame }> {
-  const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
-  const frameEl = await frameForPage(page, canvasRoot, TARGET_PAGE_ID)
-  await zoomOutUntil(page, canvasRoot, frameEl, WORKING_FRAME_WIDTH_PX)
-  // Recentre on the frame at the new zoom, then let staged mounts, the poster
-  // queue (700 ms quiet + ~120 ms per frame) and the first settle passes run.
-  await frameForPage(page, canvasRoot, TARGET_PAGE_ID)
-  await page.waitForTimeout(4000)
-  const handle = await visibleCanvasIframe(frameEl).elementHandle()
-  const content = await handle?.contentFrame()
-  if (!content) throw new Error('the target frame never attached a content document')
-  await expect(content.locator('.row__label').first()).toBeVisible({ timeout: 30_000 })
-  return { canvasRoot, frameEl, content }
+/** Open the corpus at the working zoom — see `openLargeBoardAtWorkingZoom`. */
+function openAtWorkingZoom(page: Page): Promise<{ canvasRoot: Locator; frameEl: Locator; content: Frame }> {
+  return openLargeBoardAtWorkingZoom(page, fixture, TARGET_PAGE_ID)
 }
 
 test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
