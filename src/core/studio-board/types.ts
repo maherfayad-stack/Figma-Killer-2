@@ -1,6 +1,5 @@
 import { Type, type Static } from '@sinclair/typebox'
 import type { PreviewAxes } from './previewAxes'
-import { MIN_FRAME_SIZE } from './frameGrid'
 
 export type NoteColor = 'yellow' | 'green' | 'blue' | 'pink' | 'gray'
 
@@ -106,22 +105,6 @@ export const BoardGuideSchema = Type.Object({
 })
 
 export type BoardGuide = Static<typeof BoardGuideSchema>
-
-/**
- * P5-F / IX-13 — where a NEW frame goes when the user drew it with the board
- * tool (B): its top-left in board units and, when a size was drawn, that
- * size. Crosses the wire (`POST /admin/api/studio/page`), so it is a schema;
- * a size below `MIN_FRAME_SIZE` is refused at the boundary rather than
- * clamped silently.
- */
-export const BoardFramePlacementSchema = Type.Object({
-  x: Type.Number(),
-  y: Type.Number(),
-  width: Type.Optional(Type.Number({ minimum: MIN_FRAME_SIZE })),
-  height: Type.Optional(Type.Number({ minimum: MIN_FRAME_SIZE })),
-})
-
-export type BoardFramePlacement = Static<typeof BoardFramePlacementSchema>
 
 export interface Board {
   id: string
