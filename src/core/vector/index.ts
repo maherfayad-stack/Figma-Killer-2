@@ -15,7 +15,7 @@
  *   - `precision` — how many decimals a rewritten coordinate gets.
  */
 export { jsxToMarkupAttributeName, markupToJsxAttributeName } from './svgAttributeNames'
-export { cssValueLoadsExternalResource, isSvgFragmentReference } from './svgReferences'
+export { cssTextLoadsExternalResource, cssValueLoadsExternalResource, isSvgFragmentReference } from './svgReferences'
 export {
   parsePathData,
   serializePathData,

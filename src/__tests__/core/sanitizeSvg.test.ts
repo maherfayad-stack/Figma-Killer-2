@@ -5,6 +5,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import { sanitizeRichtext, sanitizeSvg } from '@core/sanitize'
+import { cssTextLoadsExternalResource } from '@core/vector'
 
 describe('sanitizeSvg', () => {
   it('keeps a normal inline SVG (svg/path/viewBox)', () => {
@@ -100,5 +101,62 @@ describe('sanitizeSvg — a removed element does not shield the next one', () =>
     const out = sanitizeSvg(input).toLowerCase()
     expect(out).not.toMatch(/\son[a-z]+=/)
     expect(out).not.toContain('evil.test')
+  })
+
+  // security review of #264: a removed svg-namespace `head`/`body`/`html` was
+  // mistaken for DOMPurify's own document wrapper, so the pass it shielded was
+  // reported clean.
+  it.each([
+    '<svg><head></head><svg onload="alert(1)"/></svg>',
+    '<svg><desc><head></head></desc><rect width="1" onclick="alert(1)"/></svg>',
+    '<svg><title><html></html></title><svg onload="alert(1)"/></svg>',
+    '<svg><desc><body></body></desc><svg onload="alert(1)"/></svg>',
+  ])('strips the handler after a removed wrapper-named element: %s', (input) => {
+    expect(sanitizeSvg(input).toLowerCase()).not.toMatch(/\son[a-z]+=/)
+  })
+
+  it('does not keep a data: document href shielded by a removed <body>', () => {
+    const out = sanitizeSvg('<svg><body></body><use href="data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=#x"/></svg>')
+    expect(out).not.toContain('data:')
+  })
+})
+
+describe('sanitizeSvg — nothing is loaded from outside the document (security review of #264, N1)', () => {
+  // The same rule the importer refuses on (`cssValueLoadsExternalResource`)
+  // and the same outcome `sanitizeSvgBytes` gives a served file.
+  it.each([
+    ['<svg><rect fill="url(https://evil.test/p.svg#g)" width="1"/></svg>', 'evil.test'],
+    ['<svg><rect style="fill:url(//evil.test/b)" width="1"/></svg>', 'evil.test'],
+    ['<svg><rect style="background:image-set(\'x.png\' 1x)" width="1"/></svg>', 'image-set'],
+  ])('drops the remote reference: %s', (input, marker) => {
+    const out = sanitizeSvg(input)
+    expect(out.toLowerCase()).not.toContain(marker)
+    expect(out.toLowerCase()).not.toContain('@import')
+    expect(out).toContain('<rect')
+  })
+
+  it('keeps fragment url()s and inline data images', () => {
+    const out = sanitizeSvg(
+      '<svg><defs><linearGradient id="g"/></defs>' +
+        '<rect fill="url(#g)" style="stroke:url(#g)" width="1"/>' +
+        '<rect style="fill:url(data:image/png;base64,AAAA)" width="2"/></svg>',
+    )
+    expect(out).toContain('fill="url(#g)"')
+    expect(out).toContain('stroke:url(#g)')
+    expect(out).toContain('data:image/png')
+  })
+
+  // `<style>` blocks: happy-dom's HTML parser swallows everything after a
+  // `<style>` inside `<svg>` as raw text, so no `sanitizeSvg` case here can
+  // reach the hook's `<style>` branch. The rule it applies is the shared
+  // predicate, pinned below.
+  it.each([
+    ['@import url(https://evil.test/x.css);', true],
+    ['@import "https://evil.test/x.css";', true],
+    ['@\\69mport "//evil.test/x.css";', true],
+    ['.a{fill:url(https://evil.test/p.svg#g)}', true],
+    ['.a{fill:url(#g)} .b{stroke:currentColor}', false],
+  ] as const)('the <style> rule: %s loads externally = %p', (css, loads) => {
+    expect(cssTextLoadsExternalResource(css)).toBe(loads)
   })
 })

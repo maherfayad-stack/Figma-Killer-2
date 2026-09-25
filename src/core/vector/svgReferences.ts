@@ -103,3 +103,14 @@ export function cssValueLoadsExternalResource(value: string): boolean {
   // followed by `(` (a class name, a word in a font family) is not a function.
   return args.some((arg) => !FRAGMENT_REFERENCE.test(arg) && !INLINE_IMAGE.test(arg))
 }
+
+/**
+ * Whether a whole piece of CSS text (an SVG `<style>` block, or a `style`
+ * attribute) would load anything from outside the document: an `@import` in
+ * any spelling (`@import "x.css"` names its URL without `url()`), or anything
+ * {@link cssValueLoadsExternalResource} refuses. The one rule the canvas
+ * sanitizer applies to `<style>` text; values go through the value check.
+ */
+export function cssTextLoadsExternalResource(css: string): boolean {
+  return /@import\b/.test(unescapeCss(css).toLowerCase()) || cssValueLoadsExternalResource(css)
+}

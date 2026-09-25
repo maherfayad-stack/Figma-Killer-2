@@ -15,7 +15,15 @@
  */
 
 import { describe, it, expect } from 'bun:test'
-import { sanitizeRichtext, isRichtextPropKey, PLAIN_TEXT_CONFIG } from '@core/sanitize'
+import createDOMPurify from 'dompurify'
+import {
+  configureRichtextSanitizer,
+  isRichtextPropKey,
+  PLAIN_TEXT_CONFIG,
+  sanitizeBoardDocHtml,
+  sanitizeRichtext,
+  type DOMPurifyRuntime,
+} from '@core/sanitize'
 
 // ---------------------------------------------------------------------------
 // XSS prevention — the core contract
@@ -283,5 +291,44 @@ describe('sanitizeRichtext — a removed element does not shield the next one', 
     expect(out).not.toContain('onclick')
     expect(out).not.toContain('javascript:')
     expect(out).toContain('>y</a>')
+  })
+})
+
+describe('sanitizeRichtext / sanitizeBoardDocHtml — a removed element named like a document wrapper does not shield the next one', () => {
+  // security review of #264: the fixpoint used to treat ANY removed
+  // `html`/`head`/`body` as DOMPurify's own document wrapper. Inside `<table>`
+  // happy-dom creates a real mid-tree `HEAD`/`BODY`/`HTML`; removing it skipped
+  // the next node, and the pass was reported clean.
+  const hostile = '<a href="javascript:alert(1)" onclick="steal()">y</a>'
+  it.each([
+    `<table><head></head>${hostile}</table>`,
+    `<table><body></body>${hostile}</table>`,
+    `<table><html></html>${hostile}</table>`,
+  ])('strips the handler and the scheme: %s', (input) => {
+    for (const out of [sanitizeRichtext(input), sanitizeBoardDocHtml(input)].map((s) => s.toLowerCase())) {
+      expect(out).not.toContain('onclick')
+      expect(out).not.toContain('javascript:')
+    }
+  })
+
+  it('clean input still takes exactly one pass (only the parse wrapper is exempt)', () => {
+    const purifier = createDOMPurify(window as unknown as Parameters<typeof createDOMPurify>[0])
+    let calls = 0
+    const counting = new Proxy(purifier, {
+      get(target, key, receiver) {
+        if (key === 'sanitize') return (...args: Parameters<typeof purifier.sanitize>) => { calls += 1; return target.sanitize(...args) }
+        return Reflect.get(target, key, receiver)
+      },
+    })
+    configureRichtextSanitizer(counting as unknown as DOMPurifyRuntime)
+    try {
+      expect(sanitizeRichtext('<p>ok <a href="https://x.test/">l</a></p>')).toContain('href="https://x.test/"')
+      expect(calls).toBe(1)
+      calls = 0
+      sanitizeRichtext('<table><head></head><a href="javascript:alert(1)">y</a></table>')
+      expect(calls).toBeGreaterThan(1)
+    } finally {
+      configureRichtextSanitizer(null)
+    }
   })
 })

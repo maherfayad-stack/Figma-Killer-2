@@ -28,11 +28,12 @@
  */
 
 import DOMPurify, { type Config } from 'dompurify'
-import { isSvgFragmentReference } from '@core/vector'
+import { cssTextLoadsExternalResource, cssValueLoadsExternalResource, isSvgFragmentReference } from '@core/vector'
 
 type DOMPurifyHookNode = {
   tagName?: string
   nodeName?: string
+  textContent?: string | null
   setAttribute?: (name: string, value: string) => void
   getAttribute?: (name: string) => string | null
 }
@@ -46,13 +47,14 @@ type DOMPurifyAttributeHookEvent = {
 }
 
 /** One entry of DOMPurify's `removed` log: a removed element, or an attribute removed from one. */
-type DOMPurifyRemoval = { element?: { nodeName?: string }; attribute?: unknown }
+type DOMPurifyRemoval = { element?: { nodeName?: string; namespaceURI?: string | null }; attribute?: unknown }
 
 export type DOMPurifyRuntime = {
   sanitize?: (value: string, config?: Config) => unknown
   addHook?: {
     (hookName: 'afterSanitizeAttributes', callback: (node: DOMPurifyHookNode) => void): void
     (hookName: 'uponSanitizeAttribute', callback: (node: DOMPurifyHookNode, event: DOMPurifyAttributeHookEvent) => void): void
+    (hookName: 'uponSanitizeElement', callback: (node: DOMPurifyHookNode, event: { tagName: string }) => void): void
   }
   removed?: DOMPurifyRemoval[]
 }
@@ -104,6 +106,34 @@ function keepSvgFragmentHref(node: DOMPurifyHookNode, event: DOMPurifyAttributeH
   event.forceKeepAttr = true
 }
 
+/**
+ * The SVG profile's remote-resource rule (security review of #264, N1): the
+ * same `@core/vector` predicates the importer refuses on and the same outcome
+ * `sanitizeSvgBytes` gives a served file, so the canvas and publish no longer
+ * render what those two paths refuse. DOMPurify does not vet CSS at all.
+ *
+ *   - an attribute whose value loads something from outside the document
+ *     (`fill="url(https://…)"`, `style="background:url(//…)"`,
+ *     `image-set(…)`) is dropped. `aria-*`/`data-*` are text, not CSS;
+ *   - a `<style>` block that does (`@import`, a remote `url()`) is EMPTIED
+ *     rather than removed: an svg's class rules are how most exported icons
+ *     paint, and removing a node from inside a DOMPurify hook is exactly the
+ *     happy-dom iterator skip `sanitizeToFixpoint` exists for.
+ *
+ * An `<style>` inside an inline svg is document-global in the frame, so a
+ * remote `@import` there is a beacon plus CSS injection against the whole page.
+ */
+function dropSvgRemoteAttribute(_node: DOMPurifyHookNode, event: DOMPurifyAttributeHookEvent): void {
+  if (!sanitizingSvg || event.forceKeepAttr) return
+  if (event.attrName.startsWith('aria-') || event.attrName.startsWith('data-')) return
+  if (cssValueLoadsExternalResource(event.attrValue)) event.keepAttr = false
+}
+
+function emptySvgRemoteStyle(node: DOMPurifyHookNode, event: { tagName: string }): void {
+  if (!sanitizingSvg || event.tagName.toLowerCase() !== 'style') return
+  if (cssTextLoadsExternalResource(node.textContent ?? '')) node.textContent = ''
+}
+
 function installHooks(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
   if (!purifiersWithHooks.has(purifier) && typeof purifier.addHook === 'function') {
     purifier.addHook('afterSanitizeAttributes', (node) => {
@@ -113,19 +143,41 @@ function installHooks(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
       }
     })
     purifier.addHook('uponSanitizeAttribute', keepSvgFragmentHref)
+    purifier.addHook('uponSanitizeAttribute', dropSvgRemoteAttribute)
+    purifier.addHook('uponSanitizeElement', emptySvgRemoteStyle)
     purifiersWithHooks.add(purifier)
   }
   return purifier
 }
 
-/** Wrapper elements DOMPurify itself discards on every call; not a sign anything in the input was removed. */
-const DOCUMENT_WRAPPERS: ReadonlySet<string> = new Set(['HTML', 'HEAD', 'BODY'])
+const XHTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
 
-/** Whether the last `sanitize` call removed anything from the input itself. */
+/**
+ * Whether the last `sanitize` call removed anything from the input itself.
+ *
+ * DOMPurify logs one removal on EVERY call that is not the input's: the
+ * `<body>` its HTML parse wraps the input in. That entry, and only that one,
+ * is exempt: an element whose `nodeName` is exactly `BODY` (an HTML element;
+ * an svg-namespace `body` is `body`) in the XHTML namespace, at most once per
+ * pass. Nothing is exempted by name alone. Under happy-dom an input can create
+ * a real mid-tree `head`/`html`/`body` (inside `<svg>`, or `HEAD` inside
+ * `<table>`), and removing one skips the next node exactly like any other
+ * removal (security review of #264), so it must cost another pass.
+ */
 function removedFromInput(purifier: DOMPurifyRuntime): boolean {
   // A runtime without the log cannot say; assume it did, and pay a pass.
   if (!purifier.removed) return true
-  return purifier.removed.some((entry) => entry.attribute !== undefined || !DOCUMENT_WRAPPERS.has(String(entry.element?.nodeName ?? '').toUpperCase()))
+  let wrapperSeen = false
+  for (const entry of purifier.removed) {
+    if (entry.attribute !== undefined) return true
+    const element = entry.element
+    if (!wrapperSeen && element?.nodeName === 'BODY' && element.namespaceURI === XHTML_NAMESPACE) {
+      wrapperSeen = true
+      continue
+    }
+    return true
+  }
+  return false
 }
 
 /** Passes after which a still-changing result is refused rather than returned. */
@@ -253,10 +305,11 @@ const RICHTEXT_CONFIG: Config = {
  * alignment, which the doc toolbar writes and markdown has no syntax for) and
  * `align`.
  *
- * Widening `style` is safe here and is NOT a widening of the publisher's
- * profile: DOMPurify runs allowed inline styles through its own CSS parser,
- * dropping `url()`, `expression()`, `behavior` and anything else that can
- * execute. And a `DocBlock` is board furniture — it lives in
+ * Widening `style` is NOT a widening of the publisher's profile. Note what
+ * it does allow: DOMPurify does not vet CSS at all, so an allowed `style`
+ * attribute keeps whatever it says, `url()` included. That cannot run script
+ * in a modern browser, but it can load a remote resource. What bounds it is
+ * where it renders: a `DocBlock` is board furniture — it lives in
  * `.studio/boards.json`, renders only inside the admin canvas, and is never
  * emitted by the publisher — so this profile is deliberately its own constant
  * rather than a relaxation of `RICHTEXT_CONFIG`, which IS on the published
