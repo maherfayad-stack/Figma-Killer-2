@@ -37,6 +37,7 @@
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { armCanvasPaste } from './canvasClipboardBridge'
+import { isUserGestureKeyEvent } from './canvasFrameKeyRelay'
 import { stepSelectionAmongSiblings } from './canvasNodeArrowMove'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
@@ -172,9 +173,13 @@ export function useCanvasNodeShortcuts({
         // Armed, not performed: the `paste` event this keystroke raises
         // carries the clipboard, and `canvasPaste.ts` decides between the
         // copied layers (`K7`'s beside-the-selection paste), an image and an
-        // SVG. If no event comes (Safari, a cross-origin frame) the bridge
-        // reads the async Clipboard API instead.
-        armCanvasPaste()
+        // SVG. If no event comes (Safari) the bridge reads the async
+        // Clipboard API instead — but ONLY for a real keystroke. A key a Tier 2
+        // frame posted (forgeable by its project code, review #270 N1) or a
+        // synthetic one raises no paste event and must never unlock that read:
+        // it pastes the copied layers, what ⌘V did before P5-A.
+        if (isUserGestureKeyEvent(event)) armCanvasPaste()
+        else store.pasteNode(selectedNodeId, 'after')
         return true
       }
 

@@ -105,6 +105,8 @@ export function armCanvasPaste(): void {
 }
 
 async function pasteFromAsyncClipboard(): Promise<void> {
+  // No consumer, no read: the clipboard is never read for nobody (review #270, N3).
+  if (!sink) return
   const snapshot = await readAsyncClipboard()
   sink?.paste(snapshot)
 }
@@ -176,6 +178,11 @@ export function installCanvasClipboardBridge(doc: Document): () => void {
     if (pasteFallback !== null) clearTimeout(pasteFallback)
     pasteFallback = null
     if (event.defaultPrevented) return
+    // Only the browser's own paste — never one a script dispatched. A package
+    // component rendered in a same-origin portal frame could otherwise inject
+    // content into the user's source with a synthetic `ClipboardEvent`
+    // (review #270, N2). `isTrusted` is unforgeable in a browser.
+    if (!event.isTrusted) return
     const current = sink
     if (!current || !current.owns(event.target)) return
     event.preventDefault()

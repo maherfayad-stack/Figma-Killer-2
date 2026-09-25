@@ -89,6 +89,12 @@ function targetOrExplain(): InsertTarget | null {
 }
 
 async function pasteSvg(source: ClipboardSvgSource, target: InsertTarget): Promise<void> {
+  // An oversized SVG FILE goes straight to the file route: it is never read
+  // into memory just to be measured (review #270, N4).
+  if (source.kind === 'file' && source.file.size > INLINE_SVG_MAX_CHARS) {
+    landSvgAsImage(source.file, target)
+    return
+  }
   let markup: string
   try {
     markup = source.kind === 'text' ? source.markup : await source.file.text()
@@ -121,7 +127,11 @@ async function pasteSvg(source: ClipboardSvgSource, target: InsertTarget): Promi
     }
   }
 
-  const file = source.kind === 'file' ? source.file : new File([markup], 'pasted.svg', { type: 'image/svg+xml' })
+  landSvgAsImage(source.kind === 'file' ? source.file : new File([markup], 'pasted.svg', { type: 'image/svg+xml' }), target)
+}
+
+/** An SVG too large to inline: the file lands through the drop's image path, as an `<img>`. */
+function landSvgAsImage(file: File, target: InsertTarget): void {
   pushToast({
     kind: 'info',
     title: 'Large SVG added as an image',

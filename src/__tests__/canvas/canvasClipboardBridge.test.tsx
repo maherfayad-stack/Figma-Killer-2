@@ -21,7 +21,8 @@ import { isPlatformMac } from '@admin/spotlight/keybindings'
 import { useEditorKeyDispatcher } from '@site/canvas/useEditorKeyDispatcher'
 import { useCanvasNodeShortcuts } from '@site/canvas/useCanvasNodeShortcuts'
 import { useCanvasClipboardBridge } from '@site/canvas/useCanvasClipboardBridge'
-import { installCanvasClipboardBridge } from '@site/canvas/canvasClipboardBridge'
+import { armCanvasPaste, installCanvasClipboardBridge } from '@site/canvas/canvasClipboardBridge'
+import { relayFrameKeyDown, type FrameKeyInit } from '@site/canvas/canvasFrameKeyRelay'
 import { STUDIO_NODES_MIME, studioMarkerHtml } from '@site/canvas/canvasClipboardData'
 import { __resetToastBusForTests, subscribeToasts, type Toast } from '@ui/components/Toast/toastBus'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -74,11 +75,24 @@ function Harness() {
 
 const mod = isPlatformMac() ? { metaKey: true } : { ctrlKey: true }
 
+/**
+ * Marks a hand-built event as the browser's own. happy-dom lets a test define
+ * `isTrusted`; a browser does not (it is unforgeable), which is exactly the
+ * property the bridge leans on (review #270, N1/N2).
+ */
+function trusted<T extends Event>(event: T): T {
+  Object.defineProperty(event, 'isTrusted', { value: true })
+  return event
+}
+
+/** A real keystroke on the editor's own document. */
 function press(key: 'c' | 'v', target: EventTarget = document.body): KeyboardEvent {
-  const event = new KeyboardEvent('keydown', { key, code: `Key${key.toUpperCase()}`, bubbles: true, cancelable: true, ...mod })
+  const event = trusted(new KeyboardEvent('keydown', { key, code: `Key${key.toUpperCase()}`, bubbles: true, cancelable: true, ...mod }))
   target.dispatchEvent(event)
   return event
 }
+
+const V_KEY: FrameKeyInit = { key: 'v', code: 'KeyV', location: 0, repeat: false, ctrlKey: !isPlatformMac(), shiftKey: false, altKey: false, metaKey: isPlatformMac() }
 
 /** A `DataTransfer` stand-in: what the reader touches, and a `setData` recorder for copy. */
 function dataTransfer(data: Record<string, string> = {}, files: File[] = []): DataTransfer {
@@ -98,7 +112,7 @@ function clipboardEvent(type: 'paste' | 'copy', data: DataTransfer): Event {
 }
 
 function paste(data: Record<string, string>, files: File[] = [], target: EventTarget = document.body): Event {
-  const event = clipboardEvent('paste', dataTransfer(data, files))
+  const event = trusted(clipboardEvent('paste', dataTransfer(data, files)))
   target.dispatchEvent(event)
   return event
 }
@@ -245,6 +259,21 @@ describe('⌘V of SVG text — sanitised, then ONE subtree insert', () => {
     expect(toasts.map((toast) => toast.title)).toContain('Cannot paste that SVG')
   })
 
+  it('N4 — an oversized SVG FILE goes to the file route without being read', async () => {
+    let read = false
+    class UnreadFile extends File {
+      override text(): Promise<string> {
+        read = true
+        return super.text()
+      }
+    }
+    const big = new UnreadFile(['<svg>' + ' '.repeat(70 * 1024) + '</svg>'], 'huge.svg', { type: 'image/svg+xml' })
+    paste({}, [big])
+    await settle()
+    expect(read).toBe(false)
+    expect(calls.dropImagesIntoPage[0]![0].files).toEqual([big])
+  })
+
   it('an SVG too large to inline lands as an image FILE through the drop path instead', async () => {
     const parts = Array.from({ length: 300 }, (_, i) => `<rect x="${i}" width="1" height="1"/>`).join('')
     paste({ 'text/plain': `<svg viewBox="0 0 300 1">${parts}</svg>` })
@@ -278,6 +307,56 @@ describe('when no paste event comes (Safari, a cross-origin frame)', () => {
     press('v')
     await settle()
     expect(calls.pasteNode).toEqual([[A, 'after']])
+  })
+})
+
+describe('only a real keystroke may read the OS clipboard (review #270)', () => {
+  let reads = 0
+  beforeEach(() => {
+    reads = 0
+    stubAsyncClipboard({
+      read: async () => {
+        reads += 1
+        return [{ types: ['image/png'], getType: async () => new Blob([new Uint8Array([0x89])], { type: 'image/png' }) }] as unknown as ClipboardItems
+      },
+    })
+    useEditorStore.setState({ clipboardEntry: { rootNodeIds: [B], nodes: {}, classes: {}, copiedAt: COPIED_AT } } as Parameters<typeof useEditorStore.setState>[0])
+  })
+
+  it('N1 — a ⌘V `key` message a Tier 2 frame posted (forgeable by project code) never reads the clipboard; it pastes the copied layers', async () => {
+    relayFrameKeyDown(document, V_KEY, { userGesture: false })
+    await settle()
+    expect(reads).toBe(0)
+    expect(calls.dropImagesIntoPage).toEqual([])
+    expect(calls.pasteNode).toEqual([[A, 'after']])
+  })
+
+  it('a synthetic keydown on the editor document is not a gesture either', async () => {
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', bubbles: true, cancelable: true, ...mod }))
+    await settle()
+    expect(reads).toBe(0)
+    expect(calls.pasteNode).toEqual([[A, 'after']])
+  })
+
+  it('a portal frame’s REAL keystroke, relayed, may take the fallback read', async () => {
+    relayFrameKeyDown(document, V_KEY, { userGesture: true })
+    await settle()
+    expect(reads).toBe(1)
+    expect(calls.dropImagesIntoPage).toHaveLength(1)
+  })
+
+  it('N2 — a script-dispatched paste event is ignored', () => {
+    const event = clipboardEvent('paste', dataTransfer({}, [png()]))
+    document.body.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(false)
+    expect(calls.dropImagesIntoPage).toEqual([])
+  })
+
+  it('N3 — with no canvas mounted, an armed paste never reads the clipboard', async () => {
+    cleanup()
+    armCanvasPaste()
+    await settle()
+    expect(reads).toBe(0)
   })
 })
 

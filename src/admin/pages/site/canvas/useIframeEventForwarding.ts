@@ -250,7 +250,7 @@ export function useIframeEventForwarding(
       // A parent handler claimed the key (⌘K, ⌘S, Delete, …): suppress the
       // iframe's own default too, so the browser does not ALSO act on it
       // (e.g. the native ⌘S save dialog).
-      if (relayFrameKeyDown(parentDocument, frameKeyInitFrom(e))) {
+      if (relayFrameKeyDown(parentDocument, frameKeyInitFrom(e), { userGesture: e.isTrusted })) {
         e.preventDefault()
         e.stopPropagation()
       }
