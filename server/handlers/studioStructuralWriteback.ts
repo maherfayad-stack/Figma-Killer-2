@@ -566,7 +566,9 @@ export function applyStructuralEdit(
     }
     case 'delete': {
       const result = deleteJsxElement(loc)
-      return result.ok ? { ok: true, removed: result.removed } : { ok: false, ...result.refusal }
+      // WB-20 — a ternary branch replaced with `null` hands back no child bytes.
+      if (!result.ok) return { ok: false, ...result.refusal }
+      return result.removed ? { ok: true, removed: result.removed } : { ok: true }
     }
     case 'reinsert-source': {
       const result = reinsertJsxSource({ ...loc, index: edit.index, text: edit.text, imports: edit.imports ?? [] })

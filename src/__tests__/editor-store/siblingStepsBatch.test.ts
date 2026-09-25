@@ -1,7 +1,7 @@
 /**
  * P2-C2 (OD-16) — a multi-selection moved among its siblings is ONE gesture:
- * one history entry, one `/save` request carrying every move, and one ⌘Z that
- * posts the inverse batch in one request too.
+ * one history entry, one `/save` request carrying every move (P3-D: as an
+ * ordered sequence), and one ⌘Z that posts the inverse in one request too.
  *
  * Before P2-C2, ⌥↓ / ⌘] / the arrows with two layers selected did nothing at
  * all (`runMoveShortcut` returned on a multi-selection), and a multi-element
@@ -32,17 +32,20 @@ const store = () => useEditorStore.getState()
 const order = () => [...store().site!.pages[0]!.nodes[ROOT]!.children]
 
 let postedEdits: Record<string, unknown>[][]
+let postedSequence: boolean[]
 let realFetch: typeof globalThis.fetch
 
 beforeEach(() => {
   resetStructuralCommitQueue()
   postedEdits = []
+  postedSequence = []
   realFetch = globalThis.fetch
   globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(typeof input === 'string' || input instanceof URL ? input : input.url)
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) : {}
     if (url.includes('/studio/save')) {
       postedEdits.push(body.edits ?? [])
+      postedSequence.push(body.sequence === true)
       return new Response(JSON.stringify({ ok: true, written: (body.edits ?? []).length, skipped: 0, shifted: true, sharedComponents: false, touchedFiles: [FILE] }), {
         status: 200,
         headers: { 'content-type': 'application/json' },
@@ -87,10 +90,12 @@ describe('a multi-selection steps among its siblings as one gesture', () => {
     stepSelectionAmongSiblings([a, b], 1)
     expect(order()).toEqual([u, a, v, b])
     expect(store()._historyPast).toHaveLength(1)
-    expect(store()._historyPast[0]!.structural?.gesture).toBe('siblings')
+    expect(store()._historyPast[0]!.structural?.gesture).toBe('moves')
     await settle()
     expect(postedEdits).toHaveLength(1)
     expect(moves(postedEdits[0]!)).toHaveLength(2)
+    // P3-D — written in order, each against the file the last one left.
+    expect(postedSequence).toEqual([true])
   })
 
   it('one ⌘Z posts the inverse batch in ONE request and restores the order', async () => {

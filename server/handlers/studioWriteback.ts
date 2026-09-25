@@ -49,13 +49,10 @@
  * and every edit that does not write is named (WB-12, `studioEditRefusals.ts`).
  */
 import { join } from 'node:path'
-import { existsSync } from 'node:fs'
 import {
-  createImportPruneSession,
   createModuleImportPlan,
   createProject,
   detachComponentInstance,
-  isPrunableSourceFile,
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
@@ -73,6 +70,7 @@ import type { SourceFingerprintExpectations } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
+import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -381,9 +379,13 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       }
     }
     case 'detach': {
-      const result = detachComponentInstance({ ...loc, workspaceRoot: dir })
+      // P3-D (OD-7) — the import is retired by this batch's prune pass (see
+      // `removesMarkup` below), which also REPORTS it; with the call site's
+      // own bytes (`removed`) and what replaced it (`created`) that is the
+      // whole of ⌘Z (`reinsert-detached`).
+      const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true }
+      return { applied: true, ...(result.created ? { created: [result.created] } : {}), removed: result.removed }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -479,52 +481,9 @@ export function applyStudioEditBatch(
     lineCountBefore.set(file, countLines(file))
   }
 
-  // Which import bindings each file a DELETE touches references before anything
-  // is written. Removing markup can be the last use of an import, and under
-  // `noUnusedLocals` leaving that behind is a build failure — so the binding
-  // has to go too. Snapshotted here, and pruned after the loop, because an
-  // import lives at the TOP of a file: cutting its line mid-batch would shift
-  // the pending `line:col` of every edit still queued below it, which is the
-  // exact hazard `orderStudioEditsForApply` exists to prevent. Waiting also
-  // makes the question answerable at all — a binding used by two elements
-  // deleted in the same batch is orphaned by neither one alone.
-  //
-  // Scoped to batches that actually delete something, and to the files those
-  // deletes name. Every other kind either cannot drop the last reference to a
-  // binding or already retires its own (`swap`/`detach`, and
-  // `insertJsxIntoSlotProp` for a slot replace), and this pass costs two extra
-  // parses per file — not something to spend on every keystroke-driven save.
-  const importPrune = createImportPruneSession()
-  const referencedBefore = new Map<string, ReadonlySet<string>>()
-  // `store-15` — the workspace-relative `rel` for every file `referencedBefore`
-  // snapshots, so the prune pass below can report `prunedImports` in the same
-  // path shape every other per-file field on this result uses (never the
-  // absolute path `studioEditFile` resolves internally).
-  const relByFile = new Map<string, string>()
-  for (const edit of ordered) {
-    // D2 G3 — a transplant that MOVES (not copies) removes markup from the
-    // origin file exactly as a delete does, so it can orphan an import there
-    // in exactly the same way. The DESTINATION is deliberately not snapshotted:
-    // the codemod just added imports to it, and pruning a binding that has no
-    // reference yet at snapshot time would delete the one it wrote.
-    // `store-14` — an `ungroup` joined the list: dissolving a container can be
-    // the last use of the binding that named it, and leaving that import
-    // behind is a `noUnusedLocals` build failure in the user's repo. It is
-    // also what makes ⌘G → ⌘Z byte-exact: the group wrote the import, so its
-    // undo has to take it back out.
-    const removesMarkup =
-      edit.kind === 'delete' ||
-      edit.kind === 'ungroup' ||
-      ((edit.kind === 'transplant' || edit.kind === 'canvas-layer-lift') && edit.copy !== true)
-    if (!removesMarkup) continue
-    const file = studioEditFile(dir, edit.nodeId, scope)
-    if (!file || referencedBefore.has(file)) continue
-    if (isPrunableSourceFile(file) && existsSync(file)) {
-      referencedBefore.set(file, importPrune.snapshot(file))
-      const rel = studioEditLocation(dir, edit.nodeId, scope)?.rel
-      if (rel) relByFile.set(file, rel)
-    }
-  }
+  // Which import bindings the files a batch REMOVES markup from reference
+  // before anything is written — pruned after the loop (`studioBatchImportPrune.ts`).
+  const importPrune = snapshotImportsBeforeRemoval(dir, ordered, scope)
 
   let written = 0
   const refusals: StudioEditRefusal[] = identity.moved.map((entry) => entry.refusal)
@@ -607,15 +566,7 @@ export function applyStudioEditBatch(
     }
   }
 
-  // Only a binding that was live BEFORE and is dead AFTER — an import the user
-  // had already left unused is their line, not something this batch created.
-  const prunedImports: { file: string; declarations: string[] }[] = []
-  for (const [file, wasReferenced] of referencedBefore) {
-    if (!existsSync(file)) continue
-    const pruned = importPrune.prune(file, wasReferenced)
-    const rel = relByFile.get(file)
-    if (rel && pruned.declarations.length > 0) prunedImports.push({ file: rel, declarations: [...pruned.declarations] })
-  }
+  const prunedImports = importPrune.prune()
 
   // A re-found edit means the caller's ids for its file were already stale
   // before this batch wrote anything — `shifted` is how every caller learns

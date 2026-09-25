@@ -22,7 +22,7 @@ import type {
   PageTemplateConfig,
   ConditionDef,
   StyleRule,
-  SiblingMove,
+  SequencedMove,
   StructuralExplorerRowOrder,
   StructuralSiteExplorerSectionId,
 } from '@core/page-tree'
@@ -320,9 +320,9 @@ export interface SiteSlice {
   moveNode: (nodeId: string, newParentId: string, newIndex: number) => void
   /** Multi-move: moves every top-level id into newParent at newIndex (single undo step). */
   moveNodes: (nodeIds: string[], newParentId: string, newIndex: number) => void
-  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / apply independent moves: one entry, one save batch. `siblingStepActions.ts`. */
+  /** P2-C2 — step every layer `steps[parentId]` places among its siblings / P3-D: apply moves IN ORDER — one entry, one write. `moveSequenceActions.ts`. */
   stepSiblings: (nodeIds: string[], steps: Readonly<Record<string, number>>) => void
-  moveSiblings: (moves: SiblingMove[]) => void
+  moveNodesInSequence: (moves: SequencedMove[]) => void
   duplicateNode: (nodeId: string) => string
   /** Multi-duplicate: duplicates every id in place (single undo step). Returns the new ids. */
   duplicateNodes: (nodeIds: string[]) => string[]

@@ -53,7 +53,7 @@ export function createStudioSourceRefusals(
     if (plan.ok) return null
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
       nodeId: plan.nodeId,
-      retry: retryWithParent,
+      ...(retryWithParent ? { retry: (mapId: (nodeId: string) => string) => retryWithParent(mapId(parentId)) } : {}),
       getState: get,
       set,
     })

@@ -64,7 +64,7 @@ import {
   type JsxChildRangeReason,
   type TextEdit,
 } from './jsxChildRange'
-import { lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
+import { indentUnit, insertBeside, lineIndentAt, reindentBlock, resolveChildPlacement } from './jsxChildPlacement'
 import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
 import { freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 
@@ -134,7 +134,9 @@ export function moveJsxElement(params: MoveJsxElementParams): MoveJsxElementResu
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  const target = resolveJsxChildRange(sourceFile, line, col)
+  // WB-20 — `{cond && <X/>}` moves as the whole container: the condition
+  // travels with the element it decides.
+  const target = resolveJsxChildRange(sourceFile, line, col, 'conditional')
   if (!target.ok) return refuseMove(target.reason, target.message)
 
   const verbatim = verbatimSourceText(sourceFile, file)
@@ -166,7 +168,8 @@ function reorder(
     )
   }
 
-  const anchor = resolveJsxChildRange(sourceFile, anchorLine, anchorCol)
+  // WB-22 — an anchor the code produces is its `{…}` container.
+  const anchor = resolveJsxChildRange(sourceFile, anchorLine, anchorCol, 'container')
   if (!anchor.ok) return refuseMove(anchor.reason, anchor.message)
 
   if (target.element === anchor.range.element) {
@@ -179,10 +182,7 @@ function reorder(
     )
   }
   if (target.wholeLine !== anchor.range.wholeLine) {
-    return refuseMove(
-      'mixed-indentation',
-      'One of these elements is on a line of its own and the other shares a line, so Studio cannot move one past the other without reformatting code you did not touch. Reorder them in the file instead.',
-    )
+    return reorderAcrossLineShapes(sourceFile, file, verbatim, target, anchor.range, position ?? 'after')
   }
 
   const at = position === 'before' ? anchor.range.start : anchor.range.end
@@ -192,6 +192,62 @@ function reorder(
   // its own length when it was cut from above that point.
   const landedAt = at >= target.end ? at - (target.end - target.start) : at
   return { ok: true, relocated: createdJsxLocation(sourceFile, landedAt, moved) }
+}
+
+/**
+ * WB-21 — a reorder between an element on a line of its own and one that
+ * shares a line. The moved element takes the ANCHOR's shape, the way an insert
+ * beside that anchor would (`insertBeside`): it gets its own line at the
+ * anchor's indentation when the anchor has one, and joins the anchor's line
+ * (one space apart) when the anchor shares a line.
+ *
+ * The only bytes this touches that a plain splice would not are the ones the
+ * moved element leaves behind: an inline element takes one of its separating
+ * runs of spaces with it (`inlineRemoval`), so `<a/> <b/>` minus `<b/>` is
+ * `<a/>`, not `<a/> `. Every other sibling on either line keeps its bytes.
+ */
+function reorderAcrossLineShapes(
+  sourceFile: SourceFile,
+  file: string,
+  verbatim: string,
+  target: JsxChildRange,
+  anchor: JsxChildRange,
+  position: 'before' | 'after',
+): MoveJsxElementResult {
+  const subtree = verbatim.slice(target.element.getStart(), target.element.getEnd())
+  const fromIndent = lineIndentAt(verbatim, target.element.getStart())
+  const removal: TextEdit = target.wholeLine
+    ? { start: target.start, end: target.end, text: '' }
+    : { ...inlineRemoval(verbatim, target.start, target.end), text: '' }
+  const insertion = insertBeside(
+    anchor,
+    position,
+    (indent) => reindentBlock(subtree, fromIndent, indent),
+    indentUnit(verbatim),
+    verbatim,
+  )
+  writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [insertion, removal]))
+  return {
+    ok: true,
+    relocated: createdJsxLocation(sourceFile, offsetAfterEdits([removal], insertion.start), insertion.text),
+  }
+}
+
+/**
+ * The bytes an inline element owns once it LEAVES its line: itself, plus the
+ * run of spaces that separated it from the sibling before it — or, when it was
+ * first on the line, from the sibling after it. A run that holds a newline is
+ * never taken; that is the line structure, not a separator.
+ */
+export function inlineRemoval(text: string, start: number, end: number): { start: number; end: number } {
+  let before = start
+  while (before > 0 && (text[before - 1] === ' ' || text[before - 1] === '\t')) before -= 1
+  const lineStart = text.lastIndexOf('\n', start - 1) + 1
+  if (before > lineStart && before < start) return { start: before, end }
+  let after = end
+  while (after < text.length && (text[after] === ' ' || text[after] === '\t')) after += 1
+  if (after > end && after < text.length && text[after] !== '\n') return { start, end: after }
+  return { start, end }
 }
 
 /**

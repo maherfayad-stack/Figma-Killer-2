@@ -113,7 +113,7 @@ export function createTransplantActions(helpers: SiteSliceHelpers): TransplantAc
           // The refused node is always the one the gesture named — re-issuing
           // after a detach/extract remedy lands means re-issuing the same drop
           // with that id swapped for its replacement.
-          retry: (newNodeId) => actions.transplantNodes([newNodeId], destination),
+          retry: (mapId) => actions.transplantNodes(nodeIds.map(mapId), { ...destination, parentId: mapId(destination.parentId) }),
           // D2 G3 — "Duplicate into frame instead": the SAME drop, with Alt's
           // meaning. It is the same store action and therefore the same gate,
           // the same `guardAgainstConcurrentStructuralCommit`, and the same

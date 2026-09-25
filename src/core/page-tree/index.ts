@@ -29,7 +29,6 @@ export {
   isSourceDerivedNodeId,
   isStudioPageRootId,
   loopTemplateNodeId,
-  matchesCallSitePosition,
   toRuntimeStampId,
   withSourceLocation,
 } from './sourceNodeId'
@@ -58,6 +57,8 @@ export type { SourceWritableNode } from './sourceWritability'
 // The structural counterpart: can this node's PLACE be written back?
 export {
   SourceStructureError,
+  isResolvedByInstanceDetach,
+  markSoleInstanceComponentFile,
   refuseMintedNodeCopy,
   refuseMintedNodeInsert,
   refuseStructuralEdit,
@@ -245,13 +246,21 @@ export {
 export { wrapNode, wrapNodes, unwrapNode } from './wrapMutations'
 // P2-C2 — a multi-selection stepping among its siblings, as independent single-element moves.
 export {
-  invertSiblingMoves,
   planSiblingSteps,
-  topLevelSelection,
   type SiblingMove,
   type SiblingStepPlan,
   type SiblingStepRefusal,
 } from './siblingSteps'
+// P3-D — every multi-element move as single-element moves applied in order.
+export {
+  createScratchTree,
+  invertMoveSequence,
+  moveOnScratch,
+  planMoveSequence,
+  topLevelSelection,
+  type ScratchTree,
+  type SequencedMove,
+} from './moveSequence'
 export { applyTreeOperation } from './treeOperations'
 
 export {

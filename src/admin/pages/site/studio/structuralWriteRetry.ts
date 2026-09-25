@@ -28,7 +28,7 @@
  */
 import { retryWhileUnreachable } from '@core/http'
 import type { IdentityCapture } from './sourceIdentity'
-import { postEdits } from './studioSaveRequests'
+import { postEdits, type PostEditsOptions } from './studioSaveRequests'
 
 /** Waits before retry 1, 2 and 3; the length is the budget. Short: the board is showing an unconfirmed change meanwhile. */
 const STRUCTURAL_WRITE_RETRY_BACKOFF_MS = [1000, 2000, 4000] as const
@@ -37,9 +37,10 @@ const STRUCTURAL_WRITE_RETRY_BACKOFF_MS = [1000, 2000, 4000] as const
 export async function postEditsRetryingUnreachable(
   edits: readonly Record<string, unknown>[],
   identities: IdentityCapture,
+  options: PostEditsOptions = {},
 ): Promise<Awaited<ReturnType<typeof postEdits>>> {
   const idempotencyKey = crypto.randomUUID()
-  return retryWhileUnreachable(() => postEdits(edits, identities, idempotencyKey), {
+  return retryWhileUnreachable(() => postEdits(edits, identities, idempotencyKey, options), {
     backoffMs: STRUCTURAL_WRITE_RETRY_BACKOFF_MS,
   })
 }
