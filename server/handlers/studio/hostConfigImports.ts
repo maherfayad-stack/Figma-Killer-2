@@ -290,16 +290,41 @@ export function hostConfigImportedBy(root: string, rel: string): string | null {
 
 /** `text` with every CSS comment removed — a linear scan, so an unterminated `/*` costs one pass. */
 function withoutCssComments(text: string): string {
+  const QUOTE_DOUBLE = 0x22
+  const QUOTE_SINGLE = 0x27
+  const BACKSLASH = 0x5c
+  const NEWLINE = 0x0a
   let out = ''
+  let copiedFrom = 0
   let index = 0
-  for (;;) {
-    const open = text.indexOf('/*', index)
-    if (open === -1) return out + text.slice(index)
-    out += text.slice(index, open)
-    const close = text.indexOf('*/', open + 2)
-    if (close === -1) return out
-    index = close + 2
+  while (index < text.length) {
+    const code = text.charCodeAt(index)
+    // A string is copied whole, the way CSS tokenizes it: a `/*` or `*/`
+    // INSIDE one is text, not a comment (security review of #256, B1 — a
+    // string-blind stripper deleted a real directive between two strings).
+    // It ends at its quote or an unescaped newline; a backslash escapes the
+    // next character.
+    if (code === QUOTE_DOUBLE || code === QUOTE_SINGLE) {
+      index += 1
+      while (index < text.length) {
+        const inner = text.charCodeAt(index)
+        if (inner === BACKSLASH) { index += 2; continue }
+        index += 1
+        if (inner === code || inner === NEWLINE) break
+      }
+      continue
+    }
+    if (text.startsWith('/*', index)) {
+      out += text.slice(copiedFrom, index)
+      const close = text.indexOf('*/', index + 2)
+      if (close === -1) return out
+      index = close + 2
+      copiedFrom = index
+      continue
+    }
+    index += 1
   }
+  return out + text.slice(copiedFrom)
 }
 
 /** A `@plugin`/`@config` at-rule: its name, its parameter as written, and the path Tailwind takes from it. */
@@ -323,8 +348,16 @@ export interface TailwindLoadDirective {
  * above and for the content half of the agent write gate.
  */
 export function parseTailwindLoadDirectives(text: string): TailwindLoadDirective[] {
+  // Both readings, as defence in depth: the comment-stripped text (what the
+  // CSS parser hands Tailwind) and the raw text (so a stripper that misreads a
+  // string or a `<script>` block can never hide a directive). A directive that
+  // only appears inside a comment is over-counted, never missed.
+  return [...directivesIn(withoutCssComments(text)), ...directivesIn(text)]
+}
+
+function directivesIn(text: string): TailwindLoadDirective[] {
   const out: TailwindLoadDirective[] = []
-  for (const match of withoutCssComments(text).matchAll(/@(plugin|config)(?![\w-])([^;{}]{0,2000})/g)) {
+  for (const match of text.matchAll(/@(plugin|config)(?![\w-])([^;{}]{0,2000})/g)) {
     const params = match[2]!.trim()
     out.push({ name: match[1] === 'plugin' ? '@plugin' : '@config', params, path: params.length >= 2 ? params.slice(1, -1) : '' })
   }

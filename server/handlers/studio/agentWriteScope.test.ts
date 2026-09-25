@@ -406,3 +406,26 @@ describe('agentContentRefusal — a directive in ANY spelling Tailwind reads, in
     expect(agentWriteRefusal(join(dir, 'tw', 'c.js'), dir)?.code).toBe('needs-user')
   })
 })
+
+// Security re-review of #256, B1 (narrower form): a string-blind comment
+// stripper deleted a real directive sitting between a `/*` and a `*/` that
+// were both inside quoted strings. tailwindcss@4.3.3 loads `./evil.js` from
+// each of these.
+describe('agentContentRefusal — comment markers inside strings never hide a directive (B1, re-review)', () => {
+  it('double-quoted /* and */ around a real @plugin', () => {
+    const after = '.x{content:"/*"} @plugin (./evil.js); .y{content:"*/"}\n'
+    expect(agentContentRefusal('src/index.css', '.a{}\n', after)?.code).toBe('needs-user')
+  })
+
+  it('single-quoted, with a backslash-escaped quote inside the string', () => {
+    const after = ".x{content:'/*\\''} @plugin |./evil.js|; .y{content:'*/'}\n"
+    expect(agentContentRefusal('src/index.css', '.a{}\n', after)?.code).toBe('needs-user')
+  })
+
+  it('a <script> string in .vue, .svelte and .html files', () => {
+    const vue = '<script>const a = "/*"</script>\n<style>@plugin (./evil.js);</style>\n<script>const b = "*/"</script>\n'
+    expect(agentContentRefusal('src/App.vue', '', vue)?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/App.svelte', '', vue)?.code).toBe('needs-user')
+    expect(agentContentRefusal('index.html', '', `<html>${vue}</html>`)?.code).toBe('needs-user')
+  })
+})
