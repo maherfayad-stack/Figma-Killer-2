@@ -116,9 +116,9 @@ export const TOOL_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
   },
 
   // ⇧K — Figma's "place image": opens the file picker (P5-B's `insert.image`
-  // palette command, #258). NOT component-owned: an argument-free command
-  // the generic dispatcher runs. Until #258 lands the command does not exist
-  // and the key does nothing. K alone stays the scale tool (it rejects ⇧).
+  // palette command, `spotlight/commands/images.ts`). NOT component-owned: an
+  // argument-free command the generic dispatcher runs, gated on
+  // `site.structure.edit`. K alone stays the scale tool (it rejects ⇧).
   {
     commandId: 'insert.image',
     displayName: 'Place an image (opens the file picker)',

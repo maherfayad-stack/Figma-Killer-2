@@ -183,4 +183,22 @@ describe('command shortcut dispatch', () => {
 
     expect(command).toBeNull()
   })
+
+  it('resolves ⇧K on the canvas to the `insert.image` command from P5-B (the binding names a command that exists)', () => {
+    const editor: CommandContext['editor'] = {
+      selectedNodeIds: ['node-1'],
+      activePageId: 'page-1',
+      activeDocument: { kind: 'page', pageId: 'page-1' },
+      canUndo: false,
+      canRedo: false,
+      activeBreakpointId: 'desktop',
+      activeInlineEdit: false,
+    }
+    const press = eventLike('K', { shiftKey: true, target: canvasTarget() as EventTarget }) as KeyboardEvent
+
+    expect(findMatchingShortcutCommand(press, context(['site.read', 'site.structure.edit'], editor))?.id)
+      .toBe('insert.image')
+    // Inserting is a structural edit: a read-only session gets nothing.
+    expect(findMatchingShortcutCommand(press, context(['site.read'], editor))).toBeNull()
+  })
 })
