@@ -72,7 +72,25 @@ export const WORKSPACE_MAX_FILES = 5000
  */
 export function listWorkspaceFiles(dir: string): string[] {
   const results: string[] = []
+  walkWorkspace(dir, (relPath) => results.push(relPath), () => {})
+  return results.sort()
+}
 
+/**
+ * Every directory `listWorkspaceFiles(dir)` enters, `''` (the root) first,
+ * as POSIX paths relative to `dir`. A directory's own mtime moves when an
+ * entry is added, removed or renamed in it, so stamping these is how a cache
+ * of "the file list under `dir`" knows it went stale without re-walking
+ * (the preview shell's input stamp does exactly that for the pages dir).
+ */
+export function listWorkspaceDirectories(dir: string): string[] {
+  const results: string[] = []
+  walkWorkspace(dir, () => {}, (relDir) => results.push(relDir))
+  return results
+}
+
+/** The one walk behind both lists above: the same exclusions, the same refusal to follow links. */
+function walkWorkspace(dir: string, onFile: (relPath: string) => void, onDirectory: (relDir: string) => void): void {
   function walk(currentDir: string, relDir: string): void {
     let entries: Dirent[]
     try {
@@ -80,6 +98,7 @@ export function listWorkspaceFiles(dir: string): string[] {
     } catch {
       return
     }
+    onDirectory(relDir)
     for (const entry of entries) {
       // Never follow symlinks — keeps any consumer confined to `dir`.
       if (entry.isSymbolicLink()) continue
@@ -91,10 +110,9 @@ export function listWorkspaceFiles(dir: string): string[] {
         walk(join(currentDir, entry.name), entryRelPath)
         continue
       }
-      if (entry.isFile()) results.push(entryRelPath)
+      if (entry.isFile()) onFile(entryRelPath)
     }
   }
 
   walk(dir, '')
-  return results.sort()
 }
