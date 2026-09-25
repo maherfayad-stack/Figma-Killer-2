@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   frameForPage,
   openFixtureBoard,
@@ -232,7 +232,7 @@ test.describe('the free canvas', () => {
     // ── 3. Drag it into the frame ──────────────────────────────────────────
     await zoomToPercent(page, canvasRoot, 50)
     const homeFrame = await frameForPage(page, canvasRoot, 'home')
-    const content = homeFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const content = canvasContentFrame(homeFrame)
     const target = content.locator('.home__body')
     await expect(target).toBeVisible({ timeout: 30_000 })
     const imageBox = (await image.boundingBox())!
@@ -245,7 +245,7 @@ test.describe('the free canvas', () => {
     const placedImage = content.locator('img')
     await expect(placedImage).toBeVisible({ timeout: 30_000 })
     // Computed layout: the element now renders INSIDE the frame's iframe.
-    const frameIframeBox = (await homeFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR).boundingBox())!
+    const frameIframeBox = (await visibleCanvasIframe(homeFrame).boundingBox())!
     const placedBox = (await placedImage.boundingBox())!
     expect(placedBox.x).toBeGreaterThanOrEqual(frameIframeBox.x - 1)
     expect(placedBox.x + placedBox.width).toBeLessThanOrEqual(frameIframeBox.x + frameIframeBox.width + 1)
