@@ -137,6 +137,8 @@ import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
 import { useMarqueeSelection } from './useMarqueeSelection'
 import { BoardFrameView } from './BoardFrameView'
+import { PendingBoardFrame } from './PendingBoardFrame'
+import { pendingBoardFrames } from './pendingBoardFrames'
 import styles from './BoardFramesLayer.module.css'
 
 // Stable fallback reference — `?? []` inline would hand back a NEW array every
@@ -231,6 +233,11 @@ export function BoardFramesLayer() {
   // below is a hook and hooks cannot live after one. Both are cheap array
   // passes over this board's own frames — never a whole-site scan.
   const framesWithPages = resolveFramesWithPages(frames, relevantPages)
+  // P6-B — frames whose page a streamed load has not delivered yet hold their
+  // place (`PendingBoardFrame`). Empty outside a load, which is every render
+  // but the first few of a project opening.
+  const pendingPages = useEditorStore((s) => s.pendingPages)
+  const pendingFrames = pendingBoardFrames(frames, relevantPages, pendingPages)
   const onScreenFrameIds = framesWithPages
     .filter(({ frame }) =>
       isFrameOnScreen(
@@ -319,7 +326,7 @@ export function BoardFramesLayer() {
       className={styles.layer}
       data-testid="board-frames-layer"
     >
-      {framesWithPages.length === 0 ? (
+      {framesWithPages.length === 0 && pendingFrames.length === 0 ? (
         <div className={styles.emptyState}>
           <p className={styles.emptyStateTitle}>No screens on this board yet</p>
           <p className={styles.emptyStateBody}>Create a new page, or add an existing one to start laying out this flow.</p>
@@ -352,6 +359,19 @@ export function BoardFramesLayer() {
           )
         })
       )}
+
+      {pendingFrames.map(({ frame, title }) => (
+        <PendingBoardFrame
+          key={frame.id}
+          pageId={frame.pageId}
+          frameId={frame.id}
+          title={title}
+          x={frame.x}
+          y={frame.y}
+          width={frame.width ?? FRAME_WIDTH}
+          height={frame.height ?? FRAME_HEIGHT}
+        />
+      ))}
 
       {selectionBoundingBox && (
         <div

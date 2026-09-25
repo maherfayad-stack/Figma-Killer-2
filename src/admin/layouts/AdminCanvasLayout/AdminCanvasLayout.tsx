@@ -575,15 +575,16 @@ function useStudioDefaultBoardSeed(): void {
   const activeBoardFrameCount = activeBoard?.frames.length ?? null
   const pageCount = useEditorStore((s) => s.site?.pages.length ?? 0)
   const frameDefaultsSettled = useEditorStore((s) => s.frameDefaultsSettled)
+  const pagesArriving = useEditorStore((s) => s.pendingPages.length > 0)
 
   useEffect(() => {
-    if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled })) return
+    if (!shouldSeedDefaultBoard({ boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving })) return
 
     const sitePages = useEditorStore.getState().site?.pages
     const pageIds = sitePages ? sitePages.map((p) => p.id) : []
     if (pageIds.length === 0) return
     useEditorStore.getState().seedFramesForActiveBoard(pageIds)
-  }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled])
+  }, [boardsLoaded, boardsLoadFailed, boardCount, activeBoardFrameCount, pageCount, frameDefaultsSettled, pagesArriving])
 }
 
 function usePostPaintEditorBodyGate(): boolean {

@@ -1074,11 +1074,11 @@ describe('GET /admin/api/studio/load — Phase 7A multi-file workspace', () => {
       .map((l) => JSON.parse(l) as { kind: string; [k: string]: unknown })
 
     const metaLine = lines.find((l) => l.kind === 'meta') as
-      | { kind: 'meta'; dir: string; pageCount: number }
+      | { kind: 'meta'; dir: string; pageList: Array<{ id: string }> }
       | undefined
     expect(metaLine).toBeDefined()
     expect(metaLine!.dir).toBe(plainBody.dir)
-    expect(metaLine!.pageCount).toBe(plainBody.pages.length)
+    expect(metaLine!.pageList.map((p) => p.id)).toEqual(plainBody.pages.map((p) => p.id))
 
     const pageLines = lines.filter((l) => l.kind === 'page') as Array<{ kind: 'page'; page: { id: string } }>
     expect(pageLines.map((l) => l.page.id).sort()).toEqual(plainBody.pages.map((p) => p.id).sort())
@@ -1248,10 +1248,10 @@ describe('GET /admin/api/studio/load — ?pageIds= filter', () => {
       .map((l) => JSON.parse(l) as { kind: string; [k: string]: unknown })
 
     const metaLine = lines.find((l) => l.kind === 'meta') as
-      | { kind: 'meta'; pageCount: number; missingPageIds: string[] }
+      | { kind: 'meta'; pageList: Array<{ id: string }>; missingPageIds: string[] }
       | undefined
     expect(metaLine).toBeDefined()
-    expect(metaLine!.pageCount).toBe(1)
+    expect(metaLine!.pageList.map((p) => p.id)).toEqual(['home'])
     expect(metaLine!.missingPageIds).toEqual(['ghost'])
 
     const pageLines = lines.filter((l) => l.kind === 'page') as Array<{ kind: 'page'; page: { id: string } }>
