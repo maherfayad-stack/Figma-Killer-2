@@ -11,6 +11,26 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### perf-14 — the preview shell stays out of the parse (P6-B found-not-fixed 1 and 2)
+- **Agent:** perf-hunter · **Branch:** `perf/preview-shell-stays-out-of-the-parse` (merges `perf/fast-warm-load` — land #263 first) · draft PR, base `feat/canvas-excellence` · **Updated:** 2026-09-25
+- **Stage:** PR open (draft).
+- **Cause 1:** the shell's root `vite.config.js` was a workspace source file, so it was a ROOT of the ts-morph program and TypeScript followed its imports: `vite` → `rolldown`, `postcss`, `@types/node`, `undici-types`, `zod`, babel types (resolved from Studio's OWN `node_modules`, walking up out of `studio-workspace/`), plus the 2 MB `prototype/studioRuntime.generated.js`.
+- **Fix 1:** `listWorkspaceSourceFiles` / `isWorkspaceSourceFilePath` moved to `src/core/page-parser/workspaceSourceFiles.ts` and leave out every build-tool config (`isHostConfigFileName`, the user's own too — it runs in Node, no page renders it). The program pins `maxNodeModuleJsDepth: 0`.
+- **Fix 2:** `ensurePrototypeShell` stamps its inputs by `lstat` after a real run (`prototypeShell/shellInputStamp.ts`: every shell file, manifest, `package.json`, `.studio/{meta,boards,prototype}`, LanguageContext candidates, DS entry, pages dir + every subdir) and answers repeat calls from the stamp (`inputsUnchanged: true`). Stamps with an input newer than run-start − 2 s are never kept (racy rule).
+- **Numbers** (canonical fixture + generated shell, 3 interleaved fresh-process pairs vs P6-B tip `7d7660bf`, medians of 30 calls; `.tmp/pshell/bench.ts`):
+
+| | P6-B tip → branch |
+|---|---|
+| program files | 288 → 86 |
+| program build | 2148–2198 → 224–384 ms |
+| cold `loadStudioPages` (empty parse store) | 3286–3497 → 845–1311 ms |
+| warm `loadStudioPages` | 23.3–23.8 → 1.8–3.4 ms |
+| `ensurePrototypeShell` repeat call | 19.6–20.0 → 0.55–1.29 ms |
+
+- **Tests:** `shellStaysOutOfTheParse.test.ts` (program file COUNT = user sources, before and after scaffolding; configs out; package JS out under `maxNodeModuleJsDepth: 2`) — 3 of 4 failed before fix 1. `prototypeShellOnce.test.ts` (10 cases; each input kind re-runs) — the two memo-hit cases fail with the stamp check disabled; the two page-list cases fail with the pages-dir stamp disabled.
+- **Landmines:** (1) a NEW input read by the shell must be added to `shellInputPaths`, or a change to it is missed until restart. (2) The program still resolves bare imports up OUT of the workspace into Studio's own `node_modules` (and even `C:/Users/<you>/node_modules`); declarations a user page imports are kept deliberately — see PR "Found, not fixed".
+- **Next:** orchestrator merges after #263.
+
 ### perf-13 — P6-B server half: fast warm load (PERF-7 persistence, PERF-8)
 - **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR #263, base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
 - **Stage:** PR open (draft); gates green except pre-existing. The client streaming half of P6-B is OUT of scope (not started).
