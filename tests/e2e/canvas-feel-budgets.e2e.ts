@@ -8,6 +8,7 @@ import {
   type FixtureProject,
 } from './helpers/studioFixtureProject'
 import { visibleCanvasIframe } from './helpers/canvasIframe'
+import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
  * The feel budgets on a LARGE board — ROADMAP P2-A, audit `01-perf.md` §3
@@ -85,7 +86,7 @@ const BUDGET_IDLE_RAF_PER_SECOND = 0
  * after P2-I 78–85 ms. Set at ~1.4× the worst P2-I mean.
  */
 const WARM_CLICK_SAMPLES = 8
-const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = 120
+const BUDGET_WARM_CLICK_TO_RING_MEAN_MS = E2E_VITE_MODE === 'preview' ? 75 : 120
 
 /**
  * **Post-edit pause** — how long the board is watched after an edit commits:
@@ -334,7 +335,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     expect(drift).toBeLessThanOrEqual(BUDGET_PAN_TOOLBAR_DRIFT_PX)
   })
 
-  test('warm click -> selection ring: the ring is on screen within budget', async ({ page }) => {
+  test('warm click -> selection ring: the ring is on screen within budget', { tag: '@production-bundle' }, async ({ page }) => {
     // WS-5.6's "selection -> ring paint", never built until P2-I (PERF-14):
     // pointerdown in the frame to the first animation frame after the ring
     // for THAT node exists, on the same clock (the frame's own document).

@@ -5,6 +5,7 @@ import {
   profileGesture,
   readBoardCounts,
 } from './helpers/canvasPerf'
+import { E2E_VITE_MODE } from '../../scripts/lib/e2eStack'
 
 /**
  * Real-browser perf measurement for `perf-01` (WS-5.3 / WS-5.4).
@@ -113,7 +114,7 @@ const BUDGET_PAN_LAYER_MUTATIONS = 10
  * Re-calibrate on a quiet runner (CI) and tighten toward 100ms once a clean
  * number is available there — do not loosen it further to chase noise here.
  */
-const BUDGET_CLICK_TO_RING_COLD_MS = 350
+const BUDGET_CLICK_TO_RING_COLD_MS = E2E_VITE_MODE === 'preview' ? 150 : 350
 
 /**
  * How long the board is left alone so `framePosterQueue` can drain all twelve
@@ -209,7 +210,7 @@ function annotate(label: string, value: string): void {
 }
 
 test.describe('speed-04: click -> selection ring, cold', () => {
-  test('the FIRST click after the board opens rings within budget — no duplicate bridge overlay competing for it', async ({
+  test('the FIRST click after the board opens rings within budget — no duplicate bridge overlay competing for it', { tag: '@production-bundle' }, async ({
     page,
   }) => {
     page.on('console', (msg) => {

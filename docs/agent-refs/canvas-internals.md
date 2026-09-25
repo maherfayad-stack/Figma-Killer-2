@@ -1423,6 +1423,51 @@ formula deliberately omits `CanvasTransformLayer`'s 80px `top`/`left` offset**
 anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
 `CanvasRulers/rulerGeometry.ts` for the corrected formula and why.
 
+### What a click and a keystroke re-render (P6-C)
+
+`canvas-edit-budgets.e2e.ts` and `canvas-feel-budgets.e2e.ts` put numbers on a
+click and a keystroke on the 40 × 300 board; `tests/e2e/helpers/reactRenderCounter.ts`
+counts which components rendered (a minimal DevTools hook — no product code).
+What it found, and the rule each finding became:
+
+- **An action hook reads state when it acts, never subscribes to it.**
+  `useInsertModule`, `useInsertInserterItem` and `useCanvasInsertionDrag`
+  subscribed to the selection and the active page — values they read only when
+  something is inserted — so every panel that offers insertion (the Assets
+  panel: 46 cards, ~130 buttons and tooltips) re-rendered on every click and
+  every keystroke. They read `useEditorStore.getState()` at call time now;
+  `useModuleInsertionContext` subscribes to four primitives. Gated by
+  `assetsPanelRenderScope.test.tsx`.
+- **A store write that changes nothing notifies nobody** (`store/skipUnchangedSets.ts`).
+  An object partial always made a new state object, so `set({ focusedPanel })`
+  with the current value swept every mounted `NodeRenderer`'s selectors — a
+  canvas click made two such writes, ~8–10 ms each in production.
+- **Per-frame chrome reads per-frame answers.** Every mounted frame runs
+  `BreakpointSelectionOverlay`, `ClassStyleInjector` and the tree-ladder hook.
+  Board frames of one width share a breakpoint id, so an id-valued hover read
+  (`hoveredBreakpointOrigin`) changed in all of them at once — it is the
+  per-frame boolean `hoverOriginatesHere` now; the ladder reads the active page
+  only while Alt is held; the forced-state preview is its own component,
+  scoped to the frame that renders the selected node.
+- **An overlay write that changes nothing is skipped** (`PortalFrameAdapter.applyOverlay`):
+  reassigning a `<style>`'s text re-parses it and invalidates style for the
+  whole frame document even when the text is identical.
+- **The hot components must actually be compiled.** The React Compiler
+  silently skips a function it cannot lower — with this repo's
+  `babel-plugin-react-compiler` 1.0 on Babel 8, a default inside a
+  destructured parameter (`{ editable = true }`) is enough — and nothing fails.
+  `CanvasRoot` was skipped, so its context values were rebuilt on every
+  render and every frame's selection chrome re-rendered on every click and
+  keystroke. `compiled-hot-components.test.ts` compiles the hot files with the
+  exact Vite pipeline and fails naming the reason. `NodeRenderer`,
+  `BreakpointFrame`, `IframeFrameSurface` and `BreakpointSelectionOverlay`
+  still do not compile (see that test's header).
+
+Measured (medians; dev build / production bundle, `E2E_VITE_MODE=preview`):
+warm click → ring 144 → P6C_WARM_DEV ms / 61.6 → P6C_WARM_PROD ms; inspector
+keystroke → canvas paint 115 → 80 ms / 32 → P6C_KEY_PROD ms. WS-5.6's 32 ms
+click target is P6C_TARGET_STATUS.
+
 ### Mounting a frame (S1) — what a mount actually costs, measured
 
 `perf-01` recorded "a zoom that mounts frames costs 290–337 ms in one frame"
