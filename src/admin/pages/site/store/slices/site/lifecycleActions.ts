@@ -4,9 +4,11 @@
 
 import { findHomePage, reconcileSiteExplorerInPlace, reindexNodeParents } from '@core/page-tree'
 import type { Page, SiteDocument } from '@core/page-tree'
+import { replaceEqualDeep } from '@core/utils/replaceEqualDeep'
 import { removeFramesForPage } from '@core/studio-board'
 import { renderCache } from '@site/canvas/renderCache'
 import { clearCanvasHover, followCanvasHover, getCanvasHover } from '@site/canvas/canvasHover'
+import { clearNodeRenderKeys } from '@site/canvas/nodeRenderKeys'
 import {
   clonePackageJson,
   DEFAULT_SITE_PACKAGE_JSON,
@@ -26,6 +28,7 @@ import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRem
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import { notePagesRead } from './pageReadEpoch'
 import { createReparseNodeFollower, publishReparseFollow, type NodeIdFollower } from './reparseNodeFollow'
+import { carryRenderKeysThroughReread } from './rereadRenderKeys'
 import { rebaseUnsavedEdits, reportLostUnsavedEdits } from './unsavedEditRebase'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import type { Draft } from 'mutative'
@@ -114,6 +117,7 @@ export function createLifecycleActions({
     createSite: (name) => {
       const site = createDefaultSiteDocument(name)
       notePagesRead('all') // ERR-6 — see `pageReadEpoch.ts`
+      clearNodeRenderKeys() // PERF-6 — see `canvas/nodeRenderKeys.ts`
       reconcileSiteExplorerInPlace(site)
       reindexSiteTreeParents(site)
       const siteRuntime = cloneSiteRuntimeConfig(site.runtime)
@@ -159,6 +163,8 @@ export function createLifecycleActions({
       // site cannot bleed into the canvas after switching projects.
       // (Guideline #307 / Architect message #1216 — critical integration note)
       renderCache.clear()
+      // PERF-6 — a full reload renders every node under its own id again.
+      clearNodeRenderKeys()
       // ERR-6 — every page is replaced; an in-flight move/delete must not
       // replay its inverse over what disk just said (`pageReadEpoch.ts`).
       notePagesRead('all')
@@ -281,6 +287,7 @@ export function createLifecycleActions({
 
     clearSite: () => {
       notePagesRead('all')
+      clearNodeRenderKeys()
       set((state) => {
         state.site = null
         state.packageJson = clonePackageJson(DEFAULT_SITE_PACKAGE_JSON)
@@ -365,7 +372,12 @@ export function createLifecycleActions({
         }
         freshById.delete(page.id)
         upsertedIds.add(page.id)
-        nextPages.push(fresh)
+        // PERF-6 — a re-read page is a brand-new object graph even where
+        // nothing changed, and every `NodeRenderer` of its frame compares its
+        // node by identity. Share every node the read left deep-equal (and the
+        // page itself when all of it is), so a write re-renders what it
+        // changed and nothing else.
+        nextPages.push(replaceEqualDeep(page, fresh))
       }
       // Whatever's left in `freshById` didn't match an existing page — a
       // brand-new page (e.g. `studio_create_page`), appended rather than merged.
@@ -378,6 +390,11 @@ export function createLifecycleActions({
       // ERR-6 — a removal shifts every surviving page's position in
       // `site.pages`, which is what an inverse patch addresses it by.
       notePagesRead(actuallyRemovedIds.size > 0 ? 'all' : upsertedIds)
+      // PERF-6 — every element a renumbering write moved keeps the React key
+      // it rendered under, so it re-renders in place instead of remounting.
+      // The alignment it is carried through is the one the canvas-state
+      // follower below would otherwise compute again.
+      const alignments = carryRenderKeysThroughReread(site.pages, nextPages, upsertedIds, actuallyRemovedIds)
 
       // The project-wide registries the same reload recomputed. A re-parsed
       // page's `classIds` name rules from the registry computed WITH it, so
@@ -388,11 +405,18 @@ export function createLifecycleActions({
       // full recompute from disk, and a merge would resurrect rules the edit
       // deleted. Absent means the caller had nothing fresher — keep what's
       // there rather than blanking a working registry.
+      //
+      // PERF-6 — replaced by VALUE, not by object: every rule the recompute
+      // left unchanged keeps its object, and the registry keeps its identity
+      // when all of it is unchanged. Every mounted frame's
+      // `ClassStyleInjector` regenerates and rewrites its `<style>` on a new
+      // registry object, so a fresh-but-equal one restyled every frame for
+      // nothing after every write.
       const nextSite: SiteDocument = {
         ...site,
         pages: nextPages,
-        ...(styleRules ? { styleRules } : {}),
-        ...(conditions ? { conditions } : {}),
+        ...(styleRules ? { styleRules: replaceEqualDeep(site.styleRules, styleRules) } : {}),
+        ...(conditions ? { conditions: replaceEqualDeep(site.conditions, conditions) } : {}),
       }
       reconcileSiteExplorerInPlace(nextSite)
       // Track C5 — computed against the POST-patch site, pure, before `set()`,
@@ -416,6 +440,7 @@ export function createLifecycleActions({
         strictRemap: historyRemap,
         // Visual Component and layout trees are not touched by a page patch.
         offPageIds: 'keep',
+        alignments,
       })
 
       // Board-frame cleanup for a genuinely removed page — computed against

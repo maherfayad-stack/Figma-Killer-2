@@ -11,6 +11,31 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### store-20 — P6-A: reconcile after writes (PERF-6)
+- **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR #266 (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
+- **Stage:** done, awaiting merge — build + lint green; `bun test` (chunked) adds no failure (pre-existing + load timeouts triaged in the PR body); e2e `studio-board-perf` 2 failures reproduce with the change disabled.
+- **Slices touched:** `site/lifecycleActions.ts` (`patchPages`, and `createSite`/`loadSite`/`clearSite` clear the render keys), `site/reparseNodeFollow.ts` (optional `alignments` input, shared). New `site/rereadRenderKeys.ts`, `canvas/nodeRenderKeys.ts` (off-store), `@core/utils/replaceEqualDeep`. No new selector; no new mutation (a re-read is not an edit: no history entry, no coalesce key).
+- **Done:**
+  - `patchPages` applies a re-read by value: each re-read page, `styleRules` and `conditions` go through `replaceEqualDeep`, so a deep-equal node, rule, registry or page keeps its object. A prop write re-renders one `NodeRenderer`, not the whole page, and restyles no frame (was 12 of 12).
+  - A renumbered node keeps its React key: `rereadRenderKeys.ts` aligns each changed re-read page (`alignPageTrees`) and carries keys through `nodeRenderKeys.ts`; `NodeRenderer` and `CanvasComposedTree` key children by `nodeRenderKey(pageId, id)`. A move remounts nothing (was 297 of 300). The follower reuses the alignment.
+  - Bench: `bench:editor-store` "Post-write re-sync" (`scripts/bench/lib/postWriteResync.ts`), counts are a budget; before/after table in its doc.
+- **Decisions:** always align a changed page (an unchanged id SET is not a shortcut: a move among same-size siblings permutes addresses). Keys are per page and unique among siblings (minted key when a new node takes an address a moved one carries).
+- **Landmines:** (1) a shared parent whose child keys changed is COPIED (`rereadRenderKeys.ts`), or it would not re-render and keep stale keys — test `nodeRendererPostWriteRerender.test.tsx` "permutes". (2) Only frames with `CanvasPageContext` carry keys. (3) The move pays ~2.5 ms more in the store (one alignment) to save 297 remounts.
+- **Next:** orchestrator merges. Collision: `lifecycleActions.ts` (serial; P1-B/P3-E in). P3-D (#250) touches the structural commit path, not `patchPages`.
+
+### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
+- **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
+- **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
+- **Slices touched:** `site/lifecycleActions.ts` (`loadSite`, `patchPages`) + new `site/unsavedEditRebase.ts`. No new selector; no new mutation (no history entry, no coalesce key — a re-read is not an edit).
+- **Done:**
+  - ERR-9: a re-read REBASES unsaved edits instead of discarding them, on both reload paths, whoever wrote the file. `loadedValuesBaseline.ts` files the baseline each re-read replaced under its own `pages` array (`baselineBeforeRead`); the store diffs against it, aligns the pre-edit tree with the fresh one (`alignPageTrees`, then P1-A identity), writes local values onto the fresh nodes (per node all-or-nothing; never over a value now in code or a literal that moved/changed), keeps the page marked and `hasUnsavedChanges` true. The "an agent" toast is gone; a loss says its cause. `usePersistence` no longer clears the flag after a full reload.
+  - WB-9: `setJsxText` writes raw JSX text, keeps surrounding whitespace, re-wraps over the original lines; `{"…"}` only when needed or already used, in its own quote. WB-10: `setJsxStyle` keeps the object's quote and layout; `setJsxProp` keeps the attribute quote. Shared `ast-codemods/stringSpelling.ts`.
+  - WB-25: one ts-morph project per batch (`syncProjectWithDisk` before each edit), position-indexed `findJsxElementAtLocation`. 40 edits, 1,500 elements, under the lock: prop 17.4 s → 1.4 s, text 19.5 s → 0.8 s, style 20.5 s → 1.3 s (medians) (this machine; audit: 3.8 s).
+  - WB-32: locale JSON splices the value span; a created key re-serializes in the file's indent/EOL/final newline.
+- **Decisions:** local wins on a plain-value conflict (same answer as P1-D's flush-first save); an origin-backed (literal) value never wins a conflict. A page list no Studio read produced has no baseline and is adopted as-is.
+- **Landmines:** (1) `baselineBeforeRead` is keyed by array IDENTITY — a caller that copies `pages` between the fetch and `patchPages`/`loadSite` silently loses the rebase. (2) Structural codemods still get their own project (one write per gesture). (3) Old tests asserted `{"…"}` text spellings; updated.
+- **Next:** orchestrator merges. Collision: `lifecycleActions.ts` is serial with P6-A (P1-B already in).
+
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.

@@ -1336,6 +1336,7 @@ a component in a live frame selected the element inside it.
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |
 | Every store `set()` runs every mounted `NodeRenderer`'s selectors; hover was a `set()` per crossing | `NodeRenderer.tsx`, `selectionSlice.ts` | **fixed (P2-I)** — hover is off the store, selection is a keyed read, see "Per-node reads" below |
 | A poster rasterized under the user after every edit | `useFramePosterCapture.ts` | **fixed (P2-I)** — refresh only once the frame leaves the screen; the busy listeners run in every frame |
+| A post-write re-read re-rendered every node of the page, remounted every renumbered node, and restyled every mounted frame | `lifecycleActions.ts` `patchPages`, `NodeRenderer.tsx` child keys, `ClassStyleInjector.tsx` | **fixed (P6-A, PERF-6)** — deep-equal nodes/rules keep their objects; moved nodes keep their React key (`nodeRenderKeys.ts`). See `editor-store.md`'s `patchPages` |
 
 ### Per-node reads (P2-I) — what a `NodeRenderer` may subscribe to
 

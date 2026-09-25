@@ -243,6 +243,13 @@ export interface ReparseFollowInput {
    * it no longer names anything on screen (`'drop'`).
    */
   offPageIds: 'keep' | 'drop'
+  /**
+   * Page id -> `alignPageTrees(before page, after page)`, for pages the caller
+   * already aligned (`patchPages` aligns every re-read page whose ids changed,
+   * to carry React keys — `canvas/nodeRenderKeys.ts`). Consulted before
+   * aligning a page again; the follower adds what it computes itself.
+   */
+  alignments?: Map<string, Map<string, string>>
 }
 
 /**
@@ -259,7 +266,7 @@ export function createReparseNodeFollower(input: ReparseFollowInput): NodeIdFoll
   // address on the same page AND still looks the same is kept — never moved.
   const samePageSet =
     before.pages.length === after.pages.length && before.pages.every((page) => afterPages.has(page.id))
-  const alignments = new Map<string, Map<string, string>>()
+  const alignments = input.alignments ?? new Map<string, Map<string, string>>()
 
   const followOnPage = (oldId: string, pageId: string): string | null => {
     const beforePage = beforePages.get(pageId)
