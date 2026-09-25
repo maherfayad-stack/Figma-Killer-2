@@ -16,6 +16,7 @@ import * as path from 'node:path'
 import type { Page } from '@core/page-tree'
 import { clearFileDigests, sha256Hex } from '../studio/loadDigest'
 import { clearLoadedProjects, isProjectLoaded, MAX_LOADED_PROJECTS } from '../studio/loadedProjects'
+import { flushParseCacheWrites } from '../studio/pageParseCache'
 import { clearParseCacheSigningKeys, parseCacheSigningKey } from '../studio/parseCacheStore'
 import { loadStudioPages, loadStudioPagesShared } from '../studioPageLoad'
 import { resolveWorkspaceRelativePath } from '../studio/gitPaths'
@@ -43,6 +44,16 @@ function edit(dir: string, rel: string, text: string): void {
   const later = new Date(fs.statSync(abs).mtime.getTime() + 5000)
   fs.writeFileSync(abs, text, 'utf8')
   fs.utimesSync(abs, later, later)
+}
+
+/**
+ * A load, then the disk writes it queued. The server drains them 50 ms after
+ * the load (or at exit); a test drains them at once so it can read the store.
+ */
+async function load(dir: string): ReturnType<typeof loadStudioPages> {
+  const result = await loadStudioPages(dir)
+  flushParseCacheWrites()
+  return result
 }
 
 function restartServer(): void {
@@ -97,23 +108,32 @@ afterEach(() => {
 describe('PERF-7 — the parse survives a restart', () => {
   it('a restarted server answers from `.studio/cache/parse/` without re-parsing', async () => {
     const dir = newProject({ 'pages/Home.tsx': HOME_WITH_HERO, 'components/Hero.tsx': hero('Persisted') })
-    const cold = await loadStudioPages(dir)
+    const cold = await load(dir)
     const [entry] = entryFiles(dir)
     expect(entry, 'the cold load persisted nothing').toBeDefined()
     const written = fs.statSync(entry!).mtimeMs
     const bytes = fs.readFileSync(entry!, 'utf8')
 
     restartServer()
-    const warm = await loadStudioPages(dir)
+    const warm = await load(dir)
     expect(warm.pages).toEqual(cold.pages)
     // A re-parse rewrites the entry; a disk hit leaves it exactly as it was.
     expect(fs.statSync(entry!).mtimeMs).toBe(written)
     expect(fs.readFileSync(entry!, 'utf8')).toBe(bytes)
   })
 
+  it('the disk write is off the load\'s path: nothing is written during the load, and the drain runs by itself', async () => {
+    const dir = newProject({ 'pages/Home.tsx': page('Deferred') })
+    await loadStudioPages(dir)
+    expect(entryFiles(dir), 'the load wrote its entry inline — that was 170–350 ms of a cold load').toEqual([])
+    const deadline = Date.now() + 2000
+    while (entryFiles(dir).length === 0 && Date.now() < deadline) await Bun.sleep(10)
+    expect(entryFiles(dir)).toHaveLength(1)
+  })
+
   it('the store sits behind its own `.gitignore`, and Studio\'s git staging refuses it', async () => {
     const dir = newProject({ 'pages/Home.tsx': page('Ignored') })
-    await loadStudioPages(dir)
+    await load(dir)
     expect(fs.readFileSync(path.join(storeDir(dir), '.gitignore'), 'utf8')).toContain('*')
     const [entry] = entryFiles(dir)
     const rel = path.relative(dir, entry!).split(path.sep).join('/')
@@ -136,35 +156,35 @@ describe('PERF-7 — the parse survives a restart', () => {
 describe('P6-B — a cached page is served only while every file it read is unchanged', () => {
   it('editing a DEPENDENCY (not the page) re-parses the page — in process', async () => {
     const dir = newProject({ 'pages/Home.tsx': HOME_WITH_HERO, 'components/Hero.tsx': hero('Before') })
-    expect(texts((await loadStudioPages(dir)).pages, 'home')).toContain('Before')
+    expect(texts((await load(dir)).pages, 'home')).toContain('Before')
     edit(dir, 'components/Hero.tsx', hero('AfterDependencyEdit'))
-    const after = texts((await loadStudioPages(dir)).pages, 'home')
+    const after = texts((await load(dir)).pages, 'home')
     expect(after).toContain('AfterDependencyEdit')
     expect(after).not.toContain('Before')
   })
 
   it('editing a DEPENDENCY while the server is down re-parses the page after the restart', async () => {
     const dir = newProject({ 'pages/Home.tsx': HOME_WITH_HERO, 'components/Hero.tsx': hero('Before') })
-    await loadStudioPages(dir)
+    await load(dir)
     restartServer()
     edit(dir, 'components/Hero.tsx', hero('EditedWhileDown'))
-    const after = texts((await loadStudioPages(dir)).pages, 'home')
+    const after = texts((await load(dir)).pages, 'home')
     expect(after).toContain('EditedWhileDown')
     expect(after).not.toContain('Before')
   })
 
   it('an import that resolved to NOTHING is a dependency: creating the file re-parses the page', async () => {
     const dir = newProject({ 'pages/Home.tsx': HOME_WITH_HERO })
-    expect(texts((await loadStudioPages(dir)).pages, 'home')).not.toContain('NowItExists')
+    expect(texts((await load(dir)).pages, 'home')).not.toContain('NowItExists')
     write(dir, 'components/Hero.tsx', hero('NowItExists'))
-    expect(texts((await loadStudioPages(dir)).pages, 'home')).toContain('NowItExists')
+    expect(texts((await load(dir)).pages, 'home')).toContain('NowItExists')
   })
 
   it('a page added a moment ago is never missing from the next load', async () => {
     const dir = newProject({ 'pages/Home.tsx': page('Home') })
-    expect((await loadStudioPages(dir)).pages.map((p) => p.id)).toEqual(['home'])
+    expect((await load(dir)).pages.map((p) => p.id)).toEqual(['home'])
     write(dir, 'pages/About.tsx', page('About'))
-    expect((await loadStudioPages(dir)).pages.map((p) => p.id).sort()).toEqual(['about', 'home'])
+    expect((await load(dir)).pages.map((p) => p.id).sort()).toEqual(['about', 'home'])
   })
 })
 
@@ -176,11 +196,11 @@ describe('P6-B — the store is untrusted input', () => {
   }
 
   async function forgedLoadShows(dir: string, forge: (entry: { file: string; signature: string; payload: string }) => string): Promise<string[]> {
-    await loadStudioPages(dir)
+    await load(dir)
     const entry = genuineEntry(dir)
     fs.writeFileSync(entry.file, forge(entry), 'utf8')
     restartServer()
-    return texts((await loadStudioPages(dir)).pages, 'home')
+    return texts((await load(dir)).pages, 'home')
   }
 
   it('a tampered result (genuine signature, edited payload) is rejected — the page shows the source', async () => {
@@ -211,14 +231,14 @@ describe('P6-B — the store is untrusted input', () => {
 
   it('a genuine entry copied into ANOTHER project is rejected', async () => {
     const source = newProject({ 'pages/Home.tsx': page('FromOtherProject') })
-    await loadStudioPages(source)
+    await load(source)
     const target = newProject({ 'pages/Home.tsx': page('TargetHeading') })
-    await loadStudioPages(target)
+    await load(target)
     const [sourceEntry] = entryFiles(source)
     const [targetEntry] = entryFiles(target)
     fs.copyFileSync(sourceEntry!, targetEntry!)
     restartServer()
-    const shown = texts((await loadStudioPages(target)).pages, 'home')
+    const shown = texts((await load(target)).pages, 'home')
     expect(shown).toContain('TargetHeading')
     expect(shown).not.toContain('FromOtherProject')
   })
@@ -235,7 +255,7 @@ describe('P6-B — the store is untrusted input', () => {
     process.env.STUDIO_DATA_DIR = path.join(dir, '.data')
     clearParseCacheSigningKeys()
     expect(parseCacheSigningKey(dir)).toBeNull()
-    await loadStudioPages(dir)
+    await load(dir)
     expect(fs.existsSync(path.join(dir, '.data'))).toBe(false)
     expect(entryFiles(dir)).toEqual([])
   })
@@ -249,7 +269,7 @@ describe('P6-B — the store is untrusted input', () => {
     } catch (_err) {
       return // this machine cannot create a directory link — nothing to test
     }
-    await loadStudioPages(dir)
+    await load(dir)
     expect(fs.readdirSync(outside)).toEqual([])
   })
 })
@@ -257,13 +277,14 @@ describe('P6-B — the store is untrusted input', () => {
 describe('P6-B — one LRU of projects', () => {
   it('evicts the least recently loaded project, which comes back from disk', async () => {
     const dirs = Array.from({ length: MAX_LOADED_PROJECTS + 1 }, (_, i) => newProject({ 'pages/Home.tsx': page(`Project${i}`) }))
+    // Back to back, no explicit drain: whatever the drain timer has not written yet, eviction writes.
     for (const dir of dirs) await loadStudioPages(dir)
     expect(isProjectLoaded(dirs[0]!)).toBe(false)
     expect(isProjectLoaded(dirs[dirs.length - 1]!)).toBe(true)
 
     const [entry] = entryFiles(dirs[0]!)
     const written = fs.statSync(entry!).mtimeMs
-    expect(texts((await loadStudioPages(dirs[0]!)).pages, 'home')).toContain('Project0')
+    expect(texts((await load(dirs[0]!)).pages, 'home')).toContain('Project0')
     expect(fs.statSync(entry!).mtimeMs, 'the evicted project was re-parsed instead of read back').toBe(written)
   })
 })
@@ -273,7 +294,7 @@ describe('P6-B — the memo is shared with the route, private to everyone else',
     const dir = newProject({ 'pages/Home.tsx': page('Shared') })
     const first = await loadStudioPagesShared(dir)
     expect(await loadStudioPagesShared(dir)).toBe(first)
-    const copy = await loadStudioPages(dir)
+    const copy = await load(dir)
     expect(copy).not.toBe(first)
     expect(copy.pages).toEqual(first.pages)
   })

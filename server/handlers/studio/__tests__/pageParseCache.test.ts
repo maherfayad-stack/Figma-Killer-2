@@ -10,6 +10,7 @@ import { clearFileDigests, digestOf, fileStamp } from '../loadDigest'
 import {
   cachedRouteDependencies,
   clearPageParseCache,
+  flushParseCacheWrites,
   getCachedRouteParse,
   setCachedRouteParse,
   type CachedRouteParse,
@@ -165,6 +166,7 @@ describe('pageParseCache — disk tier', () => {
 
   it('a new process (memory cleared) is answered from disk while the dependency bytes match', () => {
     setCachedRouteParse(scope(tmpDir), 'A.tsx', [fileA], fakeResult)
+    flushParseCacheWrites()
     clearPageParseCache()
     clearFileDigests()
     const hit = getCachedRouteParse(scope(tmpDir), 'A.tsx')
@@ -173,6 +175,7 @@ describe('pageParseCache — disk tier', () => {
 
   it('a disk entry whose dependency changed while no process was watching is a miss', () => {
     setCachedRouteParse(scope(tmpDir), 'A.tsx', [fileA], fakeResult)
+    flushParseCacheWrites()
     clearPageParseCache()
     bump(fileA, 'export default function A() { return <section/> }')
     expect(getCachedRouteParse(scope(tmpDir), 'A.tsx')).toBeNull()
@@ -180,13 +183,24 @@ describe('pageParseCache — disk tier', () => {
 
   it('a disk entry is compared by CONTENT: a rewrite with the same bytes (new mtime) still hits', () => {
     setCachedRouteParse(scope(tmpDir), 'A.tsx', [fileA], fakeResult)
+    flushParseCacheWrites()
     clearPageParseCache()
     bump(fileA, fs.readFileSync(fileA, 'utf8'))
     expect(getCachedRouteParse(scope(tmpDir), 'A.tsx')).not.toBeNull()
   })
 
+  it('the disk write waits for the drain, and a dependency that moved before it leaves no entry', () => {
+    setCachedRouteParse(scope(tmpDir), 'A.tsx', [fileA], fakeResult)
+    bump(fileA, 'export default function A() { return <section/> }')
+    flushParseCacheWrites()
+    clearPageParseCache()
+    clearFileDigests()
+    expect(getCachedRouteParse(scope(tmpDir), 'A.tsx')).toBeNull()
+  })
+
   it('a disk entry from a different locale or config is a miss', () => {
     setCachedRouteParse(scope(tmpDir), 'A.tsx', [fileA], fakeResult)
+    flushParseCacheWrites()
     clearPageParseCache()
     expect(getCachedRouteParse(scope(tmpDir, 'h2'), 'A.tsx')).toBeNull()
     expect(getCachedRouteParse(scope(tmpDir, 'h1', { preferredKey: 'fr' }), 'A.tsx')).toBeNull()

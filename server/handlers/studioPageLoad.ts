@@ -77,7 +77,7 @@ import { ensureDesignSystemFiles } from './studio/designSystemFiles'
 import { ensurePrototypeShell } from './studio/prototypeShell'
 import { consistentStamps, digestOf, fileContentDigest } from './studio/loadDigest'
 import { viewportPriorityOrder } from './studio/loadPriority'
-import type { RouteCacheScope } from './studio/pageParseCache'
+import { scheduleParseCacheWrites, type RouteCacheScope } from './studio/pageParseCache'
 import { parseRouteThroughCache } from './studio/routeParse'
 import { memoizedStudioLoad, type ComputedStudioLoad } from './studio/studioLoadMemo'
 import { prewarmWorkspaceProgram, withWorkspaceProject, type WorkspaceProjectHandle } from './studio/workspaceProject'
@@ -462,11 +462,16 @@ async function computeStudioPages(dir: string): Promise<ComputedStudioLoad> {
   // a fresh per-file Project (parsePageFile's own default) can't see
   // across files at all. Kept across loads and synced to the disk by
   // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
-  const computed = await withWorkspaceProject(dir, (workspace) => computeStudioPagesWith(dir, pagesDir, workspace, startedAt))
-  // A load answered from the parse cache never built the TypeScript program;
-  // the first gesture after it would. Build it now, off this load's path.
-  prewarmWorkspaceProgram(dir)
-  return computed
+  try {
+    return await withWorkspaceProject(dir, (workspace) => computeStudioPagesWith(dir, pagesDir, workspace, startedAt))
+  } finally {
+    // Both off this load's path, after its response has left: the parses it
+    // made reach the disk tier (`pageParseCache.ts`), and — for a load
+    // answered from the parse cache, which never built the TypeScript
+    // program — the program is built before the first gesture needs it.
+    scheduleParseCacheWrites()
+    prewarmWorkspaceProgram(dir)
+  }
 }
 
 /**

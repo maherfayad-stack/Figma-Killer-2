@@ -122,6 +122,12 @@ function cacheKey(dir: string, route: string): string {
 onLoadedProjectEvicted((dirKey) => {
   const prefix = `${dirKey}::`
   for (const key of [...cache.keys()]) if (key.startsWith(prefix)) cache.delete(key)
+  // Its queued disk writes go out now: the disk tier is how it comes back.
+  for (const [key, write] of [...pendingDiskWrites]) {
+    if (!key.startsWith(prefix)) continue
+    pendingDiskWrites.delete(key)
+    writeToDisk(write)
+  }
 })
 
 /**
@@ -182,21 +188,89 @@ export function setCachedRouteParse(
   // against this text (`sourceTextHistory.ts`).
   rememberSourceTexts(stamps.keys())
 
-  const deps: StoredDependency[] = []
-  for (const [file, stamp] of stamps) {
-    const digest = fileContentDigest(file)
-    // A file that moved since it was stamped: the disk entry could not say
-    // which bytes the parse saw, so there is no disk entry this time.
-    if (!digest || digest.stamp !== stamp) return stamps
-    deps.push({ file, digest: digest.digest })
-  }
-  writeStoredRouteParse({ dir: scope.dir, route, preferredKey: scope.preferredKey }, scope.configHash, deps, result)
+  queueDiskWrite(key, { dir: scope.dir, route, preferredKey: scope.preferredKey, configHash: scope.configHash, stamps, result })
   return stamps
 }
 
-/** Test-only: drop every in-memory entry (the disk tier stays — that is the point of it). */
+// ## Disk writes happen after the load, not inside it
+//
+// Writing an entry — hashing its dependencies, serialising the result,
+// signing it, a temp-file write and a rename — cost 170–350 ms of a cold
+// 40-page load, measured: the whole of P6-B's cold-load regression. Nothing
+// in THIS process reads the disk tier while the memory tier holds the entry,
+// so the write is queued and drained after the load's response has left
+// (`scheduleParseCacheWrites`, called at the end of every load), and
+// synchronously at process exit so a one-shot process — the agent's Stop
+// hook — still leaves its entries for the next one. A later parse of the same
+// route replaces its queued write.
+//
+// Deferring cannot write a wrong entry: the drain hashes each dependency and
+// keeps the entry only while that file's stamp is still the one the parse
+// recorded, exactly as the inline write did. A file that moved meanwhile just
+// means no disk entry this time.
+
+interface PendingDiskWrite {
+  dir: string
+  route: string
+  preferredKey: string | undefined
+  configHash: string
+  stamps: ReadonlyMap<string, string>
+  result: CachedRouteParse
+}
+
+const pendingDiskWrites = new Map<string, PendingDiskWrite>()
+let exitHookInstalled = false
+
+/** How long after a load its disk writes start — long enough for the load's own response to leave first. */
+const DISK_WRITE_DELAY_MS = 50
+let drainTimer: ReturnType<typeof setTimeout> | null = null
+
+function queueDiskWrite(key: string, write: PendingDiskWrite): void {
+  pendingDiskWrites.set(key, write)
+  if (!exitHookInstalled) {
+    exitHookInstalled = true
+    process.on('exit', flushParseCacheWrites)
+  }
+}
+
+function writeToDisk(write: PendingDiskWrite): void {
+  const deps: StoredDependency[] = []
+  for (const [file, stamp] of write.stamps) {
+    const digest = fileContentDigest(file)
+    // A file that moved since it was stamped: the disk entry could not say
+    // which bytes the parse saw, so there is no disk entry this time.
+    if (!digest || digest.stamp !== stamp) return
+    deps.push({ file, digest: digest.digest })
+  }
+  writeStoredRouteParse({ dir: write.dir, route: write.route, preferredKey: write.preferredKey }, write.configHash, deps, write.result)
+}
+
+/** Writes every queued disk entry now. Synchronous — it also runs from `process.on('exit')`. */
+export function flushParseCacheWrites(): void {
+  if (drainTimer !== null) {
+    clearTimeout(drainTimer)
+    drainTimer = null
+  }
+  const writes = [...pendingDiskWrites.values()]
+  pendingDiskWrites.clear()
+  for (const write of writes) writeToDisk(write)
+}
+
+/**
+ * Drains the queued disk writes shortly, off the caller's path — called once
+ * a load has its result. Unreferenced, so it never keeps a process alive (the
+ * exit hook writes whatever is left).
+ */
+export function scheduleParseCacheWrites(): void {
+  if (drainTimer !== null || pendingDiskWrites.size === 0) return
+  drainTimer = setTimeout(flushParseCacheWrites, DISK_WRITE_DELAY_MS)
+  drainTimer.unref?.()
+}
+
+/** Test-only: drop every in-memory entry and every queued disk write (the disk tier stays — that is the point of it). */
 export function clearPageParseCache(): void {
   cache.clear()
+  pendingDiskWrites.clear()
 }
 
 /**

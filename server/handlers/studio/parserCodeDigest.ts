@@ -55,11 +55,21 @@ function resolveLocal(fromFile: string, specifier: string): string | null {
     }
   }
   if (base === null) return null
+  const known = resolvedBases.get(base)
+  if (known !== undefined) return known
+  let found: string | null = null
   for (const candidate of [base, `${base}.ts`, `${base}.tsx`, join(base, 'index.ts'), join(base, 'index.tsx')]) {
-    if (/\.(tsx?|json|svg|css)$/.test(candidate) && existsSync(candidate)) return candidate
+    if (/\.(tsx?|json|svg|css)$/.test(candidate) && existsSync(candidate)) {
+      found = candidate
+      break
+    }
   }
-  return null
+  resolvedBases.set(base, found)
+  return found
 }
+
+/** One `existsSync` probe per distinct import target per process — the closure imports the same modules from hundreds of files. */
+const resolvedBases = new Map<string, string | null>()
 
 /** `name@version` for a bare package specifier (`ts-morph`, `@scope/pkg/sub`), or the bare name when not installed. */
 function packageVersion(specifier: string): string | null {
@@ -75,21 +85,31 @@ function packageVersion(specifier: string): string | null {
   }
 }
 
-/** Every local module in the entry points' import closure, plus the packages it imports. */
-function importClosure(): { files: Set<string>; packages: Set<string> } {
-  const files = new Set<string>()
+/**
+ * Every local module in the entry points' import closure → its bytes, plus
+ * the packages it imports. This runs on the first load of every process, so
+ * its cost is load latency: each file is read ONCE (scanned, then hashed from
+ * the same buffer), and each distinct specifier is resolved once.
+ */
+function importClosure(): { files: Map<string, Buffer>; packages: Set<string> } {
+  const files = new Map<string, Buffer>()
   const packages = new Set<string>()
+  const seenPackageSpecifiers = new Set<string>()
   const pending = ENTRY_CLOSURES.map((rel) => join(REPO_ROOT, rel))
   while (pending.length > 0) {
     const file = pending.pop()!
     if (files.has(file)) continue
-    files.add(file)
+    const bytes = readFileSync(file)
+    files.set(file, bytes)
     if (!/\.tsx?$/.test(file)) continue
-    for (const match of readFileSync(file, 'utf8').matchAll(SPECIFIER_RE)) {
+    for (const match of bytes.toString('utf8').matchAll(SPECIFIER_RE)) {
       const specifier = match[1]!
       const local = resolveLocal(file, specifier)
-      if (local) pending.push(local)
-      else if (!specifier.startsWith('.') && !specifier.startsWith('@core/') && !specifier.startsWith('@ui/')) {
+      if (local) {
+        if (!files.has(local)) pending.push(local)
+      } else if (!specifier.startsWith('.') && !specifier.startsWith('@core/') && !specifier.startsWith('@ui/')) {
+        if (seenPackageSpecifiers.has(specifier)) continue
+        seenPackageSpecifiers.add(specifier)
         const pkg = packageVersion(specifier)
         if (pkg) packages.add(pkg)
       }
@@ -100,10 +120,13 @@ function importClosure(): { files: Set<string>; packages: Set<string> } {
 
 function compute(): string {
   const { files, packages } = importClosure()
-  for (const rel of ENTRY_FILES) files.add(join(REPO_ROOT, rel))
+  for (const rel of ENTRY_FILES) {
+    const file = join(REPO_ROOT, rel)
+    if (!files.has(file)) files.set(file, readFileSync(file))
+  }
   const parts: string[] = [`format:${PARSE_CACHE_FORMAT}`, ...[...packages].sort()]
-  for (const file of [...files].sort()) {
-    parts.push(`${file.slice(REPO_ROOT.length)}:${sha256Hex(readFileSync(file))}`)
+  for (const [file, bytes] of [...files].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    parts.push(`${file.slice(REPO_ROOT.length)}:${sha256Hex(bytes)}`)
   }
   return sha256Hex(parts.join('\n'))
 }
@@ -124,5 +147,5 @@ export function parserCodeDigest(): string | null {
 
 /** The local modules the fingerprint covers, repo-relative POSIX. Test-only. */
 export function parserCodeDigestFilesForTesting(): string[] {
-  return [...importClosure().files].map((file) => file.slice(REPO_ROOT.length + 1).split(sep).join('/')).sort()
+  return [...importClosure().files.keys()].map((file) => file.slice(REPO_ROOT.length + 1).split(sep).join('/')).sort()
 }
