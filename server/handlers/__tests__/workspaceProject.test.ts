@@ -14,7 +14,7 @@ import * as path from 'node:path'
 import type { Project } from 'ts-morph'
 import { projectsRootDir } from '../studioProjects'
 import { clearLoadedProjects } from '../studio/loadedProjects'
-import { clearWorkspaceProjects, withWorkspaceProject } from '../studio/workspaceProject'
+import { clearWorkspaceProjects, prewarmWorkspaceProgram, withWorkspaceProject } from '../studio/workspaceProject'
 
 /** Long enough for the project watcher to deliver a write's event; its debounce is then flushed by the next call's settle. */
 function watcherDelivery(): Promise<void> {
@@ -149,5 +149,20 @@ describe('withWorkspaceProject', () => {
     await expect(withWorkspaceProject(wsDir, async () => { throw new Error('boom') })).rejects.toThrow('boom')
     const text = await withWorkspaceProject(wsDir, async ({ project }) => sourceText(project, 'pages/Home.tsx'))
     expect(text).toContain('one')
+  })
+
+  it('prewarmWorkspaceProgram really builds the program and checker, off the caller path', async () => {
+    // `project.getTypeChecker()` alone is a lazy ts-morph wrapper: a prewarm
+    // that stopped there built nothing, and the first edit after a cache-hit
+    // load paid the whole program (P6-B: 0.37 s -> 1.7 s on a 40-page board).
+    // Observed through the binder: creating the checker binds every file,
+    // which sets the compiler node's `locals`.
+    const bound = (project: Project) =>
+      (project.getSourceFileOrThrow(path.join(wsDir, 'pages', 'Home.tsx')).compilerNode as { locals?: unknown }).locals !== undefined
+    expect(await withWorkspaceProject(wsDir, async ({ project }) => bound(project))).toBe(false)
+    prewarmWorkspaceProgram(wsDir)
+    await new Promise((resolve) => setTimeout(resolve, 200))
+    // Queued behind the prewarm, so it has finished by the time this runs.
+    expect(await withWorkspaceProject(wsDir, async ({ project }) => bound(project))).toBe(true)
   })
 })
