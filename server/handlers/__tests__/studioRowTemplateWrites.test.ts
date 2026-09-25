@@ -112,7 +112,8 @@ describe('OD-8 — a .map row writes its template', () => {
     expect(read('pages/Menu.tsx')).toBe(
       MENU.replace(
         "<li key={dish.id} className=\"dish\" style={{ padding: '4px' }}>",
-        "<li key={dish.id} className=\"dish featured\" style={{ padding: '4px', color: \"tomato\" }}>",
+        // WB-10 — the new value is written in the object's own quote.
+        "<li key={dish.id} className=\"dish featured\" style={{ padding: '4px', color: 'tomato' }}>",
       ),
     )
 

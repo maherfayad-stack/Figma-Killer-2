@@ -2,7 +2,6 @@ import { expect, test, type FrameLocator, type Locator, type Page, type Route } 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -11,6 +10,7 @@ import {
   sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * The Phase 1 exit gate (`ROADMAP.md` §5): "a page file is edited outside
@@ -106,8 +106,8 @@ async function openBoard(page: Page, fixture: FixtureProject, autoSave: boolean)
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave })
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-  const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+  const content = canvasContentFrame(frame)
   await expect(content.locator('p', { hasText: 'Two' })).toBeVisible({ timeout: 30_000 })
   return { canvasRoot, content }
 }

@@ -233,3 +233,25 @@ describe('readJsxProps', () => {
     })
   })
 })
+
+describe('setJsxProp — the attribute keeps its spelling (WB-10)', () => {
+  it("keeps a single-quoted attribute single-quoted", () => {
+    const source = "export const A = () => <img alt='Old' />\n"
+    const file = writeFixture('single.tsx', source)
+    const { line, col } = locateTag(source, 'img')
+
+    setJsxProp({ file, line, col, prop: 'alt', value: 'New' })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe("export const A = () => <img alt='New' />\n")
+  })
+
+  it('writes a value JSX would decode as an entity as a container, not raw', () => {
+    const source = 'export const A = () => <img alt="Old" />\n'
+    const file = writeFixture('entity.tsx', source)
+    const { line, col } = locateTag(source, 'img')
+
+    setJsxProp({ file, line, col, prop: 'alt', value: 'Fish &amp; chips' })
+
+    expect(fs.readFileSync(file, 'utf8')).toBe('export const A = () => <img alt={"Fish &amp; chips"} />\n')
+  })
+})

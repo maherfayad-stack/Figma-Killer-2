@@ -72,7 +72,7 @@ import {
   realWorkspaceRel,
   stripTrailingDotsAndSpaces,
 } from '@core/page-parser'
-import { agentWriteRefusal } from './agentWriteScope'
+import { agentContentRefusal, agentWriteRefusal } from './agentWriteScope'
 
 /**
  * Longest path, and longest single segment, a model may name. Far above any
@@ -108,6 +108,16 @@ const PROTECTED_REMEDY =
 
 function outside(rawPath: string, why: string): AgentFileRefusal {
   return { ok: false, code: 'path-outside-project', message: `"${rawPath}" ${why}.`, remedy: OUTSIDE_REMEDY }
+}
+
+/**
+ * The content half of the one agent write gate (`agentContentRefusal`) for
+ * the HTTP file tools: `after` may not add what makes the host load a module.
+ * `before` is the file's current text, `null` for a new file.
+ */
+export function agentWriteContentRefusal(rel: string, before: string | null, after: string): AgentFileRefusal | null {
+  const refusal = agentContentRefusal(rel, before, after)
+  return refusal === null ? null : needsUser(refusal.message)
 }
 
 /** A host-executed file: the agent shows the change and the user makes it (`hostExecutedWorkspaceFile`). */

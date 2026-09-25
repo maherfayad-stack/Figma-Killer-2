@@ -21,6 +21,9 @@ import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { studioWriteDir } from './studioWorkspaceDir'
 
+/** The authenticated route that serves one workspace file to the admin (`studioAsset.ts`). */
+const STUDIO_ASSET_ROUTE = '/admin/api/studio/asset'
+
 const ProjectImageAssetSchema = Type.Object({
   /** Workspace-relative POSIX path — what the admin preview endpoint reads. */
   relPath: Type.String(),
@@ -72,7 +75,23 @@ export function invalidateProjectImageAssets(): void {
 export function studioAssetPreviewUrl(relPath: string): string {
   const dir = studioWriteDir()
   const dirParam = dir ? `dir=${encodeURIComponent(dir)}&` : ''
-  return `/admin/api/studio/asset?${dirParam}path=${encodeURIComponent(relPath)}`
+  return `${STUDIO_ASSET_ROUTE}?${dirParam}path=${encodeURIComponent(relPath)}`
+}
+
+/**
+ * The inverse of {@link studioAssetPreviewUrl}: the workspace-relative path a
+ * preview URL names, or `null` for any other URL. An import-bound image's
+ * `src` reaches the board as exactly this URL (the server rewrites its
+ * `studio-asset:` sentinel, `rewriteStudioAssetSentinels`), so this is how the
+ * canvas reads WHICH file an `<img src={hero}>` imports — for an image drop's
+ * replace, which lands the new file beside it and records the old path as its
+ * undo.
+ */
+export function studioAssetRelFromPreviewUrl(url: string): string | null {
+  const question = url.indexOf('?')
+  if (question === -1 || url.slice(0, question) !== STUDIO_ASSET_ROUTE) return null
+  const path = new URLSearchParams(url.slice(question + 1)).get('path')
+  return path && path.length > 0 ? path : null
 }
 
 /**

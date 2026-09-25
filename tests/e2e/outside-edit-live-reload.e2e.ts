@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -11,6 +10,7 @@ import {
   sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P1-D (ERR-19, WB-1) — real-browser proof that a file edited OUTSIDE Studio
@@ -70,8 +70,8 @@ test.describe('P1-D — an edit made outside Studio reaches the canvas by itself
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
     await expect(content.locator('p', { hasText: 'Three' })).toBeVisible({ timeout: 30_000 })
     await expect(content.locator('p', { hasText: 'Zero' })).toHaveCount(0)
 

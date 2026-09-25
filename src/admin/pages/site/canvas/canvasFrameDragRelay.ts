@@ -74,6 +74,15 @@ export function installFrameDragRelay(iframeDoc: Document, iframe: HTMLIFrameEle
         clientX: clientPoint.x,
         clientY: clientPoint.y,
         dataTransfer: event.dataTransfer,
+        // P5-B — the held keys ARE part of what a drop means (⌥ inserts
+        // beside an image instead of replacing it, ⇧ sets a background, ⌘
+        // places at the pointer), and a clone that dropped them would make a
+        // drop inside a frame mean something different from the same drop
+        // over the frame's edge.
+        altKey: event.altKey,
+        shiftKey: event.shiftKey,
+        metaKey: event.metaKey,
+        ctrlKey: event.ctrlKey,
       }),
     )
   }

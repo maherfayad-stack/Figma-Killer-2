@@ -251,6 +251,25 @@ Learned from the 2026-09-19 cold-suite triage (`e2e-1`); each one caused real re
 4. **A same-file reparent is a write, not a refusal** (`moveJsxElement.ts`), and
    a cross-file one goes through `transplantJsxElement.ts`. The refusal that
    remains is about scope (`freeVariablesOutOfScopeAt`); no e2e covers it yet.
+5. **Reach into a canvas iframe through `helpers/canvasIframe.ts`, never a
+   bare `frameLocator('iframe[title^="Canvas frame"]')`.** Every fixture is at
+   Tier 2 by default, so each board frame is a `LiveBoardFrame`: it holds the
+   portal fallback AND a hidden bridge iframe until the live frame is ready,
+   which in a fixture without `node_modules` is never. A bare `frameLocator`
+   then matches two iframes (a strict-mode violation), and waiting for one
+   iframe never ends. `canvasContentFrame(boardFrame)` and
+   `visibleCanvasIframe(boardFrame)` pick the one that is displayed;
+   `liveBridgeIframe(boardFrame)` is for a case that must measure the live frame
+   itself. Counting frames goes per board frame too (`readBoardCounts`'
+   `mountedFrames`), not per iframe element.
+6. **Fixed-name fixtures are overwritten in place** (`createFixtureProject`,
+   `createAuthoredFixtureProject`). Opening a Tier-2 fixture starts its own Vite
+   dev server with the fixture as its working directory, and the server watches
+   an open project for 15 s after its last tab closes (`outsideEditReload.ts`'s
+   `LINGER_MS`). Both outlive the worker, so deleting the fixture in a restarted
+   worker's `beforeAll` failed with `EPERM` on Windows (reproduced with
+   `--repeat-each=2`). The helpers empty the directory instead, and wait out a
+   delete-pending one. Do not `rmSync` + `cpSync` a fixture yourself.
 
 The CMS half of the suite drives UIs PR #18 deleted (an Explorer tab row, a
 name-and-slug page dialog, a toolbar Publish action). Whether to re-point or

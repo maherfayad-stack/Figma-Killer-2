@@ -667,9 +667,49 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
 - The relay re-dispatches both events on the iframe ELEMENT and cancels them
   inside the frame, so the browser does not navigate that frame's document to
   the dropped file.
+- **What a drop means** (P5-B) is one function, `resolveCanvasFileDropIntent`,
+  asked per frame by the preview and once by the drop:
+
+  | Pointer / keys | Files | Meaning | Write |
+  |---|---|---|---|
+  | on an `<img>` (deepest node declares `imageEdit`) | 1 | **replace** its source (IMG-3) | literal `src`: `asset-drop` + a `prop` value write (ordinary undo); import-bound: `asset-upload` beside the old file + `kind:'asset'` through `commitStudioAssetReplace` (undo template `known`) |
+  | on an `<img>` + ⌥, or anywhere else | N | **insert** every image, in order, at the drop line (IMG-2) | N landings, then ONE `insert` edit whose `siblings` carry images 2..N: one write, one resync, one undo step |
+  | + ⌘/Ctrl | N | insert, **absolutely at the pointer** (IMG-9), K6's rule: positioned container only, `insetInlineStart` under RTL, cascaded 24 px per image | same insert, `style={{ position, left/inset-inline-start, top }}` |
+  | + ⇧ | 1 | the container's **top background layer** (IMG-7) | `asset-drop` + one `setNodeInlineStyles`; refused when a class owns the background |
+
+  The EMPTY BOARD is still refused here — free-canvas placement is P5-G's.
 - Every refusal is decided before the network is touched: the empty board
-  ("Drop the image onto a frame"), several files at once, a declared
-  non-image. One toast, no write.
+  ("Drop the image onto a frame"), a drop with no image in it, nothing under
+  the pointer that can hold one, ⇧ with several files, an `<img>` whose `src`
+  is computed in code, ⌘ into a `position: static` container (K6's one-click
+  refusal dialog, not a toast). A mixed drop adds its images and names the
+  files it left out. One toast, no write.
+- **Size.** Each image is written with `width`/`height` attributes: the
+  intrinsic size the landing route read from the header bytes, clamped to the
+  drop container's content-box width (`clampImageSize`, one computed-style read
+  at drop time). Unknown size writes no attributes. The canvas renders those
+  attributes (`ImageEditor`'s `authoredDimension`), so the box it reserves is
+  the one the app's browser reserves.
+- **The ghost** (IMG-8). `dropImagesIntoPage` activates the dropped-on page,
+  paints one optimistic `base.image` per file from its object URL
+  (`previewOptimisticInsertRun`) marked `data-studio-uploading`, and writes the
+  XHR upload progress into `--studio-upload-progress` on the ghost's own
+  element (the painter, `canvasUploadProgress.ts`, is INJECTED into the store
+  action — the store never imports frame-document code, or it cycles through
+  `store.ts`); `EditorChromeInjector` masks the not-yet-uploaded share. It HOLDS
+  the structural queue (`beginStructuralCommit`) from before the upload until
+  the commit ends, so no other structural write can resync the page under the
+  ghost or renumber the insert's ids. Object URLs are revoked on every outcome.
+- **Every studio board frame is a drop surface**, active or not
+  (`BreakpointSelectionOverlay` registers it on the structure permission
+  alone): a file dragged in from the OS has no pointerdown, so gating on the
+  active frame made every drop onto an unclicked frame refuse.
+- **The relay carries the held keys** (`altKey`/`shiftKey`/`metaKey`/
+  `ctrlKey`) across the iframe boundary — they change what the drop means.
+- **Insert image… (IX-img).** `canvasImagePicker.ts` opens a file picker and
+  lands the images BESIDE the selection (after it, in its parent; the page
+  root with nothing selected) through the same `dropImagesIntoPage`. Command
+  `insert.image`; ⇧K is P5-E's to bind.
 - **And decided before RELEASE, too.** `canvasFileDragPreview.ts` runs the same
   refusal functions on every `dragover`, through one rAF and zero React
   commits, and paints the answer: over a frame, the element drag's own drop

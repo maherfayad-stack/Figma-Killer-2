@@ -270,18 +270,49 @@ export function previewOptimisticInsert(
   /** Same field the plain CMS-tree insert applies post-`createNode` — see `nodeActions.ts`'s `insertNode`. */
   inlineStyles?: Record<string, string>,
 ): OptimisticPreviewHandle | null {
+  return previewOptimisticInsertRun(helpers, parentId, index, [
+    { moduleId, props, ghostId, ...(inlineStyles ? { inlineStyles } : {}) },
+  ])
+}
+
+/** One element of an optimistic insert run — see {@link previewOptimisticInsertRun}. */
+export interface OptimisticInsertNode {
+  moduleId: string
+  props: Record<string, unknown>
+  ghostId: string
+  inlineStyles?: Record<string, string>
+}
+
+/**
+ * P5-B (IMG-2/IMG-8) — a RUN of new siblings previewed at once, in order,
+ * starting at `index`: the local half of an `insert` that writes several
+ * elements in one splice (`InsertEditSchema.siblings`). ONE preview mutation,
+ * so one rollback takes the whole run back and the handle's ids line up, in
+ * order, with the `createdNodeIds` the write reports (ERR-22's retarget).
+ */
+export function previewOptimisticInsertRun(
+  helpers: SiteSliceHelpers,
+  parentId: string,
+  index: number | undefined,
+  nodes: readonly OptimisticInsertNode[],
+): OptimisticPreviewHandle | null {
   const rollback = safelyBuild('insert', () =>
     helpers.previewActiveTreeMutation((tree) => {
-      if (!tree.nodes[parentId]) return false
-      const node = createNode(moduleId, props)
-      node.id = ghostId
-      if (inlineStyles && Object.keys(inlineStyles).length > 0) node.inlineStyles = { ...inlineStyles }
-      insertNode(tree, node, parentId, index)
+      if (!tree.nodes[parentId] || nodes.length === 0) return false
+      nodes.forEach((spec, offset) => {
+        const node = createNode(spec.moduleId, spec.props)
+        node.id = spec.ghostId
+        if (spec.inlineStyles && Object.keys(spec.inlineStyles).length > 0) node.inlineStyles = { ...spec.inlineStyles }
+        insertNode(tree, node, parentId, index === undefined ? undefined : index + offset)
+      })
       return true
     }),
   )
   if (!rollback) return null
-  return trackPreview([ghostId], rollback)
+  return trackPreview(
+    nodes.map((node) => node.ghostId),
+    rollback,
+  )
 }
 
 /**

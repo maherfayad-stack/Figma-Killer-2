@@ -116,3 +116,28 @@ describe('translation catalog', () => {
     expect(result.ok).toBe(false)
   })
 })
+
+describe('WB-32 — a locale JSON keeps its own formatting', () => {
+  const TAB_CRLF = ['{', '\t"greeting": "Hello",', '\t"nav": {', '\t\t"home": "Home"', '\t}', '}'].join('\r\n')
+
+  function seedJsonProject(en: string): void {
+    write('package.json', JSON.stringify({ name: 'fixture' }))
+    write('locales/en.json', en)
+    write('locales/ar.json', '{\n  "greeting": "مرحبا"\n}\n')
+  }
+
+  it('changes only the value bytes of an existing key — tabs, CRLF and the missing final newline all stay', () => {
+    seedJsonProject(TAB_CRLF)
+    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Start' })).toEqual({ ok: true })
+    expect(readFileSync(join(dir, 'locales/en.json'), 'utf8')).toBe(TAB_CRLF.replace('"Home"', '"Start"'))
+  })
+
+  it("creates a missing key in the file's own indentation, line ending and final newline", () => {
+    const fourSpacesCrlf = ['{', '    "greeting": "Hello"', '}', ''].join('\r\n')
+    seedJsonProject(fourSpacesCrlf)
+    expect(writeTranslationEntry(dir, { locale: 'en', key: 'nav.home', value: 'Home' })).toEqual({ ok: true })
+    expect(readFileSync(join(dir, 'locales/en.json'), 'utf8')).toBe(
+      ['{', '    "greeting": "Hello",', '    "nav": {', '        "home": "Home"', '    }', '}', ''].join('\r\n'),
+    )
+  })
+})
