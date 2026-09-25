@@ -60,8 +60,6 @@ import {
   writeNewCanvasLayerFile,
 } from './studio/canvasLayerFiles'
 import { resolveDesignSystemImports } from './studioStructuralWriteback'
-import { refusalFor, StudioEditRefusalError } from './studioEditRefusals'
-import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
 
 const PositionSchema = Type.Union([Type.Literal('before'), Type.Literal('after')])
 
@@ -185,12 +183,27 @@ export interface CanvasLayerEditOutcome {
   removed?: DeletedJsxText
 }
 
-/** Run one canvas-layer edit. Every decline throws the batch's own `StudioEditRefusalError`, by name. */
+/**
+ * A named decline. `studioEditRefusals.ts` turns it into the batch's own
+ * refusal; this module never imports that one (or the schema union that folds
+ * these kinds in) — the dependency runs one way, like `studioStructuralWriteback.ts`'s.
+ */
+export class CanvasLayerEditRefusal extends Error {
+  readonly reason: string
+
+  constructor(reason: string, message: string) {
+    super(message)
+    this.name = 'CanvasLayerEditRefusal'
+    this.reason = reason
+  }
+}
+
+/** Run one canvas-layer edit. Every decline throws a {@link CanvasLayerEditRefusal}, by name. */
 export function applyCanvasLayerEdit(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLayerEditOutcome {
   try {
     return dispatch(dir, edit, locate)
   } catch (err) {
-    if (err instanceof CanvasLayerFileError) throw new StudioEditRefusalError(err.reason, err.message)
+    if (err instanceof CanvasLayerFileError) throw new CanvasLayerEditRefusal(err.reason, err.message)
     throw err
   }
 }
@@ -201,7 +214,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
     case 'canvas-layer-create': {
       const [root] = resolveDesignSystemImports([edit.element], canvasLayerRelPath(edit.layerId))
       const built = canvasLayerModuleFromSpec(root as InsertJsxNode)
-      if (!built.ok) throw new StudioEditRefusalError(built.refusal.reason, built.refusal.message)
+      if (!built.ok) throw new CanvasLayerEditRefusal(built.refusal.reason, built.refusal.message)
       writeNewCanvasLayerFile(dir, edit.layerId, built.module.text)
       return { applied: true, created: built.module.root, createdIn: layerNodeId }
     }
@@ -215,11 +228,11 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       // The root must BE in the module `layerId` names: the module that gets
       // deleted and the markup that gets written are one and the same file.
       if (!root || canvasLayerIdFromRel(root.rel) !== edit.layerId) {
-        throw new StudioEditRefusalError('not-found', 'That canvas layer is no longer where the canvas last read it. Reload the project and try again.')
+        throw new CanvasLayerEditRefusal('not-found', 'That canvas layer is no longer where the canvas last read it. Reload the project and try again.')
       }
       const destination = locate(edit.parentNodeId)
       if (!destination || canvasLayerIdFromRel(destination.rel) !== null) {
-        throw new StudioEditRefusalError('not-found', 'The frame this layer would land in is no longer backed by a page file Studio can write. Reload the project and try again.')
+        throw new CanvasLayerEditRefusal('not-found', 'The frame this layer would land in is no longer backed by a page file Studio can write. Reload the project and try again.')
       }
       const anchor = edit.anchorNodeId ? locate(edit.anchorNodeId) : null
       const result = placeCanvasLayerRoot({
@@ -231,7 +244,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
           ? { anchorLine: anchor.line, anchorCol: anchor.col, position: edit.position ?? 'before' }
           : {}),
       })
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
       // The page has the markup now; a move takes the layer off the canvas.
       const removed = edit.copy ? undefined : { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false }
       return { applied: true, created: result.created, createdIn: edit.parentNodeId, ...(removed ? { removed } : {}) }
@@ -239,11 +252,11 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
     case 'canvas-layer-lift': {
       const origin = locate(edit.nodeId)
       if (!origin || canvasLayerIdFromRel(origin.rel) !== null) {
-        throw new StudioEditRefusalError('not-found', 'That element is no longer where the canvas last read it. Reload the project and try again.')
+        throw new CanvasLayerEditRefusal('not-found', 'That element is no longer where the canvas last read it. Reload the project and try again.')
       }
       const moduleFile = canvasLayerFilePath(dir, edit.layerId)
       if (!moduleFile) {
-        throw new StudioEditRefusalError('layer-unsafe-path', "This project's canvas-layer folder is not an ordinary folder, so Studio will not write canvas layers into it.")
+        throw new CanvasLayerEditRefusal('layer-unsafe-path', "This project's canvas-layer folder is not an ordinary folder, so Studio will not write canvas layers into it.")
       }
       const result = liftJsxElementToCanvasModule({
         file: join(dir, origin.rel),
@@ -255,40 +268,8 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
           writeNewCanvasLayerFile(dir, edit.layerId, text)
         },
       })
-      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
       return { applied: true, created: result.root, createdIn: layerNodeId }
     }
   }
 }
-
-/** Every node id one edit names, target first. */
-function namedNodeIds(edit: StudioEdit): string[] {
-  const ids = [edit.nodeId]
-  if ('parentNodeId' in edit && typeof edit.parentNodeId === 'string') ids.push(edit.parentNodeId)
-  if ('anchorNodeId' in edit && typeof edit.anchorNodeId === 'string') ids.push(edit.anchorNodeId)
-  if ('siblingNodeIds' in edit) ids.push(...edit.siblingNodeIds)
-  return ids
-}
-
-/**
- * The batch's canvas-layer scope: `'allow'` for the editor's own `/save`,
- * anything else (every agent tool) refuses a canvas-layer kind, and any edit
- * whose target, anchor or destination decodes into a layer module, by name.
- * See this module's doc for the decision.
- */
-export function createCanvasLayerScope(
-  scope: 'allow' | undefined,
-  locate: Locate,
-): (edit: StudioEdit) => StudioEditRefusal | null {
-  if (scope === 'allow') return () => null
-  return (edit) => {
-    const touchesLayer =
-      isCanvasLayerEditKind(edit.kind) ||
-      namedNodeIds(edit).some((id) => isCanvasLayerEditNodeId(id) || canvasLayerIdFromRel(locate(id)?.rel ?? '') !== null)
-    return touchesLayer ? refusalFor(edit, 'canvas-layer-agent', AGENT_REFUSAL) : null
-  }
-}
-
-const AGENT_REFUSAL =
-  'Loose canvas layers are the scratch space on the board and are edited in the Studio canvas; agent edit tools do not write them. Put the element in a page instead.'
-

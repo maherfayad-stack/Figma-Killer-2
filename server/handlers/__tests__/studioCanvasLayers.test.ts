@@ -1,6 +1,6 @@
 /**
- * P5-G — the free canvas, server side (FC-1, FC-2): loose layers load apart
- * from pages, their five edit kinds write exactly the bytes they say, and an
+ * P5-G — the free canvas, server side (FC-1, FC-2): loose layers load
+ * outside the pages, their five edit kinds write exactly the bytes they say, and an
  * agent's batch never touches them.
  *
  * Every write test asserts the FILES — the honest oracle — not just the
@@ -289,7 +289,7 @@ describe('canvas-layer-delete and canvas-layer-restore', () => {
   })
 })
 
-describe('loading: loose layers travel apart from pages (G-EX-2)', () => {
+describe('loading: loose layers travel outside the pages (G-EX-2)', () => {
   it('returns layers in canvasLayers, never in pages, and a narrowed load still carries them', async () => {
     write(LAYER_REL, IMAGE_LAYER)
     const full = await loadStudioPages(wsDir)

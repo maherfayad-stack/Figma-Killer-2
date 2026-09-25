@@ -78,7 +78,8 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
-import { applyCanvasLayerEdit, canvasLayerTouchedFiles, createCanvasLayerScope, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
+import { applyCanvasLayerEdit, canvasLayerTouchedFiles, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
+import { createCanvasLayerScope } from './studioCanvasLayerScope'
 import { createSyntaxGuard } from './studioSyntaxGuard'
 import { expandMergedOutcomes } from './studioEditMerge'
 import { fingerprintAfterWrite, resolveEditIdentities } from './studioEditIdentity'

@@ -48,6 +48,7 @@ import {
   StringLiteralTargetError,
 } from '@core/ast-codemods'
 import { ELEMENT_MOVED_REASON } from '@core/page-tree'
+import { CanvasLayerEditRefusal } from './studioCanvasLayerWriteback'
 import type {
   StudioEdit,
   StudioEditApplyOutcome,
@@ -110,6 +111,7 @@ export function refusalForUnwritable(edit: StudioEdit, outcome: StudioEditApplyO
  */
 export function refusalFromCodemodError(edit: StudioEdit, err: unknown): StudioEditRefusalError | null {
   if (err instanceof StudioEditRefusalError) return err
+  if (err instanceof CanvasLayerEditRefusal) return new StudioEditRefusalError(err.reason, err.message) // P5-G
   if (err instanceof JsxElementNotFoundError) return new StudioEditRefusalError(ELEMENT_MOVED_REASON, ELEMENT_MOVED_SENTENCE)
   if (err instanceof JsxTextTargetError) {
     return new StudioEditRefusalError(

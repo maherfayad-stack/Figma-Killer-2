@@ -41,6 +41,7 @@ import { canvasLayerPageId, type CanvasLayerPlacement } from '@core/studio-board
 import type { Page } from '@core/page-tree'
 import { CanvasBreakpointContext } from '../CanvasContexts'
 import { IframeFrameSurface, type IframeFrameSurfaceHandle } from '../IframeFrameSurface'
+import { isPortalFrameAdapter } from '../frameAdapter/PortalFrameAdapter'
 import { STUDIO_BREAKPOINT_ID, type CanvasLayerWindow } from './canvasLayerGeometry'
 import { CanvasLayerHost } from './CanvasLayerHost'
 import styles from './BoardCanvasLayer.module.css'
@@ -97,7 +98,8 @@ export function CanvasLayerSurface({ boardId, area, layers, pages, surfaceElemen
   const [doc, setDoc] = useState<Document | null>(null)
 
   const handleSurface = (handle: IframeFrameSurfaceHandle | null) => {
-    const next = handle?.contentDocument ?? null
+    const adapter = handle?.adapter ?? null
+    const next = isPortalFrameAdapter(adapter) ? (adapter.getPortalWindow()?.document ?? null) : null
     onSurfaceDocument(next)
     setDoc(next)
   }

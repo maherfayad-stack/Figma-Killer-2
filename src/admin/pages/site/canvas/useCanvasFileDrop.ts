@@ -225,19 +225,8 @@ export function useCanvasFileDrop({
  * source.
  */
 async function landAndInsert(file: File, pageId: string, parentId: string, index: number): Promise<void> {
-  let src: string
-  try {
-    src = (await dropStudioAsset(file)).src
-  } catch (err) {
-    console.error('[canvas-file-drop] landing the dropped image failed:', err)
-    pushToast({
-      kind: 'error',
-      title: DROP_TITLE,
-      body: getErrorMessage(err, 'The image could not be written into your project.'),
-      location: 'site-editor',
-    })
-    return
-  }
+  const src = await landDroppedImage(file)
+  if (src === null) return
   useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
 }
 
@@ -248,9 +237,25 @@ async function landAndInsert(file: File, pageId: string, parentId: string, index
  * layer appearing is the answer — no toast.
  */
 async function landOnCanvas(file: File, at: { x: number; y: number }): Promise<void> {
-  let src: string
+  const src = await landDroppedImage(file)
+  if (src === null) return
+  const size = await intrinsicImageSize(file)
+  useEditorStore.getState().createCanvasLayer(
+    { name: 'img', props: { src, alt: altTextFor(file), ...(size ? { width: size.width, height: size.height } : {}) } },
+    size ? { x: at.x - size.width / 2, y: at.y - size.height / 2 } : at,
+  )
+}
+
+/**
+ * Land a dropped file's bytes in the project's `public/` and return the
+ * site-root `src` the server derived, or `null` after saying why it failed —
+ * the ONE failure sentence both drop destinations (a frame, the free canvas)
+ * share, reported apart from the structural commit's refusal channel because
+ * it is not about the user's source.
+ */
+async function landDroppedImage(file: File): Promise<string | null> {
   try {
-    src = (await dropStudioAsset(file)).src
+    return (await dropStudioAsset(file)).src
   } catch (err) {
     console.error('[canvas-file-drop] landing the dropped image failed:', err)
     pushToast({
@@ -259,13 +264,8 @@ async function landOnCanvas(file: File, at: { x: number; y: number }): Promise<v
       body: getErrorMessage(err, 'The image could not be written into your project.'),
       location: 'site-editor',
     })
-    return
+    return null
   }
-  const size = await intrinsicImageSize(file)
-  useEditorStore.getState().createCanvasLayer(
-    { name: 'img', props: { src, alt: altTextFor(file), ...(size ? { width: size.width, height: size.height } : {}) } },
-    size ? { x: at.x - size.width / 2, y: at.y - size.height / 2 } : at,
-  )
 }
 
 /** The image's own pixel size, or `null` when the browser cannot decode it here (the server's sniff decides validity). */

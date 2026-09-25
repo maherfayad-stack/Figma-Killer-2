@@ -149,6 +149,7 @@ export function useCanvasLayerPointer({
       if (!drag) return
       if (drag.frame !== null) cancelAnimationFrame(drag.frame)
       drag.disposeGuard()
+      window.removeEventListener('keydown', onKeyDown, true)
       clearPaint(drag)
       const lifted = surfaceElementRef.current
       if (lifted) delete lifted.dataset.studioLifted
@@ -260,6 +261,7 @@ export function useCanvasLayerPointer({
           onAbandon: cancel,
         }),
       }
+      window.addEventListener('keydown', onKeyDown, true)
     }
 
     const onPointerMove = (event: PointerEvent) => {
@@ -330,7 +332,9 @@ export function useCanvasLayerPointer({
       finish(event)
     }
 
-    const onKeyDown = (event: KeyboardEvent) => {
+    // Escape abandons the drag — bound only while one is in flight (see the
+    // exemption in `keybindings-single-dispatcher.test.ts`).
+    function onKeyDown(event: KeyboardEvent) {
       if (event.key !== 'Escape' || !session) return
       event.preventDefault()
       event.stopPropagation()
@@ -353,7 +357,6 @@ export function useCanvasLayerPointer({
     root.addEventListener('pointercancel', cancel, true)
     root.addEventListener('click', onClick, true)
     root.addEventListener('pointerleave', onPointerLeave)
-    window.addEventListener('keydown', onKeyDown, true)
     return () => {
       cancel()
       setHoveredCanvasLayer(null)
@@ -363,7 +366,6 @@ export function useCanvasLayerPointer({
       root.removeEventListener('pointercancel', cancel, true)
       root.removeEventListener('click', onClick, true)
       root.removeEventListener('pointerleave', onPointerLeave)
-      window.removeEventListener('keydown', onKeyDown, true)
     }
   }, [enabled, canvasRootRef, transformRef, surfaceDocumentRef, surfaceElementRef, boardOriginRef])
 }
