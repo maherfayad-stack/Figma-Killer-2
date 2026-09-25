@@ -3,6 +3,16 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { BUDGET_ZOOM_MEAN_FRAME_MS, BUDGET_ZOOM_WORST_FRAME_MS, profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { canvasContentFrame, selectionRings, settleCanvasFrameMode, visibleCanvasIframe } from './helpers/canvasIframe'
+import {
+  countSourceOccurrences,
+  createFixtureProject,
+  decodeNodeSourceLocation,
+  readNodeSourceFile,
+  removeFixtureProject,
+  sourceLineAt,
+  type FixtureProject,
+} from './helpers/studioFixtureProject'
 
 /**
  * `STUDIO-FIGMA-FEEL-PLAN.md` V1 — the browser gate for "does this feel like a
@@ -10,13 +20,14 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  *
  * Every claim here is about a **refusal or a ceiling**, not a happy path:
  *
- *   1. **One gesture, one card.** Hammering ⌘D five times produces exactly one
- *      success toast and at most one warning toast. Five identical cards
- *      stacked on top of each other is the single most-reported piece of noise
- *      in this editor (`Z1`), and nothing but a real browser can count the
- *      cards a user actually sees. The assertion is on the NUMBER of toast
- *      cards ever created, never on their wording — a copy change must not
- *      break this gate, and rewording must not be a way to pass it.
+ *   1. **Five presses, five writes, no card.** Hammering ⌘D five times writes
+ *      five copies into the `.tsx` and creates NO toast card: a press that
+ *      arrives mid-write is queued, not refused (`structuralCommitQueue.ts`),
+ *      and a structural commit never toasts success (P3-A). Stacked cards were
+ *      the single most-reported piece of noise in this editor (`Z1`), and
+ *      nothing but a real browser can count the cards a user actually sees.
+ *      The assertion is on the NUMBER of toast cards ever created, never on
+ *      their wording.
  *   2. **Escape always terminates.** The Escape ladder may have any number of
  *      rungs (today: step out of an entered instance, then clear), but it must
  *      never widen a selection, must reach "nothing selected" in a bounded
@@ -45,8 +56,6 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * `scripts/bench/lib/liveFrameFixture.ts` documents.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
-const SELECTION_RING = '[data-canvas-selection-ring="true"]'
 
 /**
  * `K2`'s marker on the board-frame chrome. Until the Alt+drag session exists
@@ -64,21 +73,23 @@ const ALT_DUPLICATE_MARKER = '[data-gesture="alt-duplicate"]'
  */
 const BUDGET_REFUSAL_DIALOG_MS = 100
 
-const SOURCE_PROJECT_DIR = path.join(WORKSPACE_ROOT, 'test4')
 /** Fixed name, not per-PID: a crashed run's leftovers are visibly overwritten rather than accumulating. */
 const FIXTURE_DIR = path.join(WORKSPACE_ROOT, '__e2e-studio-feel')
 
 let fixtureReady = false
+let fixture: FixtureProject | undefined
 
 test.beforeAll(() => {
-  if (!fs.existsSync(SOURCE_PROJECT_DIR)) return
-  fs.rmSync(FIXTURE_DIR, { recursive: true, force: true })
-  fs.cpSync(SOURCE_PROJECT_DIR, FIXTURE_DIR, { recursive: true })
-  fixtureReady = true
+  // The shared helper, not a raw rm + copy: when Playwright restarts a worker
+  // after a failure, the fixture's own dev server and the server's watcher
+  // still hold the directory, and deleting it fails with EPERM on Windows.
+  // `createFixtureProject` overwrites it in place instead.
+  fixture = createFixtureProject('test4', path.basename(FIXTURE_DIR))
+  fixtureReady = fixture.ready
 })
 
 test.afterAll(() => {
-  fs.rmSync(FIXTURE_DIR, { recursive: true, force: true })
+  if (fixture) removeFixtureProject(fixture)
 })
 
 /** Board frames recorded on disk, across every board in the project. */
@@ -124,7 +135,7 @@ async function openFixtureBoard(page: Page): Promise<Locator> {
  * is on screen. Failing after all of that is a real failure, and says so.
  */
 async function bringAFrameOnScreen(page: Page, canvasRoot: Locator): Promise<void> {
-  const anyFrame = page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()
+  const anyFrame = visibleCanvasIframe(page).first()
   if (await anyFrame.isVisible({ timeout: 30_000 }).catch(() => false)) return
 
   await canvasRoot.focus()
@@ -223,7 +234,10 @@ async function firstLeafNode(contentFrame: FrameLocator): Promise<Locator> {
  * stable across the fixture's `lang=ar` board.
  */
 async function firstInlinedLeafNode(contentFrame: FrameLocator): Promise<Locator> {
-  const target = contentFrame.getByText('9:41', { exact: true })
+  // `.first()`: the cases share one fixture, and the ⌘D case writes five more
+  // `<IOSStatusBar/>` right after the original, so the clock can appear six
+  // times. The first is the original's; every copy refuses the same way.
+  const target = contentFrame.getByText('9:41', { exact: true }).first()
   await expect(
     target,
     'the fixture frame never rendered the iOS status bar clock — nothing here would refuse a delete with a remedy',
@@ -353,22 +367,39 @@ test.describe('V1: the studio feels like a design tool', () => {
     )
   })
 
-  test('rapid ⌘D five times leaves one success toast and at most one warning, never five', async ({
+  test('rapid ⌘D five times writes five copies and puts no toast card on screen', async ({
     page,
   }) => {
     const canvasRoot = await openFixtureBoard(page)
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
+    // test4 is a Tier-2 Vite project whose dev server can boot here, so the
+    // frame swaps from its portal fallback to the live frame some seconds in.
+    // Settle first, so the click and the ring are read in the same document.
+    const mode = await settleCanvasFrameMode(page, firstFrame, FIXTURE_DIR)
+    annotate('frame mode', mode)
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(firstFrame)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
     await clickInFrame(page, target)
 
-    const rings = contentFrame.locator(SELECTION_RING)
+    const rings = selectionRings(page, firstFrame, mode)
     await expect(rings, 'clicking a leaf node drew no selection ring').toHaveCount(1, {
       timeout: 15_000,
     })
+
+    // What ⌘D duplicates is the SELECTION, which a click inside a component
+    // instance resolves to the instance (P2-B), not necessarily the leaf that
+    // was clicked. Read it off the ring, then count its source line's copies.
+    const selectedId = await rings.first().getAttribute('data-canvas-overlay-node-id')
+    const location = selectedId ? decodeNodeSourceLocation(selectedId) : null
+    expect(location, `the selection (${selectedId}) carries no source location to count copies of`).not.toBeNull()
+    const elementLine = sourceLineAt(readNodeSourceFile(fixture!, location!), location!.line)
+    const occurrencesBefore = countSourceOccurrences(readNodeSourceFile(fixture!, location!), elementLine)
+    const copiesAdded = (): number =>
+      countSourceOccurrences(readNodeSourceFile(fixture!, location!), elementLine) - occurrencesBefore
+    annotate('duplicating', `${selectedId} (in ${location!.rel})`)
 
     // `layers.duplicate` is a React `onKeyDown` on the canvas div
     // (`useCanvasKeyboardShortcuts.ts`), so the canvas has to hold DOM focus —
@@ -382,40 +413,39 @@ test.describe('V1: the studio feels like a design tool', () => {
 
     await startToastRecorder(page)
 
-    // No waiting between presses: the point is the concurrent case, where
-    // `guardAgainstConcurrentStructuralCommit` refuses the 2nd..5th while the
-    // 1st is still in flight. Five presses must never produce five cards.
+    // No waiting between presses: the point is the concurrent case. The 2nd..5th
+    // arrive while the 1st is still in flight, and `structuralCommitQueue.ts`
+    // parks each one and runs it next — five presses are five writes.
     for (let i = 0; i < 5; i += 1) await page.keyboard.press('Control+d')
 
-    // Wait for the write to land, then keep watching: a late-arriving 5th
-    // toast after an early count would be exactly the defect this gate exists
-    // for. Auto-dismiss cannot hide anything — the recorder counts insertions.
-    await expect(
-      page.locator('[data-toast-kind="success"]'),
-      'five ⌘D presses produced no success toast at all — the duplicate never reached the source',
-    ).toHaveCount(1, { timeout: 60_000 })
+    // The contract this case used to assert — "one success toast, at most one
+    // collapsed 'Still writing' warning" — is gone on purpose, twice over: a
+    // queued press is no longer refused (`structuralCommitQueue.ts`), and a
+    // structural commit no longer toasts success (P3-A, `store-18`: "No
+    // structural commit toasts success"). So the write is awaited in the FILE,
+    // which is the document, and the toast contract is now "no card at all".
+    await expect
+      .poll(copiesAdded, {
+        message: 'five ⌘D presses did not write five copies into the .tsx — presses were dropped rather than queued',
+        timeout: 60_000,
+      })
+      .toBe(5)
+    // Keep watching after the last write: a late card would be exactly the
+    // defect this gate exists for. Auto-dismiss cannot hide one — the recorder
+    // counts insertions, not what is on screen.
     await page.waitForTimeout(5_000)
 
     const created = await readToastRecorder(page)
-    const successes = created.filter((t) => t.kind === 'success')
-    const warnings = created.filter((t) => t.kind === 'warning')
     annotate('toast cards created by ⌘D ×5', String(created.length))
     annotate('their kinds', created.map((t) => t.kind).join(', ') || '(none)')
     annotate('their titles', created.map((t) => t.title).join(' | ') || '(none)')
 
-    // The Z1 contract, asserted on card COUNT and never on card copy.
+    // Asserted on card COUNT and never on card copy.
     expect(
-      successes.length,
-      'five rapid ⌘D presses stacked more than one success toast — pushToast is not de-duplicating by default (Z1)',
-    ).toBe(1)
-    expect(
-      warnings.length,
-      'the concurrent-commit refusal stacked more than one warning toast — pushToast is not de-duplicating by default (Z1)',
-    ).toBeLessThanOrEqual(1)
-    expect(
-      created.length,
-      'five rapid ⌘D presses produced more than the two cards this gesture is allowed (one success, one concurrency warning)',
-    ).toBeLessThanOrEqual(2)
+      created.map((t) => t.kind),
+      'five rapid ⌘D presses put toast cards on screen: a structural commit never toasts success (P3-A), and a press that arrives mid-write is queued, never refused',
+    ).toEqual([])
+    expect(copiesAdded(), 'a sixth copy landed after the burst settled').toBe(5)
   })
 
   test('the Escape ladder never widens, always reaches nothing selected, and is a no-op there', async ({
@@ -424,9 +454,12 @@ test.describe('V1: the studio feels like a design tool', () => {
     const canvasRoot = await openFixtureBoard(page)
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
+    // Same hand-off as the ⌘D case: settle before the first click.
+    const mode = await settleCanvasFrameMode(page, firstFrame, FIXTURE_DIR)
+    annotate('frame mode', mode)
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
-    const rings = contentFrame.locator(SELECTION_RING)
+    const contentFrame = canvasContentFrame(firstFrame)
+    const rings = selectionRings(page, firstFrame, mode)
     const target = await firstLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
     await clickInFrame(page, target)
@@ -598,18 +631,16 @@ test.describe('V1: the studio feels like a design tool', () => {
     const firstFrame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, firstFrame)
 
-    // `speed-04`'s own defect: a live board frame mounts a portal fallback
-    // AND the bridge `BreakpointFrame` together until the bridge is ready, so
-    // the same page container can carry two `iframe[title^="Canvas frame"]`
-    // matches for a moment — one placeholder `srcdoc`, one real `src`. Wait
-    // for that to settle to one before asking Playwright to resolve INTO it,
-    // or `frameLocator()` throws a strict-mode violation on the ambiguity.
+    // A live board frame mounts a portal fallback AND a hidden bridge iframe
+    // until the bridge is ready (never, in this fixture: it has no
+    // node_modules). Wait for the one DISPLAYED canvas iframe
+    // (`helpers/canvasIframe.ts`) before resolving into it.
     await expect(
-      firstFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR),
-      'the first board frame never settled to one live iframe',
+      visibleCanvasIframe(firstFrame),
+      'the first board frame never showed exactly one canvas iframe',
     ).toHaveCount(1, { timeout: 30_000 })
 
-    const contentFrame = firstFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(firstFrame)
     const target = await firstInlinedLeafNode(contentFrame)
     await panIntoView(page, canvasRoot, target, 80)
 

@@ -51,27 +51,27 @@ describe('setJsxStyle — a spread inside the style object', () => {
   it('updates a key written after the last spread in place', () => {
     const at = fixture(SOURCE)
     setJsxStyle({ ...at, style: { color: 'blue' } })
-    expect(read(at.file)).toBe(SOURCE.replace("color: 'red'", 'color: "blue"'))
+    expect(read(at.file)).toBe(SOURCE.replace("color: 'red'", "color: 'blue'")) // WB-10 — in the object's own quote
   })
 
   it('adds a new key after the last spread, where it wins', () => {
     const at = fixture(SOURCE)
     setJsxStyle({ ...at, style: { margin: '8px' } })
-    expect(read(at.file)).toBe(SOURCE.replace("color: 'red' }}", "color: 'red', margin: \"8px\" }}"))
+    expect(read(at.file)).toBe(SOURCE.replace("color: 'red' }}", "color: 'red', margin: '8px' }}"))
   })
 
   it('MOVES a key written only before the spread to after it — one key, never a TS1117 duplicate', () => {
     const src = "const base = { padding: 4 }\nexport const Stats = () => <Tile style={{ color: 'red', ...base }} />\n"
     const at = fixture(src)
     setJsxStyle({ ...at, style: { color: 'blue' } })
-    expect(read(at.file)).toBe(src.replace("{{ color: 'red', ...base }}", '{{ ...base, color: "blue" }}'))
+    expect(read(at.file)).toBe(src.replace("{{ color: 'red', ...base }}", "{{ ...base, color: 'blue' }}"))
   })
 
   it('sets the LAST of a key written both before and after the spread', () => {
     const src = "export const Stats = (p: object) => <Tile style={{ color: 'red', ...p, color: 'green' }} />\n"
     const at = fixture(src)
     setJsxStyle({ ...at, style: { color: 'blue' } })
-    expect(read(at.file)).toBe(src.replace("color: 'green'", 'color: "blue"'))
+    expect(read(at.file)).toBe(src.replace("color: 'green'", "color: 'blue'"))
   })
 
   it('removes a key written after the spread; a key only the spread supplies is a no-op (the canvas never showed it)', () => {

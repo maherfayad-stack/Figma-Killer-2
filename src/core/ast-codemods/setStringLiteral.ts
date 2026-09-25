@@ -24,6 +24,7 @@
  */
 import { Node, Project } from 'ts-morph'
 import { createProject, loadSourceFile } from './locateJsxElement'
+import { jsStringSpelling, jsxAttributeSpelling, quoteOf } from './stringSpelling'
 
 export interface SetStringLiteralParams {
   file: string
@@ -91,50 +92,16 @@ export function setStringLiteral(params: SetStringLiteralParams): void {
     )
   }
 
-  const usesSingleQuotes = literal.getText().startsWith("'")
+  // Spelled in the quote the file already used, so a copy edit does not show
+  // up as a quote-style diff on every line it touches (`stringSpelling.ts`).
+  const quote = quoteOf(literal)
   const replacement = Node.isJsxAttribute(literal.getParent())
-    ? jsxAttributeSpelling(value, usesSingleQuotes ? "'" : '"')
-    : jsStringSpelling(value, usesSingleQuotes)
+    ? jsxAttributeSpelling(value, quote)
+    : jsStringSpelling(value, quote)
 
   // A text splice rather than `replaceWithText`: the JSX-attribute spelling may
   // be an expression container, which is a different node kind than the
   // literal it replaces.
   sourceFile.replaceText([literal.getStart(), literal.getEnd()], replacement)
   sourceFile.saveSync()
-}
-
-/**
- * A JS string literal: `JSON.stringify` for the escaping, then normalised to
- * the quote style already in the file so a copy edit does not show up as a
- * quote-style diff on every line it touches.
- */
-function jsStringSpelling(value: string, singleQuoted: boolean): string {
-  const doubleQuoted = JSON.stringify(value)
-  return singleQuoted ? `'${doubleQuoted.slice(1, -1).replace(/\\"/g, '"').replace(/'/g, "\\'")}'` : doubleQuoted
-}
-
-/** An HTML entity the JSX compiler would decode inside an attribute string. */
-const JSX_ENTITY_RE = /&(#\d+|#x[0-9a-f]+|[a-z][a-z0-9]*);/i
-
-/**
- * P3-C (WB-6) — a JSX ATTRIBUTE string (`<Card title="…"/>`, now a write target
- * as the literal a component's text was passed from) is not a JS string. It has
- * no backslash escapes — `"C:\path"` means exactly those characters — and the
- * compiler decodes HTML entities in it. So `JSON.stringify` is wrong here twice
- * over: it doubles every backslash, and its `\"` ends the attribute.
- *
- * The value is written raw whenever a raw spelling means the same string: in
- * the quote the file already used, or the other quote when the value contains
- * the first. Otherwise — both quotes, a line break, or text the compiler would
- * decode as an entity — it becomes an expression container holding a JS
- * string (`title={"…"}`), which says exactly the value and nothing else.
- */
-function jsxAttributeSpelling(value: string, quote: '"' | "'"): string {
-  const rawSafe = !/[\r\n]/.test(value) && !JSX_ENTITY_RE.test(value)
-  if (rawSafe) {
-    if (!value.includes(quote)) return `${quote}${value}${quote}`
-    const other = quote === '"' ? "'" : '"'
-    if (!value.includes(other)) return `${other}${value}${other}`
-  }
-  return `{${JSON.stringify(value)}}`
 }

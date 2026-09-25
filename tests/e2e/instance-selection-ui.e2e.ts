@@ -1,4 +1,5 @@
 import { expect, test, type FrameLocator, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for `instance-ui-01`: the PANEL + SELECTION half of
@@ -42,7 +43,6 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 
 const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
 const TARGET_PAGE_ID = 'booking-confirmation-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 
 interface StudioProjectSummary {
   dir: string
@@ -115,7 +115,7 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   // shell shows its "Could not open this project" state in the meantime — that is
   // the pre-studio CMS document, transient, and NOT a failure to assert on.
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 90_000 })
-  await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 30_000 })
+  await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 30_000 })
   return canvasRoot
 }
 
@@ -137,7 +137,7 @@ test.describe('instance-ui-01: click selects the instance, Enter/Esc step in and
     await expect(targetFrame, `expected one board frame for page id "${TARGET_PAGE_ID}"`).toHaveCount(1)
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const contentFrame: FrameLocator = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame: FrameLocator = canvasContentFrame(targetFrame)
 
     // ── 1. Click a component → the INSTANCE is selected, and it RINGS ──────
     //

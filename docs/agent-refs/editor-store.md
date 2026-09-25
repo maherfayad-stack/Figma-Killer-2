@@ -334,13 +334,42 @@ settings — enumerated in `studioBoardResync.ts`'s own doc. `input.pages`
 upserts by id (appends an unrecognised id — how `studio_create_page` lands);
 `input.removedPageIds` drops a page confirmed gone, its board frame(s), and
 any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
-`mutateSite`/`runHistoricMutation`**: it never flips `hasUnsavedChanges` and
-never pushes undo history, because this content came FROM disk — recording it
-as a "change" would queue an autosave that writes what was just read straight
-back out (the write → reload → re-dirty → autosave → write loop
-`fsCodemodAdapter.test.ts`'s header names). A page that had local (unsaved) edits and also got overwritten toasts
-`'Local edits overwritten'` — the "merge: reload only touched pages" policy's
-one explicit data-loss case.
+`mutateSite`/`runHistoricMutation`**: it never pushes undo history, and it
+flips `hasUnsavedChanges` only for edits the user made (below) — this content
+came FROM disk, and recording it as a "change" would queue an autosave that
+writes what was just read straight back out (the write → reload → re-dirty →
+autosave → write loop `fsCodemodAdapter.test.ts`'s header names).
+
+**A re-read never throws the user's unsaved edits away (ERR-9, P3-E).** It
+used to: a page with local edits was replaced wholesale and toasted `'Local
+edits overwritten … a change an agent just wrote'` — even when the write was
+the user's own ⌘D, and `loadSite` dropped them silently. Now both
+`patchPages` and `loadSite` REBASE (`site/unsavedEditRebase.ts`):
+
+- **What is unsaved** is decided by the save diff's own baseline, as it stood
+  BEFORE this read advanced it. Both re-read entry points in
+  `loadedValuesBaseline.ts` (`mergeLoadedValuesBaseline` for a narrow read,
+  `resetLoadedValues(pages, { sameProject: true })` for a whole-project read of
+  the open project) file what they replaced under the very `pages` array they
+  were handed; the store looks it up with `baselineBeforeRead(pages)`. A page
+  list no Studio read produced (a test's, a project switch) has none, and is
+  simply adopted.
+- **Where it goes**: the old page with those values put back is aligned with
+  the fresh one by `reparseNodeFollow.ts`'s `alignPageTrees`; an element it
+  cannot place is re-found by its P1-A source identity (one match only).
+- **Local wins**, per node all-or-nothing, unless the element is gone, the
+  value is now code on the fresh node (`isPropWritableToSource`), or it is an
+  origin-backed value whose literal moved to another file or changed there too.
+  Those are reported in ONE warning that names the cause, never who wrote the
+  file (`reportLostUnsavedEdits`).
+- A rebased page keeps its `_dirtySave` mark and `hasUnsavedChanges` stays
+  true, so autosave writes exactly the carried edits against the fresh
+  baseline. `usePersistence` no longer clears the flag after a full reload —
+  `loadSite` owns it. No loop: after that save the values equal the baseline,
+  and the next re-read finds nothing to carry.
+
+Cost: the same per-node diff the save makes, over the replaced pages only, plus
+one alignment per page that holds an unsaved edit.
 
 `input.styleRules`/`input.conditions` carry the PROJECT-WIDE registries the
 same reload recomputed, and are replaced wholesale (never merged — the server

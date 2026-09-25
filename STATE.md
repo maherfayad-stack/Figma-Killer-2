@@ -11,6 +11,19 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
+- **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
+- **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
+- **Slices touched:** `site/lifecycleActions.ts` (`loadSite`, `patchPages`) + new `site/unsavedEditRebase.ts`. No new selector; no new mutation (no history entry, no coalesce key — a re-read is not an edit).
+- **Done:**
+  - ERR-9: a re-read REBASES unsaved edits instead of discarding them, on both reload paths, whoever wrote the file. `loadedValuesBaseline.ts` files the baseline each re-read replaced under its own `pages` array (`baselineBeforeRead`); the store diffs against it, aligns the pre-edit tree with the fresh one (`alignPageTrees`, then P1-A identity), writes local values onto the fresh nodes (per node all-or-nothing; never over a value now in code or a literal that moved/changed), keeps the page marked and `hasUnsavedChanges` true. The "an agent" toast is gone; a loss says its cause. `usePersistence` no longer clears the flag after a full reload.
+  - WB-9: `setJsxText` writes raw JSX text, keeps surrounding whitespace, re-wraps over the original lines; `{"…"}` only when needed or already used, in its own quote. WB-10: `setJsxStyle` keeps the object's quote and layout; `setJsxProp` keeps the attribute quote. Shared `ast-codemods/stringSpelling.ts`.
+  - WB-25: one ts-morph project per batch (`syncProjectWithDisk` before each edit), position-indexed `findJsxElementAtLocation`. 40 edits, 1,500 elements, under the lock: prop 17.4 s → 1.4 s, text 19.5 s → 0.8 s, style 20.5 s → 1.3 s (medians) (this machine; audit: 3.8 s).
+  - WB-32: locale JSON splices the value span; a created key re-serializes in the file's indent/EOL/final newline.
+- **Decisions:** local wins on a plain-value conflict (same answer as P1-D's flush-first save); an origin-backed (literal) value never wins a conflict. A page list no Studio read produced has no baseline and is adopted as-is.
+- **Landmines:** (1) `baselineBeforeRead` is keyed by array IDENTITY — a caller that copies `pages` between the fetch and `patchPages`/`loadSite` silently loses the rebase. (2) Structural codemods still get their own project (one write per gesture). (3) Old tests asserted `{"…"}` text spellings; updated.
+- **Next:** orchestrator merges. Collision: `lifecycleActions.ts` is serial with P6-A (P1-B already in).
+
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -80,6 +93,33 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The runtime half of `optimistic.text` (`messages.ts` schema, `runtime.ts` case, `applyOptimisticText`, the generated bundle) is left for `live`, which owns `runtime.ts`.
   - Nothing in the app provides a `blocked` lock; the state stays for `classPropertyRowWriteLock.test.tsx`'s row contract.
 - **Human action needed:** dogfood on `test4`, `/admin/site`: (1) shift-select two `.map` rows whose `transform`/`style` comes from row data plus one static element, then hover a row the notice names: its label has a dotted amber underline and the tooltip reads "Writes to 1 of 3 selected layers — 2 are set from an expression in code."; (2) dark theme, floating inspector: captions/units readable; (3) reload, select a component instance with a union prop: grey placeholders, then a dropdown — never a text box first; (4) owner review of the `CLAUDE.md` diff.
+
+### infra-02 — P0-I: CI runs `bun run test` on one pinned Bun
+- **Agent:** studio-implementer · **Branch:** `chore/ci-pin-bun-and-run-tests` off `25681dcb` · **PR:** #253 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-24
+- **Stage:** done (draft PR open)
+- **Goal:** re-land #86's CI half: `bun run test` (isolated workers) instead of bare `bun test`, on a pinned Bun.
+- **Done:** `engines.bun` = exact `1.3.13`; every `setup-bun` step reads it (`bun-version-file: package.json`); Dockerfile `oven/bun:1.3.13`. `ci.yml` `test` and `release.yml` run `bun run test --shard=N/10` as a 10-runner matrix; new `generated-fresh` job runs `studio-runtime:sync` + `bootstrap:sync` on Linux, fails on drift and uploads `regenerated-bundles`. Both studio-runtime bundles regenerated with bun 1.3.13 from an LF export. New gate `architecture/bun-version-pinned.test.ts`. Docs: `docs/architecture.md` → "Bun is pinned to one exact version", `architecture-tests.md`.
+- **Decisions:** 1.3.13, because (a) Bun 1.3.6 and 1.3.11 have no `--parallel`/`--shard`: they silently ignore them, so `bun run test` there IS bare `bun test`; (b) 1.3.11 and 1.3.13 emit byte-identical bundles, 1.3.6 does not. Exact pin, not a range, because `Bun.build` bytes differ between patch releases.
+- **Landmines:** the owner's bun 1.3.6 fails `studio-runtime-bundle-fresh` against the (correct) regenerated bundles and runs the suite un-isolated. Fix: install 1.3.13 (`powershell -c "& ([scriptblock]::Create((irm bun.sh/install.ps1))) -Version 1.3.13"`). The committed `vitePluginBundle.ts` was stale on SOURCE (missing `SourceOriginSchema`), not only on version. Any bundle that edits `src/core/studio-runtime/*` conflicts on the one-line generated files: resolve by regenerating (or take CI's artifact).
+- **Human action needed:** upgrade local Bun to 1.3.13. `ci.yml` only triggers on PRs to `main`, so this runs for the first time when the trunk PR goes to `main`.
+- **Verification:** `actionlint` 1.7.12 clean on both workflows (they cannot run locally). Build and lint clean. The new gate fails 3/3 with the old pins. Suite in 11 locked chunks (bun 1.3.6): 15 fail, all baseline (freshness, optimistic broadcast ×4, bridge measurement ×5, render_reference ×4, liveOrigin WS). The freshness gate passes on 1.3.13 and 1.3.11. Shard 1/10 on 1.3.13 `--parallel=4`: 141 files, 5.2 GB peak, 127 s.
+- **Next:** orchestrator review.
+
+### test-07 — Green baseline: the 16 pre-existing unit failures and the broken e2e specs
+- **Agent:** test-engineer · **Branch:** `test/green-baseline` off `25681dcb` · **PR:** #257 (draft, base `feat/canvas-excellence`; per-failure table in its body) · **Updated:** 2026-09-25
+- **Stage:** verifying (draft PR open)
+- **Goal:** the baseline every bundle reports shows no pre-existing red, so a real regression is visible.
+- **Done (unit):**
+  - `structuralOptimisticBroadcast` ×4, `useBridgeComputedValues` ×4, `fillSection` ×1: their stub channels never said `ready`, and `BridgeFrameAdapter.post` queues every message until it does. The stubs now announce `ready`, like `optimisticStructuralBroadcast.test.ts`.
+  - `referenceRender` ×4: since `live-16` a dev server writes to `options.logPath` and the manager tails that file; the fake filled `stdout`, so every boot hit the 30 s race. The fake now writes to the log file; each test gets its own `STUDIO_DEV_SERVER_STATE_DIR` and stops its server.
+  - `liveOrigin` WebSocket: **product fix** in `server/liveOrigin.ts`. Bun's `upgrade` already echoes the first offered subprotocol; passing it in `headers` too sent the header twice on Bun 1.3.6 (1.3.13 de-duplicates), and a checking client refuses that (1002). Proven on both Bun versions; a raw-handshake test asserts one header.
+  - `withWorkspaceProject` Windows path: already fixed on the trunk by P1-C; passes.
+  - Bundle freshness: not regenerated (P0-I owns the Bun pin). The gate now names the running Bun and the first differing line, and says whether it is Bun's runtime helpers, a cwd-relative `// node_modules/` comment, or real drift.
+- **Done (e2e):** `tests/e2e/helpers/canvasIframe.ts` (`visibleCanvasIframe`, `canvasContentFrame`, `liveBridgeIframe`, `settleCanvasFrameMode`, `selectionRings`) replaces every bare `frameLocator` in 30 files. Fixed-name fixtures are emptied in place (`emptyFixtureDir`): EPERM reproduced with `--repeat-each=2`. `readBoardCounts` counts per board frame (`mountedFrames`). studio-feel ⌘D now asserts five copies in the file and zero toast cards (P3-A removed success toasts; the queue removed the refusal).
+- **Landmines:** in the e2e workspace a fixture's Vite resolves from this repo's `node_modules`, so Tier-2 frames really go live some seconds into a spec. A portal frame draws its selection ring inside its iframe, a live frame in the editor document: settle first.
+- **Verified:** chunked unit suite (16 chunks, `--parallel=1`, under the lock): 1 failure left, bundle freshness (P0-I). e2e: `structural-writeback` 5/5 with `--repeat-each=2` (failed on EPERM with the old helper); `studio-feel` 5 pass + 1 pre-existing conditional skip.
+- **Found, not fixed:** Tier-2 frames never get a poster (perf-06 Phase B), so `studio-board-perf`'s WS-5.3 poster criterion still fails on the default tier; its virtualization counts now pass. `studio-feel-phase0` still waits for success toasts P3-A removed (⌘D, Alt+drag, ⌘G, save chip). The runtime bundles were built by two different Bun versions and one from a different cwd.
+- **Next:** orchestrator review; P0-I regenerates the bundles on the pinned Bun.
 
 ## Blocked
 

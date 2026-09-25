@@ -2,12 +2,12 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   createAuthoredFixtureProject,
   openFixtureBoard,
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `sec-17` landmine 6, closed: **the frame drag relay's FILE path had no test
@@ -177,10 +177,10 @@ async function dropOnFrame(
 
 /** The mounted design frame, and a frame locator into its document. */
 async function firstMountedFrame(page: Page, canvasRoot: Locator) {
-  const frameElement = page.locator(`[data-page-id] ${CANVAS_FRAME_IFRAME_SELECTOR}`).first()
-  await expect(frameElement, 'no design frame mounted on the fixture board').toBeVisible({ timeout: 60_000 })
+  const boardFrame = page.locator('[data-page-id]').first()
+  await expect(visibleCanvasIframe(boardFrame), 'no design frame mounted on the fixture board').toHaveCount(1, { timeout: 60_000 })
   await expect(canvasRoot).toBeVisible()
-  return page.locator('[data-page-id]').first().frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  return canvasContentFrame(boardFrame)
 }
 
 test.describe('dragging an image file onto a design frame', () => {
