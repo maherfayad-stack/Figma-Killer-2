@@ -12,8 +12,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
 ### perf-14 — the preview shell stays out of the parse (P6-B found-not-fixed 1 and 2)
-- **Agent:** perf-hunter · **Branch:** `perf/preview-shell-stays-out-of-the-parse` (merges `perf/fast-warm-load` — land #263 first) · draft PR, base `feat/canvas-excellence` · **Updated:** 2026-09-25
-- **Stage:** PR open (draft).
+- **Agent:** perf-hunter · **Branch:** `perf/preview-shell-stays-out-of-the-parse` (merges `perf/fast-warm-load` — land #263 first) · draft PR #267, base `feat/canvas-excellence` · **Updated:** 2026-09-25
+- **Stage:** PR open (draft); build, lint green; test chunks green except pre-existing (agentCheckpoints size, bundle-fresh on Bun 1.3.6) and two 5 s load flakes that pass alone.
 - **Cause 1:** the shell's root `vite.config.js` was a workspace source file, so it was a ROOT of the ts-morph program and TypeScript followed its imports: `vite` → `rolldown`, `postcss`, `@types/node`, `undici-types`, `zod`, babel types (resolved from Studio's OWN `node_modules`, walking up out of `studio-workspace/`), plus the 2 MB `prototype/studioRuntime.generated.js`.
 - **Fix 1:** `listWorkspaceSourceFiles` / `isWorkspaceSourceFilePath` moved to `src/core/page-parser/workspaceSourceFiles.ts` and leave out every build-tool config (`isHostConfigFileName`, the user's own too — it runs in Node, no page renders it). The program pins `maxNodeModuleJsDepth: 0`.
 - **Fix 2:** `ensurePrototypeShell` stamps its inputs by `lstat` after a real run (`prototypeShell/shellInputStamp.ts`: every shell file, manifest, `package.json`, `.studio/{meta,boards,prototype}`, LanguageContext candidates, DS entry, pages dir + every subdir) and answers repeat calls from the stamp (`inputsUnchanged: true`). Stamps with an input newer than run-start − 2 s are never kept (racy rule).
