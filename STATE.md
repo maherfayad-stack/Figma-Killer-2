@@ -88,7 +88,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** orchestrator review.
 
 ### canvas-33 — P5-G: the free canvas (OD-14) — loose layers on the empty board
-- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk through `fea4f125` merged in) · **PR:** PR_URL (draft, base `feat/canvas-excellence`; long form, threat list, reviewer file list, gesture table in its body) · **Updated:** 2026-09-25
+- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk through `fea4f125` merged in) · **PR:** #260 (draft, base `feat/canvas-excellence`; long form, threat list, reviewer file list, gesture table in its body) · **Updated:** 2026-09-25
 - **Stage:** verifying (draft PR open). **Needs security-guard review (FC-1/FC-2)** before merge — the PR body lists every file that touches the filesystem or untrusted input.
 - **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board, reconciled with P5-B's multi-file drop: one loose layer per image, intrinsic size from the landing route, cascaded 24 px; failures through P5-B's `reportUnlanded`). Doc: `docs/features/free-canvas.md`.
 - **Decisions:**
