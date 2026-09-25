@@ -2,7 +2,6 @@ import { expect, test, type FrameLocator, type Locator, type Page, type Request 
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -13,6 +12,7 @@ import {
   startToastRecorder,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P5-E "tools and handles", in a real browser — asserted on COMPUTED layout
@@ -103,8 +103,8 @@ async function openAndSelect(page: Page, divIndex: number): Promise<Opened> {
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-  const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+  const content = canvasContentFrame(frame)
   const element = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, REL, 'div', divIndex)}"]`).first()
   await panIntoView(page, canvasRoot, element, 80)
   await clickInFrame(page, element)
