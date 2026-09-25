@@ -177,6 +177,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Events/DOM × src:** a portal frame's `<img>.src` is now the asset-route URL, not the source's. Read `props.src` from the store, never the DOM, to learn what the source says (`renderEvidence.ts` reports the resolved one — correct for "did it load").
   - **Bridge frames** render nothing through here; do not "fix" them the same way — the dev server answers `/x.png` and `/admin/api/…` would 404 on its origin.
   - The route no longer serves `.json`/`.css`/`.js`/`.html` by `path=` either. Nothing in the tree asked for them; a future caller that needs source must use a different, declared route.
+- **Gates:** build + lint clean; `bun test` chunks green except pre-existing (`agentCheckpoints` size, bundle freshness on 1.3.6, two load-flakes that pass alone). e2e `frame-file-drop -g P5-B2` 2/2 pass; both FAIL with the canvas rewrite disabled (`naturalWidth` 0).
+- **Human action needed:** security review (PR body table) + dogfood: `test4`, Design view, 100%, one frame — drop a PNG: the picture shows (not a broken icon) and the source/inspector still say `/<name>.png`; ⇧-drop paints a background; a Fill `public/` image paints in every frame.
 - **Next:** IMG ledger work (canvas-28 Next); relative `url(./a.png)` in project CSS is still resolved against the admin origin (needs the stylesheet's own path) — PR body.
 
 ## Blocked
