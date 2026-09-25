@@ -33,7 +33,7 @@ const REPO_ROOT = resolve(import.meta.dir, '..', '..', '..')
 const ENTRY_CLOSURES = ['src/core/page-parser/index.ts', 'server/handlers/studio/storyPages.ts']
 
 /** The route-parse orchestration itself — which options it hands the parser — without its (unrelated) closure. */
-const ENTRY_FILES = ['server/handlers/studioPageLoad.ts']
+const ENTRY_FILES = ['server/handlers/studioPageLoad.ts', 'server/handlers/studio/routeEntryParse.ts']
 
 /** Bump when the on-disk entry's SHAPE changes in a way the code digest would not see. */
 export const PARSE_CACHE_FORMAT = 1

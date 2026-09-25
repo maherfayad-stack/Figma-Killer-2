@@ -35,7 +35,7 @@
  * server (same-origin in prod behind Caddy).
  */
 import type { IPersistenceAdapter, SaveSiteOptions } from '@core/persistence/types'
-import { type Page, type SiteDocument } from '@core/page-tree'
+import { type SiteDocument } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { type Static } from '@core/utils/typeboxHelpers'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
