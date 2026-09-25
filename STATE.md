@@ -15,6 +15,52 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR #266 (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
 - **Stage:** done, awaiting merge — build + lint green; `bun test` (chunked) adds no failure (pre-existing + load timeouts triaged in the PR body); e2e `studio-board-perf` 2 failures reproduce with the change disabled.
 - **Slices touched:** `site/lifecycleActions.ts` (`patchPages`, and `createSite`/`loadSite`/`clearSite` clear the render keys), `site/reparseNodeFollow.ts` (optional `alignments` input, shared). New `site/rereadRenderKeys.ts`, `canvas/nodeRenderKeys.ts` (off-store), `@core/utils/replaceEqualDeep`. No new selector; no new mutation (a re-read is not an edit: no history entry, no coalesce key).
+### perf-14 — the preview shell stays out of the parse (P6-B found-not-fixed 1 and 2)
+- **Agent:** perf-hunter · **Branch:** `perf/preview-shell-stays-out-of-the-parse` (merges `perf/fast-warm-load` — land #263 first) · draft PR #267, base `feat/canvas-excellence` · **Updated:** 2026-09-25
+- **Stage:** PR open (draft); build, lint green; test chunks green except pre-existing (agentCheckpoints size, bundle-fresh on Bun 1.3.6) and two 5 s load flakes that pass alone.
+- **Cause 1:** the shell's root `vite.config.js` was a workspace source file, so it was a ROOT of the ts-morph program and TypeScript followed its imports: `vite` → `rolldown`, `postcss`, `@types/node`, `undici-types`, `zod`, babel types (resolved from Studio's OWN `node_modules`, walking up out of `studio-workspace/`), plus the 2 MB `prototype/studioRuntime.generated.js`.
+- **Fix 1:** `listWorkspaceSourceFiles` / `isWorkspaceSourceFilePath` moved to `src/core/page-parser/workspaceSourceFiles.ts` and leave out every build-tool config (`isHostConfigFileName`, the user's own too — it runs in Node, no page renders it). The program pins `maxNodeModuleJsDepth: 0`.
+- **Fix 2:** `ensurePrototypeShell` stamps its inputs by `lstat` after a real run (`prototypeShell/shellInputStamp.ts`: every shell file, manifest, `package.json`, `.studio/{meta,boards,prototype}`, LanguageContext candidates, DS entry, pages dir + every subdir) and answers repeat calls from the stamp (`inputsUnchanged: true`). Stamps with an input newer than run-start − 2 s are never kept (racy rule).
+- **Numbers** (canonical fixture + generated shell, 3 interleaved fresh-process pairs vs P6-B tip `7d7660bf`, medians of 30 calls; `.tmp/pshell/bench.ts`):
+
+| | P6-B tip → branch |
+|---|---|
+| program files | 288 → 86 |
+| program build | 2148–2198 → 224–384 ms |
+| cold `loadStudioPages` (empty parse store) | 3286–3497 → 845–1311 ms |
+| warm `loadStudioPages` | 23.3–23.8 → 1.8–3.4 ms |
+| `ensurePrototypeShell` repeat call | 19.6–20.0 → 0.55–1.29 ms |
+
+- **Tests:** `shellStaysOutOfTheParse.test.ts` (program file COUNT = user sources, before and after scaffolding; configs out; package JS out under `maxNodeModuleJsDepth: 2`) — 3 of 4 failed before fix 1. `prototypeShellOnce.test.ts` (10 cases; each input kind re-runs) — the two memo-hit cases fail with the stamp check disabled; the two page-list cases fail with the pages-dir stamp disabled.
+- **Landmines:** (1) a NEW input read by the shell must be added to `shellInputPaths`, or a change to it is missed until restart. (2) The program still resolves bare imports up OUT of the workspace into Studio's own `node_modules` (and even `C:/Users/<you>/node_modules`); declarations a user page imports are kept deliberately — see PR "Found, not fixed".
+- **Next:** orchestrator merges after #263.
+
+### perf-13 — P6-B server half: fast warm load (PERF-7 persistence, PERF-8)
+- **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR #263, base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
+- **Stage:** PR open (draft); gates green except pre-existing. The client streaming half of P6-B is OUT of scope (not started).
+- **Done:** signed on-disk parse cache (`.studio/cache/parse/`, `parseCacheStore.ts`, parser-code digest); `/load` memo invalidated from P1-D's watcher (`projectChangeFeed.ts`) instead of walk+stat; 4-project LRU (`loadedProjects.ts`); SHA-256 not a 32-bit hash; viewport parse order; absence dependencies; route reads the shared memo result (no clone).
+- **A/B** (`.tmp/p6b-bench/ab-modes.sh`, interleaved vs trunk, medians, loaded machine; 40-page `large` / 1,000-file `thousand`):
+
+| | large base → branch | thousand base → branch |
+|---|---|---|
+| restart (new process) | 2765 → 649 ms | 3093 → 1260 ms |
+| warm, `/load` route | 54.8 → 18.0 ms | 117.6 → 46.8 ms |
+| warm, tool (clone), 7 pairs | 62.0 → 54.5 ms; 6 s after load 65.9 → 65.7 | 55.8 → 40.6 ms |
+| cold (empty store, 8 pairs) | 2590 → 2478 ms | 3527 → 3625 ms (pairs −369…+170) |
+| page edit | 463 → 442 ms | 1565 → 1375 ms |
+| dependency edit | 194 → 201 ms | 1466 → 1382 ms |
+
+- **This session's fixes (were regressions):** (1) prewarm called `getTypeChecker()`, a lazy ts-morph wrapper that builds nothing (0 ms measured) — page edit was 0.65 → 2.5 s; now reads `.compilerObject`. (2) disk-store writes (hash+JSON+HMAC+write, 170–350 ms of a cold load) now drain 50 ms after the load (`scheduleParseCacheWrites`), at exit, and on LRU eviction. (3) parser digest reads each file once, resolves each specifier once (100 → 55 ms). (4) no `realpathSync` per load in settle (`rootByDir`, `studioWroteSince(realRoot)`).
+- **Budgets/tests:** `workspaceProject.test.ts` prewarm-binds (fails on the lazy call); `studioLoadWarmCache.test.ts` write-is-deferred (fails on inline write); `pageParseCache.test.ts` moved-before-drain.
+- **Landmines:** (1) after a restart load the prewarm blocks the event loop ~1.8 s (large) — same total as the old in-load build, moved after the response. (2) Deferring the whole store-write was needed; trimming it (memoising digests, cheaper JSON) was not enough. (3) Tried and dropped: skipping `consistentStamps`' re-stat for Project-held files — it guards `rememberSourceTexts` (P1-D) from recording text the parse did not read. (4) This machine's bench noise is ±10 %; trust interleaved pairs only.
+- **Also:** `studioPageLoad.ts` passed the 700-line budget; its per-route half moved to `studio/routeEntryParse.ts` (listed in `parserCodeDigest.ts`'s `ENTRY_FILES`).
+- **Found, not fixed:** (1) `ensurePrototypeShell` runs on every load, ~8 ms of a 25 ms warm load. (2) The shell's generated root `vite.config.js` is a workspace source file, so it enters every kept `Project` and drags `vite`/`@types/node` into the program: 86 → 288 files on `__canonical-fixture`, and `canonicalPageCheck.test.ts` 2.5 s → 9.9 s once a server-ai test has generated the shell there (a timeout flake under load, on trunk too).
+- **Next:** orchestrator reviews and merges. Collision: `studioPageLoad.ts`, `workspaceProject.ts`, `projectWatch.ts`.
+
+### store-19 — P3-E: edits survive concurrent writes (ERR-9, WB-9, WB-10, WB-25, WB-32)
+- **Agent:** store-engineer · **Branch:** `fix/edits-survive-concurrent-writes` off `25681dcb` · draft PR #254, base `feat/canvas-excellence`, long form in the body · **Updated:** 2026-09-25
+- **Stage:** verifying — gates green except the pre-existing failures listed in the PR body.
+- **Slices touched:** `site/lifecycleActions.ts` (`loadSite`, `patchPages`) + new `site/unsavedEditRebase.ts`. No new selector; no new mutation (no history entry, no coalesce key — a re-read is not an edit).
 - **Done:**
   - `patchPages` applies a re-read by value: each re-read page, `styleRules` and `conditions` go through `replaceEqualDeep`, so a deep-equal node, rule, registry or page keeps its object. A prop write re-renders one `NodeRenderer`, not the whole page, and restyles no frame (was 12 of 12).
   - A renumbered node keeps its React key: `rereadRenderKeys.ts` aligns each changed re-read page (`alignPageTrees`) and carries keys through `nodeRenderKeys.ts`; `NodeRenderer` and `CanvasComposedTree` key children by `nodeRenderKey(pageId, id)`. A move remounts nothing (was 297 of 300). The follower reuses the alignment.

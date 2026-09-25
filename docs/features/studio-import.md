@@ -1655,7 +1655,7 @@ own dominant ending on every write**. It is installed on every disk-backed
 | Factory | Where |
 |---|---|
 | `createProject()` | `src/core/ast-codemods/locateJsxElement.ts` — every single-file codemod |
-| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load (built once per project directory and kept by `server/handlers/studio/workspaceProject.ts`, which re-reads only the files whose `size:mtimeMs` moved) AND every codemod handed that project. Its file list is `listWorkspaceSourceFiles` — the download walk minus Studio's own `prototype/` shell, whose generated runtime bundle is never parsed as source |
+| `createWorkspaceProject()` | `src/core/page-parser/componentSources.ts` — the workspace-wide load (built once per project directory and kept by `server/handlers/studio/workspaceProject.ts`, which re-reads only the files whose `size:mtimeMs` moved) AND every codemod handed that project. Its file list is `listWorkspaceSourceFiles` (`workspaceSourceFiles.ts`) — the download walk minus Studio's own `prototype/` shell, whose generated runtime bundle is never parsed as source, and minus every build-tool config (`vite.config.*`, `*.config.*`, `.*rc.*`: they run in Node, no page renders them, and as roots they pulled the whole toolchain's declarations into the program). `maxNodeModuleJsDepth` is pinned to 0, so a package's JS implementation never enters the program |
 | `parsePageFile`'s default project | `src/core/page-parser/parsePageFile.ts` |
 | the probe projects | `packageManifest.ts`, `figmaCodeConnect.ts`, `prototypeCodeFlow.ts` |
 
