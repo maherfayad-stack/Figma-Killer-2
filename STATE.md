@@ -165,6 +165,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Canvas files touched:** `canvas/{BreakpointSelectionOverlay, overlayMeasureScheduler, resizeOffer, CanvasResizeHandles}`, `modules/base/svg/{SvgEditor, hostTag, splitSvgRoot}`, `core/studio-runtime/{elementResizeRules, resizeHandles, generated/runtimeBridgeBundle}`.
   - **Found, not fixed:** the first click into a frame re-frames (pans) the board when the fixture has no board file (`resolveCanvasFocusTarget` keys on the page then); client `sanitizeSvg` turns `<!DOCTYPE x [ … ]>` into a harmless escaped `]&gt;` text node (HTML-mode parse; the entity is never expanded).
   - Not yet in `docs/features/studio-import.md` → studio-scribe: the happy-dom skipped-node rule (every server-side DOMPurify call must go through `sanitizeToFixpoint`).
+- **Verification (2026-09-25, after merging trunk `fea4f125`+):** build + lint clean. e2e `svg-renders-as-itself` 4/4. Suite in 12 locked chunks: fails only `module-size-budgets` (`agentCheckpoints.ts`, pre-existing), bundle freshness on Bun 1.3.6 (passes on 1.3.13), `publicSdkExports` (flaky under load). Two timing pins in the new `pathData.test.ts` failed under load and were fixed (scaling ratio, 30 s corpus timeout).
 - **Next:** security-guard review of SVG-2 (sanitizer paths listed in the PR body); then SVG-3 (part stamps), which reuses `@core/vector`'s name table.
 
 ## Blocked
