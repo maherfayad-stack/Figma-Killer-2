@@ -465,6 +465,9 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
         // graph this read just replaced. See `dropBoardHistory`.
         dropBoardHistory(state)
       })
+      // P5-G — the free canvas's placements and modules are read by two
+      // requests; whichever lands second reconciles them.
+      get().healCanvasLayerPlacements()
       return
     }
 

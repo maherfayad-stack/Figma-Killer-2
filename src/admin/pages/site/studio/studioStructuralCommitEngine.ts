@@ -14,6 +14,7 @@ import { flushEditorSave } from '@site/hooks/editorSaveRef'
 import { settleOrRollbackOptimistic, type OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
 import { isUnreachableFailure } from '@core/http'
+import type { CanvasLayerPlacementChange } from '@core/studio-board'
 import type { PendingStructuralHistory } from './pendingStructuralOutcome'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
@@ -46,7 +47,7 @@ export interface StructuralCommitOptions {
    * pushed an entry, and TAGGED it with this same template, before the commit
    * that reveals the answer even started.
    */
-  undo?: { label: string; template: StructuralInverseTemplate }
+  undo?: { label: string; template: StructuralInverseTemplate; placements?: CanvasLayerPlacementChange[] } // P5-G — see `StructuralSourceGesture.placements`
   /**
    * `store-15` — set only by `delete`. Its tree mutation (and history entry)
    * already ran, synchronously, BEFORE this commit — `deleteNodesAction.ts`
@@ -243,6 +244,7 @@ function resolvePendingHistory(
       forward: [...edits],
       inverseTemplate: options.undo.template,
       inverse: resolveStructuralInverse(options.undo.template, outcome),
+      ...(options.undo.placements ? { placements: [...options.undo.placements] } : {}),
     },
   }
 }

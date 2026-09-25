@@ -144,7 +144,8 @@ export async function runStudioLiveReload(input: StudioLiveReloadInput): Promise
       // pages without them renders freshly-parsed nodes against the previous
       // stylesheet — see `studioLiveReloadFetch.ts`'s doc for what that looks
       // like on screen.
-      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(input.pageIds)
+      const { pages, missingPageIds, styleRules, conditions, canvasLayers } = await fetchStudioPagesById(input.pageIds)
+      getStoreState().setCanvasLayers(canvasLayers) // P5-G — never part of the page patch
       getStoreState().patchPages({ pages, removedPageIds: missingPageIds, styleRules, conditions })
       noteBoardRead(pages, 'merge') // P1-A — the agent's write renumbered these; see `sourceIdentity.ts`
     } catch (err) {

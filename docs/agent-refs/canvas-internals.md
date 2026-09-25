@@ -612,6 +612,12 @@ can render the same page (a "duplicate as variant" sibling, WS-10 Phase 2), and
 a drop between those two is an ordinary same-file reparent that must keep going
 through `moveNodes`.
 
+**Released over no frame at all** (the empty board of a Studio board), the drag
+is a LIFT (P5-G): the element leaves its page and becomes a loose layer on the
+free canvas, keeping the grab offset (`BoardCanvasLayer/canvasLayerLift.ts`,
+`canvasDragCommit.ts`'s lift branch; ⌥ lifts a copy). See
+[`free-canvas.md`](../features/free-canvas.md).
+
 The write is one `transplant` edit (`transplantJsxElement`), not a delete plus
 an insert: two edits are two writes the batch could land half of, and the second
 has no markup to insert — the element's source text only exists in the file the
@@ -677,9 +683,14 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   | + ⌘/Ctrl | N | insert, **absolutely at the pointer** (IMG-9), K6's rule: positioned container only, `insetInlineStart` under RTL, cascaded 24 px per image | same insert, `style={{ position, left/inset-inline-start, top }}` |
   | + ⇧ | 1 | the container's **top background layer** (IMG-7) | `asset-drop` + one `setNodeInlineStyles`; refused when a class owns the background |
 
-  The EMPTY BOARD is still refused here — free-canvas placement is P5-G's.
-- Every refusal is decided before the network is touched: the empty board
-  ("Drop the image onto a frame"), a drop with no image in it, nothing under
+  **On a Studio board the EMPTY BOARD is the free canvas** (P5-G): every image
+  released there becomes its own loose layer (`plan.kind === 'canvas'`), at
+  its intrinsic size (the landing route's header read), the first centred on
+  the drop point and the rest cascaded 24 px; modifiers do not apply there.
+  One structural commit per layer — see [`free-canvas.md`](../features/free-canvas.md).
+- Every refusal is decided before the network is touched: on a canvas with
+  no free canvas (the CMS editor), the empty board ("Drop the image onto a
+  frame"); a drop with no image in it, nothing under
   the pointer that can hold one, ⇧ with several files, an `<img>` whose `src`
   is computed in code, ⌘ into a `position: static` container (K6's one-click
   refusal dialog, not a toast). A mixed drop adds its images and names the
@@ -714,8 +725,9 @@ half (`canvasFileDrop.ts`) touches no DnD API at all, so it is not.
   refusal functions on every `dragover`, through one rAF and zero React
   commits, and paints the answer: over a frame, the element drag's own drop
   line plus a cursor chip naming the format, in that frame's own drag layer;
-  over the empty board, "Drop onto a frame" in `CanvasFileDropHint`, a
-  board-level layer that exists because there is no frame layer to use there.
+  over the empty board, "Place on canvas" (a Studio board) or "Drop onto a
+  frame" (no free canvas) in `CanvasFileDropHint`, a board-level layer that
+  exists because there is no frame layer to use there.
   A `CanvasFileDropRefusal` carries a one-line `headline` for the chip and the
   whole `message` for the toast, so the two cannot drift.
 - **The chip names the TYPE, never the file.** Before `drop` the drag data

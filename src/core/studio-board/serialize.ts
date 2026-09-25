@@ -1,5 +1,16 @@
 import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
-import type { Board, BoardFrame, BoardGuide, BoardsFile, DocBlock, NoteColor, StickyNote } from './types'
+import {
+  CanvasLayerPlacementSchema,
+  type Board,
+  type BoardFrame,
+  type BoardGuide,
+  type BoardsFile,
+  type CanvasLayerPlacement,
+  type DocBlock,
+  type NoteColor,
+  type StickyNote,
+} from './types'
+import { filterArray } from '@core/utils/typeboxHelpers'
 import type { PreviewAxes } from './previewAxes'
 
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
@@ -122,6 +133,46 @@ function coerceGuide(raw: unknown): BoardGuide | undefined {
   return { id, axis: raw.axis, position: raw.position }
 }
 
+/**
+ * P5-G — one loose layer's placement. The id is the one field that must be
+ * exactly right: it names a file under `.studio/canvas/`, so anything that is
+ * not a well-formed layer id is DROPPED here rather than carried to a reader
+ * that would build a path from it. Everything else is tolerant, like the
+ * annotation coercers above; an optional field is omitted when absent or
+ * invalid so a file round-trips byte-for-byte.
+ */
+/**
+ * One placement as it goes back into the file: the schema's fields only (an
+ * unknown key a hand edit added is not carried), `false` flags omitted.
+ */
+function canonicalLayer(layer: CanvasLayerPlacement): CanvasLayerPlacement {
+  const out: CanvasLayerPlacement = { id: layer.id, x: layer.x, y: layer.y }
+  if (layer.w !== undefined) out.w = layer.w
+  if (layer.z !== undefined) out.z = layer.z
+  if (layer.name !== undefined && layer.name.length > 0) out.name = layer.name
+  if (layer.locked === true) out.locked = true
+  if (layer.hidden === true) out.hidden = true
+  return out
+}
+
+/**
+ * Every placement that passes `CanvasLayerPlacementSchema` (TypeBox — the id
+ * grammar included), each id at most once (the first wins — a duplicate would
+ * render one module twice). A malformed entry is DROPPED, not repaired: the
+ * load's heal re-places a module that has no placement.
+ */
+function coerceLayers(raw: unknown): CanvasLayerPlacement[] {
+  const seen = new Set<string>()
+  const layers: CanvasLayerPlacement[] = []
+  for (const entry of filterArray(CanvasLayerPlacementSchema, raw)) {
+    const layer = canonicalLayer(entry)
+    if (seen.has(layer.id)) continue
+    seen.add(layer.id)
+    layers.push(layer)
+  }
+  return layers
+}
+
 function coerceBoard(raw: unknown): Board | undefined {
   if (!isPlainObject(raw)) return undefined
   const id = raw.id
@@ -146,7 +197,14 @@ function coerceBoard(raw: unknown): Board | undefined {
     ? raw.guides.map(coerceGuide).filter((g): g is BoardGuide => g !== undefined)
     : []
 
-  return { id, name, frames, notes, docs, guides }
+  // `layers` (P5-G) — omitted when empty, so a board with no loose layers
+  // reads and writes exactly as it did before the free canvas existed. Every
+  // server-side writer (`boardFrames.ts`, the MCP board tools) reads through
+  // here and writes back what it read, so coercing it HERE is what keeps a
+  // page create or a frame resize from silently dropping every loose layer.
+  const layers = coerceLayers(raw.layers)
+
+  return { id, name, frames, notes, docs, guides, ...(layers.length > 0 ? { layers } : {}) }
 }
 
 export function parseBoardsFile(raw: unknown): BoardsFile {

@@ -28,14 +28,14 @@ import { digestOf, fileContentDigest } from './loadDigest'
 import { viewportPriorityOrder } from './loadPriority'
 import type { RouteCacheScope } from './pageParseCache'
 import type { RoutePageEntry } from './routePageEntry'
-import { parseRouteThroughCache } from './routeParse'
+import { parseRouteThroughCache, type RouteParseOutcome } from './routeParse'
 import type { WorkspaceProjectHandle } from './workspaceProject'
 
 /**
  * Everything one load's route parses share: the cache scope and the kept
  * `Project` they parse against. Built once per load by {@link routeParseContext}.
  */
-interface RouteParseContext {
+export interface RouteParseContext {
   scope: RouteCacheScope
   workspace: WorkspaceProjectHandle
   cssModuleClassMaps: Record<string, Record<string, string>> | undefined
@@ -79,19 +79,17 @@ function yieldToEventLoop(): Promise<void> {
 }
 
 /**
- * One route's parse+inline, through the WS-5.5/P6-B cache (`routeParse.ts`).
- * Extracted from `buildStandardPageEntries` (its per-page loop for every
- * non-`next-app` project, WS-1.3) so `loadStudioPageInLocale` (WS-10
- * §4.2/Phase 4) can parse ONE route with a different `preferredKey` without
- * duplicating this.
+ * ONE file whose default export is a page-shaped tree — its parse+inline,
+ * through the WS-5.5/P6-B cache under `route` (`routeParse.ts`). A
+ * file-per-page route and a free-canvas layer module (P5-G,
+ * `canvasLayerLoad.ts`) are both exactly this, so they share it: a layer
+ * renders what a page holding the same JSX would render.
  */
-export function parseStandardRouteEntry(context: RouteParseContext, relPath: string, pageId: string, pagesDir: string): RoutePageEntry {
+export function parseRouteFileThroughCache(context: RouteParseContext, route: string, file: string): RouteParseOutcome {
   const { scope, workspace, cssModuleClassMaps } = context
   const { dir, preferredKey } = scope
   const { project } = workspace
-  const file = join(pagesDir, ...relPath.split('/'))
-
-  const outcome = parseRouteThroughCache(scope, workspace, relPath, () => {
+  const outcome = parseRouteThroughCache(scope, workspace, route, () => {
     // §7 — one evaluator options bag PER PAGE, shared between this page's
     // own parse and every locally-inlined subtree's parse below, so the
     // page-wide step budget (and the module-namespace memo cache inside
@@ -120,6 +118,21 @@ export function parseStandardRouteEntry(context: RouteParseContext, relPath: str
     const expanded = inlineLocalComponents(parsed, sources, project, dir, { evalOptions, dependencyFiles })
     return { result: { expanded, componentSources: sources }, dependencyFiles: [file, ...dependencyFiles, ...readFiles] }
   })!
+  return outcome
+}
+
+/**
+ * One route's parse+inline, through the WS-5.5/P6-B cache (`routeParse.ts`).
+ * Extracted from `buildStandardPageEntries` (its per-page loop for every
+ * non-`next-app` project, WS-1.3) so `loadStudioPageInLocale` (WS-10
+ * §4.2/Phase 4) can parse ONE route with a different `preferredKey` without
+ * duplicating this.
+ */
+export function parseStandardRouteEntry(context: RouteParseContext, relPath: string, pageId: string, pagesDir: string): RoutePageEntry {
+  const { dir } = context.scope
+  const file = join(pagesDir, ...relPath.split('/'))
+
+  const outcome = parseRouteFileThroughCache(context, relPath, file)
 
   return {
     expanded: outcome.result.expanded,

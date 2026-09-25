@@ -51,6 +51,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
+import { resolveCanvasLiftDrop } from './BoardCanvasLayer/canvasLayerLift'
 import { commitCanvasDrag } from './canvasDragCommit'
 import {
   DRAG_ACTIVATE_PX,
@@ -321,6 +322,10 @@ export function useCanvasReorderDrag({
               target: session.foreignResolution.target,
             }
           : null,
+      // P5-G — over no frame at all: the element leaves for the free canvas.
+      lift: session.free || session.foreign
+        ? null
+        : resolveCanvasLiftDrop({ ...session, canvasRoot: canvasRootRef?.current ?? null }),
     }
     resetDrag()
 

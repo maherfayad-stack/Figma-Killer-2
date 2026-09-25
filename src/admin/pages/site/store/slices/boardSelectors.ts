@@ -9,7 +9,7 @@
  * entry point for reading board state out of the store.
  */
 import type { EditorStore } from '@site/store/types'
-import type { Board, BoardFrame, BoardGuide, DocBlock, StickyNote } from '@core/studio-board'
+import type { Board, BoardFrame, BoardGuide, CanvasLayerPlacement, DocBlock, StickyNote } from '@core/studio-board'
 import { getActiveBoard } from '@core/studio-board'
 import type { SnapGuide } from '@site/canvas/boardSnapping'
 
@@ -28,6 +28,7 @@ const EMPTY_FRAMES: readonly BoardFrame[] = []
 const EMPTY_NOTES: readonly StickyNote[] = []
 const EMPTY_DOCS: readonly DocBlock[] = []
 const EMPTY_GUIDES: readonly BoardGuide[] = []
+const EMPTY_LAYERS: readonly CanvasLayerPlacement[] = []
 
 /**
  * Per-collection selectors, one per `Board` sub-array — the fix for the
@@ -59,6 +60,10 @@ export const selectActiveBoardDocs = (s: EditorStore): readonly DocBlock[] =>
 
 export const selectActiveBoardGuides = (s: EditorStore): readonly BoardGuide[] =>
   getActiveBoard(s.boards, s.activeBoardId)?.guides ?? EMPTY_GUIDES
+
+/** P5-G — the active board's loose-layer placements (`Board.layers`), narrow like the four above. */
+export const selectActiveBoardLayers = (s: EditorStore): readonly CanvasLayerPlacement[] =>
+  getActiveBoard(s.boards, s.activeBoardId)?.layers ?? EMPTY_LAYERS
 
 /** Select the active drag's snap guides (empty outside of a drag). */
 export const selectBoardSnapGuides = (s: EditorStore): SnapGuide[] => s.boardSnapGuides

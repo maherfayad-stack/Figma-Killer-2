@@ -133,7 +133,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     const result = plan([imageFile()])
 
     expect(result.ok).toBe(true)
-    if (!result.ok) return
+    if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
     expect(result.pageId).toBe('home')
     expect(result.action.kind).toBe('insert')
     if (result.action.kind !== 'insert') return
@@ -147,7 +147,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     const result = plan([imageFile('a.png'), imageFile('b.jpg', 'image/jpeg'), imageFile('c.webp', 'image/webp')])
 
     expect(result.ok).toBe(true)
-    if (!result.ok) return
+    if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
     expect(result.action.kind).toBe('insert')
     expect(result.files.map((file) => file.name)).toEqual(['a.png', 'b.jpg', 'c.webp'])
     expect(result.skipped).toEqual([])
@@ -158,7 +158,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     const result = plan([imageFile('a.png'), imageFile('report.pdf', 'application/pdf')])
 
     expect(result.ok).toBe(true)
-    if (!result.ok) return
+    if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
     expect(result.files.map((file) => file.name)).toEqual(['a.png'])
     expect(result.skipped.map((file) => file.name)).toEqual(['report.pdf'])
   })
@@ -170,19 +170,19 @@ describe('planCanvasFileDrop — onto an image (IMG-3)', () => {
   it('one file dropped ON an <img> replaces it', () => {
     mountFrame('home')
     const result = plan([imageFile()], overImg)
-    expect(result.ok && result.action).toEqual({ kind: 'replace', nodeId: IMG })
+    expect(result.ok && result.kind === 'frame' && result.action).toEqual({ kind: 'replace', nodeId: IMG })
   })
 
   it('alt inserts beside the image instead', () => {
     mountFrame('home')
     const result = plan([imageFile()], overImg, { ...NO_DROP_MODIFIERS, alt: true })
-    expect(result.ok && result.action.kind).toBe('insert')
+    expect(result.ok && result.kind === 'frame' && result.action.kind).toBe('insert')
   })
 
   it('several files never replace one image — they are inserted', () => {
     mountFrame('home')
     const result = plan([imageFile('a.png'), imageFile('b.png')], overImg)
-    expect(result.ok && result.action.kind).toBe('insert')
+    expect(result.ok && result.kind === 'frame' && result.action.kind).toBe('insert')
   })
 
   it('refuses to replace an image whose src is computed in code, and offers alt', () => {
@@ -199,7 +199,7 @@ describe('planCanvasFileDrop — shift sets a background (IMG-7)', () => {
   it('names the container under the pointer', () => {
     mountFrame('home')
     const result = plan([imageFile()], { x: 100, y: 100 }, { ...NO_DROP_MODIFIERS, shift: true })
-    expect(result.ok && result.action).toEqual({ kind: 'background', nodeId: MAIN })
+    expect(result.ok && result.kind === 'frame' && result.action).toEqual({ kind: 'background', nodeId: MAIN })
   })
 
   it('refuses more than one file — a background takes one image', () => {
@@ -269,6 +269,52 @@ describe('resolveCanvasFileDropIntent — cmd places absolutely, the K6 rule (IM
 })
 
 describe('planCanvasFileDrop — refusals, all decided before the network', () => {
+  it('puts the image on the free canvas when the empty board is a Studio board (P5-G)', () => {
+    mountFrame('home')
+    const plan = planCanvasFileDrop({
+      files: [imageFile()],
+      point: { x: 900, y: 400 },
+      transform: null,
+      readPage,
+      modifiers: NO_DROP_MODIFIERS,
+      freeCanvas: { left: 100, top: 50, zoom: 0.5 },
+    })
+
+    expect(plan.ok).toBe(true)
+    if (!plan.ok || plan.kind !== 'canvas') throw new Error('expected a free-canvas plan')
+    // Client (900, 400) against a board origin at (100, 50), at 50% zoom.
+    expect(plan.at).toEqual({ x: 1600, y: 700 })
+  })
+
+  it('takes every image of a multi-file drop onto the free canvas, whatever keys are held, and names the rest (P5-G + P5-B)', () => {
+    mountFrame('home')
+    const plan = planCanvasFileDrop({
+      files: [imageFile('a.png'), imageFile('notes.pdf', 'application/pdf'), imageFile('b.jpg', 'image/jpeg')],
+      point: { x: 900, y: 400 },
+      transform: null,
+      readPage,
+      modifiers: { alt: true, shift: true, absolute: true },
+      freeCanvas: { left: 0, top: 0, zoom: 1 },
+    })
+
+    if (!plan.ok || plan.kind !== 'canvas') throw new Error('expected a free-canvas plan')
+    expect(plan.files.map((file) => file.name)).toEqual(['a.png', 'b.jpg'])
+    expect(plan.skipped.map((file) => file.name)).toEqual(['notes.pdf'])
+  })
+
+  it('still puts the image in the frame under the pointer when there is one', () => {
+    mountFrame('home')
+    const plan = planCanvasFileDrop({
+      files: [imageFile()],
+      point: { x: 100, y: 100 },
+      transform: null,
+      readPage,
+      modifiers: NO_DROP_MODIFIERS,
+      freeCanvas: { left: 0, top: 0, zoom: 1 },
+    })
+    expect(plan.ok && plan.kind).toBe('frame')
+  })
+
   it('refuses a drop on the empty board and says where to drop instead', () => {
     mountFrame('home')
     const result = plan([imageFile()], { x: 900, y: 400 })

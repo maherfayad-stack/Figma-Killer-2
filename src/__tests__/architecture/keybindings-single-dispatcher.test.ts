@@ -101,6 +101,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
     'S2 — Shift constrains the axis and Escape abandons the drag, read by the session that owns the pointer, bound for the length of that one gesture. A cancel must be handled by the session and by nothing else, which is exactly the in-flight-gesture exemption above.',
   ],
   [
+    'canvas/BoardCanvasLayer/useCanvasLayerPointer.ts',
+    'P5-G — Escape abandons a loose-layer drag on the free canvas and puts every layer back, bound only for the length of that one gesture: the same in-flight-gesture exemption as the element and frame drags.',
+  ],
+  [
     'canvas/BoardFramesLayer/useBoardFrameMoveDrag.ts',
     'K2 — the same Shift/Escape pair for the frame HEADER drag, bound for the length of that gesture. Separate from the element drag because a frame copy is a `boards.json` object rather than a source write.',
   ],
