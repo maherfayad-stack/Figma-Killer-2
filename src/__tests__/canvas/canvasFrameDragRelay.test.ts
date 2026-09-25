@@ -91,3 +91,40 @@ describe('installFrameDragRelay — the frame must never navigate', () => {
     expect(event.defaultPrevented).toBe(false)
   })
 })
+
+describe('installFrameDragRelay — the relayed file drag keeps its keys (P5-B)', () => {
+  it('carries alt/shift/meta/ctrl across the iframe boundary, because they change what the drop means', () => {
+    const saved = (globalThis as { DragEvent?: unknown }).DragEvent
+    // happy-dom has no DragEvent; a MouseEvent carrying the transfer is the shape the relay builds.
+    class FakeDragEvent extends MouseEvent {
+      readonly dataTransfer: unknown
+      constructor(type: string, init: MouseEventInit & { dataTransfer?: unknown }) {
+        super(type, init)
+        this.dataTransfer = init.dataTransfer ?? null
+      }
+    }
+    ;(globalThis as { DragEvent?: unknown }).DragEvent = FakeDragEvent
+    try {
+      const doc = frameDoc()
+      const iframe = iframeElement()
+      const seen: { alt: boolean; shift: boolean; meta: boolean; ctrl: boolean }[] = []
+      iframe.addEventListener('drop', (event) => {
+        const relayed = event as MouseEvent
+        seen.push({ alt: relayed.altKey, shift: relayed.shiftKey, meta: relayed.metaKey, ctrl: relayed.ctrlKey })
+      })
+      const teardown = installFrameDragRelay(doc, iframe)
+
+      const event = drag('drop', ['Files'])
+      Object.defineProperty(event, 'altKey', { value: true })
+      Object.defineProperty(event, 'shiftKey', { value: false })
+      Object.defineProperty(event, 'metaKey', { value: true })
+      Object.defineProperty(event, 'ctrlKey', { value: false })
+      doc.body.dispatchEvent(event)
+
+      expect(seen).toEqual([{ alt: true, shift: false, meta: true, ctrl: false }])
+      teardown()
+    } finally {
+      ;(globalThis as { DragEvent?: unknown }).DragEvent = saved
+    }
+  })
+})

@@ -15,6 +15,7 @@ export {
   GATEWAY_RETRY_BACKOFF_MS,
   type FetchLike,
 } from './apiClient'
+export { apiUploadRequest, type ApiUploadRequestOptions } from './uploadRequest'
 export {
   isUnreachableFailure,
   retryWhileUnreachable,

@@ -166,7 +166,7 @@ the same slot is byte-exact (`transplantJsxElement.canvas.test.ts`,
 
 | Gesture | What happens | Undo |
 |---|---|---|
-| Drop an image file on the empty board | Bytes land in `public/` (the frame drop's own route); `canvas-layer-create` with `<img src alt width height>` centred on the drop point at its intrinsic size | one ⌘Z: module deleted, placement removed |
+| Drop image files on the empty board | Each file's bytes land in `public/` (the frame drop's own route, which also reads the intrinsic size); one `canvas-layer-create` per image with `<img src alt width height>`, the first centred on the drop point and each further one cascaded 24 px; non-images are left out and named in one toast; modifiers do not apply | one ⌘Z per layer: module deleted, placement removed |
 | Press a loose layer | Selects it (⇧ toggles). A fourth selection list beside nodes, frames and annotations | — |
 | Drag a loose layer on the board | Moves it; snaps to frames, notes, docs and other layers (`computeSnap`); zero React commits per move; one board undo entry | board undo |
 | Drag a loose layer over a frame and release | Placed into the frame at the drop line (`canvas-layer-place`); ⌥ copies | one ⌘Z: element deleted from the page, module and placement back |
@@ -216,7 +216,7 @@ back (its rollback).
 | FC-3/FC-7 | Editing a loose layer's content in the inspector (a loose layer is selected as a whole; its nodes are not selectable); Layers-panel "Canvas" section; Measures X/Y on a placement; context menu |
 | FC-4 | Registering layers as drop targets for an ELEMENT drag (drop into a loose layer's children) |
 | FC-5 | Marquee selection of loose layers; resize handles; z-order keys; lock/hide UI (the placement fields exist and are honoured) |
-| FC-6 | Assets-panel drag, paste and armed-tool drawing onto the empty board (P5-A / P5-D / P5-E call `createCanvasLayer`); multi-file drops |
+| FC-6 | Assets-panel drag, paste and armed-tool drawing onto the empty board (P5-A / P5-D / P5-E call `createCanvasLayer`); a multi-file drop as ONE undo step (today one per layer) |
 | FC-8 | `studio_list_canvas_layers` / `studio_canvas_layer` MCP tools; a digest section |
 | FC-9 | Group / ungroup loose layers |
 | FC-10 | The 50-layer perf budgets |

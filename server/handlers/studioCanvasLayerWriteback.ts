@@ -174,10 +174,15 @@ export function canvasLayerFileNodeId(id: CanvasLayerId): string {
   return `${canvasLayerRelPath(id)}:1:1`
 }
 
+/** A codemod's one created element as the outcome's list of them (P5-B made `created` a list: an image drop inserts N). */
+function locations(created: CreatedJsxLocation | null | undefined): readonly CreatedJsxLocation[] | undefined {
+  return created ? [created] : undefined
+}
+
 /** What one canvas-layer edit did — the subset of `StudioEditApplyOutcome` these kinds produce. */
 export interface CanvasLayerEditOutcome {
   applied: true
-  created?: CreatedJsxLocation | null
+  created?: readonly CreatedJsxLocation[]
   createdIn?: string
   removed?: DeletedJsxText
 }
@@ -215,7 +220,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       const built = canvasLayerModuleFromSpec(root as InsertJsxNode)
       if (!built.ok) throw new CanvasLayerEditRefusal(built.refusal.reason, built.refusal.message)
       writeNewCanvasLayerFile(dir, edit.layerId, built.module.text)
-      return { applied: true, created: built.module.root, createdIn: layerNodeId }
+      return { applied: true, created: locations(built.module.root), createdIn: layerNodeId }
     }
     case 'canvas-layer-delete':
       return { applied: true, removed: { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false } }
@@ -246,7 +251,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
       if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
       // The page has the markup now; a move takes the layer off the canvas.
       const removed = edit.copy ? undefined : { text: removeCanvasLayerFile(dir, edit.layerId), wholeLine: false }
-      return { applied: true, created: result.created, createdIn: edit.parentNodeId, ...(removed ? { removed } : {}) }
+      return { applied: true, created: locations(result.created), createdIn: edit.parentNodeId, ...(removed ? { removed } : {}) }
     }
     case 'canvas-layer-lift': {
       const origin = locate(edit.nodeId)
@@ -268,7 +273,7 @@ function dispatch(dir: string, edit: CanvasLayerEdit, locate: Locate): CanvasLay
         },
       })
       if (!result.ok) throw new CanvasLayerEditRefusal(result.refusal.reason, result.refusal.message)
-      return { applied: true, created: result.root, createdIn: layerNodeId }
+      return { applied: true, created: locations(result.root), createdIn: layerNodeId }
     }
   }
 }

@@ -20,7 +20,7 @@
  */
 import { canvasLayerEditNodeId, type CanvasLayerPlacementChange } from '@core/studio-board'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import { commitStructural } from './studioStructuralCommits'
+import { commitStructural } from './studioStructuralCommitEngine'
 import type { InsertPropValue } from './studioSaveRequests'
 
 /** A new layer's root element — `insert`'s element fields. */

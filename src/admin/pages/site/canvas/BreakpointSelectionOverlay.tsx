@@ -336,8 +336,11 @@ export function BreakpointSelectionOverlay({
   })
 
   // D2 G3 — publish this frame as a place a drag from ANOTHER frame can land.
+  // P5-B: on the permission alone, not on being the active frame — an OS file
+  // drop has no pointerdown, so its frame is usually inactive, and it
+  // activates its own page when it lands (`imageDropActions.ts`).
   useCanvasDropSurfaceRegistration({
-    enabled: canEditStructureHere,
+    enabled: permissions.canEditStructure,
     frameId,
     pageId: framePageId,
     viewportRef,

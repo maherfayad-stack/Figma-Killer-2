@@ -565,7 +565,9 @@ export function applyStudioEditBatch(
         // already carries the blast radius the caller asked to see.
       } else if (outcome.applied) {
         written += 1
-        if (outcome.created) recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, outcome.created)
+        for (const created of outcome.created ?? []) {
+          recordCreatedPosition(createdPositions, dir, outcome.createdIn ?? edit.nodeId, created)
+        }
         for (const relocated of outcome.relocated ?? []) {
           recordCreatedPosition(relocatedPositions, dir, outcome.relocatedIn ?? edit.nodeId, relocated)
         }
