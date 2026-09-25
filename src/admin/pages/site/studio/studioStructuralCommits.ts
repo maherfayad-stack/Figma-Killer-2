@@ -26,9 +26,30 @@
  */
 import type { OptimisticPreviewHandle } from '@site/store/slices/site/structuralOptimism'
 import type { StructuralCommitRollback } from '@site/store/slices/site/structuralCommitRollback'
-import { dissolveWrapperTemplate, type StructuralEditPayload } from './structuralUndoPlan'
+import { commitStructural, type StructuralCommitOptions } from './studioStructuralCommitEngine'
+import { dissolveWrapperTemplate, type StructuralEditPayload, type StructuralWriteOutcome } from './structuralUndoPlan'
 import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
-import { commitStructural } from './studioStructuralCommitEngine'
+
+/**
+ * P3-D — ONE gesture written as several edits applied IN ORDER, each against
+ * the file the previous ones left, all or nothing: a multi-selection drag, the
+ * arrow-key step of a selection, a non-adjacent group ("bring them together,
+ * then wrap"), several copies dropped at one place. The server's
+ * `studioEditSequence.ts` re-addresses every step and restores every file when
+ * any step is refused, so the board's one rollback (and one toast) is the
+ * whole story — the same contract as a single write.
+ *
+ * `undo`/`rollback`/`optimistic`/`select` mean what they mean for every other
+ * commit (`StructuralCommitOptions`).
+ */
+export async function commitStudioSequence(
+  edits: readonly StructuralEditPayload[],
+  refusalTitle: string,
+  options: Pick<StructuralCommitOptions, 'undo' | 'rollback' | 'optimistic' | 'select'> = {},
+): Promise<void> {
+  if (edits.length === 0) return
+  await commitStructural(edits, refusalTitle, { ...options, sequence: true })
+}
 
 /**
  * `struct-01` — a sibling reorder, committed to the user's `.tsx` the moment
@@ -56,21 +77,14 @@ import { commitStructural } from './studioStructuralCommitEngine'
  * No `undo` template: a move mutates the tree, so it already has a history
  * entry that `structuralHistory.ts` re-issues in either direction.
  *
- * Several moves in one request only when they are INDEPENDENT — P2-C2's
- * `moveSiblings`, whose `planSiblingSteps` guarantees no move's region
- * overlaps another's. `applyStudioEditBatch` then applies them bottom-to-top,
- * so no write shifts a pending one's line, exactly as for a multi-delete.
+ * ONE element. Several are a {@link commitStudioSequence} (P3-D): each move is
+ * written against the file the previous one left.
  */
-export async function commitStudioMoves(
-  moves: readonly { nodeId: string; anchorNodeId: string; position: 'before' | 'after' }[],
+export async function commitStudioMove(
+  move: { nodeId: string; anchorNodeId: string; position: 'before' | 'after' },
   rollback?: StructuralCommitRollback,
 ): Promise<void> {
-  if (moves.length === 0) return
-  await commitStructural(
-    moves.map(({ nodeId, anchorNodeId, position }) => ({ kind: 'move', nodeId, anchorNodeId, position })),
-    'Move refused',
-    rollback ? { rollback } : {},
-  )
+  await commitStructural([{ kind: 'move', ...move }], 'Move refused', rollback ? { rollback } : {})
 }
 
 /**
@@ -175,49 +189,45 @@ export async function commitStudioTransplant(transplant: {
  *
  * Several ids in one request on purpose: `applyStudioEditBatch` orders a batch
  * bottom-to-top, so a copy written lower in the file cannot move the line of one
- * still pending above it.
+ * still pending above it. In place only (⌘D, the toolbar button); a copy that
+ * lands somewhere else is {@link commitStudioDuplicateTo}.
  */
 export async function commitStudioDuplicate(
   nodeIds: readonly string[],
-  /**
-   * K2 — Alt+drag. Where the copy lands, when it is not beside the original:
-   * the container, and optionally the existing child to write it next to
-   * (`null` appends, which is a real position). Omitted entirely for ⌘D and
-   * the toolbar button, which copy in place.
-   *
-   * Single-node only by construction: the Alt+drag session resolves ONE drop
-   * target, and a multi-selection Alt-dragged to one place would need N copies
-   * ordered against each other inside a container whose child list is shifting
-   * under them. `planSourceDuplicateTo` refuses that as `multi-select` rather
-   * than copying the first and pretending.
-   */
-  destination?: {
-    parentNodeId: string
-    anchorNodeId: string | null
-    position: 'before' | 'after'
-  },
   optimistic?: OptimisticPreviewHandle, // `perf-10` — see `StructuralCommitOptions.optimistic`.
 ): Promise<void> {
   if (nodeIds.length === 0) return
-  await commitStructural(
-    nodeIds.map((nodeId) => ({
-      kind: 'duplicate',
-      nodeId,
-      ...(destination
-        ? {
-            parentNodeId: destination.parentNodeId,
-            ...(destination.anchorNodeId
-              ? { anchorNodeId: destination.anchorNodeId, position: destination.position }
-              : {}),
-          }
-        : {}),
-    })),
-    'Duplicate refused',
-    {
-      undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
-      ...(optimistic ? { optimistic } : {}),
-    },
-  )
+  await commitStructural(nodeIds.map((nodeId) => ({ kind: 'duplicate', nodeId })), 'Duplicate refused', {
+    undo: { label: 'Duplicate', template: { kind: 'delete-created' } },
+    ...(optimistic ? { optimistic } : {}),
+  })
+}
+
+/**
+ * K2 / ⌘V — copies written INTO a container rather than beside their
+ * originals (Alt+drag, a paste). Each names the container and, optionally, the
+ * existing child to write it next to (`null` appends, which is a real
+ * position). A copy into a container in ANOTHER file (`crossFile`, ERR-16) is
+ * a `transplant` with `copy: true`, which carries the imports it needs there.
+ *
+ * Several copies (ERR-7) are one SEQUENCE: they land as a run at one place, so
+ * each is written against the file the one before it left, in the order
+ * `planSourceDuplicateTo` returned them. One write, one entry, and its undo
+ * deletes every copy.
+ */
+export async function commitStudioDuplicateTo(
+  copies: readonly { nodeId: string; parentNodeId: string; anchorNodeId: string | null; position: 'before' | 'after'; crossFile?: true }[],
+): Promise<void> {
+  const edits: StructuralEditPayload[] = copies.map((copy) => ({
+    kind: copy.crossFile ? 'transplant' : 'duplicate',
+    nodeId: copy.nodeId,
+    parentNodeId: copy.parentNodeId,
+    ...(copy.anchorNodeId ? { anchorNodeId: copy.anchorNodeId, position: copy.position } : {}),
+    ...(copy.crossFile ? { copy: true } : {}),
+  }))
+  const options = { undo: { label: 'Duplicate', template: { kind: 'delete-created' as const } } }
+  if (edits.length > 1) await commitStudioSequence(edits, 'Duplicate refused', options)
+  else if (edits.length === 1) await commitStructural(edits, 'Duplicate refused', options)
 }
 
 /**
@@ -332,6 +342,42 @@ export async function commitStudioUngroup(
           },
     },
   })
+}
+
+/**
+ * P3-D (OD-7) — detach ONE call site so that a structural gesture on the
+ * markup inside a shared component applies to this instance only. Resolves
+ * with what the write reported once the board has re-read it, or `null` when
+ * it did not land — refused quietly, because the caller answers a refusal
+ * with the one dialog the gesture would have shown anyway.
+ *
+ * Its undo (`reinsert-detached`) removes the detached markup and writes the
+ * call site's own bytes back at the slot it held (`parentNodeId`/`index`,
+ * captured before the write), with the import the detach retired.
+ */
+export async function commitStudioDetachForInstance(detach: {
+  callSiteNodeId: string
+  parentNodeId: string
+  index: number
+  label: string
+}): Promise<StructuralWriteOutcome | null> {
+  let landed: StructuralWriteOutcome | null = null
+  await commitStructural([{ kind: 'detach', nodeId: detach.callSiteNodeId }], 'Detach refused', {
+    undo: {
+      label: detach.label,
+      template: {
+        kind: 'reinsert-detached',
+        callSiteNodeId: detach.callSiteNodeId,
+        parentNodeId: detach.parentNodeId,
+        index: detach.index,
+      },
+    },
+    onLanded: (outcome) => {
+      landed = outcome
+    },
+    quiet: true,
+  })
+  return landed
 }
 
 /**
@@ -466,9 +512,12 @@ export async function commitStudioStructuralReissue(
   direction: 'undo' | 'redo',
   label: string,
   rollback: StructuralCommitRollback,
+  /** P3-D — post `edits` as an ordered sequence (a redo of a sequence gesture). */
+  sequence?: true,
 ): Promise<void> {
   await commitStructural(edits, direction === 'undo' ? `Could not undo ${label}` : `Could not redo ${label}`, {
     reissue: direction,
     rollback,
+    ...(sequence ? { sequence } : {}),
   })
 }

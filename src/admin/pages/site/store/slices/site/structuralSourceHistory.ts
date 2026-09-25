@@ -186,7 +186,7 @@ export function reissueStructuralSourceEdits(
   const placements = entry.source.placements
   const side = direction === 'undo' ? 'before' : 'after'
   const posted = placements && placements.length > 0 ? withPlacements(get, placements, side, rollback) : rollback
-  void commitStudioStructuralReissue(edits, direction, label, posted)
+  void commitStudioStructuralReissue(edits, direction, label, posted, direction === 'redo' ? entry.source.sequence : undefined)
   return { kind: 'posted', pendingCommitId: rollback.id }
 }
 

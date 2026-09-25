@@ -19,10 +19,9 @@
  * crosses it. Regions never overlap (every unselected sibling neighbours at
  * most one run in a given direction), and a region never contains another
  * run's parent (checked below), so the moves are independent: each is valid
- * against the tree as it was, in any order, and a save batch applied
- * bottom-to-top (`orderStudioEditsForApply`) cannot shift a pending one's
- * line. That is what makes a whole multi-selection step ONE write and ONE
- * undo entry, and its inverse the same shape.
+ * against the tree as it was, in any order. The store writes them as one
+ * ordered sequence (`moveSequence.ts`, P3-D) — ONE write and ONE undo entry,
+ * whose inverse is the reversed sequence of where each element came from.
  *
  * ## What does not move
  *
@@ -44,41 +43,20 @@
  */
 import type { NodeTree } from './treeSchema'
 import type { PageNode } from './pageNode'
+import { topLevelSelection, type SequencedMove } from './moveSequence'
 
-/** One element moved within its own parent: `index` is where it lands, counted after it is detached (`moveNode`'s convention). */
-export interface SiblingMove {
-  nodeId: string
-  parentId: string
-  index: number
-  /** Where it sat before — the inverse move's `index`. */
-  fromIndex: number
-}
+/**
+ * One element moved within its own parent: `index` is where it lands, counted
+ * after it is detached (`moveNode`'s convention). A step plan is an ordinary
+ * move sequence (`moveSequence.ts`) whose moves happen to be independent.
+ */
+export type SiblingMove = SequencedMove
 
 export type SiblingStepRefusal = 'multi-row' | 'nested' | 'locked'
 
 export type SiblingStepPlan =
   | { ok: true; moves: SiblingMove[] }
   | { ok: false; reason: SiblingStepRefusal }
-
-/**
- * The selected ids that move on their own: present, not the root, and not
- * inside another selected node. Order follows `nodeIds`.
- */
-export function topLevelSelection(tree: NodeTree<PageNode>, nodeIds: readonly string[]): string[] {
-  // The root never moves, so it carries nothing: a selection holding it
-  // still moves its other members.
-  const selected = new Set(nodeIds.filter((id) => id !== tree.rootNodeId))
-  return nodeIds.filter((id) => {
-    const node = tree.nodes[id]
-    if (!node || id === tree.rootNodeId) return false
-    let parentId = node.parentId
-    while (parentId) {
-      if (selected.has(parentId)) return false
-      parentId = tree.nodes[parentId]?.parentId ?? null
-    }
-    return true
-  })
-}
 
 /** True when `nodeId` is `ancestorId` or sits inside it. */
 function isSelfOrDescendant(tree: NodeTree<PageNode>, nodeId: string, ancestorId: string): boolean {
@@ -140,7 +118,7 @@ export function planSiblingSteps(
         const target = run.start + step
         if (target < 0 || target > children.length - 1) continue
         if (target === run.start) continue
-        moves.push({ nodeId: children[run.start]!, parentId, index: target, fromIndex: run.start })
+        moves.push({ nodeId: children[run.start]!, parentId, index: target })
         const low = Math.min(run.start, target)
         const high = Math.max(run.start, target)
         regions.push({ run, low, high, memberIds: children.slice(low, high + 1) })
@@ -153,8 +131,8 @@ export function planSiblingSteps(
       if (neighbourId === undefined) continue
       moves.push(
         step > 0
-          ? { nodeId: neighbourId, parentId, index: run.start, fromIndex: neighbourIndex }
-          : { nodeId: neighbourId, parentId, index: run.end, fromIndex: neighbourIndex },
+          ? { nodeId: neighbourId, parentId, index: run.start }
+          : { nodeId: neighbourId, parentId, index: run.end },
       )
       const low = Math.min(run.start, neighbourIndex)
       const high = Math.max(run.end, neighbourIndex)
@@ -179,9 +157,4 @@ export function planSiblingSteps(
     }
   }
   return { ok: true, moves }
-}
-
-/** The moves that take `moves` back, in the same independent-batch shape. */
-export function invertSiblingMoves(moves: readonly SiblingMove[]): SiblingMove[] {
-  return moves.map((move) => ({ ...move, index: move.fromIndex, fromIndex: move.index }))
 }

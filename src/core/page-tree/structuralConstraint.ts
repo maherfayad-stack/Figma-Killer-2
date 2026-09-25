@@ -170,7 +170,6 @@ export function explainStructuralConstraint(input: {
   kind: StructuralEditKind
   node: SourceStructureNode
   anchor?: SourceStructureNode | null
-  multi?: boolean
 }): EditConstraint | null {
   const refusal = refuseStructuralEdit(input)
   if (!refusal) return null

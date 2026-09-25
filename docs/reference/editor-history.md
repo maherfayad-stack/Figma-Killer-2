@@ -74,7 +74,7 @@ export interface BoardHistory {
 
 export type StructuralHistory =
   | { gesture: 'move'; undo: StructuralHistoryMove; redo: StructuralHistoryMove }
-  | { gesture: 'siblings'; undo: SiblingMove[]; redo: SiblingMove[] } // P2-C2: a multi-selection step, one /save batch each way
+  | { gesture: 'moves'; undo: SequencedMove[]; redo: SequencedMove[] } // P2-C2 / P3-D: several elements moved as one gesture — one /save SEQUENCE each way
   | { gesture: 'source'; source: StructuralSourceGesture } // insert/duplicate/wrap/group/ungroup/paste/transplant/image-drop/delete
 
 export interface StructuralHistoryMove {
