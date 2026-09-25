@@ -54,7 +54,10 @@
  *   ⇧0         | reset zoom                  | zoom to 100%, alias of ⌘0       | P2-B
  *   ⌘[ / ⌘]    | (unbound)                   | reorder ±1 in flow order        | "Up" = earlier in the DOM (IX-9)
  *   H          | toggle history              | hand tool (latched)             | Figma's
- *   ⇧H / ⇧V    | flip                        | unbound                         | Reserved for flip (IX-misc)
+ *   ⇧H / ⇧V    | flip                        | flip (P5-F): the standalone     | Figma's too. `flipValue.ts`
+ *              |                             | `scale`, one axis's sign        |
+ *   0 – 9      | opacity 100 % / 10–90 %     | the same (P5-F); 0 clears the   | Canvas-scoped: a digit in a field
+ *              |                             | layer's own opacity             | is the field's
  *   ← ↑ → ↓    | nudge / move a flex child   | the same, by what is selected:  | P2-C (IX-1). Canvas-scoped like Tab:
  *              |                             | a frame or note nudges; an      | in a panel the arrows stay the
  *              |                             | absolute layer nudges its       | panel's (a tree, a field)

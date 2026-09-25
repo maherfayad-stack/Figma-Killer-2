@@ -79,12 +79,13 @@
 import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
-import { startResizeHandleDrag } from './resizeHandleDragSession'
+import { startHandleDrag } from './handleDragSession'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import {
   MIN_ELEMENT_SIZE,
   readResizeBoxStart,
+  RESIZE_ACTIVE_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_SIZE_BADGE_ATTR,
   resizeElementBox,
@@ -247,10 +248,11 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         const badge = frame.querySelector<HTMLElement>(`[${RESIZE_SIZE_BADGE_ATTR}]`)
         if (badge) writeSizeBadge(badge, start.width + start.insetWidth, start.height + start.insetHeight)
 
-        cancelActive = startResizeHandleDrag({
+        cancelActive = startHandleDrag({
           event,
           handleEl,
           frame,
+          activeAttr: RESIZE_ACTIVE_ATTR,
           iframeDoc,
           scaleTool,
           callbacks: {

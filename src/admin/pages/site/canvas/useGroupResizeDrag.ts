@@ -10,7 +10,7 @@
  * (IX-6b), authored anchors (IX-21) — so a group resize can never write CSS a
  * one-layer resize to the same size would not. The pointer, key and lifetime
  * plumbing (⇧ / ⌥ live, Escape, ERR-12, one write per frame, the gesture
- * freeze) is `resizeHandleDragSession.ts`, shared with the single drag.
+ * freeze) is `handleDragSession.ts`, shared with the single drag.
  *
  * ## One write
  *
@@ -28,6 +28,7 @@ import { useEffect } from 'react'
 import { useEditorStore } from '@site/store/store'
 import {
   readResizeBoxStart,
+  RESIZE_ACTIVE_ATTR,
   RESIZE_HANDLE_ATTR,
   RESIZE_SIZE_BADGE_ATTR,
   writeSizeBadge,
@@ -48,7 +49,7 @@ import { anchorResizePatch } from './elementResizeAnchoring'
 import { authoredOffsets, planNudge, type NudgePlan } from './canvasNodeArrowMove'
 import { groupUnionRect, memberResizeStep, resizeGroupBox, type GroupResizeMember } from './groupResize'
 import type { SnapRect } from './boardSnapping'
-import { startResizeHandleDrag } from './resizeHandleDragSession'
+import { startHandleDrag } from './handleDragSession'
 
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
@@ -138,10 +139,11 @@ export function useGroupResizeDrag({ frame, iframeDoc, nodeIdsKey }: GroupResize
         const badge = frame.querySelector<HTMLElement>(`[${RESIZE_SIZE_BADGE_ATTR}]`)
         if (badge) writeSizeBadge(badge, union.width, union.height)
 
-        cancelActive = startResizeHandleDrag({
+        cancelActive = startHandleDrag({
           event,
           handleEl,
           frame,
+          activeAttr: RESIZE_ACTIVE_ATTR,
           iframeDoc,
           scaleTool: state.canvasTool === 'scale',
           callbacks: {

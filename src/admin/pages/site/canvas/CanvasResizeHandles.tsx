@@ -18,6 +18,9 @@
  * clicking page content anywhere but within a few px of the selected element's
  * edge behaves exactly as it did before.
  *
+ * Just outside each corner is a rotation zone (P5-F, IX-25 —
+ * `useElementRotateDrag`), writing the standalone `rotate` property.
+ *
  * A multi-selection gets ONE set of handles on the union of its layers
  * (`CanvasGroupResizeHandles`, below — P5-F, IX-6g).
  *
@@ -29,10 +32,11 @@ import { useState } from 'react'
 import { useEditorStore } from '@site/store/store'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
-import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR } from '@core/studio-runtime'
+import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR, ROTATE_CORNERS, ROTATE_HANDLE_ATTR } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
 import { useElementResizeDrag } from './useElementResizeDrag'
 import { useGroupResizeDrag } from './useGroupResizeDrag'
+import { useElementRotateDrag } from './useElementRotateDrag'
 import { CanvasSpacingHandles } from './CanvasSpacingHandles'
 
 interface CanvasResizeHandlesProps {
@@ -75,6 +79,12 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
     iframeDoc: sizeable ? iframeDoc : null,
     nodeId,
   })
+  // P5-F / IX-25 — the rotation zones ride the same frame and the same gate.
+  useElementRotateDrag({
+    frame,
+    iframeDoc: sizeable ? iframeDoc : null,
+    nodeId,
+  })
 
   // Rendering nothing is the honest answer in every case `canOfferResize`
   // refuses — see that module for which three they are. The alternative is
@@ -95,6 +105,11 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
           FIRST, so the resize strips paint over them where the two meet at
           an edge: the edge is the size, the inside is the padding. */}
       {iframeDoc && target && <CanvasSpacingHandles nodeId={nodeId} iframeDoc={iframeDoc} target={target} />}
+      {/* P5-F / IX-25 — rotation zones just OUTSIDE each corner handle, so a
+          press on the corner still resizes. Invisible; the cursor says it. */}
+      {ROTATE_CORNERS.map((corner) => (
+        <div key={`rotate-${corner}`} {...{ [ROTATE_HANDLE_ATTR]: corner }} />
+      ))}
       {RESIZE_HANDLES.map((handle) => (
         <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
       ))}

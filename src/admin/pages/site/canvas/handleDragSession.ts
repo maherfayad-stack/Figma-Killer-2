@@ -1,16 +1,17 @@
 /**
- * resizeHandleDragSession — the pointer, key and lifetime plumbing of ONE
- * drag on a resize handle inside a frame, shared by the single-element
- * resize (`useElementResizeDrag`) and the multi-selection resize
- * (`useGroupResizeDrag`, P5-F / IX-6g).
+ * handleDragSession — the pointer, key and lifetime plumbing of ONE drag on a
+ * selection handle inside a frame, shared by the single-element resize
+ * (`useElementResizeDrag`), the multi-selection resize (`useGroupResizeDrag`,
+ * P5-F / IX-6g) and rotation (`useElementRotateDrag`, P5-F / IX-25).
  *
- * The two differ in WHAT a step computes and writes; they must not differ in
- * how a drag starts, follows the pointer, reads ⇧ / ⌥, ends, cancels or is
+ * They differ in WHAT a step computes and writes; they must not differ in how
+ * a drag starts, follows the pointer, reads ⇧ / ⌥, ends, cancels or is
  * abandoned — those are the ERR-12 and IX-6c guarantees, and a second copy of
- * them is how one of the two would lose one. So this module owns:
+ * them is how one of them would lose one. So this module owns:
  *
  *  - the canvas-gesture freeze (`beginCanvasGesture` / `endCanvasGesture`)
- *    and the frame's `RESIZE_ACTIVE_ATTR` (the W×H badge, IX-18);
+ *    and, for a resize, the frame's `RESIZE_ACTIVE_ATTR` (the W×H badge,
+ *    IX-18);
  *  - pointer capture on the handle, and the pointer listeners on the frame
  *    document (a pointer event inside the iframe is already in the frame's
  *    own CSS px — see `useElementResizeDrag`'s docblock on zoom);
@@ -25,10 +26,10 @@
  * and `end` (restore previews, then commit when asked), and gets back the
  * cancel function to call if its handles are torn down mid-drag.
  */
-import { guardDragSession, RESIZE_ACTIVE_ATTR, resizeModifiersOf, type ResizeModifiers } from '@core/studio-runtime'
+import { guardDragSession, resizeModifiersOf, type ResizeModifiers } from '@core/studio-runtime'
 import { beginCanvasGesture, endCanvasGesture } from './canvasGesture'
 
-export interface ResizeHandleDragCallbacks {
+export interface HandleDragCallbacks {
   /** A new pointer delta (frame-document px) or modifier state. Compute; do not write. */
   step(dx: number, dy: number, modifiers: ResizeModifiers): void
   /** The write phase, at most once per animation frame. */
@@ -42,21 +43,26 @@ export interface ResizeHandleDragCallbacks {
   end(commit: boolean): void
 }
 
-export interface ResizeHandleDragInput {
+export interface HandleDragInput {
   /** The `pointerdown` that pressed the handle. */
   event: PointerEvent
   handleEl: HTMLElement
-  /** The handle frame — carries `RESIZE_ACTIVE_ATTR` for the length of the drag. */
+  /** The handle frame. */
   frame: HTMLElement
+  /**
+   * The attribute the frame carries for the length of the drag —
+   * `RESIZE_ACTIVE_ATTR` for a resize (it shows the W×H badge), or `null`.
+   */
+  activeAttr: string | null
   iframeDoc: Document
   /** `K4`'s scale tool, latched for the gesture: ⇧ as if held. */
   scaleTool: boolean
-  callbacks: ResizeHandleDragCallbacks
+  callbacks: HandleDragCallbacks
 }
 
 /** Start the drag. Returns the cancel to call if the handles go away under it. */
-export function startResizeHandleDrag(input: ResizeHandleDragInput): () => void {
-  const { event, handleEl, frame, iframeDoc, scaleTool, callbacks } = input
+export function startHandleDrag(input: HandleDragInput): () => void {
+  const { event, handleEl, frame, activeAttr, iframeDoc, scaleTool, callbacks } = input
   const startX = event.clientX
   const startY = event.clientY
   let pointer = { x: startX, y: startY }
@@ -68,7 +74,7 @@ export function startResizeHandleDrag(input: ResizeHandleDragInput): () => void 
   // changes layout on every frame, which is exactly what those two are built
   // to assume does not happen. See `canvasGesture.ts`.
   const gesture = beginCanvasGesture()
-  frame.setAttribute(RESIZE_ACTIVE_ATTR, 'true')
+  if (activeAttr) frame.setAttribute(activeAttr, 'true')
 
   try {
     handleEl.setPointerCapture(event.pointerId)
@@ -131,7 +137,7 @@ export function startResizeHandleDrag(input: ResizeHandleDragInput): () => void 
       doc.removeEventListener('keydown', onKey, true)
       doc.removeEventListener('keyup', onKey, true)
     }
-    frame.removeAttribute(RESIZE_ACTIVE_ATTR)
+    if (activeAttr) frame.removeAttribute(activeAttr)
     try {
       handleEl.releasePointerCapture(event.pointerId)
     } catch (_err) {

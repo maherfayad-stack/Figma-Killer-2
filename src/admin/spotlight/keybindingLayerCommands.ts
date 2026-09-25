@@ -1,7 +1,9 @@
 /**
  * keybindingLayerCommands — P5-E's layer commands: align (⌥A ⌥D ⌥W ⌥S ⌥H
  * ⌥V, IX-20), bring to front / send to back (⌘⇧] ⌘⇧[, IX-9), add flex
- * layout (⇧A, IX-10) and copy / paste style (⌘⌥C ⌘⌥V, IX-props).
+ * layout (⇧A, IX-10) and copy / paste style (⌘⌥C ⌘⌥V, IX-props) — and
+ * P5-F's quick styles: opacity on the digits and flip on ⇧H / ⇧V (IX-misc,
+ * `canvas/layerQuickStyles.ts`).
  *
  * Its own module because `keybindings.ts` sits at the 700-line ceiling; the
  * shape and the rules are the registry's. Every one of these is
@@ -27,6 +29,21 @@ function isLetter(e: KeyEventLike, letter: string): boolean {
   if (e.code) return e.code === `Key${letter.toUpperCase()}`
   return e.key.toLowerCase() === letter
 }
+
+/**
+ * The digit a bare key press names, or `null` — `key` (what an AZERTY layout
+ * and a synthetic event report) or the physical `Digit` / `Numpad` code.
+ */
+export function opacityDigit(e: KeyEventLike): number | null {
+  if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return null
+  const fromCode = e.code ? /^(?:Digit|Numpad)([0-9])$/.exec(e.code)?.[1] : undefined
+  const digit = fromCode ?? (/^[0-9]$/.test(e.key) ? e.key : undefined)
+  return digit === undefined ? null : Number(digit)
+}
+
+/** ⇧ + a letter and nothing else. */
+const shiftLetter = (letter: string) => (e: KeyEventLike) =>
+  e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isLetter(e, letter)
 
 /** ⌥ + a letter and nothing else — Figma's align chords. */
 const altLetter = (letter: string) => (e: KeyEventLike) =>
@@ -98,6 +115,42 @@ export const LAYER_COMMAND_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: '⇧A', win: 'Shift+A' },
     ariaKeyshortcuts: 'Shift+A',
     match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && isLetter(e, 'a'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // P5-F (IX-misc) — Penpot's `opacity-N` and Figma's digit keys: 1–9 set
+  // 10–90 %, 0 is 100 % (it clears the layer's own opacity). Bare digits,
+  // canvas-scoped like every layer command, so a digit typed in a field is
+  // the field's. ⇧0 / ⇧1 / ⇧2 stay the zoom keys (they carry Shift).
+  {
+    commandId: 'layers.opacity',
+    displayName: 'Opacity — 1 to 9 set 10–90 %, 0 sets 100 %',
+    shortcut: { mac: '0–9', win: '0–9' },
+    match: (e) => opacityDigit(e) !== null,
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // P5-F (IX-misc) — Figma's and Penpot's flip keys, reserved for this in the
+  // conflict register since P2-B. The standalone `scale` property, one axis's
+  // sign (`panels/PropertiesPanel/flipValue.ts`).
+  {
+    commandId: 'layers.flipHorizontal',
+    displayName: 'Flip horizontal',
+    shortcut: { mac: '⇧H', win: 'Shift+H' },
+    ariaKeyshortcuts: 'Shift+H',
+    match: shiftLetter('h'),
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  {
+    commandId: 'layers.flipVertical',
+    displayName: 'Flip vertical',
+    shortcut: { mac: '⇧V', win: 'Shift+V' },
+    ariaKeyshortcuts: 'Shift+V',
+    match: shiftLetter('v'),
     scope: 'canvas',
     ignoreInEditableField: true,
   },

@@ -60,8 +60,10 @@ const ALLOWED_NON_DISPATCHER_LISTENERS: ReadonlyMap<string, string> = new Map([
       'down during an inline edit by refusing to forward.',
   ],
   [
-    'canvas/useElementResizeDrag.ts',
-    'Escape-cancels an IN-FLIGHT resize drag, bound on the iframe document for ' +
+    'canvas/handleDragSession.ts',
+    'Escape-cancels an IN-FLIGHT selection-handle drag (resize, group resize, ' +
+      'rotate — P5-F moved the plumbing out of useElementResizeDrag), and reads ' +
+      '⇧ / ⌥ changes mid-drag, bound on the iframe document AND the parent for ' +
       'the length of that one gesture. A different realm and a different ' +
       'lifetime from the shortcut layer.',
   ],
