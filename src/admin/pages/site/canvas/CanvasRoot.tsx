@@ -68,7 +68,6 @@ import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
 import { isDrawTool } from './canvasDrawTool'
-import { CanvasDrawToolLayer } from './CanvasDrawToolLayer'
 import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
@@ -84,6 +83,11 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
+// P5-E — mounted only while a draw tool is armed, so it loads on first arming
+// rather than with the editor body.
+const CanvasDrawToolLayer = lazy(() =>
+  import('./CanvasDrawToolLayer').then((m) => ({ default: m.CanvasDrawToolLayer })),
+)
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
 )
@@ -622,7 +626,9 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
               runs keyboard / menu / handle style writes through the
               inspector's own write target (renders nothing while idle). */}
           {!isLive && editable && armedDrawTool && (
-            <CanvasDrawToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+            <Suspense fallback={null}>
+              <CanvasDrawToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+            </Suspense>
           )}
           {!isLive && editable && <SelectionStyleCommandHost />}
 

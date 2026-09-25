@@ -143,8 +143,11 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (event.button !== 0) return // wheel / middle-button pan are the canvas's
+    // No `stopPropagation`: the canvas's pan gesture must see every press, or
+    // its tap filter swallows later clicks (`canvas-overlay-pointerdown.test.ts`).
+    // It does not pan on a plain primary press, and the board marquee and the
+    // background-click deselect both ignore a target that is not the root.
     event.preventDefault()
-    event.stopPropagation()
     const start = { x: event.clientX, y: event.clientY }
     const viewport = findCanvasViewportAtPoint(start.x, start.y)
     sessionRef.current = {

@@ -64,7 +64,9 @@ export function LayerArrangeMenuItems({ targetIds, layerIdsUnderPointer, onClose
   const isRoot = single !== undefined && single.id === page?.rootNodeId
   const isContainer = single !== undefined && (isRoot || registry.get(single.moduleId)?.canHaveChildren === true)
   const locked = nodes.every((node) => node.locked === true)
-  const flexLabel = single && isContainer ? 'Toggle flex layout' : 'Wrap in flex layout'
+  // Not "Wrap in …": that is the Wrap submenu's name, and one menu must not
+  // offer two items a reader (or a screen reader) cannot tell apart.
+  const flexLabel = single && isContainer ? 'Toggle flex layout' : 'Add flex layout'
   const labelOf = (id: string) => {
     const node = page?.nodes[id]
     return node ? getNodeDisplayName(node, registry.get(node.moduleId), visualComponents) : id

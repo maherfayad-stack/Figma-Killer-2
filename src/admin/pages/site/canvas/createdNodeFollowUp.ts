@@ -45,7 +45,8 @@ export function armCreatedNodeFollowUp(run: (nodeId: string) => void, now: numbe
   // The page index, plus the active tree's own ids: a Visual Component's
   // nodes are not in the page index.
   const existing = new Set(state._nodeIdToPageIds.keys())
-  for (const id of Object.keys(selectActiveCanvasPage(state)?.nodes ?? {})) existing.add(id)
+  const tree = selectActiveCanvasPage(state)
+  if (tree) for (const id of Object.keys(tree.nodes)) existing.add(id)
   pending = { existing, expiresAt: now + FOLLOW_UP_WINDOW_MS, run }
 }
 
