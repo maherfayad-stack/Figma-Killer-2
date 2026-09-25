@@ -145,9 +145,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   3. Drag one PNG onto an existing `<img>`: it is outlined and the chip says "Replace image"; release swaps the image; ⌘Z restores the old one. Hold ⌥: it inserts beside instead.
   4. Hold ⇧ over a container: "Set as background"; release adds a background layer (Fill section shows it). Hold ⌘ over a `position: relative` container: the image lands at the pointer; over a static one, the "make it relative" dialog.
   5. ⌘K → "Insert image…": pick two files; they land right after the selected layer.
-### canvas-28 — P5-D (first half): SVG-0, SVG-1, SVG-2
-- **Agent:** parser-surgeon · **Branch:** `feat/svg-renders-as-itself` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, test/proof table in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; security-guard review of SVG-2 requested)
+### canvas-29 — P5-D (first half): SVG-0, SVG-1, SVG-2
+- **Agent:** parser-surgeon, finished by canvas-engineer · **Branch:** `feat/svg-renders-as-itself` off `25681dcb` · **PR:** draft, base `feat/canvas-excellence` (long form, threat list, test/proof table in its body) · **Updated:** 2026-09-25
+- **Stage:** verifying (draft PR open; needs a security-guard review of SVG-2 before merge)
 - **Goal:** ROADMAP §9 P5-D SVG-0/1/2 (`docs/audits/2026-09-23-studio-audit/08-svg.md` §2 defects 1 and 4, §9). SVG-3 onward not started.
 - **Done:**
   - SVG-0: `SvgEditor` renders a literal `<svg>` AS the node (`splitSvgRoot.ts`, cached HTML-parser split); no `display:contents` span. `isSizeableDisplay(display, localName)` sizes inline REPLACED elements (svg/img/…), so an svg gets resize handles.
@@ -159,9 +159,13 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Found, fixed in scope (security):** under happy-dom (the Bun server's DOMPurify DOM) a removed element made DOMPurify skip the NEXT node's attributes: `<foo></foo><a href="javascript:…" onclick>` survived `sanitizeRichtext`. `sanitize.ts` now repeats until a pass removes nothing (clean input = 1 pass).
   - `runtimeBridgeBundle.ts` regenerated with Bun 1.3.13 on an LF export (diff = exactly the two `isSizeableDisplay` hunks). The shared `regen-runtime.sh` runs `bun run studio-runtime:sync`, whose inner `bun` resolves from PATH (1.3.6) and emits old helpers; invoke `<bun 1.3.13> scripts/sync-studio-runtime.ts` directly. The file is one line: any other branch touching it conflicts textually.
   - **Height:** none new; an svg's box is now the app's box. **Injectors:** none. **Events:** none.
-  - **Found, not fixed (pre-existing, any element):** `BreakpointSelectionOverlay` schedules no measure pass when hover moves from one node to another inside a frame (hover is not a pass trigger; the ring's attribute change is filtered as chrome), so the hover ring keeps the FIRST node's box — usually `body`'s full frame. Reproduced on a plain `<div>` in `svg-renders-as-itself.e2e.ts`'s probe. One-line fix: schedule on `hoverRingNodeId` change.
+  - **Found, fixed (pre-existing, any element):** a hover moving straight from one node to another scheduled no overlay measure pass, so the hover ring kept the FIRST node's box (the e2e measured `body`'s 1024x800 box under the svg's id). A hover-target change is now a trigger (`BreakpointSelectionOverlay` → `overlayMeasureScheduler`'s trigger list). Test: `canvas/breakpointOverlayHoverRingFollowsTarget.test.tsx`, proven to fail with the effect disabled.
+  - **Not a bug:** the e2e's "selection ring 448 px off" was a stale reference box. The FIRST click into a frame re-frames the board (a plain `<span>` does the same); the ring was exactly on the svg. The spec now compares against the live box.
+  - **Events × measurement (new landmine):** overlay rings are measured on EVENTS. Any new input that moves which element a ring tracks without mutating page DOM (hover, ladder, a store-only target) must call `schedule()`: the mutation observer filters the ring's own writes as chrome.
+  - **Canvas files touched:** `canvas/{BreakpointSelectionOverlay, overlayMeasureScheduler, resizeOffer, CanvasResizeHandles}`, `modules/base/svg/{SvgEditor, hostTag, splitSvgRoot}`, `core/studio-runtime/{elementResizeRules, resizeHandles, generated/runtimeBridgeBundle}`.
+  - **Found, not fixed:** the first click into a frame re-frames (pans) the board when the fixture has no board file (`resolveCanvasFocusTarget` keys on the page then); client `sanitizeSvg` turns `<!DOCTYPE x [ … ]>` into a harmless escaped `]&gt;` text node (HTML-mode parse; the entity is never expanded).
   - Not yet in `docs/features/studio-import.md` → studio-scribe: the happy-dom skipped-node rule (every server-side DOMPurify call must go through `sanitizeToFixpoint`).
-- **Next:** SVG-3 (part stamps) can start; it reuses `@core/vector`'s name table.
+- **Next:** security-guard review of SVG-2 (sanitizer paths listed in the PR body); then SVG-3 (part stamps), which reuses `@core/vector`'s name table.
 
 ## Blocked
 
