@@ -686,6 +686,33 @@ does **not** lock the node.
 | any `isTextHostTag` tag with text, no children (`div`, `li`, `label`, `td`, `section`, …) | `base.text` on its own tag — `tag: 'custom'` + `customTag` outside the named list (P3-B, WB-3) |
 | anything else (`textarea`, `option`, `title`, `style`, …) | `base.container` |
 
+### SVG parts (P5-D, SVG-3/SVG-4)
+
+A literal `<svg>` is ONE `base.svg` node; its `<path>`/`<g>`/`<circle>` never
+become page-tree nodes. `serializeInlineSvg(el, eval, { stampParts: true })`
+(`parsePageFile.ts` only — icon props are not stamped) writes, on every element
+BELOW the root, `data-studio-svg-part="<line>:<col>"` (its own tag-name
+location, same file as the host's id tail) and, when non-empty,
+`data-studio-svg-code="d,fill"` (JSX names of attributes that are not
+literals per `isLiteralJsxAttribute` — the SAME predicate `setJsxProp` refuses
+with; `*` for a spread). Stamp bytes do not count against the 64 KB cap.
+
+- **Stamps never leave Studio.** Every exit calls `@core/vector`'s
+  `stripSvgPartStamps` — the publisher's `base.svg` render, SVG export
+  (`nodeExportModel.ts`), `SvgControl`, the agent's node search — gated by
+  `svg-part-stamps-stripped.test.ts` (every reader of `props.svg` strips or is
+  allowlisted with a reason; only the canvas render keeps them).
+- **Writes land through `svg-attr`** (`studioSvgWriteback.ts` →
+  `setSvgPartAttributes`): `nodeId` = the host svg, `part` = the stamp (`''` =
+  the host), `partTag` = the tag as read, `set`/`remove` JSX names. Server-side
+  guards: the part must be JSX nested in the host (never behind an expression
+  container), an SVG content tag, spread-free; an expression attribute refuses
+  `svg-attr-expression`; every name/value passes `svgAttributeWriteRefusal`
+  (the importer's rule too: no `on*`/`xmlns*`/React plumbing, fragment-only
+  `href`, no remote `url()`). Batches order `svg-attr` by PART
+  (`svgAttrOrderLocation`), never dedupe it, and refuse `element-moved` when
+  P1-D would re-address the host (the part location would be stale).
+
 `base.text` and `base.button` are **leaves** (`canHaveChildren: false`) and render
 a hardcoded "Text"/"Button" placeholder when empty — right for hand-authored
 pages, pure noise on imported ones. Every tag-bearing module keeps its real host

@@ -351,7 +351,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
       <path ref={handleLinesRef} className={styles.handleLines} />
       <path ref={anchorsRef} className={styles.anchors} data-vector-anchors="" />
       <path ref={handleDotsRef} className={styles.handleDots} />
-      <path ref={activeRef} className={styles.active} />
+      <path ref={activeRef} className={styles.active} data-vector-active="" />
       <path
         ref={hitRef}
         className={styles.hit}

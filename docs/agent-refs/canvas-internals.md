@@ -843,7 +843,7 @@ by **mount order**. There is now exactly one:
   remount below it.
 - **`editorKeyDispatcher.ts`** holds the scope registry and the precedence
   ladder, highest first:
-  `inline-edit > prototype-link > annotation > node > board > global`.
+  `inline-edit > vector-edit > prototype-link > annotation > node > board > global`.
   Each active scope gets first refusal; `handle` returning `true` means CLAIMED
   and stops dispatch, `false` falls through to the next rung. That fall-through
   is what lets `T`/`F`/`C` (board) still fire with a node selected while Delete
@@ -1039,6 +1039,18 @@ follow-up `setNodeInlineStyles` could not work on a studio tree: there the
 insert is an async source write that returns `''`, so no id exists to style
 until the resync lands.
 
+**The pen (P5-D, SVG-7).** `P` arms `canvasTool: 'pen'` (a `VectorTool`;
+`isArmedTool` covers both kinds) and `CanvasRoot` mounts it through the same
+lazy boundary, `CanvasArmedToolLayer` → `CanvasPenToolLayer`: the draw layer's
+capture surface, with the preview in BOARD units in an svg portalled into the
+transform layer, written imperatively per rAF. Click = corner, drag = smooth
+(⌥ breaks symmetry), ⇧ = 45°, click the first point = close; ⏎/Escape finish,
+⌘Z/Backspace pop the last point (its `vector-edit` rung, active while a path
+has points). The whole session is ONE write: an `insert` of
+`<svg …D5 defaults><path d/></svg>` at the FIRST click's drop target
+(`planSourceInsert` + `commitStudioInsert` with element children), or a loose
+free-canvas layer (`createCanvasLayer`) when it started on the empty board.
+
 **The empty board is P5-G's.** A press outside every frame is offered to
 `registerBoardDrawHandler`'s handler (`canvasDrawTool.ts`) with the drawn
 rectangle in BOARD units; with none registered it is ignored and the ghost
@@ -1151,6 +1163,34 @@ it; it does not replace it. The generated `vite.config.js` template says so in a
 comment (`server/handlers/studio/prototypeShell/shellFiles.ts`).
 
 ---
+
+## Vector editing (P5-D)
+
+Double-clicking a literal `base.svg` (`vectorEditEntry.ts`, before
+`startInlineEdit`) enters vector edit mode — or refuses BY NAME (a `?raw` icon,
+a `.map` row, locked, no stamped paths, a live frame, > 5,000 anchors, every
+`d` from code). The mode is a tiny external store (`vectorEditState.ts`), not
+editor-store state; it ends on Escape/⏎, a selection change, or the node going
+away.
+
+- **Board space, not screen space, not in-frame** (audit 08 §4.2 option c).
+  `BoardVectorLayer` mounts in `StudioBoardLayers` after the frames. Each
+  part's map is `frame content origin + part.getScreenCTM()`, measured once per
+  session and again whenever the host's markup changes (a re-applied `__html`
+  recreates every inner element — always re-query by `data-studio-svg-part`).
+  The origin is read against `[data-studio-board-origin]`. Nothing is measured
+  per pan, zoom or move. Chrome is sized `px / zoom` from the COMMITTED zoom.
+- **O(1) DOM.** All idle anchors are one path of squares, all hit targets one
+  transparent path (`pointer-events: fill`); `pointerdown` finds the anchor by
+  a linear nearest search. The overlay's geometry is written imperatively
+  (`paint`) — React renders the elements, never their `d`.
+- **One gesture = one write, zero React commits per move.** The drag mutates a
+  ref'd model in one rAF, mirrors `d` onto the real in-frame `<path>` (D6) under
+  `beginCanvasGesture()`, and on `pointerup` posts ONE `svg-attr`
+  (`svgPartCommits.ts`, a `known` structural inverse = one undo entry). A write
+  that does not land restores the old `d`. Arrow nudges are one write per burst
+  (400 ms after the last press). Delete is claimed by the rung (it would
+  otherwise delete the whole svg); removing an anchor is a follow-up.
 
 ## Inline text editing
 

@@ -69,7 +69,7 @@ src/core/page-parser/
 ├── componentSubstitution.ts  — the value half: call-site props → the component's own JSX
 ├── staticLoopExpansion.ts    — `.map` over a resolved array → one node per item
 ├── jsxAttributeReaders.ts    — how each attribute shape is read (props, style, raw SVG)
-├── inlineSvg.ts              — an `<svg>` written as JSX elements → markup for `base.svg`
+├── inlineSvg.ts              — an `<svg>` written as JSX elements → markup for `base.svg` (+ SVG-3 part stamps)
 ├── staticEvalTypes.ts        — pure leaf: the evaluator's value/scope types incl. `ValueOrigin`
 ├── componentSources.ts       — local vs package classification, workspace-wide ts-morph Project
 ├── staticEval.ts             — public composer for the value evaluator
@@ -1068,6 +1068,8 @@ The other half of inline SVG is a graphic authored as real JSX, which is how eve
 ```
 
 `serializeInlineSvg` (`inlineSvg.ts`) walks that subtree into markup for `base.svg`. It resolves each attribute through §7 independently, writes real markup attribute names through `@core/vector`'s `jsxToMarkupAttributeName` — the ONE table the SVG importer and the canvas renderer read in the other direction (`className` → `class`, `strokeWidth` → `stroke-width`, `xlinkHref` → `xlink:href`, `xmlSpace` → `xml:space`, `tabIndex` → `tabindex`, while `viewBox` and the other genuinely-camelCase SVG attributes stay; before the shared table the parse dashed every capital, so a sprite's `xlinkHref` became `xlink-href` and pointed at nothing) — serialises a `style={{…}}` object into a declaration string, drops event handlers, and omits any single attribute it cannot resolve.
+
+**Part stamps (P5-D, SVG-3).** For the page parse, every element BELOW the root `<svg>` is also stamped: `data-studio-svg-part="<line>:<col>"` (its own tag-name location, the node-id convention, in the host's file) and, when any, `data-studio-svg-code="<jsx names>"` — the attributes that are not literals by `isLiteralJsxAttribute` (the rule `setJsxProp` refuses with), or `*` for a spread. That is what lets vector edit mode address a `<path>` for an `svg-attr` write without the path becoming a node, and what tells it which attributes are bindings it must not overwrite. An authored `data-studio-svg-*` attribute is dropped (it would collide). Stamp bytes do not count against the 64 KB cap. Stamps are stripped by `@core/vector`'s `stripSvgPartStamps` everywhere markup leaves Studio — the published render, SVG export, the SVG property control, agent node search — and `svg-part-stamps-stripped.test.ts` fails on a new `props.svg` reader that does neither. Icon-prop svgs (`iconPropValues.ts`) are not stamped: they are not edited on the canvas.
 
 This replaced copying `element.getText()` verbatim and blanking the whole graphic whenever it contained a `{`. That heuristic was wrong in both directions: a "static" SVG shipped `className=` into markup where it is not a class attribute, and a single computed attribute erased the entire drawing — six empty progress rings on the eSIM corpus.
 
