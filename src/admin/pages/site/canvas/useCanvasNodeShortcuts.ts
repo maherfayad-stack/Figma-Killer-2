@@ -1,6 +1,8 @@
 /**
  * useCanvasNodeShortcuts — the `node` scope's second handler: Delete, ⌘D,
  * ⌘C / ⌘X / ⌘V, and ⌥↑/⌥↓ reorder, all acting on the current node selection.
+ * (⌘V only ARMS the paste since P5-A — the `paste` event does it; see
+ * `canvasClipboardBridge.ts`.)
  *
  * ## Why this is no longer a React `onKeyDown`
  *
@@ -34,6 +36,7 @@
  */
 import { useEditorStore } from '@site/store/store'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
+import { armCanvasPaste } from './canvasClipboardBridge'
 import { stepSelectionAmongSiblings } from './canvasNodeArrowMove'
 import { isInsideKeyOwningOverlay, isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
@@ -147,29 +150,31 @@ export function useCanvasNodeShortcuts({
         return true
       }
 
+      // ⌘C / ⌘X / ⌘V claim the key but NEVER `preventDefault` it (P5-A):
+      // cancelling the keydown cancels the browser's own copy / paste, and
+      // the `copy` / `paste` EVENT that follows is the only place the OS
+      // clipboard can be written or read without a permission prompt. The
+      // copy writes the Studio marker there; the paste reads what is there
+      // and decides what ⌘V means (`canvasClipboardBridge.ts`).
       if (getKeybindingForCommand('layers.copy')?.match(event)) {
-        event.preventDefault()
         if (currentIds.length > 1) store.copyNodes([...currentIds])
         else store.copyNode(selectedNodeId)
         return true
       }
 
       if (getKeybindingForCommand('layers.cut')?.match(event)) {
-        event.preventDefault()
         if (currentIds.length > 1) store.cutNodes([...currentIds])
         else store.cutNode(selectedNodeId)
         return true
       }
 
       if (getKeybindingForCommand('layers.paste')?.match(event)) {
-        event.preventDefault()
-        // `K7` — 'after', not the default 'auto': ⌘V is a gesture about the
-        // SELECTION, and the eye expects the copy beside the selected element
-        // rather than appended to the end of its children (where, on a tall
-        // container, it lands off-screen). The right-click "Paste here" keeps
-        // 'auto' — that one names a container and means "into it".
-        // Anchors to the multi-selection's anchor — same single target.
-        store.pasteNode(selectedNodeId, 'after')
+        // Armed, not performed: the `paste` event this keystroke raises
+        // carries the clipboard, and `canvasPaste.ts` decides between the
+        // copied layers (`K7`'s beside-the-selection paste), an image and an
+        // SVG. If no event comes (Safari, a cross-origin frame) the bridge
+        // reads the async Clipboard API instead.
+        armCanvasPaste()
         return true
       }
 

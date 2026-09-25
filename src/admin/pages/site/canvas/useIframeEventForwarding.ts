@@ -31,6 +31,12 @@
  * event types to the parent (using the original drag's pointerId so the
  * parent's session-id assumptions still line up).
  *
+ * Clipboard
+ * ─────────
+ * P5-A. `copy` / `cut` / `paste` raised in the frame's document reach the
+ * canvas's clipboard bridge (`canvasClipboardBridge.ts`), which is what lets
+ * ⌘V read an image or an SVG from the OS clipboard with focus in a frame.
+ *
  * OS file drop
  * ────────────
  * D2 G15. A `dragover`/`drop` carrying files from the desktop is re-dispatched
@@ -74,6 +80,7 @@
 import { useEffect, type RefObject } from 'react'
 import { iframeLocalPointToParentClientPoint } from './iframeEventCoordinates'
 import { installFrameDragRelay } from './canvasFrameDragRelay'
+import { installCanvasClipboardBridge } from './canvasClipboardBridge'
 import { readCanvasPointerRelay } from './canvasPointerRelay'
 import { isCanvasSpacePanActive, setCanvasSpacePanActive, shouldStartCanvasPointerPan } from './canvasPanInput'
 import { frameKeyInitFrom, relayFrameBlur, relayFrameKeyDown, relayFrameKeyUp } from './canvasFrameKeyRelay'
@@ -161,6 +168,21 @@ export function useIframeEventForwarding(
     if (!iframe) return
     return installFrameDragRelay(iframeDoc, iframe)
   }, [adapter, iframeRef, isLive])
+
+  // ── Clipboard events (P5-A) ───────────────────────────────────────────
+  // ⌘V pressed with focus in this frame raises its `paste` in THIS document,
+  // and a native clipboard event does not cross the iframe boundary; the key
+  // relay's clone on the parent document raises none. So the bridge listens
+  // here too, as `useCanvasClipboardBridge` does in the editor's document.
+  // See `canvasClipboardBridge.ts`.
+  useEffect(() => {
+    // A live frame is the running app: its clipboard is the app's.
+    if (isLive) return
+    if (!isPortalFrameAdapter(adapter)) return
+    const iframeDoc = adapter.getPortalWindow()?.document
+    if (!iframeDoc) return
+    return installCanvasClipboardBridge(iframeDoc)
+  }, [adapter, isLive])
 
   // ── Forward pointer events for canvas pan gestures + parent-doc canvas drags ────
   // The canvas pan gesture (useCanvas via @use-gesture) and the canvas

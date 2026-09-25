@@ -18,7 +18,7 @@
  * A dropped file lands wherever the pointer happens to be, which can be any
  * frame on the board, and the frame under a drop has never been activated by
  * a pointerdown because there was no pointerdown. So each action names its
- * page — and then ACTIVATES it (`openPageInCanvas`), the audit's decision
+ * page — and then ACTIVATES it (`gesturePage.ts`), the audit's decision
  * (07 §A.7): a drop is a user gesture on that frame, the optimistic ghost and
  * the value writes below both address the active tree, and the drop selects
  * its result the way Figma does.
@@ -45,7 +45,7 @@
  */
 import { pushToast } from '@ui/components/Toast'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { canWriteInlineStyleForModule, isSourceDerivedNodeId, styleValueKey, type NodeTree, type PageNode } from '@core/page-tree'
+import { canWriteInlineStyleForModule, isSourceDerivedNodeId, styleValueKey, type PageNode } from '@core/page-tree'
 import { backgroundModelPatch, insertBackgroundLayer, parseBackgroundLayers } from '@site/panels/PropertiesPanel/backgroundLayers'
 import { wrapUrlPayload } from '@site/panels/PropertiesPanel/gradientValue'
 import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
@@ -62,6 +62,7 @@ import {
   clampImageSize,
   type ImageDropRequest,
 } from './imageDropShapes'
+import { activateGesturePage, findGesturePage } from './gesturePage'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type ImageDropActions = Pick<SiteSlice, 'dropImagesIntoPage' | 'replaceImageInPage' | 'setBackgroundImageInPage'>
@@ -104,21 +105,10 @@ export function reportUnlanded(failures: readonly { name: string; message: strin
   pushToast({ kind: 'error', title: IMAGE_DROP_TITLE, body, location: 'site-editor' })
 }
 
-function findPage(get: SiteSliceHelpers['get'], pageId: string): NodeTree<PageNode> | null {
-  // A plain scan, not `store.ts`'s memoised `lookupCanvasPageById`: this
-  // module is imported BY the composed store, so importing that memo back
-  // would close a cycle. One O(pages) walk per DROP.
-  return get().site?.pages.find((page) => page.id === pageId) ?? null
-}
-
-function activatePage(get: SiteSliceHelpers['get'], pageId: string): void {
-  if (get().activePageId !== pageId || get().activeDocument !== null) get().openPageInCanvas(pageId)
-}
-
 /** Take a preview back only if its ghosts are still on the board — a resync that already replaced the page took them with it. */
 function rollbackGhosts(get: SiteSliceHelpers['get'], pageId: string, optimistic: OptimisticPreviewHandle | null): void {
   if (!optimistic) return
-  const page = findPage(get, pageId)
+  const page = findGesturePage(get, pageId)
   if (page && optimistic.nodeIds.every((id) => page.nodes[id])) optimistic.rollback()
   else optimistic.settle([])
 }
@@ -140,9 +130,9 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
       }
       if (drop.files.length === 0) return
 
-      const tree = findPage(get, drop.pageId)
+      const tree = findGesturePage(get, drop.pageId)
       if (!tree) return
-      activatePage(get, drop.pageId)
+      activateGesturePage(get, drop.pageId)
 
       const plan = planSourceInsert(tree, drop.parentId, drop.index)
       if (!plan.ok) {
@@ -167,10 +157,10 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
     },
 
     replaceImageInPage: (pageId, nodeId, file, paintProgress) => {
-      const tree = findPage(get, pageId)
+      const tree = findGesturePage(get, pageId)
       const node = tree?.nodes[nodeId]
       if (!tree || !node) return
-      activatePage(get, pageId)
+      activateGesturePage(get, pageId)
 
       void (async () => {
         const onProgress = (fraction: number) => paintProgress?.(nodeId, fraction)
@@ -205,7 +195,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
     },
 
     setBackgroundImageInPage: (pageId, nodeId, file) => {
-      const tree = findPage(get, pageId)
+      const tree = findGesturePage(get, pageId)
       const node = tree?.nodes[nodeId]
       if (!tree || !node) return
       const refusal = refuseBackgroundTarget(node, get().site?.styleRules ?? {})
@@ -213,7 +203,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
         pushToast({ kind: 'warning', title: 'Cannot set that background', body: refusal, location: 'site-editor' })
         return
       }
-      activatePage(get, pageId)
+      activateGesturePage(get, pageId)
 
       void (async () => {
         try {
@@ -221,7 +211,7 @@ export function createImageDropActions(helpers: SiteSliceHelpers): ImageDropActi
           // The same layer model the Fill section writes through: the new
           // image becomes the TOP background layer, every existing layer
           // (a gradient, another image) stays below it.
-          const current = findPage(get, pageId)?.nodes[nodeId]
+          const current = findGesturePage(get, pageId)?.nodes[nodeId]
           if (!current) return
           const model = parseBackgroundLayers(current.inlineStyles ?? {})
           const before = backgroundModelPatch(model)
