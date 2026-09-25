@@ -7,10 +7,9 @@
  * directly with a JavaScript runtime — never through `<pm> run <script>`,
  * which also runs the repository's `pre<script>`/`post<script>` hooks, and
  * never through `npx`, which can download and run a package the project did
- * not install. The security-hardening bundle made the same move for the dev
- * server (`viteLaunch.ts`, review of #233 F3.4); this is the package-agnostic
- * half of that rule, so a second Tier-2 tool does not grow a second copy of
- * the lookup.
+ * not install. The security-hardening bundle made that move for the dev
+ * server (review of #233 F3.4); this is the one lookup both Tier-2 spawns use —
+ * `viteLaunch.ts` for `vite`, `projectLint.ts` for `eslint`.
  *
  * ## Which install
  *
@@ -20,7 +19,7 @@
  * `node_modules` entry that is a link escaping it.
  */
 import { readFileSync } from 'node:fs'
-import { dirname, join, relative, resolve, sep } from 'node:path'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { Type } from '@core/utils/typeboxHelpers'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import { isRealpathContained } from './workspacePackageResolve'
@@ -34,7 +33,8 @@ export function appRootToProjectDir(appRoot: string, projectDir: string): string
     out.push(current)
     if (current === root) return out
     const rel = relative(root, current)
-    if (rel === '' || rel.startsWith('..') || rel.startsWith(`..${sep}`)) return out
+    // Past the project root: `..` itself, a `../` path, or (Windows) another drive.
+    if (rel === '' || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return out
     const parent = dirname(current)
     if (parent === current) return out
     current = parent

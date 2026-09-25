@@ -94,7 +94,9 @@ type NodeActions = Pick<
   | 'groupNodes'
   | 'ungroupNode'
   | 'transplantNodes'
-  | 'insertImageIntoPage'
+  | 'dropImagesIntoPage'
+  | 'replaceImageInPage'
+  | 'setBackgroundImageInPage'
 >
 
 function recordPatchChanges(

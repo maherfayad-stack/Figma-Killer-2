@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for `lock-01`: a node whose VALUE the evaluator had to
@@ -29,7 +30,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
  */
 
 const HOMEPAGE_ID = 'homepage-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const SECTION_TITLE_NODE_ID = 'journey-screens/src/screens/HomepageScreen.jsx:163:14'
 
 interface StudioProjectSummary {
@@ -84,12 +84,12 @@ test.describe('lock-01: a resolved VALUE does not lock its element', () => {
 
     const targetFrame = page.locator(`[data-page-id="${HOMEPAGE_ID}"]`)
     await expect(targetFrame).toHaveCount(1)
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
     await panIntoView(page, page.getByTestId('canvas-root'), targetFrame)
 
-    const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const iframeEl = visibleCanvasIframe(targetFrame)
     await expect(iframeEl).toBeVisible({ timeout: 15_000 })
-    const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(targetFrame)
 
     // ── Real click on the real copy ───────────────────────────────────────
     // "Upcoming trip" is the SectionTitle's resolved `title`. Clicking it

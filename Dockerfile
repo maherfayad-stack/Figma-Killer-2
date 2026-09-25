@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM oven/bun:1.3.11 AS build
+FROM oven/bun:1.3.13 AS build
 WORKDIR /app
 # vendor/pixel-art-icons is a `file:` dep — `bun install` needs it on disk to
 # resolve the dependency, so copy it alongside the manifest before installing.
@@ -10,13 +10,13 @@ RUN bun install --frozen-lockfile
 COPY . .
 RUN bun run build
 
-FROM oven/bun:1.3.11 AS production-deps
+FROM oven/bun:1.3.13 AS production-deps
 WORKDIR /app
 COPY package.json bun.lock ./
 COPY vendor ./vendor
 RUN bun install --frozen-lockfile --production
 
-FROM oven/bun:1.3.11 AS runtime
+FROM oven/bun:1.3.13 AS runtime
 WORKDIR /app
 
 ARG STUDIO_VERSION=dev

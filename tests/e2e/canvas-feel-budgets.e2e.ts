@@ -2,7 +2,6 @@ import { expect, test, type Frame, type Locator, type Page } from '@playwright/t
 import { profileGesture, readBoardCounts } from './helpers/canvasPerf'
 import { largeBoardPageId, writeLargeBoardCorpus } from './helpers/largeBoardCorpus'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   SELECTION_RING,
   clickInFrame,
   frameForPage,
@@ -10,6 +9,7 @@ import {
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * The feel budgets on a LARGE board — ROADMAP P2-A, audit `01-perf.md` §3
@@ -148,7 +148,7 @@ async function openAtWorkingZoom(page: Page): Promise<{ canvasRoot: Locator; fra
   // queue (700 ms quiet + ~120 ms per frame) and the first settle passes run.
   await frameForPage(page, canvasRoot, TARGET_PAGE_ID)
   await page.waitForTimeout(4000)
-  const handle = await frameEl.locator(CANVAS_FRAME_IFRAME_SELECTOR).elementHandle()
+  const handle = await visibleCanvasIframe(frameEl).elementHandle()
   const content = await handle?.contentFrame()
   if (!content) throw new Error('the target frame never attached a content document')
   await expect(content.locator('.row__label').first()).toBeVisible({ timeout: 30_000 })
@@ -164,9 +164,9 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
     annotate('hover sweep: live iframes', String(counts.liveIframes))
     annotate('hover sweep: board frames', String(counts.boardFrames))
 
-    const iframeBox = await frameEl.locator(CANVAS_FRAME_IFRAME_SELECTOR).boundingBox()
+    const iframeBox = await visibleCanvasIframe(frameEl).boundingBox()
     if (!iframeBox) throw new Error('the target iframe has no bounding box')
-    const content = await (await frameEl.locator(CANVAS_FRAME_IFRAME_SELECTOR).elementHandle())!.contentFrame()
+    const content = await (await visibleCanvasIframe(frameEl).elementHandle())!.contentFrame()
     // Element centres in the iframe's own coordinates, mapped to the page
     // through the iframe's rendered box (the canvas zoom is a CSS scale).
     const points = await content!.evaluate(() => {
@@ -383,7 +383,7 @@ test.describe('P2-A feel budgets on the 40 x 300 corpus', () => {
 
     // Targets that are actually under the viewport, in page coordinates (the
     // canvas zoom is a CSS scale on the iframe) — same mapping as the hover sweep.
-    const iframeBox = await frameEl.locator(CANVAS_FRAME_IFRAME_SELECTOR).boundingBox()
+    const iframeBox = await visibleCanvasIframe(frameEl).boundingBox()
     if (!iframeBox) throw new Error('the target iframe has no bounding box')
     // Never the warm-up node: clicking the selection again paints no new ring.
     const probe = await content.evaluate((skip) => ({

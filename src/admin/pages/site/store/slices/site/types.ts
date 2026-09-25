@@ -34,6 +34,7 @@ import type { EditorStore } from '@site/store/types'
 import type { PendingStructuralHistory } from '@site/studio/pendingStructuralOutcome'
 import type { SlotOwnerEntry } from './nodeIndex'
 import type { ImportedNodesResult } from './importedNodesResult'
+import type { ImageDropRequest, UploadProgressPainter } from './imageDropShapes'
 
 // ---------------------------------------------------------------------------
 // Public action surface — every method below appears as a top-level entry on
@@ -353,20 +354,18 @@ export interface SiteSlice {
    */
   transplantNodes: (nodeIds: string[], destination: TransplantDestination) => void
   /**
-   * D2 G15 — the `<img src alt>` a file dropped from the operating system
-   * becomes, written into the page the drop landed on.
-   *
-   * Names its page rather than using the active one: a dropped file lands
-   * wherever the pointer was, and the frame under a drop was never activated
-   * by a pointerdown because there was no pointerdown. See
-   * `imageDropActions.ts`.
+   * D2 G15 / P5-B — the `<img>`s image files dropped from the operating
+   * system become: every file landed, then ONE insert of N siblings (one
+   * write, one undo step), with an optimistic ghost per file while the bytes
+   * upload. Names its page, and activates it: a dropped file lands wherever
+   * the pointer was, and that frame was never activated by a pointerdown.
+   * See `imageDropActions.ts`.
    */
-  insertImageIntoPage: (
-    pageId: string,
-    parentId: string,
-    index: number,
-    image: { src: string; alt: string },
-  ) => void
+  dropImagesIntoPage: (drop: ImageDropRequest) => void
+  /** P5-B (IMG-3) — a file dropped onto an `<img>` replaces its source: the import it reads, or its literal `src`. */
+  replaceImageInPage: (pageId: string, nodeId: string, file: File, paintProgress?: UploadProgressPainter) => void
+  /** P5-B (IMG-7) — ⇧-drop: the file becomes the element's top background layer, written to its own inline style. */
+  setBackgroundImageInPage: (pageId: string, nodeId: string, file: File) => void
   wrapNode: (nodeId: string, containerModuleId: string, defaults?: Record<string, unknown>) => string
   /**
    * Wrap a multi-selection inside one new container with closest-common-ancestor

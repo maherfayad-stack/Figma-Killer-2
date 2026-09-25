@@ -70,6 +70,9 @@ They always change the file's line count.
   shifts node ids, so one element per call costs a re-parse each (measured:
   over twenty minutes for a ~30-node screen). The whole subtree is validated
   before any byte is written, and all its imports land in one pass.
+  \`siblings\` — an array of more elements of the same shape — writes a RUN
+  of new elements right after this one, at the same anchor, in the same
+  write; \`createdNodeIds\` then names every one in order.
 - **delete** returns \`removed\` and \`prunedImports\`: exactly what it took out.
 - **reinsert-source** is a delete's undo: \`nodeId\` is the PARENT, \`index\` the
   child position, \`text\` the bytes a delete returned in \`removed\` (JSX

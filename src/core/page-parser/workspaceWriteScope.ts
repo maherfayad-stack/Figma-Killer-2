@@ -305,6 +305,69 @@ export function realWorkspaceRel(root: string, target: string): string | null {
 }
 
 /**
+ * The READ-side decoder for a client-supplied, project-relative path to an
+ * EXISTING file — the one every route that serves or points at a project file
+ * shares (`studioAsset.ts`'s asset route, `studioEditTargets.ts`'s referenced
+ * files). `null` for any refusal, never a reason: the callers answer 404 and
+ * echo nothing.
+ *
+ * Refuses an absolute, drive-letter or UNC path, a NUL, a `.`/`..` segment on
+ * either separator, and any segment naming an excluded directory compared the
+ * way the filesystem resolves it ({@link excludedWorkspaceSegment}: `.GIT`,
+ * `.studio.`, `node_modules::$INDEX_ALLOCATION` all open the directory they
+ * spell on Windows). Then the path must EXIST and its real path — symlinks and
+ * junctions resolved — must sit strictly inside the project's real path, with
+ * no excluded directory on it either: a link named like source
+ * (`assets -> ../.git`) is refused by where it lands, not by what it is
+ * called.
+ */
+export function resolveWorkspaceReadPath(root: string, rawRel: string): { rel: string; abs: string } | null {
+  if (rawRel.length === 0 || rawRel.includes('\0')) return null
+  if (isAbsolute(rawRel) || /^[a-zA-Z]:/.test(rawRel) || rawRel.startsWith('\\\\') || rawRel.startsWith('//')) return null
+  const segments = rawRel.split(/[\\/]+/).filter((segment) => segment.length > 0)
+  if (segments.length === 0 || segments.some((segment) => segment === '..' || segment === '.')) return null
+  const rel = segments.join('/')
+  if (excludedWorkspaceSegment(rel) !== null) return null
+
+  const abs = join(resolve(root), ...segments)
+  let realRoot: string
+  let realTarget: string
+  try {
+    realRoot = realpathSync.native(root)
+    realTarget = realpathSync.native(abs)
+  } catch {
+    return null // missing, or a dangling link: nothing honest to serve or point at
+  }
+  const realRel = relative(realRoot, realTarget)
+  if (realRel === '' || isAbsolute(realRel) || realRel === '..' || realRel.startsWith(`..${sep}`)) return null
+  if (excludedWorkspaceSegment(realRel) !== null) return null
+  return { rel, abs }
+}
+
+/**
+ * Whether `target` is reached from `root` through plain directory entries
+ * only — strictly inside it, with no symlink or junction anywhere on the way
+ * and none at `target` itself (dangling or not).
+ *
+ * The rule for a file STUDIO owns and rewrites in a user's project: its
+ * preview shell (`prototype/`, `vite.config.js`, `index.html`), the generated
+ * agent guide (`CLAUDE.md`, `.claude/`), the vendored `design-system/`, and
+ * Studio's own `.studio/` records. A repository imported from GitHub can carry
+ * a link at any of those names, and a write through it lands wherever it
+ * points — `vite.config.js -> ~/.bashrc` would be overwritten on first open.
+ * Studio never needs to write one of its own files through a link, so it
+ * never does, whether the link leads in or out. Not for the user's own source:
+ * a writeback follows a link that stays inside the project
+ * ({@link isWorkspaceWritablePath}).
+ */
+export function isUnlinkedWorkspacePath(root: string, target: string): boolean {
+  const lexical = relative(resolve(root), resolve(target))
+  if (lexical === '' || isAbsolute(lexical) || lexical === '..' || lexical.startsWith(`..${sep}`)) return false
+  const real = realWorkspaceRel(root, target)
+  return real !== null && comparableWorkspaceRel(real) === comparableWorkspaceRel(lexical)
+}
+
+/**
  * Whether `target` (absolute) is a path Studio may write inside the project at
  * `root`: strictly inside it both textually and on the real path, with no
  * unwritable directory on either. The one predicate every writer that builds

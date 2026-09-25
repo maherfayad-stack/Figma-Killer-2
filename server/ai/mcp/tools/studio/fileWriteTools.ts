@@ -69,6 +69,7 @@ import {
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
+import { writeFileAtomic } from '../../../../handlers/studio/atomicFileWrite'
 
 const EXPECTED_HASH_FIELD = Type.Optional(
   Type.String({
@@ -111,10 +112,10 @@ const writeFileTool: AiTool = {
       // but it shrinks it to this call (security review of #233, F6).
       const target = resolveAgentFilePath(dir, rawPath, 'write')
       if (!target.ok) return pathRefusal(target)
-      const contentProblem = checkContent(content, target.rel)
-      if (contentProblem) return contentProblem
       const current = currentText(target, expectedHash)
       if (isRefusal(current)) return current
+      const contentProblem = checkContent(content, target.rel, current.content)
+      if (contentProblem) return contentProblem
       if (current.content !== null && expectedHash === undefined) {
         return toolRefusal('stale-source', `"${target.rel}" already exists, and replacing it whole without having read it would discard whatever it holds now.`, {
           remedy: 'Read it with studio_read_file and pass its hash as expectedHash — or change just the part you mean with studio_edit_file.',
@@ -129,11 +130,18 @@ const writeFileTool: AiTool = {
       // editor, a git checkout) created it since the check above, this
       // refuses instead of overwriting work the model never saw.
       try {
-        if (current.content !== null) checkpointBeforeWrite(dir, ctx, target)
-        writeFileSync(target.abs, content, { encoding: 'utf8', flag: current.content === null ? 'wx' : 'w' })
-        // `wx` succeeded, so the file did not exist: its pre-image is "absent",
-        // recorded only now so a creation that lost the race claims nothing.
-        if (current.content === null) checkpointBeforeWrite(dir, ctx, target, { knownAbsent: true })
+        // An existing file is replaced in one step (`writeFileAtomic`): a
+        // reader never sees it half-written. Its pre-image goes into the
+        // turn's checkpoint first.
+        if (current.content === null) {
+          writeFileSync(target.abs, content, { encoding: 'utf8', flag: 'wx' })
+          // `wx` succeeded, so the file did not exist: its pre-image is "absent",
+          // recorded only now so a creation that lost the race claims nothing.
+          checkpointBeforeWrite(dir, ctx, target, { knownAbsent: true })
+        } else {
+          checkpointBeforeWrite(dir, ctx, target)
+          writeFileAtomic(target.abs, content)
+        }
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code !== 'EEXIST') throw err
         return toolRefusal('stale-source', `"${target.rel}" was created by something else a moment ago, so it was not overwritten.`, {
@@ -252,10 +260,10 @@ const editFileTool: AiTool = {
       }
       const next = applyEdit(current.content, edit, target.rel)
       if (isRefusal(next)) return next
-      const contentProblem = checkContent(next.content, target.rel)
+      const contentProblem = checkContent(next.content, target.rel, current.content)
       if (contentProblem) return contentProblem
       checkpointBeforeWrite(dir, ctx, target)
-      writeFileSync(target.abs, next.content, 'utf8')
+      writeFileAtomic(target.abs, next.content)
       afterWrites(dir, ctx, [target])
       return { ok: true as const, path: target.rel, replacements: next.replacements, hash: contentHash(next.content) }
     })
@@ -284,7 +292,7 @@ const editFilesTool: AiTool = {
   requiresWrite: true,
   requiredCapabilities: ['studio.write'],
   description:
-    `Apply up to ${EDIT_FILES_MAX_EDITS} exact-string edits across one or more existing files ALL-OR-NOTHING: every edit is checked first (path rules, oldString found exactly once unless replaceAll, expectedHash), and if any one would refuse, NOTHING is written and the refusal names the edit (editIndex). The guarantee is against refusals and write errors (a failed write restores the files already written), not against the server itself crashing mid-batch. Use it for a change that must not land half-way — a component and its stylesheet, a renamed class or prop across files, a translation key added to every dictionary. The canvas reloads once for the whole batch. Returns { files: [{ path, hash }], edits }. Requires studio.write.`,
+    `Apply up to ${EDIT_FILES_MAX_EDITS} exact-string edits across one or more existing files ALL-OR-NOTHING: every edit is checked first (path rules, oldString found exactly once unless replaceAll, expectedHash), and if any one would refuse, NOTHING is written and the refusal names the edit (editIndex). The guarantee is against refusals and write errors (a failed write restores the files already written), not against the server itself crashing mid-batch (each file is replaced in one step, so none is ever left half-written). Use it for a change that must not land half-way — a component and its stylesheet, a renamed class or prop across files, a translation key added to every dictionary. The canvas reloads once for the whole batch. Returns { files: [{ path, hash }], edits }. Requires studio.write.`,
   inputSchema: EditFilesInputSchema,
   handler: async (input, ctx: ToolContext) => {
     const { edits } = input as { edits: readonly EditInput[] }
@@ -320,7 +328,7 @@ const editFilesTool: AiTool = {
         }
         const next = applyEdit(plan.next, edit, target.rel)
         if (isRefusal(next)) return withEditIndex(next, index)
-        const contentProblem = checkContent(next.content, target.rel)
+        const contentProblem = checkContent(next.content, target.rel, plan.original)
         if (contentProblem) return withEditIndex(contentProblem, index)
         plan.next = next.content
       }

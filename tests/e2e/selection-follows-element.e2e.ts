@@ -2,7 +2,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   SELECTION_RING,
   clickInFrame,
   createAuthoredFixtureProject,
@@ -11,6 +10,7 @@ import {
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * ERR-5 — real-browser proof that the selection follows the ELEMENT when a
@@ -78,8 +78,8 @@ test.describe('ERR-5 — the selection follows its element across a reparse', ()
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const contentFrame = canvasContentFrame(frame)
 
     const second = contentFrame.locator(`[data-node-id="${SECOND_BEFORE}"]`).first()
     await panIntoView(page, canvasRoot, second, 80)

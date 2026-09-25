@@ -15,7 +15,7 @@ import {
   cloneSiteRuntimeConfig,
   DEFAULT_SITE_RUNTIME,
 } from '@core/site-runtime'
-import { pushToast } from '@ui/components/Toast'
+import { baselineBeforeRead } from '@site/studio/loadedValuesBaseline'
 import { clearCanvasSelectionDraft } from '../selectionSlice'
 import { createDefaultSiteDocument } from './defaults'
 import { emptyDirtyMarks, type DirtyMarks } from './dirtyTracking'
@@ -26,6 +26,7 @@ import { buildReparseNodeIdRemap, remapHistoryEntries } from './historyNodeIdRem
 import { applyNodeIndexPatch, clearNodeIndexes, nodeIndexesOf, rebuildNodeIndexes } from './nodeIndex'
 import { notePagesRead } from './pageReadEpoch'
 import { createReparseNodeFollower, publishReparseFollow, type NodeIdFollower } from './reparseNodeFollow'
+import { rebaseUnsavedEdits, reportLostUnsavedEdits } from './unsavedEditRebase'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 import type { Draft } from 'mutative'
 import type { EditorStore } from '@site/store/types'
@@ -146,7 +147,14 @@ export function createLifecycleActions({
       return site
     },
 
-    loadSite: (site) => {
+    loadSite: (loaded) => {
+      // ERR-9 — the user's unsaved edits are carried onto the pages just read
+      // rather than discarded with the document they were made in. Only a
+      // re-read of the project already open has a baseline to rebase against
+      // (`baselineBeforeRead`); a first load or a project switch has none.
+      const previous = get().site
+      const rebase = rebaseUnsavedEdits(previous?.pages ?? [], loaded.pages, baselineBeforeRead(loaded.pages))
+      const site: SiteDocument = rebase.rebasedPageIds.size > 0 ? { ...loaded, pages: rebase.pages } : loaded
       // Clear the render cache BEFORE store hydration so stale HTML from a previous
       // site cannot bleed into the canvas after switching projects.
       // (Guideline #307 / Architect message #1216 — critical integration note)
@@ -244,16 +252,13 @@ export function createLifecycleActions({
         state._historyCoalesceKey = null
         state.canUndo = state._historyPast.length > 0
         state.canRedo = state._historyFuture.length > 0
-        // Always cleared, regardless of `historySafe`: `state.site` above is
-        // unconditionally replaced by the freshly-loaded document, so any
-        // in-memory edit not already reflected in it is gone either way —
-        // preserving the flag without the edit it described would just be a
-        // stuck "unsaved" indicator with nothing left to save. Item (b) of
-        // this fix (flushing a pending debounced save before a structural
-        // reload fires) is what keeps a real edit from reaching this point
-        // undelivered in the first place.
-        state.hasUnsavedChanges = false
+        // The document is the one just read, so nothing in it is unsaved —
+        // except the edits ERR-9's rebase carried onto it, whose pages stay
+        // marked for the next save (their values differ from the fresh
+        // baseline, which is exactly what that save will send).
+        state.hasUnsavedChanges = rebase.rebasedPageIds.size > 0
         state._dirtySave = emptyDirtyMarks()
+        for (const pageId of rebase.rebasedPageIds) state._dirtySave.pageIds.add(pageId)
         // Full reload — including a re-parse after a `shifted: true` save,
         // where every `line:col` id below the shifted line changed. There is
         // no pre/post patch set to diff incrementally against (this IS the
@@ -271,6 +276,7 @@ export function createLifecycleActions({
       // ERR-23 — a drag session holds ids outside the store; it follows
       // through the same answer the selection just did.
       publishReparseFollow(follow)
+      reportLostUnsavedEdits(rebase.lost)
     },
 
     clearSite: () => {
@@ -328,23 +334,23 @@ export function createLifecycleActions({
     // always has; it only wipes when replaying the stack against the new
     // tree would silently no-op or mint a phantom key, matching `loadSite`'s
     // own reasoning file-for-file (`historyPreservation.ts`).
-    patchPages: ({ pages, removedPageIds = [], styleRules, conditions }) => {
+    patchPages: ({ pages: read, removedPageIds = [], styleRules, conditions }) => {
       const { site } = get()
       if (!site) return
-      if (pages.length === 0 && removedPageIds.length === 0) return
+      if (read.length === 0 && removedPageIds.length === 0) return
 
+      // ERR-9 — every unsaved edit on a page this read replaces is carried
+      // onto the fresh page (`unsavedEditRebase.ts`), whoever wrote the file:
+      // the user's own save or structural commit, an agent, an outside editor.
+      // It used to be thrown away with a toast that blamed "an agent".
+      const rebase = rebaseUnsavedEdits(site.pages, read, baselineBeforeRead(read))
+      const pages = rebase.pages
       for (const page of pages) reindexNodeParents(page.nodes)
 
       const removedIdSet = new Set(removedPageIds)
       const freshById = new Map(pages.map((p) => [p.id, p]))
       const upsertedIds = new Set<string>()
       const actuallyRemovedIds = new Set<string>()
-      // A page about to be overwritten that still carried the user's own
-      // unsaved edits — surfaced as a toast ("merge: reload only touched
-      // pages" policy — the agent's on-disk write wins for a page it also
-      // touched).
-      const overwrittenDirtyTitles: string[] = []
-      const dirty = get()._dirtySave
 
       const nextPages: Page[] = []
       for (const page of site.pages) {
@@ -359,7 +365,6 @@ export function createLifecycleActions({
         }
         freshById.delete(page.id)
         upsertedIds.add(page.id)
-        if (dirty.all || dirty.pageIds.has(page.id)) overwrittenDirtyTitles.push(page.title)
         nextPages.push(fresh)
       }
       // Whatever's left in `freshById` didn't match an existing page — a
@@ -445,11 +450,15 @@ export function createLifecycleActions({
           marks,
         )
 
-        // A page whose local edits were just discarded is no longer
-        // meaningfully "unsaved" — drop the stale mark so a later save never
-        // tries to persist content the store no longer holds. A genuinely
-        // removed page's marks are dropped for the same reason.
-        for (const id of upsertedIds) state._dirtySave.pageIds.delete(id)
+        // A page that is now exactly what disk says holds nothing to save, so
+        // its mark goes; a page the rebase carried edits onto keeps one (ERR-9),
+        // and the store says so, or the autosave would never write them. A
+        // genuinely removed page's marks are dropped too.
+        for (const id of upsertedIds) {
+          if (rebase.rebasedPageIds.has(id)) state._dirtySave.pageIds.add(id)
+          else state._dirtySave.pageIds.delete(id)
+        }
+        if (rebase.rebasedPageIds.size > 0) state.hasUnsavedChanges = true
         for (const id of actuallyRemovedIds) {
           state._dirtySave.pageIds.delete(id)
           state._dirtySave.deletedPageIds.delete(id)
@@ -517,15 +526,7 @@ export function createLifecycleActions({
       // through the same answer the selection just did.
       publishReparseFollow(follow)
 
-      if (overwrittenDirtyTitles.length > 0) {
-        pushToast({
-          kind: 'warning',
-          title: 'Local edits overwritten',
-          body:
-            `${overwrittenDirtyTitles.join(', ')} had unsaved canvas edits that were replaced by ` +
-            `a change an agent just wrote to the same file${overwrittenDirtyTitles.length === 1 ? '' : 's'}.`,
-        })
-      }
+      reportLostUnsavedEdits(rebase.lost)
     },
   }
 }

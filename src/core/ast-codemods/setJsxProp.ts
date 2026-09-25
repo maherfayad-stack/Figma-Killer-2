@@ -18,6 +18,7 @@
  */
 import { Node, Project, SyntaxKind, type JsxAttribute } from 'ts-morph'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
+import { jsxAttributeSpelling, quoteOf, type Quote } from './stringSpelling'
 
 export interface SetJsxPropParams {
   file: string
@@ -84,15 +85,20 @@ function hasLiteralInitializer(attribute: JsxAttribute): boolean {
   )
 }
 
-function buildInitializerText(value: string | number | boolean): string {
-  if (typeof value === 'string') {
-    const hasDouble = value.includes('"')
-    const hasSingle = value.includes("'")
-    if (!hasDouble) return `"${value}"`
-    if (!hasSingle) return `'${value}'`
-    return `{${JSON.stringify(value)}}`
-  }
-  return `{${value}}`
+/**
+ * A string is spelled the way JSX spells an attribute (`stringSpelling.ts`):
+ * raw, in the quote the attribute already used — so `title='a'` stays
+ * single-quoted (WB-10's rule, for props) — and a container only for what raw
+ * attribute text cannot say (both quotes, a line break, a decodable entity).
+ */
+function buildInitializerText(value: string | number | boolean, quote: Quote): string {
+  return typeof value === 'string' ? jsxAttributeSpelling(value, quote) : `{${value}}`
+}
+
+/** The quote an attribute's existing string value is written in, or JSX's usual double quote. */
+function attributeQuote(attribute: JsxAttribute | undefined): Quote {
+  const initializer = attribute?.getInitializer()
+  return initializer && Node.isStringLiteral(initializer) ? quoteOf(initializer) : '"'
 }
 
 export function setJsxProp(params: SetJsxPropParams): void {
@@ -101,8 +107,11 @@ export function setJsxProp(params: SetJsxPropParams): void {
   const sourceFile = loadSourceFile(project, file)
   const element = findJsxElementAtLocationOrThrow(sourceFile, file, line, col)
 
-  const initializerText = buildInitializerText(value)
   const existingAttribute = element.getAttribute(prop)
+  const initializerText = buildInitializerText(
+    value,
+    attributeQuote(existingAttribute && Node.isJsxAttribute(existingAttribute) ? existingAttribute : undefined),
+  )
 
   if (existingAttribute && Node.isJsxAttribute(existingAttribute)) {
     if (!hasLiteralInitializer(existingAttribute)) {
