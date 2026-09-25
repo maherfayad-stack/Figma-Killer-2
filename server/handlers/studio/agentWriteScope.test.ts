@@ -360,7 +360,9 @@ describe('agentContentRefusal — a stylesheet write may not ADD what loads a mo
     const before = '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n@theme { --color-brand: red; }\n'
     const after = '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n@theme { --color-brand: coral; }\n'
     expect(agentContentRefusal('src/app.css', before, after)).toBeNull()
-    expect(agentContentRefusal('src/Home.tsx', '', '@plugin "./x.js"')).toBeNull()
+    // Every text write is judged (B1): a .tsx that gains the at-rule in a CSS string is refused too.
+    expect(agentContentRefusal('src/Home.tsx', '', '@plugin "./x.js"')?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/Home.tsx', '', 'export const plugins = []')).toBeNull()
   })
 
   it('the CLI hook input: an Edit is judged by old_string/new_string, a Write against the file on disk', () => {
@@ -369,5 +371,38 @@ describe('agentContentRefusal — a stylesheet write may not ADD what loads a mo
     expect(agentToolInputContentRefusal('src/app.css', dir, { old_string: '/* x */', new_string: '@plugin "./evil.js";' })?.code).toBe('needs-user')
     expect(agentToolInputContentRefusal('src/app.css', dir, { content: '@plugin "./kept.js";\nbody { margin: 0 }\n' })).toBeNull()
     expect(agentToolInputContentRefusal('src/app.css', dir, { content: '@plugin "./kept.js";\n@plugin "./evil.js";\n' })?.code).toBe('needs-user')
+  })
+})
+
+// Security review of #256, B1: tailwindcss@4 takes the path as
+// `params.slice(1, -1)` — any wrapping characters, not only quotes — and the
+// CSS parser drops comments first. Each spelling below loads `./evil.js`.
+describe('agentContentRefusal — a directive in ANY spelling Tailwind reads, in ANY file that carries CSS (B1)', () => {
+  const BYPASSES = ['@plugin (./evil.js);', '@plugin |./evil.js|;', '@config x./evil.jsx;', '@plugin/**/"./evil.js";']
+  for (const directive of BYPASSES) {
+    it(`adding ${directive} to a stylesheet needs the user`, () => {
+      expect(agentContentRefusal('src/index.css', 'body {}\n', `${directive}\nbody {}\n`)?.code).toBe('needs-user')
+    })
+  }
+
+  it('a <style> block in index.html, a .vue or a .svelte file is judged too', () => {
+    const html = (extra: string): string => `<html><head><style>${extra}@import "tailwindcss";</style></head></html>\n`
+    expect(agentContentRefusal('index.html', html(''), html('@plugin (./evil.js);'))?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/App.vue', '<style>\n</style>\n', '<style>\n@plugin "./evil.js";\n</style>\n')?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/App.svelte', '', '<style>@config |./evil.js|;</style>')?.code).toBe('needs-user')
+  })
+
+  it('an existing directive in a new spelling is still an edit of the rest, not an addition', () => {
+    expect(agentContentRefusal('src/index.css', '@plugin (./kept.js);\n.a{}', '@plugin (./kept.js);\n.b{}')).toBeNull()
+  })
+
+  it('the closure protects what a wrapped directive loads', () => {
+    const dir = tmpProject()
+    writeFileSync(join(dir, 'package.json'), JSON.stringify({ name: 'p', devDependencies: { tailwindcss: '^4.0.0' } }))
+    writeFileSync(join(dir, 'src', 'index.css'), '@import "tailwindcss";\n@plugin (./tw/a.js);\n@config x./tw/b.jsx;\n')
+    writeFileSync(join(dir, 'index.html'), '<style>@plugin |./tw/c.js|;</style>\n')
+    expect(agentWriteRefusal(join(dir, 'src', 'tw', 'a.js'), dir)?.code).toBe('needs-user')
+    expect(agentWriteRefusal(join(dir, 'src', 'tw', 'b.js'), dir)?.code).toBe('needs-user')
+    expect(agentWriteRefusal(join(dir, 'tw', 'c.js'), dir)?.code).toBe('needs-user')
   })
 })

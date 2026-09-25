@@ -76,7 +76,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### sec-24 — security hardening follow-ups (mcp-28 / mcp-30 open items, P1-E2 found-not-fixed)
 - **Agent:** security-guard · **Branch:** `fix/security-hardening-followups` off `25681dcb` · **PR:** #256 (draft, base `feat/canvas-excellence`; the item | threat | fix | test table and the adversarial inputs are in its body) · **Updated:** 2026-09-24
-- **Stage:** verifying (draft PR open; needs a security-guard re-review)
+- **Stage:** verifying (draft PR open; review #256 B1 fixed, needs security-guard re-review of it)
 - **Goal:** close the follow-ups that reviews #233 and #248 deferred, each with a test that failed with its fix disabled in place.
 - **Done:**
   - `ssrfGuard.ts` parses addresses to bytes: NAT64, SIIT, IPv4-compatible, 6to4, Teredo, doc/benchmark ranges, multicast, broadcast; fails closed. The plugin gated fetch now PINS the connection to the validated address (it re-resolved before: DNS rebinding).
@@ -88,6 +88,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - `devServer.ts` runs the project's own Vite bin (`viteLaunch.ts`); `predev`/`postdev` never run (measured on `__vite-live-fixture`: they did under `bun run dev` and `npm run dev`).
   - Guide generator: prune only where Studio's manifest exists and the hash matches; nothing through a link.
   - `writeFileAtomic` for agent overwrites (temp + fsync + rename; EPERM retry then in place; mode kept).
+  - Review #256 B1 fixed: `parseTailwindLoadDirectives` reads `@plugin`/`@config` the way tailwindcss@4 does (comments stripped, ANY wrapping, since Tailwind takes `params.slice(1,-1)`); the content gate judges EVERY agent text write (`<style>` in .html/.vue/.svelte too); the closure scan uses the same parser. Nits: EPERM in-place fallback never follows a link (O_NOFOLLOW, lstat on Windows); `gitOperations` exclusion is case-folded.
 - **Decisions:** exec Vite directly rather than `--ignore-scripts` (pnpm/yarn/bun differ; no shell at all now); Node runtime kept (fidelity), Bun only without Node. TEST-NET ranges are blocked, so tests that used 203.0.113.x as "public" now use 93.184.216.34.
 - **Landmines:**
   - P4-F (#251) is in the trunk; the merge (`a5855b96`) kept both sides: the checkpoint pre-image is taken BEFORE `writeFileAtomic`, and the hook runs the content refusal beside `agentWriteRefusal` before its pre-image capture. Keep that order.

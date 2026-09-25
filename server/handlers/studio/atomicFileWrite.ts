@@ -31,7 +31,7 @@
  * create (`wx`): that is what makes a racing creator lose.
  */
 import { randomUUID } from 'node:crypto'
-import { closeSync, fsyncSync, openSync, realpathSync, renameSync, statSync, unlinkSync, writeFileSync, writeSync } from 'node:fs'
+import { closeSync, constants, fsyncSync, lstatSync, openSync, realpathSync, renameSync, statSync, unlinkSync, writeSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 
 /** Error codes a rename over an open file reports on Windows. */
@@ -88,7 +88,20 @@ export function writeFileAtomic(path: string, content: string, deps: AtomicWrite
       }
     }
     // Still held by another process: write in place, as before — never lose it.
-    writeFileSync(target, content, 'utf8')
+    // Never through a link: `target` was resolved before the retry window, and
+    // a link swapped in since must not carry the write. `O_NOFOLLOW` where the
+    // OS has it; Windows has no such flag (and Bun rejects numeric open flags
+    // there), so an `lstat` right before the open stands in for it.
+    const noFollow = constants.O_NOFOLLOW
+    if (noFollow === undefined && lstatSync(target).isSymbolicLink()) {
+      throw new Error('The file became a link while it was held open, so it was not written.')
+    }
+    const held = noFollow === undefined ? openSync(target, 'w') : openSync(target, constants.O_WRONLY | constants.O_TRUNC | noFollow)
+    try {
+      writeSync(held, content, null, 'utf8')
+    } finally {
+      closeSync(held)
+    }
   } finally {
     try {
       unlinkSync(temp)

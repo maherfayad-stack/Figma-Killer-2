@@ -22,8 +22,9 @@
  * - **A symlinked config.** Its imports resolve from where the link POINTS,
  *   the way esbuild resolves them, and the file it points at is protected too.
  * - **Tailwind's CSS directives.** In a project that depends on Tailwind,
- *   `@plugin "./x.js"` and `@config "./x.js"` in any stylesheet load that
- *   module in Node on the next build. The targets are protected here; a write
+ *   `@plugin "./x.js"` and `@config "./x.js"` in any stylesheet — or in a
+ *   `<style>` block of an HTML or component file — load that module in Node on
+ *   the next build, however the path is wrapped (`parseTailwindLoadDirectives`). The targets are protected here; a write
  *   that ADDS such a directive is refused by the content half of the gate
  *   (`agentContentRefusal`, `agentWriteScope.ts`).
  * - **What each of those imports**, to depth {@link MAX_DEPTH}, found by a
@@ -67,10 +68,9 @@ const MAX_SCANNED_BYTES = 200_000
 const RELATIVE_SPECIFIER = /(?:\bfrom\s{0,20}|\bimport\s{0,20}\(?\s{0,20}|\brequire\s{0,20}\(\s{0,20})(['"`])(\.{1,2}\/[^'"`\r\n]{1,400})\1/g
 /** Any quoted relative string — the PostCSS plugin-map key form. */
 const QUOTED_RELATIVE = /(['"`])(\.{1,2}\/[^'"`\r\n]{1,400})\1/g
-/** Tailwind's `@plugin "…"` / `@config "…"` at-rules. */
-const TAILWIND_DIRECTIVE = /@(?:plugin|config)\s{1,20}(['"])([^'"\r\n]{1,400})\1/g
 const CODE_EXTENSIONS = ['.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs']
-const STYLESHEET = /\.(?:css|pcss|postcss)$/i
+/** Files whose CSS a Vite + Tailwind build reads directives from: stylesheets, and the `<style>` blocks of HTML and component files. */
+const CSS_CARRIER = /\.(?:css|pcss|postcss|scss|sass|less|html|vue|svelte|astro)$/i
 
 interface ClosureEntry {
   /** Comparable project-relative path → what (transitively) loads it. */
@@ -223,13 +223,12 @@ function scan(root: string): ClosureEntry {
     for (const rel of listWorkspaceFiles(root)) {
       const segments = rel.split('/')
       for (let i = 0; i < segments.length - 1; i += 1) dirs.add(segments.slice(0, i + 1).join('/'))
-      if (!STYLESHEET.test(rel)) continue
+      if (!CSS_CARRIER.test(rel)) continue
       const css = join(root, ...segments)
       stamp(css)
       const text = readCapped(css)
       if (text === null) continue
-      for (const match of text.matchAll(TAILWIND_DIRECTIVE)) {
-        const spec = match[2]!
+      for (const { path: spec } of parseTailwindLoadDirectives(text)) {
         if (!spec.startsWith('./') && !spec.startsWith('../')) continue
         const by = `${rel} (@plugin/@config)`
         for (const candidate of candidatePaths(dirname(css), spec)) {
@@ -289,19 +288,54 @@ export function hostConfigImportedBy(root: string, rel: string): string | null {
   return entry.importedBy.get(comparableWorkspaceRel(rel)) ?? null
 }
 
-/** Whether a path names a stylesheet Tailwind reads directives from. */
-export function isTailwindStylesheetPath(path: string): boolean {
-  return STYLESHEET.test(path)
+/** `text` with every CSS comment removed — a linear scan, so an unterminated `/*` costs one pass. */
+function withoutCssComments(text: string): string {
+  let out = ''
+  let index = 0
+  for (;;) {
+    const open = text.indexOf('/*', index)
+    if (open === -1) return out + text.slice(index)
+    out += text.slice(index, open)
+    const close = text.indexOf('*/', open + 2)
+    if (close === -1) return out
+    index = close + 2
+  }
+}
+
+/** A `@plugin`/`@config` at-rule: its name, its parameter as written, and the path Tailwind takes from it. */
+export interface TailwindLoadDirective {
+  readonly name: '@plugin' | '@config'
+  readonly params: string
+  readonly path: string
 }
 
 /**
- * Every `@plugin "…"` / `@config "…"` directive in a stylesheet, spelled
- * `@plugin "./x.js"` — relative or a package name, each loads a module in
- * Node on the next Tailwind build. One definition for the closure scan above
- * and for the content half of the agent write gate.
+ * Every Tailwind `@plugin` / `@config` at-rule in a text, read the way
+ * Tailwind reads it (security review of #256, B1). `tailwindcss@4` takes the
+ * path as `params.slice(1, -1)`: it strips the parameter's first and last
+ * character WHATEVER they are, so `@plugin (./evil.js);`, `@plugin
+ * |./evil.js|;` and `@config x./evil.jsx;` all load `./evil.js`, and a comment
+ * between the name and the parameter (`@plugin/**\/"./x.js"`) is dropped by
+ * the CSS parser before Tailwind sees it. So: comments first, then ANY
+ * `@plugin`/`@config` token up to the `;`, `{` or `}` that ends the at-rule,
+ * with no assumption about how the parameter is wrapped. The at-rule name is
+ * compared case-sensitively, as Tailwind does. One parser for the closure scan
+ * above and for the content half of the agent write gate.
  */
-export function tailwindLoadDirectives(css: string): string[] {
-  const out: string[] = []
-  for (const match of css.matchAll(TAILWIND_DIRECTIVE)) out.push(`${match[0].startsWith('@plugin') ? '@plugin' : '@config'} "${match[2]!}"`)
+export function parseTailwindLoadDirectives(text: string): TailwindLoadDirective[] {
+  const out: TailwindLoadDirective[] = []
+  for (const match of withoutCssComments(text).matchAll(/@(plugin|config)(?![\w-])([^;{}]{0,2000})/g)) {
+    const params = match[2]!.trim()
+    out.push({ name: match[1] === 'plugin' ? '@plugin' : '@config', params, path: params.length >= 2 ? params.slice(1, -1) : '' })
+  }
   return out
+}
+
+/**
+ * Every load directive in a text, each spelled as one comparable string
+ * (`@plugin (./x.js)`, whitespace collapsed) — what the content gate diffs
+ * before against after.
+ */
+export function tailwindLoadDirectives(text: string): string[] {
+  return parseTailwindLoadDirectives(text).map(({ name, params }) => `${name} ${params.replace(/\s+/g, ' ')}`.trimEnd())
 }

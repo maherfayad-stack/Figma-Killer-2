@@ -53,6 +53,27 @@ describe('writeFileAtomic', () => {
     expect(readdirSync(dir)).toEqual(['Home.tsx'])
   })
 
+  it('the in-place fallback never follows a link swapped in during the retry window', () => {
+    const file = join(dir, 'Home.tsx')
+    const outside = join(dir, 'outside.txt')
+    writeFileSync(file, 'OLD')
+    writeFileSync(outside, 'OUTSIDE')
+    let swapped = false
+    const swap = (): void => {
+      if (swapped) return
+      swapped = true
+      rmSync(file)
+      symlinkSync(outside, file, 'file')
+    }
+    try {
+      writeFileAtomic(file, 'NEW', { rename: () => { swap(); throw Object.assign(new Error('EPERM'), { code: 'EPERM' }) } })
+    } catch (_err) {
+      // Refused is the expected outcome; the assertion is on the outside file.
+    }
+    if (!lstatSync(file).isSymbolicLink()) return // no symlink privilege on this machine
+    expect(readFileSync(outside, 'utf8')).toBe('OUTSIDE')
+  })
+
   it('with a real second handle open on the target, the write still lands', () => {
     const file = join(dir, 'Home.tsx')
     writeFileSync(file, 'OLD')

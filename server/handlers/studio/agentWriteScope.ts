@@ -60,7 +60,7 @@ import {
   studioShellWorkspaceFile,
   unwritableWorkspaceSegment,
 } from '@core/page-parser'
-import { hostConfigImportedBy, isTailwindStylesheetPath, tailwindLoadDirectives } from './hostConfigImports'
+import { hostConfigImportedBy, tailwindLoadDirectives } from './hostConfigImports'
 
 /**
  * The forbidden segment in `candidate`, if it has one — measured RELATIVE to
@@ -217,12 +217,17 @@ export function agentWriteRefusal(filePath: string, cwd: string): AgentWriteRefu
  * not. What an existing directive loads is protected by the path half
  * (`hostConfigImports.ts`).
  *
+ * Every agent text write is judged, not only `.css`: a `<style>` block in
+ * `index.html`, a `.vue` or a `.svelte` file reaches Tailwind through Vite
+ * just the same. And a directive is recognised the way Tailwind reads it —
+ * any wrapping around the path, comments dropped (`parseTailwindLoadDirectives`,
+ * security review of #256, B1) — never only in its quoted spelling.
+ *
  * Both write paths ask it: the HTTP tools before every write
  * (`agentWriteSupport.ts`' `checkContent`), and the CLI's `PreToolUse` hook
  * with the Write or Edit tool's own input ({@link agentToolInputContentRefusal}).
  */
 export function agentContentRefusal(filePath: string, before: string | null, after: string): AgentWriteRefusal | null {
-  if (!isTailwindStylesheetPath(filePath)) return null
   const had = tailwindLoadDirectives(before ?? '')
   const added = tailwindLoadDirectives(after).filter((directive) => {
     const index = had.indexOf(directive)
@@ -235,7 +240,7 @@ export function agentContentRefusal(filePath: string, before: string | null, aft
     code: 'needs-user',
     message:
       `Not written: this change to "${filePath}" adds ${added.join(', ')}, which makes the next Tailwind build load that module in Node on the user's machine. `
-      + 'Show the user the exact change and ask them to make or approve it, then carry on — the rest of the stylesheet stays yours to write.',
+      + 'Show the user the exact change and ask them to make or approve it, then carry on — the rest of the file stays yours to write.',
   }
 }
 
@@ -252,7 +257,7 @@ export interface AgentToolWriteInput {
  * `old_string`.
  */
 export function agentToolInputContentRefusal(filePath: string, cwd: string, input: AgentToolWriteInput | undefined): AgentWriteRefusal | null {
-  if (!input || !isTailwindStylesheetPath(filePath)) return null
+  if (!input) return null
   if (typeof input.content === 'string') {
     return agentContentRefusal(filePath, currentTextOrNull(isAbsolute(filePath) ? filePath : resolve(cwd, filePath)), input.content)
   }
