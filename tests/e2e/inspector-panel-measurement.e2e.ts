@@ -4,6 +4,7 @@ import { Value } from '@sinclair/typebox/value'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * `STATE.md` `panel-27` (Track P, P6) — the REAL half of the inspector
@@ -51,7 +52,6 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  *     children — matching F3's own baseline shape.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const EDITOR_LAYOUT_STORAGE_KEY = 'studio-editor-layout-v2'
 const SIDEBAR_MIN_WIDTH = 260
 const FIXTURE_PROJECT_NAME = `panel27-e2e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -224,15 +224,13 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   const canvasRoot = page.getByTestId('canvas-root')
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 30_000 })
-  await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
-  // `speed-04`'s own defect (`studio-feel.e2e.ts` pins the same wait): a live
-  // board frame mounts the portal fallback AND the bridge frame together until
-  // the bridge is ready, so the page container briefly carries TWO
-  // `iframe[title^="Canvas frame"]` — and `frameLocator()` throws a
-  // strict-mode violation on the ambiguity. Settle to one before resolving
-  // into it.
+  await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
+  // A live board frame mounts the portal fallback AND a hidden bridge iframe
+  // until the bridge is ready, and in a fixture whose dev server cannot boot it
+  // never is: two `iframe[title^="Canvas frame"]` for good. Wait for the ONE
+  // displayed canvas iframe (`helpers/canvasIframe.ts`) before resolving into it.
   await expect(
-    page.locator('[data-page-id]').first().locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(page.locator('[data-page-id]').first()),
     'the first board frame never settled to one canvas iframe',
   ).toHaveCount(1, { timeout: 30_000 })
   return canvasRoot
@@ -378,7 +376,7 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
     await page.setViewportSize({ width: 1400, height: 2100 })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
     await selectTextLayer(page, canvasRoot, contentFrame)
 
     const scroll = panelScroll(page)
@@ -403,7 +401,7 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
     await page.setViewportSize({ width: 1400, height: 1000 })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
 
     // The resize handle only mounts once the panel is actually expanded
     // (`RightSidebar.tsx`: `{isExpanded && <SidebarResizeHandle .../>}`) —
@@ -476,7 +474,7 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
     await page.setViewportSize({ width: 1400, height: 1400 })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
 
     await selectRectangle(page, canvasRoot, contentFrame)
 
@@ -549,7 +547,7 @@ test.describe('panel-27 — inspector panel measurement gate (the real half)', (
     await page.setViewportSize({ width: 1400, height: 1000 })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
     const baseline = readBaseline()
 
     // f1_resizeViaWidthField — select the rectangle, click the W field.

@@ -63,9 +63,10 @@
  * ## Filesystem safety
  *
  * Every write target is derived server-side from the source tree's own layout
- * and containment-checked against `<project>/design-system/` on its REAL path
- * (`isRealpathContainedAllowingMissing`), so a planted symlink cannot carry a
- * write out of the folder. Every source file is containment-checked against
+ * and must be reached through plain directory entries only
+ * (`isUnlinkedWorkspacePath`): no symlink or junction on the way or at the
+ * name, dangling ones included — `existsSync` follows links, so a dangling
+ * one reads as "absent" and a write would land wherever it points. Every source file is containment-checked against
  * the vendored `src/` the same way before it is read. The ONLY paths this
  * module ever deletes are files it recorded writing itself, in that one
  * folder; a stale manifest entry that is a symlink, or that resolves outside
@@ -87,7 +88,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, posix } from 'node:path'
-import { listWorkspaceFiles } from '@core/page-parser'
+import { isUnlinkedWorkspacePath, listWorkspaceFiles } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import {
@@ -413,6 +414,8 @@ function readManifest(projectDir: string): DesignSystemManifest | null {
 
 function writeManifest(projectDir: string, manifest: DesignSystemManifest): void {
   const file = join(projectDir, ...MANIFEST_REL.split('/'))
+  // Studio's own record: never written through a link (`isUnlinkedWorkspacePath`).
+  if (!isUnlinkedWorkspacePath(projectDir, file)) return
   mkdirSync(dirname(file), { recursive: true })
   writeFileSync(file, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 }
@@ -452,7 +455,10 @@ export function ensureDesignSystemFiles(
     for (const file of files) {
       if (!isSafeRelPath(file.relPath)) continue
       const abs = join(dsRoot, ...file.relPath.split('/'))
-      if (!isRealpathContainedAllowingMissing(abs, dsRoot)) continue
+      // Studio owns this folder, and never writes it through a link: a
+      // dangling one at the name would carry the write out of the project,
+      // and `existsSync` below cannot see it (it follows links).
+      if (!isUnlinkedWorkspacePath(projectDir, abs)) continue
       if (existsSync(abs) && readFileBytesOrNull(abs)?.equals(file.contents)) continue
       mkdirSync(dirname(abs), { recursive: true })
       writeFileSync(abs, file.contents)

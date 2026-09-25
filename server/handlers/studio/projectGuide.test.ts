@@ -5,7 +5,8 @@
  * Exercised against real temp directories, never the real `claude` binary.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { generateStudioProjectGuide } from './projectGuide'
@@ -113,7 +114,18 @@ describe('generateStudioProjectGuide', () => {
   })
 
   describe('legacy artefact sweep', () => {
+    /**
+     * A manifest on disk from an older generator, without a sweep record — the
+     * state of a project Studio generated a guide in before. The sweep only
+     * ever runs there (security review of #233, F7): on a project with no
+     * manifest nothing under these names is Studio's.
+     */
+    function studioGeneratedBefore(files: Record<string, { hash: string; size: number; mtimeMs: number }> = {}): void {
+      write(dir, '.claude/.studio-generated.json', JSON.stringify({ files }))
+    }
+
     it('deletes guides a previous generator version wrote and this one does not', () => {
+      studioGeneratedBefore()
       // The CLI loads EVERY file under `.claude/` from its cwd, so leaving
       // these on disk did not make them inert — `figma.md` kept walking the
       // agent through a six-step Figma node-id workflow and handing off to
@@ -144,12 +156,14 @@ describe('generateStudioProjectGuide', () => {
     it('reports only artefacts that were actually there', () => {
       // `rmSync(force:true)` does not throw for a missing path, so without an
       // existence check every project would claim to have swept all 18.
+      studioGeneratedBefore()
       write(dir, '.claude/figma.md', '# Figma asset workflow\n')
       const result = generateStudioProjectGuide(dir)
       expect(result.pruned).toEqual(['.claude/figma.md'])
     })
 
     it('sweeps once, then never again — a file the user later creates is theirs', () => {
+      studioGeneratedBefore()
       write(dir, '.claude/figma.md', '# Figma asset workflow\n')
       expect(generateStudioProjectGuide(dir).pruned).toEqual(['.claude/figma.md'])
 
@@ -186,6 +200,7 @@ describe('generateStudioProjectGuide', () => {
       // first project swept in a process wrote "already swept" into the value
       // every later project received, and nothing on disk explained why they
       // were skipped.
+      studioGeneratedBefore()
       write(dir, '.claude/figma.md', '# Figma asset workflow\n')
       expect(generateStudioProjectGuide(dir).pruned).toEqual(['.claude/figma.md'])
 
@@ -193,10 +208,67 @@ describe('generateStudioProjectGuide', () => {
       try {
         write(second, 'package.json', JSON.stringify({ name: 'p2', dependencies: {} }))
         write(second, 'pages/Home.tsx', 'export default function Home() {\n  return <main />\n}\n')
+        write(second, '.claude/.studio-generated.json', JSON.stringify({ files: {} }))
         write(second, '.claude/figma.md', '# Figma asset workflow\n')
         expect(generateStudioProjectGuide(second).pruned).toEqual(['.claude/figma.md'])
       } finally {
         rmSync(second, { recursive: true, force: true })
+      }
+    })
+
+    // Security review of #233, F7: the names are generic, so a name alone is
+    // never proof that Studio wrote the file.
+    it("never sweeps an imported repository's own .claude files — no manifest, nothing of Studio's", () => {
+      write(dir, '.claude/agents/design-critic.md', '# Our own design critic\n')
+      write(dir, '.claude/figma.md', '# Our Figma notes\n')
+      const result = generateStudioProjectGuide(dir)
+      expect(result.pruned).toEqual([])
+      expect(read(dir, '.claude/agents/design-critic.md')).toBe('# Our own design critic\n')
+      expect(read(dir, '.claude/figma.md')).toBe('# Our Figma notes\n')
+      // Recorded as swept all the same, so a later turn cannot delete them either.
+      expect(generateStudioProjectGuide(dir).pruned).toEqual([])
+      expect(existsSync(join(dir, '.claude/figma.md'))).toBe(true)
+    })
+
+    it('where the manifest still holds the hash Studio wrote, only an unedited file is swept', () => {
+      const studioWrote = '# screen-builder\n'
+      const hash = createHash('sha256').update(studioWrote, 'utf8').digest('hex')
+      studioGeneratedBefore({
+        '.claude/agents/screen-builder.md': { hash, size: 0, mtimeMs: 0 },
+        '.claude/agents/design-critic.md': { hash, size: 0, mtimeMs: 0 },
+      })
+      write(dir, '.claude/agents/screen-builder.md', studioWrote)
+      write(dir, '.claude/agents/design-critic.md', '# edited by the user\n')
+      const result = generateStudioProjectGuide(dir)
+      expect(result.pruned).toEqual(['.claude/agents/screen-builder.md'])
+      expect(read(dir, '.claude/agents/design-critic.md')).toBe('# edited by the user\n')
+    })
+  })
+
+  describe('never through a link (security review of #233, F7)', () => {
+    it('a .claude junction out of the project gets no guide file, no hook settings and no manifest', () => {
+      const outside = mkdtempSync(join(tmpdir(), 'studio-guide-outside-'))
+      try {
+        symlinkSync(outside, join(dir, '.claude'), 'junction')
+        generateStudioProjectGuide(dir)
+        expect(readdirSync(outside)).toEqual([])
+      } finally {
+        rmdirSync(join(dir, '.claude'))
+        rmSync(outside, { recursive: true, force: true })
+      }
+    })
+
+    it('a legacy artefact reached through a .claude junction is never deleted', () => {
+      const outside = mkdtempSync(join(tmpdir(), 'studio-guide-outside-'))
+      try {
+        writeFileSync(join(outside, 'figma.md'), '# not the project\'s\n')
+        writeFileSync(join(outside, '.studio-generated.json'), JSON.stringify({ files: {} }))
+        symlinkSync(outside, join(dir, '.claude'), 'junction')
+        expect(generateStudioProjectGuide(dir).pruned).toEqual([])
+        expect(existsSync(join(outside, 'figma.md'))).toBe(true)
+      } finally {
+        rmdirSync(join(dir, '.claude'))
+        rmSync(outside, { recursive: true, force: true })
       }
     })
   })

@@ -28,13 +28,14 @@ import { BridgeFrameAdapter, type BridgeFrameChannel } from '@site/canvas/frameA
 import { registerFrameAdapter, unregisterFrameAdapter } from '@site/canvas/frameAdapter/canvasFrameAdapterRegistry'
 import { makePage, makeSite } from '../fixtures'
 import type { PageNode } from '@core/page-tree'
-import type { InboundEnvelope } from '@core/studio-runtime'
+import { toOutboundEnvelope, type InboundEnvelope } from '@core/studio-runtime'
 import '@modules/base/index'
 import { resetStructuralCommitQueue } from '@site/studio/structuralCommitQueue'
 
 const FILE = 'app/page.tsx'
 const at = (line: number) => `${FILE}:${line}:5`
 const ROOT = 'page-1:body'
+const FRAME_ORIGIN = 'https://live.studio.test'
 
 function studioSite(children: Record<string, { moduleId: string; children?: string[] }>, rootChildren: string[]) {
   const nodes: Record<string, PageNode> = {
@@ -67,10 +68,16 @@ beforeEach(() => {
   posted = []
   const channel: BridgeFrameChannel = {
     postMessage: (message) => posted.push(message as InboundEnvelope),
-    addEventListener: () => {},
+    addEventListener: (type, handler) => {
+      if (type !== 'message') return
+      // A booted runtime reports `ready` first. `BridgeFrameAdapter.post`
+      // queues every message until it does, so a channel that never says
+      // `ready` would hide every broadcast this file asserts on.
+      handler({ origin: FRAME_ORIGIN, source: undefined, data: toOutboundEnvelope({ type: 'ready' }) } as MessageEvent)
+    },
     removeEventListener: () => {},
   }
-  adapter = new BridgeFrameAdapter({ channel, frameOrigin: 'https://live.studio.test' })
+  adapter = new BridgeFrameAdapter({ channel, frameOrigin: FRAME_ORIGIN })
   iframe = document.createElement('iframe')
   registerFrameAdapter(iframe, adapter, 'desktop')
 

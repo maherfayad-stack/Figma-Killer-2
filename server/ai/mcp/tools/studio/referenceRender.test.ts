@@ -19,48 +19,63 @@ import {
   type ReferenceRenderOverrides,
 } from './referenceRender'
 import type { SpawnedProcessLike } from '../../../../handlers/studio/subprocessRunner'
+import { stopDevServer } from '../../../../handlers/studio/devServer'
+import { STUDIO_DEV_SERVER_STATE_DIR_ENV } from '../../../../handlers/studio/devServerRecords'
+import { writeViteProject } from '../../../../handlers/studio/viteLaunch.testHelpers'
 
-function streamFromChunks(chunks: string[]): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder()
-  return new ReadableStream<Uint8Array>({
-    start(controller) {
-      for (const chunk of chunks) controller.enqueue(encoder.encode(chunk))
-      // Deliberately never closes for the "hangs" case unless the caller
-      // enqueues nothing — tests that need a bounded stream pass one chunk
-      // and rely on `close()` below via a follow-up controller call.
-    },
-  })
-}
+// `live-11` — a dev server that reaches `'ready'` writes a record into
+// `STUDIO_DEV_SERVER_STATE_DIR`; without this the fakes below would leave
+// records in the repo's real `.tmp/dev-servers/`.
+let stateDir: string
+let previousStateDir: string | undefined
+/** Every project dir a test booted — stopped after it so no registry entry, idle timer or log tail outlives the test. */
+const bootedDirs: string[] = []
 
-function emptyStream(): ReadableStream<Uint8Array> {
-  return new ReadableStream<Uint8Array>({
-    start() {
-      // Never closes — simulates a dev server that keeps running (no EOF)
-      // without ever printing a URL, so `pumpAndWatch` never resolves the
-      // stream side; the boot-timeout race is what settles the test.
-    },
-  })
-}
+beforeEach(() => {
+  stateDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-mcp-reference-state-')))
+  previousStateDir = process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV]
+  process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV] = stateDir
+})
+
+afterEach(() => {
+  for (const dir of bootedDirs.splice(0)) stopDevServer(dir)
+  if (previousStateDir === undefined) delete process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV]
+  else process.env[STUDIO_DEV_SERVER_STATE_DIR_ENV] = previousStateDir
+  fs.rmSync(stateDir, { recursive: true, force: true })
+})
 
 interface FakeProcessOptions {
   stdoutChunks?: string[]
 }
 
-function makeFakeProcess(opts: FakeProcessOptions = {}): { proc: SpawnedProcessLike; wasKilled: () => boolean } {
+/**
+ * A fake dev-server process. Like a real one it stays alive until it is
+ * killed. Its output is NOT a stream: since `live-16` a real child writes to
+ * the log FILE the manager hands every spawn (`options.logPath`), and
+ * `devServer.ts` tails that file for the "Local:" URL. A fake that only
+ * filled `stdout` was never read, so every boot ran into the 30 s boot race
+ * and the test timed out. `stdoutChunks` are written to that file; omitting
+ * them models a server that keeps running without ever printing a URL.
+ */
+function makeFakeProcess(opts: FakeProcessOptions = {}): { spawn: NonNullable<ReferenceRenderOverrides['spawn']>; wasKilled: () => boolean } {
   let killed = false
   let resolveExited!: (code: number) => void
   const exited = new Promise<number>((resolve) => { resolveExited = resolve })
 
   const proc: SpawnedProcessLike = {
-    stdout: opts.stdoutChunks ? streamFromChunks(opts.stdoutChunks) : emptyStream(),
-    stderr: emptyStream(),
+    stdout: null,
+    stderr: null,
     exited,
     kill: () => {
       killed = true
       resolveExited(-1)
     },
   }
-  return { proc, wasKilled: () => killed }
+  const spawn: NonNullable<ReferenceRenderOverrides['spawn']> = (_argv, options) => {
+    fs.writeFileSync(options.logPath, (opts.stdoutChunks ?? []).join(''), 'utf8')
+    return proc
+  }
+  return { spawn, wasKilled: () => killed }
 }
 
 function makeFakeBrowser(pngBase64: string): { browser: PlaywrightLikeBrowser; gotoUrls: string[]; closed: () => boolean } {
@@ -81,10 +96,6 @@ function makeFakeBrowser(pngBase64: string): { browser: PlaywrightLikeBrowser; g
 
 const TINY_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
 
-function writePackageJson(dir: string, scripts: Record<string, string>): void {
-  fs.mkdirSync(dir, { recursive: true })
-  fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ name: 'fixture', scripts }))
-}
 
 /**
  * A10 — every non-refusal path below needs the project at Tier 2, because
@@ -103,6 +114,7 @@ describe('studio_render_reference', () => {
 
   beforeEach(() => {
     tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-mcp-reference-')))
+    bootedDirs.push(tmpDir)
   })
 
   afterEach(() => {
@@ -110,13 +122,13 @@ describe('studio_render_reference', () => {
   })
 
   it('boots the dev server, discovers its printed URL, and screenshots the route', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
-    const { proc } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'] })
+    const { spawn } = makeFakeProcess({ stdoutChunks: ['  VITE v5.0.0  ready\n', '  ➜  Local:   http://localhost:5173/\n'] })
     const { browser, gotoUrls } = makeFakeBrowser(TINY_PNG_BASE64)
 
     const overrides: ReferenceRenderOverrides = {
-      spawn: () => proc,
+      spawn,
       launchBrowser: async () => browser,
     }
     const tool = createReferenceRenderTool(overrides)
@@ -136,12 +148,12 @@ describe('studio_render_reference', () => {
   })
 
   it('returns ok:false with the captured log when the dev server never prints a URL (boot timeout)', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
-    const { proc, wasKilled } = makeFakeProcess()
+    const { spawn, wasKilled } = makeFakeProcess()
 
     const overrides: ReferenceRenderOverrides = {
-      spawn: () => proc,
+      spawn,
       bootTimeoutMs: 15,
     }
     const tool = createReferenceRenderTool(overrides)
@@ -159,10 +171,10 @@ describe('studio_render_reference', () => {
   })
 
   it('returns ok:false with a clear message when package.json has no dev or start script', async () => {
-    writePackageJson(tmpDir, { build: 'vite build' })
+    writeViteProject(tmpDir, { build: 'vite build' })
     writeTrustTier(tmpDir, 'run-project')
 
-    const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
+    const tool = createReferenceRenderTool({ spawn: makeFakeProcess().spawn })
     const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as {
       ok: boolean
       error?: string
@@ -173,13 +185,13 @@ describe('studio_render_reference', () => {
   })
 
   it('reuses the same dev server across calls for the same project (no second spawn)', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
     let spawnCount = 0
     const overrides: ReferenceRenderOverrides = {
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).proc
+        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5174/\n'] }).spawn(argv, options)
       },
       launchBrowser: async () => makeFakeBrowser(TINY_PNG_BASE64).browser,
     }
@@ -208,6 +220,7 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
 
   beforeEach(() => {
     tmpDir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'studio-mcp-reference-trust-')))
+    bootedDirs.push(tmpDir)
   })
 
   afterEach(() => {
@@ -219,14 +232,14 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('refuses a Tier 0 (static) project with trust-tier-required, and spawns nothing', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'static')
     let spawnCount = 0
 
     const tool = createReferenceRenderTool({
-      spawn: () => {
+      spawn: (argv, options) => {
         spawnCount += 1
-        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).proc
+        return makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5173/\n'] }).spawn(argv, options)
       },
     })
     const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as {
@@ -247,10 +260,10 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('refuses a Tier 1 (render-packages) project too — the gate is equality, not a floor', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'render-packages')
 
-    const tool = createReferenceRenderTool({ spawn: () => makeFakeProcess().proc })
+    const tool = createReferenceRenderTool({ spawn: makeFakeProcess().spawn })
     const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string; trust?: string }
 
     expect(result.ok).toBe(false)
@@ -259,10 +272,10 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('a project with no .studio/meta.json at all is at the default tier — run-project — and proceeds', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
 
     const tool = createReferenceRenderTool({
-      spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5198/\n'] }).proc,
+      spawn: makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5198/\n'] }).spawn,
       launchBrowser: async () => makeFakeBrowser(TINY_PNG_BASE64).browser,
     })
     const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string }
@@ -272,11 +285,11 @@ describe('studio_render_reference — the project\'s own trust tier', () => {
   })
 
   it('proceeds once the project is promoted to run-project', async () => {
-    writePackageJson(tmpDir, { dev: 'vite' })
+    writeViteProject(tmpDir, { dev: 'vite' })
     writeTrustTier(tmpDir, 'run-project')
 
     const tool = createReferenceRenderTool({
-      spawn: () => makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5199/\n'] }).proc,
+      spawn: makeFakeProcess({ stdoutChunks: ['Local: http://localhost:5199/\n'] }).spawn,
       launchBrowser: async () => makeFakeBrowser(TINY_PNG_BASE64).browser,
     })
     const result = (await tool.handler!({ dir: tmpDir, route: '/' }, {} as never)) as { ok: boolean; code?: string }

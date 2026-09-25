@@ -3,7 +3,6 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   createFixtureProject,
@@ -12,6 +11,7 @@ import {
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, liveBridgeIframe, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P2-B "selection and keyboard hands" (ROADMAP §6), in a real browser: the
@@ -195,8 +195,8 @@ test.describe('P2-B on a board frame', () => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toHaveCount(1, { timeout: 60_000 })
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toHaveCount(1, { timeout: 60_000 })
+    const content = canvasContentFrame(frame)
     await expect(content.locator('.box-a')).toBeVisible({ timeout: 30_000 })
     return { canvasRoot, content }
   }
@@ -285,9 +285,9 @@ test.describe('P2-B on a live frame', () => {
     await panIntoView(page, canvasRoot, frame)
     // A live board frame shows a Tier-0 fallback until its bridge iframe is
     // ready, so two canvas iframes coexist for a while — wait for the bridge.
-    const bridge = frame.locator('[data-testid="live-board-frame-bridge"]:not([hidden])')
+    const bridge = liveBridgeIframe(frame)
     await expect(bridge, 'the SMS frame never switched to its live (bridge) iframe').toBeVisible({ timeout: 120_000 })
-    const content = bridge.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const content = bridge.contentFrame()
     await expect(content.locator('[class*="resendRun"]')).toBeVisible({ timeout: 60_000 })
     return { canvasRoot, content }
   }

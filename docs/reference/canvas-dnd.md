@@ -66,9 +66,12 @@ topology below first.
   `pointerup`, and the preview stands down entirely for the three layouts its
   packing model does not describe. See
   "[The reflow preview (K6)](#the-reflow-preview-k6)".
-- **An image file dropped from the OPERATING SYSTEM onto a frame becomes an
-  `<img src alt>`** (D2 G15) — one upload into the project's own `public/`,
-  then one structural insert at the drop point. **The verdict arrives before
+- **Image files dropped from the OPERATING SYSTEM onto a frame become
+  `<img src alt width height>`s** (D2 G15, P5-B) — each file lands in the
+  project's own `public/` (with a ghost that fills as it uploads), then ONE
+  structural insert writes them all at the drop point: one write, one undo.
+  Dropped onto an `<img>` it replaces that image; ⇧ sets a background; ⌘ places
+  it at the pointer (`docs/agent-refs/canvas-internals.md` has the matrix). **The verdict arrives before
   release**: over a frame, the same drop line an element drag shows plus a
   cursor chip naming the format; over the empty board, a chip saying
   "Drop onto a frame"; for a non-image, the refusal, while the file is still in
@@ -662,15 +665,19 @@ layers an element drag uses. `canvasFileDragPreview.ts` decides;
 
 | Where the pointer is | What is drawn |
 |---|---|
-| Over a container in a frame | The drop line an element drag would show, plus a cursor chip naming the format ("PNG image") |
+| Over a container in a frame | The drop line an element drag would show, the drop target's parent outlined (P2-E), plus a cursor chip naming the format ("PNG image"), or the count ("Add 3 images") |
+| Over an `<img>`, one file | That image outlined and "Replace image" — no drop line; ⌥ turns it back into an insert |
+| Holding ⇧, one file | The container outlined and "Set as background" |
+| Holding ⌘/Ctrl | The drop line and "… at the pointer"; over a `position: static` container, K6's refusal |
 | Over a frame, nothing can hold a child | The refused-position box and "Nothing here can hold an image" |
 | Over the empty board | "Drop onto a frame", in the board-level hint layer |
 | A non-image, anywhere | The refusal naming the declared type, and NO drop line |
-| More than one file | "One image at a time" |
+| Holding ⇧ with several files | "A background takes one image" |
 
 **One verdict, two moments.** Every refusal comes from `canvasFileDrop.ts` —
-`refuseDroppedFile` for the file itself, `CANVAS_FILE_DROP_REFUSAL` for the two
-that need geometry. The preview is not a second rule that agrees; it is the
+`refuseDroppedFile` for the files themselves, `resolveCanvasFileDropIntent` for
+what the drop MEANS here with these keys held (P5-B: insert, replace,
+background, ⌘ placement). The preview is not a second rule that agrees; it is the
 same rule asked earlier, so the chip and the toast cannot drift. A
 `CanvasFileDropRefusal` carries both a one-line `headline` (the chip) and the
 whole `message` (the toast).
@@ -678,7 +685,7 @@ whole `message` (the toast).
 **The chip cannot name the file, and must not pretend to.** Before `drop` the
 drag data store is in the HTML spec's *protected mode*: `DataTransfer.files` is
 empty and `DataTransferItem.getAsFile()` returns `null`. Only `items[i].kind`
-and `items[i].type` are readable — a count and a declared MIME type, **no name
+and `items[i].type` are readable — each entry's declared MIME type, **no name
 and no size**. `DroppedFileFacts` is that reduced shape, and both halves of the
 gesture are written against it.
 

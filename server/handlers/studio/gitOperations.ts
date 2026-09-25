@@ -75,7 +75,7 @@
  */
 import { existsSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { EXCLUDED_WORKSPACE_DIR_NAMES } from '@core/page-parser'
+import { EXCLUDED_WORKSPACE_DIR_NAMES, excludedWorkspaceSegment } from '@core/page-parser'
 import { splitLines } from '@core/utils/lineEndings'
 import { isArgvSafeBranchName, parseGithubRemoteUrl, redactRemoteUrlCredentials } from './gitPaths'
 import { GIT_LOCK_WAIT_MS, ProjectWriteLockBusyError, withProjectWriteLock } from './projectWriteLock'
@@ -159,7 +159,8 @@ export interface GitProjectStatus {
 
 /** True when the path's FIRST segment (or any segment) is a directory Studio never lets git touch. */
 function isExcludedPath(path: string): boolean {
-  return path.split('/').some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))
+  // Case-folded: on Windows and macOS `.STUDIO` IS `.studio`.
+  return excludedWorkspaceSegment(path) !== null
 }
 
 /** `git status --porcelain=v2 --branch -z`, parsed, plus the two extra facts the panel needs. */
