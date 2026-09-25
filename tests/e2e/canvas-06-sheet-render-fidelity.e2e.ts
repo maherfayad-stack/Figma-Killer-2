@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for canvas-06 — "overlay and bottom-sheet screens
@@ -19,7 +20,6 @@ import { expect, test, type Locator, type Page } from '@playwright/test'
  * `runUnrollPass` for the fix.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
 
 interface StudioProjectSummary {
@@ -103,7 +103,7 @@ async function goToFrame(page: Page, canvasRoot: Locator, pageId: string) {
   // (observed: ~80-85px on this corpus) is normal — not every board
   // position is exactly reachable in one wheel-delta-to-px mapping.
   await panIntoView(page, canvasRoot, targetFrame, 100)
-  const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+  const iframeEl = visibleCanvasIframe(targetFrame)
   await expect(iframeEl, `the ${pageId} frame never mounted a live iframe after being panned into view`).toBeVisible({
     timeout: 15_000,
   })
@@ -111,7 +111,7 @@ async function goToFrame(page: Page, canvasRoot: Locator, pageId: string) {
   await page.waitForTimeout(200) // let the last unroll settle paint
   const frameBody = targetFrame.getByTestId('board-frame-body')
   await expect(frameBody, `${pageId}'s .frameBody never rendered`).toBeVisible()
-  const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  const contentFrame = canvasContentFrame(targetFrame)
   return { targetFrame, frameBody, contentFrame }
 }
 
@@ -133,7 +133,7 @@ test.describe('canvas-06: bottom sheets dock at the frame bottom, not mid-frame'
     const canvasRoot = page.getByTestId('canvas-root')
     await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
     await expect(page.getByTestId('board-frames-layer')).toBeAttached()
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const { frameBody, contentFrame } = await goToFrame(page, canvasRoot, 'esim-manual-entry-screen')
 
@@ -234,7 +234,7 @@ test.describe('canvas-06: bottom sheets dock at the frame bottom, not mid-frame'
     await page.goto('/admin/site?studio')
     const canvasRoot = page.getByTestId('canvas-root')
     await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const { frameBody, contentFrame } = await goToFrame(page, canvasRoot, 'esim-select-package-sheet')
 
@@ -304,7 +304,7 @@ test.describe('canvas-06: bottom sheets dock at the frame bottom, not mid-frame'
     await page.goto('/admin/site?studio')
     const canvasRoot = page.getByTestId('canvas-root')
     await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const { frameBody, contentFrame } = await goToFrame(page, canvasRoot, 'esim-device-picker-sheet')
 
@@ -365,7 +365,7 @@ test.describe('canvas-06: bottom sheets dock at the frame bottom, not mid-frame'
     await page.goto('/admin/site?studio')
     const canvasRoot = page.getByTestId('canvas-root')
     await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     const { frameBody, contentFrame } = await goToFrame(page, canvasRoot, 'booking-details-screen')
 

@@ -1,6 +1,5 @@
 import { expect, test, type FrameLocator, type Page } from '@playwright/test'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createFixtureProject,
   frameForPage,
@@ -9,6 +8,7 @@ import {
   removeFixtureProject,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame } from './helpers/canvasIframe'
 
 /**
  * P1-F "Undo tells the truth" — ERR-1, in a real browser.
@@ -71,7 +71,7 @@ test.describe('Undo tells the truth (P1-F)', () => {
   test('a width typed, entered and undone is not written back when the user clicks away (ERR-1)', async ({ page }) => {
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
     const frame = await frameForPage(page, canvasRoot, PAGE_ID)
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
     const leaf = await ownLeaf(contentFrame)
     const nodeId = await leaf.getAttribute('data-node-id')
     expect(nodeId, 'the leaf carries no node id').not.toBeNull()

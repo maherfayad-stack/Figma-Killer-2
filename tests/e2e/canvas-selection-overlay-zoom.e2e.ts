@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from '@playwright/test'
 import { readZoomPercent, zoomToPercent } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * Real-browser coverage for WS-5.1 (`canvas-05`): "the selection ring / props
@@ -27,7 +28,6 @@ import { readZoomPercent, zoomToPercent } from './helpers/studioFixtureProject'
 
 const PROJECT_FOLDER_NAME = 'maherfayad-stack-eSIM'
 const TARGET_PAGE_ID = 'esim-manual-entry-screen'
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const TARGET_ZOOM_PCT = 58
 
 interface StudioProjectSummary {
@@ -107,14 +107,14 @@ test.describe('canvas-05 / WS-5.1: selection ring and inspector must not drift a
 
     // Let the canvas's own "center on open" pass settle before driving
     // pan/zoom ourselves (same reasoning as frame-fit-height.e2e.ts).
-    await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
+    await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
 
     await panIntoView(page, canvasRoot, targetFrame)
 
-    const iframeEl = targetFrame.locator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const iframeEl = visibleCanvasIframe(targetFrame)
     await expect(iframeEl, 'the manual-entry frame never mounted a live iframe').toBeVisible({ timeout: 15_000 })
 
-    const contentFrame = targetFrame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(targetFrame)
     // ManualEntryScreen.jsx: <Button variant="primary" label={t.common.confirm} .../>
     // from @alm-design/design-system — an alm.* module, so InPlaceInspector
     // (studio-only, single-select, alm.* gate) renders real content for it.

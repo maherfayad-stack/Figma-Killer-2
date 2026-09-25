@@ -2,7 +2,6 @@ import { expect, test } from '@playwright/test'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -11,6 +10,7 @@ import {
   sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P1-A (WB-1) — real-browser proof that a file edited OUTSIDE Studio mid-session
@@ -70,8 +70,8 @@ test.describe('P1-A — an outside edit never redirects a canvas gesture', () =>
     const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: true })
     const frame = page.locator('[data-page-id]').first()
     await panIntoView(page, canvasRoot, frame)
-    await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-    const content = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+    const content = canvasContentFrame(frame)
 
     const three = content.locator(`[data-node-id="${sourceNodeId(FIXTURE_PAGE, 'pages/Home.tsx', 'li', 3)}"]`).first()
     await panIntoView(page, canvasRoot, three, 80)

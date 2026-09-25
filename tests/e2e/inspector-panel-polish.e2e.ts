@@ -2,6 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P2-H — panel polish, measured in a real browser (UX-11, UX-20, UX-21,
@@ -27,7 +28,6 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * (never `studio-workspace/test4`, which is user data), removed in afterAll.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const EDITOR_LAYOUT_STORAGE_KEY = 'studio-editor-layout-v2'
 const EDITOR_PREFS_KEY = 'studio-editor-prefs'
 const FIXTURE_PREFIX = 'p2h-polish-e2e-'
@@ -121,13 +121,13 @@ async function openBoard(page: Page, theme: 'dark' | 'light'): Promise<{ canvasR
   const canvasRoot = page.getByTestId('canvas-root')
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   await expect(page.locator(`html[data-editor-theme="${theme}"]`)).toHaveCount(1)
-  // A live frame can mount beside the fallback frame until its bridge is
-  // ready (`speed-04`): settle to one iframe before resolving into it.
+  // A live frame mounts beside the fallback frame (hidden) until its bridge is
+  // ready: wait for the one displayed canvas iframe (`helpers/canvasIframe.ts`).
   await expect(
-    page.locator('[data-page-id]').first().locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(page.locator('[data-page-id]').first()),
     'the board frame never settled to one canvas iframe',
   ).toHaveCount(1, { timeout: 30_000 })
-  const frame = page.locator('[data-page-id]').first().frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  const frame = canvasContentFrame(page.locator('[data-page-id]').first())
   return { canvasRoot, frame }
 }
 

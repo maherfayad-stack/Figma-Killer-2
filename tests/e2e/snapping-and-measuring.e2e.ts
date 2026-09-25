@@ -2,7 +2,6 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createAuthoredFixtureProject,
   openFixtureBoard,
@@ -13,6 +12,7 @@ import {
   zoomToPercent,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P2-E — snapping and measuring, in a real browser, asserted on COMPUTED
@@ -92,8 +92,8 @@ async function openBoard(page: Page, zoomPct: number): Promise<Board> {
   expect(Math.abs((await readZoomPercent(page)) - zoomPct)).toBeLessThanOrEqual(1)
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-  return { canvasRoot, content: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR) }
+  await expect(visibleCanvasIframe(frame)).toBeVisible({ timeout: 60_000 })
+  return { canvasRoot, content: canvasContentFrame(frame) }
 }
 
 /** Pan `element` to the middle, click it, and return the screen px per frame px it is drawn at. */
