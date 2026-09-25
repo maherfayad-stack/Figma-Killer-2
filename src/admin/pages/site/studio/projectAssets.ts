@@ -21,8 +21,12 @@ import { apiRequest } from '@core/http'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { studioWriteDir } from './studioWorkspaceDir'
 
-/** The authenticated route that serves one workspace file to the admin (`studioAsset.ts`). */
-const STUDIO_ASSET_ROUTE = '/admin/api/studio/asset'
+/**
+ * The authenticated route that serves one project image/font/media file to the
+ * admin (`studioAsset.ts`): by workspace `path` here, by site-root `url` for a
+ * design frame (`canvasProjectAssetUrl.ts`).
+ */
+export const STUDIO_ASSET_ROUTE = '/admin/api/studio/asset'
 
 const ProjectImageAssetSchema = Type.Object({
   /** Workspace-relative POSIX path — what the admin preview endpoint reads. */
