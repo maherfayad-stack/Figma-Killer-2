@@ -28,6 +28,7 @@ import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMer
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import { canvasLayerTouchedFiles, isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
+import { svgAttrOrderLocation } from './studioSvgWriteback'
 import type { StudioEdit, StudioEditBatchOptions } from './studioEditSchemas'
 
 /**
@@ -302,9 +303,15 @@ export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']):
 export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
   // Ordering names no file to write, so every target the batch may hold sorts
   // by its line — a layer module's edits too (the write decode is scoped).
+  // P5-D — an `svg-attr` edit sorts by its PART, which is inside its host.
+  const orderLocation = (edit: T) => {
+    const host = decodeNodeIdLocation(edit.nodeId, ORDER_ANY_TARGET)
+    const part = host && 'kind' in edit ? svgAttrOrderLocation(edit as { kind: string; part?: unknown }) : null
+    return part && host ? { ...host, ...part } : host
+  }
   return [...edits].sort((a, b) => {
-    const la = decodeNodeIdLocation(a.nodeId, ORDER_ANY_TARGET)
-    const lb = decodeNodeIdLocation(b.nodeId, ORDER_ANY_TARGET)
+    const la = orderLocation(a)
+    const lb = orderLocation(b)
     if (!la) return 1
     if (!lb) return -1
     return lb.line - la.line || lb.col - la.col
@@ -401,6 +408,10 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
       edit.kind === 'transplant' ||
       edit.kind === 'reinsert-source' ||
       edit.kind === 'styled' ||
+      // P5-D — every part of one `<svg>` shares its host's location; two
+      // edits on different parts are two writes, and two on one part apply
+      // in order (each only sets what it names).
+      edit.kind === 'svg-attr' ||
       // P5-G — a place or lift names a real element but is never the "same
       // write" as a value edit on it; the other three carry synthetic ids.
       isCanvasLayerEditKind(edit.kind)

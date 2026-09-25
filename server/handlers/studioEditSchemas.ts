@@ -13,6 +13,8 @@
  *   - `css` (`kind: 'css'`, `studioCssWriteback.ts`) — a `set` or `insert`
  *     declaration write.
  *   - `move` / `delete` / `insert` (`studioStructuralWriteback.ts`).
+ *   - `svg-attr` (`studioSvgWriteback.ts`, P5-D SVG-4) — attributes of one
+ *     element inside an inline `<svg>`, addressed by its host node and part.
  *   - `insert-slot` / `promote-component` / `add-slot-prop`
  *     (`studioSlotWriteback.ts`, E2.4/E2.2) — the "page-as-component with
  *     slots" flagship's writeback: filling a component's slot PROP, pulling
@@ -47,6 +49,7 @@ import {
 } from './studioSlotWriteback'
 import { StructuralEditSchemas } from './studioStructuralWriteback'
 import { CanvasLayerEditSchemas } from './studioCanvasLayerWriteback'
+import { SvgEditSchemas } from './studioSvgWriteback'
 import type { CreatedJsxLocation, DeletedJsxText } from '@core/ast-codemods'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 
@@ -274,6 +277,8 @@ export const StudioEditSchema = Type.Union([
   ...SlotEditSchemas,
   // P5-G — the free canvas's five kinds (`studioCanvasLayerWriteback.ts`).
   ...CanvasLayerEditSchemas,
+  // P5-D SVG-4 — one element inside an inline `<svg>` (`studioSvgWriteback.ts`).
+  ...SvgEditSchemas,
   CssEditSchema,
 ])
 export type StudioEdit = Static<typeof StudioEditSchema>
