@@ -46,79 +46,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
-### canvas-33 — P5-G: the free canvas (OD-14) — loose layers on the empty board
-- **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk through `0177ed7d` / #263 merged in) · **PR:** #260 (draft, base `feat/canvas-excellence`; long form, threat list, reviewer file list, gesture table in its body) · **Updated:** 2026-09-25
-- **Stage:** security APPROVED; merged over #263 (P6-B), ready for the orchestrator. N2 (`boards.json` plain-fs) is a listed follow-up.
-- **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board, reconciled with P5-B's multi-file drop: one loose layer per image, intrinsic size from the landing route, cascaded 24 px; failures through P5-B's `reportUnlanded`). Doc: `docs/features/free-canvas.md`.
-- **Decisions:**
-  - Agent: native Write/Edit into `.studio/` stay refused; `studio_apply_edits` refuses every canvas-layer kind and every layer-module target (`canvas-layer-agent`) — only `/save` passes `canvasLayers: 'allow'`.
-  - The surface takes NO input: `pointer-events: none`; layers are hit-tested from the board (`useCanvasLayerPointer`), so no gap forwarding exists to go wrong.
-  - A loose layer is selected as a whole (a 4th selection list). Inspector editing of its content is FC-7.
-  - `canvas-layer-restore` accepts client text (undo), exclusive-create, ≤ 512 KB — same trust as `reinsert-source`.
-  - Default deny IN THE DECODER (#260 B1): `studioEditLocation`/`canonicalSourceRel`/`isWritableSourceRel` refuse a layer path unless given `SourceTargetScope` `{ canvasLayers: 'allow' }` — only `applyStudioEditBatch` for `/save` threads it. A new decoder caller gets the refusal for free; never pass `'allow'` from anything that writes on an agent's behalf.
-  - `CanvasFileDropPlan` is `kind: 'frame'` (P5-B's action) | `kind: 'canvas'`; modifiers never apply on the empty board. A multi-file canvas drop is one undo step PER layer (FC-6 follow-up).
-- **Canvas files touched:** `canvas/BoardCanvasLayer/*` (new), `StudioBoardLayers`, `IframeFrameSurface` + contract (`sizing`), `useIframeFrameAutoHeight` (`isLive` → `fitToContent`), `canvasFileDrop`, `canvasFileDragPreview`, `useCanvasFileDrop`, `canvasDragCommit`, `useCanvasReorderDrag`, `boardSnapping`.
-- **Landmines (height × injectors × events):**
-  - The surface uses `sizing: 'fixed'`: auto-height is OFF there, and its body gets inline `margin: 0`/transparent background. A change to `applyIframeBodyReset` that pins body size must not assume every canvas iframe fits to content.
-  - The surface must stay `pointer-events: none`. If anyone makes it receive input, `useCanvasLayerPointer`'s capture-phase claim on the canvas root stops seeing presses over layers AND the marquee breaks over the surface's gaps.
-  - `useCanvasLayerPointer` claims a root press with `stopImmediatePropagation` in CAPTURE; the marquee (`useMarqueeSelection`) must stay a non-capture listener or it will start under a layer press.
-  - Pending marks are released after the RESYNC, not at `settle` — otherwise a heal between write and re-read drops a fresh placement.
-  - A full `CMS_SITE_RELOAD_EVENT` re-reads `boards.json` over an unsaved placement (pre-existing for every board edit); layer writes resync narrowly (`reloadScope` maps layer files), and the heal re-places a module that lost its placement.
-  - Events × drop: a free-canvas file drop is decided by the drop's TARGET (`isEmptyBoardTarget`), not by the frame hit test — a drop relayed out of a frame arrives targeted at the iframe element and must never fall through to the canvas. Keep the relay dispatching on the iframe element.
-  - Structural commits now live in `studioStructuralCommitEngine.ts` (trunk refactor); the `placements` undo delta rides `StructuralCommitOptions.undo` there.
-  - Load (P6-B): layers parse through `routeEntryParse.ts`'s `parseRouteFileThroughCache` (cache route `canvas-layer:<id>`), their dependencies join the memo's, and `routeListing` includes the layer ids so a create/delete invalidates. Site-root images render via P5-B2's `canvasProjectAssetUrl.ts`; P5-G's own `publicRoot` path was removed as a duplicate.
-- **Next:** FC-7 panels/inspector, FC-8 MCP tools, FC-9 group, FC-10 budgets; FC-6 pieces ride P5-A/P5-D/P5-E (`createCanvasLayer`).
-- **Human action needed:** dogfood (PR body checklist).
-### canvas-37 — Live-frame parity: resize, snap, rollback, double-click and hover in Tier 2 frames
-- **Agent:** canvas-engineer · **Branch:** `fix/live-frame-parity` off `25681dcb`, trunk `69397b64` merged · **PR:** #265 (draft), base `feat/canvas-excellence` (long form in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying (draft PR open; owner dogfood below). Renumbered from `canvas-28` (#258 took it; `canvas-34` went to #262).
-- **Goal:** gestures fixed in static frames in Phases 1–2 behave the same in live (Tier 2, Vite) frames: canvas-23, canvas-26, store-17, canvas-24, perf-12's hover note.
-- **Done:**
-  - canvas-23: the parent sends the node's stored `flex`/`alignSelf`/`justifySelf` with `setResizeTarget`; the runtime plans the Fixed companions with the SAME resolver as the portal drag and previews a clear as the cascade value. `resize:commit` carries them (`flex: '0 1 auto' | null`, `alignSelf`/`justifySelf: null`) and rejects any other key.
-  - canvas-23 badge: the runtime hides its overlay root for the `scrollHeight` read (handles and badge are not content) and reports no `frame:resize` while a resize is live (`onGestureChange`), once after.
-  - canvas-26: the parent sends the tree siblings, tree parent and zoom; the runtime snaps the moving edge (`elementResizeSnapRules.ts`) and posts `resize:guides`, painted in the parent drag layer (`elementResizeGuides.ts`).
-  - store-17: new `optimistic.revert`; `structuralCommitRollback.ts` broadcasts it for the gesture's own nodes (`trackStructuralTreeCommit` takes them).
-  - canvas-24: `text:editStart` carries the stamped ancestor chain; the adapter resolves the nearest KNOWN node, like a click; the runtime accepts a reply for any ref in the chain.
-  - perf-12 note: static frames only (live frames resolve hover per move). A leave hands the hover to `relatedTarget`'s node (`canvasHoverHandoff.ts`); `onMouseLeave` now receives the event.
-- **Moved to `@core/studio-runtime`** (one implementation for both hosts): `elementSizing.ts` → `elementSizingRules.ts`, `canvasSnapPeers.ts` → `snapPeerRules.ts`, the pure half of `boardSnapping.ts` → `snapRules.ts`, and the plan/snap halves of `elementResizeSizing.ts`/`elementResizeSnap.ts`. The admin keeps `elementResizeInlinePreview.ts` and `elementResizeGuides.ts`. `resizeMessages.ts` split out of `messages.ts`.
-- **Also:** deleted `optimistic.text`'s runtime half (schema, handler, `applyOptimisticText`); #259 had already removed the sender.
-- **Canvas files touched:** `canvas/{useElementResizeDrag, elementResizeInlinePreview (new), elementResizeGuides (new), resizeTargetContext (new), canvasHoverHandoff (new), useBridgeSelectionChrome, NodeRenderer (leave only), boardSnapping, canvasFreeMove, canvasDragPainter, useAnnotationInteraction, BoardFramesLayer/{useBridgeFrameInteraction, useBoardFrameMoveDrag}, frameAdapter/{FrameDocumentAdapter, BridgeFrameAdapter, PortalFrameAdapter, optimisticStructuralBroadcast}}`; `core/studio-runtime/{runtime, resizeHandles, inlineTextEdit, gestureForwarding, nodeDom, optimisticDomOps, messages, messageShapes, index}` + the new rule modules + `generated/runtimeBridgeBundle.ts` (regenerated by `studio-runtime:sync`, never hand-patched).
-- **Landmines:**
-  - **Height × injectors:** runtime chrome sits inside `<body>`, so anything it draws below an element counts in `body.scrollHeight` = the reported frame height. Anything new drawn under an element needs the gesture freeze. Documented in canvas-internals → "Height".
-  - **Events × height:** the freeze ends in `finish()` AFTER `RESIZE_ACTIVE_ATTR` is removed (badge hidden), then one `scheduleFrameResize`. Reordering those re-measures the badge.
-  - **Events × store:** a live resize's companions come from the markers the parent sent at the LAST `setResizeTarget`. They are re-sent on change (primitive selectors), but a drag started before the HMR lands plans from the old markers.
-  - **Wire:** `text:editStart` now requires `ancestors`; `resize:commit.patch` is `additionalProperties: false`.
-  - `runtime.ts` is 690/700 lines, `messages.ts` 676/700.
-  - **Trunk merge (`69397b64`):** P5-E's `elementResizeAnchoring.ts` (right/bottom-anchored resize) is portal-only. A live resize still writes `left`/`top`, because the authored offsets are not in `setResizeTarget`. Recorded in the PR under "Found, not fixed".
-  - **Events × app:** a live frame's runtime has NO drag/drop handling, so an OS file dropped on a live frame goes to the running app (and the browser's default navigation if the app doesn't cancel it). A relay needs a new wire message the parent must NOT trust as a user gesture (a Tier 2 app can post it). Listed under "Found, not fixed" in the PR.
-- **Tests (each failed with its fix disabled in place):** `studio-runtime/{liveFrameParity (5), resizeHandles (+5), elementResizeSizing (+2), messages (+3)}`, `canvas/frameAdapter/BridgeFrameAdapter (+5)`, `editor-store/undoTellsTheTruth (+3)`, `canvas/canvasHoverOffStore (+2)`, `canvas/useBridgeSelectionChrome (+1)`. e2e `tests/e2e/live-frame-parity.e2e.ts` (store-17, badge, flex, snap on a live SMS frame).
-- **Next:** owner dogfood (Pending dogfood → `canvas-37`). P5-G/B/D regenerate the bundle after this lands.
-
-### store-21 — P3-D: structural refusals become writes (ERR-7, ERR-8, ERR-16, WB-14, WB-20, WB-21, WB-22; WB-15/OD-8 → P3-D2)
-- **Agent:** store-engineer · **Branch:** `feat/structural-refusals-become-writes` · **PR:** #250 (draft, base `feat/canvas-excellence`; long form in its body) · **Updated:** 2026-09-25 · trunk `fea4f125` merged
-- **Stage:** verifying: gates done (below); owner dogfood pending. Filed as `store-19`, then `store-20`; both IDs were taken on the trunk (P3-E, P6-A).
-- **Done:**
-  - **One engine for N-element gestures.** `@core/page-tree` `moveSequence.ts` (single-element moves applied IN ORDER, each against the scratch tree the last one left) → store `moveNodesInSequence` (`moveSequenceActions.ts`) → `commitStudioSequence` → `/save` `sequence: true` → `server/handlers/studioEditSequence.ts` (each edit is a one-edit batch; ids are re-addressed by DOCUMENT ORDER; every file is restored if any step refuses). Multi-drag, ⌥-drag of N, paste of N and P2-C2 steps all ride it. History gesture `siblings` → `moves`.
-  - ERR-8: paste finds its source on the board (`studioPasteWrites.ts`); a copy into another file is a `transplant` copy. ERR-16: cross-file reparent → transplant; wrap of N → group. WB-20/21/22: `resolveJsxChildRange(…, unit)` (whole `{cond && …}`, ternary branch → `null`, mixed-line shape, `.map` edge as anchor).
-  - OD-7 (`instanceOnlyGesture.ts`): a `shared-component` refusal detaches THIS call site (fallback: a single-instance component copy), follows ids by child-index path, replays via `retry(mapId)`, and links the entries (`HistoryEntry.linkedToNext`) so one ⌘Z undoes both. The link is made BEFORE the replay runs (`f1544ac0`). The dialog no longer re-issues gestures (`findReplacementNode.ts` deleted).
-  - ⌘Z during an in-flight structural write now waits for it instead of reading an empty stack (`undoRedoActions.ts`, `b3d47a60`). That was the cross-frame paste ⌘Z bug.
-- **Slices / selectors:** site slice only; no new selector. New action `moveNodesInSequence` (entry `moves`, no coalesce key, one entry per gesture). Removed: `moveSiblings`, `invertSiblingMoves`, `refuseStructuralEdit`'s `multi`.
-- **Merge notes (`fea4f125`):** P5-B split the same commit body into `studioStructuralCommitEngine.ts`. P3-D's `commitStructural.ts` was folded into it (options `sequence`/`select`/`onLanded`/`quiet`) and deleted. `structuralUndoPlan` keeps both `reinsert-detached` and P5-B's `known`. The detach reports `created` as a list; the sequence resolves identities with its own project (WB-25).
-- **Tests (each shown failing with its fix disabled in place):** `structuralJsxCodemods`/`groupJsxCodemods` (+9), `moveSequence.test.ts` (14), `structuralGesturesBecomeWrites.test.ts` (6), `instanceOnlyGesture.test.ts` (6), `crossFramePasteUndo.test.ts` (2), `duplicateToPlan` (+4); `studioEditSequence.test.ts` (6, new engine). e2e `structural-gestures-one-write.e2e.ts`: ERR-7, ERR-8 with ⌘Z, and OD-7.
-- **Landmines:**
-  - A new sequenced edit kind must declare what it acts on (`actedOnBefore/After` in `studioEditSequence.ts`), or it will refuse.
-  - A ternary-branch delete reports no `removed` bytes, so its ⌘Z is skipped with a notice.
-  - `retry` on `presentStructuralRefusal` takes an id MAP (`(mapId) => void`).
-- **Not done (next):** OD-8/WB-15 list rows → **P3-D2** (design in the PR body); non-adjacent group; multi cross-frame drop; multi-file image drop is P5-B IMG-2.
-- **Human action needed:** dogfood on `test4`, `/admin/site`, static tier:
-  1. Layers: click one row, Ctrl-click a non-adjacent one, drag onto a third: both land together; `git diff` shows only those lines moved; one ⌘Z restores the file.
-  2. ⌥-drag two selected layers: two copies, one save, one ⌘Z removes both.
-  3. ⌘C a layer in one frame, click a layer in another frame, ⌘V: the copy lands in the second page's file; ⌘Z right away takes it back.
-  4. Inside a component used twice (e.g. a `SheetHeader`), select an inner element (Enter, Tab), press Delete: no dialog; only THIS instance is detached and loses the element; the component file and the other instance are unchanged; one ⌘Z restores the page exactly.
-  5. Drag an element that shares a line with a sibling to below a whole-line sibling: it lands on its own line.
-- **Verification (2026-09-25, after the merge):** build ✓, lint ✓, `tsc -b` ✓; suite in 15 locked chunks, all green except pre-existing/load: `module-size-budgets` (`agentCheckpoints.ts`), `publicSdkExports`, `canonicalSummaryForFile` and `GET /studio/projects` (the last two pass alone). Mine, fixed: `structuralMoveUndo` ×2 (the test now waits for the re-issued move before the next ⌘Z), and `vitePluginBundle` regenerated on 1.3.13 (`sourceStructure.ts` is in it). e2e (51674/31602): 4/4 green twice, but **OD-7 failed 1 of 3 runs**: the detach landed on disk, the board did not re-read it within 60 s, and the replay never ran. Not reproduced since; see the PR's Found, not fixed.
-- **Re-merge (trunk `8f226b1d`+, 2026-09-25 late):** the sequence route takes P5-G's `canvasLayers` scope; `detach` and `canvas-layer-lift` share the import prune pass, now in `studioBatchImportPrune.ts` (`studioWriteback.ts` 650/700); P6-A's optimistic node ids are carried into `moveSequenceActions`. tsc, lint, and the arch/store/structural/writeback chunks are green (pre-existing `agentCheckpoints.ts` size only). e2e `--repeat-each=3`: 9/9; the OD-7 flake did not reproduce.
-
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -229,6 +156,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 - `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
 - `canvas-33` — P5-G: loose layers on the empty board (FC-1..5), drop images on the board, decoder refuses layer files by default (only /save opts in); security approved — #260 — 2026-09-25
@@ -238,7 +166,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
 - `mcp-32` — P4-G: `studio_lint`, `studio_delegate` (per-turn caps 2 calls / 8 children / 150 rounds), model routing, short tool descriptions, run-project tools held in plan mode; security approved — #255 — 2026-09-25
 - `canvas-29` — P5-E: armed draw tools, padding/gap handles, align, layer commands, ⇧K insert image, 12 IX/UX items — #261 — 2026-09-25
-- `panel-46` — sweep: style-lock partial writes, dark --text-subtle contrast, icon guide, late component catalog, CLAUDE.md toast rule (owner reviews) — #259 — 2026-09-25
 
 ---
 
