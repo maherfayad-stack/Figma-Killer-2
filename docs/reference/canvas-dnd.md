@@ -572,7 +572,11 @@ frame rate and the selection ring (which re-measures the real element) follows
 for free. The preview is dropped BEFORE the store commit, never after: they
 are the same DOM property, so clearing it afterwards would delete exactly what
 React just wrote. Same shape, and the same reasoning, as
-`useElementResizeDrag`.
+`useElementResizeDrag`. The clear RESTORES each property the preview touched
+to its pre-drag inline value (`createInlineStylePreview`) rather than removing
+it: a move that wandered sideways and was released straight down commits
+only `top`, and React — which re-applies only what changed — would never put
+back a removed `left` (P5-F, found by the multi-select e2e).
 
 **A free move resolves no drop target and runs no auto-pan.** The two are
 different gestures: one places inside a container, the other looks for a

@@ -1225,9 +1225,10 @@ a component in a live frame selected the element inside it.
     the live runtime's handles do not snap yet.
   - **Double-click a handle: Hug** (P5-F, IX-6f). `hugPatchForHandle` is the
     inspector's own `sizingPatch('hug', …)` on the axes the handle owns (an
-    edge one, a corner both), in one `setNodeInlineStyles`. It runs in the
-    document-capture listener that swallows the handle's clicks — that
-    listener stops the event before any handle-level listener would hear it.
+    edge one, a corner both), in one `setNodeInlineStyles`. Detected as a
+    SECOND PRESS on the same handle within 400 ms of a press that moved
+    nothing — never from the native `dblclick`, which a real browser did not
+    deliver after the handle's cancelled `pointerdown` (measured by the e2e).
   - **Rotation** (P5-F, IX-25, `useElementRotateDrag.ts`). Four invisible
     zones just OUTSIDE the corner handles (`ROTATE_HANDLE_ATTR`, placed by
     `selectionChromeCss.ts`), so a press on the corner still resizes. The
