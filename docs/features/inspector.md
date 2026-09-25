@@ -953,7 +953,13 @@ notice when no style target is writable, which is always the case for an
 instance with no class, and before P2-G that notice swallowed the props too.
 `designCallSiteSections` still mounts it above the notice. A Detach refusal
 shows the parser's sentence under the title, and `explainDetachConstraint`
-alone decides whether "duplicate as a new file" is offered.
+alone decides whether "duplicate as a new file" is offered. A prop's control
+depends on its declared kind, which only the project's component catalog
+knows, so while that fetch is in flight (`useLocalComponentCatalog()` returns
+`null`) the section draws one disabled `ControlRow` with a field-height
+skeleton per prop the call site sets — never a guessed text box that becomes a
+dropdown a moment later. A catalog that has already arrived is read on the
+first render, so selecting the next instance draws no placeholder.
 
 **Separate entries, not one "Studio extras" component** — Component only applies
 to `studio.instance` nodes (the others apply to any node), and cramming
@@ -1697,7 +1703,7 @@ section file changed**: every section already reads
 | `selectedNode.codeProps` | only the `style:<prop>` locks present on **every** node — a lock on one of five must not disable a control that works for four |
 | `computedValues` | `null`. `useFrameComputedStyleValues` reads ONE mounted element; showing the anchor's as the selection's placeholder would claim agreement nobody measured |
 | `assignedClassRules` | `[]` (Element/inline), or the one shared class once the user picks it and clears its gate — see §9.4 |
-| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `blockedPropertyCounts`, `sharedClassRules` | the N-node facts the target bar and its notices state |
+| `selectedNodes`, `inlineWritableNodeIds`, `inlineUnwritableNodes`, `inlineWriteReach`, `sharedClassRules` | the N-node facts the target bar and its notices state |
 
 `commitApi.ts` is the other half: an inline write for N dispatches to
 `setNodesInlineStyles` instead of `setNodeInlineStyles`. A class write needs no
@@ -1913,15 +1919,19 @@ a selection-wide count would be wrong on every property but one. Each row asks
 about its own property in O(1) via `resolveRowWriteLock`, and carries
 `data-write-partial="true"` when it has something to disclose.
 
-**Nothing in the panel provides this context today.** No component renders
-`StyleWriteLockContext.Provider`, so `useStyleWriteLock()` in
-`ClassPropertyRow.tsx` always reads `null`, and neither the `blocked` nor the
-`partial` row state reaches the app; only
-`src/__tests__/panels/classPropertyRowWriteLock.test.tsx` mounts a provider.
-The class lock the panel does apply comes from the selection model:
-`selectionModel.ts` sets `writableClasses[].lockReason` through
-`classCssWritability.ts`'s `classCssWriteLockReason`, and a multi-selection's
-skipped layers and code-set properties are named by `MultiSelectTargetBar.tsx`.
+**Who provides it.** `StyleSurface` is the one provider: it wraps the mounted
+sections (and the More group) in `StyleWriteLockContext.Provider` with
+`partialStyleWriteLock(model.inlineWriteReach)`. The selection model builds
+`inlineWriteReach` with `buildInlineStyleWriteReach` for a multi-selection
+aimed at Element, and leaves it `null` for one layer and for a class target
+(one write that reaches every carrier). The partial row also underlines its
+label, dotted, in `--warning`, so the count is findable without hovering every
+row. Only `ClassPropertyRow` reads the context; the bespoke `ScrubInput`
+fields (W/H, X/Y, rotation angle) do not, and their counts are stated once
+above the sections by `MultiSelectTargetBar.tsx`. Nothing in the app provides
+`blocked`: a whole class that cannot be written is the selection model's
+`writableClasses[].lockReason` (via `classCssWritability.ts`), which drops it
+from the write targets. Pinned by `styleSurfacePartialWrite.test.tsx`.
 
 ### §9.4b Selection colors (G6.4)
 

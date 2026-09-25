@@ -149,10 +149,6 @@ export class PortalFrameAdapter implements FrameDocumentAdapter {
       if (!el || !parent) return
       parent.insertBefore(el, parent.children[index] ?? null)
     },
-    text: (nodeId, text) => {
-      const el = findByNodeId(this.doc, nodeId)
-      if (el) el.textContent = text
-    },
     // `speed-01` — a documented no-op. The store write this call previews/
     // commits already re-renders the portal tree through React on the SAME
     // tick; a second DOM write here would be a redundant paint racing the

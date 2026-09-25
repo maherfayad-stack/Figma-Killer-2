@@ -14,10 +14,11 @@
  * edit it knows cannot land is the panel's version of the `[object Object]`
  * input: it does not merely fail, it invites the failure.
  *
- * So the predicate moved out of the component and gained a second consumer:
- * `StyleWriteLockContext`, which `StyleSurface` provides around the CLASS
- * block only and every `ClassPropertyRow` beneath it reads to render
- * disabled. Same fact, stated once, used by the tooltip and by the controls.
+ * So the predicate moved out of the component and into the selection model:
+ * `selectionModel.ts` sets each class's `writableClasses[].lockReason` from
+ * it, which drops the class from `resolveWriteTarget`'s candidates and strikes
+ * its pill through. Same fact, stated once, used by the tooltip and by the
+ * write target.
  *
  * ## The predicate is `styleRuleWriteback.ts`'s, not a second opinion
  *

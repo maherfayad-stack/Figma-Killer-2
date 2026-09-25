@@ -85,7 +85,9 @@ export function listWorkspaceFiles(dir: string): string[] {
       if (entry.isSymbolicLink()) continue
       const entryRelPath = relDir ? `${relDir}/${entry.name}` : entry.name
       if (entry.isDirectory()) {
-        if (EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name)) continue
+        // Case-folded: on Windows and macOS `.GIT` and `Node_Modules` ARE the
+        // excluded directories.
+        if (EXCLUDED_WORKSPACE_DIR_NAMES.has(entry.name.toLowerCase())) continue
         walk(join(currentDir, entry.name), entryRelPath)
         continue
       }

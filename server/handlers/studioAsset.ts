@@ -9,7 +9,9 @@
  * depends on routing or on any other studio endpoint.
  *
  * `path` is fully attacker-controlled (it comes straight off the query
- * string), so every check here is adversarial, not just a happy-path guard:
+ * string), so every check here is adversarial, not just a happy-path guard.
+ * They live in ONE decoder, `resolveWorkspaceReadPath` (`@core/page-parser`),
+ * shared with `studioEditTargets.ts` so the two read paths cannot drift:
  *
  *  - An absolute path (POSIX `/etc/passwd`, a Windows drive path
  *    `C:\Users\...`, or a UNC path `\\host\share`) is rejected outright.
@@ -29,11 +31,15 @@
  *    segment scan above, so a normalization quirk in the scan can't be the
  *    only thing standing between a request and the rest of the filesystem.
  *  - Any segment named in `EXCLUDED_WORKSPACE_DIR_NAMES` (`node_modules`,
- *    `.git`, …) is rejected — those are never "app source" anywhere else in
- *    the studio pipeline (`listWorkspaceFiles`, `createWorkspaceProject`),
- *    and this endpoint shouldn't be a side door into them.
+ *    `.git`, …) is rejected, compared the way the filesystem resolves it —
+ *    case-folded, trailing dots and NTFS stream suffixes dropped, so `.GIT`
+ *    and `.git.` are `.git` on Windows. Those are never "app source" anywhere
+ *    else in the studio pipeline (`listWorkspaceFiles`,
+ *    `createWorkspaceProject`), and this endpoint shouldn't be a side door
+ *    into them.
  *  - Finally, the path is resolved through `fs.realpathSync` and re-checked
- *    for containment. `resolve()` alone is lexical — it does not follow
+ *    for containment AND for an excluded directory (a link `pics -> .git`).
+ *    `resolve()` alone is lexical — it does not follow
  *    symlinks — so a symlink planted inside `dir` that points outside it
  *    would otherwise sail through every check above. A target that doesn't
  *    exist (or a broken symlink) fails `realpathSync` and falls through to
@@ -46,39 +52,14 @@
  * the file is the project's, not Studio's, and must never act as a document
  * on this origin.
  */
-import { isAbsolute, join, resolve, sep } from 'node:path'
-import { realpathSync } from 'node:fs'
-import { EXCLUDED_WORKSPACE_DIR_NAMES, STUDIO_ASSET_SENTINEL } from '@core/page-parser'
+import { STUDIO_ASSET_SENTINEL, resolveWorkspaceReadPath } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
 import { inertFileResponse, serveStaticFile } from '../static'
 
 export async function resolveStudioAssetResponse(dir: string, rawPath: string, req: Request): Promise<Response | null> {
-  if (isAbsolute(rawPath)) return null
-  if (/^[a-zA-Z]:/.test(rawPath)) return null // Windows drive path, e.g. "C:\Users\x"
-  if (rawPath.startsWith('\\\\') || rawPath.startsWith('//')) return null // UNC path
-
-  const segments = rawPath.split(/[\\/]+/).filter((segment) => segment.length > 0)
-  if (segments.length === 0) return null
-  if (segments.some((segment) => segment === '..')) return null
-  if (segments.some((segment) => EXCLUDED_WORKSPACE_DIR_NAMES.has(segment))) return null
-
-  const root = resolve(dir)
-  const resolved = resolve(join(dir, ...segments))
-  if (resolved !== root && !resolved.startsWith(root + sep)) return null
-
-  let real: string
-  try {
-    real = realpathSync(resolved)
-  } catch {
-    return null // missing file / broken symlink — let the caller 404
-  }
-  let realRoot: string
-  try {
-    realRoot = realpathSync(root)
-  } catch {
-    return null // the project dir itself doesn't exist on disk
-  }
-  if (real !== realRoot && !real.startsWith(realRoot + sep)) return null
+  const target = resolveWorkspaceReadPath(dir, rawPath)
+  if (!target) return null
+  const segments = target.rel.split('/')
 
   // `serveStaticFile` decodes its `pathname` argument once (it expects a raw
   // URL path component) — but `rawPath` already went through one decode via

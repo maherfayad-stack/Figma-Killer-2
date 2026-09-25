@@ -334,13 +334,42 @@ settings — enumerated in `studioBoardResync.ts`'s own doc. `input.pages`
 upserts by id (appends an unrecognised id — how `studio_create_page` lands);
 `input.removedPageIds` drops a page confirmed gone, its board frame(s), and
 any dangling `selectedFrameIds`/selection entry. **Deliberately bypasses
-`mutateSite`/`runHistoricMutation`**: it never flips `hasUnsavedChanges` and
-never pushes undo history, because this content came FROM disk — recording it
-as a "change" would queue an autosave that writes what was just read straight
-back out (the write → reload → re-dirty → autosave → write loop
-`fsCodemodAdapter.test.ts`'s header names). A page that had local (unsaved) edits and also got overwritten toasts
-`'Local edits overwritten'` — the "merge: reload only touched pages" policy's
-one explicit data-loss case.
+`mutateSite`/`runHistoricMutation`**: it never pushes undo history, and it
+flips `hasUnsavedChanges` only for edits the user made (below) — this content
+came FROM disk, and recording it as a "change" would queue an autosave that
+writes what was just read straight back out (the write → reload → re-dirty →
+autosave → write loop `fsCodemodAdapter.test.ts`'s header names).
+
+**A re-read never throws the user's unsaved edits away (ERR-9, P3-E).** It
+used to: a page with local edits was replaced wholesale and toasted `'Local
+edits overwritten … a change an agent just wrote'` — even when the write was
+the user's own ⌘D, and `loadSite` dropped them silently. Now both
+`patchPages` and `loadSite` REBASE (`site/unsavedEditRebase.ts`):
+
+- **What is unsaved** is decided by the save diff's own baseline, as it stood
+  BEFORE this read advanced it. Both re-read entry points in
+  `loadedValuesBaseline.ts` (`mergeLoadedValuesBaseline` for a narrow read,
+  `resetLoadedValues(pages, { sameProject: true })` for a whole-project read of
+  the open project) file what they replaced under the very `pages` array they
+  were handed; the store looks it up with `baselineBeforeRead(pages)`. A page
+  list no Studio read produced (a test's, a project switch) has none, and is
+  simply adopted.
+- **Where it goes**: the old page with those values put back is aligned with
+  the fresh one by `reparseNodeFollow.ts`'s `alignPageTrees`; an element it
+  cannot place is re-found by its P1-A source identity (one match only).
+- **Local wins**, per node all-or-nothing, unless the element is gone, the
+  value is now code on the fresh node (`isPropWritableToSource`), or it is an
+  origin-backed value whose literal moved to another file or changed there too.
+  Those are reported in ONE warning that names the cause, never who wrote the
+  file (`reportLostUnsavedEdits`).
+- A rebased page keeps its `_dirtySave` mark and `hasUnsavedChanges` stays
+  true, so autosave writes exactly the carried edits against the fresh
+  baseline. `usePersistence` no longer clears the flag after a full reload —
+  `loadSite` owns it. No loop: after that save the values equal the baseline,
+  and the next re-read finds nothing to carry.
+
+Cost: the same per-node diff the save makes, over the replaced pages only, plus
+one alignment per page that holds an unsaved edit.
 
 `input.styleRules`/`input.conditions` carry the PROJECT-WIDE registries the
 same reload recomputed, and are replaced wholesale (never merged — the server
@@ -439,9 +468,10 @@ that did not land sends no HMR update. Full contract: `editor-history.md` → "A
 not land is taken back".
 
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
-(D2 G3 — a drag that crossed a board frame) and `insertImageIntoPage` (D2 G15 —
-an image file dropped from the OS) both take their page id as an argument
-instead of using `activePageId`, and neither goes through `mutateActiveTree`.
+(D2 G3 — a drag that crossed a board frame) and the image-drop actions
+(`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
++ P5-B — image files dropped from the OS) take their page id as an argument
+instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the
 active page is the wrong end of the gesture; a dropped file was never preceded
@@ -449,11 +479,22 @@ by a pointerdown at all, so the frame under it was never activated. They are
 therefore NOT among the named tree-mutation actions the
 `no-vc-mode-branches-in-mutations` gate walks — they mutate no tree.
 
-Both still show **nothing optimistically** — unlike `insert`/`duplicate`/`wrap`
-(below), the node that appears afterwards is a freshly parsed one whose id is
-the `rel:line:col` the write produced, and previewing it locally would need a
-tree on the OTHER end of the transplant/drop too. Both ride the same
-`structuralCommitQueue.ts` the rest of that family does.
+The transplant still shows **nothing optimistically** — the node that appears
+afterwards is a freshly parsed one in the OTHER file, and previewing it locally
+would need a tree on the other end of the gesture. The image drop (P5-B) does
+the opposite of guessing an id: it ACTIVATES the dropped-on page first
+(`openPageInCanvas`, a drop is a user gesture on that frame), then previews one
+ghost `<img>` per file through `previewOptimisticInsertRun` (N siblings, one
+preview mutation, ids in the same order as the write's `createdNodeIds`). It
+holds `structuralCommitQueue.ts` from BEFORE the upload (`beginStructuralCommit`)
+until the commit's own end, so the page cannot be resynced under the ghost
+while the bytes go up; a drop whose every file fails rolls the ghost back and
+releases the queue itself. N images are ONE `insert` edit (`siblings`) — one
+write, one undo step whose `delete-created` inverse deletes them all. A replace
+of a LITERAL `src` is an ordinary `updateNodeProps` (ordinary undo); a replace
+of an IMPORT-BOUND one posts `kind: 'asset'` through `commitStudioAssetReplace`
+with the undo template `known` (its inverse is fixed at gesture time: point the
+import back). A ⇧-drop background is one `setNodeInlineStyles`.
 
 **`insert`/`duplicate`/`wrap`/`group` DO paint optimistically now (`perf-10`).**
 `structuralOptimism.ts`'s `previewOptimisticInsert`/`Duplicate`/`Wrap`/`Group`
@@ -469,7 +510,8 @@ replaces the touched PAGE object wholesale, erasing the preview regardless of
 whether its guessed id matches the real one; `commitStructuralBody` explicitly
 rolls it back only on the two paths where no resync follows (a full refusal,
 or the POST never reaching disk). `ungroup`/paste/K2 Alt-drag-duplicate/
-transplant/image-drop are unchanged — still nothing shown until the resync.
+transplant are unchanged — still nothing shown until the resync. The image drop
+previews through the same module (`previewOptimisticInsertRun`, above).
 A Delete on a pending preview id is QUEUED behind the write that made it and
 then aimed at the element that write created (ERR-22, `resolvePreviewTargets`,
 fed by `settle(createdNodeIds)` — wired into `deleteNode`/`deleteNodes`); it
@@ -612,9 +654,10 @@ frame clears the node selection and vice versa (mutual exclusivity), so
   edit skips the refusing node and still lands on the rest, because leaving
   N-1 nodes half-written is worse than skipping one. The panel names the
   skipped properties instead of leaving the refusal silent
-  (`MultiSelectTargetBar`). The per-row "writes to 3 of 5" state of the
-  three-state `StyleWriteLockContext` exists, but no component provides that
-  context, so it never renders (`inspector.md` §9.4a). A class target is reachable too, once the user
+  (`MultiSelectTargetBar`). Each `ClassPropertyRow` also states its own
+  count ("writes to 3 of 5"): `StyleSurface` provides the three-state
+  `StyleWriteLockContext` from `SelectionModel.inlineWriteReach`
+  (`inspector.md` §9.4a). A class target is reachable too, once the user
   clears the "used by N other elements" gate — but a class edit is an
   ordinary `updateClassStyles`, not a bulk write, because the class IS the one
   honest target. See

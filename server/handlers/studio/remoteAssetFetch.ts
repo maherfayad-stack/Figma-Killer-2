@@ -24,8 +24,8 @@
  *   1. Scheme restricted to `http:`/`https:` — no `file:`, no `data:`, no
  *      internal scheme.
  *   2. **The resolved address is validated, and the connection is pinned to
- *      exactly that address** (`resolveSafeConnectAddress` +
- *      `pinUrlToAddress`) — every address a hostname resolves to (not just
+ *      exactly that address** (`resolvePinnedAddresses` +
+ *      `pinUrlToAddress`, `server/util/ssrfGuard.ts`) — every address a hostname resolves to (not just
  *      the first) is checked against the shared loopback/private/link-
  *      local/CGNAT/unique-local/metadata blocklist (`server/util/
  *      ssrfGuard.ts`, the same classifier the QuickJS plugin sandbox's
@@ -96,12 +96,11 @@
  * lookup). That failure mode is a compromised DNS infrastructure problem,
  * outside what any application-level fetch guard can detect.
  */
-import { isIP } from 'node:net'
 import { lookup } from 'node:dns/promises'
 import { basename } from 'node:path'
 import { ArchiveIngestError, readBytesWithLimit } from './archiveIngest'
 import { landAssetBytes, sniffImageExtension, type LandAssetResult } from './assetLanding'
-import { isBlockedAddress, stripHostnameBrackets } from '../../util/ssrfGuard'
+import { pinnedRequestInit, pinUrlToAddress, resolvePinnedAddresses } from '../../util/ssrfGuard'
 
 /** Same order of magnitude as `MAX_ASSET_UPLOAD_BYTES` (`assetUpload.ts`) — a single image has no business exceeding this regardless of transport. */
 export const MAX_REMOTE_ASSET_BYTES = 25 * 1024 * 1024 // 25 MB
@@ -219,38 +218,6 @@ export type FetchRemoteBytesResult =
   | { ok: true; bytes: Uint8Array; filenameHint: string }
   | { ok: false; error: string }
 
-type SafeAddressResolution =
-  | { ok: true; addresses: readonly string[] }
-  | { ok: false; reason: 'unresolved' | 'blocked' }
-
-/**
- * Resolves `hostname` to every address it names — a literal IP resolves to
- * itself, a domain name goes through `resolveHostAddresses` — and checks
- * EVERY candidate against the SSRF blocklist before accepting any of them.
- * Returns the single address the request will actually connect to
- * (`pinUrlToAddress`) only when the whole set is clean.
- */
-async function resolveSafeConnectAddress(
-  hostname: string,
-  resolveHostAddresses: (host: string) => Promise<string[]>,
-  allowLoopback: boolean,
-): Promise<SafeAddressResolution> {
-  const host = stripHostnameBrackets(hostname)
-  const addresses = isIP(host) !== 0 ? [host] : await resolveHostAddresses(host)
-  if (addresses.length === 0) return { ok: false, reason: 'unresolved' }
-  for (const address of addresses) {
-    if (isBlockedAddress(address, { allowLoopback })) return { ok: false, reason: 'blocked' }
-  }
-  // EVERY address is returned, not just the first. All of them cleared the
-  // blocklist, so connecting to any is equally safe — and pinning blindly to
-  // addresses[0] made a host that merely LISTS an address unreachable when
-  // nothing is listening on it. Concretely: `localhost` resolves to ::1 first
-  // on macOS while the Figma Dev Mode server binds IPv4 only, so every asset
-  // fetch failed with ConnectionRefused against an address the server never
-  // claimed to serve.
-  return { ok: true, addresses }
-}
-
 /**
  * Single-machine escape hatch for fetching assets served on loopback.
  *
@@ -293,20 +260,6 @@ export function loopbackAssetFetchEnabled(env: NodeJS.ProcessEnv = process.env):
 }
 
 /**
- * Rewrites `url` so its own literal host is the validated `address` — the
- * connection-pinning half of the SSRF fix. `url.hostname`/`url.host` stay
- * available on the ORIGINAL `url` for the caller to use as the `Host` header
- * and TLS `serverName`, so virtual-hosted / CDN-fronted targets keep
- * resolving to the right vhost even though the literal connection target is
- * now an IP.
- */
-function pinUrlToAddress(url: URL, address: string): URL {
-  const pinned = new URL(url.toString())
-  pinned.hostname = isIP(address) === 6 ? `[${address}]` : address
-  return pinned
-}
-
-/**
  * Fetch `rawUrl` server-side and return its validated bytes — the
  * SSRF-hardened half of `fetchRemoteAsset`, split out so a caller that needs
  * the bytes for something other than `landAssetBytes`'s default asset
@@ -327,11 +280,13 @@ export async function fetchRemoteBytes(
   if (!url) return { ok: false, error: `"${rawUrl}" is not a valid http:// or https:// URL.` }
 
   const resolveHostAddresses = deps.resolveHostAddresses ?? defaultResolveHostAddresses
-  const resolution = await resolveSafeConnectAddress(
-    url.hostname,
-    resolveHostAddresses,
-    deps.allowLoopback ?? loopbackAssetFetchEnabled(),
-  )
+  // Every address is judged, and every one is kept: all of them cleared the
+  // blocklist, so connecting to any is equally safe, and pinning blindly to
+  // the first made a host unreachable when nothing listened there (`localhost`
+  // resolves to ::1 first on macOS while Figma's Dev Mode server binds IPv4).
+  const resolution = await resolvePinnedAddresses(url.hostname, resolveHostAddresses, {
+    allowLoopback: deps.allowLoopback ?? loopbackAssetFetchEnabled(),
+  })
   if (!resolution.ok) {
     // Deliberately does NOT echo `rawUrl` here (unlike the other error
     // branches below): for a literal-IP URL the caller already knows what
@@ -348,7 +303,6 @@ export async function fetchRemoteBytes(
     }
   }
 
-  const sniHost = stripHostnameBrackets(url.hostname)
   const fetchImpl = deps.fetchImpl ?? fetch
 
   // Protection 8: one deadline for connect, headers and body. Aborting the
@@ -374,8 +328,7 @@ export async function fetchRemoteBytes(
         res = await fetchImpl(pinUrlToAddress(url, address), {
           redirect: 'error',
           signal: deadline.signal,
-          headers: { 'user-agent': 'studio-asset-fetch', host: url.host },
-          ...(url.protocol === 'https:' ? { tls: { serverName: sniHost } } : {}),
+          ...pinnedRequestInit(url, { 'user-agent': 'studio-asset-fetch' }),
         })
         break
       } catch (err) {

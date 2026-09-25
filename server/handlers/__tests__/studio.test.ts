@@ -284,7 +284,7 @@ describe('applyStudioEdit', () => {
     const result = applyStudioEdit(tmpDir, { kind: 'text', nodeId: `text.tsx:${line}:${col}`, text: 'Bye' })
 
     expect(result.applied).toBe(true)
-    expect(fs.readFileSync(file, 'utf8')).toContain('<p>{"Bye"}</p>')
+    expect(fs.readFileSync(file, 'utf8')).toContain('<p>Bye</p>')
   })
 
   it('dispatches a kind: "style" edit to setJsxStyle, merging into an existing style object', () => {

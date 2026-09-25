@@ -14,7 +14,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { applySecurityHeaders } from '../../../server/securityHeaders'
+import { ADMIN_CSP, applySecurityHeaders } from '../../../server/securityHeaders'
 import { hardenUploadResponse, INERT_FILE_CSP } from '../../../server/static'
 import { configurePublicOrigins, resetPublicOrigins } from '../../../server/auth/security'
 import { handleServerRequest } from '../../../server/router'
@@ -242,5 +242,30 @@ describe('/_studio/assets/* responses via router (integration)', () => {
     } finally {
       rmSync(uploadsDir, { recursive: true, force: true })
     }
+  })
+})
+
+// Re-review of #248, item 1: the admin policy is a SECOND policy beside a
+// route's own, never merged into it. Inside one policy only the first
+// occurrence of a directive counts, so a merged `route; admin` let a route's
+// own `frame-ancestors` beat the admin's `'none'`.
+describe('applySecurityHeaders — the admin CSP is added as its own policy', () => {
+  const policies = (res: Response): string[] =>
+    (res.headers.get('content-security-policy') ?? '').split(',').map((entry) => entry.trim()).filter(Boolean)
+
+  it("a route's own frame-ancestors cannot override the admin's: both policies are present and separate", () => {
+    const route = "frame-ancestors *; default-src 'none'; sandbox"
+    const res = applySecurityHeaders(makeResponse('<svg/>', { 'content-security-policy': route }), '/admin/api/studio/asset')
+    expect(policies(res)).toEqual([route, ADMIN_CSP])
+  })
+
+  it('an inert project file keeps its sandbox policy and gains the admin policy beside it, each exactly once', () => {
+    const res = applySecurityHeaders(applySecurityHeaders(hardenUploadResponse(makeResponse('x', { 'content-type': 'image/svg+xml' })), '/admin/x'), '/admin/x')
+    expect(policies(res)).toEqual([INERT_FILE_CSP, ADMIN_CSP])
+  })
+
+  it('the inert policy is added, not set: a policy the file response already carried stays', () => {
+    const res = hardenUploadResponse(makeResponse('x', { 'content-type': 'image/png', 'content-security-policy': "frame-ancestors 'self'" }))
+    expect(policies(res)).toEqual(["frame-ancestors 'self'", INERT_FILE_CSP])
   })
 })

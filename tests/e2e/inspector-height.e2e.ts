@@ -2,6 +2,7 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * WS-14.5 — the inspector height gate: the Design tab's rendered height at a
@@ -133,7 +134,6 @@ import { WORKSPACE_ROOT } from './helpers/constants'
  * up.
  */
 
-const CANVAS_FRAME_IFRAME_SELECTOR = 'iframe[title^="Canvas frame"]'
 const EDITOR_LAYOUT_STORAGE_KEY = 'studio-editor-layout-v2'
 const FIXTURE_PROJECT_NAME = `ws145-e2e-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 
@@ -342,15 +342,13 @@ async function openStudioBoard(page: Page, projectDir: string): Promise<Locator>
   const canvasRoot = page.getByTestId('canvas-root')
   await expect(canvasRoot).toBeVisible({ timeout: 20_000 })
   await expect(page.getByTestId('board-frames-layer')).toBeAttached({ timeout: 30_000 })
-  await expect(page.locator(CANVAS_FRAME_IFRAME_SELECTOR).first()).toBeVisible({ timeout: 20_000 })
-  // `speed-04`'s own defect (`studio-feel.e2e.ts` pins the same wait): a live
-  // board frame mounts the portal fallback AND the bridge frame together until
-  // the bridge is ready, so the page container briefly carries TWO
-  // `iframe[title^="Canvas frame"]` — and `frameLocator()` throws a
-  // strict-mode violation on the ambiguity. Settle to one before resolving
-  // into it.
+  await expect(visibleCanvasIframe(page).first()).toBeVisible({ timeout: 20_000 })
+  // A live board frame mounts the portal fallback AND a hidden bridge iframe
+  // until the bridge is ready, and in a fixture whose dev server cannot boot it
+  // never is: two `iframe[title^="Canvas frame"]` for good. Wait for the ONE
+  // displayed canvas iframe (`helpers/canvasIframe.ts`) before resolving into it.
   await expect(
-    page.locator('[data-page-id]').first().locator(CANVAS_FRAME_IFRAME_SELECTOR),
+    visibleCanvasIframe(page.locator('[data-page-id]').first()),
     'the first board frame never settled to one canvas iframe',
   ).toHaveCount(1, { timeout: 30_000 })
   return canvasRoot
@@ -448,8 +446,8 @@ interface Fixture {
   /**
    * A test id that appears only once the selection has settled. The Component
    * section's rows come from the project's component catalog, fetched after
-   * the section mounts: measured before it lands, F5 shows the call site's
-   * two props instead of the three the component declares.
+   * the section mounts: measured before it lands, F5 shows a placeholder per
+   * call-site prop (two) instead of the three rows the component declares.
    */
   settledTestId?: string
 }
@@ -500,7 +498,7 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
     await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame: FrameLocator = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame: FrameLocator = canvasContentFrame(frame)
 
     const table: Record<string, unknown> = {
       viewport: HEIGHT_BUDGET_VIEWPORT,
@@ -591,7 +589,7 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
     await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
 
     await clickLayer(page, canvasRoot, contentFrame.locator('.text-layer').first())
     await expect(designSection(page, 'text')).toBeVisible({ timeout: 15_000 })
@@ -650,7 +648,7 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
     await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
 
     // A plain text node: no `display` at all, so no layout exists.
     await clickLayer(page, canvasRoot, contentFrame.locator('.text-layer').first())
@@ -699,7 +697,7 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
     await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
     const frame = page.locator('[data-page-id]').first()
-    const contentFrame = frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(frame)
 
     await clickLayer(page, canvasRoot, contentFrame.locator('.image-layer').first())
     const moduleBlock = designSection(page, 'module')
@@ -740,7 +738,7 @@ test.describe('WS-14.5 — the Design tab height at 900px', () => {
   test('an instance shows its props under one title row, and a multi-selection hides them', async ({ page }) => {
     await page.setViewportSize({ ...HEIGHT_BUDGET_VIEWPORT })
     const canvasRoot = await openStudioBoard(page, fixtureDir)
-    const contentFrame = page.locator('[data-page-id]').first().frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+    const contentFrame = canvasContentFrame(page.locator('[data-page-id]').first())
 
     await clickLayer(page, canvasRoot, contentFrame.locator('.btn').first())
     await selectLayerRow(page, 'FixtureButton')

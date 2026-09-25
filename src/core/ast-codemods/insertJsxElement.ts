@@ -62,12 +62,17 @@
  * answers. A reparent lands with exactly the whitespace an insert at the same
  * spot would have produced, because it is the same function.
  */
-import { Project } from 'ts-morph'
+import { Project, type SourceFile } from 'ts-morph'
 import { createProject, findJsxElementAtLocation, loadSourceFile } from './locateJsxElement'
 import { applyTextEdits, verbatimSourceText, writeVerbatimSource } from './jsxChildRange'
-import { createdJsxLocation, offsetAfterEdits, type CreatedJsxLocation } from './createdJsxLocation'
+import {
+  createdJsxLocation,
+  createdJsxLocationsIn,
+  offsetAfterEdits,
+  type CreatedJsxLocation,
+} from './createdJsxLocation'
 import { resolveChildPlacement } from './jsxChildPlacement'
-import { planImportBindings, resolveImportEdits } from './jsxImportEdits'
+import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
 import {
   collectSubtreeImports,
   indentBlock,
@@ -76,6 +81,7 @@ import {
   renderJsxNode,
   validateSubtree,
   type InsertJsxChildren,
+  type InsertJsxNode,
   type InsertJsxRefusal,
   type InsertableJsxPropValue,
 } from './jsxSubtree'
@@ -119,19 +125,39 @@ export interface InsertJsxElementParams {
    * scope this codemod cannot verify — and text is refused on a void element.
    */
   children?: InsertJsxChildren
+  /**
+   * P5-B (IMG-2) — more NEW elements written immediately after this one, in
+   * order, at the same anchor and in the SAME splice: N siblings, one write.
+   *
+   * ## Why one splice and not N inserts
+   *
+   * Every insert shifts the line of everything below it, so N independent
+   * inserts are N writes, N re-parses and N undo steps for what the user did
+   * as ONE gesture (dropping three images at once). Rendering the whole run
+   * into one placement edit makes it one write whose undo is one step, and
+   * nothing in the run needs an id before the next one is written.
+   *
+   * Validated as a whole before a byte is written, like `children`: one
+   * refused sibling means nothing is written at all. Meant to be shared with
+   * SVG-5's multi-node insert, which is why the shape is the insert's own
+   * {@link InsertJsxNode} rather than anything image-specific.
+   */
+  siblings?: readonly InsertJsxNode[]
   /** Optional pre-existing project to reuse. */
   project?: Project
 }
 
 /**
- * `created` is the NEW element's own tag-name `line:col` in the file this call
- * just wrote — the half of the answer the caller cannot derive, because the
- * element has no node id until the board re-parses. `null` when the write
- * landed but its position could not be confirmed against the re-parsed file;
- * see `createdJsxLocation.ts` for why that is never guessed at.
+ * `created` is every NEW top-level element's own tag-name `line:col` in the
+ * file this call just wrote, in source order — the element itself first, then
+ * each of `siblings` — the half of the answer the caller cannot derive,
+ * because no element has a node id until the board re-parses. EMPTY when the
+ * write landed but the positions could not be confirmed against the re-parsed
+ * file (all of them or none: a partial list would pair an id with the wrong
+ * element); see `createdJsxLocation.ts` for why that is never guessed at.
  */
 export type InsertJsxElementResult =
-  | { ok: true; created: CreatedJsxLocation | null }
+  | { ok: true; created: readonly CreatedJsxLocation[] }
   | { ok: false; refusal: InsertJsxRefusal }
 
 export function insertJsxElement(params: InsertJsxElementParams): InsertJsxElementResult {
@@ -139,10 +165,24 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   const project = params.project ?? createProject()
   const sourceFile = loadSourceFile(project, file)
 
-  // Validated for the WHOLE subtree before a single byte is written — a
-  // refusal three levels down must leave the file untouched, not half-built.
-  const invalid = validateSubtree({ name, props: params.props, importSpecifier, children })
-  if (invalid) return invalid
+  // The run this call writes: the element itself, then every sibling.
+  const run: InsertJsxNode[] = [
+    {
+      name,
+      props: params.props,
+      ...(importSpecifier === undefined ? {} : { importSpecifier }),
+      ...(children === undefined ? {} : { children }),
+    },
+    ...(params.siblings ?? []),
+  ]
+
+  // Validated for the WHOLE run before a single byte is written — a refusal
+  // three levels down, or in the third sibling, must leave the file
+  // untouched, not half-built.
+  for (const node of run) {
+    const invalid = validateSubtree(node)
+    if (invalid) return invalid
+  }
 
   const parentOpening = findJsxElementAtLocation(sourceFile, line, col)
   if (!parentOpening) {
@@ -154,10 +194,12 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
 
   // Only a component name can collide: an intrinsic tag is a string to JSX,
   // never a reference to a binding, so a local `const div = …` is irrelevant
-  // to `<div />`. Every component in the subtree, not just the root, is bound
-  // to a local name that shadows nothing (WB-19), and written by that name.
-  const bindings = planImportBindings(sourceFile, collectSubtreeImports({ name, props: params.props, importSpecifier, children }))
-  const subtree = renameSubtreeComponents({ name, props: params.props, importSpecifier, children }, bindings.localName)
+  // to `<div />`. Every component in the run, not just the root, is bound to
+  // a local name that shadows nothing (WB-19), and written by that name.
+  const required = new Map<string, ImportRequirement>()
+  for (const node of run) for (const [local, requirement] of collectSubtreeImports(node)) required.set(local, requirement)
+  const bindings = planImportBindings(sourceFile, required)
+  const renamed = run.map((node) => renameSubtreeComponents(node, bindings.localName))
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {
@@ -178,7 +220,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
           : null,
       ...(params.position ? { position: params.position } : {}),
     },
-    (indent, unit) => indentBlock(renderJsxNode(subtree, unit), indent),
+    (indent, unit) => renderSiblingRun(renamed, indent, unit),
   )
   if (!placement.ok) return placement
 
@@ -187,8 +229,38 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
   writeVerbatimSource(sourceFile, file, applyTextEdits(verbatim, [placement.edit, ...importEdits]))
   // Only the IMPORT edits move the splice point: they sit above the JSX, and
   // the placement edit's own start is the thing being located.
-  return {
-    ok: true,
-    created: createdJsxLocation(sourceFile, offsetAfterEdits(importEdits, placement.edit.start), placement.edit.text),
+  const blockStart = offsetAfterEdits(importEdits, placement.edit.start)
+  return { ok: true, created: createdRunLocations(sourceFile, blockStart, placement.edit.text, run.length) }
+}
+
+/**
+ * A run of sibling elements as the one block a placement writes. Each element
+ * after the first starts on its own line at the placement's indentation — the
+ * shape a hand-written list of siblings has. An INLINE placement (an empty
+ * `indent`: the newcomers join a row the user kept on one line) joins them
+ * with a space instead, so the row stays one line.
+ */
+function renderSiblingRun(nodes: readonly InsertJsxNode[], indent: string, unit: string): string {
+  const separator = indent === '' ? ' ' : `\n${indent}`
+  return nodes.map((node) => indentBlock(renderJsxNode(node, unit), indent)).join(separator)
+}
+
+/**
+ * Where each element of a just-written run landed. One element keeps
+ * `createdJsxLocation`'s first-`<` rule; a run is READ off the re-parsed file
+ * (`createdJsxLocationsIn`), and only a count that matches what was written is
+ * trusted — see {@link InsertJsxElementResult}.
+ */
+function createdRunLocations(
+  sourceFile: SourceFile,
+  blockStart: number,
+  block: string,
+  count: number,
+): CreatedJsxLocation[] {
+  if (count === 1) {
+    const created = createdJsxLocation(sourceFile, blockStart, block)
+    return created ? [created] : []
   }
+  const located = createdJsxLocationsIn(sourceFile, blockStart, blockStart + block.length)
+  return located.length === count ? located : []
 }

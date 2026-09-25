@@ -132,14 +132,14 @@ const IDEMPOTENT_REPLAY_PATHS = new Set([
 ])
 
 /** The header carrying the per-attempt request id — see the module doc and `IDEMPOTENT_REPLAY_PATHS`. */
-const IDEMPOTENCY_KEY_HEADER = 'X-Studio-Idempotency-Key'
+export const IDEMPOTENCY_KEY_HEADER = 'X-Studio-Idempotency-Key'
 
 /**
  * Whether a gateway-down response for `method`+`path` may be retried at all,
  * and (for a state-changing method) the idempotency key to attach on every
  * attempt so the server can recognise a replay. `null` for "do not retry".
  */
-function retryPlanFor(
+export function retryPlanFor(
   method: string,
   path: string,
   callerKey: string | undefined,
@@ -151,7 +151,7 @@ function retryPlanFor(
 }
 
 /** Real-timer sleep, abortable — the default `sleepImpl`; tests inject a fast stand-in. */
-function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
+export function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new DOMException('Aborted', 'AbortError'))
@@ -175,7 +175,7 @@ function sleep(ms: number, signal?: AbortSignal | null): Promise<void> {
  * via `res.clone()` so the body is still intact for the caller (or the next
  * retry attempt's own error path) to read again.
  */
-async function isEmptyGatewayResponse(res: Response): Promise<boolean> {
+export async function isEmptyGatewayResponse(res: Response): Promise<boolean> {
   if (!GATEWAY_STATUSES.has(res.status)) return false
   try {
     const text = await res.clone().text()

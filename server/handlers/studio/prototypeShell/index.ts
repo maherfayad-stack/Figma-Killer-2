@@ -54,6 +54,7 @@
 import { createHash } from 'node:crypto'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
+import { isUnlinkedWorkspacePath } from '@core/page-parser'
 import { parseJsonWithFallback } from '@core/utils/jsonValidate'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
 import { discoverPageFiles, projectPagesDir } from '../../studioProjects'
@@ -159,8 +160,17 @@ function collectLocales(dir: string): string[] {
   return keys.length > 0 ? [...keys] : ['en']
 }
 
-/** Write a file, creating its directory. Returns whether anything changed on disk. */
-function writeIfDifferent(absPath: string, contents: string): boolean {
+/**
+ * Write a file of the shell's inside project `root`, creating its directory.
+ * Returns whether anything changed on disk. Never through a link
+ * (`isUnlinkedWorkspacePath`): the shell's names — `vite.config.js`,
+ * `index.html`, `package.json`, `prototype/` — are names an imported
+ * repository can already hold as a symlink, and a write through one lands
+ * wherever it points (`vite.config.js -> ~/.bashrc` was overwritten on first
+ * open, adopted as "scaffolded before the manifest existed").
+ */
+function writeIfDifferent(root: string, absPath: string, contents: string): boolean {
+  if (!isUnlinkedWorkspacePath(root, absPath)) return false
   if (existsSync(absPath) && readFileSync(absPath, 'utf8') === contents) return false
   mkdirSync(dirname(absPath), { recursive: true })
   writeFileSync(absPath, contents, 'utf8')
@@ -183,6 +193,7 @@ function writeIfDifferent(absPath: string, contents: string): boolean {
  */
 export function mergeShellPackageJson(dir: string): boolean {
   const file = join(dir, 'package.json')
+  if (!isUnlinkedWorkspacePath(dir, file)) return false
   const existing = existsSync(file)
     ? parseJsonWithFallback(readFileSync(file, 'utf8'), PackageJsonShape, {}) as Record<string, unknown>
     : {}
@@ -204,7 +215,7 @@ export function mergeShellPackageJson(dir: string): boolean {
   merge('dependencies', SHELL_DEPENDENCIES)
   merge('devDependencies', SHELL_DEV_DEPENDENCIES)
 
-  return writeIfDifferent(file, `${JSON.stringify(next, null, 2)}\n`)
+  return writeIfDifferent(dir, file, `${JSON.stringify(next, null, 2)}\n`)
 }
 
 /**
@@ -235,6 +246,8 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
 
     for (const file of [...staticShellFiles(), ...playerShellFiles()]) {
       const abs = join(dir, ...file.relPath.split('/'))
+      // Never read or written through a link — see `writeIfDifferent`.
+      if (!isUnlinkedWorkspacePath(dir, abs)) continue
       const present = existsSync(abs)
       const current = present ? readFileSync(abs, 'utf8') : null
 
@@ -267,7 +280,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
     }
 
     if (hashesChanged || !hadManifest) {
-      writeIfDifferent(manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
+      writeIfDifferent(dir, manifestPath, `${JSON.stringify({ version: 1, files: nextHashes }, null, 2)}\n`)
     }
 
     if (mergeShellPackageJson(dir)) result.created.push('package.json')
@@ -298,7 +311,7 @@ export function ensurePrototypeShell(dir: string): EnsureShellResult {
 
     for (const file of generated) {
       const abs = join(dir, ...file.relPath.split('/'))
-      if (writeIfDifferent(abs, file.contents)) result.regenerated.push(file.relPath)
+      if (writeIfDifferent(dir, abs, file.contents)) result.regenerated.push(file.relPath)
     }
   } catch (err) {
     // The shell is an addition, never a precondition — a project that cannot

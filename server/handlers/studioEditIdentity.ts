@@ -43,8 +43,8 @@
  */
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import type { SourceFile } from 'ts-morph'
-import { createProject, loadSourceFile, readSourceFingerprintAt } from '@core/ast-codemods'
+import type { Project, SourceFile } from 'ts-morph'
+import { loadSourceFile, readSourceFingerprintAt } from '@core/ast-codemods'
 import { LITERAL_FINGERPRINT_LABEL } from '@core/page-parser'
 import {
   ELEMENT_MOVED_REASON,
@@ -102,15 +102,17 @@ function readdressEdit(edit: StudioEdit, rename: (nodeId: string) => string): St
  * Decide, before the batch writes a byte, which edits still name the element
  * the caller read (run them as sent), which name an element that has moved
  * within its file (re-address them — P1-D), and which name one that cannot be
- * found exactly once (refuse `element-moved`). Reads each named file once.
+ * found exactly once (refuse `element-moved`). Reads each named file once,
+ * into the batch's own project (WB-25), so the codemods that follow do not
+ * parse the same file again.
  */
 export function resolveEditIdentities(
   dir: string,
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations,
+  project: Project,
 ): ResolvedEditIdentities {
   if (Object.keys(expect).length === 0) return { runnable: [...edits], moved: [], retargeted: [] }
-  const project = createProject()
   const files = new Map<string, SourceFile | null>()
   const readFile = (file: string): SourceFile | null => {
     if (!files.has(file)) files.set(file, existsSync(file) ? loadSourceFile(project, file) : null)
@@ -182,14 +184,22 @@ const IDENTITY_CHANGING_VALUE_KINDS = new Set<StudioEdit['kind']>(['prop', 'text
  * runs: the batch applies bottom-to-top, so the target is still at its
  * original `line:col` here even when a later edit will shift it — and the
  * original id is the key the client holds.
+ *
+ * Read through the batch's own project (WB-25): the codemod that just wrote
+ * the file left it parsed there, so this costs a read and a compare rather
+ * than a second parse.
  */
-export function fingerprintAfterWrite(dir: string, edit: StudioEdit): { nodeId: string; fingerprint: string } | null {
+export function fingerprintAfterWrite(
+  dir: string,
+  edit: StudioEdit,
+  project: Project,
+): { nodeId: string; fingerprint: string } | null {
   if (!IDENTITY_CHANGING_VALUE_KINDS.has(edit.kind)) return null
   const location = studioEditLocation(dir, edit.nodeId)
   if (!location) return null
   const file = join(dir, location.rel)
   if (!existsSync(file)) return null
-  const fingerprint = readSourceFingerprintAt(loadSourceFile(createProject(), file), location.line, location.col)
+  const fingerprint = readSourceFingerprintAt(loadSourceFile(project, file), location.line, location.col)
   return fingerprint ? { nodeId: edit.nodeId, fingerprint } : null
 }
 

@@ -115,6 +115,17 @@ export type StructuralInverseTemplate =
       // `StructuralSourceGesture.forward`/`.inverse` just below.
       nodes: { nodeId: string; parentNodeId: string; index: number }[]
     }
+  | {
+      /**
+       * P5-B (IMG-3) — an inverse that is fully known at gesture time,
+       * because the gesture rewrites a value in place rather than creating or
+       * moving markup: an image dropped onto an import-bound `<img>` repoints
+       * the import (`kind: 'asset'`), and its undo points it back at the file
+       * it named before. Nothing the write reports can change it.
+       */
+      kind: 'known'
+      inverse: StructuralEditPayload[]
+    }
   | { kind: 'unsupported'; message: string }
 
 /** One `delete` edit's own discarded bytes — `StructuralWriteOutcome.removed`'s own shape, keyed by the edit's `nodeId`. */
@@ -157,6 +168,8 @@ export function resolveStructuralInverse(
   switch (template.kind) {
     case 'unsupported':
       return null
+    case 'known':
+      return template.inverse.map((edit) => ({ ...edit }))
     case 'delete-created': {
       if (outcome.createdNodeIds.length === 0) return null
       return outcome.createdNodeIds.map((nodeId) => ({ kind: 'delete', nodeId }))
@@ -246,6 +259,17 @@ export function fileOfNodeId(nodeId: string): string {
  * field makes the check permissive and the remap incomplete.
  */
 const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
+
+/**
+ * True for an edit whose `nodeId` names a LITERAL's position (an import
+ * specifier, for `kind: 'asset'`) rather than an element on the board — so
+ * "is that id still a node on the board" is the wrong pre-flight question for
+ * it. Its own guard is the server's: the literal's fingerprint (P1-A) refuses
+ * `element-moved` when that position now holds something else.
+ */
+export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
+  return edit.kind === 'asset'
+}
 
 /** Every node id one edit payload names, `nodeId` first — the order a reader would look for them. */
 export function structuralEditNodeIds(edit: StructuralEditPayload): string[] {
