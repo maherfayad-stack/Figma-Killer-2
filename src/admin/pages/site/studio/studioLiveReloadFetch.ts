@@ -69,7 +69,7 @@
 import type { ConditionDef, Page, StyleRule } from '@core/page-tree'
 import { ndjsonRequest } from '@core/http'
 import { getStudioWorkspaceDir } from './studioWorkspaceDir'
-import { orderStreamedPages, StudioLoadStreamLineSchema, type StudioLoadStreamLine } from './studioLoadStreamSchema'
+import { orderStreamedPages, StudioLoadStreamLineSchema, type CanvasLayerLoad, type StudioLoadStreamLine } from './studioLoadStreamSchema'
 import { mergeLoadedValuesBaseline } from './loadedValuesBaseline'
 import { setStudioAuthoredCss, setStudioVendorCss } from './studioRawCssStores'
 import { setStudioLoadWarnings } from './studioLoadWarningsStore'
@@ -83,6 +83,8 @@ export interface StudioPagesByIdResult {
   styleRules: Record<string, StyleRule>
   /** The project-wide condition set, same contract as `styleRules`. */
   conditions: ConditionDef[]
+  /** P5-G — every loose layer on the free canvas (always the full set). Hand it to `setCanvasLayers`. */
+  canvasLayers: CanvasLayerLoad[]
 }
 
 export interface StudioPagesByIdOptions {
@@ -114,7 +116,7 @@ export async function fetchStudioPagesById(
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
   // P6-B — lines arrive in viewport order; the reloaded pages keep page order.
   const pages = orderStreamedPages(pageLines)
-  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust } = meta
+  const { missingPageIds, styleRules, styleRuleSources, styledStyleRuleSources, conditions, vendorCss, authoredCss, warnings, trust, canvasLayers } = meta
 
   // The per-load leaves, in the same order and with the same calls
   // `fsCodemodAdapter.ts`'s `loadSite` makes. Each is its own tiny external
@@ -135,5 +137,5 @@ export async function fetchStudioPagesById(
 
   mergeLoadedValuesBaseline(pages)
 
-  return { pages, missingPageIds: missingPageIds ?? [], styleRules, conditions }
+  return { pages, missingPageIds: missingPageIds ?? [], styleRules, conditions, canvasLayers: canvasLayers ?? [] }
 }

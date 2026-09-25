@@ -42,6 +42,23 @@
  *    does the same on import: `svg.cljc` `generate-id-mapping` /
  *    `replace-attrs-ids`).
  *
+ * ## References stay inside the graphic
+ *
+ * Everything an imported SVG points at must be a fragment of itself
+ * (`@core/vector`'s `svgReferences`):
+ *
+ * - `href` / `xlink:href` survive only as `#name` (the sanitiser's fragment
+ *   hook already guarantees it; this re-checks rather than trusts), and
+ *   `xlink:href` is written as plain `href`, which every browser Studio
+ *   supports reads and React needs no alias for.
+ * - A `url(…)` pointing anywhere else — `fill="url(https://…)"`,
+ *   `style="background:url(//…)"`, a `<style>` rule's `mask: url(…)` — REFUSES
+ *   the import with a sentence. DOMPurify does not vet CSS, so such a value
+ *   used to be written into the user's `.tsx`, where it makes their app fetch
+ *   from a third-party host on every render: a tracking beacon that arrived
+ *   inside an icon. Refusing (rather than silently dropping the value) keeps
+ *   the rule that an import either writes what the file drew or says why not.
+ *
  * ## The shape is deliberately not imported from the codemod
  *
  * `InsertJsxNode` lives in `@core/ast-codemods`, which pulls in ts-morph —
@@ -59,6 +76,7 @@
  * skipped during it. Every rewrite above runs on the sanitised document.
  */
 import { sanitizeSvg } from '@core/sanitize'
+import { cssValueLoadsExternalResource, isSvgFragmentReference, markupToJsxAttributeName } from '@core/vector'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import type { SlotJsxNode } from './studioSaveRequests'
 import {
@@ -89,23 +107,6 @@ export type SvgToJsxResult = { ok: true; node: SlotJsxNode } | { ok: false; mess
  */
 function isDroppedAttribute(name: string): boolean {
   return name === 'xmlns' || name.startsWith('xmlns:') || /^on/i.test(name)
-}
-
-/**
- * An SVG attribute's JSX spelling. `data-*`/`aria-*` keep their hyphens
- * (React passes them through verbatim); every other hyphenated attribute
- * camelCases (`stroke-linecap` -> `strokeLinecap`); the two namespaced
- * attributes React does understand get their documented names; `class` is
- * `className`. Anything else namespaced is dropped by the caller, because a
- * colon cannot appear in a JSX attribute name at all.
- */
-function jsxAttributeName(name: string): string | undefined {
-  if (name === 'class') return 'className'
-  if (name === 'xlink:href') return 'xlinkHref'
-  if (name === 'xml:space') return 'xmlSpace'
-  if (name.includes(':')) return undefined
-  if (name.startsWith('data-') || name.startsWith('aria-')) return name
-  return name.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase())
 }
 
 /** Attributes whose value is a whitespace-separated list of element ids, with no `#`. */
@@ -197,6 +198,8 @@ function extractStylesheet(root: Element): { ok: true; rules: ClassRule[] } | { 
 
 interface ConversionContext {
   nodes: number
+  /** The first reason this SVG cannot be written, set by whichever element found it. */
+  refusal?: string
   /** Stylesheet rules, in source order — the tiebreak between two matching rules. */
   rules: readonly ClassRule[]
   /** Class names the stylesheet defined; they are resolved away, so they are not written. */
@@ -210,6 +213,17 @@ function matchingRuleDeclarations(classNames: readonly string[], rules: readonly
   return rules.filter((rule) => classNames.includes(rule.className)).flatMap((rule) => rule.declarations)
 }
 
+/** The refusal sentence for a value that loads something from outside the SVG. */
+function remoteReferenceRefusal(where: string, value: string): string {
+  const shown = value.length > 60 ? `${value.slice(0, 57)}…` : value
+  return `That SVG loads something from outside itself (${where}: ${shown}), and Studio will not write a remote reference into your source. Remove it from the file and try again.`
+}
+
+/** Attributes whose value is text for people, never a CSS value to vet. */
+function isTextAttribute(name: string): boolean {
+  return name.startsWith('aria-') || name.startsWith('data-')
+}
+
 function convertElement(element: Element, depth: number, context: ConversionContext): SlotJsxNode | undefined {
   if (depth > MAX_DEPTH || context.nodes >= MAX_NODES) return undefined
   context.nodes += 1
@@ -218,11 +232,23 @@ function convertElement(element: Element, depth: number, context: ConversionCont
   const props: Record<string, JsonDataValue> = {}
   for (const attr of Array.from(element.attributes)) {
     if (isDroppedAttribute(attr.name) || attr.name === 'style') continue
-    const jsxName = jsxAttributeName(attr.name)
+    if (FRAGMENT_ATTRIBUTES.has(attr.name)) {
+      // Fragment-only, and always spelled `href`: `xlink:href` gives way to a
+      // plain `href` on the same element rather than writing both.
+      if (!isSvgFragmentReference(attr.value)) continue
+      if (attr.name === 'xlink:href' && element.hasAttribute('href')) continue
+      props.href = rewriteAttributeReferences(attr.name, attr.value, context.ids)
+      continue
+    }
+    const jsxName = markupToJsxAttributeName(attr.name)
     if (!jsxName) continue
     if (attr.name === 'class') {
       const kept = classNames.filter((name) => !context.inlinedClasses.has(name))
       if (kept.length > 0) props[jsxName] = kept.join(' ')
+      continue
+    }
+    if (!isTextAttribute(attr.name) && cssValueLoadsExternalResource(attr.value)) {
+      context.refusal ??= remoteReferenceRefusal(attr.name, attr.value)
       continue
     }
     props[jsxName] = rewriteAttributeReferences(attr.name, attr.value, context.ids)
@@ -235,6 +261,9 @@ function convertElement(element: Element, depth: number, context: ConversionCont
     matchingRuleDeclarations(classNames, context.rules),
     parseDeclarations(element.getAttribute('style') ?? ''),
   )
+  for (const [property, value] of winners) {
+    if (cssValueLoadsExternalResource(value)) context.refusal ??= remoteReferenceRefusal(property, value)
+  }
   const { attributes, style } = declarationsToJsx(
     new Map(Array.from(winners, ([property, value]) => [property, rewriteUrlReferences(value, context.ids)])),
   )
@@ -283,6 +312,7 @@ export function convertSanitizedSvg(root: Element): SvgToJsxResult {
     ids: buildIdMapping(root),
   }
   const node = convertElement(root, 1, context)
+  if (context.refusal) return { ok: false, message: context.refusal }
   if (!node) return { ok: false, message: 'That SVG is too deeply nested to write into source.' }
   if (context.nodes >= MAX_NODES) {
     return {

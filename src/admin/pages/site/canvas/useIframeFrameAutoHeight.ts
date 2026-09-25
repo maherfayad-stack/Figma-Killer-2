@@ -21,7 +21,13 @@ interface UseIframeFrameAutoHeightOptions {
   /** Portal-mode-only — the escape hatch this hook's own portal branch still uses directly, alongside `adapter`, since its DOM-observer wiring is far more than a single `Document` reference. */
   iframeDoc: Document | null
   adapter: FrameDocumentAdapter | null
-  isLive: boolean
+  /**
+   * Whether the frame grows to its content at all. `false` for a live frame
+   * (it scrolls natively) and for P5-G's free-canvas surface (a fixed window
+   * over the board — its hosts are absolutely positioned and contribute no
+   * content height to fit to).
+   */
+  fitToContent: boolean
 }
 
 /**
@@ -70,10 +76,10 @@ export function useIframeFrameAutoHeight({
   iframeRef,
   iframeDoc,
   adapter,
-  isLive,
+  fitToContent,
 }: UseIframeFrameAutoHeightOptions): void {
   useEffect(() => {
-    if (isLive) return
+    if (!fitToContent) return
     const iframe = iframeRef.current
     if (!iframe) return
 
@@ -201,5 +207,5 @@ export function useIframeFrameAutoHeight({
       ro.disconnect()
       mo?.disconnect()
     }
-  }, [iframeDoc, iframeRef, isLive, adapter])
+  }, [iframeDoc, iframeRef, fitToContent, adapter])
 }

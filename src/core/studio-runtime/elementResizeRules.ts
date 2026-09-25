@@ -84,7 +84,20 @@ export const MIN_ELEMENT_SIZE = 8
  */
 const UNSIZEABLE_DISPLAYS = new Set(['inline', 'contents', 'none'])
 
-export function isSizeableDisplay(display: string): boolean {
+/**
+ * Replaced elements: CSS sizes them through `width`/`height` even while their
+ * display is `inline` (CSS 2.2 §10.3.2), which is every one of them by
+ * default. Refusing `inline` without this exception refused every inline
+ * `<svg>` and every `<img>` no stylesheet happened to make a block.
+ */
+const INLINE_SIZEABLE_ELEMENTS = new Set(['svg', 'img', 'video', 'canvas', 'iframe', 'embed', 'object', 'audio'])
+
+/**
+ * Whether CSS honours a `width`/`height` on an element with this computed
+ * `display` and this `localName` (lowercase tag name).
+ */
+export function isSizeableDisplay(display: string, localName: string): boolean {
+  if (display === 'inline') return INLINE_SIZEABLE_ELEMENTS.has(localName)
   return !UNSIZEABLE_DISPLAYS.has(display)
 }
 

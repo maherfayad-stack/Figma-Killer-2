@@ -87,7 +87,7 @@ export function altTextFor(file: File): string {
  * server's own words. When the rest were written, the canvas already shows
  * the result, so the files left behind are a warning naming them.
  */
-function reportUnlanded(failures: readonly { name: string; message: string }[], landedCount: number): void {
+export function reportUnlanded(failures: readonly { name: string; message: string }[], landedCount: number): void {
   const [first] = failures
   if (!first) return
   const names = failures.map((failure) => `"${failure.name}"`).join(', ')

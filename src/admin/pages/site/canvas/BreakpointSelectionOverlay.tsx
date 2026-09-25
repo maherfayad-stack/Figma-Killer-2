@@ -319,6 +319,9 @@ export function BreakpointSelectionOverlay({
   // highlight becomes the hover ring target so keyboard navigation is visible.
   const hoverRingNodeId = treeLadder.hoverNodeId ?? hoveredNodeId
   const showHover = Boolean(hoverRingNodeId) && !selectedNodeIds.includes(hoverRingNodeId ?? '')
+  // A hover TARGET change is a measure trigger — see `overlayMeasureScheduler`.
+  const hoverTargetId = showHover ? hoverRingNodeId : null
+  useEffect(() => schedulerRef.current?.schedule(), [hoverTargetId])
   const reorderDrag = useCanvasReorderDrag({
     viewportRef,
     iframeElement,

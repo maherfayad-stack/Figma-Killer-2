@@ -17,11 +17,14 @@
  * its two methods once the outcome is known:
  *
  *  - `settle()` — the write landed (the resync owns the board from here).
- *  - `rollback(failure)` — it did not. Two halves:
+ *  - `rollback(failure)` — it did not. Three parts:
  *      * the TREE: a move/delete's own inverse patches are applied, unless a
  *        re-read from disk has replaced the page since (`pageReadEpoch.ts` —
  *        the fresh page already says what the file says, and replaying the
  *        inverse over it would invent a change);
+ *      * a live frame's DOM: the optimistic hide or move the gesture made in
+ *        every bridge frame is put back (`broadcastOptimisticRevert`, store-17)
+ *        — no HMR follows a write that did not land, so nothing else would;
  *      * the STACK: the entry the write stood for is found again by its
  *        `pendingCommit` id. A gesture that never happened is removed. An
  *        undo/redo step that the server REFUSED is removed too — it is the
@@ -34,6 +37,7 @@
  */
 import { apply, type Draft, type Patches } from 'mutative'
 import type { SiteDocument } from '@core/page-tree'
+import { broadcastOptimisticRevert } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import type { EditorStore } from '@site/store/types'
 import { pruneCanvasSelectionDraft } from '../selectionSlice'
 import { collectDirtyFromSitePatches } from './dirtyTracking'
@@ -69,6 +73,9 @@ export function mintPendingCommitId(): number {
  * rollback replays. The patches are held here, never on the entry, so the
  * delete's patch-free contract stands.
  *
+ * `optimisticNodeIds` are the nodes the gesture hid or moved in the bridge
+ * frames (`broadcastOptimisticDelete`/`Move`) — what a rollback puts back there.
+ *
  * `topBefore` is the top of `_historyPast` from just BEFORE the mutation: a
  * recipe can report a change that produced no patch, and then no entry was
  * pushed — the top is somebody else's, and there is nothing to track.
@@ -76,6 +83,7 @@ export function mintPendingCommitId(): number {
 export function trackStructuralTreeCommit(
   { get, set }: Pick<SiteSliceHelpers, 'get' | 'set'>,
   topBefore: HistoryEntry | undefined,
+  optimisticNodeIds: readonly string[],
 ): StructuralCommitRollback | null {
   const state = get()
   const top = state._historyPast[state._historyPast.length - 1]
@@ -88,7 +96,7 @@ export function trackStructuralTreeCommit(
     const entry = draft._historyPast[draft._historyPast.length - 1]
     if (entry) entry.pendingCommit = { id, step: 'gesture' }
   })
-  return buildRollback({ get, set }, id, { inverse, pageIds, mark })
+  return buildRollback({ get, set }, id, { inverse, pageIds, mark, optimisticNodeIds })
 }
 
 /**
@@ -104,6 +112,7 @@ interface TreeInverse {
   inverse: Patches
   pageIds: ReadonlySet<string>
   mark: number
+  optimisticNodeIds: readonly string[]
 }
 
 function buildRollback(
@@ -140,6 +149,7 @@ function buildRollback(
         }
         takeBackEntry(state, id, failure)
       })
+      if (tree) broadcastOptimisticRevert(tree.optimisticNodeIds)
     },
   }
 }

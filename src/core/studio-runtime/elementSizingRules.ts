@@ -1,6 +1,11 @@
 /**
- * elementSizing — the Fixed / Hug / Fill sizing-intent model behind
- * `SizeSection`'s width and height fields.
+ * elementSizingRules — the Fixed / Hug / Fill sizing-intent model behind
+ * `SizeSection`'s width and height fields, and behind the Fixed switch a
+ * canvas resize flips on every axis it writes (IX-6b). It lives in
+ * `@core/studio-runtime` because both hosts of that resize read it: the
+ * portal drag (`useElementResizeDrag.ts`) and the live frame's own handles
+ * (`resizeHandles.ts`), which run inside a cross-origin frame and can reach
+ * no admin module. One resolver for the panel and both drags.
  *
  * docs/features/inspector.md, G2 (F30/F31): Figma folds a sizing
  * INTENT into the same control that shows the number — `Fixed` (a literal
@@ -58,7 +63,11 @@
  * numbers, not mode words.
  */
 import type { CSSPropertyBag } from '@core/page-tree'
-import { hasStyleValue } from './styleValueUtils'
+
+/** A stored declaration that says something: not absent, `null` or the empty string. */
+function hasStyleValue(value: unknown): value is string | number {
+  return value !== undefined && value !== null && value !== ''
+}
 
 export type SizingMode = 'fixed' | 'hug' | 'fill'
 
@@ -120,13 +129,13 @@ const STRETCH_VALUE = 'stretch'
  * width: CSS's own initial `flex` (no grow, the size as the basis). Not a
  * marker this model reads back as Hug or Fill, so it reads as Fixed.
  */
-const FLEX_MAIN_FIXED_VALUE = '0 1 auto'
+export const FLEX_MAIN_FIXED_VALUE = '0 1 auto'
 
 /**
  * What the element's CASCADE says about its flex sizing — its computed
  * `flex-grow` / `flex-basis` with this model's own inline markers already
  * cleared. Only a caller that can read the rendered element knows this (the
- * canvas resize drag does, `useElementResizeDrag.ts`); it is how a `flex: 1`
+ * canvas resize drag does, `elementResizeSizing.ts`); it is how a `flex: 1`
  * that lives in a CLASS, which no inline write can clear, is still overridden
  * rather than left to swallow the width (IX-6b).
  */

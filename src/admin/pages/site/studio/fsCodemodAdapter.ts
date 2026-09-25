@@ -85,6 +85,9 @@ import { notifyRowTemplateWrites } from './rowTemplateWrites'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
+/** A load that carried no `canvasLayers` (a CMS load): the free canvas is empty. */
+const NO_CANVAS_LAYERS: readonly never[] = []
+
 /**
  * Remembered from the last load so saveSite can tell the server which folder
  * to write. Held by `studioSaveRequests`, which every one-shot commit shares.
@@ -230,6 +233,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
       trust,
       projectKey,
       paletteHiddenModuleIds: loadedPaletteHiddenModuleIds,
+      canvasLayers: loadedCanvasLayers,
     } = meta
     // ERR-14 — the automatic stylesheet choices are this project's; a load of
     // a DIFFERENT project starts without them (a resync keeps them).
@@ -264,6 +268,9 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     // misdirect a real diff in the new one. `watchLocalizedPagesForBaseline`
     // is idempotent — safe to call on every load, only subscribes once.
     useEditorStore.getState().resetLocalizedPages()
+    // P5-G — the free canvas's loose layers, kept apart from `site.pages` by
+    // construction (`canvasLayerSlice.ts`): they never enter the document below.
+    useEditorStore.getState().setCanvasLayers(loadedCanvasLayers ?? NO_CANVAS_LAYERS)
     resetLocalizedTextBaseline()
     watchLocalizedPagesForBaseline()
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per

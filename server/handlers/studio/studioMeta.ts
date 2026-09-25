@@ -444,7 +444,8 @@ export const StudioMetaSchema = Type.Object({
 })
 export type StudioMeta = Static<typeof StudioMetaSchema>
 
-function studioMetaFile(dir: string): string {
+/** `<dir>/.studio/meta.json` — exported so a cache keyed on what it reads (the preview shell's input stamp) names the same file. */
+export function studioMetaFile(dir: string): string {
   return join(dir, '.studio', 'meta.json')
 }
 

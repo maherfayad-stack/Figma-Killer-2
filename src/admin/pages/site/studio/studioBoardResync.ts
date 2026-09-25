@@ -163,7 +163,7 @@ export async function resyncBoardAfterWrite(
       schema: StudioReloadScopeResponseSchema,
     })
     if (scope.narrow && scope.pageIds.length > 0) {
-      const { pages, missingPageIds, styleRules, conditions } = await fetchStudioPagesById(scope.pageIds, {
+      const { pages, missingPageIds, styleRules, conditions, canvasLayers } = await fetchStudioPagesById(scope.pageIds, {
         refusedRuleIds: options.refusedRuleIds,
       })
       dispatchCmsSitePagesPatch({
@@ -171,6 +171,7 @@ export async function resyncBoardAfterWrite(
         removedPageIds: missingPageIds,
         styleRules,
         conditions,
+        canvasLayers,
         ...(options.structuralOutcome ? { structuralOutcome: options.structuralOutcome } : {}),
       })
       return

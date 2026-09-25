@@ -26,28 +26,10 @@
  * change markup.
  */
 import { Node } from 'ts-morph'
+import { jsxToMarkupAttributeName } from '@core/vector'
 import type { JsxAttribute, JsxSpreadAttribute } from 'ts-morph'
 import type { PageEvalContext } from './nodeResolution'
 import { tryResolveExpression } from './nodeResolution'
-
-/**
- * SVG attributes that really are camelCase in markup. Everything else that
- * carries a capital is a React-ism for a dashed attribute (`strokeWidth` →
- * `stroke-width`), which is how React itself splits the two cases.
- */
-const CAMEL_CASE_SVG_ATTRIBUTES: ReadonlySet<string> = new Set([
-  'attributeName', 'attributeType', 'baseFrequency', 'baseProfile', 'calcMode',
-  'clipPathUnits', 'diffuseConstant', 'edgeMode', 'filterUnits', 'gradientTransform',
-  'gradientUnits', 'kernelMatrix', 'kernelUnitLength', 'keyPoints', 'keySplines',
-  'keyTimes', 'lengthAdjust', 'limitingConeAngle', 'markerHeight', 'markerUnits',
-  'markerWidth', 'maskContentUnits', 'maskUnits', 'numOctaves', 'pathLength',
-  'patternContentUnits', 'patternTransform', 'patternUnits', 'pointsAtX',
-  'pointsAtY', 'pointsAtZ', 'preserveAlpha', 'preserveAspectRatio', 'primitiveUnits',
-  'refX', 'refY', 'repeatCount', 'repeatDur', 'requiredExtensions', 'specularConstant',
-  'specularExponent', 'spreadMethod', 'startOffset', 'stdDeviation', 'stitchTiles',
-  'surfaceScale', 'systemLanguage', 'tableValues', 'targetX', 'targetY', 'textLength',
-  'viewBox', 'xChannelSelector', 'yChannelSelector', 'zoomAndPan',
-])
 
 /** Attributes that are React plumbing, never markup. */
 const DROPPED_ATTRIBUTES: ReadonlySet<string> = new Set(['key', 'ref', 'dangerouslySetInnerHTML'])
@@ -63,15 +45,6 @@ const VOID_SVG_TAGS: ReadonlySet<string> = new Set([
  * produce invalid markup, so the whole serialisation declines instead.
  */
 const MAX_MARKUP_LENGTH = 64 * 1024
-
-/** React prop name -> markup attribute name. */
-function attributeName(name: string): string {
-  if (name === 'className') return 'class'
-  if (name === 'htmlFor') return 'for'
-  if (name.startsWith('data-') || name.startsWith('aria-') || name.includes(':')) return name
-  if (CAMEL_CASE_SVG_ATTRIBUTES.has(name)) return name
-  return name.replace(/([a-z0-9])([A-Z])/g, '$1-$2').toLowerCase()
-}
 
 /** `strokeWidth` -> `stroke-width` for a `style={{…}}` entry; `--x` passes through. */
 function cssPropertyName(name: string): string {
@@ -153,7 +126,10 @@ function serializeAttributes(
       ? styleAttributeValue(attribute, evalCtx)
       : attributeValue(attribute, evalCtx)
     if (value === undefined) continue
-    out += value === '' ? ` ${attributeName(name)}` : ` ${attributeName(name)}="${escapeAttribute(value)}"`
+    // The one JSX ⇄ markup name table (`@core/vector`), shared with the SVG
+    // importer and the canvas renderer so a round trip is an identity.
+    const markupName = jsxToMarkupAttributeName(name)
+    out += value === '' ? ` ${markupName}` : ` ${markupName}="${escapeAttribute(value)}"`
   }
   return out
 }

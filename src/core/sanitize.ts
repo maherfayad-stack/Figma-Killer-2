@@ -28,50 +28,208 @@
  */
 
 import DOMPurify, { type Config } from 'dompurify'
+import { cssValueLoadsExternalResource, isSvgFragmentReference, svgStyleLoadsExternalResource, type SvgStyleChildNode } from '@core/vector'
 
 type DOMPurifyHookNode = {
   tagName?: string
+  nodeName?: string
+  textContent?: string | null
+  childNodes?: ArrayLike<SvgStyleChildNode>
   setAttribute?: (name: string, value: string) => void
+  getAttribute?: (name: string) => string | null
 }
+
+/** DOMPurify's per-attribute hook event. Setting `forceKeepAttr` skips every later check on that attribute. */
+type DOMPurifyAttributeHookEvent = {
+  attrName: string
+  attrValue: string
+  keepAttr: boolean
+  forceKeepAttr?: boolean
+}
+
+/** One entry of DOMPurify's `removed` log: a removed element, or an attribute removed from one. */
+type DOMPurifyRemoval = { element?: { nodeName?: string; namespaceURI?: string | null }; attribute?: unknown }
 
 export type DOMPurifyRuntime = {
   sanitize?: (value: string, config?: Config) => unknown
-  addHook?: (hookName: 'afterSanitizeAttributes', callback: (node: DOMPurifyHookNode) => void) => void
+  addHook?: {
+    (hookName: 'afterSanitizeAttributes', callback: (node: DOMPurifyHookNode) => void): void
+    (hookName: 'uponSanitizeAttribute', callback: (node: DOMPurifyHookNode, event: DOMPurifyAttributeHookEvent) => void): void
+    (hookName: 'uponSanitizeElement', callback: (node: DOMPurifyHookNode, event: { tagName: string }) => void): void
+  }
+  removed?: DOMPurifyRemoval[]
 }
 
 type DOMPurifyFactory = DOMPurifyRuntime & ((window: Window) => DOMPurifyRuntime)
 
 const importedDOMPurify = DOMPurify as unknown as DOMPurifyFactory
 let activeDOMPurify: DOMPurifyRuntime | null = null
-const purifiersWithLinkHook = new WeakSet<object>()
+const purifiersWithHooks = new WeakSet<object>()
 
-function installLinkHook(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
-  if (!purifiersWithLinkHook.has(purifier) && typeof purifier.addHook === 'function') {
+/**
+ * True only while `sanitizeSvg` is running. DOMPurify hooks are global to an
+ * instance, so the SVG profile's `href` allowance is scoped by this flag
+ * rather than by the config — richtext and board docs never see it.
+ * `sanitize` is synchronous, so the flag cannot leak across calls.
+ */
+let sanitizingSvg = false
+
+/**
+ * The SVG elements whose `href` is a same-document reference an icon needs:
+ * `<use href="#glyph">` sprites, gradient/pattern/filter inheritance
+ * (`<linearGradient href="#base">`), text on a path, a motion path, and a
+ * filter image of another element. Every other element keeps DOMPurify's
+ * blanket `href` refusal.
+ */
+const SVG_FRAGMENT_HREF_ELEMENTS: ReadonlySet<string> = new Set([
+  'use', 'lineargradient', 'radialgradient', 'pattern', 'filter', 'textpath', 'mpath', 'feimage',
+])
+
+/**
+ * Keep `href` / `xlink:href` on an {@link SVG_FRAGMENT_HREF_ELEMENTS} element
+ * when — and only when — its RAW value is a same-document fragment (`#name`).
+ *
+ * `forceKeepAttr` bypasses DOMPurify's own URI checks for that attribute, so
+ * the predicate is deliberately narrower than a URL parser: the value must
+ * match `^#[\w.-]+$` exactly as written. DOMPurify hands the hook a TRIMMED
+ * value and would keep the untrimmed original, so the raw attribute is read
+ * back and must equal it: a leading character `trim()` removes but a URL
+ * parser keeps (`U+2028#a`) would otherwise turn a fragment into a relative
+ * URL — a same-origin fetch of another document, which is exactly what
+ * `<use>` must never do.
+ */
+function keepSvgFragmentHref(node: DOMPurifyHookNode, event: DOMPurifyAttributeHookEvent): void {
+  if (!sanitizingSvg) return
+  if (event.attrName !== 'href' && event.attrName !== 'xlink:href') return
+  if (!SVG_FRAGMENT_HREF_ELEMENTS.has(String(node.nodeName ?? node.tagName ?? '').toLowerCase())) return
+  const raw = node.getAttribute?.(event.attrName)
+  if (raw !== event.attrValue || !isSvgFragmentReference(raw)) return
+  event.forceKeepAttr = true
+}
+
+/**
+ * The SVG profile's remote-resource rule (security review of #264, N1): the
+ * same `@core/vector` predicates the importer refuses on and the same outcome
+ * `sanitizeSvgBytes` gives a served file, so the canvas and publish no longer
+ * render what those two paths refuse. DOMPurify does not vet CSS at all.
+ *
+ *   - an attribute whose value loads something from outside the document
+ *     (`fill="url(https://…)"`, `style="background:url(//…)"`,
+ *     `image-set(…)`) is dropped. `aria-*`/`data-*` are text, not CSS;
+ *   - a `<style>` block that does (`@import`, a remote `url()`), or that has
+ *     any child that is not text (a kept `<tspan>` can split `@im|port`
+ *     between the sheet and `textContent`), is EMPTIED rather than removed: an svg's class rules are how most exported icons
+ *     paint, and removing a node from inside a DOMPurify hook is exactly the
+ *     happy-dom iterator skip `sanitizeToFixpoint` exists for.
+ *
+ * An `<style>` inside an inline svg is document-global in the frame, so a
+ * remote `@import` there is a beacon plus CSS injection against the whole page.
+ */
+function dropSvgRemoteAttribute(_node: DOMPurifyHookNode, event: DOMPurifyAttributeHookEvent): void {
+  if (!sanitizingSvg || event.forceKeepAttr) return
+  if (event.attrName.startsWith('aria-') || event.attrName.startsWith('data-')) return
+  if (cssValueLoadsExternalResource(event.attrValue)) event.keepAttr = false
+}
+
+function emptySvgRemoteStyle(node: DOMPurifyHookNode, event: { tagName: string }): void {
+  if (!sanitizingSvg || event.tagName.toLowerCase() !== 'style') return
+  if (svgStyleLoadsExternalResource(node.childNodes ?? [])) node.textContent = ''
+}
+
+function installHooks(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
+  if (!purifiersWithHooks.has(purifier) && typeof purifier.addHook === 'function') {
     purifier.addHook('afterSanitizeAttributes', (node) => {
       if (node.tagName === 'A') {
         node.setAttribute?.('target', '_blank')
         node.setAttribute?.('rel', 'noopener noreferrer')
       }
     })
-    purifiersWithLinkHook.add(purifier)
+    purifier.addHook('uponSanitizeAttribute', keepSvgFragmentHref)
+    purifier.addHook('uponSanitizeAttribute', dropSvgRemoteAttribute)
+    purifier.addHook('uponSanitizeElement', emptySvgRemoteStyle)
+    purifiersWithHooks.add(purifier)
   }
   return purifier
 }
 
+const XHTML_NAMESPACE = 'http://www.w3.org/1999/xhtml'
+
+/**
+ * Whether the last `sanitize` call removed anything from the input itself.
+ *
+ * DOMPurify logs one removal on EVERY call that is not the input's: the
+ * `<body>` its HTML parse wraps the input in. That entry, and only that one,
+ * is exempt: an element whose `nodeName` is exactly `BODY` (an HTML element;
+ * an svg-namespace `body` is `body`) in the XHTML namespace, at most once per
+ * pass. Nothing is exempted by name alone. Under happy-dom an input can create
+ * a real mid-tree `head`/`html`/`body` (inside `<svg>`, or `HEAD` inside
+ * `<table>`), and removing one skips the next node exactly like any other
+ * removal (security review of #264), so it must cost another pass.
+ */
+function removedFromInput(purifier: DOMPurifyRuntime): boolean {
+  // A runtime without the log cannot say; assume it did, and pay a pass.
+  if (!purifier.removed) return true
+  let wrapperSeen = false
+  for (const entry of purifier.removed) {
+    if (entry.attribute !== undefined) return true
+    const element = entry.element
+    if (!wrapperSeen && element?.nodeName === 'BODY' && element.namespaceURI === XHTML_NAMESPACE) {
+      wrapperSeen = true
+      continue
+    }
+    return true
+  }
+  return false
+}
+
+/** Passes after which a still-changing result is refused rather than returned. */
+const MAX_SANITIZE_PASSES = 8
+
+/**
+ * `purifier.sanitize`, repeated until a pass removes nothing.
+ *
+ * One pass is not always enough. Under happy-dom — the DOM the Bun server
+ * gives DOMPurify (`server/richtextSanitizer.ts`), and the one the publisher's
+ * `escapeProps` sanitises with — removing an element makes DOMPurify's node
+ * iterator skip the node after it, so that node's attributes are never
+ * checked: `<foo></foo><a href="javascript:…" onclick="…">` came back with
+ * both attributes intact. A browser's iterator does not skip, which is why no
+ * browser test ever saw it. A second pass over the first pass's output sees
+ * the skipped node (the element that caused the skip is gone), and a pass that
+ * removes nothing proves the output clean. Clean input costs one pass, since
+ * nothing was removed from it.
+ *
+ * A result still changing after {@link MAX_SANITIZE_PASSES} is refused as
+ * `''`: a sanitiser that cannot prove its output clean returns nothing.
+ */
+function sanitizeToFixpoint(purifier: DOMPurifyRuntime, input: string, config: Config): string {
+  // `removed` is REASSIGNED by every `sanitize` call, so it is read off the
+  // purifier each time, never held.
+  const run = (value: string): string => String(purifier.sanitize?.(value, config) ?? '')
+  let current = run(input)
+  for (let pass = 1; pass < MAX_SANITIZE_PASSES; pass += 1) {
+    if (!removedFromInput(purifier)) return current
+    const next = run(current)
+    if (next === current && !removedFromInput(purifier)) return current
+    current = next
+  }
+  return removedFromInput(purifier) ? '' : current
+}
+
 export function configureRichtextSanitizer(purifier: DOMPurifyRuntime | null): void {
-  activeDOMPurify = purifier ? installLinkHook(purifier) : null
+  activeDOMPurify = purifier ? installHooks(purifier) : null
 }
 
 function getDOMPurify(): DOMPurifyRuntime | null {
   const direct = activeDOMPurify ?? importedDOMPurify
   if (typeof direct.sanitize === 'function') {
-    return installLinkHook(direct)
+    return installHooks(direct)
   }
 
   if (typeof window !== 'undefined' && typeof importedDOMPurify === 'function') {
     activeDOMPurify = importedDOMPurify(window)
     if (typeof activeDOMPurify.sanitize === 'function') {
-      return installLinkHook(activeDOMPurify)
+      return installHooks(activeDOMPurify)
     }
   }
 
@@ -149,10 +307,11 @@ const RICHTEXT_CONFIG: Config = {
  * alignment, which the doc toolbar writes and markdown has no syntax for) and
  * `align`.
  *
- * Widening `style` is safe here and is NOT a widening of the publisher's
- * profile: DOMPurify runs allowed inline styles through its own CSS parser,
- * dropping `url()`, `expression()`, `behavior` and anything else that can
- * execute. And a `DocBlock` is board furniture — it lives in
+ * Widening `style` is NOT a widening of the publisher's profile. Note what
+ * it does allow: DOMPurify does not vet CSS at all, so an allowed `style`
+ * attribute keeps whatever it says, `url()` included. That cannot run script
+ * in a modern browser, but it can load a remote resource. What bounds it is
+ * where it renders: a `DocBlock` is board furniture — it lives in
  * `.studio/boards.json`, renders only inside the admin canvas, and is never
  * emitted by the publisher — so this profile is deliberately its own constant
  * rather than a relaxation of `RICHTEXT_CONFIG`, which IS on the published
@@ -217,7 +376,7 @@ export function sanitizeRichtext(
     return config._plainText ? stripped.trim() : stripped
   }
 
-  const sanitized = String(purifier.sanitize(str, config))
+  const sanitized = sanitizeToFixpoint(purifier, str, config)
 
   // When plain-text mode is requested, apply a post-strip pass.
   // DOMPurify's ALLOWED_TAGS:[] covers most cases but certain browsers / DOM
@@ -252,9 +411,19 @@ export function isRichtextPropKey(key: string): boolean {
  *
  * `currentColor` and presentation attributes survive, so an SVG styled by a
  * CSS class (`fill: currentColor`) keeps inheriting the page's text colour.
+ *
+ * `href` / `xlink:href` stay forbidden, with ONE exception applied by the
+ * `keepSvgFragmentHref` hook while this profile runs: a same-document fragment
+ * (`#name`) on the elements that reference one. That is what makes
+ * `<use href="#glyph">` sprites and gradient inheritance render instead of
+ * silently drawing nothing. `<use>` itself is added back for the same reason:
+ * DOMPurify drops it by default because a `<use>` pointing at a `data:` or
+ * remote document can carry script, and with its `href` limited to a fragment
+ * of THIS document it cannot.
  */
 const SVG_CONFIG: Config = {
   USE_PROFILES: { svg: true, svgFilters: true },
+  ADD_TAGS: ['use'],
   // Defence in depth — DOMPurify's svg profile already excludes these, but be
   // explicit: no HTML embedding, no script, no nested anchors carrying hrefs.
   FORBID_TAGS: ['script', 'foreignObject', 'a'],
@@ -284,5 +453,10 @@ export function sanitizeSvg(value: unknown): string {
     return ''
   }
 
-  return String(purifier.sanitize(str, SVG_CONFIG))
+  sanitizingSvg = true
+  try {
+    return sanitizeToFixpoint(purifier, str, SVG_CONFIG)
+  } finally {
+    sanitizingSvg = false
+  }
 }

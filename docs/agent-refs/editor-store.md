@@ -388,6 +388,37 @@ convert is skipped for every unrequested route — but never the meta: the style
 registry is built from every route's stylesheets together, so it stays a full,
 fresh recompute (`studioPageLoad.ts`'s `options.pageIds` doc).
 
+**A re-read is applied by VALUE, not by object (PERF-6, P6-A).** Everything
+off the wire is a brand-new object graph, and the canvas compares by identity:
+every `NodeRenderer` selects its node, every mounted frame's
+`ClassStyleInjector` regenerates its `<style>` on a new `styleRules` object.
+So `patchPages` puts each re-read page, `styleRules` and `conditions` in
+through `replaceEqualDeep` (`@core/utils/replaceEqualDeep`): a node, rule or
+condition deep-equal to the one the store held keeps its old object, and the
+page or registry itself keeps its identity when all of it is unchanged. A prop
+write therefore re-renders the one node it changed and restyles no frame
+("wholesale" above is about which rules EXIST — a deleted rule is gone — not
+about object identity).
+
+**A renumbered node keeps its React key.** A structural write renumbers every
+`rel:line:col` id below it, and `NodeRenderer` used to key each child by its
+id, so every one of those elements remounted. `site/rereadRenderKeys.ts`
+aligns each re-read page against the page the store held (`alignPageTrees`,
+the alignment the selection follower then reuses via `alignments`) and hands
+it to `canvas/nodeRenderKeys.ts`, an off-store per-page map from node id to
+the key it renders under. `NodeRenderer` and `CanvasComposedTree` key children
+by `nodeRenderKey(pageId, id)`; a moved element re-renders in place (its id
+changed), it does not remount. Rules: keys stay unique among siblings (an
+unaligned node whose id a moved node carries gets a minted key); a node object
+shared from the previous page whose CHILD keys changed is copied, because a
+shared parent would not re-render and would keep the old keys (a move among
+same-size siblings permutes the addresses without changing the parent's
+`children` ids); `loadSite`/`createSite`/`clearSite` clear the map. Only board
+frames (which provide `CanvasPageContext`) carry keys; a frame without a page
+context keys by id, as before. Measured by `bench:editor-store`'s post-write
+re-sync scenario (`scripts/bench/lib/postWriteResync.ts`), whose counts are a
+budget.
+
 A resync triggered by `saveSite` runs as the **last** thing that function does,
 after every diff baseline has advanced, and carries the save's `refusedRuleIds`
 so the reload's own `commitBaseline` does not adopt a value the server refused.

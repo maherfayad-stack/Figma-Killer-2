@@ -32,7 +32,7 @@
  * file's own doc for the conversion.
  */
 import type { PreviewAxes } from '@core/studio-board'
-import type { ElementResizePatch, RuntimeErrorKind } from '@core/studio-runtime'
+import type { ResizeCommitPatch, ResizeSizingMarkers, RuntimeErrorKind, SnapGuide } from '@core/studio-runtime'
 
 /** A real, canonical parser/tree node id — the ONLY id shape any caller outside `frameAdapter/` ever sees. */
 export interface NodeRef {
@@ -103,6 +103,14 @@ export interface OptimisticDomOps {
   style(nodeId: string, patch: Record<string, string>, className?: string): void
   /** Drops whatever optimistic style rule is currently active for `nodeId` — a no-op when none is. */
   clearStyle(nodeId: string): void
+  /**
+   * store-17 — the structural write behind an optimistic `delete`/`move` of
+   * these nodes did not land (refused, or never answered), so no HMR will
+   * reconcile the frame: put their optimistic hide or move back now. Called
+   * from `structuralCommitRollback.ts`, beside the tree's own inverse replay.
+   * A portal frame's DOM IS the tree, so its implementation is a no-op.
+   */
+  revert(nodeIds: readonly string[]): void
 }
 
 export type FrameRuntimeEvent =
@@ -139,10 +147,14 @@ export type FrameRuntimeEvent =
    * `live-13` — a finished drag on the frame's own resize handles changed the
    * node's size; `patch` is the inline-style write the consumer commits
    * through the store (only the dimensions the drag changed, as `px`
-   * strings). Bridge mode only in practice: a portal frame's handles are the
-   * parent's own React elements (`CanvasResizeHandles`) and commit directly.
+   * strings, plus the Fixed companions a flex/grid child needs — `null`
+   * clears one; canvas-23). Bridge mode only in practice: a portal frame's
+   * handles are the parent's own React elements (`CanvasResizeHandles`) and
+   * commit directly.
    */
-  | { type: 'resize:commit'; nodeId: string; patch: ElementResizePatch }
+  | { type: 'resize:commit'; nodeId: string; patch: ResizeCommitPatch }
+  /** canvas-26 — the snap guides of the frame's resize step changed (`[]` when it ends), in frame-document px; the consumer paints them in the frame's drag layer. */
+  | { type: 'resize:guides'; guides: SnapGuide[] }
   /** `live-12` — a design-mode wheel gesture inside a bridge frame, in frame-local client pixels; the parent re-dispatches it on the iframe element. */
   | {
       type: 'wheel'
@@ -191,6 +203,19 @@ export type FrameRuntimeEvent =
 export type Unsubscribe = () => void
 
 /**
+ * What a resize target needs beyond the node itself — everything a portal
+ * drag reads straight off the store and a live frame cannot.
+ */
+export interface ResizeTargetOptions {
+  /** `K4`'s scale tool is armed: keep the aspect ratio. */
+  proportional: boolean
+  /** canvas-23 — the node's STORED inline sizing markers, which the Fixed switch reads to decide what a resize clears. */
+  sizing?: ResizeSizingMarkers
+  /** canvas-26 — what the moving edge snaps to: the node's tree siblings and parent, and the canvas zoom for the screen-px threshold. */
+  snap?: { siblings: NodeRef[]; parent: NodeRef | null; zoom: number }
+}
+
+/**
  * The interface. 7 methods (the plan's own literal sketch is corrected from
  * 6 — see `STATE.md`'s `live-05` entry, "The plan's literal interface is
  * incomplete") plus a symmetric `dispose()`.
@@ -230,10 +255,11 @@ export interface FrameDocumentAdapter {
    * whether `K4`'s scale tool is armed. The caller has already applied the
    * module policy (`resizeOffer.ts`); the frame applies the geometric one
    * (an element whose computed display ignores a size gets no handles).
+   * `options` also carries what the frame cannot know itself (canvas-23/26).
    * Portal mode draws its handles as the parent's own React elements
    * (`CanvasResizeHandles`) and ignores this call — see `PortalFrameAdapter`.
    */
-  setResizeTarget(ref: NodeRef | null, options: { proportional: boolean }): void
+  setResizeTarget(ref: NodeRef | null, options: ResizeTargetOptions): void
   /**
    * `live-18` — replies to the frame's `text:editStart`: whether `nodeId`
    * may be edited inline (the same predicate the portal editor's

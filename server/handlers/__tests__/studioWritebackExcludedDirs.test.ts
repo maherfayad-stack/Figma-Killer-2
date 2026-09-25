@@ -18,7 +18,10 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { UNWRITABLE_WORKSPACE_DIR_NAMES, isWorkspaceWritablePath } from '@core/page-parser'
-import { applyStudioEditBatch, studioEditLocation } from '../studioWriteback'
+import { applyStudioEditBatch, canonicalSourceRel, isWritableSourceRel, studioEditLocation } from '../studioWriteback'
+
+/** The editor batch's scope — the only caller that may name a loose-layer module. */
+const ALLOW_LAYERS = { canvasLayers: 'allow' } as const
 import { landAssetBytes, landDesignReferenceBytes } from '../studio/assetLanding'
 import { tryServeStudioExtractComponent } from '../studio/extractComponent'
 import { studioEditMcpTools } from '../../ai/mcp/tools/studio/editTools'
@@ -94,11 +97,51 @@ describe('the node-id decode refuses every unwritable directory', () => {
     expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
   })
 
-  // FC-1's extension point is deliberately CLOSED. When FC-1 opens exactly
-  // `.studio/canvas/<id>.tsx`, it flips this assertion in its own reviewed
-  // change — and must keep every other `.studio` path refused.
-  it('does not yet open the future free-canvas layer path', () => {
+  // FC-1 (P5-G) opens EXACTLY `.studio/canvas/<id>.tsx` — the free canvas's
+  // layer modules — and nothing wider. The acceptance below failed before FC-1
+  // (the extension point was empty); every refusal after it must keep holding.
+  it('opens the free-canvas layer path ONLY for a caller that opts in (the editor batch), and only its exact spelling', () => {
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1', ALLOW_LAYERS)).toEqual({
+      rel: '.studio/canvas/cl0123456789.tsx',
+      line: 1,
+      col: 1,
+    })
+  })
+
+  it('refuses the layer path by DEFAULT — a caller that decodes on its own never reaches it (#260 B1)', () => {
     expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toBeNull()
+    expect(canonicalSourceRel(tmpDir, '.studio/canvas/cl0123456789.tsx')).toBeNull()
+    expect(isWritableSourceRel('.studio/canvas/cl0123456789.tsx')).toBe(false)
+  })
+
+  it.each([
+    ['another .studio file', '.studio/meta.tsx:1:1'],
+    ['a nested canvas path', '.studio/canvas/x/cl0123456789.tsx:1:1'],
+    ['a sibling directory', '.studio/canvasx/cl0123456789.tsx:1:1'],
+    ['a canvas file with another extension', '.studio/canvas/cl0123456789.ts:1:1'],
+    ['a canvas file with a second extension', '.studio/canvas/cl0123456789.tsx.tsx:1:1'],
+    ['an id that is too short', '.studio/canvas/cl012345678.tsx:1:1'],
+    ['an id that is too long', '.studio/canvas/cl01234567890.tsx:1:1'],
+    ['an id with upper case', '.studio/canvas/cl0123456789A.tsx:1:1'],
+    ['an id without the prefix', '.studio/canvas/xx0123456789.tsx:1:1'],
+    ['upper-cased .studio', '.STUDIO/canvas/cl0123456789.tsx:1:1'],
+    ['upper-cased canvas', '.studio/CANVAS/cl0123456789.tsx:1:1'],
+    ['a trailing-dot spelling', '.studio./canvas/cl0123456789.tsx:1:1'],
+    ['backslash separators', '.studio\\canvas\\cl0123456789.tsx:1:1'],
+    ['traversal out of canvas', '.studio/canvas/../meta.tsx:1:1'],
+    ['traversal into canvas', 'src/../.studio/canvas/cl0123456789.tsx:1:1'],
+    ['a nested .studio', 'src/.studio/canvas/cl0123456789.tsx:1:1'],
+    ['an absolute path', '/.studio/canvas/cl0123456789.tsx:1:1'],
+    ['a stream suffix', '.studio/canvas/cl0123456789.tsx::$DATA:1:1'],
+  ])('keeps refusing %s, even for a caller that opts in', (_label, nodeId) => {
+    expect(studioEditLocation(tmpDir, nodeId, ALLOW_LAYERS)).toBeNull()
+  })
+
+  it('judges a .studio/canvas that is a link by where it really lands', () => {
+    // A cloned repository can carry a symlink; git stores them. A canvas
+    // directory linked into `.git` must not become a way to write there.
+    linkDir('.git/hooks', '.studio/canvas')
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1', ALLOW_LAYERS)).toBeNull()
   })
 
   it('refuses a symlink spelled like source whose real path is inside .studio', () => {

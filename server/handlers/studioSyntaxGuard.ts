@@ -18,7 +18,7 @@ import { join } from 'node:path'
 import { fileSyntaxError, type SourceSyntaxError } from '@core/page-parser'
 import { cssCreateImportTarget } from './studioCssWriteback'
 import { refusalFor } from './studioEditRefusals'
-import { canonicalSourceRel, studioEditLocation } from './studioEditRouting'
+import { canonicalSourceRel, studioEditLocation, type SourceTargetScope } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
 
 /**
@@ -27,12 +27,12 @@ import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
  * through `studioEditLocation`, the same containment-checked decoder the write
  * itself uses, so this never reads a path the write would not.
  */
-function filesWrittenBy(dir: string, edit: StudioEdit): string[] {
+function filesWrittenBy(dir: string, edit: StudioEdit, scope: SourceTargetScope | undefined): string[] {
   const rels: string[] = []
-  const own = studioEditLocation(dir, edit.nodeId)
+  const own = studioEditLocation(dir, edit.nodeId, scope)
   if (own) rels.push(own.rel)
   if (edit.kind === 'transplant') {
-    const destination = studioEditLocation(dir, edit.parentNodeId)
+    const destination = studioEditLocation(dir, edit.parentNodeId, scope)
     if (destination) rels.push(destination.rel)
   }
   // A `create` writes the new stylesheet's `import` into the page (or, with no
@@ -41,7 +41,7 @@ function filesWrittenBy(dir: string, edit: StudioEdit): string[] {
   // through the same guard a node id's `rel` does before anything reads it.
   if (edit.kind === 'css' && edit.op === 'create') {
     const importer = cssCreateImportTarget(dir, edit)
-    const page = importer ? canonicalSourceRel(dir, importer) : null
+    const page = importer ? canonicalSourceRel(dir, importer, scope) : null
     if (page) rels.push(page)
   }
   return rels
@@ -52,7 +52,7 @@ function filesWrittenBy(dir: string, edit: StudioEdit): string[] {
  * parses, otherwise the `syntax-error` refusal naming the first broken file
  * and its first parse error's line.
  */
-export function createSyntaxGuard(dir: string): (edit: StudioEdit) => StudioEditRefusal | null {
+export function createSyntaxGuard(dir: string, scope?: SourceTargetScope): (edit: StudioEdit) => StudioEditRefusal | null {
   const checked = new Map<string, SourceSyntaxError | undefined>()
   const errorIn = (rel: string): SourceSyntaxError | undefined => {
     if (!checked.has(rel)) checked.set(rel, fileSyntaxError(join(dir, ...rel.split('/'))))
@@ -60,7 +60,7 @@ export function createSyntaxGuard(dir: string): (edit: StudioEdit) => StudioEdit
   }
 
   return (edit) => {
-    for (const rel of filesWrittenBy(dir, edit)) {
+    for (const rel of filesWrittenBy(dir, edit, scope)) {
       const error = errorIn(rel)
       if (!error) continue
       return refusalFor(

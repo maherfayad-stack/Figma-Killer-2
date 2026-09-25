@@ -117,7 +117,7 @@ function applyEditorAttrsToBody(
   }
   const onMouseLeave = nodeWrapperProps?.onMouseLeave
   if (onMouseLeave) {
-    const wrapped = () => onMouseLeave()
+    const wrapped = (e: MouseEvent) => onMouseLeave(e)
     body.addEventListener('mouseleave', wrapped)
     handlers.push(['mouseleave', wrapped as EventListener])
   }
