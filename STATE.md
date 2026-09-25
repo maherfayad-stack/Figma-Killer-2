@@ -11,6 +11,23 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### canvas-38 — P5-F: canvas backlog (snapping to guides and spacing, multi-select move and resize, Hug, rotation, B, quick keys)
+- **Agent:** canvas-engineer · **Branch:** `feat/canvas-snapping-and-backlog` off `1c939ab0` · **PR:** draft, base `feat/canvas-excellence` (long form, tests, dogfood in its body) · **Updated:** 2026-09-25
+- **Stage:** verifying (draft PR open; owner dogfood below)
+- **Closes:** IX-5c, IX-5d, IX-5e, IX-6f, IX-6g, IX-22, IX-25, IX-13, UX-8, UX-9 (frame size, Copy as PNG, snap toggles; no board background — the model has none), IX-misc partly (0–9 opacity, ⇧H/⇧V flip). **Follow-ups:** IX-23 (grid cell drops need a parser-side `grid-row`/`grid-column` write), the rest of IX-misc (⌥N/⇧G aliases, ⌘⇧E, `\`, ⌥L/⌥I, g-d/g-v, Z, font keys, ⇧⏎ multi, ⌘D offset memory), group snapping/rotation/Hug.
+- **Canvas files touched:** `boardSnapping`, `snapSpacing` (new), `snapPreferences` (new), `canvasSnapPeers`, `canvasFreeMove`, `canvasDragFrame`, `canvasDragCommit`, `canvasDragPainter` (+css), `elementResizeSnap`, `elementResizeSizing`, `useElementResizeDrag`, `handleDragSession` (new), `groupResize` + `useGroupResizeDrag` (new), `useElementRotateDrag` (new), `CanvasResizeHandles`, `CanvasSelectionChrome`, `BreakpointSelectionOverlay`, `canvasSelectionOverlayPositioning`, `BoardGuidesLayer` (+css), `useBoardFrameMoveDrag`, `useAnnotationInteraction`, `CanvasDrawToolLayer`, `canvasDrawTool`, `boardDrawTool` (new), `BoardFramesLayer/AddPagePicker` + `BoardDrawPagePicker` (new), `CanvasRoot`, `layerQuickStyles` (new), `useCanvasLayerCommandKeys`, `useCanvasToolShortcuts`, `copyAsPng` (new), `useCopyAsPngShortcut`. Runtime: `selectionChromeCss`, `resizeHandles` (rotate zone attrs) + regenerated `runtimeBridgeBundle`. Also store `canvasSlice` / `boardSlice` / `boardFrameSliceActions`, keybindings (`keybindingViewport` ⌘' ⌘⇧', `keybindingTools` B, `keybindingLayerCommands` 0–9 ⇧H ⇧V), `ZoomControls`, `EmptySelectionPanel` (new), `RotationRow` (`rotateValue`, new), `Section.module.css`, server `pageScaffold`/`boardFrames`/`projectRoutes` (`placement`).
+- **Decisions:** ⌘' toggles ruler-guide snapping, ⌘⇧' object + spacing snapping (register row added; persisted per person in `localStorage`). Pills describe the RESULT, not the snap. A multi free move / group resize is all-or-nothing and one `setNodesInlineStylesPerNode`. Group resize writes offsets only for absolute members. Rotation writes the standalone `rotate`, never `transform`; refuses a rotate-family transform. B on the empty board never reaches P5-G's handler. Opacity 0 CLEARS the layer's own `opacity`.
+- **P5-G seams:** `snapBoardFurniture` (furniture snap with guides, spacing and toggles in one call) and `setBoardSnapGuides(guides, spacings?)` — loose layers can adopt both. `DrawTool` gained `'board'`: an exhaustive switch over `DrawTool` in P5-G's handler must add it (it never receives one).
+- **Landmines:**
+  - **Events × injectors:** rotation zones are `[data-canvas-rotate-handle]` in `selectionChromeCss` (cursor `!important`, like the resize handles) — a runtime-rule change, so the bridge bundle was regenerated. The shared regen script's PATH line breaks on the `C:` drive colon (it runs local Bun 1.3.6); I ran a copy with `cygpath -u` on that line only.
+  - **Events:** a handle press cancels its `pointerdown`, and Chromium then did not deliver `dblclick` to it — Hug is a second PRESS on the same handle within 400 ms of a still press, detected in the handle's own `pointerdown`. Do not move it back to `dblclick`.
+  - **Events × store (fixed, was K6):** the free-move preview now RESTORES each touched offset instead of removing it. Removing it lost a React-authored `left` on a move released straight down (React re-applies only changed style keys). Any new preview must snapshot/restore (`createInlineStylePreview`).
+  - **Height × gestures:** every handle gesture (resize, group, rotate) now freezes through `handleDragSession`; a new handle gesture must use it, not copy it.
+  - Ruler guides reach frame space through the transform layer's rect top-left (= board 0,0 because `transform-origin: 0 0`).
+- **Found, not fixed:** in the PR body.
+- **Next:** owner dogfood (script in the PR body); orchestrator review.
+- **Human action needed:** dogfood: `test4`, `/admin/site`, static tier, one frame, 100% — equal-spacing pills on an absolute drag, ⌘'/⌘⇧' in the zoom menu, ⇧-select two layers → one handle box, double-click an edge, rotate from outside a corner with ⇧, 5 / 0 / ⇧H, B-drag on the empty board.
+
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -64,6 +81,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 - `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
+- `canvas-38` · `/admin/site` on `test4`, one frame, 100% · equal-spacing pills on an absolute drag; ⌘' / ⌘⇧' (zoom menu shows them); ⇧-select two → one handle box, drag scales both; double-click an edge → Hug; rotate from outside a corner with ⇧; 5 / 0 / ⇧H; B-drag on the empty board → page picker, frame at the drawn rect. Script: the PR body
 
 **Assistant (P4)**
 - `mcp-28` · the Agent panel with an Anthropic API key (not the CLI) · ask it to build a screen: it reads, writes and edits files; asking it to edit `vite.config.js` or `package.json` is refused as needs-you. Script: the PR #233 body
