@@ -109,15 +109,21 @@ import type { SnapPreferences } from './snapPreferences'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
-import { cssPropertyName } from './elementResizeSizing'
+import { createInlineStylePreview, type InlineStylePreview } from './elementResizeSizing'
 import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
 import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
 
 /** One layer a free move writes: its element, the offsets it moves, and whether it becomes absolute. */
 export interface FreeMoveMember {
   nodeId: string
-  /** The element whose own inline style the gesture writes. */
-  element: HTMLElement
+  /**
+   * The drag's preview on the element whose own inline style the gesture
+   * writes — it snapshots every property it
+   * touches and restores exactly those values, so clearing it can never
+   * delete an inline value React wrote and the commit will not rewrite (a
+   * `left` the move never changed, on a purely vertical move).
+   */
+  preview: InlineStylePreview
   /**
    * The offsets the gesture moves, each from its value at drag start — the
    * authored ones (IX-21, see the module doc), or `left`/`top` for a layer
@@ -331,7 +337,7 @@ function resolveMember(
     kind: 'member',
     member: {
       nodeId,
-      element,
+      preview: createInlineStylePreview(element),
       offsets: planFreeMoveOffsets(box, own, authored, properties.needsAbsolute),
       needsAbsolute: properties.needsAbsolute,
     },
@@ -498,12 +504,7 @@ function offsetsPatch(member: FreeMoveMember, step: FreeMoveStep): Record<string
  * because otherwise the offsets would visibly do nothing until the drop.
  */
 export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
-  for (const member of plan.members) {
-    if (member.needsAbsolute) member.element.style.setProperty('position', 'absolute')
-    for (const [property, value] of Object.entries(offsetsPatch(member, step))) {
-      member.element.style.setProperty(cssPropertyName(property), value)
-    }
-  }
+  for (const member of plan.members) member.preview.apply(freeMoveStylePatch(member, step))
 }
 
 /**
@@ -513,14 +514,14 @@ export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
  * from its point of view the style prop did not change. Both happen inside one
  * event handler, so the browser paints once and the intermediate state is
  * never seen.
+ *
+ * It RESTORES what each property held before the drag rather than removing
+ * it: an offset the drag touched and the commit then leaves alone (the
+ * horizontal term of a move that ended purely vertical) must keep React's
+ * value, which React will not write again (P5-F).
  */
 export function clearFreeMovePreview(plan: FreeMovePlan): void {
-  for (const member of plan.members) {
-    for (const term of [...member.offsets.horizontal, ...member.offsets.vertical]) {
-      member.element.style.removeProperty(cssPropertyName(term.property))
-    }
-    if (member.needsAbsolute) member.element.style.removeProperty('position')
-  }
+  for (const member of plan.members) member.preview.clear()
 }
 
 /** One member's inline-style patch — one element, one `style={{…}}`. */

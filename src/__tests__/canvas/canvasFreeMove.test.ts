@@ -25,6 +25,7 @@ import {
 import { authoredOffsets, type NudgeOffsetProperty } from '@site/canvas/canvasNodeArrowMove'
 import { isPositionedFreely } from '@core/studio-runtime'
 import { SNAP_THRESHOLD_SCREEN_PX } from '@site/canvas/boardSnapping'
+import { createInlineStylePreview } from '@site/canvas/elementResizeSizing'
 
 function style(overrides: Partial<FreeMoveStyleInput> = {}): FreeMoveStyleInput {
   return {
@@ -109,7 +110,7 @@ describe('IX-21 — a free move keeps the layer anchored the way its source anch
     return {
       members: [{
         nodeId: 'n',
-        element: {} as HTMLElement,
+        preview: createInlineStylePreview(styleElement()),
         offsets: planFreeMoveOffsets(BOX, style({ position: 'absolute', ...own }), authored, false),
         needsAbsolute: false,
       }],
@@ -143,7 +144,14 @@ describe('IX-21 — a free move keeps the layer anchored the way its source anch
   })
 })
 
-interface PlanOverrides extends Partial<Omit<FreeMovePlan, 'members'>>, Partial<Omit<FreeMoveMember, 'nodeId'>> {}
+interface PlanOverrides extends Partial<Omit<FreeMovePlan, 'members'>>, Partial<Omit<FreeMoveMember, 'nodeId' | 'preview'>> {
+  element?: HTMLElement
+}
+
+/** An element with a real CSSOM style declaration — the preview snapshots and restores through it. */
+function styleElement(): HTMLElement {
+  return document.createElement('div')
+}
 
 /** A one-member plan, with the member's and the plan's fields overridable in one bag. */
 function plan(overrides: PlanOverrides = {}): FreeMovePlan {
@@ -151,7 +159,7 @@ function plan(overrides: PlanOverrides = {}): FreeMovePlan {
   return {
     members: [{
       nodeId: 'n',
-      element: element ?? ({} as HTMLElement),
+      preview: createInlineStylePreview(element ?? styleElement()),
       offsets: offsets ?? {
         horizontal: [{ property: 'left', sign: 1, base: 100 }],
         vertical: [{ property: 'top', sign: 1, base: 100 }],
@@ -234,6 +242,8 @@ describe('free move writes a React style key to the source and a CSSOM name to t
   function recordingElement() {
     const set = new Map<string, string>()
     const style = {
+      getPropertyValue: (name: string) => set.get(name) ?? '',
+      getPropertyPriority: () => '',
       setProperty: (name: string, value: string) => void set.set(name, value),
       removeProperty: (name: string) => {
         set.delete(name)
@@ -257,5 +267,29 @@ describe('free move writes a React style key to the source and a CSSOM name to t
     expect([...set.keys()].sort()).toEqual(['inset-inline-start', 'top'])
     clearFreeMovePreview(p)
     expect(set.size).toBe(0)
+  })
+})
+
+/**
+ * P5-F — found by the multi-select e2e: the clear REMOVED every offset
+ * property, including a `left` the source authored and the commit of a
+ * purely vertical move leaves alone, so React (which only re-applies what
+ * changed) never put it back and the layer jumped to `left: auto`.
+ */
+describe('clearing a free-move preview restores what React wrote', () => {
+  it('a vertical move keeps the authored left', () => {
+    const element = document.createElement('div')
+    element.style.setProperty('left', '120px')
+    element.style.setProperty('top', '40px')
+    const p = plan({ element })
+    // A little sideways mid-drag, then straight down at release.
+    previewFreeMove(p, stepFreeMove(p, 6, 30, 1))
+    expect(element.style.getPropertyValue('left')).toBe('106px')
+    const release = stepFreeMove(p, 0, 30, 1)
+    previewFreeMove(p, release)
+    clearFreeMovePreview(p)
+    expect(element.style.getPropertyValue('left')).toBe('120px')
+    expect(element.style.getPropertyValue('top')).toBe('40px')
+    expect(patchOf(p, release)).toEqual({ top: '130px' })
   })
 })

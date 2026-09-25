@@ -22,6 +22,7 @@ import { createBoard } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { resolveFreeMove, stepFreeMove, type FreeMovePlan } from '@site/canvas/canvasFreeMove'
 import { DEFAULT_SNAP_PREFERENCES } from '@site/canvas/snapPreferences'
+import { createInlineStylePreview } from '@site/canvas/elementResizeSizing'
 import { useAnnotationInteraction } from '@site/canvas/useAnnotationInteraction'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import { paintCanvasDrag } from '@site/canvas/canvasDragPainter'
@@ -59,7 +60,7 @@ function freePlan(overrides: Partial<Omit<FreeMovePlan, 'members'>> = {}): FreeM
   return {
     members: [{
       nodeId: 'n',
-      element: {} as HTMLElement,
+      preview: createInlineStylePreview(document.createElement('div')),
       offsets: {
         horizontal: [{ property: 'left', sign: 1, base: 100 }],
         vertical: [{ property: 'top', sign: 1, base: 100 }],

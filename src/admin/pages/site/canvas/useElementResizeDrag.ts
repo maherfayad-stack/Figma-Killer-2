@@ -64,12 +64,15 @@
  * ## Double-click: Hug (P5-F, IX-6f)
  *
  * A double-click on a handle sets Hug contents on the axes it owns
- * (`hugPatchForHandle`) — one `setNodeInlineStyles`, one undo entry. The two
- * presses before it are zero-distance drags that commit nothing
- * (`resizeInlinePatch` is `null` for a step that moved nothing). It is handled
- * in the same document-capture listener that swallows the handle's clicks,
- * because that listener stops the event before any handle-level one would
- * hear it.
+ * (`hugPatchForHandle`) — one `setNodeInlineStyles`, one undo entry. It is
+ * detected here, as a SECOND PRESS on the same handle within
+ * {@link DOUBLE_PRESS_MS} of a first press that moved nothing, never from the
+ * native `dblclick`: every handle press cancels its `pointerdown` (so the page
+ * never sees it), and a real browser then does not reliably deliver the
+ * `dblclick` (measured in `canvas-snapping-and-backlog.e2e.ts`). The first
+ * press is a zero-distance drag that commits nothing (`resizeInlinePatch` is
+ * `null` for a step that moved nothing); the second one hugs instead of
+ * starting a drag.
  *
  * Escape and a window blur cancel: the preview is restored and nothing is
  * committed. A move that arrives with the button already up (the release
@@ -119,6 +122,11 @@ import {
 /** A node with no `style={{…}}` of its own — stable, so no fallback object is built per press. */
 const NO_INLINE_STYLES: Readonly<Record<string, unknown>> = {}
 
+/** Two presses on one handle this close together are a double-click (the OS default is ~500 ms). */
+export const DOUBLE_PRESS_MS = 400
+/** …and this close in place, frame px. */
+const DOUBLE_PRESS_SLOP_PX = 4
+
 interface ElementResizeDragOptions {
   /** The handle container portalled into the iframe overlay root, or `null`. */
   frame: HTMLElement | null
@@ -150,16 +158,23 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
       if (!frame.contains(event.target as Node | null)) return
       event.preventDefault()
       event.stopPropagation()
-      if (event.type === 'dblclick') hugFromHandle(event.target)
     }
+
+    // IX-6f — the last press that ended without moving anything: a second
+    // one on the same handle, soon and close, is the double-click.
+    let lastStillPress: { handle: ResizeHandle; at: number; x: number; y: number } | null = null
+    const isSecondPress = (handle: ResizeHandle, event: PointerEvent): boolean =>
+      lastStillPress !== null &&
+      lastStillPress.handle === handle &&
+      performance.now() - lastStillPress.at <= DOUBLE_PRESS_MS &&
+      Math.abs(event.clientX - lastStillPress.x) <= DOUBLE_PRESS_SLOP_PX &&
+      Math.abs(event.clientY - lastStillPress.y) <= DOUBLE_PRESS_SLOP_PX
 
     // IX-6f — Hug on the double-clicked handle's axes. Resolved per gesture
     // like a drag: the element on screen now, its parent's layout now.
-    const hugFromHandle = (target: EventTarget | null) => {
-      const handleEl = target instanceof Element ? target.closest(`[${RESIZE_HANDLE_ATTR}]`) : null
-      const handle = handleEl?.getAttribute(RESIZE_HANDLE_ATTR) as ResizeHandle | null | undefined
-      const element = handle ? presentedElementForNode(iframeDoc, nodeId) : null
-      if (!handle || !element) return
+    const hugFromHandle = (handle: ResizeHandle) => {
+      const element = presentedElementForNode(iframeDoc, nodeId)
+      if (!element) return
       const state = useEditorStore.getState()
       const stored = findNodeById(state, nodeId)?.inlineStyles ?? NO_INLINE_STYLES
       const patch = hugPatchForHandle(handle, readSizingParentLayout(view, element), stored)
@@ -194,6 +209,13 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
         if (event.button !== 0) return
         event.preventDefault()
         event.stopPropagation()
+
+        if (isSecondPress(handle, event)) {
+          lastStillPress = null
+          hugFromHandle(handle)
+          return
+        }
+        lastStillPress = null
 
         // The same resolver `CanvasResizeHandles` gates on, so the thing being
         // dragged and the thing the handles were drawn for cannot disagree —
@@ -285,6 +307,10 @@ export function useElementResizeDrag({ frame, iframeDoc, nodeId }: ElementResize
               // of view the style prop did not change.
               preview.clear()
               const patch = commit ? patchAt(last) : null
+              // A press that moved nothing may be the first half of a double-click.
+              lastStillPress = commit && patchAt(last) === null
+                ? { handle, at: performance.now(), x: event.clientX, y: event.clientY }
+                : null
               if (patch) {
                 useEditorStore.getState().setNodeInlineStyles(
                   nodeId,
