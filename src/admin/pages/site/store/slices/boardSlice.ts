@@ -100,6 +100,7 @@ import type { EditorStoreSliceCreator } from '@site/store/types'
 import type {
   AnnotationRef,
   Board,
+  BoardFramePlacement,
   BoardsFile,
   NoteColor,
   PreviewAxes,
@@ -292,7 +293,12 @@ interface BoardSlice {
    * slot. No-op if the page is already a frame on the board, or there is no
    * active board.
    */
-  addFrame: (pageId: string) => void
+  /**
+   * Put `pageId` on the active board. `placement` (P5-F, IX-13 — the board
+   * tool's drawn rect) sets where and how big; absent, the next grid slot at
+   * the project's default size.
+   */
+  addFrame: (pageId: string, placement?: BoardFramePlacement) => void
   /**
    * Add frames (grid layout) for every `pageId` not already present on the
    * ACTIVE board. Used for the one-time default-board seed. No-op with no

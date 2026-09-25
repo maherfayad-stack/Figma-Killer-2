@@ -1,5 +1,5 @@
 /**
- * keybindingTools — the bare-letter TOOL keys: V T F C H K R O (E).
+ * keybindingTools — the bare-letter TOOL keys: V T F B C H K R O (E).
  *
  * Moved out of `keybindings.ts` in P5-E, when the armed draw tools (IX-12,
  * OD-5) and the layer commands pushed that file past the 700-line ceiling.
@@ -49,6 +49,19 @@ export const TOOL_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     shortcut: { mac: 'F', win: 'F' },
     ariaKeyshortcuts: 'F',
     match: (e) => noModifier(e) && e.key.toLowerCase() === 'f',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
+  // P5-F / IX-13 — Penpot's and Figma's board key. On the EMPTY board a click
+  // or a drag opens the add-page picker where it was drawn, and the new frame
+  // lands at the drawn rect; inside a frame it is the F tool.
+  {
+    commandId: 'tools.board',
+    displayName: 'Board tool — draw a new page on the board (inside a frame: a container)',
+    shortcut: { mac: 'B', win: 'B' },
+    ariaKeyshortcuts: 'B',
+    match: (e) => noModifier(e) && e.key.toLowerCase() === 'b',
     scope: 'canvas',
     ignoreInEditableField: true,
   },

@@ -51,6 +51,7 @@ import {
   type DrawRect,
 } from './canvasDrawTool'
 import { armCreatedNodeFollowUp } from './createdNodeFollowUp'
+import { boardDrawPlacement } from './boardDrawTool'
 import { startCanvasTextEdit } from './canvasTextEditStart'
 import styles from './CanvasDrawToolLayer.module.css'
 
@@ -202,21 +203,34 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
     const bounds = layer.getBoundingClientRect()
     const zoom = canvasZoomOf(layer)
     const client = rect ?? { x: start.x, y: start.y, width: 0, height: 0 }
-    const created = offerBoardDraw({
-      tool,
-      spec,
-      dragged: rect !== null,
-      boardRect: {
-        x: (client.x - bounds.left) / zoom,
-        y: (client.y - bounds.top) / zoom,
-        width: client.width / zoom,
-        height: client.height / zoom,
-      },
-    })
+    const boardRect = {
+      x: (client.x - bounds.left) / zoom,
+      y: (client.y - bounds.top) / zoom,
+      width: client.width / zoom,
+      height: client.height / zoom,
+    }
+    // P5-F / IX-13 — the board tool on the empty board draws a new FRAME: the
+    // picker opens where the pointer was released, and the pick lands at the
+    // drawn rect. It never reaches the loose-layer handler (P5-G).
+    if (tool === 'board') {
+      const store = useEditorStore.getState()
+      store.setBoardDrawRequest({
+        placement: boardDrawPlacement(boardRect, rect !== null),
+        clientX: client.x + client.width,
+        clientY: client.y + client.height,
+      })
+      store.setCanvasTool('move')
+      return
+    }
+    const created = offerBoardDraw({ tool, spec, dragged: rect !== null, boardRect })
     if (created) useEditorStore.getState().setCanvasTool('move')
   }
 
-  const ghostLabel = hover && !hover.preview && !acceptsBoardDraws() ? `${spec.label} — draw inside a frame` : spec.label
+  const ghostLabel = hover && !hover.preview
+    ? tool === 'board'
+      ? 'Board — draw a new page here'
+      : acceptsBoardDraws() ? spec.label : `${spec.label} — draw inside a frame`
+    : spec.label
 
   return (
     <>
