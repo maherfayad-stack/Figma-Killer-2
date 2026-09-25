@@ -115,6 +115,20 @@ export const TOOL_KEYBINDINGS: ReadonlyArray<KeybindingDefinition> = [
     ignoreInEditableField: true,
   },
 
+  // ⇧K — Figma's "place image": opens the file picker (P5-B's `insert.image`
+  // palette command, #258). NOT component-owned: an argument-free command
+  // the generic dispatcher runs. Until #258 lands the command does not exist
+  // and the key does nothing. K alone stays the scale tool (it rejects ⇧).
+  {
+    commandId: 'insert.image',
+    displayName: 'Place an image (opens the file picker)',
+    shortcut: { mac: '⇧K', win: 'Shift+K' },
+    ariaKeyshortcuts: 'Shift+K',
+    match: (e) => e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey && e.key.toLowerCase() === 'k',
+    scope: 'canvas',
+    ignoreInEditableField: true,
+  },
+
   {
     commandId: 'tools.ellipse',
     displayName: 'Ellipse tool — click or drag inside a frame',

@@ -93,6 +93,7 @@
  *   ⇧A         | toggle flex layout          | the same (P5-E, IX-10); 2+      | Figma's "add auto layout"
  *              |                             | layers are grouped first        |
  *   ⌘⌥C ⌘⌥V    | copy / paste properties     | copy / paste style (P5-E)       | ⌘C / ⌘V now reject ⌥
+ *   ⇧K         | (unbound)                   | place an image (P5-B's picker)  | Figma's; K alone is the scale tool
  *   ⇧-drag on  | axis pair of paddings;      | the same (P5-E, IX-17)          | Pointer modifiers, on the `?` sheet
  *   a padding  | ⌥-drag all four             |                                 | as `canvas.spacingHandles`
  */
