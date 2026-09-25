@@ -151,9 +151,9 @@ function remapStructural(
     nodeId: remap.get(s.nodeId) ?? s.nodeId,
     parentId: remap.get(s.parentId) ?? s.parentId,
   })
-  // P2-C2 — a sibling batch names one element and one parent per move, the
-  // same two ids a single move does.
-  if (structural.gesture === 'siblings') {
+  // P2-C2 / P3-D — a move sequence names one element and one parent per
+  // step, the same two ids a single move does.
+  if (structural.gesture === 'moves') {
     return { ...structural, undo: structural.undo.map(step), redo: structural.redo.map(step) }
   }
   return { ...structural, undo: step(structural.undo), redo: step(structural.redo) }

@@ -274,28 +274,12 @@ describe('explainStructuralConstraint', () => {
     expect(constraint.reason).toBe('list-row')
   })
 
-  it('row 13 — wrap is allowed on one element and refused on a multi-selection', () => {
+  // Rows 13–14 (multi-select wrap / reorder) are writes since P3-D: a
+  // multi-wrap is a group and a multi-reorder is a move sequence, so the
+  // per-node rule no longer has a `multi` input to refuse on.
+  it('row 13 — wrap is allowed on one element', () => {
     const node = { id: 'src/screens/Home.jsx:9:1' }
     expect(explainStructuralConstraint({ kind: 'wrap', node })).toBeNull()
-
-    const constraint = explainStructuralConstraint({ kind: 'wrap', node, multi: true })
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('multi-select')
-  })
-
-  it('row 14 — multi-select reorder refuses with no action: the old "one at a time" button was permanently unwired dead code', () => {
-    const node = { id: 'src/screens/Home.jsx:9:1' }
-    const anchor = { id: 'src/screens/Home.jsx:11:1' }
-    const constraint = explainStructuralConstraint({ kind: 'reorder', node, anchor, multi: true })
-    assertWellFormed(constraint)
-    expect(constraint.reason).toBe('multi-select')
-    // The instruction still reaches the user — it's in `explanation`
-    // (`refuseStructuralEdit`'s own sentence, "Drag them one by one").
-    // `actions` is empty because `constraintActions.ts` never wired
-    // `select-container` to anything: a button that does nothing is worse
-    // than no button.
-    expect(constraint.explanation).toContain('one by one')
-    expect(constraint.actions).toEqual([])
   })
 
   it('row 15 — no-sibling-anchor refuses with no action', () => {

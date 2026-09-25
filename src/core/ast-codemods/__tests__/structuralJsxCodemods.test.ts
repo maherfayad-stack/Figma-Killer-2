@@ -150,12 +150,14 @@ describe('moveJsxElement', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
-  it('refuses a move that would have to reformat, when one side shares its line', () => {
+  // WB-21 — these used to refuse `mixed-indentation`. The moved element now
+  // takes the ANCHOR's shape, and only the bytes it leaves behind change.
+  it('moves a whole-line element beside one that shares a line, joining that line', () => {
     const source = `export default function Page() {
   return (
     <section>
       <p>alone</p>
-      <b>shared</b><i>line</i>
+      <b>shared</b> <i>line</i>
     </section>
   )
 }
@@ -164,18 +166,74 @@ describe('moveJsxElement', () => {
     const p = locateTag(source, 'p')
     const b = locateTag(source, 'b')
 
-    const result = moveJsxElement({
-      file,
-      line: p.line,
-      col: p.col,
-      anchorLine: b.line,
-      anchorCol: b.col,
-      position: 'after',
-    })
-    expect(result.ok).toBe(false)
-    if (result.ok) throw new Error('unreachable')
-    expect(result.refusal.reason).toBe('mixed-indentation')
-    expect(fs.readFileSync(file, 'utf8')).toBe(source)
+    const result = moveJsxElement({ file, line: p.line, col: p.col, anchorLine: b.line, anchorCol: b.col, position: 'after' })
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page() {
+  return (
+    <section>
+      <b>shared</b> <p>alone</p> <i>line</i>
+    </section>
+  )
+}
+`)
+  })
+
+  it('splits an element off a shared line onto a line of its own beside a whole-line anchor', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <p>alone</p>
+      <b>shared</b> <i>line</i>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const i = locateTag(source, 'i')
+    const p = locateTag(source, 'p')
+
+    const result = moveJsxElement({ file, line: i.line, col: i.col, anchorLine: p.line, anchorCol: p.col, position: 'before' })
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page() {
+  return (
+    <section>
+      <i>line</i>
+      <p>alone</p>
+      <b>shared</b>
+    </section>
+  )
+}
+`)
+    if (!result.ok) throw new Error('unreachable')
+    expect(result.relocated).toEqual({ line: 4, col: 8 })
+  })
+
+  it('splits the FIRST element of a shared line off, taking the separator after it', () => {
+    const source = `export default function Page() {
+  return (
+    <section>
+      <b>shared</b> <i>line</i>
+      <p>alone</p>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const b = locateTag(source, 'b')
+    const p = locateTag(source, 'p')
+
+    const result = moveJsxElement({ file, line: b.line, col: b.col, anchorLine: p.line, anchorCol: p.col, position: 'after' })
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page() {
+  return (
+    <section>
+      <i>line</i>
+      <p>alone</p>
+      <b>shared</b>
+    </section>
+  )
+}
+`)
   })
 
   it('refuses to move the component root, which has no siblings in the code', () => {
@@ -197,10 +255,9 @@ describe('moveJsxElement', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
   })
 
-  it('refuses an element the code produces from an expression, not from a fixed position', () => {
-    // `parser-06` selects a branch and leaves the node UNLOCKED (its values are
-    // editable), so nothing before this point refuses it — this check is what
-    // keeps its POSITION honest.
+  // WB-20 — this used to refuse `expression-child`. A move of `<X/>` in
+  // `{cond && <X/>}` moves the whole container: the condition goes with it.
+  it('moves a conditional element together with its condition', () => {
     const source = `export default function Page({ loading }) {
   return (
     <section>
@@ -222,10 +279,70 @@ describe('moveJsxElement', () => {
       anchorCol: p.col,
       position: 'after',
     })
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page({ loading }) {
+  return (
+    <section>
+      <p>content</p>
+      {loading && <span>spinner</span>}
+    </section>
+  )
+}
+`)
+  })
+
+  it('still refuses to move one row of a .map, which is not the container’s only content', () => {
+    const source = `export default function Page({ items }) {
+  return (
+    <ul>
+      {items.map((item) => <li key={item}>{item}</li>)}
+      <p>after</p>
+    </ul>
+  )
+}
+`
+    const file = writeFixture(source)
+    const li = locateTag(source, 'li')
+    const p = locateTag(source, 'p')
+
+    const result = moveJsxElement({ file, line: li.line, col: li.col, anchorLine: p.line, anchorCol: p.col, position: 'after' })
     expect(result.ok).toBe(false)
     if (result.ok) throw new Error('unreachable')
     expect(result.refusal.reason).toBe('expression-child')
     expect(fs.readFileSync(file, 'utf8')).toBe(source)
+  })
+
+  // WB-22 — an anchor the code produces is written against the `{…}` that
+  // produces it: "after the last row" is "after the list".
+  it('writes a move against the list a .map row belongs to', () => {
+    const source = `export default function Page({ items }) {
+  return (
+    <ul>
+      <p>header</p>
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+    </ul>
+  )
+}
+`
+    const file = writeFixture(source)
+    const p = locateTag(source, 'p')
+    const li = locateTag(source, 'li')
+
+    const result = moveJsxElement({ file, line: p.line, col: p.col, anchorLine: li.line, anchorCol: li.col, position: 'after' })
+    expect(result).toMatchObject({ ok: true })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page({ items }) {
+  return (
+    <ul>
+      {items.map((item) => (
+        <li key={item}>{item}</li>
+      ))}
+      <p>header</p>
+    </ul>
+  )
+}
+`)
   })
 
   it('refuses a location that no longer holds a JSX element', () => {
@@ -260,6 +377,56 @@ describe('deleteJsxElement', () => {
     expect(fs.readFileSync(file, 'utf8')).toBe(
       PAGE.replace('      <Third\n        label="third"\n      />\n', ''),
     )
+  })
+
+  // WB-20 — deleting `<X/>` out of `{cond && <X/>}` removes the container:
+  // `{cond && }` would not parse, and there is no other state to keep.
+  it('deletes a conditional element together with its condition', () => {
+    const source = `export default function Page({ loading }) {
+  return (
+    <section>
+      {loading && <span>spinner</span>}
+      <p>content</p>
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const span = locateTag(source, 'span')
+
+    const result = deleteJsxElement({ file, line: span.line, col: span.col })
+    expect(result).toMatchObject({ ok: true, removed: { text: '      {loading && <span>spinner</span>}\n', wholeLine: true } })
+    expect(fs.readFileSync(file, 'utf8')).toBe(source.replace('      {loading && <span>spinner</span>}\n', ''))
+  })
+
+  it('deletes one branch of a ternary by writing null over it, keeping the other state', () => {
+    const source = `export default function Page({ open }) {
+  return (
+    <section>
+      {open ? (
+        <b>open</b>
+      ) : (
+        <i>closed</i>
+      )}
+    </section>
+  )
+}
+`
+    const file = writeFixture(source)
+    const b = locateTag(source, 'b')
+
+    const result = deleteJsxElement({ file, line: b.line, col: b.col })
+    expect(result).toMatchObject({ ok: true, removed: null })
+    expect(fs.readFileSync(file, 'utf8')).toBe(`export default function Page({ open }) {
+  return (
+    <section>
+      {open ? null : (
+        <i>closed</i>
+      )}
+    </section>
+  )
+}
+`)
   })
 
   it('refuses to delete the component root', () => {

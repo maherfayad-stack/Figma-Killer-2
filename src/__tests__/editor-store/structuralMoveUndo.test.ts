@@ -147,6 +147,8 @@ describe('a structural reparse renames node ids — history is re-addressed, not
 
     store().undo() // the move, re-issued against the new ids
     expect(store().site!.pages[0]!.nodes[ROOT]!.children).toEqual([a2, b2, c2])
+    // The re-issued move is a write; the next ⌘Z queues behind it (P3-D).
+    await settle()
 
     store().undo() // the value edit, at `c`'s NEW address
     expect(store().site!.pages[0]!.nodes[c2]!.props.text).toBe(c)
@@ -172,6 +174,7 @@ describe('a structural reparse renames node ids — history is re-addressed, not
     store().loadSite(reparsed)
 
     store().undo() // the move
+    await settle() // the re-issued move is a write; the next ⌘Z queues behind it
     store().undo() // the value edit
 
     // `c` is now at line 4. Its edit must be reverted THERE, and the element

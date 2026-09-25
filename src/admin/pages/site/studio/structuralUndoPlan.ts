@@ -119,6 +119,22 @@ export type StructuralInverseTemplate =
     }
   | {
       /**
+       * P3-D (OD-7) — the inverse of a `detach`: the markup that replaced the
+       * call site goes (`delete` of what the detach CREATED — the batch's
+       * prune pass takes the imports it added with it), and the call site's
+       * own bytes go back where they were (`reinsert-source` at the slot
+       * captured before the detach, with the component import the detach's
+       * prune pass reported). One batch: the delete is below the parent's own
+       * tag, so the batch's bottom-to-top order applies it first.
+       */
+      kind: 'reinsert-detached'
+      /** The call site's id when the detach was made — the key its `removed` bytes are reported under. */
+      callSiteNodeId: string
+      parentNodeId: string
+      index: number
+    }
+  | {
+      /**
        * P5-B (IMG-3) — an inverse that is fully known at gesture time,
        * because the gesture rewrites a value in place rather than creating or
        * moving markup: an image dropped onto an import-bound `<img>` repoints
@@ -215,6 +231,22 @@ export function resolveStructuralInverse(
       // tree as it is when ⌘Z is pressed. Appending is the honest fallback the
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
+    }
+    case 'reinsert-detached': {
+      const [inlined] = outcome.createdNodeIds
+      const callSite = outcome.removed.find((entry) => entry.nodeId === template.callSiteNodeId)
+      if (inlined === undefined || !callSite) return null
+      const imports = outcome.prunedImports.find((entry) => entry.file === fileOfNodeId(template.parentNodeId))?.declarations ?? []
+      return [
+        { kind: 'delete', nodeId: inlined },
+        {
+          kind: 'reinsert-source',
+          nodeId: template.parentNodeId,
+          index: template.index,
+          text: callSite.text,
+          ...(imports.length > 0 ? { imports: [...imports] } : {}),
+        },
+      ]
     }
     case 'canvas-layer-delete':
       return [{ kind: 'canvas-layer-delete', nodeId: canvasLayerEditNodeId(template.layerId), layerId: template.layerId }]
@@ -371,6 +403,13 @@ export function remapInverseTemplate(
   if (template.kind === 'transplant-back' || template.kind === 'canvas-layer-lift-back') {
     return { ...template, parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId }
   }
+  if (template.kind === 'reinsert-detached') {
+    return {
+      ...template,
+      callSiteNodeId: remap.get(template.callSiteNodeId) ?? template.callSiteNodeId,
+      parentNodeId: remap.get(template.parentNodeId) ?? template.parentNodeId,
+    }
+  }
   if (template.kind === 'reinsert-deleted') {
     // Both ids, not just `parentNodeId`: `nodeId` is the key `resolveStructuralInverse`
     // looks up in the outcome's `removed` list, and that list is keyed by
@@ -438,6 +477,14 @@ export interface StructuralSourceGesture {
    * the store copies before posting.
    */
   forward: StructuralEditPayload[]
+  /**
+   * P3-D — `forward` is a SEQUENCE: its edits were written in order, each
+   * against the file the previous one left (several copies dropped at one
+   * place, a paste of several roots). A redo re-posts it the same way; posted
+   * as an ordinary batch the steps would be applied bottom-to-top against ids
+   * the earlier steps move.
+   */
+  sequence?: true
   inverseTemplate: StructuralInverseTemplate
   inverse: StructuralEditPayload[] | null
   /**
