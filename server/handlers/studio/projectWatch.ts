@@ -20,7 +20,7 @@
  *   - the board's live reload (`server/ai/mcp/outsideEditReload.ts`) acts only
  *     on `outside` changes — Studio's own writes are already followed by the
  *     writer's own resync, and a second reload would race it;
- *   - PERF-8's `/load` invalidation (ROADMAP P6-C) needs EVERY change, its own
+ *   - PERF-8's `/load` invalidation (P6-B, `projectChangeFeed.ts`) needs EVERY change, its own
  *     writes first of all, to drop a memoised load without walking and
  *     statting the whole tree on every load.
  *

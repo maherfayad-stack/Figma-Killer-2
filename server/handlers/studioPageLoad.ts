@@ -80,7 +80,7 @@ import { viewportPriorityOrder } from './studio/loadPriority'
 import type { RouteCacheScope } from './studio/pageParseCache'
 import { parseRouteThroughCache } from './studio/routeParse'
 import { memoizedStudioLoad, type ComputedStudioLoad } from './studio/studioLoadMemo'
-import { withWorkspaceProject, type WorkspaceProjectHandle } from './studio/workspaceProject'
+import { prewarmWorkspaceProgram, withWorkspaceProject, type WorkspaceProjectHandle } from './studio/workspaceProject'
 import { collectLoadWarnings } from './studio/loadWarnings'
 import { rewriteStudioAssetSentinels } from './studioAsset'
 // Re-exported so `loadStudioPages`' own module stays the obvious import site
@@ -462,7 +462,11 @@ async function computeStudioPages(dir: string): Promise<ComputedStudioLoad> {
   // a fresh per-file Project (parsePageFile's own default) can't see
   // across files at all. Kept across loads and synced to the disk by
   // `workspaceProject.ts` — rebuilding it was the whole cost of a resync.
-  return withWorkspaceProject(dir, (workspace) => computeStudioPagesWith(dir, pagesDir, workspace, startedAt))
+  const computed = await withWorkspaceProject(dir, (workspace) => computeStudioPagesWith(dir, pagesDir, workspace, startedAt))
+  // A load answered from the parse cache never built the TypeScript program;
+  // the first gesture after it would. Build it now, off this load's path.
+  prewarmWorkspaceProgram(dir)
+  return computed
 }
 
 /**

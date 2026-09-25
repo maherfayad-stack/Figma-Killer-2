@@ -287,11 +287,13 @@ export interface StoredRouteParse {
 
 /** The stored entry for `key`, or `null` for anything short of a genuine, matching entry. See this module's doc. */
 export function readStoredRouteParse(key: StoredParseKey): StoredRouteParse | null {
+  // The store's absence first: a project that never had one pays nothing —
+  // not even the parser-code fingerprint.
+  const storeDir = storeDirForRead(key.dir)
+  if (!storeDir) return null
   const signingKey = parseCacheSigningKey(key.dir)
   const parser = parserCodeDigest()
   if (!signingKey || !parser) return null
-  const storeDir = storeDirForRead(key.dir)
-  if (!storeDir) return null
   const file = join(storeDir, entryName(key))
 
   let text: string

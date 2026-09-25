@@ -282,6 +282,44 @@ export function withWorkspaceProject<T>(dir: string, fn: (workspace: WorkspacePr
   return run.finally(release)
 }
 
+/** How long after a load the program is warmed — long enough for the load's own response to leave first. */
+const PREWARM_DELAY_MS = 50
+
+const prewarmPending = new Set<string>()
+
+/**
+ * P6-B — build `dir`'s TypeScript program and type checker soon, off the
+ * load's critical path.
+ *
+ * A load whose routes all came out of the parse cache never asks the
+ * `Project` an import question, so it never builds the program. The FIRST
+ * gesture after it then did — its re-parse resolved one import and paid the
+ * whole program plus the checker: measured 0.65 s → 2.5 s for a page edit on
+ * a 40-page board and 1.1 s → 3.2 s on a 1,000-file repo, against the old
+ * load that built the program up front. Building it in a queued job just
+ * after the load puts that cost back where it was paid before — before the
+ * gesture — without adding it to the load. It goes through the project's own
+ * queue, so it never runs under a parse, and a load that arrives meanwhile
+ * waits at most what the old load always paid. Once built it stays: a later
+ * edit's re-parse reuses every unchanged file's binding.
+ *
+ * Unreferenced timer, so a one-shot process (the agent's Stop hook) exits
+ * without waiting for it.
+ */
+export function prewarmWorkspaceProgram(dir: string): void {
+  const key = resolve(dir)
+  if (prewarmPending.has(key)) return
+  prewarmPending.add(key)
+  const timer = setTimeout(() => {
+    prewarmPending.delete(key)
+    if (!slots.has(key)) return // evicted meanwhile — nothing to warm
+    withWorkspaceProject(key, async ({ project }) => {
+      project.getTypeChecker()
+    }).catch((err: unknown) => console.error('[studio:workspaceProject] program prewarm failed:', err))
+  }, PREWARM_DELAY_MS)
+  timer.unref?.()
+}
+
 /** Test-only: drop every kept `Project` so one test's workspace cannot leak into the next. */
 export function clearWorkspaceProjects(): void {
   slots.clear()

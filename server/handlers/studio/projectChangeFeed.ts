@@ -22,7 +22,7 @@
  *
  * ## `settle()` — the watcher is a debounce; a load cannot wait for one
  *
- * An event takes a moment to arrive and {@link QUIET_MS} more to be reported.
+ * An event takes a moment to arrive and `projectWatch.ts`'s `QUIET_MS` more to be reported.
  * `settle()` closes that gap from the reader's side before any answer is
  * read: it lets two turns of the event loop pass (measured on Windows under
  * Bun 1.3: a write's event is delivered after the SECOND `setImmediate`, 50
