@@ -90,7 +90,7 @@
     --text-bright: #f4f4f5;
     --text: #ededed;
     --text-muted: #a1a1aa;
-    --text-subtle: #787878;
+    --text-subtle: #888888;
     --text-disabled: #52525b;
 
     /* White overlay scale. Suffix = alpha x 100. */

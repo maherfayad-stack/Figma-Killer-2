@@ -1,14 +1,20 @@
 /**
  * StyleWriteLockContext — carries "declarations typed into THIS style target
- * cannot reach disk, and here is why" from the one component that knows it
- * (`StyleSurface`, via `classCssWritability.ts`) down to the controls that
- * have to stop accepting edits (`ClassPropertyRow`).
+ * do not all reach disk, and here is how far they do" from the one component
+ * that knows it (`StyleSurface`, reading `SelectionModel.inlineWriteReach`)
+ * down to the controls that state it (`ClassPropertyRow`).
  *
  * A `.ts` context + hook with no component export, for the same Fast Refresh
  * reason `TokenCatalogContext.ts` is split from `TokenCatalogProvider.tsx`.
  * There is no provider component here at all: `StyleSurface` renders
- * `<StyleWriteLockContext.Provider>` directly around the CLASS block, which
- * is the only subtree the lock applies to.
+ * `<StyleWriteLockContext.Provider>` directly around the mounted
+ * `INSPECTOR_SECTIONS`, with `partialStyleWriteLock(model.inlineWriteReach)`
+ * — a `partial` lock for a multi-selection aimed at Element, `null` for
+ * everything else. Nothing in the app provides `blocked` today: a whole
+ * target that cannot be written is the selection model's job
+ * (`writableClasses[].lockReason`, `StyleSurface`'s nothing-writable notice),
+ * and the state stays for the row contract it pins
+ * (`classPropertyRowWriteLock.test.tsx`).
  *
  * ## Why a context rather than a prop
  *
@@ -22,12 +28,10 @@
  *
  * ## Scope, precisely
  *
- * The provider wraps the class composer ONLY. The Element (inline) block has
- * its own, unrelated writability story — per-property `codeProps` locks that
- * `InlineStyleComposer` surfaces itself — and must not inherit a class's
- * verdict. `LockedStylePreview`'s phantom teaser rows and the global-selector
- * surface render outside any provider and read `null`, i.e. unlocked, which
- * is the honest default for "nobody asserted a lock here".
+ * The provider wraps the node surface's mounted sections ONLY. The
+ * global-selector surface (`SelectorInspector`) renders outside it and reads
+ * `null`, i.e. unlocked, which is the honest default for "nobody asserted a
+ * lock here".
  */
 import { createContext, useContext } from 'react'
 import { describeReach, type StyleWriteReach } from './styleWriteReach'
@@ -53,9 +57,9 @@ export type StyleWriteLock =
   | { kind: 'blocked'; reason: string }
   | { kind: 'partial'; reach: StyleWriteReach }
 
-/** The `blocked` lock, so callers with a plain reason string don't build the object by hand. */
-export function blockedStyleWriteLock(reason: string | null): StyleWriteLock | null {
-  return reason === null ? null : { kind: 'blocked', reason }
+/** The `partial` lock for a reach, or `null` when there is no reach to state (one layer, or a class target). */
+export function partialStyleWriteLock(reach: StyleWriteReach | null): StyleWriteLock | null {
+  return reach === null ? null : { kind: 'partial', reach }
 }
 
 /**

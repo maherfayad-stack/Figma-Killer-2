@@ -465,17 +465,21 @@ describe('buildDesignSystemGuide', () => {
     expect(contract).toContain('never hand-edit')
   })
 
-  it('does not hand out per-file icon paths for the built-in system, because the project has only a few of them', () => {
-    // Studio ships 568 SVGs; a project's copy carries the ~20 its own
-    // components import. Printing all of them as importable paths would be an
-    // instruction that fails on almost every one.
+  it('teaches a ?raw import from the project folder for ANY built-in icon, because a load copies it in', () => {
+    // The project's copy carries only the icons something imports — but that
+    // set is demand-driven: `ensureDesignSystemFiles` runs on every load and
+    // copies in any icon a project file imports (`findIconTool.test.ts`
+    // proves the round trip). The guide used to say there was "no file path
+    // to import" for the rest, which sent the agent to inline markup instead.
     mkdirSync(join(pkgDir, 'src', 'icons', 'line-icons'), { recursive: true })
     writeFileSync(join(pkgDir, 'src', 'icons', 'line-icons', 'wifi.svg'), '<svg/>', 'utf8')
     const guide = buildDesignSystemGuide(pkgDir, 'alm', { kind: 'folder', dirName: 'design-system' })!
     const rendered = renderIconReference(guide)!
-    expect(rendered).toContain('inline them, do not import them')
+    expect(rendered).not.toContain('do not import them')
+    expect(rendered).not.toContain('no file path to import')
+    expect(rendered).toContain("from '../design-system/icons/line-icons/wifi.svg?raw'")
+    expect(rendered).toContain('copies')
     expect(rendered).toContain('wifi')
-    expect(rendered).not.toContain('?raw')
   })
 
   it('contributes nothing at all for a package that ships no docs', () => {
