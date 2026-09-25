@@ -16,7 +16,7 @@
  *   - `designReferenceStore.ts` (`studio_register_design_reference`) — same
  *     sniff/sanitize/collision-safe write through its own entry,
  *     `landDesignReferenceBytes`, into the one `.studio/` directory the
- *     SERVER names (`DESIGN_REFERENCE_ASSET_DIR`), because a design reference
+ *     SERVER names (`DESIGN_REFERENCE_STORE_DIR`), because a design reference
  *     is Studio's own state, never an `<img>` import target.
  *
  * A landing is idempotent by content (IMG-1): the same bytes landed twice in
@@ -56,9 +56,10 @@
  */
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { closeSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, writeFileSync } from 'node:fs'
-import { isWorkspaceWritablePath, pathEntryExists, realWorkspaceRel } from '@core/page-parser'
+import { isWorkspaceWritablePath, pathEntryExists } from '@core/page-parser'
 import { sanitizeSvgBytes } from '../cms/svgSanitize'
 import { readImageDimensions } from './imageDimensions'
+import { isStudioStorePathUnlinked, studioStorePath } from './studioStore'
 
 /** Where a bare (no `targetDir`) asset write lands — the conventional home for local images in a Vite/CRA-shaped repo. */
 export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
@@ -74,7 +75,7 @@ export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
  * `targetDir` STRING equal to this value, so any upload route or MCP asset
  * tool that forwarded a client's `targetDir` could land a file in `.studio/`.
  */
-export const DESIGN_REFERENCE_ASSET_DIR = '.studio/references'
+export const DESIGN_REFERENCE_STORE_DIR = 'references'
 
 export type LandAssetResult =
   | {
@@ -121,15 +122,13 @@ export function resolveAssetWriteDir(dir: string, targetDirRaw: string | undefin
 }
 
 /**
- * {@link DESIGN_REFERENCE_ASSET_DIR}, resolved — or `null` when its real path
- * is anything but itself (a `.studio/references` that is a link to `.git/` or
- * out of the project). The shared predicate cannot be used as-is: it refuses
- * every `.studio` path by design, and this is the one server-derived
- * directory Studio writes its own image state to.
+ * {@link DESIGN_REFERENCE_STORE_DIR}, resolved — or `null` when anything from
+ * `.studio` down to it is a link (`studioStore.ts`'s rule). The source-writer
+ * predicate cannot be used: it refuses every `.studio` path by design, and
+ * this is the one server-derived directory Studio writes its own image state to.
  */
 function resolveDesignReferenceDir(dir: string): string | null {
-  const target = join(dir, ...DESIGN_REFERENCE_ASSET_DIR.split('/'))
-  return realWorkspaceRel(dir, target) === DESIGN_REFERENCE_ASSET_DIR ? resolve(target) : null
+  return isStudioStorePathUnlinked(dir, DESIGN_REFERENCE_STORE_DIR) ? studioStorePath(dir, DESIGN_REFERENCE_STORE_DIR) : null
 }
 
 // ---------------------------------------------------------------------------
@@ -343,7 +342,7 @@ export function landAssetBytes(
 }
 
 /**
- * Land a design reference's bytes into {@link DESIGN_REFERENCE_ASSET_DIR} —
+ * Land a design reference's bytes into {@link DESIGN_REFERENCE_STORE_DIR} —
  * the same sniff/sanitize/collision-safe pipeline as {@link landAssetBytes},
  * into a directory the SERVER fixes. `designReferenceStore.ts` is its only
  * caller; nothing that forwards a client's `targetDir` may reach it. Never

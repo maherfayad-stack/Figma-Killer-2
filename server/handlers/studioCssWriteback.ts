@@ -58,7 +58,7 @@
  *     same three moves one scope over, inside a `@keyframes` block (W5-5).
  *     Their schemas and their pure writers live in `studioCssKeyframes.ts`;
  *     the editability check, the containment guard, and the single
- *     `writeFileSync` below are shared with every op above, which is the whole
+ *     `writeFileAtomic` below are shared with every op above, which is the whole
  *     reason that module is pure. Their honest-target gate is
  *     `analyzeKeyframesTarget`, not `analyzeDeclarationTarget` — see
  *     `applyCssEdit`.
@@ -113,9 +113,9 @@
  * to show a user, only an attack to decline.
  */
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
-import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { QuoteKind } from 'ts-morph'
-import { isWorkspaceWritablePath, listWorkspaceFiles, unwritableWorkspaceSegment } from '@core/page-parser'
+import { isWorkspaceWritablePath, listWorkspaceFiles, unwritableWorkspaceSegment, writeFileAtomic } from '@core/page-parser'
 import { createProject, relativeSpecifier, topLevelBindingNames } from '@core/ast-codemods'
 import {
   AT_RULE_SCOPE_PATTERN,
@@ -255,7 +255,7 @@ export const CssEditSchema = Type.Union([
   CssCreateEditSchema,
   // W5-5's three `@keyframes` ops. Their schemas and their (pure) writers live
   // in `studioCssKeyframes.ts`; this module still owns the path guard, the
-  // editability check, and the single `writeFileSync` — see `applyCssEdit`.
+  // editability check, and the single `writeFileAtomic` — see `applyCssEdit`.
   ...CssKeyframeEditSchemas,
 ])
 
@@ -565,7 +565,7 @@ function applyCssCreateEdit(dir: string, edit: CssCreateEdit): CssEditOutcome {
 
   const existingCss = existsSync(cssAbsPath) ? readFileSync(cssAbsPath, 'utf8') : ''
   const result = insertRule(existingCss, edit.selector, edit.declarations, { atRule: edit.atRule })
-  if (result.changed) writeFileSync(cssAbsPath, result.css, 'utf8')
+  if (result.changed) writeFileAtomic(cssAbsPath, result.css)
 
   return { applied: true, createdStylesheet: { file: cssRelPath } }
 }
@@ -598,7 +598,7 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
     if ('refusal' in outcome) {
       return { applied: false, refusal: outcome.refusal }
     }
-    if (outcome.changed) writeFileSync(filePath, outcome.css, 'utf8')
+    if (outcome.changed) writeFileAtomic(filePath, outcome.css)
     return { applied: true }
   }
 
@@ -608,7 +608,7 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
     // `insertRule` itself refuses to create a duplicate block for an
     // exact-selector match (merges into it instead — see its doc).
     const result = insertRule(cssText, edit.selector, edit.declarations, { atRule: edit.atRule })
-    if (result.changed) writeFileSync(filePath, result.css, 'utf8')
+    if (result.changed) writeFileAtomic(filePath, result.css)
     return { applied: true }
   }
 
@@ -622,6 +622,6 @@ export function applyCssEdit(dir: string, edit: CssEdit): CssEditOutcome {
       ? removeDeclaration(cssText, edit.selector, edit.property, scope)
       : setDeclaration(cssText, edit.selector, edit.property, edit.value, scope)
   if (!result.ok) return { applied: false, refusal: { reason: result.refusal.reason, message: result.refusal.message } }
-  if (result.changed) writeFileSync(filePath, result.css, 'utf8')
+  if (result.changed) writeFileAtomic(filePath, result.css)
   return { applied: true }
 }

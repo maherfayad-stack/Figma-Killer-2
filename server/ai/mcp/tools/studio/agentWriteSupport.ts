@@ -33,7 +33,7 @@ import {
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { appendTurnWrite } from '../../../../handlers/studio/turnWriteLog'
-import { writeFileAtomic } from '../../../../handlers/studio/atomicFileWrite'
+import { writeFileAtomic } from '@core/page-parser'
 import { DEFAULT_ASSET_TARGET_DIR, landAssetBytes } from '../../../../handlers/studio/assetLanding'
 import { assetSiteUrlResolver } from '../../../../handlers/studio/assetSiteUrl'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'

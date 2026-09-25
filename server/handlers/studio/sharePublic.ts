@@ -32,15 +32,17 @@
  *
  * The token and the filename are both matched against a fixed shape
  * (`isShareTokenShape` / `isShareImageFileName`) BEFORE either becomes a path
- * segment, and the resolved path is then real-path containment-checked
- * against the share's own directory (`resolveShareFile`). Nothing under
- * `.studio/` other than that one directory is reachable from this route, and
- * `dir` never appears in a URL at all — it is derived from the token.
+ * segment, and the file is then read through `studioStore.ts` (`readShareFile`),
+ * which refuses a link anywhere from `.studio` down — this route is public, so
+ * a repository that shipped `.studio/shares/<token> -> ~` must not turn it into
+ * a file server. Nothing under `.studio/` other than that one directory is
+ * reachable from this route, and `dir` never appears in a URL at all — it is
+ * derived from the token.
  */
 import { existsSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { isShareImageFileName, isShareTokenShape, SHARE_ROUTE_PREFIX } from '@core/studio-share'
-import { resolveActiveShare, resolveShareFile } from './shareStore'
+import { readShareFile, resolveActiveShare } from './shareStore'
 
 const VITE_DEV_URL = 'http://localhost:5173'
 const VITE_SHARE_ENTRY = '/share.html'
@@ -135,9 +137,9 @@ export async function tryServeSharePublic(
   if (parts.rest === '') return serveShareEntry(parts.token)
 
   if (parts.rest === 'board.json') {
-    const path = resolveShareFile(share.dir, parts.token, 'board.json')
-    if (!path || !existsSync(path)) return shareNotFound()
-    return new Response(await Bun.file(path).arrayBuffer(), {
+    const bytes = readShareFile(share.dir, parts.token, 'board.json')
+    if (!bytes) return shareNotFound()
+    return new Response(bytes, {
       headers: { 'content-type': 'application/json; charset=utf-8', ...NO_STORE },
     })
   }
@@ -145,13 +147,13 @@ export async function tryServeSharePublic(
   if (parts.rest.startsWith('frames/')) {
     const file = parts.rest.slice('frames/'.length)
     if (!isShareImageFileName(file)) return shareNotFound()
-    const path = resolveShareFile(share.dir, parts.token, file)
-    if (!path || !existsSync(path)) return shareNotFound()
-    // Read into a buffer rather than handing the `BunFile` straight to
-    // `Response`: a frame is a bounded PNG, and an explicit body keeps this
-    // handler testable outside a live `Bun.serve` (the suite runs under the
-    // happy-dom preload, where a `BunFile` body does not survive).
-    return new Response(await Bun.file(path).arrayBuffer(), { headers: IMMUTABLE_IMAGE })
+    // A buffer rather than a `BunFile`: a frame is a bounded PNG, and an
+    // explicit body keeps this handler testable outside a live `Bun.serve`
+    // (the suite runs under the happy-dom preload, where a `BunFile` body does
+    // not survive).
+    const bytes = readShareFile(share.dir, parts.token, file)
+    if (!bytes) return shareNotFound()
+    return new Response(bytes, { headers: IMMUTABLE_IMAGE })
   }
 
   return shareNotFound()

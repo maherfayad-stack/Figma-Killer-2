@@ -15,8 +15,8 @@
  * restored from the trash carries its preview with it, and nothing has to
  * reconcile a cache keyed by a path that just changed.
  */
-import { statSync } from 'node:fs'
-import { join } from 'node:path'
+import type { Stats } from 'node:fs'
+import { readStudioStoreBytes, statStudioStoreFile, studioStorePath, writeStudioStoreFile } from './studioStore'
 
 /**
  * Thumbnail geometry: 4:3, 480px wide. The card renders it at roughly
@@ -26,9 +26,11 @@ import { join } from 'node:path'
 export const PROJECT_THUMBNAIL_WIDTH = 480
 export const PROJECT_THUMBNAIL_HEIGHT = 360
 
-/** `<dir>/.studio/thumbnail.png` — the one path both the writer and the route use. */
+const THUMBNAIL_FILE = 'thumbnail.png'
+
+/** `<dir>/.studio/thumbnail.png` — for a caller that must NAME it; reading and writing go through the functions below. */
 export function projectThumbnailFile(dir: string): string {
-  return join(dir, '.studio', 'thumbnail.png')
+  return studioStorePath(dir, THUMBNAIL_FILE)
 }
 
 /** What the HTTP layer needs to answer a conditional GET, and the listing needs to answer "is there one". */
@@ -39,15 +41,33 @@ export interface ProjectThumbnailStat {
   size: number
 }
 
+function toThumbnailStat(stat: Stats | null): ProjectThumbnailStat | null {
+  return stat ? { mtimeMs: stat.mtimeMs, size: stat.size } : null
+}
+
 /**
  * The thumbnail's stat, or `null` when there isn't one. Never throws: a
  * launcher listing must not fail because one project's sidecar is unreadable.
+ * A thumbnail reached through a link is not one (`studioStore.ts`): the route
+ * would otherwise serve whatever file a cloned repository pointed it at.
  */
 export function readProjectThumbnailStat(dir: string): ProjectThumbnailStat | null {
   try {
-    const stat = statSync(projectThumbnailFile(dir))
-    return stat.isFile() ? { mtimeMs: stat.mtimeMs, size: stat.size } : null
+    return toThumbnailStat(statStudioStoreFile(dir, THUMBNAIL_FILE))
   } catch {
     return null
   }
+}
+
+/** The thumbnail's bytes, or `null` (absent, unreadable, or reached through a link). */
+export function readProjectThumbnailBytes(dir: string): Buffer | null {
+  return readStudioStoreBytes(dir, THUMBNAIL_FILE)
+}
+
+/** Replace the thumbnail in one step. Throws `StudioStoreLinkError` rather than write through a link. */
+export function writeProjectThumbnail(dir: string, png: Uint8Array): ProjectThumbnailStat {
+  writeStudioStoreFile(dir, THUMBNAIL_FILE, png)
+  const stat = readProjectThumbnailStat(dir)
+  if (!stat) throw new Error('The thumbnail was written but cannot be read back.')
+  return stat
 }

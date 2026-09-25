@@ -48,7 +48,7 @@ import {
 } from '../../../../handlers/studioWriteback'
 import { pushStudioLiveReload } from './liveReloadPush'
 import { touchedFilesToPageIds } from './touchedPageIds'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 
 const DirField = Type.Optional(
   Type.String({ description: 'Absolute project directory. Defaults to the project currently open in Studio — omit it unless you deliberately mean a DIFFERENT project than the one this conversation is about.' }),

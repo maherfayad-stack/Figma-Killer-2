@@ -20,14 +20,10 @@
  * screens ten to one, and why it places each story exactly once instead of
  * reconciling.
  */
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { existsSync } from 'node:fs'
 import {
   createBoard,
-  createBoardsFile,
   defaultFramePosition,
-  parseBoardsFile,
-  serializeBoardsFile,
   upsertBoard,
   upsertFrame,
   FRAME_GAP,
@@ -40,33 +36,7 @@ import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import type { StorySummary } from './storyDiscovery'
-
-export function boardsFilePath(dir: string): string {
-  return join(dir, '.studio', 'boards.json')
-}
-
-/** Read the project's boards, or a fresh empty file when none exists yet. */
-export function readBoardsFile(dir: string): BoardsFile {
-  const file = boardsFilePath(dir)
-  return existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
-}
-
-/**
- * Persist a boards file, creating `.studio/` if this is the project's first
- * board write.
- *
- * Exported alongside {@link readBoardsFile} for the board-mutating MCP tools
- * (`studio_set_frames`, `studio_set_frame_axes`,
- * `studio_duplicate_frame_as_variant`), which had each grown their own copy of
- * these four lines. This module's whole reason to exist is that every
- * server-side write to the board's frame list has one owner — a private write
- * helper here plus two more elsewhere was that ownership in name only.
- */
-export function writeBoardsFile(dir: string, next: BoardsFile): void {
-  const file = boardsFilePath(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, serializeBoardsFile(next))
-}
+import { readBoardsFile, writeBoardsFile } from './boardGeometry'
 
 /**
  * Places `pageId` on the project's board at the next free grid slot
@@ -136,7 +106,6 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
  * leaves `boards.json`'s mtime alone (`compareVerdictCache.ts` keys on it).
  */
 export function removeBoardFramesForPage(dir: string, pageId: string): number {
-  if (!existsSync(boardsFilePath(dir))) return 0
   const existing = readBoardsFile(dir)
   let removed = 0
   const boards = existing.boards.map((board) => {
@@ -280,6 +249,5 @@ export function syncStoryBoardFrames(dir: string, stories: readonly StorySummary
 
 /** Whether `.studio/boards.json` already carries a frame for `pageId` on any board. */
 function boardHasFrameForPage(dir: string, pageId: string): boolean {
-  if (!existsSync(boardsFilePath(dir))) return false
   return readBoardsFile(dir).boards.some((board) => board.frames.some((frame) => frame.pageId === pageId))
 }

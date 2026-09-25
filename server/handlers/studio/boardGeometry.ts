@@ -1,18 +1,35 @@
 /**
- * boardGeometry — small headless READ helpers over `.studio/boards.json`,
- * extracted from `server/ai/mcp/tools/studio/editTools.ts`'s local
- * `readBoardsFile` so a second server tool (`studio_recommend_export_dpr`,
- * `designReferenceTools.ts`) that only needs a frame's AUTHORED width
- * doesn't reimplement the same exists-then-parse-else-empty read. Writing
- * stays local to `editTools.ts` (`studio_set_frames` is the only mutator).
+ * boardGeometry — the ONE owner of `.studio/boards.json` on the server: the
+ * read, the write, and the small headless questions tools ask of it (a
+ * frame's AUTHORED width and height).
+ *
+ * A leaf on purpose: capture, comments, shares, the prototype shell and the
+ * board-mutating MCP tools all read the board, and none of them should pull
+ * in `boardFrames.ts`'s page discovery to do it. There used to be three copies
+ * of the exists-then-parse read (here, `boardFrames.ts`, the shell's
+ * registry) plus a fourth inline in the `/boards` route; each followed a link
+ * a cloned repository could plant at `.studio/boards.json`. Both halves now go
+ * through `studioStore.ts`, which refuses one.
  */
-import { existsSync, readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { createBoardsFile, parseBoardsFile, FRAME_WIDTH, FRAME_HEIGHT, type BoardsFile } from '@core/studio-board'
+import { createBoardsFile, parseBoardsFile, serializeBoardsFile, FRAME_WIDTH, FRAME_HEIGHT, type BoardsFile } from '@core/studio-board'
+import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from './studioStore'
 
-export function readBoardsFileOrEmpty(dir: string): BoardsFile {
-  const file = join(dir, '.studio', 'boards.json')
-  return existsSync(file) ? parseBoardsFile(readFileSync(file, 'utf8')) : createBoardsFile()
+/** The board document's store path (`.studio/boards.json`). */
+export const BOARDS_FILE = 'boards.json'
+
+/** Absolute path of the board document — for a caller that must NAME it (a cache key), never to read or write it. */
+export function boardsFilePath(dir: string): string {
+  return studioStorePath(dir, BOARDS_FILE)
+}
+
+/** The project's boards, or a fresh empty file when none exists yet (or the name is a link). */
+export function readBoardsFile(dir: string): BoardsFile {
+  return readStudioStoreDocument(dir, BOARDS_FILE, parseBoardsFile, createBoardsFile)
+}
+
+/** Persist a boards file (normalised by `serializeBoardsFile`), creating `.studio/` on the first board write. */
+export function writeBoardsFile(dir: string, next: BoardsFile): void {
+  writeStudioStoreFile(dir, BOARDS_FILE, serializeBoardsFile(next))
 }
 
 /**
@@ -22,9 +39,8 @@ export function readBoardsFileOrEmpty(dir: string): BoardsFile {
  * recommendation computed from this number matches what a real
  * `studio_export_frames` call will actually request. `null` when no board
  * has a frame for this `pageId` at all (call `studio_list_pages` first).
- */
 export function authoredFrameWidth(dir: string, pageId: string): number | null {
-  const boardsFile = readBoardsFileOrEmpty(dir)
+  const boardsFile = readBoardsFile(dir)
   for (const board of boardsFile.boards) {
     const frame = board.frames.find((f) => f.pageId === pageId)
     if (frame) return frame.width ?? FRAME_WIDTH
@@ -44,7 +60,7 @@ export function authoredFrameWidth(dir: string, pageId: string): number | null {
  * `pageId` at all (call `studio_list_pages` first).
  */
 export function authoredFrameHeight(dir: string, pageId: string): number | null {
-  const boardsFile = readBoardsFileOrEmpty(dir)
+  const boardsFile = readBoardsFile(dir)
   for (const board of boardsFile.boards) {
     const frame = board.frames.find((f) => f.pageId === pageId)
     if (frame) return frame.height ?? FRAME_HEIGHT

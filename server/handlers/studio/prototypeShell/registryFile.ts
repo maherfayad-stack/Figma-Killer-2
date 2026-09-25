@@ -26,10 +26,9 @@
  * generation time. Putting that seam in its own tiny generated file is what
  * lets `App.jsx` be written once and then belong to the user.
  */
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { join } from 'node:path'
-import { parseBoardsFile, type Board, type BoardsFile } from '@core/studio-board'
-import { boardsFilePath } from '../boardFrames'
+import type { Board, BoardsFile } from '@core/studio-board'
 import { runtimeBridgeShellFile } from './runtimeBridgeShellFile'
 import { PROTOTYPE_SHELL_DIR, type ShellFile } from './shellPaths'
 import { studioRuntimeShellFile } from './studioRuntimeShellFile'
@@ -312,13 +311,6 @@ export function generatedShellFiles(input: ShellRegistryInput): ShellFile[] {
     studioRuntimeShellFile(),
     runtimeBridgeShellFile(),
   ]
-}
-
-/** The project's boards, or an empty file when it has none yet. */
-export function readBoardsForShell(dir: string): BoardsFile {
-  const file = boardsFilePath(dir)
-  if (!existsSync(file)) return { version: 1, boards: [] }
-  return parseBoardsFile(readFileSync(file, 'utf8'))
 }
 
 /** True when the workspace ships an `i18n/LanguageContext` the shell can mount. */

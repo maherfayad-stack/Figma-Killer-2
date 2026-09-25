@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createBoard, createBoardsFile, upsertBoard, upsertFrame, type Board } from '@core/studio-board'
-import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardFrames'
+import { readBoardsFile, writeBoardsFile } from '../../../../handlers/studio/boardGeometry'
 import { layoutPlacements, studioArrangeFramesMcpTools } from './arrangeFramesTool'
 
 const tool = studioArrangeFramesMcpTools[0]!

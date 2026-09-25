@@ -40,7 +40,7 @@
  *
  * Write path: `landDesignReferenceBytes` (`assetLanding.ts`) — the SAME
  * magic-number sniff / collision-safe write pipeline `studio_upload_asset`
- * and `studio_fetch_remote_asset` use, into `DESIGN_REFERENCE_ASSET_DIR`, a
+ * and `studio_fetch_remote_asset` use, into `DESIGN_REFERENCE_STORE_DIR`, a
  * directory the server fixes. No client-supplied `targetDir` can reach
  * `.studio/` (P1-G). There is no second write path here.
  *
@@ -55,12 +55,9 @@
  * on-disk shape.
  */
 import { createHash, randomUUID } from 'node:crypto'
-import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import sharp from 'sharp'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import { isRealpathContained } from './workspacePackageResolve'
-import { DESIGN_REFERENCE_ASSET_DIR, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
+import { DESIGN_REFERENCE_STORE_DIR, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
+import { readStudioStoreBytes, readStudioStoreJson, removeStudioStoreEntry, writeStudioStoreJson } from './studioStore'
 import {
   DESIGN_REFERENCE_MIME_TYPES,
   DesignReferenceManifestSchema,
@@ -75,25 +72,19 @@ import {
 /** A hand-edited `manifest.json` is untrusted input (same trust level as `.studio/meta.json`) — `readDesignReferenceBytes` re-derives the real file path from `id`+`ext` rather than the manifest's own `relPath` string, so this pattern is what actually gates filesystem access. */
 const REFERENCE_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
-function referencesDir(dir: string): string {
-  return join(dir, ...DESIGN_REFERENCE_ASSET_DIR.split('/'))
-}
+const MANIFEST_FILE = `${DESIGN_REFERENCE_STORE_DIR}/manifest.json`
 
-function manifestFile(dir: string): string {
-  return join(referencesDir(dir), 'manifest.json')
+/** The store path of a reference's bytes: re-derived from the pattern-checked id and the closed-enum ext, never the manifest's own `relPath`. */
+function referenceBytesFile(reference: { id: string; ext: string }): string {
+  return `${DESIGN_REFERENCE_STORE_DIR}/${reference.id}.${reference.ext}`
 }
 
 function readManifest(dir: string): DesignReferenceManifest {
-  const file = manifestFile(dir)
-  if (!existsSync(file)) return EMPTY_DESIGN_REFERENCE_MANIFEST
-  const raw = readFileSync(file, 'utf8')
-  return parseJsonWithFallback(raw, DesignReferenceManifestSchema, EMPTY_DESIGN_REFERENCE_MANIFEST)
+  return readStudioStoreJson(dir, MANIFEST_FILE, DesignReferenceManifestSchema, EMPTY_DESIGN_REFERENCE_MANIFEST)
 }
 
 function writeManifest(dir: string, manifest: DesignReferenceManifest): void {
-  const file = manifestFile(dir)
-  mkdirSync(dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(manifest, null, 2))
+  writeStudioStoreJson(dir, MANIFEST_FILE, manifest, { pretty: true })
 }
 
 // ---------------------------------------------------------------------------
@@ -302,16 +293,15 @@ export function getMostRecentDesignReference(dir: string): DesignReference | nul
  * Read a registered reference's ORIGINAL bytes back off disk. Deliberately
  * ignores the manifest's own `relPath` field for the actual filesystem
  * access — see `REFERENCE_ID_PATTERN`'s doc comment — and re-derives the
- * path from `id` (pattern-checked) + `ext` (a closed enum) instead. Symlink
- * escape (a GitHub-imported project can contain one) is caught by
- * `isRealpathContained`, the same guard `studio_read_file` uses.
+ * path from `id` (pattern-checked) + `ext` (a closed enum) instead. A link
+ * anywhere on the way (a GitHub-imported project can contain one) reads as
+ * absent (`studioStore.ts`).
  */
 export function readDesignReferenceBytes(dir: string, reference: DesignReference): Uint8Array | null {
   if (!REFERENCE_ID_PATTERN.test(reference.id) || !isDesignReferenceExt(reference.ext)) return null
-  const abs = join(referencesDir(dir), `${reference.id}.${reference.ext}`)
-  if (!isRealpathContained(abs, dir)) return null
   try {
-    return new Uint8Array(readFileSync(abs))
+    const bytes = readStudioStoreBytes(dir, referenceBytesFile(reference))
+    return bytes === null ? null : new Uint8Array(bytes)
   } catch {
     return null
   }
@@ -349,7 +339,7 @@ export function removeDesignReference(dir: string, referenceId: string): RemoveD
   // outcome this function reports.
   if (isDesignReferenceExt(target.ext)) {
     try {
-      unlinkSync(join(referencesDir(dir), `${target.id}.${target.ext}`))
+      if (REFERENCE_ID_PATTERN.test(target.id)) removeStudioStoreEntry(dir, referenceBytesFile(target))
     } catch {
       // Already gone — not a failure.
     }
