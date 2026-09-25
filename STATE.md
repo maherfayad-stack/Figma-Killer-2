@@ -11,25 +11,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### canvas-40 — P5-F: canvas backlog (snapping to guides and spacing, multi-select move and resize, Hug, rotation, B, quick keys)
-- **Agent:** canvas-engineer · **Branch:** `feat/canvas-snapping-and-backlog` off `1c939ab0` · **PR:** #268 (draft, base `feat/canvas-excellence`; long form, tests, dogfood in its body) · **Updated:** 2026-09-26 (trunk `df627418` merged)
-- **Stage:** verifying (draft PR open; owner dogfood below)
-- **Closes:** IX-5c, IX-5d, IX-5e, IX-6f, IX-6g, IX-22, IX-25, IX-13, UX-8, UX-9 (frame size, Copy as PNG, snap toggles; no board background — the model has none), IX-misc partly (0–9 opacity, ⇧H/⇧V flip). **Follow-ups:** IX-23 (grid cell drops need a parser-side `grid-row`/`grid-column` write), the rest of IX-misc (⌥N/⇧G aliases, ⌘⇧E, `\`, ⌥L/⌥I, g-d/g-v, Z, font keys, ⇧⏎ multi, ⌘D offset memory), group snapping/rotation/Hug.
-- **Canvas files touched:** runtime `snapRules` (+ new `snapSpacingRules`, `snapRectRules` — ONE snap engine, after #265 moved it there), `snapPeerRules` (`guideLinesInSpace`), `elementResizeSnapRules`, `elementResizeSizing` (`hugPatchForHandle`); canvas `boardSnapping` (`rulerGuideLines`, `readBoardScreenOrigin`, `snapBoardFurniture`), `snapPreferences` (new), `elementResizeGuides` (`resizeGuideLines`), `BoardCanvasLayer/useCanvasLayerPointer` (P5-G loose layers now snap through `snapBoardFurniture`), `canvasFreeMove`, `canvasDragFrame`, `canvasDragCommit`, `canvasDragPainter` (+css), `useElementResizeDrag`, `handleDragSession` (new), `groupResize` + `useGroupResizeDrag` (new), `useElementRotateDrag` (new), `CanvasResizeHandles`, `CanvasSelectionChrome`, `BreakpointSelectionOverlay`, `canvasSelectionOverlayPositioning`, `BoardGuidesLayer` (+css), `useBoardFrameMoveDrag`, `useAnnotationInteraction`, `CanvasDrawToolLayer`, `canvasDrawTool`, `boardDrawTool` (new), `BoardFramesLayer/AddPagePicker` + `BoardDrawPagePicker` (new), `CanvasRoot`, `layerQuickStyles` (new), `useCanvasLayerCommandKeys`, `useCanvasToolShortcuts`, `copyAsPng` (new), `useCopyAsPngShortcut`. Runtime: `selectionChromeCss`, `resizeHandles` (rotate zone attrs) + regenerated `runtimeBridgeBundle`. Also store `canvasSlice` / `boardSlice` / `boardFrameSliceActions`, keybindings (`keybindingViewport` ⌘' ⌘⇧', `keybindingTools` B, `keybindingLayerCommands` 0–9 ⇧H ⇧V), `ZoomControls`, `EmptySelectionPanel` (new), `RotationRow` (`rotateValue`, new), `Section.module.css`, server `pageScaffold`/`boardFrames`/`projectRoutes` (`placement`).
-- **Decisions:** ⌘' toggles ruler-guide snapping, ⌘⇧' object + spacing snapping (register row added; persisted per person in `localStorage`). Pills describe the RESULT, not the snap. A multi free move / group resize is all-or-nothing and one `setNodesInlineStylesPerNode`. Group resize writes offsets only for absolute members. Rotation writes the standalone `rotate`, never `transform`; refuses a rotate-family transform. B on the empty board never reaches P5-G's handler. Opacity 0 CLEARS the layer's own `opacity`.
-- **P5-G:** loose-layer drags now go through `snapBoardFurniture` + `setBoardSnapGuides(guides, spacings)` (guides, spacing, toggles). `DrawTool` gained `'board'`; no board-draw handler is registered on the trunk, and B returns before `offerBoardDraw`, so nothing to extend.
-- **Live frames:** `ResizeSnapContext` carries no ruler guides or toggles yet — a live frame's resize snaps to peers with both toggles on (`ALL_SNAP_SOURCES`). Follow-up: add both to the wire schema.
-- **Landmines:**
-  - **Events × injectors:** rotation zones are `[data-canvas-rotate-handle]` in `selectionChromeCss` (cursor `!important`, like the resize handles) — a runtime-rule change, so the bridge bundle was regenerated. The shared regen script's PATH line breaks on the `C:` drive colon (it runs local Bun 1.3.6); I ran a copy with `cygpath -u` on that line only.
-  - **Events:** a handle press cancels its `pointerdown`, and Chromium then did not deliver `dblclick` to it — Hug is a second PRESS on the same handle within 400 ms of a still press, detected in the handle's own `pointerdown`. Do not move it back to `dblclick`.
-  - **Events × store (fixed, was K6):** the free-move preview now RESTORES each touched offset instead of removing it. Removing it lost a React-authored `left` on a move released straight down (React re-applies only changed style keys). Any new preview must snapshot/restore (`createInlineStylePreview`).
-  - **Height × gestures:** every handle gesture (resize, group, rotate) now freezes through `handleDragSession`; a new handle gesture must use it, not copy it.
-  - Ruler guides reach frame space through the transform layer's rect top-left (= board 0,0 because `transform-origin: 0 0`).
-- **Found, not fixed:** in the PR body.
-- **Verification:** build + lint clean; unit suite in locked chunks after merging trunk `69397b64`: only pre-existing fails (`module-size-budgets` on `agentCheckpoints.ts`, bundle freshness on Bun 1.3.6 — passes on 1.3.13) plus three load timeouts that pass alone. SitePage cap raised 41.3 → 41.7 KB (audited: the zoom menu's snap rows). e2e: new spec 6/6, `element-resize` 5/5, `snapping-and-measuring` 10/10, `canvas-tools-and-handles` 5/5.
-- **Next:** owner dogfood (script in the PR body); orchestrator review.
-- **Human action needed:** dogfood: `test4`, `/admin/site`, static tier, one frame, 100% — equal-spacing pills on an absolute drag, ⌘'/⌘⇧' in the zoom menu, ⇧-select two layers → one handle box, double-click an edge, rotate from outside a corner with ⇧, 5 / 0 / ⇧H, B-drag on the empty board.
-
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -176,6 +157,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 - `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
@@ -185,7 +167,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
 - `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
 - `mcp-32` — P4-G: `studio_lint`, `studio_delegate` (per-turn caps 2 calls / 8 children / 150 rounds), model routing, short tool descriptions, run-project tools held in plan mode; security approved — #255 — 2026-09-25
-- `canvas-29` — P5-E: armed draw tools, padding/gap handles, align, layer commands, ⇧K insert image, 12 IX/UX items — #261 — 2026-09-25
 
 ---
 
