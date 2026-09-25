@@ -102,6 +102,7 @@ import {
   positionNodeBadge,
   positionOverlayElement,
   positionResizeFrame,
+  resizeFrameRect,
   positionToolbar,
   publishSelectionAnchor,
   resolveNodeBadgeLabel,
@@ -446,8 +447,8 @@ export function BreakpointSelectionOverlay({
     // rect as the ring, so they cannot drift off the box they belong to.
     // WHETHER they exist is `canOfferResize`'s call, in `CanvasResizeHandles`
     // — no second gate here: re-deriving it is how the two would disagree.
-    const soleRing = ringPlacements.length === 1 ? ringPlacements[0] : undefined
-    positionResizeFrame(resizeFrameRef.current, soleRing ? soleRing.rect : null)
+    // P5-F / IX-6g — a multi-selection's handles sit on the union of its rings.
+    positionResizeFrame(resizeFrameRef.current, resizeFrameRect(ringPlacements.map((placement) => placement.rect)))
     positionOverlayElement(hoverRef.current, hoverRect)
     syncSelectorHighlightRings(
       selectorHighlightRef.current,
@@ -624,14 +625,12 @@ export function BreakpointSelectionOverlay({
   // inside `CanvasTransformLayer`, so it was never subject to the
   // zoom-multiplied drift this work order fixes.
   const usingIframeOverlay = Boolean(overlayRoot)
-  // A SINGLE selection only: the drag writes an inline style to one element,
-  // so three selected elements would mean three edits behind one set of
-  // handles — a different feature, not a loop over this one. In-iframe only:
-  // the parent-document fallback positions from zoom-converted math
-  // (`standing-03`), and handles are far less forgiving of drift than a ring.
-  const resizeNodeId = usingIframeOverlay && showRings && selectedNodeIds.length === 1
-    ? (selectedNodeIds[0] ?? null)
-    : null
+  // One selected layer gets its own handles; several get ONE set on their
+  // union (P5-F, IX-6g — `CanvasGroupResizeHandles`), which scales them as a
+  // group in one write. In-iframe only: the parent-document fallback
+  // positions from zoom-converted math (`standing-03`), and handles are far
+  // less forgiving of drift than a ring.
+  const resizeNodeIds = usingIframeOverlay && showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS
   // `live-13` — the same rings, hover, handles and anchor for a bridge frame, through its adapter.
   useBridgeSelectionChrome(bridgeChrome ? adapter : null, {
     iframeElement, canvasRoot: portalCanvasRoot, selectedNodeIds: showRings ? selectedNodeIds : EMPTY_SELECTED_NODE_IDS,
@@ -663,7 +662,7 @@ export function BreakpointSelectionOverlay({
       showSelectorHighlight={showSelectorHighlight}
       usingIframeOverlay={usingIframeOverlay}
       toolbarMode={toolbarMode}
-      resizeNodeId={resizeNodeId}
+      resizeNodeIds={resizeNodeIds}
       overlayRoot={overlayRoot}
       selectorHighlightRef={selectorHighlightRef}
       hoverRef={hoverRef}

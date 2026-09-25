@@ -104,7 +104,8 @@ import type {
   NoteColor,
   PreviewAxes,
 } from '@core/studio-board'
-import { snapGuidesEqual, type SnapGuide } from '@site/canvas/boardSnapping'
+import { snapGuidesEqual, type SnapGuide, type SnapSpacing } from '@site/canvas/boardSnapping'
+import { snapSpacingsEqual } from '@site/canvas/snapSpacing'
 import {
   createBoard,
   createBoardsFile,
@@ -170,6 +171,8 @@ interface BoardSlice {
    * the module doc's "Snap guides" note.
    */
   boardSnapGuides: SnapGuide[]
+  /** P5-F / IX-5d — the same drag's equal-spacing pills. Same lifetime as the guides. */
+  boardSnapSpacings: SnapSpacing[]
 
   /**
    * Hydrate from a freshly-fetched `BoardsFile`. An empty file gets a default
@@ -337,9 +340,10 @@ interface BoardSlice {
   /**
    * Replace the active drag's snap guides (Phase 6B). Pass `[]` to clear —
    * furniture drag handlers do this on pointer-up/cancel. Never touches
-   * `boardsDirty`: guides are drawn, not persisted.
+   * `boardsDirty`: guides are drawn, not persisted. `spacings` are the
+   * equal-spacing pills (IX-5d); omitted means none.
    */
-  setBoardSnapGuides: (guides: SnapGuide[]) => void
+  setBoardSnapGuides: (guides: SnapGuide[], spacings?: SnapSpacing[]) => void
 
   // ── Frame multi-selection (WS-7.1) ───────────────────────────────────────
   /** Selected frame ids (page ids), on the ACTIVE board. Distinct from node selection. Page-id-keyed — see module doc's WS-10 Phase 2 note. */
@@ -436,6 +440,7 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   boardsLoadFailed: false,
   boardsPendingExplicitRemoval: false,
   boardSnapGuides: [],
+  boardSnapSpacings: [],
   selectedFrameIds: [],
   frameDefaults: {},
   frameDefaultsSettled: false,
@@ -576,9 +581,10 @@ export const createBoardSlice: EditorStoreSliceCreator<BoardSlice> = (set, get) 
   // selector sweep) per pointer event where one of them almost always wrote
   // the same empty list back. The equality check makes the guide write cost
   // nothing until the guides actually change — see `snapGuidesEqual`.
-  setBoardSnapGuides: (guides) => {
-    if (snapGuidesEqual(get().boardSnapGuides, guides)) return
-    set({ boardSnapGuides: guides })
+  setBoardSnapGuides: (guides, spacings = []) => {
+    const state = get()
+    if (snapGuidesEqual(state.boardSnapGuides, guides) && snapSpacingsEqual(state.boardSnapSpacings, spacings)) return
+    set({ boardSnapGuides: guides, boardSnapSpacings: spacings })
   },
 
   // ── Frame multi-selection (WS-7.1) — implementation split out to

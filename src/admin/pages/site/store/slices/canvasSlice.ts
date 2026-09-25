@@ -10,6 +10,11 @@ import { DEFAULT_PREVIEW_AXES, type PreviewAxes } from '@core/studio-board'
 // Type-only: the store carries the canvas's published gesture contract but
 // never imports canvas DOM code at runtime.
 import type { CanvasViewportCommands } from '@site/canvas/canvasViewportCommands'
+import {
+  readSnapPreferences,
+  writeSnapPreferences,
+  type SnapPreferences,
+} from '@site/canvas/snapPreferences'
 
 type CanvasMode = 'select' | 'pan' | 'insert'
 
@@ -144,6 +149,14 @@ interface CanvasSlice {
    * disables the toolbar's Fit control instead of letting it silently no-op.
    */
   canvasViewportCommands: CanvasViewportCommands | null
+  /**
+   * P5-F / IX-5e — snap to objects (siblings, parents, furniture, equal
+   * spacing) and snap to ruler guides, independently. A preference of the
+   * person, persisted to `localStorage` (`canvas/snapPreferences.ts`). Every
+   * snapping gesture reads it at its start and applies it through
+   * `snapSourcesFor`.
+   */
+  snapPreferences: SnapPreferences
 
   setZoom: (zoom: number) => void
   /** Publish (or, with `null`, retract) the mounted canvas's viewport gestures. */
@@ -183,6 +196,8 @@ interface CanvasSlice {
   zoomIn: (originX?: number, originY?: number) => void
   zoomOut: (originX?: number, originY?: number) => void
   zoomTo: (zoom: number, originX?: number, originY?: number) => void
+  /** Flip one snap toggle (⌘⇧' objects, ⌘' ruler guides) and persist it. */
+  toggleSnapPreference: (which: keyof SnapPreferences) => void
 }
 
 // Contribute this slice's fields to the combined `EditorStore` type via TS
@@ -207,6 +222,7 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
   agentSnapshotCaptureRequest: null,
   previewAxes: DEFAULT_PREVIEW_AXES,
   canvasViewportCommands: null,
+  snapPreferences: readSnapPreferences(),
 
   setZoom: (zoom) => set({ zoom: clampZoom(zoom) }),
 
@@ -315,5 +331,11 @@ export const createCanvasSlice: EditorStoreSliceCreator<CanvasSlice> = (set, get
     const newPanX = clampPan(originX - scale * (originX - panX))
     const newPanY = clampPan(originY - scale * (originY - panY))
     set({ zoom: newZoom, panX: newPanX, panY: newPanY })
+  },
+
+  toggleSnapPreference: (which) => {
+    const next = { ...get().snapPreferences, [which]: !get().snapPreferences[which] }
+    set({ snapPreferences: next })
+    writeSnapPreferences(next)
   },
 })

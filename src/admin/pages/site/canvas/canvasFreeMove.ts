@@ -69,6 +69,12 @@
  * The threshold is SCREEN px (IX-5a): `snapThresholdAtZoom` of the session's
  * live zoom, re-read every frame, so the pull feels the same at 50% and 400%.
  *
+ * P5-F adds the rest of the snap vocabulary through the same `computeSnap`:
+ * the board's ruler guides (IX-5c, converted into the frame's space once,
+ * `guideLinesInSpace`), equal spacing with its distance pills (IX-5d), the
+ * user's two toggles (IX-5e, applied by `snapSourcesFor` when the plan is
+ * made), and the Shift axis lock, which leaves the locked axis unsnapped.
+ *
  * Everything below is pure except `resolveFreeMove` (which reads computed
  * style and layout) and `previewFreeMove` / `clearFreeMovePreview` (which write one
  * element's own inline style, the same preview-then-commit shape
@@ -89,7 +95,17 @@ import {
   presentStructuralRefusal,
   STRUCTURAL_REFUSAL_TITLE,
 } from '@site/store/slices/site/structuralSourceEdits'
-import { computeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
+import {
+  computeSnap,
+  snapSourcesFor,
+  snapThresholdAtZoom,
+  type SnapGuide,
+  type SnapLine,
+  type SnapOptions,
+  type SnapRect,
+  type SnapSpacing,
+} from './boardSnapping'
+import type { SnapPreferences } from './snapPreferences'
 import type { CanvasDropCandidate, CanvasRect } from './canvasDnd'
 import { paintCanvasDrag, type CanvasDragGhost } from './canvasDragPainter'
 import { presentedElementForNode } from './canvasNodeLookup'
@@ -97,7 +113,9 @@ import { cssPropertyName } from './elementResizeSizing'
 import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
 import { authoredOffsets, planNudge, type NudgeOffsetProperty, type NudgePlan, type NudgeTerm } from './canvasNodeArrowMove'
 
-export interface FreeMovePlan {
+/** One layer a free move writes: its element, the offsets it moves, and whether it becomes absolute. */
+export interface FreeMoveMember {
+  nodeId: string
   /** The element whose own inline style the gesture writes. */
   element: HTMLElement
   /**
@@ -112,9 +130,25 @@ export interface FreeMovePlan {
    * alone would be a no-op. Both axes are written then, moved or not.
    */
   needsAbsolute: boolean
-  /** Sibling rects plus the parent's padding / content box, frame space, measured once. */
-  peers: SnapRect[]
-  /** The moved element's own frame-space rect at drag start. */
+}
+
+/**
+ * A free move of one layer or several (P5-F, IX-22). Every member moves by
+ * the SAME snapped delta, so a multi-selection keeps its arrangement; the
+ * snap runs once, on the union of the members' rects — the box the user sees
+ * move — against every peer that is not itself being moved.
+ */
+export interface FreeMovePlan {
+  members: FreeMoveMember[]
+  /**
+   * Sibling rects plus the parents' padding / content boxes, frame space,
+   * measured once — already filtered by the object-snap toggle, and never a
+   * member.
+   */
+  peers: readonly SnapRect[]
+  /** The ruler guides in frame space and the spacing switch, as the toggles left them (P5-F). */
+  snap: SnapOptions
+  /** The union of the members' frame-space rects at drag start. */
   rect: SnapRect
 }
 
@@ -131,13 +165,15 @@ export type FreeMoveResolution =
   | { ok: true; plan: FreeMovePlan }
   | { ok: false; refusal: FreeMoveRefusal }
 
-/** One frame of a free move: how far the element has gone, and what to draw. */
+/** One frame of a free move: how far the layers have gone, and what to draw. */
 export interface FreeMoveStep {
   /** The SNAPPED visual delta since drag start, frame px. */
   dx: number
   dy: number
   guides: SnapGuide[]
-  /** The snapped rect, in frame space — what the ghost and guides are drawn against. */
+  /** IX-5d — the equal gaps the moved box now has. */
+  spacings: SnapSpacing[]
+  /** The snapped union rect, in frame space — what the ghost and guides are drawn against. */
   rect: SnapRect
 }
 
@@ -213,26 +249,37 @@ interface ResolveFreeMoveInput {
   /** The frame's own document. */
   doc: Document
   tree: NodeTree<PageNode>
-  /** The node the gesture is about — always the single dragged element. */
-  nodeId: string
+  /**
+   * Every layer the gesture moves (IX-22) — the dragged selection. A layer
+   * nested inside another member is dropped: moving its ancestor already
+   * moves it, and writing it too would move it twice.
+   */
+  nodeIds: readonly string[]
   /** The drag session's candidate rects, in frame space. Peers are read from here. */
   candidates: readonly CanvasDropCandidate[]
-  /** ⌘/Ctrl is held. Without it, only an ALREADY-positioned element moves freely. */
+  /** ⌘/Ctrl is held. Without it, only ALREADY-positioned layers move freely. */
   modifierHeld: boolean
+  /** The board's ruler guides, already in this frame's space (`guideLinesInSpace`). */
+  guideLines: readonly SnapLine[]
+  /** The user's snap toggles at the start of the gesture. */
+  preferences: SnapPreferences
 }
 
-/**
- * The DOM half: does this element move freely right now, and if so from what.
- *
- * `null` means "this gesture is an ordinary reorder" — the element is in flow
- * and the user is not asking for anything else. A refusal means the user DID
- * ask (⌘ is held) and the answer is honestly no.
- */
-export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution | null {
-  const { doc, tree, nodeId, candidates, modifierHeld } = input
+type MemberResolution =
+  | { kind: 'member'; member: FreeMoveMember }
+  | { kind: 'reorder' }
+  | { kind: 'refused'; refusal: FreeMoveRefusal }
+
+/** One layer's answer — the single-layer question K6 always asked. */
+function resolveMember(
+  doc: Document,
+  view: Window,
+  tree: NodeTree<PageNode>,
+  nodeId: string,
+  modifierHeld: boolean,
+): MemberResolution {
   const element = presentedElementForNode(doc, nodeId)
-  const view = doc.defaultView
-  if (!element || !view || typeof view.getComputedStyle !== 'function') return null
+  if (!element) return { kind: 'reorder' }
 
   const computed = view.getComputedStyle(element)
   const own: FreeMoveStyleInput = {
@@ -247,7 +294,7 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
   // An already-absolute element moves freely with no modifier at all — its
   // position is ALREADY what `left`/`top` say, so dragging it anywhere else
   // would be the surprising behaviour.
-  if (!isPositionedFreely(own.position) && !modifierHeld) return null
+  if (!isPositionedFreely(own.position) && !modifierHeld) return { kind: 'reorder' }
 
   const parentElement = element.parentElement
   const parentPosition = parentElement ? view.getComputedStyle(parentElement).position : 'static'
@@ -255,7 +302,7 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
   if (!properties) {
     const parentNode = getParent(tree, nodeId)
     return {
-      ok: false,
+      kind: 'refused',
       refusal: {
         reason: 'static-parent',
         parentNodeId: parentNode?.id ?? null,
@@ -270,31 +317,6 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
     }
   }
 
-  const rect = candidates.find((candidate) => candidate.nodeId === nodeId)?.rect
-  if (!rect) return null
-
-  const parentNode = getParent(tree, nodeId)
-  const siblingIds = new Set(parentNode?.children ?? [])
-  siblingIds.delete(nodeId)
-  const peers: SnapRect[] = []
-  for (const candidate of candidates) {
-    if (candidate.nodeId === parentNode?.id) {
-      // IX-5b — the parent's own edges and centre. Its rect is already in the
-      // index; only the border + padding widths are a read. The TREE parent's
-      // element, not `element.parentElement`: a module may render the child
-      // one wrapper-free level down, but the node the user sees as "the
-      // parent" is the tree's.
-      const parentElementForInsets = presentedElementForNode(doc, candidate.nodeId) ?? parentElement
-      const insets = parentElementForInsets
-        ? readBoxInsets(view, parentElementForInsets)
-        : { border: ZERO_INSETS, padding: ZERO_INSETS }
-      peers.push(...parentSnapRects(snapRectOf(candidate.rect), insets))
-      continue
-    }
-    if (!siblingIds.has(candidate.nodeId)) continue
-    peers.push(snapRectOf(candidate.rect))
-  }
-
   const node = tree.nodes[nodeId]
   const authored = node
     ? authoredOffsets(node, useEditorStore.getState().site?.styleRules)
@@ -306,13 +328,97 @@ export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution
     containerWidth: (element.offsetParent as HTMLElement | null)?.clientWidth ?? 0,
   }
   return {
-    ok: true,
-    plan: {
+    kind: 'member',
+    member: {
+      nodeId,
       element,
       offsets: planFreeMoveOffsets(box, own, authored, properties.needsAbsolute),
       needsAbsolute: properties.needsAbsolute,
-      peers,
-      rect: snapRectOf(rect),
+    },
+  }
+}
+
+/** Whether `nodeId` sits inside another of `ids` — it moves with that ancestor already. */
+function hasAncestorIn(tree: NodeTree<PageNode>, nodeId: string, ids: ReadonlySet<string>): boolean {
+  let parentId = tree.nodes[nodeId]?.parentId ?? null
+  while (parentId) {
+    if (ids.has(parentId)) return true
+    parentId = tree.nodes[parentId]?.parentId ?? null
+  }
+  return false
+}
+
+/**
+ * The DOM half: do these layers move freely right now, and if so from what.
+ *
+ * `null` means "this gesture is an ordinary reorder" — a layer is in flow and
+ * the user is not asking for anything else. It is all or nothing: a selection
+ * where one layer would move by coordinates and another by child order would
+ * be two gestures pretending to be one, so it reorders, like any selection
+ * with a flow layer in it. A refusal means the user DID ask (⌘ is held) and
+ * the answer for at least one layer is honestly no — the first such layer's
+ * container is the one the remedy names.
+ */
+export function resolveFreeMove(input: ResolveFreeMoveInput): FreeMoveResolution | null {
+  const { doc, tree, candidates, modifierHeld, guideLines, preferences } = input
+  const view = doc.defaultView
+  if (!view || typeof view.getComputedStyle !== 'function') return null
+
+  const requested = new Set(input.nodeIds)
+  const nodeIds = input.nodeIds.filter((id) => !hasAncestorIn(tree, id, requested))
+  if (nodeIds.length === 0) return null
+
+  const members: FreeMoveMember[] = []
+  for (const nodeId of nodeIds) {
+    const answer = resolveMember(doc, view, tree, nodeId, modifierHeld)
+    if (answer.kind === 'reorder') return null
+    if (answer.kind === 'refused') return { ok: false, refusal: answer.refusal }
+    members.push(answer.member)
+  }
+
+  const memberIds = new Set(nodeIds)
+  const rectById = new Map(candidates.map((candidate) => [candidate.nodeId, candidate.rect]))
+  const memberRects: SnapRect[] = []
+  for (const nodeId of nodeIds) {
+    const rect = rectById.get(nodeId)
+    if (!rect) return null
+    memberRects.push(snapRectOf(rect))
+  }
+
+  // The peers: every member's siblings that are not themselves moving, and
+  // each distinct parent's padding / content box (IX-5b). The TREE parent's
+  // element, not `element.parentElement`: a module may render the child one
+  // wrapper-free level down, but the node the user sees as "the parent" is
+  // the tree's.
+  const parentIds = new Set<string>()
+  const siblingIds = new Set<string>()
+  for (const nodeId of nodeIds) {
+    const parentNode = getParent(tree, nodeId)
+    if (!parentNode) continue
+    parentIds.add(parentNode.id)
+    for (const childId of parentNode.children) if (!memberIds.has(childId)) siblingIds.add(childId)
+  }
+  const peers: SnapRect[] = []
+  for (const candidate of candidates) {
+    if (parentIds.has(candidate.nodeId)) {
+      const parentElement = presentedElementForNode(doc, candidate.nodeId)
+      const insets = parentElement
+        ? readBoxInsets(view, parentElement)
+        : { border: ZERO_INSETS, padding: ZERO_INSETS }
+      peers.push(...parentSnapRects(snapRectOf(candidate.rect), insets))
+      continue
+    }
+    if (siblingIds.has(candidate.nodeId)) peers.push(snapRectOf(candidate.rect))
+  }
+
+  const sources = snapSourcesFor(preferences, peers, guideLines)
+  return {
+    ok: true,
+    plan: {
+      members,
+      peers: sources.peers,
+      snap: sources.options,
+      rect: unionRect(memberRects),
     },
   }
 }
@@ -323,62 +429,80 @@ function snapRectOf(rect: CanvasRect): SnapRect {
   return { x: rect.left, y: rect.top, width: rect.width, height: rect.height }
 }
 
+function unionRect(rects: readonly SnapRect[]): SnapRect {
+  const left = Math.min(...rects.map((rect) => rect.x))
+  const top = Math.min(...rects.map((rect) => rect.y))
+  const right = Math.max(...rects.map((rect) => rect.x + rect.width))
+  const bottom = Math.max(...rects.map((rect) => rect.y + rect.height))
+  return { x: left, y: top, width: right - left, height: bottom - top }
+}
+
 /**
  * One frame of the gesture: apply the pointer delta, snap to the peers, and
  * report the guides to draw.
  *
  * `dx`/`dy` are FRAME-space deltas (client pixels already divided by the
- * canvas scale). Snapping runs on the element's rect in the same space, so a
+ * canvas scale). Snapping runs on the moved box in the same space, so a
  * guide drawn at a peer's edge is drawn exactly where that edge is. `zoom` is
  * the live canvas zoom, which turns the screen-px threshold into frame px.
+ * `lockedAxis` is the axis the Shift constraint holds still, which never snaps.
  */
-export function stepFreeMove(plan: FreeMovePlan, dx: number, dy: number, zoom: number): FreeMoveStep {
+export function stepFreeMove(
+  plan: FreeMovePlan,
+  dx: number,
+  dy: number,
+  zoom: number,
+  lockedAxis: 'x' | 'y' | null = null,
+): FreeMoveStep {
   const moved: SnapRect = {
     x: plan.rect.x + dx,
     y: plan.rect.y + dy,
     width: plan.rect.width,
     height: plan.rect.height,
   }
-  const snapped = computeSnap(moved, plan.peers, snapThresholdAtZoom(zoom))
-  // The snap is expressed as a correction to the rect; the same correction
-  // applies to every offset, because each differs from the rect's edge only
-  // by a constant for the length of the gesture.
+  const snapped = computeSnap(moved, plan.peers, snapThresholdAtZoom(zoom), { ...plan.snap, lockedAxis })
+  // The snap is expressed as a correction to the box; the same correction
+  // applies to every offset of every member, because each differs from the
+  // box's edge only by a constant for the length of the gesture.
   return {
     dx: snapped.x - plan.rect.x,
     dy: snapped.y - plan.rect.y,
     guides: snapped.guides,
+    spacings: snapped.spacings,
     rect: { x: snapped.x, y: snapped.y, width: moved.width, height: moved.height },
   }
 }
 
 /**
- * The offsets at this step, as a React style patch: every term of an axis
- * that moved — both axes for an element becoming absolute, which has no
- * offsets of its own yet.
+ * One member's offsets at this step, as a React style patch: every term of
+ * an axis that moved — both axes for an element becoming absolute, which has
+ * no offsets of its own yet.
  */
-function offsetsPatch(plan: FreeMovePlan, step: FreeMoveStep): Record<string, string> {
+function offsetsPatch(member: FreeMoveMember, step: FreeMoveStep): Record<string, string> {
   const patch: Record<string, string> = {}
   const write = (terms: readonly NudgeTerm[], delta: number) => {
     for (const term of terms) patch[term.property] = `${Math.round(term.base + term.sign * delta)}px`
   }
-  if (plan.needsAbsolute || step.dx !== 0) write(plan.offsets.horizontal, step.dx)
-  if (plan.needsAbsolute || step.dy !== 0) write(plan.offsets.vertical, step.dy)
+  if (member.needsAbsolute || step.dx !== 0) write(member.offsets.horizontal, step.dx)
+  if (member.needsAbsolute || step.dy !== 0) write(member.offsets.vertical, step.dy)
   return patch
 }
 
 /**
- * Show the step on the element itself, at frame rate, with no store round
- * trip — the same preview-then-commit shape `useElementResizeDrag` uses, and
- * for the same reason: the selection ring re-measures the real element, so it
- * follows for free.
+ * Show the step on the elements themselves, at frame rate, with no store
+ * round trip — the same preview-then-commit shape `useElementResizeDrag`
+ * uses, and for the same reason: the selection rings re-measure the real
+ * elements, so they follow for free.
  *
- * `position` is previewed too when the element is about to become absolute,
+ * `position` is previewed too when an element is about to become absolute,
  * because otherwise the offsets would visibly do nothing until the drop.
  */
 export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
-  if (plan.needsAbsolute) plan.element.style.setProperty('position', 'absolute')
-  for (const [property, value] of Object.entries(offsetsPatch(plan, step))) {
-    plan.element.style.setProperty(cssPropertyName(property), value)
+  for (const member of plan.members) {
+    if (member.needsAbsolute) member.element.style.setProperty('position', 'absolute')
+    for (const [property, value] of Object.entries(offsetsPatch(member, step))) {
+      member.element.style.setProperty(cssPropertyName(property), value)
+    }
   }
 }
 
@@ -391,21 +515,35 @@ export function previewFreeMove(plan: FreeMovePlan, step: FreeMoveStep): void {
  * never seen.
  */
 export function clearFreeMovePreview(plan: FreeMovePlan): void {
-  for (const term of [...plan.offsets.horizontal, ...plan.offsets.vertical]) {
-    plan.element.style.removeProperty(cssPropertyName(term.property))
+  for (const member of plan.members) {
+    for (const term of [...member.offsets.horizontal, ...member.offsets.vertical]) {
+      member.element.style.removeProperty(cssPropertyName(term.property))
+    }
+    if (member.needsAbsolute) member.element.style.removeProperty('position')
   }
-  if (plan.needsAbsolute) plan.element.style.removeProperty('position')
 }
 
-/** The inline-style patch the store commits — one element, one `style={{…}}`. */
-export function freeMoveStylePatch(
+/** One member's inline-style patch — one element, one `style={{…}}`. */
+export function freeMoveStylePatch(member: FreeMoveMember, step: FreeMoveStep): Record<string, string> {
+  return {
+    ...(member.needsAbsolute ? { position: 'absolute' } : {}),
+    ...offsetsPatch(member, step),
+  }
+}
+
+/**
+ * Everything the store commits for a step: every member's own patch, skipping
+ * members this step did not move. The caller writes them in ONE transaction
+ * (`setNodesInlineStylesPerNode`), so a multi-selection moved together is one
+ * undo entry and one save.
+ */
+export function freeMoveStylePatches(
   plan: FreeMovePlan,
   step: FreeMoveStep,
-): Record<string, string> {
-  return {
-    ...(plan.needsAbsolute ? { position: 'absolute' } : {}),
-    ...offsetsPatch(plan, step),
-  }
+): Array<{ nodeId: string; patch: Record<string, string> }> {
+  return plan.members
+    .map((member) => ({ nodeId: member.nodeId, patch: freeMoveStylePatch(member, step) }))
+    .filter(({ patch }) => Object.keys(patch).length > 0)
 }
 
 /**
@@ -429,9 +567,11 @@ export function paintFreeMoveFrame(input: {
   dy: number
   /** Live canvas zoom — the snap threshold is screen px (IX-5a). */
   zoom: number
+  /** The Shift axis lock: the axis that is held still and never snapped. */
+  lockedAxis: 'x' | 'y' | null
   ghost: CanvasDragGhost
 }): FreeMoveStep | null {
-  const { layer, resolution, draggedId, rect, dx, dy, zoom, ghost } = input
+  const { layer, resolution, draggedId, rect, dx, dy, zoom, lockedAxis, ghost } = input
   if (!resolution.ok) {
     const constraint = explainStaticParentConstraint(resolution.refusal.parentLabel)
     paintCanvasDrag(layer, {
@@ -442,9 +582,9 @@ export function paintFreeMoveFrame(input: {
     return null
   }
 
-  const step = stepFreeMove(resolution.plan, dx, dy, zoom)
+  const step = stepFreeMove(resolution.plan, dx, dy, zoom, lockedAxis)
   previewFreeMove(resolution.plan, step)
-  paintCanvasDrag(layer, { target: null, invalid: null, guides: step.guides, ghost })
+  paintCanvasDrag(layer, { target: null, invalid: null, guides: step.guides, spacings: step.spacings, ghost })
   return step
 }
 

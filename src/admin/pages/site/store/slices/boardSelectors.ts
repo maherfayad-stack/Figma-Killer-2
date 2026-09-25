@@ -11,7 +11,7 @@
 import type { EditorStore } from '@site/store/types'
 import type { Board, BoardFrame, BoardGuide, DocBlock, StickyNote } from '@core/studio-board'
 import { getActiveBoard } from '@core/studio-board'
-import type { SnapGuide } from '@site/canvas/boardSnapping'
+import type { SnapGuide, SnapSpacing } from '@site/canvas/boardSnapping'
 
 /** Select the active board (or `null` — not studio mode / not loaded yet). */
 export const selectActiveBoard = (s: EditorStore): Board | null =>
@@ -62,3 +62,4 @@ export const selectActiveBoardGuides = (s: EditorStore): readonly BoardGuide[] =
 
 /** Select the active drag's snap guides (empty outside of a drag). */
 export const selectBoardSnapGuides = (s: EditorStore): SnapGuide[] => s.boardSnapGuides
+export const selectBoardSnapSpacings = (s: EditorStore): SnapSpacing[] => s.boardSnapSpacings

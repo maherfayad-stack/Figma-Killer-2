@@ -21,10 +21,21 @@
  * box (outside the border) is not offered: snapping there writes `left: -1px`
  * on a bordered parent, which nobody means.
  *
- * Pure except {@link readBoxInsets}, the one computed-style read, taken once
- * at the start of a gesture.
+ * ## Ruler guides, in a frame's space (P5-F, IX-5c)
+ *
+ * Ruler guides are persisted in BOARD space; an element's rects are in its
+ * frame's space. {@link guideLinesInSpace} converts one into the other through
+ * the client coordinates both can be expressed in: the board's origin on
+ * screen (the transform layer's own rect — its `transform-origin` is `0 0`, so
+ * its rect's top-left IS board (0, 0) at any pan and zoom) and the frame
+ * space's origin and scale. Read once per gesture: a drag never pans the
+ * frame relative to the board, so the converted lines hold for its length.
+ *
+ * Pure except {@link readBoxInsets} and {@link readBoardScreenOrigin}, the
+ * reads taken once at the start of a gesture.
  */
-import type { SnapRect } from './boardSnapping'
+import { canvasTransformLayerOf, canvasZoomOf } from './canvasZoom'
+import type { SnapLine, SnapRect } from './boardSnapping'
 
 /** One set of four side lengths, in CSS px. */
 export interface SideLengths {
@@ -94,4 +105,40 @@ export function readBoxInsets(view: Window, element: Element): BoxInsets {
       left: px(style.paddingLeft),
     },
   }
+}
+
+/** Where a coordinate space's (0, 0) is on screen, and how many client px one of its units is. */
+export interface ScreenSpace {
+  originX: number
+  originY: number
+  scale: number
+}
+
+/**
+ * Board-space lines (`rulerGuideLines`) in another space — a frame's, where
+ * the dragged element's rects are. Both spaces are given as their screen
+ * origin and scale; see the module doc.
+ */
+export function guideLinesInSpace(lines: readonly SnapLine[], board: ScreenSpace, space: ScreenSpace): SnapLine[] {
+  const scale = space.scale > 0 ? space.scale : 1
+  return lines.map((line) => {
+    const client = line.axis === 'x'
+      ? board.originX + line.position * board.scale
+      : board.originY + line.position * board.scale
+    const origin = line.axis === 'x' ? space.originX : space.originY
+    return { axis: line.axis, position: (client - origin) / scale }
+  })
+}
+
+/**
+ * The board's screen space, read off the canvas transform layer `element`
+ * sits in (a frame's viewport or iframe). `null` outside a board canvas — a
+ * live view, a test — where there are no ruler guides to convert.
+ */
+export function readBoardScreenOrigin(element: Element | null): ScreenSpace | null {
+  if (!(element instanceof HTMLElement)) return null
+  const layer = canvasTransformLayerOf(element)
+  if (!layer) return null
+  const rect = layer.getBoundingClientRect()
+  return { originX: rect.left, originY: rect.top, scale: canvasZoomOf(layer) }
 }

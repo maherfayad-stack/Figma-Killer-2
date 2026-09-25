@@ -7,7 +7,7 @@ import { describe, it, expect } from 'bun:test'
 import {
   computeSnap,
   collectPeerRects,
-  guideSnapRects,
+  rulerGuideLines,
   SNAP_THRESHOLD_SCREEN_PX,
   snapThresholdAtZoom,
   type SnapRect,
@@ -20,7 +20,7 @@ describe('computeSnap', () => {
   it('does not snap when there are no peers', () => {
     const dragged: SnapRect = { x: 100, y: 100, width: 50, height: 50 }
     const result = computeSnap(dragged, [], THRESHOLD)
-    expect(result).toEqual({ x: 100, y: 100, guides: [] })
+    expect(result).toEqual({ x: 100, y: 100, guides: [], spacings: [] })
   })
 
   it('snaps the dragged left edge to a peer left edge within threshold', () => {
@@ -186,43 +186,41 @@ describe('collectPeerRects', () => {
   })
 })
 
-describe('guideSnapRects (D1)', () => {
+describe('rulerGuideLines + computeSnap lines (D1, P5-F IX-5c)', () => {
   it('returns [] for no guides', () => {
-    expect(guideSnapRects([])).toEqual([])
+    expect(rulerGuideLines([])).toEqual([])
   })
 
-  it('represents an x-axis guide as a zero-size point at its own x, far off-axis on y', () => {
-    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 320 }]
-    const rects = guideSnapRects(guides)
-    expect(rects).toHaveLength(1)
-    expect(rects[0].x).toBe(320)
-    expect(rects[0].width).toBe(0)
-    expect(rects[0].height).toBe(0)
-    expect(Math.abs(rects[0].y)).toBeGreaterThan(100_000)
+  it('keeps each guide on its own axis at its own board position', () => {
+    const guides: BoardGuide[] = [
+      { id: 'g1', axis: 'x', position: 320 },
+      { id: 'g2', axis: 'y', position: -80 },
+    ]
+    expect(rulerGuideLines(guides)).toEqual([
+      { axis: 'x', position: 320 },
+      { axis: 'y', position: -80 },
+    ])
   })
 
-  it('represents a y-axis guide as a zero-size point at its own y, far off-axis on x', () => {
-    const guides: BoardGuide[] = [{ id: 'g1', axis: 'y', position: -80 }]
-    const rects = guideSnapRects(guides)
-    expect(rects[0].y).toBe(-80)
-    expect(Math.abs(rects[0].x)).toBeGreaterThan(100_000)
-  })
-
-  it('an x-axis guide is a real snap target on the x axis via computeSnap', () => {
-    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 100 }]
+  it('an x-axis guide is a real snap target on the x axis, and draws along the dragged extent', () => {
+    const lines = rulerGuideLines([{ id: 'g1', axis: 'x', position: 100 }])
     const dragged: SnapRect = { x: 104, y: 300, width: 50, height: 50 }
-    const result = computeSnap(dragged, guideSnapRects(guides), THRESHOLD)
+    const result = computeSnap(dragged, [], THRESHOLD, { lines })
     expect(result.x).toBe(100)
-    expect(result.y).toBe(300) // never spuriously matched on y
+    expect(result.y).toBe(300)
+    expect(result.guides).toEqual([{ axis: 'x', position: 100, start: 300, end: 350 }])
   })
 
-  it('an x-axis guide never spuriously matches on the y axis', () => {
-    const guides: BoardGuide[] = [{ id: 'g1', axis: 'x', position: 100 }]
-    // Dragged rect's y happens to be huge too — still must not match, since
-    // the sentinel is an internal implementation detail, not a real board
-    // coordinate a user's drag could ever reach (MAX_PAN bounds pan/frames).
-    const dragged: SnapRect = { x: 104, y: 5, width: 50, height: 50 }
-    const result = computeSnap(dragged, guideSnapRects(guides), THRESHOLD)
-    expect(result.y).toBe(5)
+  it('an x-axis guide never matches on the y axis', () => {
+    const lines = rulerGuideLines([{ id: 'g1', axis: 'x', position: 100 }])
+    const dragged: SnapRect = { x: 400, y: 98, width: 50, height: 50 }
+    const result = computeSnap(dragged, [], THRESHOLD, { lines })
+    expect(result).toEqual({ x: 400, y: 98, guides: [], spacings: [] })
+  })
+
+  it('the right edge or the centre can land on a guide too', () => {
+    const lines = rulerGuideLines([{ id: 'g1', axis: 'x', position: 200 }])
+    expect(computeSnap({ x: 147, y: 0, width: 50, height: 10 }, [], THRESHOLD, { lines }).x).toBe(150)
+    expect(computeSnap({ x: 172, y: 0, width: 50, height: 10 }, [], THRESHOLD, { lines }).x).toBe(175)
   })
 })

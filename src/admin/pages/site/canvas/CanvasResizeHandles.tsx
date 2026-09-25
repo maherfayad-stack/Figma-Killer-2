@@ -18,6 +18,9 @@
  * clicking page content anywhere but within a few px of the selected element's
  * edge behaves exactly as it did before.
  *
+ * A multi-selection gets ONE set of handles on the union of its layers
+ * (`CanvasGroupResizeHandles`, below — P5-F, IX-6g).
+ *
  * Whether handles are drawn at all is `canOfferResize`'s decision, not this
  * component's — see `resizeOffer.ts` for the three ways a drag can have no
  * honest target, and why offering one anyway is worse than offering nothing.
@@ -29,6 +32,7 @@ import { findNodeById } from './InPlaceInspector/findNodeById'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
 import { useElementResizeDrag } from './useElementResizeDrag'
+import { useGroupResizeDrag } from './useGroupResizeDrag'
 import { CanvasSpacingHandles } from './CanvasSpacingHandles'
 
 interface CanvasResizeHandlesProps {
@@ -97,6 +101,64 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
       {/* IX-18 — the W×H badge; shown by the injected CSS only while a drag
           marks this frame, its text written by the drag and the overlay's
           measure pass. */}
+      <div {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
+    </div>
+  )
+}
+
+interface CanvasGroupResizeHandlesProps {
+  /** Two or more selected nodes. The group box is offered only when EVERY one is resizable. */
+  nodeIds: readonly string[]
+  iframeDoc: Document | null
+  /** As `CanvasResizeHandles`: the frame goes to the overlay, which places it on the union of the rings. */
+  onFrameReady: (element: HTMLDivElement | null) => void
+}
+
+/**
+ * P5-F / IX-6g — ONE set of handles on the union of a multi-selection, which
+ * scales every member with the box (`groupResize.ts`, `useGroupResizeDrag`).
+ *
+ * All or nothing, like the single handles' `canOfferResize`: a member the
+ * gate refuses would be a layer the box claims to resize and does not, so
+ * one refusal draws no group handles at all. No padding / gap handles here —
+ * those belong to ONE container.
+ */
+export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: CanvasGroupResizeHandlesProps) {
+  const [frame, setFrame] = useState<HTMLDivElement | null>(null)
+  // A joined string, not an array: a fresh array per store change would be a
+  // new snapshot every time. One module id per member, in selection order.
+  const moduleIdsKey = useEditorStore((s) => nodeIds.map((id) => findNodeById(s, id)?.moduleId ?? '').join('\n'))
+  const moduleIds = moduleIdsKey.split('\n')
+
+  const sizeable = iframeDoc !== null && nodeIds.every((nodeId, index) => {
+    const target = presentedElementForNode(iframeDoc, nodeId)
+    return canOfferResize({
+      moduleId: moduleIds[index] || null,
+      hasOwnElement: target !== null,
+      display: target ? (iframeDoc.defaultView?.getComputedStyle(target).display ?? '') : '',
+    })
+  })
+
+  useGroupResizeDrag({
+    frame,
+    iframeDoc: sizeable ? iframeDoc : null,
+    nodeIdsKey: nodeIds.join(' '),
+  })
+
+  if (!sizeable) return null
+
+  return (
+    <div
+      ref={(element) => {
+        setFrame(element)
+        onFrameReady(element)
+      }}
+      data-canvas-resize-frame="true"
+      data-canvas-resize-group="true"
+    >
+      {RESIZE_HANDLES.map((handle) => (
+        <div key={handle} {...{ [RESIZE_HANDLE_ATTR]: handle }} />
+      ))}
       <div {...{ [RESIZE_SIZE_BADGE_ATTR]: 'true' }} />
     </div>
   )

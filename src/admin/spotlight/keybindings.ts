@@ -96,6 +96,10 @@
  *   ⇧K         | (unbound)                   | place an image (P5-B's picker)  | Figma's; K alone is the scale tool
  *   ⇧-drag on  | axis pair of paddings;      | the same (P5-E, IX-17)          | Pointer modifiers, on the `?` sheet
  *   a padding  | ⌥-drag all four             |                                 | as `canvas.spacingHandles`
+ *   ⌘'         | show / hide guides          | snap to ruler guides on / off   | P5-F (IX-5e). Guides stay visible;
+ *              |                             |                                 | what the user toggles is the pull
+ *   ⌘⇧'        | snap to guides              | snap to objects + equal spacing | P5-F. The ruler-guide half of
+ *              |                             | on / off                        | Penpot's ⌘⇧G is ⌘' here (⌘⇧G ungroups)
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'

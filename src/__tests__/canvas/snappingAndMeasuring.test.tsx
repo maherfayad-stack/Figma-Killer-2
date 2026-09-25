@@ -21,6 +21,7 @@ import { act, cleanup, render, renderHook } from '@testing-library/react'
 import { createBoard } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { resolveFreeMove, stepFreeMove, type FreeMovePlan } from '@site/canvas/canvasFreeMove'
+import { DEFAULT_SNAP_PREFERENCES } from '@site/canvas/snapPreferences'
 import { useAnnotationInteraction } from '@site/canvas/useAnnotationInteraction'
 import { useCanvasReorderDrag } from '@site/canvas/useCanvasReorderDrag'
 import { paintCanvasDrag } from '@site/canvas/canvasDragPainter'
@@ -54,15 +55,19 @@ function rectOf(left: number, top: number, width: number, height: number): DOMRe
 // IX-5a — screen-px thresholds
 // ---------------------------------------------------------------------------
 
-function freePlan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
+function freePlan(overrides: Partial<Omit<FreeMovePlan, 'members'>> = {}): FreeMovePlan {
   return {
-    element: {} as HTMLElement,
-    offsets: {
-      horizontal: [{ property: 'left', sign: 1, base: 100 }],
-      vertical: [{ property: 'top', sign: 1, base: 100 }],
-    },
-    needsAbsolute: false,
+    members: [{
+      nodeId: 'n',
+      element: {} as HTMLElement,
+      offsets: {
+        horizontal: [{ property: 'left', sign: 1, base: 100 }],
+        vertical: [{ property: 'top', sign: 1, base: 100 }],
+      },
+      needsAbsolute: false,
+    }],
     peers: [],
+    snap: {},
     rect: { x: 100, y: 100, width: 50, height: 20 },
     ...overrides,
   }
@@ -70,7 +75,7 @@ function freePlan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
 
 /** The `left` a step lands on — the plan's first horizontal offset moved by the snapped delta. */
 function leftAt(plan: FreeMovePlan, step: { dx: number }): number {
-  const [term] = plan.offsets.horizontal
+  const [term] = plan.members[0]!.offsets.horizontal
   return term!.base + term!.sign * step.dx
 }
 
@@ -167,12 +172,14 @@ describe('IX-5b — a free move snaps to its parent padding and content box', ()
     const resolution = resolveFreeMove({
       doc: document,
       tree: page,
-      nodeId: 'abs',
+      nodeIds: ['abs'],
       candidates: [
         { nodeId: 'stage', depth: 0, axis: 'vertical', rect: { left: 0, top: 0, right: 300, bottom: 200, width: 300, height: 200 } },
         { nodeId: 'abs', depth: 1, axis: 'vertical', rect: { left: 50, top: 30, right: 100, bottom: 50, width: 50, height: 20 } },
       ],
       modifierHeld: false,
+      guideLines: [],
+      preferences: DEFAULT_SNAP_PREFERENCES,
     })
     if (!resolution?.ok) throw new Error('expected a free move')
     return resolution.plan

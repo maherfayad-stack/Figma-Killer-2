@@ -26,6 +26,14 @@
  * `resizeElementBox` like any other, so box-sizing, the floor and the offsets
  * are all still that module's business.
  *
+ * ## Ruler guides and the toggles (P5-F)
+ *
+ * The moving edge snaps to the board's ruler guides as well (IX-5c), converted
+ * into the frame document's px once at pointerdown ({@link resizeGuideLines}),
+ * and both snap toggles apply (IX-5e) through the same `snapSourcesFor` a move
+ * uses. Equal spacing is a MOVE snap only: a resize changes a size, and "the
+ * same gap as its neighbours" is a position question.
+ *
  * ## Space and threshold
  *
  * Everything here is in the frame document's own CSS px — the space a pointer
@@ -36,8 +44,18 @@
  * (`canvasDragPainter`), never into the frame: canvas DOM is the user's DOM.
  */
 import { resizeAxes, type ResizeHandle, type ResizeModifiers } from '@core/studio-runtime'
-import { computeEdgeSnap, snapThresholdAtZoom, type SnapGuide, type SnapRect } from './boardSnapping'
-import { parentSnapRects, readBoxInsets } from './canvasSnapPeers'
+import type { BoardGuide } from '@core/studio-board'
+import {
+  computeEdgeSnap,
+  rulerGuideLines,
+  snapSourcesFor,
+  snapThresholdAtZoom,
+  type SnapGuide,
+  type SnapLine,
+  type SnapRect,
+} from './boardSnapping'
+import { guideLinesInSpace, parentSnapRects, readBoardScreenOrigin, readBoxInsets } from './canvasSnapPeers'
+import type { SnapPreferences } from './snapPreferences'
 import { clientRectToViewportRect, getViewportZoom } from './canvasDomGeometry'
 import { paintCanvasDrag } from './canvasDragPainter'
 import { listCanvasDropSurfaces } from './canvasDropSurfaceRegistry'
@@ -135,13 +153,14 @@ export function snapResizeDelta(
   dy: number,
   peers: readonly SnapRect[],
   threshold: number,
+  lines: readonly SnapLine[] = [],
 ): ResizeSnapStep {
   const guides: SnapGuide[] = []
   let snappedDx = dx
   let snappedDy = dy
   if (edges.x) {
     const edge = (edges.x === 'start' ? rect.x : rect.x + rect.width) + dx
-    const snap = computeEdgeSnap('x', edge, { start: rect.y, end: rect.y + rect.height }, peers, threshold)
+    const snap = computeEdgeSnap('x', edge, { start: rect.y, end: rect.y + rect.height }, peers, threshold, lines)
     if (snap) {
       snappedDx = dx + snap.delta
       guides.push(snap.guide)
@@ -149,7 +168,7 @@ export function snapResizeDelta(
   }
   if (edges.y) {
     const edge = (edges.y === 'start' ? rect.y : rect.y + rect.height) + dy
-    const snap = computeEdgeSnap('y', edge, { start: rect.x, end: rect.x + rect.width }, peers, threshold)
+    const snap = computeEdgeSnap('y', edge, { start: rect.x, end: rect.x + rect.width }, peers, threshold, lines)
     if (snap) {
       snappedDy = dy + snap.delta
       guides.push(snap.guide)
@@ -171,8 +190,10 @@ interface RectSource {
 export interface ResizeSnapInput {
   /** The element's border box, frame-document px. */
   rect: SnapRect
-  /** Its siblings' boxes, and its parent's padding / content box. */
-  peers: SnapRect[]
+  /** Its siblings' boxes, and its parent's padding / content box - empty when object snapping is off. */
+  peers: readonly SnapRect[]
+  /** The board's ruler guides in frame-document px - empty when guide snapping is off. */
+  lines: readonly SnapLine[]
   /** Frame px — `snapThresholdAtZoom` of the canvas zoom at pointerdown. */
   threshold: number
   /** Which edges may snap per axis, before the live modifiers are applied. */
@@ -206,8 +227,11 @@ export function readResizeSnapInput(input: {
   resolveElement: (nodeId: string) => Element | null
   resolveRect: (element: Element) => SnapRect | null
   zoom: number
+  /** The board's ruler guides, already in frame-document px ({@link resizeGuideLines}). */
+  guideLines: readonly SnapLine[]
+  preferences: SnapPreferences
 }): ResizeSnapInput | null {
-  const { view, element, siblingIds, parentId, resolveElement, resolveRect, zoom } = input
+  const { view, element, siblingIds, parentId, resolveElement, resolveRect, zoom, guideLines, preferences } = input
   const rect = snapRectOf(element)
   if (!rect) return null
 
@@ -234,9 +258,11 @@ export function readResizeSnapInput(input: {
     justifySelf: own.justifySelf || 'auto',
     direction: own.direction || 'ltr',
   }
+  const sources = snapSourcesFor(preferences, peers, guideLines)
   return {
     rect,
-    peers,
+    peers: sources.peers,
+    lines: sources.options.lines ?? [],
     threshold: snapThresholdAtZoom(zoom),
     anchored: { x: flowStartAnchored('x', layout), y: flowStartAnchored('y', layout) },
   }
@@ -267,6 +293,24 @@ export function resolveResizeGuideSurface(iframe: Element | null): ResizeGuideSu
   if (!surface || !layer) return null
   const origin = clientRectToViewportRect(surface.viewport, iframe.getBoundingClientRect())
   return { layer, originX: origin.left, originY: origin.top, zoom: getViewportZoom(surface.viewport) }
+}
+
+/**
+ * The board's ruler guides in a frame document's own px: the iframe's screen
+ * origin and zoom are that document's screen space. One rect read of the
+ * iframe and one of the transform layer, at pointerdown.
+ */
+export function resizeGuideLines(iframe: Element | null, guides: readonly BoardGuide[]): SnapLine[] {
+  if (guides.length === 0 || !(iframe instanceof HTMLElement)) return []
+  const board = readBoardScreenOrigin(iframe)
+  if (!board) return []
+  const rect = iframe.getBoundingClientRect()
+  const scale = iframeZoom(iframe)
+  return guideLinesInSpace(rulerGuideLines(guides), board, {
+    originX: rect.left + iframe.clientLeft * scale,
+    originY: rect.top + iframe.clientTop * scale,
+    scale,
+  })
 }
 
 /** The canvas zoom a frame is drawn at, from its iframe element alone (no drop surface). */

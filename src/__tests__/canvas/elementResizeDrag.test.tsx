@@ -438,3 +438,38 @@ describe('IX-6e — a resize handle snaps its moving edge', () => {
     expect(commits).toEqual([{ width: '98px' }])
   })
 })
+
+// ---------------------------------------------------------------------------
+// P5-F / IX-6f — double-click a handle: Hug on the axes it owns
+// ---------------------------------------------------------------------------
+
+function doubleClick(handle: string) {
+  const el = harness.handles.querySelector(`[${RESIZE_HANDLE_ATTR}="${handle}"]`)!
+  el.dispatchEvent(new Event('dblclick', { bubbles: true, cancelable: true }))
+}
+
+describe('IX-6f — double-clicking a handle sets Hug', () => {
+  it('an edge handle hugs its one axis, through the inspector resolver', () => {
+    seed()
+    harness = mount('width: 200px; height: 100px')
+    render()
+    doubleClick('e')
+    expect(commits).toEqual([{ width: 'fit-content' }])
+  })
+
+  it('a corner hugs both axes; a flex main axis also stops growing and shrinking', () => {
+    seed({ flex: '1' })
+    harness = mount('width: 200px; height: 100px', 'display: flex')
+    render()
+    doubleClick('se')
+    expect(commits).toEqual([{ width: 'fit-content', flex: '0 0 auto', height: 'fit-content' }])
+  })
+
+  it('a cross-axis Fill marker is dropped with the hug', () => {
+    seed({ alignSelf: 'stretch' })
+    harness = mount('width: 200px; height: 100px', 'display: flex')
+    render()
+    doubleClick('s')
+    expect(commits).toEqual([{ height: 'fit-content', alignSelf: null }])
+  })
+})

@@ -17,7 +17,7 @@
  */
 import type { RefObject } from 'react'
 import { cn } from '@ui/cn'
-import { CanvasResizeHandles } from './CanvasResizeHandles'
+import { CanvasGroupResizeHandles, CanvasResizeHandles } from './CanvasResizeHandles'
 import styles from './BreakpointSelectionOverlay.module.css'
 
 interface CanvasSelectionChromeProps {
@@ -27,7 +27,8 @@ interface CanvasSelectionChromeProps {
   showSelectorHighlight: boolean
   usingIframeOverlay: boolean
   toolbarMode: 'scoped' | 'fixed'
-  resizeNodeId: string | null
+  /** The selected layers that get resize handles: one gets its own, several get a group box (IX-6g). */
+  resizeNodeIds: readonly string[]
   overlayRoot: HTMLElement | null
   selectorHighlightRef: RefObject<HTMLDivElement | null>
   hoverRef: RefObject<HTMLDivElement | null>
@@ -48,7 +49,7 @@ export function CanvasSelectionChrome({
   showSelectorHighlight,
   usingIframeOverlay,
   toolbarMode,
-  resizeNodeId,
+  resizeNodeIds,
   overlayRoot,
   selectorHighlightRef,
   hoverRef,
@@ -122,9 +123,16 @@ export function CanvasSelectionChrome({
       />
       {/* The one interactive thing in this click-through overlay — see
           `CanvasResizeHandles`. */}
-      {resizeNodeId && (
+      {resizeNodeIds.length === 1 && (
         <CanvasResizeHandles
-          nodeId={resizeNodeId}
+          nodeId={resizeNodeIds[0]!}
+          iframeDoc={overlayRoot?.ownerDocument ?? null}
+          onFrameReady={onResizeFrameReady}
+        />
+      )}
+      {resizeNodeIds.length > 1 && (
+        <CanvasGroupResizeHandles
+          nodeIds={resizeNodeIds}
           iframeDoc={overlayRoot?.ownerDocument ?? null}
           onFrameReady={onResizeFrameReady}
         />

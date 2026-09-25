@@ -17,7 +17,9 @@ import {
   planFreeMoveProperties,
   stepFreeMove,
   type FreeMoveElementBox,
+  type FreeMoveMember,
   type FreeMovePlan,
+  type FreeMoveStep,
   type FreeMoveStyleInput,
 } from '@site/canvas/canvasFreeMove'
 import { authoredOffsets, type NudgeOffsetProperty } from '@site/canvas/canvasNodeArrowMove'
@@ -105,53 +107,70 @@ describe('IX-21 — a free move keeps the layer anchored the way its source anch
   function planFor(own: Partial<FreeMoveStyleInput>, inlineStyles: Record<string, string>): FreeMovePlan {
     const authored = authoredOffsets({ classIds: [], inlineStyles }, undefined)
     return {
-      element: {} as HTMLElement,
-      offsets: planFreeMoveOffsets(BOX, style({ position: 'absolute', ...own }), authored, false),
-      needsAbsolute: false,
+      members: [{
+        nodeId: 'n',
+        element: {} as HTMLElement,
+        offsets: planFreeMoveOffsets(BOX, style({ position: 'absolute', ...own }), authored, false),
+        needsAbsolute: false,
+      }],
       peers: [],
+      snap: {},
       rect: { x: 100, y: 100, width: 50, height: 20 },
     }
   }
 
   it('a right-anchored layer moved right writes a SMALLER right, and no left', () => {
     const plan = planFor({ left: '226px', right: '24px', top: '10px' }, { right: '24px', top: '10px' })
-    const patch = freeMoveStylePatch(plan, stepFreeMove(plan, 30, 0, 1))
+    const patch = patchOf(plan, stepFreeMove(plan, 30, 0, 1))
     expect(patch).toEqual({ right: '-6px' })
     expect(patch).not.toHaveProperty('left')
   })
 
   it('a bottom-anchored layer moved down writes a smaller bottom, and no top', () => {
     const plan = planFor({ left: '10px', top: '150px', bottom: '40px' }, { left: '10px', bottom: '40px' })
-    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 0, 15, 1))).toEqual({ bottom: '25px' })
+    expect(patchOf(plan, stepFreeMove(plan, 0, 15, 1))).toEqual({ bottom: '25px' })
   })
 
   it('a stretched layer (left AND right) moves both, keeping its width', () => {
     const plan = planFor({ left: '20px', right: '30px', top: '0px' }, { left: '20px', right: '30px', top: '0px' })
-    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 5, 0, 1))).toEqual({ left: '25px', right: '25px' })
+    expect(patchOf(plan, stepFreeMove(plan, 5, 0, 1))).toEqual({ left: '25px', right: '25px' })
   })
 
   it('a left: 50% + translate(-50%) centring moves as left, from its USED px value', () => {
     // The translate stays authored; moving the used left by 10 moves the box by 10.
     const plan = planFor({ left: '150px', top: '0px' }, { left: '50%', transform: 'translateX(-50%)', top: '0px' })
-    expect(freeMoveStylePatch(plan, stepFreeMove(plan, 10, 0, 1))).toEqual({ left: '160px' })
+    expect(patchOf(plan, stepFreeMove(plan, 10, 0, 1))).toEqual({ left: '160px' })
   })
 })
 
-function plan(overrides: Partial<FreeMovePlan> = {}): FreeMovePlan {
+interface PlanOverrides extends Partial<Omit<FreeMovePlan, 'members'>>, Partial<Omit<FreeMoveMember, 'nodeId'>> {}
+
+/** A one-member plan, with the member's and the plan's fields overridable in one bag. */
+function plan(overrides: PlanOverrides = {}): FreeMovePlan {
+  const { element, offsets, needsAbsolute, ...rest } = overrides
   return {
-    element: {} as HTMLElement,
-    offsets: {
-      horizontal: [{ property: 'left', sign: 1, base: 100 }],
-      vertical: [{ property: 'top', sign: 1, base: 100 }],
-    },
-    needsAbsolute: false,
+    members: [{
+      nodeId: 'n',
+      element: element ?? ({} as HTMLElement),
+      offsets: offsets ?? {
+        horizontal: [{ property: 'left', sign: 1, base: 100 }],
+        vertical: [{ property: 'top', sign: 1, base: 100 }],
+      },
+      needsAbsolute: needsAbsolute ?? false,
+    }],
     peers: [],
+    snap: {},
     rect: { x: 100, y: 100, width: 50, height: 20 },
-    ...overrides,
+    ...rest,
   }
 }
 
-const RTL_OFFSETS: FreeMovePlan['offsets'] = {
+/** The one member's patch — what a single-layer free move writes. */
+function patchOf(p: FreeMovePlan, step: FreeMoveStep): Record<string, string> {
+  return freeMoveStylePatch(p.members[0]!, step)
+}
+
+const RTL_OFFSETS: FreeMoveMember['offsets'] = {
   horizontal: [{ property: 'insetInlineStart', sign: -1, base: 100 }],
   vertical: [{ property: 'top', sign: 1, base: 100 }],
 }
@@ -185,13 +204,13 @@ describe('stepFreeMove — the delta, the snap, and the guides', () => {
 describe('freeMoveStylePatch — what reaches the user\'s source', () => {
   it('writes only the offsets that moved for an element that is already positioned', () => {
     const p = plan()
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 10, 1))).toEqual({ left: '130px', top: '110px' })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 30, 0, 1))).toEqual({ left: '130px' })
+    expect(patchOf(p, stepFreeMove(p, 30, 10, 1))).toEqual({ left: '130px', top: '110px' })
+    expect(patchOf(p, stepFreeMove(p, 30, 0, 1))).toEqual({ left: '130px' })
   })
 
   it('writes position: absolute and BOTH offsets when the element was in flow', () => {
     const p = plan({ needsAbsolute: true })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 0, 0, 1))).toEqual({
+    expect(patchOf(p, stepFreeMove(p, 0, 0, 1))).toEqual({
       position: 'absolute',
       left: '100px',
       top: '100px',
@@ -201,7 +220,7 @@ describe('freeMoveStylePatch — what reaches the user\'s source', () => {
   it('reverses the horizontal delta for an RTL inline start, and keeps the logical name', () => {
     // A drag to visual-right DECREASES the distance from an RTL inline start.
     const p = plan({ offsets: RTL_OFFSETS })
-    expect(freeMoveStylePatch(p, stepFreeMove(p, 20, 0, 1))).toEqual({ insetInlineStart: '80px' })
+    expect(patchOf(p, stepFreeMove(p, 20, 0, 1))).toEqual({ insetInlineStart: '80px' })
   })
 })
 
@@ -226,7 +245,7 @@ describe('free move writes a React style key to the source and a CSSOM name to t
 
   it('every key of an RTL free-move patch is camelCase', () => {
     const p = plan({ offsets: RTL_OFFSETS })
-    const patch = freeMoveStylePatch(p, stepFreeMove(p, 12, 3, 1))
+    const patch = patchOf(p, stepFreeMove(p, 12, 3, 1))
     for (const key of Object.keys(patch)) expect(key).not.toContain('-')
     expect(patch).toEqual({ insetInlineStart: '88px', top: '103px' })
   })

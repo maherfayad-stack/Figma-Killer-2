@@ -1,7 +1,8 @@
 /**
  * useCanvasViewportKeys — the keys that move the VIEW, as one scope on the
  * editor key ladder (`global` rung): + / = zoom in, − / _ zoom out, ⌘0 / ⇧0 zoom
- * to 100%, ⇧1 fit, ⇧2 fit the selection, and Space held to pan.
+ * to 100%, ⇧1 fit, ⇧2 fit the selection, Space held to pan, and the two snap
+ * toggles (P5-F, IX-5e): ⌘' ruler guides, ⌘⇧' objects.
  *
  * ## What it replaced (P2-B, IX-15)
  *
@@ -51,7 +52,14 @@ interface CanvasViewportKeysOptions {
   zoomToSelection: () => void
 }
 
-type ViewportIntent = 'zoomIn' | 'zoomOut' | 'zoomReset' | 'zoomToFit' | 'zoomToSelection'
+type ViewportIntent =
+  | 'zoomIn'
+  | 'zoomOut'
+  | 'zoomReset'
+  | 'zoomToFit'
+  | 'zoomToSelection'
+  | 'toggleSnapToGuides'
+  | 'toggleSnapToObjects'
 
 const VIEWPORT_INTENTS: ReadonlyArray<ViewportIntent> = [
   'zoomIn',
@@ -59,6 +67,8 @@ const VIEWPORT_INTENTS: ReadonlyArray<ViewportIntent> = [
   'zoomReset',
   'zoomToFit',
   'zoomToSelection',
+  'toggleSnapToGuides',
+  'toggleSnapToObjects',
 ]
 
 function matchViewportIntent(event: KeyboardEvent): ViewportIntent | null {
@@ -124,6 +134,12 @@ export function useCanvasViewportKeys({
           return true
         case 'zoomToSelection':
           zoomToSelection()
+          return true
+        case 'toggleSnapToGuides':
+          useEditorStore.getState().toggleSnapPreference('guides')
+          return true
+        case 'toggleSnapToObjects':
+          useEditorStore.getState().toggleSnapPreference('objects')
           return true
       }
     },
