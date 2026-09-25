@@ -98,7 +98,7 @@ export function shareSnapshotDir(dir: string, token: string): string | null {
  * is a link. `fileName` must already have been shape-checked by the caller
  * (`isShareImageFileName`, or the literal `board.json`).
  */
-export function readShareFile(dir: string, token: string, fileName: string): Buffer | null {
+export function readShareFile(dir: string, token: string, fileName: string): Buffer<ArrayBuffer> | null {
   const rel = snapshotStoreDir(token)
   if (rel === null || !SHARE_FILE_NAME.test(fileName)) return null
   return readStudioStoreBytes(dir, `${rel}/${fileName}`)

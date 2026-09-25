@@ -128,7 +128,7 @@ function isMissing(err: unknown): boolean {
 }
 
 /** The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent, not a file, or reached through a link. */
-export function readStudioStoreBytes(dir: string, rel: string): Buffer | null {
+export function readStudioStoreBytes(dir: string, rel: string): Buffer<ArrayBuffer> | null {
   const abs = readablePath(dir, rel)
   if (abs === null) return null
   try {

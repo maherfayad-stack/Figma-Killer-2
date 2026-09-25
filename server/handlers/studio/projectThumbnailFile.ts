@@ -60,7 +60,7 @@ export function readProjectThumbnailStat(dir: string): ProjectThumbnailStat | nu
 }
 
 /** The thumbnail's bytes, or `null` (absent, unreadable, or reached through a link). */
-export function readProjectThumbnailBytes(dir: string): Buffer | null {
+export function readProjectThumbnailBytes(dir: string): Buffer<ArrayBuffer> | null {
   return readStudioStoreBytes(dir, THUMBNAIL_FILE)
 }
 

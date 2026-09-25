@@ -39,6 +39,7 @@ export function writeBoardsFile(dir: string, next: BoardsFile): void {
  * recommendation computed from this number matches what a real
  * `studio_export_frames` call will actually request. `null` when no board
  * has a frame for this `pageId` at all (call `studio_list_pages` first).
+ */
 export function authoredFrameWidth(dir: string, pageId: string): number | null {
   const boardsFile = readBoardsFile(dir)
   for (const board of boardsFile.boards) {

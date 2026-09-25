@@ -45,8 +45,9 @@ server/handlers/
     ├── projectSeed.ts     — what every NEW project starts with, copied (never installed) — see below
     ├── sampleProject.ts   — POST /admin/api/studio/sample: copies `examples/studio-sample-project/` in
     ├── onboardingFacts.ts — GET /admin/api/studio/onboarding: the launcher checklist's five live facts
-    └── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
-    ├── boardFrames.ts     — every server-side write to `.studio/boards.json`, incl. the Stories board
+    ├── boardFrames.ts     — every server-side CHANGE to the board's frames, incl. the Stories board
+    ├── boardGeometry.ts   — the ONE owner of `.studio/boards.json`'s read and write
+    ├── studioStore.ts     — the ONE door to `.studio/`: refuses a link, validates on read, writes atomically
     ├── projectDirGuard.ts — the ONE containment rule for a caller-supplied `dir` (delete / duplicate / thumbnail)
     ├── projectThumbnailFile.ts  — where `.studio/thumbnail.png` lives + its stat (leaf: no capture deps)
     ├── projectThumbnail.ts      — captures the launcher preview headlessly and writes that file
@@ -177,6 +178,17 @@ GitHub account's, resolved server-side from the session
 `studio-workspace/<owner>-<repo>` already exists; the zipball path clears that
 directory because re-importing is how a zipball user updates, and a clone user
 has `git pull`.
+
+A clone keeps the repository's committed `.studio/` (its board, comments and
+prototype links are meant to travel with it), but never a LINK in it: before
+Studio writes a single record, `stripStudioStoreLinks` removes a `.studio` that
+is itself a link, and every link at any depth inside a real one, as links:
+nothing they point at is followed or touched. The repository's own `meta.json`
+is then replaced outright (trust tier and approved MCP servers included). The
+zipball path never had the problem: it drops every `.studio/` entry, and an
+archive entry lands as bytes, never as a link. Every later read and write of
+`.studio/` goes through `studioStore.ts`, which refuses a link wherever it
+appears, so one that arrives with a later `git pull` fails closed.
 
 A dropped folder is not a fourth path. `src/admin/pages/site/studio/droppedFolderWalk.ts`
 walks the `DataTransfer` entry tree (`webkitGetAsEntry()`, paging `readEntries`

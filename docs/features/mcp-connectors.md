@@ -652,9 +652,9 @@ refusal whenever no tab was open.
 
 Both are now `execution: 'server'`
 (`server/ai/mcp/tools/studio/frameAxesTools.ts`). They write through
-`boardFrames.ts`'s `readBoardsFile`/`writeBoardsFile` — the module whose stated
-reason to exist is that every server-side write to the board's frame list has
-one owner — and then `pushStudioLiveReload({ boardsChanged: true })`, so an open
+`boardGeometry.ts`'s `readBoardsFile`/`writeBoardsFile` — the one owner of
+`.studio/boards.json`, whose writes go through `studioStore.ts` (atomic, and
+never through a link) — and then `pushStudioLiveReload({ boardsChanged: true })`, so an open
 board re-reads the file and the user sees the frame flip exactly as before.
 Addressing is by `pageId`, with an optional `frameId`; the server has no notion
 of an "active board", so the rule is the first board carrying a frame for that

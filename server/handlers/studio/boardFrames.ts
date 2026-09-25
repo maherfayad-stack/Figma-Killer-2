@@ -30,7 +30,6 @@ import {
   FRAME_HEIGHT,
   FRAME_WIDTH,
   type Board,
-  type BoardsFile,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
 import { pageIdFromRelPath } from '../studioPageIds'

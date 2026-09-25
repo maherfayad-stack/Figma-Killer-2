@@ -173,6 +173,22 @@ Studio reads and writes the user's repo. Every path is untrusted.
   two spellings of one file (`pages/Home.tsx` vs `pages/home.tsx`, or a
   junctioned directory) can never be two write targets, and a `.tsx` symlink
   pointing out of the project is refused even though it is lexically clean.
+- **Studio's OWN records (`.studio/`) go through one door: `studioStore.ts`.**
+  A store names its file relative to `.studio` (`'boards.json'`,
+  `'cache/agent/<key>/turnWrites.json'`) and reads it with
+  `readStudioStoreJson` (TypeBox) / `readStudioStoreDocument` (a `@core`
+  parser), writes it with `writeStudioStoreFile`/`writeStudioStoreJson`
+  (atomic). The door refuses a link ANYWHERE from `.studio` down, in or out
+  of the project: a read through one is "absent", a write throws
+  `StudioStoreLinkError`. Never `join(dir, '.studio', …)` + `readFileSync` —
+  `studio-store-single-door.test.ts` fails the build on a `.studio` literal
+  outside the door. A clone strips links from the repo's `.studio/` before
+  Studio writes a record (`gitClone.ts`, `stripStudioStoreLinks`).
+- **Replacing a file's contents is `writeFileAtomic`** (`@core/page-parser`):
+  temp file, then rename. The writeback gets it through the disk-backed
+  `EolPreservingFileSystem` every codemod's `saveSync` lands in, and CSS
+  writeback calls it directly. A new file that must not race is still an
+  exclusive create (`wx`).
 - **A secret file on disk goes through `privateTempDir.ts`**, never
   `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
   `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,
