@@ -25,8 +25,8 @@ import { useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { MIN_ANNOTATION_SIZE, type AnnotationRef } from '@core/studio-board'
 import { useEditorStore } from '@site/store/store'
 import { selectActiveBoard } from '@site/store/slices/boardSelectors'
-import { collectPeerRects } from './boardSnapping'
-import { computeSnap, snapThresholdAtZoom, type ResizeHandle } from '@core/studio-runtime'
+import { snapBoardFurniture } from './boardSnapping'
+import type { ResizeHandle } from '@core/studio-runtime'
 import { resizeRect, type ResizeRect } from './rectResize'
 
 export interface AnnotationRect {
@@ -95,16 +95,16 @@ export function useAnnotationInteraction({ ref, rect, onMove }: UseAnnotationInt
     const rawY = drag.originY + (event.clientY - drag.startClientY) / zoom
 
     // Snap to the OTHER furniture on the board — every frame, note and doc
-    // except this one.
-    const board = selectActiveBoard(useEditorStore.getState())
-    const peers = board ? collectPeerRects(board, ref) : []
-    const snapped = computeSnap(
-      { x: rawX, y: rawY, width: rect.w, height: rect.h },
-      peers,
-      // IX-5a — the same screen-px pull at every zoom.
-      snapThresholdAtZoom(zoom),
-    )
-    useEditorStore.getState().setBoardSnapGuides(snapped.guides)
+    // except this one — and the ruler guides, as the toggles allow (P5-F).
+    const state = useEditorStore.getState()
+    const snapped = snapBoardFurniture({
+      board: selectActiveBoard(state),
+      dragged: ref,
+      rect: { x: rawX, y: rawY, width: rect.w, height: rect.h },
+      preferences: state.snapPreferences,
+      zoom,
+    })
+    useEditorStore.getState().setBoardSnapGuides(snapped.guides, snapped.spacings)
     onMove(snapped.x, snapped.y)
   }
 

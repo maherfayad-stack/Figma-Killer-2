@@ -9,8 +9,10 @@
  *
  * The title doubles as the disclosure toggle. Figma's sections are not
  * collapsible, but this panel has half again as many of them, so collapse
- * stays — drawn as a chevron that only surfaces on hover/focus, so a resting
- * panel reads as flat blocks rather than as a row of accordions.
+ * stays — on an open section the chevron only surfaces on hover/focus, so a
+ * resting panel reads as flat blocks rather than as a row of accordions; a
+ * COLLAPSED section shows it at rest (P5-F, UX-8), so a folded section never
+ * reads like an empty one.
  *
  * `actions` is the header's trailing slot: the small icon buttons Figma puts
  * flush right of a section title (apply a style, add a fill, open settings).

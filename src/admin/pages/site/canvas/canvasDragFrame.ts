@@ -40,6 +40,11 @@
  * stopped tracking" discipline the selection overlay already follows.
  */
 import { registry } from '@core/module-engine'
+import type { BoardGuide } from '@core/studio-board'
+import { useEditorStore } from '@site/store/store'
+import { selectActiveBoardGuides } from '@site/store/slices/boardSelectors'
+import { guideLinesInSpace, type SnapLine } from '@core/studio-runtime'
+import { readBoardScreenOrigin, rulerGuideLines } from './boardSnapping'
 import { getNodeDisplayName } from '@core/page-tree'
 import type { NodeTree, PageNode } from '@core/page-tree'
 import type { CanvasDropCandidate, CanvasDropResolution, CanvasTransplantResolution } from './canvasDnd'
@@ -233,7 +238,7 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
   // position. Nothing below this branch runs for one, including the board scan
   // and the auto-pan — a coordinate drag stays inside the container it is
   // positioned in.
-  const free = readSessionFreeMove(session, env.iframe)
+  const free = readSessionFreeMove(session, env)
   if (free) {
     const point = indexLocalPoint(session.index, screenPoint)
     const origin = indexLocalPoint(session.index, session.origin)
@@ -252,6 +257,8 @@ export function runCanvasDragFrame(session: DragSession, env: CanvasDragFrameEnv
       dx: point.x - origin.x,
       dy: point.y - origin.y,
       zoom: session.index.scale,
+      // Shift holds one axis still; that axis must not snap off it.
+      lockedAxis: session.axisLocked ? lockedAxisOf(session.origin, session.point) : null,
       ghost: { point, label: session.label, duplicating: session.duplicating },
     })
     session.paintedLayer = env.dropLayer
@@ -398,23 +405,49 @@ function leaveForeignFrame(session: DragSession): void {
  * under, because that is the one input that can flip the answer mid-gesture:
  * press ⌘ and a reorder becomes a placement, release it and it goes back.
  */
-function readSessionFreeMove(
-  session: DragSession,
-  iframe: HTMLIFrameElement | null,
-): FreeMoveResolution | null {
+function readSessionFreeMove(session: DragSession, env: CanvasDragFrameEnv): FreeMoveResolution | null {
   if (session.free !== undefined && session.freeWanted === session.freeRequested) return session.free
-  const doc = resolvePortalDocument(iframe)
+  const doc = resolvePortalDocument(env.iframe)
   session.freeWanted = session.freeRequested
+  const state = useEditorStore.getState()
   session.free = doc
     ? resolveFreeMove({
         doc,
         tree: session.tree,
-        nodeId: session.draggedId,
+        // IX-22 — every dragged layer moves, by one snapped delta.
+        nodeIds: session.draggedIds,
         candidates: session.index.candidates,
         modifierHeld: session.freeRequested,
+        guideLines: frameGuideLines(env.viewport, session.index, selectActiveBoardGuides(state)),
+        preferences: state.snapPreferences,
       })
     : null
   return session.free
+}
+
+/**
+ * P5-F / IX-5c - the board's ruler guides in this frame's space. One rect
+ * read (the transform layer), taken when the free move is resolved: a free
+ * move never moves the frame, so the converted lines hold for the gesture.
+ */
+function frameGuideLines(
+  viewport: HTMLElement,
+  index: FrameCandidateIndex,
+  guides: readonly BoardGuide[],
+): SnapLine[] {
+  if (guides.length === 0) return []
+  const board = readBoardScreenOrigin(viewport)
+  if (!board) return []
+  return guideLinesInSpace(rulerGuideLines(guides), board, {
+    originX: index.originX,
+    originY: index.originY,
+    scale: index.scale,
+  })
+}
+
+/** Which axis the Shift constraint holds still: the one the pointer has travelled LESS along (`constrainToDragAxis`). */
+function lockedAxisOf(origin: ClientPoint, point: ClientPoint): 'x' | 'y' {
+  return Math.abs(point.x - origin.x) >= Math.abs(point.y - origin.y) ? 'y' : 'x'
 }
 
 export function resolveDraggedIds(

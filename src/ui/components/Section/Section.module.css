@@ -73,10 +73,17 @@
 /*
  * Identity mark and disclosure chevron, stacked in one 16px box.
  *
- * The chevron is absent at rest — a resting panel should read as flat titled
- * blocks (Figma), not as a column of accordions — and appears on hover in the
- * icon's place. Sharing the box is what keeps the title from shifting, without
- * either reserving a second slot or hanging the chevron outside the header.
+ * On an OPEN section the chevron is absent at rest — a resting panel should
+ * read as flat titled blocks (Figma), not as a column of accordions — and
+ * appears on hover in the icon's place. Sharing the box is what keeps the
+ * title from shifting, without either reserving a second slot or hanging the
+ * chevron outside the header.
+ *
+ * A COLLAPSED section shows its chevron at rest (P5-F, UX-8): it has a body
+ * the user cannot see, and without the chevron it looked exactly like an
+ * empty section, which has no toggle at all (Penpot always draws the arrow on
+ * a collapsible title bar). Keyed off the toggle's own `aria-expanded`, so the
+ * look and the announced state can never disagree.
  */
 .sectionMarker {
     position: relative;
@@ -108,8 +115,13 @@
 }
 
 .sectionToggle:hover .sectionMarkerChevron,
-.sectionToggle:focus-visible .sectionMarkerChevron {
+.sectionToggle:focus-visible .sectionMarkerChevron,
+.sectionToggle[aria-expanded="false"] .sectionMarkerChevron {
     opacity: 1;
+}
+
+.sectionToggle[aria-expanded="false"] .sectionMarkerIcon {
+    opacity: 0;
 }
 
 .sectionMarkerChevronOpen {

@@ -34,6 +34,7 @@ import {
   FRAME_HEIGHT,
   FRAME_WIDTH,
   type Board,
+  type BoardFramePlacement,
   type BoardsFile,
 } from '@core/studio-board'
 import { discoverPageFiles, projectPagesDir } from '../studioProjects'
@@ -92,7 +93,12 @@ export function writeBoardsFile(dir: string, next: BoardsFile): void {
  * or re-positioned — a scaffolded screen gets exactly one frame, never a
  * second "variant" of itself.
  */
-export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: string): void {
+export function autoPlaceBoardFrame(
+  dir: string,
+  pageId: string,
+  boardId?: string,
+  placement?: BoardFramePlacement,
+): void {
   const existing = readBoardsFile(dir)
   // The board the author had OPEN wins over "the first one". Boards curate
   // subsets of the project's pages on purpose, so a page created while looking
@@ -106,14 +112,18 @@ export function autoPlaceBoardFrame(dir: string, pageId: string, boardId?: strin
   const board = requested ?? existing.boards[0] ?? createBoard(crypto.randomUUID(), 'Board 1')
   if (board.frames.some((f) => f.pageId === pageId)) return
 
-  const { x, y } = defaultFramePosition(board.frames.length)
+  // P5-F / IX-13 — a frame DRAWN with the board tool lands where it was
+  // drawn, at the drawn size; anything else takes the next grid slot.
+  const { x, y } = placement ?? defaultFramePosition(board.frames.length)
   // WS-7.2 — a page scaffolded after "apply to all pages" inherits the
   // project's own frame default instead of the hardcoded FRAME_WIDTH/HEIGHT,
-  // same precedent `boardSlice.ts`'s `addFrame` follows.
+  // same precedent `boardSlice.ts`'s `addFrame` follows. A drawn size wins.
   const frameDefaults = readStudioMeta(dir).frameDefaults ?? {}
   const frame: Parameters<typeof upsertFrame>[1] = { id: crypto.randomUUID(), pageId, x, y }
-  if (frameDefaults.width) frame.width = frameDefaults.width
-  if (frameDefaults.height) frame.height = frameDefaults.height
+  const width = placement?.width ?? frameDefaults.width
+  const height = placement?.height ?? frameDefaults.height
+  if (width) frame.width = width
+  if (height) frame.height = height
 
   writeBoardsFile(dir, upsertBoard(existing, upsertFrame(board, frame)))
 }

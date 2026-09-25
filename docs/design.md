@@ -502,7 +502,9 @@ diagonals as staircases).
 
 **Sections** are separated by a hairline and nothing else: no chip, no fill, no
 radius. The title doubles as the disclosure toggle, with the chevron sharing the
-section icon's 16px box and appearing only on hover. `Section`'s `actions` slot
+section icon's 16px box: on an open section it appears only on hover, and a
+collapsed section shows it at rest (P5-F, UX-8), so a folded section never
+looks like an empty one. `Section`'s `actions` slot
 carries the icon buttons Figma puts flush right of a title. A section with
 nothing in it is *not* a disclosure — `Section`'s `empty` prop drops the
 chevron, the toggle and the body, because there is nothing behind them; the
