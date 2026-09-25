@@ -42,6 +42,8 @@
  *     (`inspector/sections/ExportSection.tsx`), gated by its own `appliesTo`
  *     rather than the bespoke `studioSession`/`activePageId` conditional this
  *     file used to compute for it.
+ *   - The one `StyleWriteLockContext` provider (§9.4a): a multi-selection
+ *     aimed at Element hands every row its own "writes to 3 of 5" count.
  *   - The one full-column notice for the genuine "no STYLE here is
  *     writable" case — role permission, or every reachable target locked.
  *     It stands in for the style sections only: a section that writes a
@@ -75,6 +77,7 @@ import {
   designPrimarySections,
   type InspectorSectionDefinition,
 } from '@site/inspector/sections'
+import { partialStyleWriteLock, StyleWriteLockContext } from './StyleWriteLockContext'
 import styles from './StyleSurface.module.css'
 
 // ---------------------------------------------------------------------------
@@ -192,8 +195,15 @@ export function StyleSurface({ moduleContent, onFocusClassPicker }: StyleSurface
                 <GeneratedUtilityLockedState cls={soleGeneratedUtility} />
               </div>
             )}
-            <MountedSections sections={designPrimarySections(model)} />
-            <MoreDisclosure model={model} />
+            {/* §9.4a — the ONE provider of the write lock. A multi-selection
+                aimed at Element writes each property to the layers that take
+                it and skips the ones computing it in code; every
+                `ClassPropertyRow` below states its own count ("Writes to 3 of
+                5 selected layers"). `null` everywhere else. */}
+            <StyleWriteLockContext.Provider value={partialStyleWriteLock(model.inlineWriteReach)}>
+              <MountedSections sections={designPrimarySections(model)} />
+              <MoreDisclosure model={model} />
+            </StyleWriteLockContext.Provider>
           </>
         )}
       </div>
