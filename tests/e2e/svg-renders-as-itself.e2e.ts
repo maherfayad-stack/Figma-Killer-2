@@ -1,6 +1,5 @@
 import { expect, test, type FrameLocator, type Locator } from '@playwright/test'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   SELECTION_RING,
   clickInFrame,
   createAuthoredFixtureProject,
@@ -10,6 +9,7 @@ import {
   sourceNodeId,
   type FixtureProject,
 } from './helpers/studioFixtureProject'
+import { canvasContentFrame, visibleCanvasIframe } from './helpers/canvasIframe'
 
 /**
  * P5-D SVG-0 — a literal `<svg>` renders AS the node, asserted on COMPUTED
@@ -106,8 +106,8 @@ async function openBoard(page: import('@playwright/test').Page): Promise<{ conte
   const canvasRoot = await openFixtureBoard(page, fixture, { autoSave: false })
   const frame = page.locator('[data-page-id]').first()
   await panIntoView(page, canvasRoot, frame)
-  await expect(frame.locator(CANVAS_FRAME_IFRAME_SELECTOR)).toBeVisible({ timeout: 60_000 })
-  return { content: frame.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR), canvasRoot }
+  await expect(visibleCanvasIframe(frame)).toHaveCount(1, { timeout: 60_000 })
+  return { content: canvasContentFrame(frame), canvasRoot }
 }
 
 test.describe('SVG-0 — a literal <svg> is the node, with the box the app gives it', () => {
