@@ -85,6 +85,16 @@
     color: var(--class-row-label-color);
 }
 
+/* A PARTIAL write (§9.4a): the row stays editable, and its label carries a
+   dotted warning underline so the count in its `title` ("Writes to 3 of 5
+   selected layers") is findable without hovering every row. State colour,
+   not decoration; no geometry change. */
+.propertyRowPartial :global(label) {
+    text-decoration: underline dotted var(--warning);
+    text-underline-offset: 3px;
+    cursor: help;
+}
+
 /* ── Remove button — overlays the fixed label column, leaving controls full-width ───── */
 /* Hidden by default; revealed on row hover or keyboard focus-within (WCAG 2.1.1) */
 .removeBtn {

@@ -117,7 +117,7 @@ describe('PortalFrameAdapter — setInteractionMode', () => {
 })
 
 describe('PortalFrameAdapter — optimistic DOM ops', () => {
-  it('insert/move/text/delete mutate the DOM directly, never through innerHTML', () => {
+  it('insert/move/delete mutate the DOM directly, never through innerHTML', () => {
     const doc = freshDoc()
     doc.body.innerHTML = `<div data-node-id="parent"></div>`
     const adapter = new PortalFrameAdapter(doc)
@@ -128,9 +128,6 @@ describe('PortalFrameAdapter — optimistic DOM ops', () => {
     expect(inserted?.tagName).toBe('SPAN')
     expect(inserted?.textContent).toBe('<img onerror=alert(1)>')
     expect(inserted?.querySelector('img')).toBeNull()
-
-    adapter.optimistic.text('new1', 'updated')
-    expect(doc.querySelector('[data-node-id="new1"]')?.textContent).toBe('updated')
 
     adapter.optimistic.delete('new1')
     expect(doc.querySelector('[data-node-id="new1"]')).toBeNull()

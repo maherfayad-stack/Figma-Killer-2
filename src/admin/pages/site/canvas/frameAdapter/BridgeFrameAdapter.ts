@@ -178,10 +178,6 @@ export class BridgeFrameAdapter implements FrameDocumentAdapter {
         index,
       })
     },
-    text: (nodeId, text) => {
-      const ref = this.toWireRef(nodeId)
-      this.post({ type: 'optimistic.text', nodeId: ref.nodeId, occurrenceIndex: ref.occurrenceIndex, text })
-    },
     style: (nodeId, patch, className) => {
       const ref = this.toWireRef(nodeId)
       this.post({ type: 'optimistic.style', ref, patch, ...(className === undefined ? {} : { className }) })

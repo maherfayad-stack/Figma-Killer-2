@@ -127,7 +127,6 @@ export function runFrameDocumentAdapterContract(name: string, makeHarness: () =>
       const { adapter, existingRef, cleanup } = makeHarness()
       try {
         expect(() => adapter.optimistic.insert('contract-new', existingRef.nodeId, 0, 'div', 'hi')).not.toThrow()
-        expect(() => adapter.optimistic.text('contract-new', 'updated')).not.toThrow()
         // Moves the newly-inserted node back under the SAME parent — moving a
         // node to be its own child (`existingRef` as both mover and target)
         // is nonsensical and correctly throws in a real DOM; this exercises

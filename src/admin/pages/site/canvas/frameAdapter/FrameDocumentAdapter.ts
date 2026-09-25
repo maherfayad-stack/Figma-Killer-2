@@ -72,17 +72,19 @@ export interface DropCandidateGeometry {
 }
 
 /**
- * The four structural DOM mutations today's reorder-drag code already
- * performs immediately (same tick) for the paint-on-drop feel, ahead of the
- * HMR/writeback reconciliation that follows within milliseconds. Portal mode:
- * a close-to-direct pass-through onto the local `Document`. Bridge mode: the
- * four already-built `optimistic.*` wire messages.
+ * The three structural DOM mutations a structural gesture performs
+ * immediately (same tick) for the paint-on-drop feel, ahead of the
+ * HMR/writeback reconciliation that follows within milliseconds, plus the
+ * style preview. Portal mode: a close-to-direct pass-through onto the local
+ * `Document`. Bridge mode: the `optimistic.*` wire messages.
+ *
+ * There is no text op: a text edit happens IN the frame (`startTextEdit`),
+ * so the element already shows what the user typed.
  */
 export interface OptimisticDomOps {
   insert(nodeId: string, parentNodeId: string, index: number, tagName: string, text?: string): void
   delete(nodeId: string): void
   move(nodeId: string, parentNodeId: string, index: number): void
-  text(nodeId: string, text: string): void
   /**
    * `speed-01` — a properties-panel style commit or scrub preview, applied
    * as a stylesheet rule scoped to `nodeId`'s own element (never `nodeId`'s
