@@ -11,7 +11,7 @@
  *    `NodeRenderer` keyed each child by its `rel:line:col` id).
  */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'bun:test'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { act, cleanup, render } from '@testing-library/react'
 import { registry, type AnyModuleDefinition } from '@core/module-engine'
 import type { Page, PageNode } from '@core/page-tree'
@@ -34,11 +34,12 @@ interface ProbeProps {
 
 function Probe({ props, nodeWrapperProps, children }: ProbeProps) {
   bump(renders, props.name)
+  // The name this fiber was MOUNTED with: fixed for its life, so the effect
+  // runs once per mount, never on a re-render.
+  const [mountedAs] = useState(props.name)
   useEffect(() => {
-    bump(mounts, props.name)
-    // Mount-once on purpose: a second run would mean a remount.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+    bump(mounts, mountedAs)
+  }, [mountedAs])
   return (
     <div {...nodeWrapperProps}>
       {props.text}
