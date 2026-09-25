@@ -86,6 +86,9 @@ import { notifyRowTemplateWrites } from './rowTemplateWrites'
 
 export type { ComponentSource } from './studioLoadStreamSchema'
 
+/** A load that carried no `canvasLayers` (a CMS load): the free canvas is empty. */
+const NO_CANVAS_LAYERS: readonly never[] = []
+
 /**
  * Remembered from the last load so saveSite can tell the server which folder
  * to write. Held by `studioSaveRequests`, which every one-shot commit shares.
@@ -268,7 +271,7 @@ export const fsCodemodAdapter: IPersistenceAdapter = {
     useEditorStore.getState().resetLocalizedPages()
     // P5-G — the free canvas's loose layers, kept apart from `site.pages` by
     // construction (`canvasLayerSlice.ts`): they never enter the document below.
-    useEditorStore.getState().setCanvasLayers(loadedCanvasLayers ?? [])
+    useEditorStore.getState().setCanvasLayers(loadedCanvasLayers ?? NO_CANVAS_LAYERS)
     resetLocalizedTextBaseline()
     watchLocalizedPagesForBaseline()
     // Distinct from `site.name` (the "Studio" product wordmark, unchanged per

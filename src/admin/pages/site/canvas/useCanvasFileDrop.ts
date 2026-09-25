@@ -54,7 +54,7 @@ import { useEffect, useRef } from 'react'
 import { pushToast } from '@ui/components/Toast'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
 import { getErrorMessage } from '@core/utils/errorMessage'
-import { IMAGE_DROP_TITLE, altTextFor } from '@site/store/slices/site/imageDropActions'
+import { IMAGE_DROP_TITLE, altTextFor, reportUnlanded } from '@site/store/slices/site/imageDropActions'
 import { dropStudioAsset, type DroppedStudioAsset } from '@site/studio/dropStudioAsset'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
 import { paintCanvasDrag } from './canvasDragPainter'
@@ -287,22 +287,26 @@ const CANVAS_DROP_CASCADE = 24
  * route read from the header bytes — the first centred on the drop point and
  * every further one cascaded down-right. One structural commit per layer, in
  * drop order; the layers appearing is the answer, so a landing that succeeds
- * raises no toast. A landing that fails says why once and the rest still land.
+ * raises no toast. Files that fail to land are reported in ONE toast through
+ * the frame drop's own `reportUnlanded` (a warning when some landed, an error
+ * only when none did), and the rest still land.
  */
 async function landOnCanvas(files: readonly File[], at: { x: number; y: number }): Promise<void> {
-  const failures: string[] = []
+  const failures: { name: string; message: string }[] = []
+  let landedCount = 0
   for (const [index, file] of files.entries()) {
     let landed: DroppedStudioAsset
     try {
       landed = await dropStudioAsset(file)
     } catch (err) {
       console.error('[canvas-file-drop] landing a dropped image on the free canvas failed:', err)
-      failures.push(`"${file.name}": ${getErrorMessage(err, 'The image could not be written into your project.')}`)
+      failures.push({ name: file.name, message: getErrorMessage(err, 'The image could not be saved to your project.') })
       continue
     }
     const size = landed.width !== null && landed.height !== null && landed.width > 0 && landed.height > 0
       ? { width: landed.width, height: landed.height }
       : null
+    landedCount += 1
     const offset = index * CANVAS_DROP_CASCADE
     const centre = { x: at.x + offset, y: at.y + offset }
     useEditorStore.getState().createCanvasLayer(
@@ -310,7 +314,5 @@ async function landOnCanvas(files: readonly File[], at: { x: number; y: number }
       size ? { x: centre.x - size.width / 2, y: centre.y - size.height / 2 } : centre,
     )
   }
-  if (failures.length > 0) {
-    pushToast({ kind: 'error', title: IMAGE_DROP_TITLE, body: failures.join(' '), location: 'site-editor' })
-  }
+  reportUnlanded(failures, landedCount)
 }

@@ -108,8 +108,10 @@ export function useCanvasLayerPointer({
     let suppressClick = false
 
     const liveTransform = (): CanvasTransform => {
+      const live = transformRef?.current
+      if (live) return live
       const state = useEditorStore.getState()
-      return transformRef?.current ?? { zoom: state.zoom, panX: state.panX, panY: state.panY }
+      return { zoom: state.zoom, panX: state.panX, panY: state.panY }
     }
 
     const layerAt = (client: ClientPoint): CanvasLayerRect | null => {
