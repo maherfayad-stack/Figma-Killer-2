@@ -96,6 +96,7 @@ subscribes to the whole array or to bare `s.site`.
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
 | `layoutsSlice.ts`, `settingsSlice.ts` | Layouts, editor settings |
 | `prototypeSlice.ts` | A project's flows (prototype mode) — out of scope for this page; see `docs/features/studio-prototype.md` |
+| `streamedLoadSlice.ts` | P6-B: a project opening while its pages are still arriving — `pendingPages`, `openStreamedLoad`, `receiveStreamedPages`, `finishStreamedLoad`, `abandonStreamedLoad`. See "Opening a project: the streamed load" below |
 
 ---
 
@@ -432,6 +433,35 @@ Both are load-bearing and both have a regression test
   **origin's** `rel:line:col` as its `nodeId` — and that path runs **before** the
   `hasWritableSourceLocation` guard, because that guard is about JSX locations
   and a literal edit has nothing to do with the node's own id.
+
+### Opening a project: the streamed load (P6-B)
+
+The FIRST load of a project (no document in the store yet) hands the board its
+pages as they arrive instead of after the last one. `usePersistence` passes
+`LoadSiteOptions.progress` (`@core/persistence/types`) built by
+`siteReloadApply.ts`'s `streamedOpenProgress`; `studioProjectLoad.ts` (the
+adapter's `loadSite`) calls `progress.open(site, pending)` once the meta line,
+both `.studio/` reads and the page the editor opens on have arrived, then
+`progress.pages(batch)` once per network chunk. The store side is
+`streamedLoadSlice.ts`:
+
+- `openStreamedLoad` = `loadSite` with the pages so far, plus `pendingPages`
+  (id + title) for the rest. `BoardFramesLayer` paints a `PendingBoardFrame`
+  (inert, same box, `data-page-pending`) for a frame whose page is pending.
+- `receiveStreamedPages` **appends** — undo patches and in-flight structural
+  rollbacks address a page by its POSITION in `site.pages`, so nothing already
+  there may move. Indexes via `applyNodeIndexPatch`; no history, no dirty mark.
+- `finishStreamedLoad(pageOrder)` restores page order only when the undo stack
+  is empty; otherwise the arrival order stays until the next load.
+- `loadSite`/`clearSite` clear `pendingPages`; `abandonStreamedLoad` clears it
+  when the load fails after opening. The default-board seed waits for it
+  (`shouldSeedDefaultBoard`'s `pagesArriving`).
+
+A later batch needs what the open document got from `loadSite`: the adapter
+applies `reconcileFrameworkClassesOnPages` against the registry AS LOADED (the
+store's copy is already claimed and pruned) and extends the save-diff baseline
+(`mergeLoadedValuesBaseline`) before handing it over. Every re-read of a
+project already on screen is unchanged: one whole document through `loadSite`.
 
 ---
 

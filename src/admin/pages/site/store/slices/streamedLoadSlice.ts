@@ -26,14 +26,17 @@
  *
  * Like `patchPages`, these actions record no history and mark nothing dirty:
  * the pages were just read from disk, and a save of them would write back what
- * the file already says.
+ * the file already says. The same holds for `adoptLoadedFramework`: the token
+ * extraction a load runs after itself, whose answer is part of the read.
  */
+import { create } from 'mutative'
 import { reconcileSiteExplorerInPlace, reindexNodeParents } from '@core/page-tree'
 import type { Page, SiteDocument } from '@core/page-tree'
 import type { PendingPage } from '@core/persistence/types'
 import type { EditorStoreSliceCreator } from '@site/store/types'
 import { emptyDirtyMarks } from './site/dirtyTracking'
-import { applyNodeIndexPatch, nodeIndexesOf } from './site/nodeIndex'
+import { reconcileFrameworkClasses } from './site/framework/reconcile'
+import { applyNodeIndexPatch, nodeIndexesOf, rebuildNodeIndexes } from './site/nodeIndex'
 import { notePagesRead } from './site/pageReadEpoch'
 
 export interface StreamedLoadSlice {
@@ -47,6 +50,15 @@ export interface StreamedLoadSlice {
   finishStreamedLoad: (pageOrder: readonly string[]) => void
   /** The load failed or was superseded after it opened: whatever never arrived is no longer on its way. */
   abandonStreamedLoad: () => void
+  /**
+   * The token extraction a load runs AFTER it (`studioProjectLoad.ts`'s
+   * `adoptExtractedTokens`) landed: take its framework as part of what was
+   * read — like `loadSite`, no history, no dirty mark, and the framework
+   * classes reconciled — unless the document no longer holds the framework
+   * the load gave it (the person changed it meanwhile; theirs stands). Returns
+   * whether the document now holds `extracted`.
+   */
+  adoptLoadedFramework: (loaded: SiteDocument['settings']['framework'], extracted: SiteDocument['settings']['framework']) => boolean
 }
 
 declare module '@site/store/types' {
@@ -106,6 +118,25 @@ export const createStreamedLoadSlice: EditorStoreSliceCreator<StreamedLoadSlice>
     set((state) => {
       state.pendingPages = NO_PENDING_PAGES
     })
+  },
+
+  adoptLoadedFramework: (loaded, extracted) => {
+    const { site } = get()
+    if (!site) return false
+    const held = JSON.stringify(site.settings.framework)
+    if (held === JSON.stringify(extracted)) return true
+    if (held !== JSON.stringify(loaded)) return false
+    // What `loadSite` does with the framework it is handed: regenerate the
+    // framework classes, and re-point any class ids they claim or prune.
+    const next = create(site, (draft) => {
+      draft.settings.framework = extracted
+      reconcileFrameworkClasses(draft as SiteDocument)
+    })
+    set((state) => {
+      state.site = next
+      rebuildNodeIndexes(nodeIndexesOf(state), next)
+    })
+    return true
   },
 })
 

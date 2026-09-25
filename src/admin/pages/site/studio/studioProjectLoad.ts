@@ -6,16 +6,15 @@
  * One request carries the project: `GET /admin/api/studio/load?stream=1`, an
  * NDJSON stream of one `meta` line (the project-wide registries and the list of
  * pages to come) and then one line per page, the frames a person sees first,
- * first (`studioLoadResponse.ts`, `loadPriority.ts`). Two small `.studio/`
- * reads ride beside it: the sidecar settings (`sidecarSync.ts`) and the
- * token extraction (`studioTokenStatus.ts`). All three start together — they
- * need nothing from each other, and opening a project used to wait for them
- * one after another.
+ * first (`studioLoadResponse.ts`, `loadPriority.ts`). The sidecar settings
+ * (`sidecarSync.ts`) are read beside it — they need nothing from the load, and
+ * opening a project used to wait for the two one after the other — and the
+ * token extraction runs after it, unwaited (`adoptExtractedTokens`).
  *
  * ## Streamed (P6-B, PERF-7)
  *
  * Given `options.progress`, the document is handed over BEFORE the stream
- * ends: `progress.open` as soon as the meta line, both `.studio/` reads and
+ * ends: `progress.open` as soon as the meta line, the sidecar settings and
  * the page the editor opens on (the home page, else the first page — the one
  * `loadSite` would pick) are in; then `progress.pages` for each later batch,
  * one per network chunk (a microtask after the chunk's lines, never a timer or
@@ -33,7 +32,6 @@
  * save-diff baseline (`mergeLoadedValuesBaseline`).
  */
 import type { Page, SiteDocument, StyleRule } from '@core/page-tree'
-import type { FrameworkSettings } from '@core/framework-schema'
 import type { LoadSiteOptions, PendingPage, SiteLoadProgress } from '@core/persistence/types'
 import { ndjsonRequest } from '@core/http'
 import { createDefaultSiteDocument } from '@site/store/slices/site/defaults'
@@ -119,16 +117,29 @@ export async function refreshExtractedTokens(): Promise<TokenExtractionStatus> {
  * every load: the server's merge only ever fills a currently-EMPTY family, so
  * this is a no-op once populated (by extraction or by the user), and a project
  * whose tokens only became reachable later — e.g. after "Install dependencies"
- * resolves a vendor CSS import — picks them up on the very next load. A
- * failure must not block the project from loading: logged, and `null`.
+ * resolves a vendor CSS import — picks them up on the very next load.
+ *
+ * P6-B — AFTER the load, and never waited for. The extraction costs the server
+ * 150–600 ms on every open (measured: 150–180 ms on the 40-page board, 550–590
+ * on a 1,000-file repo), and run beside `/load` it held the load's first byte
+ * back by as much. The document opens on the sidecar's framework — the result
+ * of every previous extraction, persisted — and the merged answer is adopted
+ * when it lands: a no-op unless a family was empty and is not any more (the
+ * first open of an imported project), and skipped if the person has already
+ * changed the framework themselves (`adoptLoadedFramework`). A failure is
+ * logged: the project is open either way.
  */
-async function extractTokensForLoad(dir: string): Promise<FrameworkSettings | null> {
-  try {
-    return (await fetchExtractedTokens(dir)).framework
-  } catch (err) {
-    console.error('[studioProjectLoad] token extraction failed', err)
-    return null
-  }
+function adoptExtractedTokens(dir: string, loaded: SiteDocument['settings']['framework']): void {
+  fetchExtractedTokens(dir).then(
+    ({ framework }) => {
+      // A different project was opened while this one's extraction ran.
+      if (studioWriteDir() !== dir) return
+      if (useEditorStore.getState().adoptLoadedFramework(loaded, framework)) noteFrameworkSynced(framework)
+    },
+    (err: unknown) => {
+      console.error('[studioProjectLoad] token extraction failed', err)
+    },
+  )
 }
 
 /**
@@ -186,7 +197,7 @@ function applyLoadMeta(meta: MetaLine, pages: readonly Page[]): void {
 }
 
 /** The document a load hands over: the source-derived pages in a valid default site shell (breakpoints, settings, framework, …). */
-function buildLoadedSite(meta: MetaLine, pages: Page[], sidecar: SidecarSettings, extracted: FrameworkSettings | null): SiteDocument {
+function buildLoadedSite(meta: MetaLine, pages: Page[], sidecar: SidecarSettings): SiteDocument {
   const site = createDefaultSiteDocument('Studio')
   site.pages = pages
   // §6 — styling imported from the workspace's `.css` files, re-derived
@@ -202,8 +213,6 @@ function buildLoadedSite(meta: MetaLine, pages: Page[], sidecar: SidecarSettings
   // whatever this project has persisted in `.studio/`, if anything. See
   // `sidecarSync.ts` — nothing persisted means the default stands as-is.
   applySidecarSettings(site, sidecar)
-  // `tokens-01` — the extraction's merged answer wins over the sidecar's framework.
-  if (extracted) site.settings.framework = extracted
   armSidecarBaselines(site)
   return site
 }
@@ -223,7 +232,6 @@ interface Received {
   /** Every page line so far, in arrival order. Only ever appended to. */
   lines: PageLine[]
   sidecar: Promise<SidecarSettings>
-  tokens: Promise<FrameworkSettings | null> | null
 }
 
 /** `fsCodemodAdapter.loadSite` — see this module's doc. */
@@ -236,7 +244,6 @@ export async function loadStudioProject({ signal, progress }: LoadSiteOptions = 
     meta: null,
     lines: [],
     sidecar: fetchSidecarSettings(overrideDir ?? null),
-    tokens: overrideDir ? extractTokensForLoad(overrideDir) : null,
   }
   // Observed here, re-raised where it is awaited.
   received.sidecar.catch(() => {})
@@ -249,7 +256,6 @@ export async function loadStudioProject({ signal, progress }: LoadSiteOptions = 
     onLine: (line) => {
       if (line.kind === 'meta') {
         received.meta = line
-        received.tokens ??= extractTokensForLoad(line.dir)
         return
       }
       received.lines.push(line)
@@ -261,10 +267,17 @@ export async function loadStudioProject({ signal, progress }: LoadSiteOptions = 
   if (!meta) throw new Error('Studio load stream produced no metadata line.')
   // Lines arrive in viewport order; the document keeps page order.
   const pages = orderStreamedPages(received.lines)
-  if (stream) return stream.finish(pages)
-
-  applyLoadMeta(meta, pages)
-  return buildLoadedSite(meta, pages, await received.sidecar, await received.tokens)
+  let site: SiteDocument
+  if (stream) {
+    site = await stream.finish(pages)
+  } else {
+    const sidecar = await received.sidecar
+    applyLoadMeta(meta, pages)
+    site = buildLoadedSite(meta, pages, sidecar)
+  }
+  // Last, and not awaited: every page has been handed over by now.
+  adoptExtractedTokens(meta.dir, site.settings.framework)
+  return site
 }
 
 /** Where a streamed load is: what it has handed over, and what is in flight. */
@@ -293,12 +306,12 @@ function streamDelivery(progress: SiteLoadProgress, received: Received) {
     const batch = received.lines.slice(0).sort(byPageOrder)
     state.delivered = batch.length
     const opening = (async () => {
-      const [settings, extracted] = await Promise.all([received.sidecar, received.tokens])
+      const settings = await received.sidecar
       const pages = batch.map((line) => line.page)
       applyLoadMeta(meta, pages)
       // Copied BEFORE `open`: the store reconciles the document's registry in place.
       state.loadedStyleRules = { ...meta.styleRules }
-      const site = buildLoadedSite(meta, pages, settings, extracted)
+      const site = buildLoadedSite(meta, pages, settings)
       state.site = site
       const arrivedIds = new Set(pages.map((page) => page.id))
       const pending: PendingPage[] = meta.pageList

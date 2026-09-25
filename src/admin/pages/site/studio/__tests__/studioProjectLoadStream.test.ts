@@ -13,8 +13,9 @@
  *   - later pages arrive through `pages`, with the framework class-id rewrite
  *     the open document got from `loadSite` applied to them too;
  *   - the promise resolves with the whole document, in page order;
- *   - the sidecar and token reads are issued before the stream is read to its
- *     end (they used to wait for it).
+ *   - the sidecar read is issued with the load and supplies the open
+ *     document's framework; the token extraction is only issued after the
+ *     last page (it used to hold the load's first byte back).
  */
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import type { FrameworkSettings } from '@core/framework-schema'
@@ -128,7 +129,7 @@ function stubStreamedFetch(first: string[], second: string[]): StreamControl {
       })
       return new Response(body, { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
     }
-    if (path === '/admin/api/studio/framework') return Response.json({ framework: null, fonts: null })
+    if (path === '/admin/api/studio/framework') return Response.json({ framework: FRAMEWORK, fonts: null })
     if (path === '/admin/api/studio/tokens') {
       return Response.json({ ok: true, framework: FRAMEWORK, source: 'project-css', counts: { colors: 1, spacing: 0, typography: 0 }, warnings: [] })
     }
@@ -190,16 +191,18 @@ describe('loadStudioProject — streamed (P6-B)', () => {
     // Open came while the second chunk is still held back.
     expect(recorded.opened).toEqual({ pages: ['a', 'c'], pending: ['b', 'd'] })
     expect(recorded.batches).toEqual([])
-    // Both `.studio/` reads went out before the stream finished.
+    // The sidecar read went out with the load, and its framework is the open
+    // document's; the token extraction waits for the load to finish.
     expect(control.requests).toContain('/admin/api/studio/framework')
-    expect(control.requests).toContain('/admin/api/studio/tokens')
-    // The tokens answer is the open document's framework.
+    expect(control.requests).not.toContain('/admin/api/studio/tokens')
     expect(recorded.openSite!.settings.framework).toEqual(FRAMEWORK)
 
     control.release()
     const site = await done
     expect(recorded.batches).toEqual([['b', 'd']])
     expect(site.pages.map((p) => p.id)).toEqual(['a', 'b', 'c', 'd'])
+    // After the last page, never before it.
+    expect(control.requests).toContain('/admin/api/studio/tokens')
   })
 
   it('waits for the page the editor opens on before the first delivery', async () => {

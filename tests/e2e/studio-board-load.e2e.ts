@@ -23,20 +23,33 @@ import { removeFixtureProject, type FixtureProject } from './helpers/studioFixtu
  * `usePersistence.ts`). What counts as painted: a displayed canvas iframe
  * whose document holds a rendered node with a real box.
  *
- * Only the warm first frame is a budget. The cold numbers are reported: they
- * are dominated by the parse, which this machine's load swings by 2×. Every
+ * Two budgets, both on the WARM open. The cold numbers are reported only:
+ * they are dominated by the parse and, on the first navigation after the
+ * stack boots, by Vite compiling every module for the first time. Every
  * number here runs under the Vite DEV server, so module loading (hundreds of
- * separate requests before the canvas code can run) is part of every one of
- * them; a production build pays a fraction of that.
+ * separate requests before the canvas code can run) is part of all of them; a
+ * production build pays a fraction of that.
  */
 
 /**
- * Warm open → first frame painted, under the dev server. Calibrated on the
- * P6-B branch at about 2× its observed value (the convention
- * `studio-board-perf.e2e.ts`'s budgets follow); before P6-B the same
- * measurement was 4.7–4.9 s. The numbers are in `STATE.md`'s P6-B entry.
+ * Warm open → first frame painted. Before P6-B (trunk `ef23f78a`) this was
+ * 5315 / 5602 ms on the calibration machine (Windows, eight agents' load);
+ * with it, 4296 / 4669 / 5053 ms. Set about 20 % over the worst "after". On a
+ * machine this loaded it does NOT separate before from after on its own — the
+ * noise is as wide as the gain — which is what the ORDER budget below is for;
+ * this one fails a new second-long wait on top of today's open.
  */
-const BUDGET_WARM_FIRST_FRAME_MS = 7_000
+const BUDGET_WARM_FIRST_FRAME_MS = 6_000
+
+/**
+ * Warm open: the first frame's box (its header and body, painted or not)
+ * after the canvas itself exists. Before P6-B the board's own chunk was only
+ * requested once the canvas rendered, so frames appeared ~1 s after the
+ * canvas root (1065 / 961 ms); now the chunk is preloaded with the editor
+ * body and the two land together (0 / 0 ms). Machine-speed independent: it
+ * measures an ORDER, not a duration, so the margin is small.
+ */
+const BUDGET_WARM_FRAME_AFTER_CANVAS_MS = 300
 
 const CORPUS_TIMEOUT_MS = 120_000
 
@@ -189,7 +202,7 @@ async function measureOpen(page: Page, label: string): Promise<OpenProbe> {
 test.describe('P6-B project open on the 40 x 300 corpus', () => {
   test.setTimeout(300_000)
 
-  test('cold then warm open: the first frame paints within budget when warm', async ({ browser }) => {
+  test('cold then warm open: frames appear with the canvas, and the first paints within budget when warm', async ({ browser }) => {
     const storageState = test.info().project.use.storageState
     const viewport = { width: 1920, height: 1080 }
 
@@ -203,5 +216,11 @@ test.describe('P6-B project open on the 40 x 300 corpus', () => {
 
     expect(cold.firstFramePaintedMs, 'cold open: no frame ever painted').not.toBeNull()
     expect(warm.firstFramePaintedMs, 'warm open: time to the first painted frame').toBeLessThan(BUDGET_WARM_FIRST_FRAME_MS)
+    expect(warm.firstFrameShellMs, 'warm open: no board frame appeared').not.toBeNull()
+    expect(warm.canvasRootMs, 'warm open: the canvas never rendered').not.toBeNull()
+    expect(
+      warm.firstFrameShellMs! - warm.canvasRootMs!,
+      'warm open: board frames appeared this long after the canvas — the board chunk is being fetched after the canvas renders again',
+    ).toBeLessThan(BUDGET_WARM_FRAME_AFTER_CANVAS_MS)
   })
 })

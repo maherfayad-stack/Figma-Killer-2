@@ -60,6 +60,7 @@ import {
 import { LazyChunkBoundary } from '@admin/lib/LazyChunkBoundary'
 import { ChromeBoundary } from '@site/ui/ChromeBoundary'
 import { prewarmedLazy } from '@admin/lib/prewarmedLazy'
+import { StudioBoardLayers } from '@site/canvas/studioBoardLayersChunk'
 import styles from './AdminCanvasLayout.module.css'
 import { lazy, Suspense, useEffect, useRef, useState } from 'react'
 import { useCurrentAdminUser } from '@admin/sessionContext'
@@ -219,6 +220,15 @@ export function AdminCanvasLayout() {
   const loadRetrying = loadError !== null && persistence.saveStatus.retrying === true
 
   const loadEditorBody = usePostPaintEditorBodyGate()
+  // P6-B — every project opens on a board, so the board's own chunk is fetched
+  // WITH the body rather than after it (`studioBoardLayersChunk.ts`).
+  useEffect(() => {
+    if (!loadEditorBody) return
+    StudioBoardLayers.preload().catch((err: unknown) => {
+      // The canvas's own render retries it through its Suspense boundary.
+      console.error('[AdminCanvasLayout] board layers preload failed:', err)
+    })
+  }, [loadEditorBody])
 
   return (
     <EditorPermissionsProvider value={permissions}>

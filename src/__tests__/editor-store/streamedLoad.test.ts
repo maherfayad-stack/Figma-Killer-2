@@ -10,7 +10,10 @@
  *     nothing dirty and records no history;
  *   - `finishStreamedLoad` puts the pages back in page order when the undo
  *     stack is empty, and leaves the arrival order alone when it is not;
- *   - a full `loadSite` clears whatever was still pending.
+ *   - a full `loadSite` clears whatever was still pending;
+ *   - `adoptLoadedFramework` (the token extraction a load runs after itself)
+ *     lands without history or a dirty mark, reconciles the framework classes,
+ *     and never overwrites a framework the person changed meanwhile.
  */
 import { beforeEach, describe, expect, it } from 'bun:test'
 import { useEditorStore } from '@site/store/store'
@@ -132,5 +135,49 @@ describe('streamed load', () => {
     useEditorStore.getState().abandonStreamedLoad()
     expect(useEditorStore.getState().pendingPages).toEqual([])
     expect(useEditorStore.getState().site!.pages.map((p) => p.id)).toEqual(['c'])
+  })
+})
+
+describe('adoptLoadedFramework', () => {
+  const extracted = {
+    colors: {
+      tokens: [
+        {
+          id: 'primary-token',
+          category: 'Brand',
+          slug: 'primary',
+          lightValue: 'hsla(238, 100%, 62%, 1)',
+          darkValue: 'hsla(238, 100%, 42%, 1)',
+          darkModeEnabled: false,
+          generateUtilities: { text: true, background: false, border: false, fill: false },
+          generateTransparent: false,
+          generateShades: { enabled: false, count: 0 },
+          generateTints: { enabled: false, count: 0 },
+          order: 0,
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    },
+  }
+
+  it('takes the extraction as part of the read: framework classes appear, nothing is dirty, nothing is undoable', () => {
+    useEditorStore.getState().loadSite(makeSite({ pages: [page('a', 'index')] }))
+    const loaded = useEditorStore.getState().site!.settings.framework
+    expect(useEditorStore.getState().adoptLoadedFramework(loaded, extracted)).toBe(true)
+    const state = useEditorStore.getState()
+    expect(state.site!.settings.framework).toEqual(extracted)
+    expect(Object.values(state.site!.styleRules).some((rule) => rule.name === 'text-primary')).toBe(true)
+    expect(state.hasUnsavedChanges).toBe(false)
+    expect(state._historyPast).toEqual([])
+  })
+
+  it('leaves a framework the person changed after the load alone', () => {
+    useEditorStore.getState().loadSite(makeSite({ pages: [page('a', 'index')] }))
+    const loaded = useEditorStore.getState().site!.settings.framework
+    const theirs = { colors: { tokens: [{ ...extracted.colors.tokens[0]!, id: 'theirs', slug: 'accent' }] } }
+    useEditorStore.setState({ site: { ...useEditorStore.getState().site!, settings: { ...useEditorStore.getState().site!.settings, framework: theirs } } } as Parameters<typeof useEditorStore.setState>[0])
+    expect(useEditorStore.getState().adoptLoadedFramework(loaded, extracted)).toBe(false)
+    expect(useEditorStore.getState().site!.settings.framework).toEqual(theirs)
   })
 })
