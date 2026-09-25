@@ -5,8 +5,14 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 256 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 262 entries, archived 2026-09-23, newest first
 
+- 2026-09-25 · `store-21` · P3-D: structural refusals become writes (PR #250) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-38` · P5-D first half: SVG renders as itself (PR #264) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-37` · live-frame parity (PR #265) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `canvas-33` · P5-G: the free canvas (OD-14) (PR #260) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `perf-14` · preview shell stays out of the parse (PR #267) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `store-20` · P6-A: reconcile after writes (PR #266) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `perf-13` · P6-B server half: fast warm load (PR #263) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `canvas-34` · P5-B2: images show in design frames (PR #262) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `mcp-32` · P4-G: lint, HTTP subagents, model routing (PR #255) · [`2026-09.md`](2026-09.md)

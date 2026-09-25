@@ -64,6 +64,7 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
     moduleId: node?.moduleId ?? null,
     hasOwnElement: target !== null,
     display,
+    localName: target?.localName ?? '',
   })
 
   useElementResizeDrag({

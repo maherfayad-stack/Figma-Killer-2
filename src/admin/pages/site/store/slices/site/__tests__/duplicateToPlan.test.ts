@@ -54,12 +54,14 @@ describe('planSourceDuplicateTo — where the copy is written', () => {
 
     expect(plan.ok).toBe(true)
     if (!plan.ok) return
-    expect(plan.commit).toEqual({
-      nodeId: at(5),
-      parentNodeId: at(3),
-      anchorNodeId: at(6),
-      position: 'after',
-    })
+    expect(plan.commit).toEqual([
+      {
+        nodeId: at(5),
+        parentNodeId: at(3),
+        anchorNodeId: at(6),
+        position: 'after',
+      },
+    ])
   })
 
   it('appends into an empty container — a position with no anchor is still a position', () => {
@@ -68,8 +70,8 @@ describe('planSourceDuplicateTo — where the copy is written', () => {
 
     expect(plan.ok).toBe(true)
     if (!plan.ok) return
-    expect(plan.commit?.parentNodeId).toBe(at(7))
-    expect(plan.commit?.anchorNodeId).toBeNull()
+    expect(plan.commit?.[0]?.parentNodeId).toBe(at(7))
+    expect(plan.commit?.[0]?.anchorNodeId).toBeNull()
   })
 
   it('returns no commit for a tree with no source behind it — the caller takes its in-memory path', () => {
@@ -86,17 +88,54 @@ describe('planSourceDuplicateTo — where the copy is written', () => {
   })
 })
 
-describe('planSourceDuplicateTo — what it refuses', () => {
-  it('refuses a multi-node Alt+drag, because N copies at one position have no order in the code', () => {
+// ERR-7 — this used to refuse `multi-select`. Several copies now land as ONE
+// run: every one written against the same unmoving anchor, in the order that
+// makes the run come out in selection order.
+describe('planSourceDuplicateTo — several elements, and another file', () => {
+  it('copies several elements after one anchor, written last-first so the run reads in order', () => {
+    const tree = studioTree()
+    const plan = planSourceDuplicateTo(tree, [at(5), at(6)], at(3), 2)
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    expect(plan.commit).toEqual([
+      { nodeId: at(6), parentNodeId: at(3), anchorNodeId: at(6), position: 'after' },
+      { nodeId: at(5), parentNodeId: at(3), anchorNodeId: at(6), position: 'after' },
+    ])
+  })
+
+  it('appends several elements into an empty container first-first', () => {
     const tree = studioTree()
     const plan = planSourceDuplicateTo(tree, [at(5), at(6)], at(7), 0)
-
-    expect(plan.ok).toBe(false)
-    if (plan.ok) return
-    expect(plan.constraint.reason).toBe('multi-select')
-    // The remedy has to be something the user can actually do.
-    expect(plan.constraint.explanation).toContain('one by one')
+    expect(plan.ok).toBe(true)
+    if (!plan.ok) return
+    expect(plan.commit?.map((copy) => copy.nodeId)).toEqual([at(5), at(6)])
+    expect(plan.commit?.every((copy) => copy.anchorNodeId === null)).toBe(true)
   })
+
+  // ERR-16 — this used to refuse `cross-file`: the copy is a transplant now.
+  it('copies into a container in a different file as a transplant', () => {
+    const tree = studioTree()
+    const foreign = 'pages/Other.tsx:9:3'
+    tree.nodes[foreign] = makeNode({ id: foreign, moduleId: 'base.container', parentId: at(3) })
+    tree.nodes[at(3)]!.children = [at(5), at(6), foreign]
+
+    const plan = planSourceDuplicateTo(tree, [at(5)], foreign, 0)
+    expect(plan.ok).toBe(true)
+    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: at(5), parentNodeId: foreign, anchorNodeId: null, position: 'after', crossFile: true }])
+  })
+
+  // ERR-8 — a paste of something copied in ANOTHER frame: the copied node is
+  // not in this tree, and is asked the same questions anyway.
+  it('plans a copy of an element that lives in another frame', () => {
+    const tree = studioTree()
+    const elsewhere = makeNode({ id: 'pages/About.tsx:4:5', moduleId: 'base.text', parentId: 'pages/About.tsx:3:3' })
+    const plan = planSourceDuplicateTo(tree, [elsewhere.id], at(7), 0, (id) => (id === elsewhere.id ? elsewhere : undefined))
+    expect(plan.ok).toBe(true)
+    if (plan.ok) expect(plan.commit).toEqual([{ nodeId: elsewhere.id, parentNodeId: at(7), anchorNodeId: null, position: 'after', crossFile: true }])
+  })
+})
+
+describe('planSourceDuplicateTo — what it refuses', () => {
 
   it('refuses a `.map` row — the same reason ⌘D refuses it', () => {
     const tree = studioTree()
@@ -109,16 +148,6 @@ describe('planSourceDuplicateTo — what it refuses', () => {
     if (!plan.ok) expect(plan.constraint.reason).toBe('list-row')
   })
 
-  it('refuses a copy into a container in a different file — the same reason a reparent refuses it', () => {
-    const tree = studioTree()
-    const foreign = 'pages/Other.tsx:9:3'
-    tree.nodes[foreign] = makeNode({ id: foreign, moduleId: 'base.container', parentId: at(3) })
-    tree.nodes[at(3)]!.children = [at(5), at(6), foreign]
-
-    const plan = planSourceDuplicateTo(tree, [at(5)], foreign, 0)
-    expect(plan.ok).toBe(false)
-    if (!plan.ok) expect(plan.constraint.reason).toBe('cross-file')
-  })
 
   it('refuses a locked container, and says which one', () => {
     const tree = studioTree()

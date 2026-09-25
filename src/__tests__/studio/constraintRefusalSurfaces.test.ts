@@ -204,12 +204,15 @@ describe('presentStructuralRefusal — dialog path (constraint.actions is non-em
     })
   })
 
-  it('carries a retry closure through to the dialog state untouched', () => {
+  // P3-D — the dialog no longer re-issues gestures (its call-site guess could
+  // land on the wrong element); OD-7's detach-and-replay owns the retry.
+  it('does not hand a retry closure to the dialog', () => {
     const { set, dialog } = fakeDialogSetter()
-    const retry = (_newNodeId: string) => {}
+    const retry = () => {}
     presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, LIST_ROW, { nodeId: 'a.tsx:1:1', retry, set })
 
-    expect(dialog()?.retry).toBe(retry)
+    expect(dialog()).not.toBeNull()
+    expect(dialog() && 'retry' in dialog()!).toBe(false)
   })
 
   it('opens the dialog for shared-component, R2s own motivating case', () => {

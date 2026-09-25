@@ -16,10 +16,11 @@
  *      `RenderedCanvasNodeCache` resolves it to its DESCENDANTS — which is
  *      right for drawing a selection ring around a component and wrong for
  *      sizing, because the box under the handles belongs to a different node.
- *   2. **A display CSS ignores a size on.** `inline`, `contents`, `none`. The
- *      edit lands in the source and changes nothing on screen — a dead
- *      affordance that is harder to spot than a refusal, because it appears
- *      to have worked.
+ *   2. **A display CSS ignores a size on.** `inline`, `contents`, `none` —
+ *      except that a replaced element (`<svg>`, `<img>`, …) is sized even
+ *      while `inline`, which is its default. The edit lands in the source and
+ *      changes nothing on screen — a dead affordance that is harder to spot
+ *      than a refusal, because it appears to have worked.
  *   3. **A module that does not own its own `style=""`.** S4: a `pkg.*`
  *      component is an arbitrary third-party package Studio knows nothing
  *      about, and a `studio.instance` renders no element at the call site at
@@ -51,13 +52,15 @@ export interface ResizeOfferInput {
    * no element.
    */
   display: string
+  /** The presented element's `localName`. Empty when there is no element. */
+  localName: string
 }
 
 /** True when a drag on this node has an honest target in the user's source. */
-export function canOfferResize({ moduleId, hasOwnElement, display }: ResizeOfferInput): boolean {
+export function canOfferResize({ moduleId, hasOwnElement, display, localName }: ResizeOfferInput): boolean {
   if (!canOfferResizeForModule(moduleId)) return false
   if (!hasOwnElement) return false
-  return isSizeableDisplay(display)
+  return isSizeableDisplay(display, localName)
 }
 
 /**

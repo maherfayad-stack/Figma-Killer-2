@@ -280,15 +280,58 @@ describe('svgToJsxNode — ids', () => {
     }
   })
 
-  it('rewrites a fragment href to the remapped id', () => {
-    // `sanitizeSvg` strips href today (P5-D adds the fragment-only hook), so
-    // this runs past it — the rewrite must already be right when that lands.
+  it('rewrites a fragment href to the remapped id, writing xlink:href as href', () => {
     const node = unwrap(
       convertParsed('<svg xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1 1"><symbol id="s"/><use href="#s"/><use xlink:href="#s"/></svg>'),
     )
     const [symbol, use, legacy] = childrenOf(node)
     expect(use!.props!.href).toBe(`#${symbol!.props!.id}`)
-    expect(legacy!.props!.xlinkHref).toBe(`#${symbol!.props!.id}`)
+    expect(legacy!.props!.href).toBe(`#${symbol!.props!.id}`)
+    expect(legacy!.props!.xlinkHref).toBeUndefined()
+  })
+})
+
+describe('svgToJsxNode — references stay inside the graphic (P5-D SVG-2)', () => {
+  it('writes a <use> sprite end to end, through the sanitiser, with its href remapped', () => {
+    // Before the fragment hook, DOMPurify dropped `<use>` outright and every
+    // `href` with it, so a sprite imported as an empty `<svg>`.
+    const node = unwrap(svgToJsxNode('<svg viewBox="0 0 8 8"><defs><path id="dot" d="M0 0h1"/></defs><use href="#dot" x="2"/></svg>'))
+    const [defs, use] = childrenOf(node)
+    const pathId = childrenOf(defs!)[0]!.props!.id
+    expect(use!.name).toBe('use')
+    expect(use!.props).toEqual({ href: `#${pathId}`, x: '2' })
+  })
+
+  it.each([
+    ['a presentation attribute', '<svg viewBox="0 0 1 1"><path d="M0 0" fill="url(https://evil.test/beacon.svg#p)"/></svg>', 'fill'],
+    ['a style string', '<svg viewBox="0 0 1 1"><path d="M0 0" style="fill:red;background:url(//evil.test/b.png)"/></svg>', 'background'],
+    ['a <style> rule', '<svg viewBox="0 0 1 1"><style>.a{mask:url("https://evil.test/m.svg#m")}</style><path class="a" d="M0 0"/></svg>', 'mask'],
+    ['an escaped url()', '<svg viewBox="0 0 1 1"><path d="M0 0" filter="\\75 rl(https://evil.test/f)"/></svg>', 'filter'],
+  ])('refuses a remote url() in %s, naming it', (_label, markup, where) => {
+    const result = convertParsed(markup)
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).toContain(`${where}:`)
+    expect(result.message).toContain('remote reference')
+  })
+
+  it('still writes a same-document url() and an inline image', () => {
+    const node = unwrap(
+      convertParsed('<svg viewBox="0 0 1 1"><linearGradient id="g"/><path d="M0 0" fill="url(#g)" style="mask:url(data:image/png;base64,AA==)"/></svg>'),
+    )
+    const path = childrenOf(node)[1]!
+    expect(String(path.props!.fill)).toMatch(/^url\(#g-[a-z0-9]+\)$/)
+    expect(path.props!.mask).toBe('url(data:image/png;base64,AA==)')
+  })
+
+  it('drops an href that is not a fragment even if one reached the converter', () => {
+    const node = unwrap(convertParsed('<svg viewBox="0 0 1 1"><use href="https://evil.test/s.svg#a"/><use href=" #a"/></svg>'))
+    for (const use of childrenOf(node)) expect(use.props?.href).toBeUndefined()
+  })
+
+  it('keeps a url() mentioned in text for people', () => {
+    const node = unwrap(convertParsed('<svg viewBox="0 0 1 1" aria-label="see url(https://example.test)"><path d="M0 0"/></svg>'))
+    expect(node.props!['aria-label']).toBe('see url(https://example.test)')
   })
 })
 

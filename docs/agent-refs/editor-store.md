@@ -96,7 +96,7 @@ subscribes to the whole array or to bare `s.site`.
 | `visualComponentsSlice.ts`, `vcTreeOps.ts`, `vcSlotReconcile.ts` | Visual Components |
 | `layoutsSlice.ts`, `settingsSlice.ts` | Layouts, editor settings |
 | `prototypeSlice.ts` | A project's flows (prototype mode) — out of scope for this page; see `docs/features/studio-prototype.md` |
-| `streamedLoadSlice.ts` | P6-B: a project opening while its pages are still arriving — `pendingPages`, `openStreamedLoad`, `receiveStreamedPages`, `finishStreamedLoad`, `abandonStreamedLoad`. See "Opening a project: the streamed load" below |
+| `streamedLoadSlice.ts` | P6-B: a project opening while its pages are still arriving — `pendingPages`, `openStreamedLoad`, `receiveStreamedPages`, `finishStreamedLoad`, `abandonStreamedLoad`, `adoptLoadedFramework`. See "Opening a project: the streamed load" below |
 
 ---
 
@@ -134,7 +134,7 @@ rather than mutating a studio-imported tree in a way nothing can write back.
 **Structural actions refuse before they mutate (`struct-01`).** `insertNode`,
 `deleteNode(s)`, `moveNode(s)`, `duplicateNode(s)` and `wrapNode(s)` ask
 `structuralSourceEdits.ts` first. On a studio-imported tree they either commit a
-`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMoves` /
+`move`/`delete`/`insert` edit to the user's `.tsx` (`commitStudioMove` / `commitStudioSequence` /
 `commitStudioDelete` / `commitStudioInsert`) or toast a reason and do nothing —
 never both nothing and nothing said, which is what they used to do.
 
@@ -463,6 +463,12 @@ store's copy is already claimed and pruned) and extends the save-diff baseline
 (`mergeLoadedValuesBaseline`) before handing it over. Every re-read of a
 project already on screen is unchanged: one whole document through `loadSite`.
 
+The token extraction (`POST /tokens`) runs AFTER every load, unwaited
+(`studioProjectLoad.ts`'s `adoptExtractedTokens`); its framework reaches the
+store through `adoptLoadedFramework(loaded, extracted)` — no history, no dirty
+mark, framework classes reconciled, node indexes rebuilt — and is skipped when
+the document no longer holds the framework the load gave it.
+
 ---
 
 ## Undo / redo
@@ -504,11 +510,30 @@ back to it — on the page that OWNS the element, found through
 `deleteNodes` tags its entry as a `source` gesture whose undo is a
 `reinsert-source` write (`store-15`). Tagging happens only when a source write
 was actually issued — a CMS or Visual Component tree keeps plain patch replay.
-A multi-selection step (`stepSiblings` → `moveSiblings`, P2-C2) is tagged
-`siblings` with the whole batch of independent single-element moves; its undo
-re-issues the inverse batch through `moveSiblings` — again one write and one
-entry (`siblingStepActions.ts`; the independence rule is `@core/page-tree`'s
-`planSiblingSteps`). A batch of one is an ordinary `move` entry.
+Several elements moved as ONE gesture — an arrow step of a selection
+(`stepSiblings`, P2-C2) or a multi-selection drag (`moveNodes` with several
+ids, P3-D) — go through `moveNodesInSequence` (`moveSequenceActions.ts`):
+single-element moves applied IN ORDER, each planned against the scratch tree
+the previous one leaves (`@core/page-tree`'s `moveSequence.ts`), all or
+nothing, posted as ONE `/save` **sequence** (`commitStudioSequence` → the
+server's `studioEditSequence.ts`, which re-addresses every step by document
+order and restores every file if any step refuses). The entry is tagged
+`moves`; its undo is `invertMoveSequence` re-issued through the same action.
+A sequence of one is an ordinary `move` entry.
+
+**P3-D — what used to refuse and now writes.** ⌥-drag and ⌘V of several
+elements (`planSourceDuplicateTo` returns the copies in WRITE order; several
+are one sequence); a wrap of several elements (it is a group); a move or copy
+into a container in ANOTHER file (a `transplant`, `crossFile` on the plan); a
+paste of something copied in another frame, or before an edit renumbered its
+file (`studioPasteWrites.ts` finds it on the board, by id or by unique
+fingerprint). **OD-7** — a gesture refused `shared-component` is taken over
+by `instanceOnlyGesture.ts`: it detaches THIS call site
+(`commitStudioDetachForInstance`), follows every id the gesture named into
+the detached markup by child-index path, replays it (`retry(mapId)` — every
+`retry` closure now takes an id MAP), and marks the detach entry
+`linkedToNext`, so one ⌘Z undoes both (`undoRedoActions.ts` cascades). A
+detach that refuses shows the refusal dialog, as before.
 
 **Undo never jams, and never lies (P1-F).** A structural step that can never
 happen as recorded (an `unsupported` inverse, an element gone from the board, a

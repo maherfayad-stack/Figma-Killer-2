@@ -1017,7 +1017,9 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
   // The multi-select half of the same rule: several elements can be duplicated
   // or deleted in one batch (ordered bottom-to-top), but ONE wrapper around
   // several ranges is not a write `wrapJsxElement` makes.
-  it('a multi-selection can be duplicated but not wrapped', () => {
+  // P3-D — a wrap of several elements is a group now (one container around
+  // their run), so the item is enabled. It used to be refused `multi-select`.
+  it('a multi-selection can be duplicated AND wrapped', () => {
     const page = makePage({
       id: 'page-multi',
       rootNodeId: 'root',
@@ -1032,7 +1034,7 @@ describe('LayerNodeContextMenu — R4 pre-disabled structural gestures', () => {
     expect(screen.getByRole('menuitem', { name: /duplicate/i }).getAttribute('aria-disabled')).toBeNull()
     fireEvent.mouseEnter(screen.getByRole('menuitem', { name: /wrap in/i }))
     const containerItem = within(screen.getByRole('menu', { name: 'Wrap in' })).getByRole('menuitem', { name: /container/i })
-    expect(containerItem.getAttribute('aria-disabled')).toBe('true')
+    expect(containerItem.getAttribute('aria-disabled')).toBeNull()
   })
 })
 
@@ -1087,7 +1089,10 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     expect(screen.queryByTestId('constraint-notice')).toBeNull()
   })
 
-  it('explains a shared-component refusal and names where the markup really lives', () => {
+  // OD-7 (P3-D) — a gesture inside a shared component is written to THIS
+  // instance (detach, then the gesture), so nothing is refused and no footer
+  // shows. The footer used to explain a `shared-component` refusal here.
+  it('refuses nothing inside a shared component — it applies to this instance (OD-7)', () => {
     const shared = 'src/screens/Home.jsx:9:1~src/ui/Icon.jsx:3:4'
     const page = makePage({
       id: 'page-shared',
@@ -1099,17 +1104,7 @@ describe('LayerNodeContextMenu — refusal footer', () => {
     })
     renderMenuForNode(shared, page)
 
-    const notice = screen.getByTestId('constraint-notice')
-    expect(notice.getAttribute('data-constraint-reason')).toBe('shared-component')
-    // R1 (`STATE.md`'s `refusal-01`) gave `shared-component` a real targeted
-    // `edit-component` action — `ConstraintNotice`'s own de-dup rule
-    // ("origin is offered on its own only when no action already points at a
-    // file") now correctly suppresses the separate `constraint-origin` badge
-    // this test used to assert on, since the action button below points at
-    // the same file. The button's own label doesn't name the file the way
-    // the old badge did — a real, minor precision loss worth a follow-up,
-    // not a bug this test should paper over.
-    expect(screen.queryByTestId('constraint-origin')).toBeNull()
-    expect(screen.getByTestId('constraint-action-edit-component').textContent).toContain('Open the component definition')
+    expect(screen.queryByTestId('constraint-notice')).toBeNull()
+    expect(screen.getByRole('menuitem', { name: /delete/i }).getAttribute('aria-disabled')).toBeNull()
   })
 })

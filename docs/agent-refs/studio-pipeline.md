@@ -79,9 +79,13 @@ page order, so no page line can leave before every route is parsed. A cold
 load's first line waits for the whole parse; streaming buys the board painting
 the first pages while the rest are still being sent, parsed and validated.
 
-Independently, the CLIENT (`studioProjectLoad.ts`) calls
-`POST /admin/api/studio/tokens` (`tokens-01`, `studio/tokenExtract.ts`) and
-`GET /admin/api/studio/framework`, both started together with `/load` — reads `:root` custom properties out
+Beside the load, the CLIENT (`studioProjectLoad.ts`) reads
+`GET /admin/api/studio/framework` (started together with `/load`; the open
+document's framework), and AFTER it — unwaited, adopted when it lands as part
+of the read (`adoptLoadedFramework`), P6-B — calls
+`POST /admin/api/studio/tokens` (`tokens-01`, `studio/tokenExtract.ts`), which
+costs the server 150–600 ms per open and, run beside `/load`, held its first
+byte back by as much. The extraction reads `:root` custom properties out
 of the SAME `compileProjectStyles` output step 6.5 already produced (falling
 back to a static Tailwind-theme read, then vendor package CSS), classifies
 them into `FrameworkColorToken`/`FrameworkSpacingGroup`/
@@ -488,9 +492,11 @@ from the node id and `lockReason` alone:
 | `cross-file` / `no-sibling-anchor` | a reorder is written as "put this before that one", so it needs a plain sibling in the same file; a reparent needs its new parent in that file. **A drag ACROSS frames is not this** — it is a `transplant`, which is allowed, and whose own tree-level rule is `previewStructuralTransplant` (`sourceStructureTransplant.ts`): the four placement reasons on BOTH ends, one element at a time, an honest destination container, and a backstop refusal when the two frames turn out to be two views of one file |
 
 The AST adds the refusals only it can answer: `not-siblings`,
-`expression-child` (the element comes out of `{cond && <X/>}`, so its position
-is decided at runtime — and, for a group, something the code decides sits
-between the members), `mixed-indentation`, `no-jsx-parent` (it is what the
+`expression-child` (a `.map` row or a helper call — and, for a group,
+something the code decides sits between the members; since P3-D a MOVE or
+DELETE of `{cond && <X/>}` acts on the whole container, a ternary branch
+deletes to `null`, and an ANCHOR the code produces is written against its
+`{…}` container — `resolveJsxChildRange`'s `unit`), `no-jsx-parent` (it is what the
 component returns), `stale-source`, `into-own-descendant`, K3's
 **`not-contiguous`** (an element the user did not select sits inside the span a
 group would wrap) and **`has-behaviour`**, and W4-1's
@@ -607,7 +613,7 @@ when it copied and `relocated` when it moved — the two have different undos.
 Both id lists are on the `/save` response.
 
 **Commit shape.** Structural edits are one-shot commits
-(`commitStudioMoves` / `commitStudioDelete` / `commitStudioDuplicate` /
+(`commitStudioMove` / `commitStudioSequence` / `commitStudioDelete` / `commitStudioDuplicate` /
 `commitStudioGroup` / `commitStudioUngroup` / … in
 `studioStructuralCommits.ts`), like
 asset/detach/swap — never the `saveSite` diff, which has no notion of parent or

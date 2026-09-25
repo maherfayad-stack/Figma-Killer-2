@@ -223,8 +223,18 @@ export async function postOneEdit(edit: StructuralEditPayload): Promise<StudioSa
 }
 
 /**
+ * How `/save` applies a batch. `sequence` (P3-D): in the order given, each
+ * edit against the files the previous ones left, all or nothing — the server's
+ * `studioEditSequence.ts`. Without it the edits must be independent, and the
+ * route orders them bottom-to-top.
+ */
+export interface PostEditsOptions {
+  sequence?: true
+}
+
+/**
  * Post a batch of edits to `/save`. The save route orders them bottom-to-top
- * before applying.
+ * before applying (unless `options.sequence` asks for them in order).
  *
  * `identities` (P1-A) is what the writer captured about each node id its edits
  * name — sent as `expect`, so an edit whose position now holds a different
@@ -241,11 +251,17 @@ export async function postEdits(
   edits: readonly Record<string, unknown>[],
   identities?: IdentityCapture,
   idempotencyKey?: string,
+  options: PostEditsOptions = {},
 ): Promise<StudioSaveResponse> {
   const expect = identities ? expectationsFor(identities) : {}
   const result = await apiRequest('/admin/api/studio/save', {
     method: 'POST',
-    body: { dir: studioWriteDir(), edits, ...(Object.keys(expect).length > 0 ? { expect } : {}) },
+    body: {
+      dir: studioWriteDir(),
+      edits,
+      ...(Object.keys(expect).length > 0 ? { expect } : {}),
+      ...(options.sequence ? { sequence: true } : {}),
+    },
     schema: StudioSaveResponseSchema,
     ...(idempotencyKey ? { idempotencyKey } : {}),
   })
