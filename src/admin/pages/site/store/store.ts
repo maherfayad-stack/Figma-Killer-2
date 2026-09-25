@@ -4,6 +4,7 @@ import { subscribeWithSelector } from 'zustand/middleware'
 import type { Page, SiteDocument } from '@core/page-tree'
 import { flattenVCToVirtualPage } from '@core/visualComponents'
 import type { EditorStore } from './types'
+import { skipUnchangedSets } from './skipUnchangedSets'
 import { createSiteSlice } from './slices/siteSlice'
 import { createSelectionSlice } from './slices/selectionSlice'
 import { createCanvasSlice } from './slices/canvasSlice'
@@ -68,34 +69,39 @@ export type { EditorStore }
 
 export const useEditorStore = create<EditorStore>()(
   subscribeWithSelector(
-    // The zustand-mutative middleware gives slice recipes draft-mutation syntax
-    // plus structural sharing. enableAutoFreeze keeps the dev guard against
-    // accidental external mutation; existing code already tolerates frozen state.
-    // Patch-based undo history opts INTO patches per-call via mutative `create`.
-    mutative(
-      (...args) => ({
-        ...createSiteSlice(...args),
-        ...createSelectionSlice(...args),
-        ...createCanvasSlice(...args),
-        ...createUiSlice(...args),
-        ...createStyleRuleSlice(...args),
-        ...createFilesSlice(...args),
-        ...createVisualComponentsSlice(...args),
-        ...createSettingsSlice(...args),
-        ...createAgentSlice(siteAgentSliceConfig)(...args),
-        ...createSitePanelSlice(...args),
-        ...createClipboardSlice(...args),
-        ...createInlineEditSlice(...args),
-        ...createLayoutsSlice(...args),
-        ...createSaveTrackingSlice(...args),
-        ...createBoardSlice(...args),
-        ...createCommentsSlice(...args),
-        ...createPrototypeSlice(...args),
-        ...createCanvasLayerSlice(...args),
-        ...createLocalizedPageSlice(...args),
-      }),
-      { enableAutoFreeze: true },
-    )
+    // A write that changes nothing notifies nobody — see `skipUnchangedSets.ts`
+    // (P6-C: two such writes per canvas click each swept every mounted node's
+    // selectors).
+    skipUnchangedSets(
+      // The zustand-mutative middleware gives slice recipes draft-mutation syntax
+      // plus structural sharing. enableAutoFreeze keeps the dev guard against
+      // accidental external mutation; existing code already tolerates frozen state.
+      // Patch-based undo history opts INTO patches per-call via mutative `create`.
+      mutative(
+        (...args) => ({
+          ...createSiteSlice(...args),
+          ...createSelectionSlice(...args),
+          ...createCanvasSlice(...args),
+          ...createUiSlice(...args),
+          ...createStyleRuleSlice(...args),
+          ...createFilesSlice(...args),
+          ...createVisualComponentsSlice(...args),
+          ...createSettingsSlice(...args),
+          ...createAgentSlice(siteAgentSliceConfig)(...args),
+          ...createSitePanelSlice(...args),
+          ...createClipboardSlice(...args),
+          ...createInlineEditSlice(...args),
+          ...createLayoutsSlice(...args),
+          ...createSaveTrackingSlice(...args),
+          ...createBoardSlice(...args),
+          ...createCommentsSlice(...args),
+          ...createPrototypeSlice(...args),
+          ...createCanvasLayerSlice(...args),
+          ...createLocalizedPageSlice(...args),
+        }),
+        { enableAutoFreeze: true },
+      ),
+    ),
   )
 )
 

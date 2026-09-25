@@ -1483,13 +1483,26 @@ there is one policy, parameterised by what a frame **costs**:
 
 | `FrameMountCost` | A mounted frame is | Budget |
 |---|---|---|
-| `'portal'` (Tier 0/1) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
-| `'live'` (Tier 2) | `LiveBoardFrame`: a Tier-0 fallback document **and** a cross-origin bridge iframe against a real dev-server process — two documents until it reports ready | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+| `'portal'` (Tier 0/1, and Tier 2 until its dev server is ready) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
+| `'live'` (Tier 2, dev server ready) | `LiveBoardFrame`: a cross-origin bridge iframe against a real dev-server process (plus its fallback until that frame reports ready) — measured ~0.85 MB of heap, one document and ~110 DOM nodes per small frame (`docs/audits/2026-09-13-live-frame-memory-baseline.md`) | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
 
-The cost is derived from the trust tier in `BoardFramesLayer` and **nowhere
-else**; the tier no longer reaches mounting at all. One retention list, one
-`useState`, one budget per render. Switching tier (Tier-2 auto-promotion, or
-its Undo) is part of the retention key, so the pool resizes without a pan.
+The cost is derived from the trust tier **and the dev server's readiness** in
+`BoardFramesLayer` and **nowhere else**; the tier no longer reaches mounting at
+all. One retention list, one `useState`, one budget per render. A trust change,
+or the dev server coming up, is part of the retention key, so the pool resizes
+without a pan.
+
+**Why readiness and not just the tier (P6-C).** Until its dev server is ready
+a Tier-2 frame IS its same-origin fallback (the bridge iframe has nothing to
+load), and the portal headroom is the only window in which a departed frame
+can be rasterized into its poster — capture runs only for a frame that is off
+screen and still pooled (P2-I). Under the live budget a frame leaving a full
+screen was evicted on the spot, so a Tier-2 board whose server was booting,
+failed or could not start (no `node_modules`) never got a poster: `perf-01`
+read 0/4. And `LiveBoardFrame` paints a cached poster OVER its clickable
+fallback until the fallback's tree commits — never INSTEAD of it; it used to
+replace it, so a frame panned away from and back to became a picture nothing
+could select until the server reported ready.
 
 `resolveFrameMount({ isOnScreen, isPooled })` is the single per-frame answer,
 returning `{ mounted, reason }` where `reason` is `on-screen` / `pooled` /
