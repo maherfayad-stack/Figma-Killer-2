@@ -263,14 +263,6 @@ export const OptimisticMoveMessageSchema = Type.Object({
   index: Type.Number({ minimum: 0 }),
 })
 
-/** Sets `textContent`, never `innerHTML` — see the module docblock. */
-export const OptimisticTextMessageSchema = Type.Object({
-  type: Type.Literal('optimistic.text'),
-  nodeId: Type.String({ minLength: 1 }),
-  occurrenceIndex: Type.Integer({ minimum: 0, default: 0 }),
-  text: Type.String(),
-})
-
 /**
  * `speed-01` — a properties-panel style commit or scrub preview, applied
  * in-frame as a stylesheet rule ahead of the file write + HMR round trip
@@ -350,7 +342,6 @@ export const OptimisticMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
   OptimisticRevertMessageSchema,
@@ -370,7 +361,6 @@ export const InboundRuntimeMessageSchema = Type.Union([
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
   OptimisticRevertMessageSchema,

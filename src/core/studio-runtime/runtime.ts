@@ -37,10 +37,10 @@
  *     TypeBox schema runs, so a same-shaped message from an unrelated
  *     `postMessage` sender (React DevTools, a browser extension) is dropped
  *     without ever reaching a handler.
- *   - `optimistic.insert`/`optimistic.text` never touch `innerHTML`, and
- *     refuse a dangerous tag name case-insensitively before
- *     `createElement` runs — see `optimisticDomOps.ts`, which owns all four
- *     mutations and is deliberately small enough to audit at a glance.
+ *   - `optimistic.insert` never touches `innerHTML`, and refuses a dangerous
+ *     tag name case-insensitively before `createElement` runs — see
+ *     `optimisticDomOps.ts`, which owns every structural preview
+ *     mutation and is deliberately small enough to audit at a glance.
  *   - The outbound `error` channel (Z5) carries only bounded plain text, no
  *     HTML and no node id, capped and rate-limited at this honest sender
  *     (`runtimeErrorTaps.ts`). A same-realm forger can still post directly,
@@ -68,7 +68,6 @@ import {
   applyOptimisticDelete,
   applyOptimisticInsert,
   applyOptimisticMove,
-  applyOptimisticText,
   revertOptimisticDom,
   revertOptimisticNodes,
   sweepOptimisticGhosts,
@@ -599,9 +598,6 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       case 'optimistic.revert':
         revertOptimisticNodes(doc, message.refs)
         scheduleReposition()
-        return
-      case 'optimistic.text':
-        applyOptimisticText(doc, message.nodeId, message.occurrenceIndex, message.text)
         return
       case 'optimistic.style':
         applyOptimisticStyle(doc, message.ref, message.patch) // `message.className` is wire-informational only — see `optimisticStyle.ts`

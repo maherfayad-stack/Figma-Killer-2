@@ -70,7 +70,6 @@ export {
   OptimisticInsertMessageSchema,
   OptimisticDeleteMessageSchema,
   OptimisticMoveMessageSchema,
-  OptimisticTextMessageSchema,
   OptimisticStyleMessageSchema,
   OptimisticStyleClearMessageSchema,
   OptimisticStylePatchSchema,

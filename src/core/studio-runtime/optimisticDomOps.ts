@@ -1,7 +1,7 @@
 /**
- * optimisticDomOps — the four immediate DOM mutations a live frame performs
- * for the paint-on-drop feel, ahead of the HMR/writeback reconciliation that
- * follows within milliseconds.
+ * optimisticDomOps — the immediate structural DOM mutations (insert, delete,
+ * move, and their revert) a live frame performs for the paint-on-drop feel,
+ * ahead of the HMR/writeback reconciliation that follows within milliseconds.
  *
  * Extracted out of `runtime.ts` (module-size-budgets gate): "apply a
  * placeholder mutation to this document" is a distinct responsibility from
@@ -165,11 +165,6 @@ export function revertOptimisticNodes(doc: Document, refs: readonly { nodeId: st
     }
     own.removeAttribute(OPTIMISTIC_HIDDEN_ATTR)
   }
-}
-
-export function applyOptimisticText(doc: Document, nodeId: string, occurrenceIndex: number, text: string): void {
-  const el = findNthNodeById(doc, nodeId, occurrenceIndex)
-  if (el) el.textContent = text
 }
 
 /** Clears every optimistic placeholder and any leftover hide/move — called on `vite:afterUpdate`, which fires once the new DOM exists. */

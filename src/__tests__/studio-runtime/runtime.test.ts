@@ -268,17 +268,6 @@ describe('createStudioRuntimeBridge — optimistic DOM ops', () => {
     expect(to?.querySelector('[data-node-id="item"]')).not.toBeNull()
   })
 
-  it('text sets textContent, never innerHTML', () => {
-    document.body.innerHTML = `<div data-node-id="t1">old</div>`
-    const { fakeWindow } = makeFakeParentWindow()
-    bridge = createStudioRuntimeBridge({ parentOrigin: PARENT_ORIGIN, parentWindow: fakeWindow, document })
-
-    bridge.handleMessage({ type: 'optimistic.text', nodeId: 't1', occurrenceIndex: 0, text: '<b>bold</b>' })
-
-    const el = document.querySelector('[data-node-id="t1"]')
-    expect(el?.textContent).toBe('<b>bold</b>')
-    expect(el?.querySelector('b')).toBeNull()
-  })
 })
 
 // `speed-01` — a properties-panel style commit/scrub previewed in-frame

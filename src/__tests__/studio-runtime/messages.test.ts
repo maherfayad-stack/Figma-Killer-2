@@ -71,7 +71,6 @@ const inboundSamples: InboundRuntimeMessage[] = [
     parentOccurrenceIndex: 1,
     index: 1,
   },
-  { type: 'optimistic.text', nodeId: 'n1', occurrenceIndex: 0, text: 'updated' },
   {
     type: 'optimistic.style',
     ref: { nodeId: 'n1', occurrenceIndex: 0 },
