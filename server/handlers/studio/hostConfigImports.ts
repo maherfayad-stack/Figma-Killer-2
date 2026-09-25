@@ -288,43 +288,112 @@ export function hostConfigImportedBy(root: string, rel: string): string | null {
   return entry.importedBy.get(comparableWorkspaceRel(rel)) ?? null
 }
 
-/** `text` with every CSS comment removed — a linear scan, so an unterminated `/*` costs one pass. */
-function withoutCssComments(text: string): string {
-  const QUOTE_DOUBLE = 0x22
-  const QUOTE_SINGLE = 0x27
-  const BACKSLASH = 0x5c
-  const NEWLINE = 0x0a
+// ---------------------------------------------------------------------------
+// Tailwind's load directives, read every way they can be read
+// (security review of #256, B1 and its two re-reviews)
+// ---------------------------------------------------------------------------
+
+const BACKSLASH = 0x5c
+const SLASH = 0x2f
+const STAR = 0x2a
+const QUOTE_DOUBLE = 0x22
+const QUOTE_SINGLE = 0x27
+const NEWLINE = 0x0a
+const CARRIAGE_RETURN = 0x0d
+
+/** A comment-stripped reading, and whether the tokenizer met a construct it could not close. */
+interface StrippedReading {
+  readonly text: string
+  readonly unterminated: boolean
+}
+
+/**
+ * `text` with its comments removed EXACTLY as Tailwind's own CSS parser
+ * removes them — mirrored from `tailwindcss@4.3.3`'s `dist/lib.mjs`, the
+ * parser function `Te(e, i)` (the one whose error reads "Unterminated
+ * string"), and its string scanner `Lr(e, i, r, t)`:
+ *
+ * - a backslash escapes the next character EVERYWHERE — outside strings
+ *   (`v===He` → `f+=e.slice(u,u+2),u+=1`, `He` = 92), inside comments
+ *   (`m===He` → `y+=1`) and inside strings (`Lr`: `n===He` → `s+=1`). The
+ *   escaped pair is kept, never interpreted: `x\'` is not a string opener;
+ *   that miss was the second re-review's bypass;
+ * - `/*` opens a comment that ends at the first unescaped `*\/`; the comment
+ *   is dropped from the buffer with nothing in its place, which is why
+ *   `@plu/**\/gin` becomes `@plugin`. An UNTERMINATED comment is not dropped:
+ *   the loop leaves `u` on the `/` and the characters are read as text;
+ * - `"` or `'` opens a string, copied whole, that ends at the same quote. A
+ *   newline inside it makes Tailwind throw ("Unterminated string"); a string
+ *   still open at the end of the text is NOT a string (`Lr` returns `i`, so
+ *   only the quote is consumed) and reading goes on after the quote;
+ * - `\r` before `\n` is skipped.
+ *
+ * Where Tailwind would throw — a newline inside a string — this reading does
+ * what the CSS Syntax spec (§4.3.5, bad-string) does instead: it ends the
+ * string there and carries on, so the rest of the file is still read (a
+ * `.vue`'s `<script>` apostrophe must not hide its `<style>` block). Every
+ * construct left open is reported as `unterminated`.
+ */
+function tailwindCommentStrip(text: string): StrippedReading {
   let out = ''
-  let copiedFrom = 0
-  let index = 0
-  while (index < text.length) {
-    const code = text.charCodeAt(index)
-    // A string is copied whole, the way CSS tokenizes it: a `/*` or `*/`
-    // INSIDE one is text, not a comment (security review of #256, B1 — a
-    // string-blind stripper deleted a real directive between two strings).
-    // It ends at its quote or an unescaped newline; a backslash escapes the
-    // next character.
-    if (code === QUOTE_DOUBLE || code === QUOTE_SINGLE) {
-      index += 1
-      while (index < text.length) {
-        const inner = text.charCodeAt(index)
-        if (inner === BACKSLASH) { index += 2; continue }
-        index += 1
-        if (inner === code || inner === NEWLINE) break
+  let unterminated = false
+  let u = 0
+  while (u < text.length) {
+    const code = text.charCodeAt(u)
+    if (code === CARRIAGE_RETURN && text.charCodeAt(u + 1) === NEWLINE) { u += 1; continue }
+    if (code === BACKSLASH) { out += text.slice(u, u + 2); u += 2; continue }
+    if (code === SLASH && text.charCodeAt(u + 1) === STAR) {
+      let end = -1
+      for (let y = u + 2; y < text.length; y += 1) {
+        const inner = text.charCodeAt(y)
+        if (inner === BACKSLASH) { y += 1; continue }
+        if (inner === STAR && text.charCodeAt(y + 1) === SLASH) { end = y + 1; break }
       }
+      if (end === -1) { unterminated = true; out += '/'; u += 1; continue }
+      u = end + 1
       continue
     }
-    if (text.startsWith('/*', index)) {
-      out += text.slice(copiedFrom, index)
-      const close = text.indexOf('*/', index + 2)
-      if (close === -1) return out
-      index = close + 2
-      copiedFrom = index
+    if (code === QUOTE_DOUBLE || code === QUOTE_SINGLE) {
+      let end = -1
+      let s = u + 1
+      for (; s < text.length; s += 1) {
+        const inner = text.charCodeAt(s)
+        if (inner === BACKSLASH) { s += 1; continue }
+        if (inner === code) { end = s; break }
+        if (inner === NEWLINE) { unterminated = true; end = s - 1; break }
+      }
+      if (end === -1) { unterminated = true; out += text[u]; u += 1; continue }
+      out += text.slice(u, end + 1)
+      u = end + 1
       continue
     }
-    index += 1
+    out += text[u]
+    u += 1
   }
-  return out + text.slice(copiedFrom)
+  return { text: out, unterminated }
+}
+
+/** `text` with every `/*…*\/` removed, whatever quotes or escapes surround it. */
+function naiveCommentStrip(text: string): StrippedReading {
+  let out = ''
+  let index = 0
+  for (;;) {
+    const open = text.indexOf('/*', index)
+    if (open === -1) return { text: out + text.slice(index), unterminated: false }
+    out += text.slice(index, open)
+    const close = text.indexOf('*/', open + 2)
+    if (close === -1) return { text: out, unterminated: true }
+    index = close + 2
+  }
+}
+
+/** CSS escapes decoded (`\70` → `p`, `\p` → `p`), the form a CSS-aware tool may compare a name in. */
+function decodeCssEscapes(text: string): string {
+  return text.replace(/\\([0-9a-fA-F]{1,6})[ \t\n]?|\\([^\n0-9a-fA-F])/g, (_all, hex: string | undefined, char: string | undefined) => {
+    if (hex === undefined) return char ?? ''
+    const point = parseInt(hex, 16)
+    return point > 0 && point <= 0x10ffff ? String.fromCodePoint(point) : ''
+  })
 }
 
 /** A `@plugin`/`@config` at-rule: its name, its parameter as written, and the path Tailwind takes from it. */
@@ -334,25 +403,49 @@ export interface TailwindLoadDirective {
   readonly path: string
 }
 
+/** A directive whose name was assembled from pieces — present, but with no parameter this reading can trust. */
+const OBFUSCATED = '<spelled across comments or escapes>'
+/** A reading that could not be closed, in a text that spells a directive somewhere: counted as one, fail closed. */
+const UNTOKENIZABLE = '<in text a tokenizer could not close>'
+
 /**
- * Every Tailwind `@plugin` / `@config` at-rule in a text, read the way
- * Tailwind reads it (security review of #256, B1). `tailwindcss@4` takes the
- * path as `params.slice(1, -1)`: it strips the parameter's first and last
- * character WHATEVER they are, so `@plugin (./evil.js);`, `@plugin
- * |./evil.js|;` and `@config x./evil.jsx;` all load `./evil.js`, and a comment
- * between the name and the parameter (`@plugin/**\/"./x.js"`) is dropped by
- * the CSS parser before Tailwind sees it. So: comments first, then ANY
- * `@plugin`/`@config` token up to the `;`, `{` or `}` that ends the at-rule,
- * with no assumption about how the parameter is wrapped. The at-rule name is
- * compared case-sensitively, as Tailwind does. One parser for the closure scan
- * above and for the content half of the agent write gate.
+ * Every Tailwind `@plugin` / `@config` at-rule in a text, read every way it
+ * can be read, so no spelling one tool sees and another misses slips
+ * through (security review of #256, B1 and two re-reviews). Four readings
+ * of the text — as written, comment-stripped the way Tailwind strips
+ * (`tailwindCommentStrip`), comment-stripped naively, and each with CSS
+ * escapes decoded — and in each, any `@plugin`/`@config` token up to the `;`,
+ * `{` or `}` that ends it, however the path is wrapped (Tailwind takes it as
+ * `params.slice(1, -1)`). On top, a letters-only pass over each reading
+ * counts a name spelled across comments, escapes or whitespace
+ * (`@plu/**\/gin`, `@\70 lu/**\/gin`) even where no parameter can be read.
+ * And a reading that cannot be closed — an unterminated string or comment —
+ * in a text that spells a directive anywhere counts as one more: fail closed.
+ *
+ * Over-counting is the safe side: the content gate refuses only a write that
+ * ADDS to this list, so a directive every reading counts in both the old and
+ * new text never refuses, and an over-count costs the user one approval.
  */
 export function parseTailwindLoadDirectives(text: string): TailwindLoadDirective[] {
-  // Both readings, as defence in depth: the comment-stripped text (what the
-  // CSS parser hands Tailwind) and the raw text (so a stripper that misreads a
-  // string or a `<script>` block can never hide a directive). A directive that
-  // only appears inside a comment is over-counted, never missed.
-  return [...directivesIn(withoutCssComments(text)), ...directivesIn(text)]
+  const tokenized = tailwindCommentStrip(text)
+  const naive = naiveCommentStrip(text)
+  const readings = [text, tokenized.text, naive.text]
+  const out: TailwindLoadDirective[] = []
+  let spelled = 0
+  for (const reading of readings) {
+    for (const variant of [reading, decodeCssEscapes(reading)]) {
+      out.push(...directivesIn(variant))
+      const letters = variant.replace(/[^A-Za-z0-9@_-]/g, '')
+      for (const match of letters.matchAll(/@(plugin|config)(?![A-Za-z0-9_-])/gi)) {
+        spelled += 1
+        out.push({ name: match[1]!.toLowerCase() === 'plugin' ? '@plugin' : '@config', params: OBFUSCATED, path: '' })
+      }
+    }
+  }
+  if ((tokenized.unterminated || naive.unterminated) && spelled > 0) {
+    out.push({ name: '@plugin', params: UNTOKENIZABLE, path: '' })
+  }
+  return out
 }
 
 function directivesIn(text: string): TailwindLoadDirective[] {

@@ -429,3 +429,40 @@ describe('agentContentRefusal — comment markers inside strings never hide a di
     expect(agentContentRefusal('index.html', '', `<html>${vue}</html>`)?.code).toBe('needs-user')
   })
 })
+
+// Security re-review 2 of #256, B1: tailwindcss@4.3.3 treats a backslash as
+// an escape EVERYWHERE, so `x\'` outside a string is no string opener, and it
+// drops a comment inside an at-rule name. Each line below loads `./evil.js`
+// in the real compiler; the class is closed by mirroring its tokenizer and by
+// refusing on ANY of several readings.
+describe('agentContentRefusal — Tailwind\'s own tokenizer, and every other reading (B1, re-review 2)', () => {
+  const BS = String.fromCharCode(92)
+
+  it('the exploit: an escaped apostrophe outside a string, then a comment inside the at-rule name', () => {
+    const after = `.a{content:x${BS}'} @plu/**/gin (./evil.js); .b{content:'}\n`
+    expect(agentContentRefusal('src/index.css', '.a{}\n', after)?.code).toBe('needs-user')
+  })
+
+  it('the same inside a <style> block of an HTML or Vue file', () => {
+    const style = `<style>.a{content:x${BS}'} @plu/**/gin (./evil.js); .b{content:'}</style>\n`
+    expect(agentContentRefusal('index.html', '<html></html>\n', `<html>${style}</html>\n`)?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/App.vue', '<template/>\n', `<template/>\n${style}`)?.code).toBe('needs-user')
+  })
+
+  it('a CSS hex escape and a comment inside the name', () => {
+    expect(agentContentRefusal('src/index.css', '', `@${BS}70 lu/**/gin "./evil.js";\n`)?.code).toBe('needs-user')
+    expect(agentContentRefusal('src/index.css', '', `@${BS}70lugin (./evil.js);\n`)?.code).toBe('needs-user')
+  })
+
+  it('a comment with text inside the name, after a string that holds a comment opener', () => {
+    expect(agentContentRefusal('src/index.css', '', '.a{content:"/*"} @plu/*x*/gin (./evil.js);\n')?.code).toBe('needs-user')
+  })
+
+  it('an ordinary edit of a stylesheet, or of a component full of apostrophes, still lands', () => {
+    const tsx = "export default function Home() {\n  return <p>Don't have an account? It's free</p>\n}\n"
+    expect(agentContentRefusal('src/Home.tsx', tsx, tsx.replace('free', 'quick'))).toBeNull()
+    expect(agentContentRefusal('src/Home.tsx', null, tsx)).toBeNull()
+    const css = '@import "tailwindcss";\n@plugin "@tailwindcss/typography";\n.a { content: "it\'s"; }\n'
+    expect(agentContentRefusal('src/index.css', css, css.replace('.a', '.b'))).toBeNull()
+  })
+})
