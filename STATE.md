@@ -12,7 +12,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
 ### store-20 — P6-A: reconcile after writes (PERF-6)
-- **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
+- **Agent:** store-engineer · **Branch:** `perf/reconcile-after-writes` off `74425627` · draft PR #266 (base `feat/canvas-excellence`), long form in the body · **Updated:** 2026-09-25
 - **Stage:** done, awaiting merge — build + lint green; `bun test` (chunked) adds no failure (pre-existing + load timeouts triaged in the PR body); e2e `studio-board-perf` 2 failures reproduce with the change disabled.
 - **Slices touched:** `site/lifecycleActions.ts` (`patchPages`, and `createSite`/`loadSite`/`clearSite` clear the render keys), `site/reparseNodeFollow.ts` (optional `alignments` input, shared). New `site/rereadRenderKeys.ts`, `canvas/nodeRenderKeys.ts` (off-store), `@core/utils/replaceEqualDeep`. No new selector; no new mutation (a re-read is not an edit: no history entry, no coalesce key).
 - **Done:**
