@@ -19,6 +19,7 @@ import { afterAll, afterEach, beforeEach, describe, expect, it, mock } from 'bun
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useEditorStore } from '@site/store/store'
 import { setStudioStyleRuleSources } from '@site/studio/styleRuleWriteback'
+import { createFakeUploadXhr } from '@site/studio/__tests__/fakeUploadXhr'
 
 // The shape `project-assets` answers with: each file carries the URL the
 // SERVER computed (`assetSiteUrl.ts`). The picker writes `src` verbatim.
@@ -144,15 +145,12 @@ describe('Fill — add an image fill', () => {
   })
 
   it('an uploaded image fill lands through asset-drop and writes the src the server returned', async () => {
-    const savedFetch = globalThis.fetch
-    const seen: string[] = []
-    globalThis.fetch = (async (input: RequestInfo | URL) => {
-      seen.push(typeof input === 'string' ? input : input instanceof URL ? input.href : input.url)
-      return new Response(
-        JSON.stringify({ ok: true, mode: 'public', relPath: 'apps/web/public/new.png', src: '/new.png', width: 1, height: 1, deduped: false }),
-        { status: 200, headers: { 'content-type': 'application/json' } },
-      )
-    }) as typeof fetch
+    // The upload goes through the one XHR upload client, apiUploadRequest.
+    const xhr = createFakeUploadXhr(() => ({
+      status: 200,
+      body: { ok: true, mode: 'public', relPath: 'apps/web/public/new.png', src: '/new.png', width: 1, height: 1, deduped: false },
+    }))
+    xhr.install()
     try {
       selectNode()
       const { container } = render(<FillSection />)
@@ -164,9 +162,9 @@ describe('Fill — add an image fill', () => {
       fireEvent.change(input, { target: { files: [file] } })
 
       await waitFor(() => expect(currentNode()?.inlineStyles?.backgroundImage).toBe("url('/new.png')"))
-      expect(seen.map((url) => url.split('?')[0])).toEqual(['/admin/api/studio/asset-drop'])
+      expect(xhr.requests.map((request) => request.url.split('?')[0])).toEqual(['/admin/api/studio/asset-drop'])
     } finally {
-      globalThis.fetch = savedFetch
+      xhr.restore()
     }
   })
 

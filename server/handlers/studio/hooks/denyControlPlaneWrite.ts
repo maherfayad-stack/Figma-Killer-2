@@ -40,12 +40,12 @@
  * drop the security gate from those projects.
  */
 import { resolve } from 'node:path'
-import { agentWriteRefusal } from '../agentWriteScope'
+import { agentToolInputContentRefusal, agentWriteRefusal, type AgentToolWriteInput } from '../agentWriteScope'
 import { captureAgentPreImage, conversationCheckpointKeyFromEnv } from '../agentCheckpoints'
 import { studioAgentUserKeyFromEnv } from '../agentUserScope'
 
 interface PreToolUseInput {
-  readonly tool_input?: { readonly file_path?: string }
+  readonly tool_input?: { readonly file_path?: string } & AgentToolWriteInput
   readonly cwd?: string
 }
 
@@ -63,7 +63,7 @@ async function main(): Promise<number> {
   if (!filePath) return 0
 
   const cwd = input.cwd ?? process.cwd()
-  const refusal = agentWriteRefusal(filePath, cwd)
+  const refusal = agentWriteRefusal(filePath, cwd) ?? agentToolInputContentRefusal(filePath, cwd, input.tool_input)
   if (refusal === null) {
     const conversationKey = conversationCheckpointKeyFromEnv()
     if (conversationKey !== null) {

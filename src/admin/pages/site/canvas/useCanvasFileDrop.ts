@@ -6,9 +6,10 @@
  *
  * `planCanvasFileDrop` decides everything that can go wrong before the network
  * is touched, and each of its refusals is one toast with a sentence and no
- * write. A drop that IS good makes exactly two calls — land the bytes, then
- * one structural commit — and the success toast is the commit's own, so the
- * user never gets two for one gesture.
+ * write. A drop that IS good is ONE store action (`runCanvasFileDropPlan`):
+ * insert N images as one write, replace an image's source, or set a
+ * background — the upload, the optimistic ghost and the write are the
+ * store's (`imageDropActions.ts`).
  *
  * ## The answer arrives before release
  *
@@ -49,24 +50,28 @@
  */
 import { useEffect, useRef } from 'react'
 import { pushToast } from '@ui/components/Toast'
-import { getErrorMessage } from '@core/utils/errorMessage'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
-import { dropStudioAsset } from '@site/studio/dropStudioAsset'
+import { IMAGE_DROP_TITLE } from '@site/store/slices/site/imageDropActions'
 import { measureBoardDropSurfaces } from './canvasDragBoard'
 import { paintCanvasDrag } from './canvasDragPainter'
 import type { ClientPoint } from './canvasDragSession'
 import {
   beginCanvasFileDragSession,
+  dropModifiersOf,
   readDraggedFileFacts,
   resolveCanvasFileDragPaint,
   type CanvasFileDragSession,
 } from './canvasFileDragPreview'
-import { planCanvasFileDrop } from './canvasFileDrop'
-import type { DroppedFileFacts } from './canvasFileDrop'
+import {
+  NO_DROP_MODIFIERS,
+  planCanvasFileDrop,
+  type CanvasFileDropModifiers,
+  type CanvasFileDropPlan,
+  type DroppedFileFacts,
+} from './canvasFileDrop'
+import { presentFreeMoveRefusal } from './canvasFreeMove'
+import { paintCanvasUploadProgress } from './canvasUploadProgress'
 import type { CanvasTransform } from './math'
-
-/** Title every refusal and every failure of this gesture shares. */
-const DROP_TITLE = 'Cannot add that image'
 
 interface UseCanvasFileDropOptions {
   /** Off entirely without structural edit rights — a read-only session writes nothing. */
@@ -87,7 +92,8 @@ export function useCanvasFileDrop({
   const hintLayerRef = useRef<HTMLDivElement | null>(null)
   const sessionRef = useRef<CanvasFileDragSession | null>(null)
   const pointRef = useRef<ClientPoint>({ x: 0, y: 0 })
-  const factsRef = useRef<DroppedFileFacts>({ count: 0, type: '' })
+  const factsRef = useRef<DroppedFileFacts>({ types: [] })
+  const modifiersRef = useRef<CanvasFileDropModifiers>(NO_DROP_MODIFIERS)
   const hintOriginRef = useRef<ClientPoint | null>(null)
   const frameRef = useRef<number | null>(null)
 
@@ -118,6 +124,7 @@ export function useCanvasFileDrop({
       const next = resolveCanvasFileDragPaint(session, {
         point: pointRef.current,
         facts: factsRef.current,
+        modifiers: modifiersRef.current,
         transform: transformRef?.current ?? null,
         readPage,
         hintLayer: hintLayerRef.current,
@@ -143,6 +150,7 @@ export function useCanvasFileDrop({
 
       pointRef.current = { x: event.clientX, y: event.clientY }
       factsRef.current = facts
+      modifiersRef.current = dropModifiersOf(event)
       if (!sessionRef.current) {
         sessionRef.current = beginCanvasFileDragSession(
           measureBoardDropSurfaces(transformRef?.current ?? null),
@@ -166,23 +174,11 @@ export function useCanvasFileDrop({
       const plan = planCanvasFileDrop({
         files: Array.from(transfer?.files ?? []),
         point: { x: event.clientX, y: event.clientY },
+        modifiers: dropModifiersOf(event),
         transform: transformRef?.current ?? null,
         readPage,
       })
-
-      if (!plan.ok) {
-        pushToast({
-          kind: 'warning',
-          title: DROP_TITLE,
-          body: plan.refusal.message,
-          location: 'site-editor',
-          // Dropping the same wrong thing twice is one fact, not two cards.
-          dedupeKey: `canvas-file-drop:${plan.refusal.reason}`,
-        })
-        return
-      }
-
-      void landAndInsert(plan.file, plan.pageId, plan.target.parentId, plan.target.index)
+      runCanvasFileDropPlan(plan)
     }
 
     // `relatedTarget === null` is the drag leaving the WINDOW; every other
@@ -208,36 +204,56 @@ export function useCanvasFileDrop({
 }
 
 /**
- * The two calls a good drop makes. Separate from the listener so the failure
- * of the FIRST one (the upload) is reported with the server's own sentence
- * rather than folded into the structural commit's refusal channel — they fail
- * for genuinely different reasons and only one of them is about the user's
- * source.
+ * Carry out a planned drop: a refusal is one toast (or, for a ⌘-drop into a
+ * static container, K6's one-click refusal dialog), and an accepted drop is
+ * one store action. The upload, the ghost and the write are the store's
+ * (`imageDropActions.ts`), so this is the only place a plan is dispatched.
  */
-async function landAndInsert(file: File, pageId: string, parentId: string, index: number): Promise<void> {
-  let src: string
-  try {
-    src = (await dropStudioAsset(file)).src
-  } catch (err) {
-    console.error('[canvas-file-drop] landing the dropped image failed:', err)
+export function runCanvasFileDropPlan(plan: CanvasFileDropPlan): void {
+  if (!plan.ok) {
+    const { refusal } = plan
+    if (refusal.staticParent) {
+      presentFreeMoveRefusal({ reason: 'static-parent', ...refusal.staticParent })
+      return
+    }
     pushToast({
-      kind: 'error',
-      title: DROP_TITLE,
-      body: getErrorMessage(err, 'The image could not be written into your project.'),
+      kind: 'warning',
+      title: IMAGE_DROP_TITLE,
+      body: refusal.message,
       location: 'site-editor',
+      // Dropping the same wrong thing twice is one fact, not two cards.
+      dedupeKey: `canvas-file-drop:${refusal.reason}`,
     })
     return
   }
-  useEditorStore.getState().insertImageIntoPage(pageId, parentId, index, { src, alt: altTextFor(file) })
-}
 
-/**
- * The `alt` a dropped image starts with: its own file name without the
- * extension. A placeholder the inspector fixes — but an `<img>` with NO `alt`
- * is a real accessibility defect written into someone's repository, and an
- * empty one asserts the image is decorative, which Studio cannot know.
- */
-function altTextFor(file: File): string {
-  const base = file.name.replace(/\.[^./\\]+$/, '').trim()
-  return base.length > 0 ? base : 'Image'
+  if (plan.skipped.length > 0) {
+    const names = plan.skipped.map((file) => `"${file.name}"`).join(', ')
+    pushToast({
+      kind: 'warning',
+      title: `${plan.skipped.length} file${plan.skipped.length === 1 ? '' : 's'} left out`,
+      body: `${names} ${plan.skipped.length === 1 ? 'is not an image' : 'are not images'}, so only the images were added.`,
+      location: 'site-editor',
+    })
+  }
+
+  const store = useEditorStore.getState()
+  const { action } = plan
+  if (action.kind === 'replace') {
+    store.replaceImageInPage(plan.pageId, action.nodeId, plan.files[0]!, paintCanvasUploadProgress)
+    return
+  }
+  if (action.kind === 'background') {
+    store.setBackgroundImageInPage(plan.pageId, action.nodeId, plan.files[0]!)
+    return
+  }
+  store.dropImagesIntoPage({
+    pageId: plan.pageId,
+    parentId: action.target.parentId,
+    index: action.target.index,
+    files: plan.files,
+    maxWidth: action.maxWidth,
+    absolute: action.absolute,
+    paintProgress: paintCanvasUploadProgress,
+  })
 }
