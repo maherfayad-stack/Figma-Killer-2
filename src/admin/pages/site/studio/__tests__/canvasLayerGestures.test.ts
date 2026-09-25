@@ -122,7 +122,7 @@ describe('free-canvas gestures', () => {
             createdNodeIds: lastAnswer.createdNodeIds ?? [],
             relocatedNodeIds: [],
             removed: lastAnswer.removed ?? [],
-            prunedImports: [],
+            undoToken: null,
           }),
           { status: 200 },
         )

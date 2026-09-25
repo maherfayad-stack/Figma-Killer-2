@@ -130,7 +130,7 @@ describe('replaceImageInPage — an import-bound src (IMG-3)', () => {
   it('records an undo that points the import back at the file it named before', () => {
     const inverse = resolveStructuralInverse(
       { kind: 'known', inverse: [{ kind: 'asset', nodeId: 'pages/About.tsx:1:18', assetPath: 'src/assets/brand/hero.png' }] },
-      { createdNodeIds: [], relocatedNodeIds: [], removed: [], prunedImports: [] },
+      { createdNodeIds: [], relocatedNodeIds: [], removed: [], undoToken: null },
     )
     expect(inverse).toEqual([{ kind: 'asset', nodeId: 'pages/About.tsx:1:18', assetPath: 'src/assets/brand/hero.png' }])
   })

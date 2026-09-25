@@ -117,7 +117,6 @@ describe('P1-D — an edit whose file changed under the board is re-found, not r
     expect(result.written).toBe(1)
     expect(read('pages/Home.tsx')).toContain('<li>Zero</li>')
     expect(read('pages/Home.tsx')).not.toContain('One')
-    expect(result.removed.map((entry) => entry.nodeId)).toEqual([one])
   })
 
   it('follows an element whose block was re-indented by an outside wrap', async () => {

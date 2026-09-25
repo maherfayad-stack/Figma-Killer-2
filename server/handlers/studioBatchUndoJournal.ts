@@ -28,9 +28,8 @@
  * than one edit is refused by name, before anything runs.
  */
 import { join } from 'node:path'
-import { refusalFor } from './studioEditRefusals'
+import { refusalFor, StudioEditRefusalError } from './studioEditRefusals'
 import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, StudioEditRefusal } from './studioEditSchemas'
-import { StudioEditRefusalError } from './studioEditRefusals'
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */

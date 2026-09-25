@@ -124,6 +124,10 @@ docs/superpowers/
 # pre- and post-image of every file an agent turn wrote, so the user can revert
 # the turn. Per account, machine-local, never source.
 **/.studio/agent-checkpoints/
+# The editor's undo journal (server/handlers/studio/undoJournal.ts) — the
+# pre-image of each delete/detach/swap/extract, so ⌘Z can put it back.
+# Bounded, machine-local, never source.
+**/.studio/undo-journal/
 # Design references (server/handlers/studio/designReferenceStore.ts) —
 # durable, addressable-by-id copies of a design comp (typically a Figma
 # export) an agent measures a Studio frame against. Unlike every OTHER entry

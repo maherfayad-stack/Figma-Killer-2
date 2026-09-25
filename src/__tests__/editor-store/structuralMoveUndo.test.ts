@@ -302,15 +302,13 @@ describe('undo of a move is the inverse move, written to source', () => {
   })
 })
 
-describe('a source delete with no addressable parent is skipped by ⌘Z, never faked and never a jam', () => {
-  // `a`/`b` sit directly under the synthetic page root in this fixture — a
-  // shape no real component returns (a component returns ONE root element;
-  // `<a/><b/>` as two top-level siblings has nowhere to be written), but
-  // exactly `deleteJsxElement`'s own `no-jsx-parent` refusal for the sole
-  // element a page actually returns: there is no source POSITION to reinsert
-  // into. `captureDeleteOrigin` reports exactly that — no origin — and the
-  // gesture is tagged `unsupported` rather than a made-up one.
-  it('tags the entry unsupported, and ⌘Z drops it instead of guessing a position or sticking on it', async () => {
+describe('a source delete the server journaled no undo for is skipped by ⌘Z, never faked and never a jam', () => {
+  // The save mock above answers without an `undoToken` — what the server
+  // says when it could not record the write's pre-image (P3-F,
+  // `undoJournal.ts`: an oversized or non-UTF-8 file). The entry keeps its
+  // `restore-journal` template with no inverse, so ⌘Z has nothing it could
+  // post and must skip it rather than resurrect the element on the canvas.
+  it('keeps no inverse, and ⌘Z drops the entry instead of faking it or sticking on it', async () => {
     const a = at(3), b = at(4)
     store().loadSite(studioSite([a, b]))
     store().setActivePage('page-1')
@@ -320,7 +318,7 @@ describe('a source delete with no addressable parent is skipped by ⌘Z, never f
     const entry = store()._historyPast[store()._historyPast.length - 1]!
     expect(entry.structural).toMatchObject({
       gesture: 'source',
-      source: { label: 'Delete', inverseTemplate: { kind: 'unsupported' }, inverse: null },
+      source: { label: 'Delete', inverseTemplate: { kind: 'restore-journal' }, inverse: null },
     })
 
     const pastBefore = store()._historyPast.length
