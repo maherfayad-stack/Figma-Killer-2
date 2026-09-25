@@ -15,12 +15,27 @@ import { PROPOSE_PLAN_TOOL_NAME } from '../../mcp/tools/studio/proposePlanTool'
 /**
  * Plan mode on an HTTP turn (AI-22): `required` when the turn was offered
  * `studio_propose_plan`, `approved` once the user approved a plan in it.
- * Until then every `sideEffects: 'write'` call is refused, so the composer's
- * Plan mode is a rule the loop keeps, not a sentence the model may skip.
+ * Until then every call {@link heldUntilPlanApproved} names is refused, so the
+ * composer's Plan mode is a rule the loop keeps, not a sentence the model may skip.
  */
 export interface TurnPlanGate {
   readonly required: boolean
   approved: boolean
+}
+
+/**
+ * What plan mode holds back until a plan is approved: every write, and every
+ * Tier-2 tool — the family that declares `studio.run.project`
+ * (`studio_lint`, `studio_render_reference`), which run the project's own
+ * code, config and plugins on the user's machine. Those are observers to the
+ * loop (they change no file, so they batch with other looks), but "plan
+ * first" means nothing of the project's runs before the user has agreed
+ * what the turn is for.
+ */
+export function heldUntilPlanApproved(tool: AiTool | undefined): boolean {
+  // An unknown name is answered `Unknown tool` below; nothing to hold.
+  if (tool === undefined) return false
+  return tool.sideEffects === 'write' || tool.requiredCapabilities?.includes('studio.run.project') === true
 }
 
 function planNotApproved(toolName: string): AiToolOutput {
@@ -104,7 +119,7 @@ export async function executeOneCall(
 ): Promise<ExecutedCall> {
   const tool = toolsByName.get(call.name)
   const ledgered = tool?.sideEffects === 'write'
-  if (ledgered && planGate.required && !planGate.approved) return { call, output: planNotApproved(call.name), error: '' }
+  if (planGate.required && !planGate.approved && heldUntilPlanApproved(tool)) return { call, output: planNotApproved(call.name), error: '' }
   if (ledgered) {
     const prior = priorWriteOutcome(writeLedger, call.name, call.input)
     if (prior !== undefined) return { call, output: duplicateCallOutput(call.name, prior), error: '' }

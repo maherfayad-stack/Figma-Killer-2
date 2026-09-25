@@ -50,6 +50,12 @@
  * (`ConstraintNotice`, `@site/ui/ConstraintNotice`) — the same component the
  * refusal toast and every other refusal surface share, so the wording and the
  * ways forward cannot drift between them.
+ *
+ * P5-E (UX-22, IX-27) — every item with a key shows it, right-aligned, read
+ * from the keybinding registry (`shortcutLabelFor`), and the arrange block
+ * (`LayerArrangeMenuItems`: Group, Ungroup, Lock, front / back, flex layout,
+ * Align, copy / paste style, and the canvas's "Select layer" list) follows
+ * Wrap.
  */
 
 import { useEffect, useRef } from 'react'
@@ -85,6 +91,8 @@ import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
 import { ConstraintNotice } from '@site/ui/ConstraintNotice'
+import { shortcutLabelFor } from '@admin/spotlight/keybindings'
+import { LayerArrangeMenuItems } from './LayerArrangeMenuItems'
 import styles from './LayerNodeContextMenu.module.css'
 
 interface LayerNodeContextMenuProps {
@@ -113,6 +121,12 @@ interface LayerNodeContextMenuProps {
   onPasteHtml?: (nodeId: string) => void
   /** The node that was right-clicked. When omitted, falls back to selectedNodeId. */
   nodeId?: string
+  /**
+   * P5-E (IX-26) — every layer under the pointer, innermost first, for the
+   * "Select layer" submenu. The canvas passes it (`nodesUnderClientPoint`);
+   * the Layers panel has no pointer over the page and omits it.
+   */
+  layerIdsUnderPointer?: readonly string[]
 }
 
 export function LayerNodeContextMenu({
@@ -128,6 +142,7 @@ export function LayerNodeContextMenu({
   onPaste,
   onPasteHtml,
   nodeId: nodeIdProp,
+  layerIdsUnderPointer,
 }: LayerNodeContextMenuProps) {
   const firstItemRef = useRef<HTMLButtonElement>(null)
 
@@ -402,7 +417,7 @@ export function LayerNodeContextMenu({
 
       {canToggleHidden && (
         <>
-          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden}>
+          <ContextMenuItem ref={firstItemRef} onClick={dispatchToggleHidden} shortcut={shortcutLabelFor('layers.toggleVisibility')}>
             <span aria-hidden="true"><EyeSolidIcon size={13} /></span>
             {hideActionLabel}
           </ContextMenuItem>
@@ -413,7 +428,7 @@ export function LayerNodeContextMenu({
       {/* Rename — hidden for slot-instance lockdown AND for multi-select
           (rename is single-node only). */}
       {!lockedSlotInstance && !isMulti && (
-        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename}>
+        <ContextMenuItem ref={canToggleHidden ? undefined : firstItemRef} onClick={onRename} shortcut={shortcutLabelFor('layers.rename')}>
           <span aria-hidden="true"><PenSquareSolidIcon size={13} /></span>
           Rename
         </ContextMenuItem>
@@ -424,6 +439,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             ref={!canToggleHidden && isMulti ? firstItemRef : undefined}
             onClick={dispatchDuplicate}
+            shortcut={shortcutLabelFor('layers.duplicate')}
             disabled={structuralConstraints.duplicate !== null}
             tooltip={structuralConstraints.duplicate?.explanation}
           >
@@ -451,18 +467,18 @@ export function LayerNodeContextMenu({
 
           <ContextMenuSeparator />
 
-          <ContextMenuItem onClick={dispatchCopy}>
+          <ContextMenuItem onClick={dispatchCopy} shortcut={shortcutLabelFor('layers.copy')}>
             <span aria-hidden="true"><CopySolidIcon size={13} /></span>
             Copy
           </ContextMenuItem>
 
-          <ContextMenuItem onClick={dispatchCut}>
+          <ContextMenuItem onClick={dispatchCut} shortcut={shortcutLabelFor('layers.cut')}>
             <span aria-hidden="true"><CopyXSolidIcon size={13} /></span>
             Cut
           </ContextMenuItem>
 
           {canPaste && (
-            <ContextMenuItem onClick={onPaste}>
+            <ContextMenuItem onClick={onPaste} shortcut={shortcutLabelFor('layers.paste')}>
               <span aria-hidden="true"><FilesStack2SolidIcon size={13} /></span>
               Paste
             </ContextMenuItem>
@@ -509,6 +525,12 @@ export function LayerNodeContextMenu({
               Loop
             </ContextMenuItem>
           </ContextMenuSubmenu>
+
+          <LayerArrangeMenuItems
+            targetIds={targetIds}
+            layerIdsUnderPointer={layerIdsUnderPointer ?? []}
+            onClose={onClose}
+          />
         </>
       )}
 
@@ -545,6 +567,7 @@ export function LayerNodeContextMenu({
           <ContextMenuItem
             danger
             onClick={dispatchDelete}
+            shortcut={shortcutLabelFor('layers.delete')}
             disabled={structuralConstraints.delete !== null}
             tooltip={structuralConstraints.delete?.explanation}
           >

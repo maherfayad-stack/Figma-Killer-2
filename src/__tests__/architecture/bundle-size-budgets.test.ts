@@ -179,7 +179,16 @@ const BUDGETS: ChunkBudget[] = [
     // or a crash in either still reaches `admin-route` and takes the editor
     // down), the load ladder + Retry wiring, and the chip's "Out of date"
     // state. Measured 40,224 B; no editor-body code entered the chunk.
-    maxBytes: 40_600,
+    //
+    // Raised 40.6 KB -> 41.3 KB for P5-E (tools and handles). Audited against
+    // the trunk build (40,327 B -> 40,913 B, +586 B): +322 B is the
+    // `__vite__mapDeps` preload table (net +7 entries: the new shared canvas
+    // chunks `layerAlign`, `layerCommands`, `selectionStyleCommands`,
+    // `canvasSelectionMeasure`, `canvasTextEditStart`, `createdNodeFollowUp`,
+    // `canvasDomGeometry` and `CanvasInsertionDragOverlay` .js/.css, minus
+    // `Kbd` .js/.css), and +264 B is `ZoomControls`' new
+    // `tooltipShortcut` slots (UX-23). No editor-body code entered the chunk.
+    maxBytes: 41_300,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +

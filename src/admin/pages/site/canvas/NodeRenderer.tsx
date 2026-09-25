@@ -57,6 +57,7 @@ import {
   shouldSuppressAuthoredFormControlEvent,
 } from './canvasEventTargets'
 import { PackageComponentPlaceholder } from './PackageComponentPlaceholder'
+import { canvasProjectAssetScope, projectAssetProps, projectAssetStyle } from './canvasProjectAssetUrl'
 import {
   CanvasBreakpointContext,
   CanvasFrameContext,
@@ -285,8 +286,15 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
     sel.addRange(range)
   }, [isInlineEditing])
 
-  const inlineStyle = useResponsiveBackgroundStyle(
-    mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId),
+  // A portal frame lives on the admin origin, so a site-root `url('/bg.png')`
+  // in the node's own style resolves to the project asset route here — the
+  // same resolution the props below and every CSS injector get
+  // (`canvasProjectAssetUrl.ts`, P5-B2). Render-time only; the store keeps
+  // what the source says.
+  const assetScope = canvasProjectAssetScope()
+  const inlineStyle = projectAssetStyle(
+    useResponsiveBackgroundStyle(mergePreviewedInlineStyles(node?.inlineStyles, previewNodeStyles, nodeId)),
+    assetScope,
   )
 
   if (!node) return null
@@ -333,15 +341,22 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
   // Pass the module schema so resolveProps drops breakpoint overrides for
   // non-responsive (content) keys — text/tag/src etc. must look identical
   // across every breakpoint frame, since published HTML is one document.
-  const effectiveProps = addEditorFormPreviewProps(
-    node.moduleId,
-    resolveDynamicProps(
-    resolveProps(node, breakpointId, definition.schema),
-    effectiveNodeBindings(node),
-    templateContext,
+  //
+  // Resource URLs (`src`, `srcSet`, `poster`) resolve last, for every module
+  // at once: a site-root `src="/hero.png"` would otherwise load from the
+  // admin origin and show broken (P5-B2, `canvasProjectAssetUrl.ts`).
+  const effectiveProps = projectAssetProps(
+    addEditorFormPreviewProps(
+      node.moduleId,
+      resolveDynamicProps(
+      resolveProps(node, breakpointId, definition.schema),
+      effectiveNodeBindings(node),
+      templateContext,
+      ),
+      editorFormPreviewState,
+      editorFormPreviewSuccessMessage,
     ),
-    editorFormPreviewState,
-    editorFormPreviewSuccessMessage,
+    assetScope,
   )
 
   // Build className from classIds using the user-facing class names.

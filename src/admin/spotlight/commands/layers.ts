@@ -14,7 +14,7 @@
  *   - Wrap in container
  *   - Group / Ungroup (K3)
  *   - Move up / Move down
- *   - Select parent / first child / next sibling / previous sibling
+ *   - Select parent / children / next sibling / previous sibling
  *   - Convert selection to Visual Component
  */
 
@@ -426,14 +426,14 @@ export function getLayersCommands(): Command[] {
       },
     },
 
-    // ── Select first child ───────────────────────────────────────────────────
+    // ── Select children (P5-E, IX-7) ─────────────────────────────────────────
     {
-      id: 'layers.selectFirstChild',
-      title: 'Select first child layer',
-      subtitle: 'Move selection to the first child of the current layer',
+      id: 'layers.selectChildren',
+      title: 'Select children',
+      subtitle: 'Select every child of the selected layers (Enter on a text layer edits it)',
       group: 'editor',
       iconName: 'arrow-down',
-      keywords: ['layer', 'child', 'select', 'down', 'navigate', 'first'],
+      keywords: ['layer', 'child', 'children', 'select', 'down', 'navigate', 'enter'],
       workspaces: ['site'],
       capability: 'site.read',
       when: hasSelection,
@@ -443,11 +443,12 @@ export function getLayersCommands(): Command[] {
         try {
           // viewport-01 — see `layers.selectParent` above: one shared,
           // board-aware walk in the store, called from both the palette and
-          // the Enter keybinding.
+          // the Enter keybinding. The palette never starts a text edit: that
+          // half of Enter is a canvas gesture (`useCanvasSelectionKeyboard`).
           const { useEditorStore } = await import('@site/store/store')
-          useEditorStore.getState().selectFirstChildNode()
+          useEditorStore.getState().selectChildNodes()
         } catch (err) {
-          console.error('[spotlight] selectFirstChild failed:', err)
+          console.error('[spotlight] selectChildren failed:', err)
         }
       },
     },

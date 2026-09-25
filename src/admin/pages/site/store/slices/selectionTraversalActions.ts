@@ -1,8 +1,9 @@
 /**
  * selectionTraversalActions — walking the tree with the keyboard:
- * `layers.selectParent` / `layers.selectFirstChild` (⇧Enter / Enter,
- * `viewport-01`), and since P2-B the sibling moves — Tab / ⇧Tab
- * (`selectSiblingNode`, IX-3) and ⌘A (`selectAllSiblingNodes`, IX-4).
+ * `layers.selectParent` / `layers.selectChildren` (⇧Enter / Enter,
+ * `viewport-01`; P5-E made both act on the WHOLE selection, IX-7), and since
+ * P2-B the sibling moves — Tab / ⇧Tab (`selectSiblingNode`, IX-3) and ⌘A
+ * (`selectAllSiblingNodes`, IX-4).
  *
  * Split out of `selectionSlice.ts` purely to stay under the module-size-budget
  * ceiling — same reasoning `boardFrameSelectionActions.ts` gives for its own
@@ -41,7 +42,7 @@ type Get = Parameters<EditorStoreSliceCreator<EditorStore>>[1]
 
 type SelectionTraversalActions = Pick<
   EditorStore,
-  'selectParentNode' | 'selectFirstChildNode' | 'selectSiblingNode' | 'selectAllSiblingNodes'
+  'selectParentNode' | 'selectChildNodes' | 'selectSiblingNode' | 'selectAllSiblingNodes'
 >
 
 /** See "What the keyboard can reach" in the module doc. */
@@ -63,24 +64,48 @@ export function createSelectionTraversalActions(get: Get): SelectionTraversalAct
       if (!anchor) return false
       const resolved = resolveSelectableNode(state, anchor)
       if (!resolved) return false
-      const parent = getParent(resolved.tree, anchor)
-      // No parent = the anchor is the tree root. Stop there rather than
-      // clearing: "walk up until you can't" is the whole gesture, and
+      // Every selected layer's parent, in selection order, once each (IX-7).
+      // A root has none — "walk up until you can't" is the whole gesture, and
       // Escape is the key that means "deselect" (`select-01`).
-      if (!parent) return false
-      state.selectNode(parent.id, 'replace', { frameId: state.selectedNodeFrameId })
+      const parents: string[] = []
+      for (const id of state.selectedNodeIds.length > 0 ? state.selectedNodeIds : [anchor]) {
+        const parent = getParent(resolved.tree, id)
+        if (parent && !parents.includes(parent.id)) parents.push(parent.id)
+      }
+      if (parents.length === 0) return false
+      const frameId = state.selectedNodeFrameId
+      // A root is only ever selected on its own (`filterMultiSelectableIds`).
+      const selectable = parents.length > 1 ? filterMultiSelectableIds(state, parents) : []
+      if (selectable.length > 1) state.selectMany(selectable, { frameId })
+      else state.selectNode(selectable[0] ?? parents[0]!, 'replace', { frameId })
       return true
     },
 
-    selectFirstChildNode: () => {
+    selectChildNodes: () => {
       const state = get()
       const anchor = state.selectedNodeId
       if (!anchor) return false
       const resolved = resolveSelectableNode(state, anchor)
       if (!resolved) return false
-      const firstChild = resolved.node.children[0]
-      if (!firstChild) return false
-      state.selectNode(firstChild, 'replace', { frameId: state.selectedNodeFrameId })
+      const { tree } = resolved
+      // Every reachable child of every selected layer (IX-7), in tree order.
+      const children: string[] = []
+      for (const id of state.selectedNodeIds.length > 0 ? state.selectedNodeIds : [anchor]) {
+        const node = tree.nodes[id]
+        if (!node) continue
+        for (const childId of node.children) {
+          if (isKeyboardReachable(tree.nodes[childId]) && !children.includes(childId)) children.push(childId)
+        }
+      }
+      if (children.length === 0) return false
+      const frameId = state.selectedNodeFrameId
+      if (children.length === 1) {
+        state.selectNode(children[0]!, 'replace', { frameId })
+        return true
+      }
+      const selectable = filterMultiSelectableIds(state, children)
+      if (selectable.length === 0) return false
+      state.selectMany(selectable, { frameId })
       return true
     },
 

@@ -500,7 +500,7 @@ honest target, in exactly two cases. `canvasFreeMove.ts` owns the whole thing.
 
 | The element is… | ⌘/Ctrl held? | What happens |
 |---|---|---|
-| `position: absolute \| fixed` | not needed | the drag writes `left`/`top` — that is already the property deciding where it is, so dragging it into the child order would be the surprising behaviour |
+| `position: absolute \| fixed` | not needed | the drag moves the offsets the source AUTHORED (P5-E, IX-21): `left`/`top`, or `right`/`bottom` for a layer anchored that way, or both of a stretched pair — that is already what decides where it is, so dragging it into the child order would be the surprising behaviour |
 | in flow, parent is positioned | yes | the drag writes `position: absolute` **and** `left`/`top`. Writing the offsets alone would do nothing at all on a static element, and a declaration with no effect is exactly the silent no-op this codebase refuses |
 | in flow, parent is `position: static` | yes | **refuses** — see below |
 | in flow | no | ordinary reorder |
@@ -518,6 +518,17 @@ sits inside the store's own import graph and may not import the composed store
 back. It is also the one refusal in `editConstraint.ts` that is NOT a
 source-writability question: the file would take the write; the CSS would not
 do what was pointed at.
+
+**Anchoring (P5-E, IX-21).** A free move of an already-positioned layer
+moves the offsets its source authored — the same plan the arrow-key nudge
+uses (`planNudge` over `authoredOffsets`, `canvasNodeArrowMove.ts`). A layer
+anchored by `right: 24px` keeps `right` and never gains a `left` (with both,
+the next width change moves the wrong edge, or `width: auto` stretches it);
+`bottom` likewise; a stretched `left` + `right` pair moves both. A `left: 50%`
++ `translate(-50%)` centring moves as `left` from its USED px value, so the
+translate still centres it where it lands. Only a layer that becomes absolute
+in this gesture has nothing authored and takes `left`/`top`. A resize of a
+positioned layer follows the same rule (`elementResizeAnchoring.ts`).
 
 **RTL.** In a right-to-left element the physical `left` is the wrong property:
 a drag to the right must DECREASE the distance from the inline start. The

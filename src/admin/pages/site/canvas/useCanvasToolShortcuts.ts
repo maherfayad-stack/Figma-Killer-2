@@ -1,45 +1,41 @@
 /**
  * useCanvasToolShortcuts — a `board` scope: the bare-letter tool keys
- * `V` `T` `F` `C` `H` `K` `R` `O`.
+ * `V` `T` `F` `C` `H` `K` `R` `O` (`E`), and ⏎ while a draw tool is armed.
  *
- * `T` inserts a text node, `F` a container INSIDE the selection, `C` enters
- * comment mode. `K4` added four more: `H` latches the hand tool, `K` latches
- * the scale tool, and `R` / `O` insert a box — square, or round via
- * `border-radius: 50%` — BESIDE the selection. P2-B added `V` (IX-11): the
- * move tool, which puts EVERY armed tool away — hand, scale and comment — and
- * is the one key that always means "back to normal". Named after Figma's,
- * because that is where the muscle memory comes from.
+ * `C` enters comment mode. `H` latches the hand tool and `K` the scale tool
+ * (`K4`). `V` (IX-11) is the move tool: it puts EVERY armed tool away — hand,
+ * scale, draw and comment — and is the one key that always means "back to
+ * normal". Named after Figma's, because that is where the muscle memory comes
+ * from.
  *
- * WHAT "INSERT" MEANS HERE, AND WHY IT IS NOT A DRAW GESTURE
- * ─────────────────────────────────────────────────────────
- * In Figma, T / F / R / O arm a tool you then drag a rectangle with, because a
- * Figma document is absolutely-positioned shapes. Studio's document is a real
- * React tree, so there is no rectangle to draw: a new node's position is
- * decided by its parent's layout, not by where the pointer went. So they
- * insert immediately and select the result, which is the state a drag would
- * have left you in anyway.
+ * ## The draw tools (P5-E, IX-12, OD-5)
  *
- * `F` and `R`/`O` differ in WHERE, not in what: `F` goes through
- * `useInsertModule`'s default resolution (inside a container target — the same
- * place the module picker and right-click "Insert module here" land), while
- * `R`/`O` take `resolveSiblingAfterLocation` and land NEXT TO the selection.
- * A user watching a selected box expects the new one beside it; a user
- * reaching for "frame" expects to nest. Both are real, so both have a key.
+ * `R`, `O` / `E`, `T` and `F` ARM a draw tool: a click or a drag inside a
+ * frame then inserts a rectangle, an ellipse, a text or a frame where the
+ * pointer lands (`CanvasDrawToolLayer`, `canvasDrawTool.ts`). They used to
+ * insert at once, beside or inside the selection, because "there is no
+ * rectangle to draw" in a React tree — but the drawn size IS a write (the
+ * element's `width` / `height`), and the owner chose armed tools (OD-5).
  *
- * WHY THE TWO LATCHED TOOLS TOGGLE ON THEIR OWN KEY
- * ─────────────────────────────────────────────────
+ * The immediate insert is still here, on ⏎: with a draw tool armed, ⏎ inserts
+ * at the selection exactly as the letter used to — `T` / `F` inside a
+ * container target (`useInsertModule`'s default), `R` / `O` as the NEXT
+ * SIBLING of the selection — and puts the tool away. A keyboard-only user is
+ * never stranded by an armed tool.
+ *
+ * ## Why every tool toggles on its own key
+ *
  * Escape is not reliably available: the `node` rung above this one claims it
  * whenever anything is selected (`editorKeyDispatcher.ts`), so a user with a
  * selection would press Escape, watch the selection clear, and still be stuck
- * in the hand tool. Pressing `H` again is always the way out. Escape DOES
- * disarm as a second chance, below, for the case where nothing is selected.
+ * in the tool. Pressing the tool's key again is always the way out, and so is
+ * V. Escape DOES disarm as a second chance, below, when nothing is selected.
  *
- * WHY IT IS A `board` SCOPE AND NOT A `node` ONE
- * ──────────────────────────────────────────────
+ * ## Why it is a `board` scope and not a `node` one
+ *
  * The tool keys must keep working with a node selected — that is the normal
- * case, since the selection is what decides where the new node lands. The
- * `node` rung above simply never claims a bare letter, so these fall through to
- * it (`editorKeyDispatcher.ts`).
+ * case. The `node` rung above simply never claims a bare letter, and gives ⏎
+ * up while a draw tool is armed (`useCanvasSelectionKeyboard`).
  *
  * The guards, in order, all of which have to hold:
  *   - No open inline text edit. Supplied by the dispatcher's `inline-edit`
@@ -52,29 +48,20 @@
  */
 import { registry } from '@core/module-engine'
 import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
+import type { DrawTool } from '@site/store/slices/canvasSlice'
 import { resolveSiblingAfterLocation } from '@site/store/insertLocation'
 import { getKeybindingForCommand } from '@admin/spotlight/keybindings'
 import { useInsertModule } from '@site/hooks/useInsertModule'
+import { DRAW_TOOL_SPECS, isDrawTool } from './canvasDrawTool'
 import { isTextInputTarget } from './editorKeyGuards'
 import { useEditorKeyScope } from './useEditorKeyDispatcher'
 
-/** `T` and `F` — insert at `useInsertModule`'s default (inside a container target). */
-const NESTING_INSERT_KEYS: ReadonlyArray<{ commandId: string; moduleId: string }> = [
-  { commandId: 'tools.text', moduleId: 'base.text' },
-  { commandId: 'tools.frame', moduleId: 'base.container' },
-]
-
-/**
- * `R` and `O` — insert a box as the NEXT SIBLING of the selection. `O` is the
- * same box made round, which is all an ellipse is in CSS. Keys are React-style
- * camelCase because that is what lands in `style={{ … }}`.
- */
-const SIBLING_BOX_KEYS: ReadonlyArray<{
-  commandId: string
-  inlineStyles?: Record<string, string>
-}> = [
-  { commandId: 'tools.rectangle' },
-  { commandId: 'tools.ellipse', inlineStyles: { borderRadius: '50%' } },
+/** The four keys that arm a draw tool — each a toggle on its own key. */
+const DRAW_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: DrawTool }> = [
+  { commandId: 'tools.rectangle', tool: 'rectangle' },
+  { commandId: 'tools.ellipse', tool: 'ellipse' },
+  { commandId: 'tools.text', tool: 'text' },
+  { commandId: 'tools.frame', tool: 'frame' },
 ]
 
 /** `H` and `K` — the two latched tools, each a toggle on its own key. */
@@ -85,6 +72,30 @@ const LATCHED_TOOL_KEYS: ReadonlyArray<{ commandId: string; tool: 'hand' | 'scal
 
 export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void {
   const insertModule = useInsertModule()
+
+  /** ⏎ with `tool` armed: the immediate insert the letter used to make. */
+  const insertAtSelection = (tool: DrawTool): boolean => {
+    const spec = DRAW_TOOL_SPECS[tool]
+    const definition = registry.get(spec.moduleId)
+    if (!definition) return false
+    const inlineStyles = { ...spec.inlineStyles, ...(spec.clickSize ? { width: `${spec.clickSize.width}px`, height: `${spec.clickSize.height}px` } : {}) }
+    const options = Object.keys(inlineStyles).length > 0 ? { inlineStyles } : {}
+    if (spec.keyboardPlacement === 'inside') {
+      insertModule(definition, undefined, options)
+      return true
+    }
+    const store = useEditorStore.getState()
+    const page = selectActiveCanvasPage(store)
+    const anchorId = store.selectedNodeId ?? page?.rootNodeId
+    if (!page || !anchorId) return false
+    // Explicit location: the whole difference between `R` and `F` is
+    // beside-vs-inside. `null` means the anchor is orphaned, which is nothing
+    // to place against — fall through rather than land it somewhere else.
+    const location = resolveSiblingAfterLocation(page, anchorId)
+    if (!location) return false
+    insertModule(definition, location, options)
+    return true
+  }
 
   useEditorKeyScope(
     'board',
@@ -113,8 +124,8 @@ export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void
         return true
       }
 
-      // Escape puts a latched tool away — the SECOND chance, not the first.
-      // With anything selected the `node` rung claims Escape first (deselect),
+      // Escape puts a tool away — the SECOND chance, not the first. With
+      // anything selected the `node` rung claims Escape first (deselect),
       // which is why each tool also toggles on its own key.
       if (event.key === 'Escape') {
         const store = useEditorStore.getState()
@@ -136,31 +147,24 @@ export function useCanvasToolShortcuts(editable: boolean, isLive: boolean): void
 
       if (!editable) return false
 
-      for (const { commandId, moduleId } of NESTING_INSERT_KEYS) {
+      for (const { commandId, tool } of DRAW_TOOL_KEYS) {
         if (!getKeybindingForCommand(commandId)?.match(event)) continue
-        const definition = registry.get(moduleId)
-        if (!definition) return false
         event.preventDefault()
-        insertModule(definition)
+        const store = useEditorStore.getState()
+        store.setCanvasTool(store.canvasTool === tool ? 'move' : tool)
         return true
       }
 
-      for (const { commandId, inlineStyles } of SIBLING_BOX_KEYS) {
-        if (!getKeybindingForCommand(commandId)?.match(event)) continue
-        const definition = registry.get('base.container')
-        if (!definition) return false
+      // ⏎ with a draw tool armed: insert at the selection, then put it away.
+      // Plain ⏎ is `layers.selectChildren`'s key, which the node rung gives up
+      // while a draw tool is armed.
+      if (getKeybindingForCommand('layers.selectChildren')?.match(event)) {
         const store = useEditorStore.getState()
-        const page = selectActiveCanvasPage(store)
-        const anchorId = store.selectedNodeId ?? page?.rootNodeId
-        if (!page || !anchorId) return false
-        // Explicit location rather than `useInsertModule`'s default: the whole
-        // difference between `R` and `F` is beside-vs-inside. `null` means the
-        // anchor is orphaned, which is nothing to place against — fall through
-        // rather than silently landing the box somewhere else.
-        const location = resolveSiblingAfterLocation(page, anchorId)
-        if (!location) return false
+        const tool = store.canvasTool
+        if (!isDrawTool(tool)) return false
+        if (!insertAtSelection(tool)) return false
         event.preventDefault()
-        insertModule(definition, location, inlineStyles ? { inlineStyles } : {})
+        store.setCanvasTool('move')
         return true
       }
 

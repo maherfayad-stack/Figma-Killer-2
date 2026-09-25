@@ -316,11 +316,12 @@ export async function createConversation(
   credentialId: string,
   modelId: string,
   dir: string | null,
+  modelSource: 'default' | 'chosen',
   signal?: AbortSignal,
 ): Promise<CreatedConversation> {
   const body = await apiRequest(AI_CONVERSATIONS_PATH, {
     method: 'POST',
-    body: dir ? { credentialId, modelId, dir } : { credentialId, modelId },
+    body: dir ? { credentialId, modelId, dir, modelSource } : { credentialId, modelId, modelSource },
     schema: CreatedConversationEnvelopeSchema,
     fallbackMessage: 'Conversation create failed',
     signal,

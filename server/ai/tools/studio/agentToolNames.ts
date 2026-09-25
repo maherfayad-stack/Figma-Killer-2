@@ -85,6 +85,10 @@ export const STUDIO_AGENT_TOOL_NAMES: readonly string[] = [
   // tsc — see systemPrompt.ts's "not done until it both compares clean AND
   // typechecks" rule.
   'studio_typecheck',
+  // AI-21 — the project's own lint rules, the check after it compiles. Tier 2
+  // (it runs the project's ESLint config and plugins), gated like
+  // studio_render_reference.
+  'studio_lint',
   // The machine-readable "what will not import faithfully" report: turns
   // `PageNode.lockReason`/`resolution`/`codeProps` into stable finding codes
   // with a node id, file:line, and a fix. Was absent here — every OTHER

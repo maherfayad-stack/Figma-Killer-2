@@ -196,7 +196,7 @@ export const TOOL_REFUSAL_CODES = {
   },
   'plan-not-approved': {
     retryable: false,
-    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs. Call studio_propose_plan with the steps and wait for the user\'s approval.',
+    meaning: 'The turn is in plan mode and no plan has been approved yet, so no write runs, and no tool that runs the project\'s own code (studio_lint, studio_render_reference). Call studio_propose_plan with the steps and wait for the user\'s approval.',
   },
   'stale-anchor': {
     retryable: false,
@@ -302,6 +302,22 @@ export const TOOL_REFUSAL_CODES = {
     retryable: false,
     meaning: 'tsc itself could not run — a broken toolchain or tsconfig, not a code error. The refusal carries a capped output excerpt.',
   },
+  'eslint-not-installed': {
+    retryable: false,
+    meaning: 'The project has no ESLint of its own to lint with. Studio never substitutes its own or downloads one; install the project\'s dependencies, or rely on the typecheck when the project does not use ESLint.',
+  },
+  'no-eslint-config': {
+    retryable: false,
+    meaning: 'ESLint is installed but the project has no ESLint config inside it, so there are no project rules. Never write a config to make the lint pass.',
+  },
+  'lint-timed-out': {
+    retryable: false,
+    meaning: 'ESLint was killed before it finished; nothing it found is known. Lint fewer paths at a time.',
+  },
+  'lint-invocation-error': {
+    retryable: false,
+    meaning: 'ESLint itself could not run or produced no readable report — a broken config or plugin, not a code error, or a report too large to read (lint fewer paths). The refusal carries a capped output excerpt.',
+  },
   'io-error': {
     retryable: true,
     meaning: 'An unexpected filesystem or subprocess error. The message carries the underlying cause.',
@@ -311,6 +327,22 @@ export const TOOL_REFUSAL_CODES = {
   'duplicate-call': {
     retryable: false,
     meaning: 'This exact write, with these exact arguments, already ran this turn and nothing else has been written since. The loop answered from the first call\'s result instead of running it again (Z3, `toolLoop.ts`) — the write you asked for has already happened, so read the echoed result rather than repeating it. Observers (screenshots, compares, measurements, typechecks) are never answered this way, and a write repeated after a different write landed runs again.',
+  },
+  'not-owned': {
+    retryable: false,
+    meaning: 'A studio_delegate subagent tried to write a file it does not own. A subagent owns exactly its page\'s component file and that page\'s .module.css; every shared file stays with the agent that delegated. Name the change you need in your final reply instead.',
+  },
+  'overlapping-ownership': {
+    retryable: false,
+    meaning: 'Two studio_delegate tasks name the same page, so two subagents would write the same files. Give each page to exactly one task.',
+  },
+  'delegation-unavailable': {
+    retryable: false,
+    meaning: 'Delegation runs only inside a chat turn on an API-key driver with a project open; this call has none (an external client, or a subagent, which cannot delegate further). Do the work yourself.',
+  },
+  'delegation-budget-exhausted': {
+    retryable: false,
+    meaning: 'This turn has spent its delegation budget: at most 2 studio_delegate calls, 8 subagents and 150 subagent rounds per turn, so a runaway turn cannot spend without bound on the user\'s key. Nothing from this call ran. Build the remaining pages yourself.',
   },
   'strict-mode-stand-in-refused': {
     retryable: false,

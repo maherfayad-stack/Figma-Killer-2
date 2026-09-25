@@ -89,7 +89,7 @@ describe('fsCodemodAdapter — write-loop safety + framework sync', () => {
           // should not have to name the field. A fixture that does care still
           // overrides.
           { kind: 'meta', styleRuleSources: {}, styledStyleRuleSources: {}, authoredCss: '', ...meta, pageCount: pages.length },
-          ...pages.map((page) => ({ kind: 'page', page })),
+          ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]
         return new Response(
           lines.map((line) => JSON.stringify(line)).join('\n') + '\n',

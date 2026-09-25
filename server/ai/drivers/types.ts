@@ -16,6 +16,7 @@ import type {
   AiProviderId,
   AiStreamEvent,
   AiTool,
+  DelegateRunner,
 } from '../runtime/types'
 
 // ---------------------------------------------------------------------------
@@ -254,6 +255,13 @@ export interface ToolContextBase {
    * checkpoint.
    */
   readonly turnId?: string
+  /**
+   * Runs `studio_delegate`'s subagents (AI-23): built by the chat handler for
+   * an HTTP-driver turn that was offered the tool, with the turn's driver,
+   * credential, prompt and tools. `undefined` otherwise — for an external MCP
+   * client, and inside a subagent, which therefore cannot delegate again.
+   */
+  readonly delegate?: DelegateRunner
   /**
    * The live editor snapshot for read tools. Mutable across a turn: the
    * browser bridge refreshes it after each mutating tool (via createBridge's

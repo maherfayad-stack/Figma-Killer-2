@@ -65,6 +65,10 @@ import { usePrototypePlayback } from './usePrototypePlayback'
 import { useCanvasNodeInteraction } from './useCanvasNodeInteraction'
 import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
+import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
+import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
+import { isDrawTool } from './canvasDrawTool'
+import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
 import { CanvasFileDropHint } from './CanvasFileDropHint'
@@ -79,6 +83,11 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
+// P5-E — mounted only while a draw tool is armed, so it loads on first arming
+// rather than with the editor body.
+const CanvasDrawToolLayer = lazy(() =>
+  import('./CanvasDrawToolLayer').then((m) => ({ default: m.CanvasDrawToolLayer })),
+)
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
 )
@@ -391,9 +400,14 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
   // arrow-nudge undo burst, for annotations as well as frames.
   useBoardFrameNudge(editable, isLive)
 
-  // `board` — bare-letter tool keys: T (text), F (container inside), C
-  // (comment mode), H (hand), K (scale), R / O (box beside the selection).
+  // `board` — bare-letter tool keys: V, C (comment), H (hand), K (scale), and
+  // R / O / T / F arming a draw tool (P5-E, `CanvasDrawToolLayer` below).
   useCanvasToolShortcuts(editable, isLive)
+  // `node` — P5-E's align / front-back / flex / copy-paste-style keys; and the
+  // follow-up that opens a drawn text or lays out a ⇧A group once it lands.
+  useCanvasLayerCommandKeys(editable, isLive)
+  useCreatedNodeFollowUp()
+  const armedDrawTool = useEditorStore((s) => (isDrawTool(s.canvasTool) ? s.canvasTool : null))
 
   // Not a key scope: mirrors the latched hand tool onto the shared space-pan
   // flag, which is what every pan-aware surface already reads.
@@ -607,6 +621,16 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
           {!isLive && editable && permissions.canEditStructure && (
             <CanvasFileDropHint layerRef={fileDrop.hintLayerRef} />
           )}
+
+          {/* P5-E — an armed draw tool's surface (IX-12), and the host that
+              runs keyboard / menu / handle style writes through the
+              inspector's own write target (renders nothing while idle). */}
+          {!isLive && editable && armedDrawTool && (
+            <Suspense fallback={null}>
+              <CanvasDrawToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+            </Suspense>
+          )}
+          {!isLive && editable && <SelectionStyleCommandHost />}
 
           {/*
           Plugin-registered canvas overlays. Mounted after the transform
