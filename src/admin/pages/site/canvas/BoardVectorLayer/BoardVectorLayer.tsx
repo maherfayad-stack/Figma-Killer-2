@@ -39,7 +39,7 @@
  * graphic disappearing. A click that is not on an anchor falls through to the
  * frame, where it selects — which, unless it selects this same svg, leaves.
  */
-import { useEffect, useEffectEvent, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react'
 import { moveAnchor, moveHandle, serializePathModel, type PathModel, type Point } from '@core/vector'
 import { pushToast } from '@ui/components/Toast'
 import { cn } from '@ui/cn'
@@ -101,8 +101,12 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   })
   const selectedNodeId = useEditorStore((s) => s.selectedNodeId)
   // The stamps of the measured parts — the only React-visible fact of a
-  // session besides the selected anchor. Geometry lives in `partsRef`.
-  const [partKeys, setPartKeys] = useState<readonly string[]>([])
+  // session besides the selected anchor. Geometry lives in `partsRef`. A
+  // measurement is an external fact (the committed frame DOM), so it is
+  // published to a tiny store the render subscribes to, not set as state
+  // from inside the effect that measured it.
+  const [partKeysStore] = useState(createPartKeysStore)
+  const partKeys = useSyncExternalStore(partKeysStore.subscribe, partKeysStore.get, partKeysStore.get)
   const [selection, setSelection] = useState<VectorSelection | null>(null)
 
   const partsRef = useRef<VectorPart[]>([])
@@ -123,10 +127,9 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   }, [markup, selectedNodeId, target.hostNodeId])
 
   // (Re)measure after every commit that changed the host's markup: a
-  // re-applied `__html` recreated every inner element. Measuring needs the
-  // committed DOM, so it is an effect; the state it sets is the measurement's
-  // answer (an effect event), not a value derivable during render.
-  const measure = useEffectEvent(() => {
+  // re-applied `__html` recreated every inner element.
+  useLayoutEffect(() => {
+    if (markup === null) return
     const resolution = resolveVectorHost(target.frameId, target.hostNodeId)
     if (!resolution.ok) {
       pushToast({ kind: 'warning', title: 'Cannot edit points', body: resolution.message, location: 'site-editor' })
@@ -134,11 +137,8 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
       return
     }
     partsRef.current = resolution.value.parts
-    setPartKeys(resolution.value.parts.map((part) => part.part))
-  })
-  useLayoutEffect(() => {
-    if (markup !== null) measure()
-  }, [markup, target.frameId, target.hostNodeId])
+    partKeysStore.set(resolution.value.parts.map((part) => part.part))
+  }, [markup, target.frameId, target.hostNodeId, partKeysStore])
 
   const half = (px: number) => px / (zoom > 0 ? zoom : 1)
 
@@ -407,4 +407,23 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
       />
     </svg>
   )
+}
+
+/** The measured part keys, as a store: one `set` per measurement, a stable array between them. */
+function createPartKeysStore() {
+  let keys: readonly string[] = []
+  const listeners = new Set<() => void>()
+  return {
+    get: (): readonly string[] => keys,
+    set: (next: readonly string[]) => {
+      keys = next
+      for (const listener of listeners) listener()
+    },
+    subscribe: (listener: () => void) => {
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+      }
+    },
+  }
 }
