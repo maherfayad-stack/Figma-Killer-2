@@ -5,7 +5,7 @@
 
 import { describe, it, expect } from 'bun:test'
 import { sanitizeRichtext, sanitizeSvg } from '@core/sanitize'
-import { cssTextLoadsExternalResource } from '@core/vector'
+import { cssTextLoadsExternalResource, svgStyleLoadsExternalResource, type SvgStyleChildNode } from '@core/vector'
 
 describe('sanitizeSvg', () => {
   it('keeps a normal inline SVG (svg/path/viewBox)', () => {
@@ -158,5 +158,26 @@ describe('sanitizeSvg — nothing is loaded from outside the document (security 
     ['.a{fill:url(#g)} .b{stroke:currentColor}', false],
   ] as const)('the <style> rule: %s loads externally = %p', (css, loads) => {
     expect(cssTextLoadsExternalResource(css)).toBe(loads)
+  })
+
+  // Security re-review of #264: the sheet is built from a `<style>`'s DIRECT
+  // text; `textContent` adds nested text, so a kept child element split the
+  // token and the old check read `@imxport`. The three payloads that fetched
+  // in real Chromium, as the child-node lists that browser builds for them
+  // (happy-dom parses an svg `<style>` as raw text, so it cannot build them).
+  const text = (value: string): SvgStyleChildNode => ({ nodeType: 3, nodeValue: value })
+  const element = (): SvgStyleChildNode => ({ nodeType: 1, nodeValue: null })
+  it.each([
+    ['@im<tspan>x</tspan>port "https://evil/c.css";', [text('@im'), element(), text('port "https://evil/c.css";')]],
+    ['@im<title>x</title>port "https://evil/n.css";', [text('@im'), element(), text('port "https://evil/n.css";')]],
+    ['rect{fill:u<tspan>x</tspan>rl(https://evil/d)}', [text('rect{fill:u'), element(), text('rl(https://evil/d)}')]],
+  ] as const)('a <style> split by a child element loads externally: %s', (_markup, children) => {
+    expect(svgStyleLoadsExternalResource(children)).toBe(true)
+  })
+
+  it('a <style> of text only is judged on that text', () => {
+    expect(svgStyleLoadsExternalResource([text('.a{fill:url(#g)}'), text(' .b{stroke:red}')])).toBe(false)
+    expect(svgStyleLoadsExternalResource([text('@imp'), text('ort "//evil/x.css";')])).toBe(true)
+    expect(svgStyleLoadsExternalResource([text('.a{}'), { nodeType: 8, nodeValue: 'x' }])).toBe(true)
   })
 })

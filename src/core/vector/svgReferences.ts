@@ -114,3 +114,37 @@ export function cssValueLoadsExternalResource(value: string): boolean {
 export function cssTextLoadsExternalResource(css: string): boolean {
   return /@import\b/.test(unescapeCss(css).toLowerCase()) || cssValueLoadsExternalResource(css)
 }
+
+/** The part of a DOM node an SVG `<style>` check reads: its type, and a text node's data. */
+export interface SvgStyleChildNode {
+  readonly nodeType: number
+  readonly nodeValue: string | null
+}
+
+const TEXT_NODE = 3
+
+/**
+ * Whether an SVG `<style>` element, given its child nodes, would load anything
+ * from outside the document. Judge the element, never its `textContent`.
+ *
+ * The browser builds a `<style>`'s sheet from its DIRECT text children only.
+ * `textContent` also includes text nested in child elements, so a kept svg
+ * element can split a token between the two: `@im<tspan>x</tspan>port
+ * "https://…"` reads `@imxport` to a `textContent` check, while the sheet reads
+ * `@import` and fetches (security re-review of #264, found in real Chromium).
+ * No legitimate stylesheet has a child that is not text, so ANY non-text child
+ * (an element, a comment, a CDATA or processing-instruction node) counts as
+ * loading. Otherwise the direct text is judged, which is what the sheet parses.
+ *
+ * `sanitizeSvgBytes` (a served file) removes every `<style>`, which is stricter
+ * than this and so agrees with it.
+ */
+export function svgStyleLoadsExternalResource(children: ArrayLike<SvgStyleChildNode>): boolean {
+  let css = ''
+  for (let i = 0; i < children.length; i += 1) {
+    const child = children[i]!
+    if (child.nodeType !== TEXT_NODE) return true
+    css += child.nodeValue ?? ''
+  }
+  return cssTextLoadsExternalResource(css)
+}

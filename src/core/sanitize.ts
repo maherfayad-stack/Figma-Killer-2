@@ -28,12 +28,13 @@
  */
 
 import DOMPurify, { type Config } from 'dompurify'
-import { cssTextLoadsExternalResource, cssValueLoadsExternalResource, isSvgFragmentReference } from '@core/vector'
+import { cssValueLoadsExternalResource, isSvgFragmentReference, svgStyleLoadsExternalResource, type SvgStyleChildNode } from '@core/vector'
 
 type DOMPurifyHookNode = {
   tagName?: string
   nodeName?: string
   textContent?: string | null
+  childNodes?: ArrayLike<SvgStyleChildNode>
   setAttribute?: (name: string, value: string) => void
   getAttribute?: (name: string) => string | null
 }
@@ -115,8 +116,9 @@ function keepSvgFragmentHref(node: DOMPurifyHookNode, event: DOMPurifyAttributeH
  *   - an attribute whose value loads something from outside the document
  *     (`fill="url(https://…)"`, `style="background:url(//…)"`,
  *     `image-set(…)`) is dropped. `aria-*`/`data-*` are text, not CSS;
- *   - a `<style>` block that does (`@import`, a remote `url()`) is EMPTIED
- *     rather than removed: an svg's class rules are how most exported icons
+ *   - a `<style>` block that does (`@import`, a remote `url()`), or that has
+ *     any child that is not text (a kept `<tspan>` can split `@im|port`
+ *     between the sheet and `textContent`), is EMPTIED rather than removed: an svg's class rules are how most exported icons
  *     paint, and removing a node from inside a DOMPurify hook is exactly the
  *     happy-dom iterator skip `sanitizeToFixpoint` exists for.
  *
@@ -131,7 +133,7 @@ function dropSvgRemoteAttribute(_node: DOMPurifyHookNode, event: DOMPurifyAttrib
 
 function emptySvgRemoteStyle(node: DOMPurifyHookNode, event: { tagName: string }): void {
   if (!sanitizingSvg || event.tagName.toLowerCase() !== 'style') return
-  if (cssTextLoadsExternalResource(node.textContent ?? '')) node.textContent = ''
+  if (svgStyleLoadsExternalResource(node.childNodes ?? [])) node.textContent = ''
 }
 
 function installHooks(purifier: DOMPurifyRuntime): DOMPurifyRuntime {
