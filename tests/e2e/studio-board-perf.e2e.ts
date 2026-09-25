@@ -436,56 +436,68 @@ test.describe('perf-01: studio board pan/zoom and iframe virtualization', () => 
 
     // ── WS-5.3 — the frozen poster ─────────────────────────────────────────
     // A frame the user has already looked at must NOT come back as an empty
-    // box once it leaves the viewport. Pan hard until at least one
-    // previously-live frame goes offscreen, then look at what it renders.
+    // box once it leaves the viewport.
     //
-    // First, let the poster queue actually run. `framePosterQueue` waits
-    // `QUIET_PERIOD_MS` (700 ms) after the last arrival or input event, then
-    // drains SERIALLY — one `html-to-image` rasterization per macrotask, each
-    // measured at ~85 ms, plus a 32 ms gap. Twelve frames is therefore about
-    // 700 + 12 × 117 ≈ 2.1 s of quiet before the last poster is cached, and a
-    // frame that leaves the viewport before its turn has its request WITHDRAWN
-    // (the `cancelFramePoster` cleanup in `useFramePosterCapture`). Waiting too
-    // little here does not make the assertion below flaky — it makes it
-    // impossible, which is exactly what it did at 800 ms on this board: 0/4.
+    // Since P2-I (PERF-5) a poster is rasterized only while a frame sits in
+    // the pool OFF screen (`framePosterNeeded`) — never while the user is
+    // looking at it — and `framePosterQueue` holds every capture until the
+    // board has been quiet for 700 ms, then runs them serially. So the
+    // gesture that earns a poster is the one a user makes: move away a little
+    // (frames leave the screen but stay mounted), pause, then move far away
+    // (they are evicted). A single fast pan evicts a frame before any quiet
+    // period, and it shows the plain title placeholder — by design. This used
+    // to be one burst pan, which could only ever read 0 posters after P2-I.
+    const readMountReasons = () =>
+      page.evaluate(() =>
+        Object.fromEntries(
+          [...document.querySelectorAll('[data-page-id][data-frame-mount]')].map((el) => [
+            el.getAttribute('data-page-id') ?? '',
+            el.getAttribute('data-frame-mount') ?? '',
+          ]),
+        ),
+      )
+    let pooledOffscreen: string[] = []
+    for (let i = 0; i < 60 && pooledOffscreen.length < 2; i += 1) {
+      await page.mouse.wheel(60, 40)
+      await page.waitForTimeout(150)
+      pooledOffscreen = Object.entries(await readMountReasons())
+        .filter(([, reason]) => reason === 'pooled')
+        .map(([id]) => id)
+    }
+    annotate('frames pooled off screen before the pause', pooledOffscreen.join(',') || '(none)')
+    expect(
+      pooledOffscreen.length,
+      'a short pan never left a frame mounted off screen, so no frame could be rasterized into a poster',
+    ).toBeGreaterThan(0)
+
+    // The pause. `framePosterQueue` waits `QUIET_PERIOD_MS` (700 ms) after the
+    // last input, then drains serially, one `html-to-image` rasterization per
+    // macrotask (~85 ms on this corpus) plus a 32 ms gap.
     await page.waitForTimeout(POSTER_QUEUE_DRAIN_MS)
 
-    const liveBefore = Object.entries(await readFrameStates(page))
-      .filter(([, state]) => state === 'live')
-      .map(([id]) => id)
-    annotate('frames live before poster pan', liveBefore.join(','))
-
+    // Now far away: the pool evicts least-recently-on-screen first, which is
+    // exactly the frames that were pooled during the pause.
     for (let i = 0; i < 30; i += 1) await page.mouse.wheel(140, 100)
     // Past the debounced store commit (100ms) that flips `isOnScreen`, plus
     // a render.
     await page.waitForTimeout(1500)
 
     const afterPan = await readFrameStates(page)
-    const departed = liveBefore.filter((id) => afterPan[id] !== 'live')
-    annotate('previously-live frames now offscreen', String(departed.length))
-    annotate(
-      'their states',
-      departed.map((id) => `${id}=${afterPan[id]}`).join(', ') || '(none departed)',
-    )
-
-    // Posters are rasterized by `framePosterQueue`, which holds every capture
-    // until the board has been quiet — the pan above is exactly the kind of
-    // gesture it refuses to work under, so the wait has to outlast its quiet
-    // period plus a serial capture or two.
-    await page.waitForTimeout(3000)
-    const afterSettle = await readFrameStates(page)
-    // Unconditional, not `if (departed.length > 0)`. On the committed
-    // twelve-frame fixture this pan always pushes frames out of the pool, so a
-    // run where nothing departed means the pan stopped working — and the old
-    // guard turned exactly that into a silent pass.
+    const departed = pooledOffscreen.filter((id) => afterPan[id] !== 'live')
+    annotate('of those, evicted by the far pan', String(departed.length))
+    annotate('their states', departed.map((id) => `${id}=${afterPan[id]}`).join(', ') || '(none departed)')
+    // Unconditional, not `if (departed.length > 0)`: a run where nothing was
+    // evicted means the pan stopped working, and a guard would turn exactly
+    // that into a silent pass.
     expect(
       departed.length,
-      'the poster pan pushed no previously-live frame offscreen, so the poster criterion was never exercised',
+      'the far pan evicted none of the frames pooled during the pause, so the poster criterion was never exercised',
     ).toBeGreaterThan(0)
-    const withPoster = departed.filter((id) => afterSettle[id] === 'poster')
+    const withPoster = departed.filter((id) => afterPan[id] === 'poster')
     annotate('of those, showing a frozen poster', `${withPoster.length}/${departed.length}`)
-    // The WS-5.3 acceptance criterion.
-    expect(withPoster.length).toBeGreaterThan(0)
+    // The WS-5.3 acceptance criterion: every frame that was looked at and then
+    // rested off screen comes back as a picture.
+    expect(withPoster.length).toBe(departed.length)
 
     // ── The "before" state, measured rather than assumed ───────────────────
     // Reset the view (Ctrl+0 → `useCanvas.ts`'s `resetCanvasView`) so the

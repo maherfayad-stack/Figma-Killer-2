@@ -239,7 +239,7 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
   })
 
   test('memory: 20 pan cycles and 50 edits leave no detached documents and a bounded heap', async ({ page }) => {
-    const { canvasRoot, content } = await open(page)
+    const { canvasRoot, frameEl } = await open(page)
     const cdp: CDPSession = await page.context().newCDPSession(page)
     await cdp.send('Performance.enable')
     const measure = async () => {
@@ -264,6 +264,11 @@ test.describe('P6-C edit and load budgets on the 40 x 300 corpus', () => {
     }
     await page.waitForTimeout(2500)
 
+    // The pans may have evicted and remounted the target frame: a new iframe,
+    // so a new content document.
+    await expect(visibleCanvasIframe(frameEl)).toBeVisible({ timeout: 30_000 })
+    const content = await (await visibleCanvasIframe(frameEl).elementHandle())?.contentFrame()
+    if (!content) throw new Error('the target frame has no content document after the pans')
     const heading = content.locator('.block__heading').nth(1)
     await clickInFrame(page, heading)
     await expect(content.locator(SELECTION_RING).first()).toBeAttached({ timeout: 10_000 })

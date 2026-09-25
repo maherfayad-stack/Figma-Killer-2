@@ -132,24 +132,22 @@ test.describe('P6-C budgets on a booted Tier-2 board', () => {
     await expect(bridges, 'not every frame went live with the whole board on screen').toHaveCount(LIVE_BOARD_FRAME_COUNT, { timeout: 180_000 })
     await page.waitForTimeout(3000)
 
-    const live = await liveContent(boardFrame)
-    const liveCdp: CDPSession = await page.context().newCDPSession(live)
-    const pageCdp: CDPSession = await page.context().newCDPSession(page)
-    await pageCdp.send('Performance.enable')
+    // Same-site: the live origin (`localhost:<port>`) and the editor share a
+    // renderer process, so the live documents are in the PAGE's heap and DOM
+    // counters (Chromium reports them under the page's own CDP session).
+    const cdp: CDPSession = await page.context().newCDPSession(page)
+    await cdp.send('Performance.enable')
     const measure = async () => {
-      await liveCdp.send('HeapProfiler.collectGarbage')
-      await pageCdp.send('HeapProfiler.collectGarbage')
+      await cdp.send('HeapProfiler.collectGarbage')
       await page.waitForTimeout(300)
-      const heap = (await liveCdp.send('Runtime.getHeapUsage')) as { usedSize: number }
-      const dom = (await liveCdp.send('Memory.getDOMCounters')) as { documents: number; nodes: number; jsEventListeners: number }
-      const { metrics } = (await pageCdp.send('Performance.getMetrics')) as { metrics: Array<{ name: string; value: number }> }
-      const editorHeap = metrics.find((m) => m.name === 'JSHeapUsedSize')?.value ?? Number.NaN
-      return { liveHeapMb: heap.usedSize / 1_048_576, liveDocuments: dom.documents, liveNodes: dom.nodes, editorHeapMb: editorHeap / 1_048_576, bridges: await bridges.count() }
+      await cdp.send('HeapProfiler.collectGarbage')
+      const { metrics } = (await cdp.send('Performance.getMetrics')) as { metrics: Array<{ name: string; value: number }> }
+      const read = (name: string) => metrics.find((m) => m.name === name)?.value ?? Number.NaN
+      return { heapMb: read('JSHeapUsedSize') / 1_048_576, documents: read('Documents'), frames: read('Frames'), nodes: read('Nodes'), bridges: await bridges.count() }
     }
     const all = await measure()
     annotate('memory: live frames', String(all.bridges))
-    annotate('memory: live renderer heap MB / documents / nodes', `${all.liveHeapMb.toFixed(1)} / ${all.liveDocuments} / ${all.liveNodes}`)
-    annotate('memory: editor heap MB', all.editorHeapMb.toFixed(1))
+    annotate('memory: heap MB / documents / frames / DOM nodes', `${all.heapMb.toFixed(1)} / ${all.documents} / ${all.frames} / ${all.nodes}`)
 
     // Zoom back in on the animated frame: the live pool keeps
     // max(on screen, 8), so the frames that leave beyond eight are evicted.
@@ -166,9 +164,10 @@ test.describe('P6-C budgets on a booted Tier-2 board', () => {
     const fewer = await measure()
     const evicted = all.bridges - fewer.bridges
     annotate('memory: live frames after the pan', String(fewer.bridges))
-    annotate('memory: live renderer heap MB / documents / nodes (after)', `${fewer.liveHeapMb.toFixed(1)} / ${fewer.liveDocuments} / ${fewer.liveNodes}`)
-    annotate('memory: per evicted live frame, heap MB', ((all.liveHeapMb - fewer.liveHeapMb) / evicted).toFixed(2))
-    annotate('memory: per evicted live frame, documents', ((all.liveDocuments - fewer.liveDocuments) / evicted).toFixed(2))
+    annotate('memory: heap MB / documents / frames / DOM nodes (after)', `${fewer.heapMb.toFixed(1)} / ${fewer.documents} / ${fewer.frames} / ${fewer.nodes}`)
+    annotate('memory: per evicted live frame, heap MB', ((all.heapMb - fewer.heapMb) / evicted).toFixed(2))
+    annotate('memory: per evicted live frame, documents / DOM nodes', `${((all.documents - fewer.documents) / evicted).toFixed(2)} / ${((all.nodes - fewer.nodes) / evicted).toFixed(0)}`)
+    annotate('memory: detached documents (after)', String(fewer.documents - fewer.frames))
     expect(evicted).toBeGreaterThan(0)
   })
 })
