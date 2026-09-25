@@ -28,7 +28,24 @@ import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMer
 import { isSlotEditKind } from './studioSlotWriteback'
 import { isStructuralEditKind } from './studioStructuralWriteback'
 import { canvasLayerTouchedFiles, isCanvasLayerEditKind } from './studioCanvasLayerWriteback'
-import type { StudioEdit } from './studioEditSchemas'
+import type { StudioEdit, StudioEditBatchOptions } from './studioEditSchemas'
+
+/**
+ * Which Studio-authored targets a decode may name (FC-1, P5-G). The DEFAULT —
+ * no argument — is none: a free-canvas layer module decodes to `null` exactly
+ * like any other `.studio/` path, for every caller. Only the editor's own
+ * `/save` batch passes `{ canvasLayers: 'allow' }` (`applyStudioEditBatch`'s
+ * options, threaded through every helper that batch calls). So a tool that
+ * decodes a node id on its own — `studio_codemod`, `/extract-component`,
+ * `nodeJsxSource` — can never reach a layer, and has no check of its own to
+ * forget (security review of #260, B1).
+ */
+export type SourceTargetScope = Pick<StudioEditBatchOptions, 'canvasLayers'>
+
+/** The default scope: no Studio-authored target at all. */
+const NO_AUTHORED_TARGETS: SourceTargetScope = {}
+/** Ordering only ever compares line numbers, so it reads every grammar-valid target. */
+const ORDER_ANY_TARGET: SourceTargetScope = { canvasLayers: 'allow' }
 
 const NODE_LOC_ID = /^(.*):(\d+):(\d+)$/
 
@@ -52,12 +69,12 @@ export interface StudioEditLocation {
  * `"pages/Home.jsx:77:19~components/Icon.jsx"` — a path that does not exist,
  * and if it ever did, a file the user never asked to modify.
  */
-function decodeNodeIdLocation(nodeId: string): StudioEditLocation | null {
+function decodeNodeIdLocation(nodeId: string, scope: SourceTargetScope): StudioEditLocation | null {
   const target = nodeId.split(INLINE_ID_SEPARATOR).pop() ?? nodeId
   const m = NODE_LOC_ID.exec(target)
   if (!m) return null
   const rel = m[1]!
-  return isWritableSourceRel(rel) ? { rel, line: Number(m[2]), col: Number(m[3]) } : null
+  return isWritableSourceRel(rel, scope) ? { rel, line: Number(m[2]), col: Number(m[3]) } : null
 }
 
 /**
@@ -102,10 +119,14 @@ function decodeNodeIdLocation(nodeId: string): StudioEditLocation | null {
  * cannot put `dir` and the file on different sides of a link); a path through
  * a DANGLING link is refused, because a write would follow it.
  */
-export function studioEditLocation(dir: string, nodeId: string): StudioEditLocation | null {
-  const decoded = decodeNodeIdLocation(nodeId)
+export function studioEditLocation(
+  dir: string,
+  nodeId: string,
+  scope: SourceTargetScope = NO_AUTHORED_TARGETS,
+): StudioEditLocation | null {
+  const decoded = decodeNodeIdLocation(nodeId, scope)
   if (!decoded) return null
-  const rel = canonicalSourceRel(dir, decoded.rel)
+  const rel = canonicalSourceRel(dir, decoded.rel, scope)
   return rel === null ? null : { rel, line: decoded.line, col: decoded.col }
 }
 
@@ -116,8 +137,8 @@ export function studioEditLocation(dir: string, nodeId: string): StudioEditLocat
  * that hold a `rel` rather than a node id (`reloadScope.ts`'s round-tripped
  * `files` list) can apply the same rule instead of a parallel one.
  */
-export function canonicalSourceRel(dir: string, rel: string): string | null {
-  if (!isWritableSourceRel(rel)) return null
+export function canonicalSourceRel(dir: string, rel: string, scope: SourceTargetScope = NO_AUTHORED_TARGETS): string | null {
+  if (!isWritableSourceRel(rel, scope)) return null
 
   // `realWorkspaceRel` (`@core/page-parser`'s shared write scope) resolves
   // symlinks and junctions through the deepest ancestor that exists, so a
@@ -128,7 +149,7 @@ export function canonicalSourceRel(dir: string, rel: string): string | null {
   // Re-run the lexical guard on the RESULT: a symlink spelled like source
   // that really lands in `.studio/` comes back as a `.studio/…` rel, and the
   // directory check refuses it.
-  return canonical !== null && isWritableSourceRel(canonical) ? canonical : null
+  return canonical !== null && isWritableSourceRel(canonical, scope) ? canonical : null
 }
 
 /** Files a writeback may touch. Never a `.env`, a lockfile, or anything else that isn't app source. */
@@ -161,12 +182,12 @@ const WRITABLE_SOURCE_EXTENSION = /\.(tsx?|jsx?|mjs|cjs)$/i
  * request round-trips back to the server, rather than a second, parallel
  * check that could drift from this one.
  */
-export function isWritableSourceRel(rel: string): boolean {
+export function isWritableSourceRel(rel: string, scope: SourceTargetScope = NO_AUTHORED_TARGETS): boolean {
   if (rel.length === 0) return false
   if (rel.startsWith('/') || rel.startsWith('\\') || /^[a-zA-Z]:/.test(rel)) return false
   const segments = rel.split(/[/\\]/)
   if (segments.some((segment) => segment === '..' || segment === '')) return false
-  if (unwritableWorkspaceSegment(rel) !== null && !isStudioAuthoredSourceRel(rel)) return false
+  if (unwritableWorkspaceSegment(rel) !== null && !(scope.canvasLayers === 'allow' && isStudioAuthoredSourceRel(rel))) return false
   return WRITABLE_SOURCE_EXTENSION.test(rel)
 }
 
@@ -184,12 +205,15 @@ export function isWritableSourceRel(rel: string): boolean {
  * `.studio` path stays refused: `.studio/meta.tsx`, `.studio/canvas/x/y.tsx`,
  * `.STUDIO/canvas/<id>.tsx` and a backslash spelling all fail it.
  *
- * It widens this node-id decoder only. `canonicalSourceRel` still re-runs the
- * guard on the REAL path, so a `.studio/canvas` that is a link elsewhere is
- * judged by where it really lands. The agent's native writes
- * (`agentWriteScope.ts`), CSS writeback and asset landing never consult it,
- * and a batch run for an agent refuses every canvas-layer target
- * (`studioCanvasLayerScope.ts`'s `createCanvasLayerScope`). Nothing
+ * It widens this node-id decoder only, and only for a caller that passes
+ * `{ canvasLayers: 'allow' }` ({@link SourceTargetScope}) — the editor's
+ * `/save` batch and nothing else. Every other caller gets the default, under
+ * which a layer path is refused like the rest of `.studio/`.
+ * `canonicalSourceRel` still re-runs the guard on the REAL path, so a
+ * `.studio/canvas` that is a link elsewhere is judged by where it really
+ * lands. The agent's native writes (`agentWriteScope.ts`), CSS writeback and
+ * asset landing never consult it, and a batch run for an agent also names its
+ * refusal (`studioCanvasLayerScope.ts`'s `createCanvasLayerScope`). Nothing
  * else belongs in this list without its own security review.
  */
 const STUDIO_AUTHORED_SOURCE_PATTERNS: readonly RegExp[] = [CANVAS_LAYER_REL_PATTERN]
@@ -276,9 +300,11 @@ export function isSharedSourceNodeId(nodeId: string, kind?: StudioEdit['kind']):
  * the save path.
  */
 export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: readonly T[]): T[] {
+  // Ordering names no file to write, so every target the batch may hold sorts
+  // by its line — a layer module's edits too (the write decode is scoped).
   return [...edits].sort((a, b) => {
-    const la = decodeNodeIdLocation(a.nodeId)
-    const lb = decodeNodeIdLocation(b.nodeId)
+    const la = decodeNodeIdLocation(a.nodeId, ORDER_ANY_TARGET)
+    const lb = decodeNodeIdLocation(b.nodeId, ORDER_ANY_TARGET)
     if (!la) return 1
     if (!lb) return -1
     return lb.line - la.line || lb.col - la.col
@@ -352,11 +378,12 @@ export function orderStudioEditsForApply<T extends { nodeId: string }>(edits: re
 export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
   dir: string,
   edits: readonly T[],
+  scope: SourceTargetScope = NO_AUTHORED_TARGETS,
 ): DedupedStudioEdit<T>[] {
   const byTarget = new Map<string, DedupedStudioEdit<T>>()
   const passthrough: T[] = []
   for (const edit of edits) {
-    const loc = studioEditLocation(dir, edit.nodeId)
+    const loc = studioEditLocation(dir, edit.nodeId, scope)
     // `styled` (W4-4 Phase B) joins the exemption for the same reason
     // `insert`/`insert-slot` are here: its identity is not the location alone.
     // Every declaration in one template shares that template's `line:col`, so
@@ -396,8 +423,8 @@ export function dedupeStudioEdits<T extends { nodeId: string; kind: string }>(
  * composite-id rule — see `studioEditLocation`, whose canonical `rel` is what
  * makes two aliases of one file a single member of that set.
  */
-export function studioEditFile(dir: string, nodeId: string): string | null {
-  const loc = studioEditLocation(dir, nodeId)
+export function studioEditFile(dir: string, nodeId: string, scope: SourceTargetScope = NO_AUTHORED_TARGETS): string | null {
+  const loc = studioEditLocation(dir, nodeId, scope)
   return loc ? join(dir, loc.rel) : null
 }
 
@@ -405,10 +432,14 @@ export function studioEditFile(dir: string, nodeId: string): string | null {
  * Every absolute file `edits` write — what a batch compares line counts over
  * (`shifted`) and reports as `touchedFiles` for the caller to re-read.
  */
-export function studioEditsTouchedFiles(dir: string, edits: readonly StudioEdit[]): Set<string> {
+export function studioEditsTouchedFiles(
+  dir: string,
+  edits: readonly StudioEdit[],
+  scope: SourceTargetScope = NO_AUTHORED_TARGETS,
+): Set<string> {
   const touchedFiles = new Set<string>()
   for (const edit of edits) {
-    const file = studioEditFile(dir, edit.nodeId)
+    const file = studioEditFile(dir, edit.nodeId, scope)
     if (file) touchedFiles.add(file)
     // A `css`/`create` edit's nodeId never decodes (it's synthetic), but the
     // edit itself rewrites `pageFile`'s import list — a real line-count
@@ -425,11 +456,11 @@ export function studioEditsTouchedFiles(dir: string, edits: readonly StudioEdit[
     // line-count-shift check would report `shifted: false` for a write that
     // moved every id in the file the element landed in.
     if (edit.kind === 'transplant') {
-      const destination = studioEditFile(dir, edit.parentNodeId)
+      const destination = studioEditFile(dir, edit.parentNodeId, scope)
       if (destination) touchedFiles.add(destination)
     }
     // P5-G — a loose layer's module, and the page a `canvas-layer-place` lands in.
-    for (const file of canvasLayerTouchedFiles(dir, edit, (id) => studioEditLocation(dir, id))) touchedFiles.add(file)
+    for (const file of canvasLayerTouchedFiles(dir, edit, (id) => studioEditLocation(dir, id, scope))) touchedFiles.add(file)
   }
   return touchedFiles
 }

@@ -85,7 +85,7 @@ describe('page ids and edit node ids', () => {
 })
 
 describe('placements in boards.json', () => {
-  it('round-trips layers and drops a malformed id instead of carrying it', () => {
+  it('round-trips layers and drops every entry that fails the TypeBox schema instead of carrying or repairing it', () => {
     const file = parseBoardsFile({
       version: 1,
       boards: [
@@ -100,13 +100,14 @@ describe('placements in boards.json', () => {
             { id: '../../etc', x: 0, y: 0 },
             { id: 'cl0123456789', x: 99, y: 99 },
             { id: 'clabcdefghij', x: 'nope', y: 5, w: 0 },
+            { id: 'clzzzzzzzzzz', x: 1, y: 2, extra: 'dropped', hidden: true },
           ],
         },
       ],
     })
     expect(file.boards[0]!.layers).toEqual([
       { id: 'cl0123456789', x: 10, y: 20, w: 360, z: 2, name: 'Hero', locked: true },
-      { id: 'clabcdefghij', x: 0, y: 5 },
+      { id: 'clzzzzzzzzzz', x: 1, y: 2, hidden: true },
     ])
     expect(parseBoardsFile(serializeBoardsFile(file))).toEqual(file)
   })

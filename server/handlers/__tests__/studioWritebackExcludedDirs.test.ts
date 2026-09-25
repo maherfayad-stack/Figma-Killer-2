@@ -18,7 +18,10 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
 import { UNWRITABLE_WORKSPACE_DIR_NAMES, isWorkspaceWritablePath } from '@core/page-parser'
-import { applyStudioEditBatch, studioEditLocation } from '../studioWriteback'
+import { applyStudioEditBatch, canonicalSourceRel, isWritableSourceRel, studioEditLocation } from '../studioWriteback'
+
+/** The editor batch's scope — the only caller that may name a loose-layer module. */
+const ALLOW_LAYERS = { canvasLayers: 'allow' } as const
 import { landAssetBytes, landDesignReferenceBytes } from '../studio/assetLanding'
 import { tryServeStudioExtractComponent } from '../studio/extractComponent'
 import { studioEditMcpTools } from '../../ai/mcp/tools/studio/editTools'
@@ -97,12 +100,18 @@ describe('the node-id decode refuses every unwritable directory', () => {
   // FC-1 (P5-G) opens EXACTLY `.studio/canvas/<id>.tsx` — the free canvas's
   // layer modules — and nothing wider. The acceptance below failed before FC-1
   // (the extension point was empty); every refusal after it must keep holding.
-  it('opens the free-canvas layer path, and only its exact spelling', () => {
-    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toEqual({
+  it('opens the free-canvas layer path ONLY for a caller that opts in (the editor batch), and only its exact spelling', () => {
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1', ALLOW_LAYERS)).toEqual({
       rel: '.studio/canvas/cl0123456789.tsx',
       line: 1,
       col: 1,
     })
+  })
+
+  it('refuses the layer path by DEFAULT — a caller that decodes on its own never reaches it (#260 B1)', () => {
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toBeNull()
+    expect(canonicalSourceRel(tmpDir, '.studio/canvas/cl0123456789.tsx')).toBeNull()
+    expect(isWritableSourceRel('.studio/canvas/cl0123456789.tsx')).toBe(false)
   })
 
   it.each([
@@ -124,15 +133,15 @@ describe('the node-id decode refuses every unwritable directory', () => {
     ['a nested .studio', 'src/.studio/canvas/cl0123456789.tsx:1:1'],
     ['an absolute path', '/.studio/canvas/cl0123456789.tsx:1:1'],
     ['a stream suffix', '.studio/canvas/cl0123456789.tsx::$DATA:1:1'],
-  ])('keeps refusing %s', (_label, nodeId) => {
-    expect(studioEditLocation(tmpDir, nodeId)).toBeNull()
+  ])('keeps refusing %s, even for a caller that opts in', (_label, nodeId) => {
+    expect(studioEditLocation(tmpDir, nodeId, ALLOW_LAYERS)).toBeNull()
   })
 
   it('judges a .studio/canvas that is a link by where it really lands', () => {
     // A cloned repository can carry a symlink; git stores them. A canvas
     // directory linked into `.git` must not become a way to write there.
     linkDir('.git/hooks', '.studio/canvas')
-    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1')).toBeNull()
+    expect(studioEditLocation(tmpDir, '.studio/canvas/cl0123456789.tsx:1:1', ALLOW_LAYERS)).toBeNull()
   })
 
   it('refuses a symlink spelled like source whose real path is inside .studio', () => {

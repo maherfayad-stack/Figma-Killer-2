@@ -204,7 +204,10 @@ function resolveNarrowReloadPageIds(dir: string, filesRelToDir: readonly string[
   const pageIds = new Set<string>()
   for (const relToDir of filesRelToDir) {
     // Never trust an unvalidated path into `join` — see this module's doc.
-    const rel = canonicalSourceRel(dir, relToDir)
+    // FC-1 — a layer module is admitted HERE only to be named (it maps to its
+    // `canvas:<id>` page id below and is never read or written), so the narrow
+    // resync a `/save` of a layer asks for stays narrow.
+    const rel = canonicalSourceRel(dir, relToDir, { canvasLayers: 'allow' })
     if (rel === null) return null
     const absFile = join(dir, ...rel.split('/'))
     // Rule 2b — editing a story file can remove its frame entirely.

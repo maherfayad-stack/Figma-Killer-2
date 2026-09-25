@@ -54,7 +54,7 @@ import {
 } from '@core/page-tree'
 import { refusalFor } from './studioEditRefusals'
 import { relocateSourcePosition } from './studioEditRelocate'
-import { studioEditLocation } from './studioEditRouting'
+import { studioEditLocation, type SourceTargetScope } from './studioEditRouting'
 import type { StudioEdit, StudioEditRefusal } from './studioEditSchemas'
 
 /**
@@ -111,6 +111,7 @@ export function resolveEditIdentities(
   edits: readonly StudioEdit[],
   expect: SourceFingerprintExpectations,
   project: Project,
+  scope?: SourceTargetScope,
 ): ResolvedEditIdentities {
   if (Object.keys(expect).length === 0) return { runnable: [...edits], moved: [], retargeted: [] }
   const files = new Map<string, SourceFile | null>()
@@ -124,7 +125,7 @@ export function resolveEditIdentities(
   const locate = (nodeId: string, expected: string): string | { refusal: string } => {
     const known = found.get(nodeId)
     if (known !== undefined) return known
-    const location = studioEditLocation(dir, nodeId)
+    const location = studioEditLocation(dir, nodeId, scope)
     let answer: string | { refusal: string }
     if (!location) {
       answer = nodeId // synthetic, or refused by the path guard — the codemod path answers that
@@ -193,9 +194,10 @@ export function fingerprintAfterWrite(
   dir: string,
   edit: StudioEdit,
   project: Project,
+  scope?: SourceTargetScope,
 ): { nodeId: string; fingerprint: string } | null {
   if (!IDENTITY_CHANGING_VALUE_KINDS.has(edit.kind)) return null
-  const location = studioEditLocation(dir, edit.nodeId)
+  const location = studioEditLocation(dir, edit.nodeId, scope)
   if (!location) return null
   const file = join(dir, location.rel)
   if (!existsSync(file)) return null

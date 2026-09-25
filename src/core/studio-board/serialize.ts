@@ -1,6 +1,16 @@
 import { renderMarkdownToHtml } from '@core/markdown/renderMarkdown'
-import type { Board, BoardFrame, BoardGuide, BoardsFile, CanvasLayerPlacement, DocBlock, NoteColor, StickyNote } from './types'
-import { isCanvasLayerId } from './canvasLayers'
+import {
+  CanvasLayerPlacementSchema,
+  type Board,
+  type BoardFrame,
+  type BoardGuide,
+  type BoardsFile,
+  type CanvasLayerPlacement,
+  type DocBlock,
+  type NoteColor,
+  type StickyNote,
+} from './types'
+import { filterArray } from '@core/utils/typeboxHelpers'
 import type { PreviewAxes } from './previewAxes'
 
 const NOTE_COLORS: NoteColor[] = ['yellow', 'green', 'blue', 'pink', 'gray']
@@ -131,31 +141,32 @@ function coerceGuide(raw: unknown): BoardGuide | undefined {
  * annotation coercers above; an optional field is omitted when absent or
  * invalid so a file round-trips byte-for-byte.
  */
-function coerceLayer(raw: unknown): CanvasLayerPlacement | undefined {
-  if (!isPlainObject(raw)) return undefined
-  const id = raw.id
-  if (typeof id !== 'string' || !isCanvasLayerId(id)) return undefined
-  const layer: CanvasLayerPlacement = {
-    id,
-    x: typeof raw.x === 'number' && Number.isFinite(raw.x) ? raw.x : 0,
-    y: typeof raw.y === 'number' && Number.isFinite(raw.y) ? raw.y : 0,
-  }
-  if (typeof raw.w === 'number' && Number.isFinite(raw.w) && raw.w >= 1) layer.w = raw.w
-  if (typeof raw.z === 'number' && Number.isFinite(raw.z)) layer.z = raw.z
-  if (typeof raw.name === 'string' && raw.name.length > 0) layer.name = raw.name.slice(0, 120)
-  if (raw.locked === true) layer.locked = true
-  if (raw.hidden === true) layer.hidden = true
-  return layer
+/**
+ * One placement as it goes back into the file: the schema's fields only (an
+ * unknown key a hand edit added is not carried), `false` flags omitted.
+ */
+function canonicalLayer(layer: CanvasLayerPlacement): CanvasLayerPlacement {
+  const out: CanvasLayerPlacement = { id: layer.id, x: layer.x, y: layer.y }
+  if (layer.w !== undefined) out.w = layer.w
+  if (layer.z !== undefined) out.z = layer.z
+  if (layer.name !== undefined && layer.name.length > 0) out.name = layer.name
+  if (layer.locked === true) out.locked = true
+  if (layer.hidden === true) out.hidden = true
+  return out
 }
 
-/** Every well-formed placement, each id at most once (the first wins — a duplicate would render one module twice). */
+/**
+ * Every placement that passes `CanvasLayerPlacementSchema` (TypeBox — the id
+ * grammar included), each id at most once (the first wins — a duplicate would
+ * render one module twice). A malformed entry is DROPPED, not repaired: the
+ * load's heal re-places a module that has no placement.
+ */
 function coerceLayers(raw: unknown): CanvasLayerPlacement[] {
-  if (!Array.isArray(raw)) return []
   const seen = new Set<string>()
   const layers: CanvasLayerPlacement[] = []
-  for (const entry of raw) {
-    const layer = coerceLayer(entry)
-    if (!layer || seen.has(layer.id)) continue
+  for (const entry of filterArray(CanvasLayerPlacementSchema, raw)) {
+    const layer = canonicalLayer(entry)
+    if (seen.has(layer.id)) continue
     seen.add(layer.id)
     layers.push(layer)
   }

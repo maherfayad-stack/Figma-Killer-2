@@ -8,7 +8,7 @@
  */
 import { existsSync, readFileSync } from 'node:fs'
 import { buildSourceNodeId } from '@core/page-tree'
-import { studioEditFile, studioEditLocation } from './studioEditRouting'
+import { studioEditFile, studioEditLocation, type SourceTargetScope } from './studioEditRouting'
 
 /** Lines in `file`, or 0 when it does not exist — the one reading every line-count comparison here uses. */
 export function countLines(file: string): number {
@@ -43,9 +43,10 @@ export function recordCreatedPosition(
   dir: string,
   nodeId: string,
   created: { line: number; col: number },
+  scope?: SourceTargetScope,
 ): void {
-  const location = studioEditLocation(dir, nodeId)
-  const file = studioEditFile(dir, nodeId)
+  const location = studioEditLocation(dir, nodeId, scope)
+  const file = studioEditFile(dir, nodeId, scope)
   if (!location || !file) return
   into.push({ rel: location.rel, file, col: created.col, linesFromEnd: countLines(file) - created.line })
 }

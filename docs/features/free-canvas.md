@@ -117,7 +117,15 @@ the same slot is byte-exact (`transplantJsxElement.canvas.test.ts`,
   (`^\.studio/canvas/(cl[a-z0-9]{10})\.tsx$`). Every other `.studio` path stays
   refused; `studioWritebackExcludedDirs.test.ts` pins both halves (the
   acceptance failed before FC-1; a widened pattern fails nine near-miss rows).
-  `canonicalSourceRel` still re-checks the real path.
+  `canonicalSourceRel` still re-checks the real path. **The opening is opt-in**
+  (security review of #260, B1): `studioEditLocation` / `canonicalSourceRel` /
+  `isWritableSourceRel` refuse a layer path by DEFAULT, and admit it only
+  under `SourceTargetScope` `{ canvasLayers: 'allow' }`, which only the editor's
+  `/save` batch passes (threaded through every helper that batch calls). A
+  caller that decodes a node id on its own — `studio_codemod`,
+  `/extract-component`, `nodeJsxSource` — therefore cannot reach a layer, with
+  no check of its own to forget. `reloadScope` opts in only to NAME a layer
+  file (it maps to `canvas:<id>`, never read or written).
 - **Files.** Only `studio/canvasLayerFiles.ts` touches `.studio/canvas/`. It
   builds paths from validated ids, refuses a `.studio` or `.studio/canvas` that
   is a link (a cloned repo can carry one) and any real path that is not the

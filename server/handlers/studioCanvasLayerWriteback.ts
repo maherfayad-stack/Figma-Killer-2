@@ -161,7 +161,10 @@ type Locate = (nodeId: string) => { rel: string; line: number; col: number } | n
  */
 export function canvasLayerTouchedFiles(dir: string, edit: { kind: string }, locate: Locate): string[] {
   if (!isCanvasLayerEdit(edit)) return []
-  const files = [join(dir, ...canvasLayerRelPath(edit.layerId).split('/'))]
+  // The same link-refusing path builder every write uses: a linked `.studio`
+  // or `.studio/canvas` names no file here either (the write refuses it anyway).
+  const layerFile = canvasLayerFilePath(dir, edit.layerId)
+  const files = layerFile ? [layerFile] : []
   if (edit.kind === 'canvas-layer-place') {
     const destination = locate(edit.parentNodeId)
     if (destination) files.push(join(dir, destination.rel))

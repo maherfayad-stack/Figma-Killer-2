@@ -89,13 +89,14 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### canvas-33 — P5-G: the free canvas (OD-14) — loose layers on the empty board
 - **Agent:** canvas-engineer · **Branch:** `feat/free-canvas-loose-layers` off `25681dcb` (trunk through `fea4f125` merged in) · **PR:** #260 (draft, base `feat/canvas-excellence`; long form, threat list, reviewer file list, gesture table in its body) · **Updated:** 2026-09-25
-- **Stage:** verifying (draft PR open). **Needs security-guard review (FC-1/FC-2)** before merge — the PR body lists every file that touches the filesystem or untrusted input.
+- **Stage:** security review round 1 addressed (B1 blocker + N1/N3); awaiting re-review. N2 (`boards.json` plain-fs) is a listed follow-up.
 - **Done:** FC-1 (id/path grammar, `Board.layers`, load apart from pages, memo, reload scope, the ONE write-path pattern), FC-2 (create/delete/restore/place/lift kinds; lift + place back is byte-exact), FC-3 (`canvasLayerPages` slice, gestures whose ONE history entry holds module + placement, heal), FC-4 (one windowed static surface per board, below frames; rings above), FC-5 (press/drag/snap/move, drag into a frame = place, drag out of a frame = lift, Delete, arrows), FC-6 G2 (OS image drop on the empty board, reconciled with P5-B's multi-file drop: one loose layer per image, intrinsic size from the landing route, cascaded 24 px; failures through P5-B's `reportUnlanded`). Doc: `docs/features/free-canvas.md`.
 - **Decisions:**
   - Agent: native Write/Edit into `.studio/` stay refused; `studio_apply_edits` refuses every canvas-layer kind and every layer-module target (`canvas-layer-agent`) — only `/save` passes `canvasLayers: 'allow'`.
   - The surface takes NO input: `pointer-events: none`; layers are hit-tested from the board (`useCanvasLayerPointer`), so no gap forwarding exists to go wrong.
   - A loose layer is selected as a whole (a 4th selection list). Inspector editing of its content is FC-7.
   - `canvas-layer-restore` accepts client text (undo), exclusive-create, ≤ 512 KB — same trust as `reinsert-source`.
+  - Default deny IN THE DECODER (#260 B1): `studioEditLocation`/`canonicalSourceRel`/`isWritableSourceRel` refuse a layer path unless given `SourceTargetScope` `{ canvasLayers: 'allow' }` — only `applyStudioEditBatch` for `/save` threads it. A new decoder caller gets the refusal for free; never pass `'allow'` from anything that writes on an agent's behalf.
   - `CanvasFileDropPlan` is `kind: 'frame'` (P5-B's action) | `kind: 'canvas'`; modifiers never apply on the empty board. A multi-file canvas drop is one undo step PER layer (FC-6 follow-up).
 - **Canvas files touched:** `canvas/BoardCanvasLayer/*` (new), `StudioBoardLayers`, `IframeFrameSurface` + contract (`sizing`), `useIframeFrameAutoHeight` (`isLive` → `fitToContent`), `canvasFileDrop`, `canvasFileDragPreview`, `useCanvasFileDrop`, `canvasDragCommit`, `useCanvasReorderDrag`, `boardSnapping`.
 - **Landmines (height × injectors × events):**
