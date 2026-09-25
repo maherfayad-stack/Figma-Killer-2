@@ -2,8 +2,8 @@ import { expect, test, type FrameLocator, type Locator, type Page } from '@playw
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { WORKSPACE_ROOT } from './helpers/constants'
+import { liveBridgeIframe } from './helpers/canvasIframe'
 import {
-  CANVAS_FRAME_IFRAME_SELECTOR,
   clickInFrame,
   createFixtureProject,
   openFixtureBoard,
@@ -99,9 +99,9 @@ async function openLiveSms(page: Page): Promise<LiveSms> {
   await panIntoView(page, canvasRoot, frame)
   // A live board frame shows a Tier-0 fallback until its bridge iframe is
   // ready, so two canvas iframes coexist for a while — wait for the bridge.
-  const bridge = frame.locator('[data-testid="live-board-frame-bridge"]:not([hidden])')
+  const bridge = liveBridgeIframe(frame)
   await expect(bridge, 'the SMS frame never switched to its live (bridge) iframe').toBeVisible({ timeout: 120_000 })
-  const content = bridge.frameLocator(CANVAS_FRAME_IFRAME_SELECTOR)
+  const content = bridge.contentFrame()
   await expect(content.locator('[class*="codeInput"]').first()).toBeVisible({ timeout: 60_000 })
   return { canvasRoot, frame, content }
 }
