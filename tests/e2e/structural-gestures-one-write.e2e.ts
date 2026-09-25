@@ -205,19 +205,20 @@ test.describe('P3-D — structural refusals become writes', () => {
     const rule = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'hr', 1)}`
     const title = content.locator(`[data-node-id="${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'h3', 1)}"]`).first()
     await panIntoView(page, canvasRoot, title, 80)
-    // P2-B: a click selects the outermost instance, and each double-click goes
-    // one level deeper — instance, its <section>, then the rule.
     await clickInFrame(page, title)
-    const ruleEl = content.locator(`[data-node-id="${rule}"]`).first()
     const selected = () =>
       page.evaluate(async () => {
         const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
         return useEditorStore.getState().selectedNodeId as string | null
       })
-    for (let i = 0; i < 3 && (await selected()) !== rule; i += 1) {
-      const box = await ruleEl.boundingBox()
-      if (!box) throw new Error('the rule has no bounding box')
-      await page.mouse.dblclick(box.x + box.width / 2, box.y + box.height / 2)
+    // P2-B: a click selects the outermost instance; Enter goes one level in
+    // (the instance, then its first child), Tab to the next sibling — down to
+    // the rule after the <h3>.
+    const heading = `${firstCard}~${sourceNodeId(CARD_COMPONENT, CARD, 'h3', 1)}`
+    for (let i = 0; i < 6; i += 1) {
+      const now = await selected()
+      if (now === rule) break
+      await page.keyboard.press(now === heading ? 'Tab' : 'Enter')
       await page.waitForTimeout(300)
     }
     await expect.poll(selected).toBe(rule)
@@ -227,6 +228,8 @@ test.describe('P3-D — structural refusals become writes', () => {
     // This instance is now its own markup, minus the rule; the component file
     // and the second instance are exactly as they were. No dialog opened.
     await expect.poll(() => read(HOME), { timeout: 30_000 }).not.toContain('<Card title="One" />')
+    // The detach lands first; the delete it replays lands right after.
+    await expect.poll(() => read(HOME), { timeout: 30_000 }).not.toContain('className="rule"')
     const detached = read(HOME)
     expect(detached).toContain('<h3>One</h3>')
     expect(detached).not.toContain('className="rule"')
@@ -234,8 +237,23 @@ test.describe('P3-D — structural refusals become writes', () => {
     expect(read(CARD)).toBe(CARD_COMPONENT)
     await expect(page.getByRole('dialog')).toHaveCount(0)
 
+    const stack = () =>
+      page.evaluate(async () => {
+        const { useEditorStore } = await import('/src/admin/pages/site/store/store.ts' as string)
+        const st = useEditorStore.getState()
+        const show = (entry: { linkedToNext?: boolean; structural?: { gesture: string; source?: { label: string; inverse: unknown } } }) =>
+          `${entry.structural?.gesture}:${entry.structural?.source?.label ?? ''}:linked=${entry.linkedToNext ?? false}:inv=${JSON.stringify(entry.structural?.source?.inverse ?? null).slice(0, 160)}`
+        return `past=[${st._historyPast.map(show).join(' | ')}] future=[${st._historyFuture.map(show).join(' | ')}]`
+      })
+    const beforeUndo = await stack()
     await page.keyboard.press('Control+z')
-    await expect.poll(() => read(HOME), { timeout: 30_000 }).toBe(HOME_PAGE)
+    await expect
+      .poll(() => read(HOME), { timeout: 30_000, message: `before ⌘Z ${beforeUndo}` })
+      .toBe(HOME_PAGE)
+      .catch(async (error: unknown) => {
+        throw new Error(`${String(error)}
+after ⌘Z ${await stack()}`)
+      })
     expect(read(CARD)).toBe(CARD_COMPONENT)
   })
 })
