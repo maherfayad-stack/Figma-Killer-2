@@ -29,13 +29,14 @@
  * honest target, and why offering one anyway is worse than offering nothing.
  */
 import { useState } from 'react'
-import { useEditorStore } from '@site/store/store'
+import { selectActiveCanvasPage, useEditorStore } from '@site/store/store'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR, ROTATE_CORNERS, ROTATE_HANDLE_ATTR } from '@core/studio-runtime'
 import { canOfferResize } from './resizeOffer'
 import { useElementResizeDrag } from './useElementResizeDrag'
 import { useGroupResizeDrag } from './useGroupResizeDrag'
+import { hasNestedMember } from './groupResize'
 import { useElementRotateDrag } from './useElementRotateDrag'
 import { CanvasSpacingHandles } from './CanvasSpacingHandles'
 
@@ -135,7 +136,9 @@ interface CanvasGroupResizeHandlesProps {
  *
  * All or nothing, like the single handles' `canOfferResize`: a member the
  * gate refuses would be a layer the box claims to resize and does not, so
- * one refusal draws no group handles at all. No padding / gap handles here —
+ * one refusal draws no group handles at all — and neither does a selection
+ * with a layer inside another selected layer (`hasNestedMember`), which
+ * would scale that layer twice. No padding / gap handles here —
  * those belong to ONE container.
  */
 export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: CanvasGroupResizeHandlesProps) {
@@ -145,7 +148,13 @@ export function CanvasGroupResizeHandles({ nodeIds, iframeDoc, onFrameReady }: C
   const moduleIdsKey = useEditorStore((s) => nodeIds.map((id) => findNodeById(s, id)?.moduleId ?? '').join('\n'))
   const moduleIds = moduleIdsKey.split('\n')
 
-  const sizeable = iframeDoc !== null && nodeIds.every((nodeId, index) => {
+  // A layer inside another selected layer would be scaled twice.
+  const nested = useEditorStore((s) => {
+    const tree = selectActiveCanvasPage(s)
+    return hasNestedMember((id) => tree?.nodes[id]?.parentId ?? null, nodeIds)
+  })
+
+  const sizeable = iframeDoc !== null && !nested && nodeIds.every((nodeId, index) => {
     const target = presentedElementForNode(iframeDoc, nodeId)
     return canOfferResize({
       moduleId: moduleIds[index] || null,

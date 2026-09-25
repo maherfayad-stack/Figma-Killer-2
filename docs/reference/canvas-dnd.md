@@ -549,6 +549,23 @@ is being positioned. A resize handle snaps its moving edge through the same
 resolver (`computeEdgeSnap`, IX-6e) — see `canvas-internals.md` → "Element
 resize".
 
+P5-F adds the rest of the vocabulary to the same resolver: the board's
+**ruler guides** (IX-5c, converted into the frame's space once per gesture),
+**equal spacing** with pink distance pills (IX-5d — the same gap as one the
+row already has, or centred between two neighbours), the user's two **snap
+toggles** (IX-5e: ⌘⇧' objects and spacing, ⌘' ruler guides; also in the zoom
+menu), and the **⇧ axis lock**, which leaves the held axis unsnapped. See
+`canvas-internals.md` → "Snapping, in one place".
+
+**Several layers (P5-F, IX-22).** A multi-selection moves together: every
+dragged layer is a member of ONE plan (`FreeMovePlan.members`), all move by
+the same snapped delta — so the arrangement is kept — and the snap runs on
+the union of their boxes against the peers that are NOT moving. A layer
+nested inside another member is dropped (it moves with its ancestor). It is
+all or nothing: a flow layer in the selection without ⌘ makes the whole
+gesture a reorder, and one refusal refuses the gesture. The commit is every
+member's own patch in one `setNodesInlineStylesPerNode` — one undo entry.
+
 **Preview, then commit.** The step is written straight onto the element's own
 `style` during the drag — no store round trip, so it tracks the pointer at
 frame rate and the selection ring (which re-measures the real element) follows

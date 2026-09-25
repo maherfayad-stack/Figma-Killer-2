@@ -109,3 +109,23 @@ export function memberResizeStep(member: GroupResizeMember, union: SnapRect, nex
   const nextInline = inlineProperty === 'left' ? inline + leftShift : inline - rightShift
   return { width, height, inline: Math.round(nextInline), top: Math.round(top + topShift) }
 }
+
+/**
+ * Whether any selected node sits inside another selected node. A group box
+ * over such a selection would scale the inner layer twice — once with its
+ * ancestor, once on its own — so no group handles are offered for it.
+ */
+export function hasNestedMember(
+  parentOf: (nodeId: string) => string | null,
+  nodeIds: readonly string[],
+): boolean {
+  const selected = new Set(nodeIds)
+  for (const nodeId of nodeIds) {
+    let parentId = parentOf(nodeId)
+    while (parentId) {
+      if (selected.has(parentId)) return true
+      parentId = parentOf(parentId)
+    }
+  }
+  return false
+}

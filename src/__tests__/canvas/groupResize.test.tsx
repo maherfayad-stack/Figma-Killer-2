@@ -13,7 +13,7 @@ import { afterEach, beforeEach, describe, expect, it, mock } from 'bun:test'
 import { cleanup, renderHook } from '@testing-library/react'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, type ResizeBoxStart } from '@core/studio-runtime'
 import { useEditorStore } from '@site/store/store'
-import { groupUnionRect, memberResizeStep, resizeGroupBox } from '@site/canvas/groupResize'
+import { groupUnionRect, hasNestedMember, memberResizeStep, resizeGroupBox } from '@site/canvas/groupResize'
 import { resizeFrameRect } from '@site/canvas/canvasSelectionOverlayPositioning'
 import { useGroupResizeDrag } from '@site/canvas/useGroupResizeDrag'
 import { makeNode, makePage, makeSite } from '../fixtures'
@@ -44,6 +44,17 @@ describe('IX-6g — the group box', () => {
     expect(resizeFrameRect([{ x: 0, y: 0, width: 10, height: 10 }])).toEqual({ x: 0, y: 0, width: 10, height: 10 })
     expect(resizeFrameRect([{ x: 0, y: 0, width: 10, height: 10 }, { x: 20, y: 5, width: 10, height: 30 }])).toEqual({ x: 0, y: 0, width: 30, height: 35 })
     expect(resizeFrameRect([{ x: 0, y: 0, width: 10, height: 10 }, null])).toBeNull()
+  })
+})
+
+describe('IX-6g — a nested selection gets no group box', () => {
+  const parents: Record<string, string | null> = { root: null, card: 'root', title: 'card', other: 'root' }
+  const parentOf = (id: string) => parents[id] ?? null
+
+  it('siblings and cousins are fine; a layer inside another selected one is not', () => {
+    expect(hasNestedMember(parentOf, ['card', 'other'])).toBe(false)
+    expect(hasNestedMember(parentOf, ['title', 'other'])).toBe(false)
+    expect(hasNestedMember(parentOf, ['card', 'title'])).toBe(true)
   })
 })
 
