@@ -12,7 +12,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
 ### perf-13 — P6-B server half: fast warm load (PERF-7 persistence, PERF-8)
-- **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR (see branch), base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
+- **Agent:** perf-hunter · **Branch:** `perf/fast-warm-load` · draft PR #263, base `feat/canvas-excellence`, long form + full A/B in the body · **Updated:** 2026-09-25
 - **Stage:** PR open (draft); gates green except pre-existing. The client streaming half of P6-B is OUT of scope (not started).
 - **Done:** signed on-disk parse cache (`.studio/cache/parse/`, `parseCacheStore.ts`, parser-code digest); `/load` memo invalidated from P1-D's watcher (`projectChangeFeed.ts`) instead of walk+stat; 4-project LRU (`loadedProjects.ts`); SHA-256 not a 32-bit hash; viewport parse order; absence dependencies; route reads the shared memo result (no clone).
 - **A/B** (`.tmp/p6b-bench/ab-modes.sh`, interleaved vs trunk, medians, loaded machine; 40-page `large` / 1,000-file `thousand`):
