@@ -40,7 +40,6 @@ import {
   canvasLayerIdFromRel,
   canvasLayerRelPath,
   CanvasLayerIdSchema,
-  isCanvasLayerEditNodeId,
   type CanvasLayerId,
 } from '@core/studio-board'
 import {
