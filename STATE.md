@@ -81,7 +81,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Goal:** gestures fixed in static frames in Phases 1–2 behave the same in live (Tier 2, Vite) frames: canvas-23, canvas-26, store-17, canvas-24, perf-12's hover note.
 - **Done:**
   - canvas-23: the parent sends the node's stored `flex`/`alignSelf`/`justifySelf` with `setResizeTarget`; the runtime plans the Fixed companions with the SAME resolver as the portal drag and previews a clear as the cascade value. `resize:commit` carries them (`flex: '0 1 auto' | null`, `alignSelf`/`justifySelf: null`) and rejects any other key.
-  - canvas-23 badge: the runtime reports no `frame:resize` while a resize is live (`onGestureChange`) and reports once after.
+  - canvas-23 badge: the runtime hides its overlay root for the `scrollHeight` read (handles and badge are not content) and reports no `frame:resize` while a resize is live (`onGestureChange`), once after.
   - canvas-26: the parent sends the tree siblings, tree parent and zoom; the runtime snaps the moving edge (`elementResizeSnapRules.ts`) and posts `resize:guides`, painted in the parent drag layer (`elementResizeGuides.ts`).
   - store-17: new `optimistic.revert`; `structuralCommitRollback.ts` broadcasts it for the gesture's own nodes (`trackStructuralTreeCommit` takes them).
   - canvas-24: `text:editStart` carries the stamped ancestor chain; the adapter resolves the nearest KNOWN node, like a click; the runtime accepts a reply for any ref in the chain.
@@ -93,7 +93,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - **Events × height:** the freeze ends in `finish()` AFTER `RESIZE_ACTIVE_ATTR` is removed (badge hidden), then one `scheduleFrameResize`. Reordering those re-measures the badge.
   - **Events × store:** a live resize's companions come from the markers the parent sent at the LAST `setResizeTarget`. They are re-sent on change (primitive selectors), but a drag started before the HMR lands plans from the old markers.
   - **Wire:** `text:editStart` now requires `ancestors`; `resize:commit.patch` is `additionalProperties: false`.
-  - `runtime.ts` is 689/700 lines, `messages.ts` 694/700.
+  - `runtime.ts` is 694/700 lines, `messages.ts` 694/700.
 - **Tests (each failed with its fix disabled in place):** `studio-runtime/{liveFrameParity (5), resizeHandles (+5), elementResizeSizing (+2), messages (+3)}`, `canvas/frameAdapter/BridgeFrameAdapter (+5)`, `editor-store/undoTellsTheTruth (+3)`, `canvas/canvasHoverOffStore (+2)`, `canvas/useBridgeSelectionChrome (+1)`. e2e `tests/e2e/live-frame-parity.e2e.ts` (store-17, badge, flex, snap on a live SMS frame).
 - **Next:** owner dogfood (Pending dogfood → `canvas-28`). P5-G/B/D regenerate the bundle after this lands.
 

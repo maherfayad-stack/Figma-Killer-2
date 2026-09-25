@@ -496,12 +496,13 @@ INSIDE `<body>`, so anything of theirs that hangs past the body's bottom edge
 counts in `body.scrollHeight` — which is exactly the number `runtime.ts`
 reports as `frame:resize`. The badge hangs ~24px under the element, so a resize
 at the very bottom of a hugging live frame, plus ANY app mutation mid-drag
-(the frame-fit reset re-measures), grew the frame by the badge. The runtime now
-freezes its height reports for the length of a resize (`resizeHandles.ts`'
-`onGestureChange`, the live twin of a portal frame's `beginCanvasGesture`) and
-reports once after the release, when the badge is gone. Anything new the
-runtime draws below an element needs the same freeze, or has to stay inside
-the element's box. Regression coverage: `liveFrameParity.test.ts`,
+(the frame-fit reset re-measures), grew the frame by the badge — and the S handles alone (4px) grew it on any
+report while a bottom element was selected. The runtime now hides its overlay
+root for the `scrollHeight` read (same task, no paint), and freezes its height
+reports for the length of a resize (`resizeHandles.ts`' `onGestureChange`, the
+live twin of a portal frame's `beginCanvasGesture`), reporting once after the
+release. Anything the runtime draws must live in the overlay root, or it
+counts as content. Regression coverage: `liveFrameParity.test.ts`,
 `tests/e2e/live-frame-parity.e2e.ts`.
 
 ### A board frame hugs its content until the author sets a height

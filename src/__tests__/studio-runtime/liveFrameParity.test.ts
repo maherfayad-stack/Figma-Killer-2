@@ -187,3 +187,34 @@ describe('live frame — a double-click names what a click names (canvas-24)', (
     expect(inner.getAttribute('contenteditable')).toBeNull()
   })
 })
+
+describe('live frame — selection chrome is not content (canvas-23)', () => {
+  it('handles hanging past the body never count in the reported height', async () => {
+    const posted = boot()
+    const box = stamped(BOX, 'width: 100px; height: 40px; box-sizing: border-box')
+    document.body.appendChild(box)
+    placeAt(box, 0, 0, 100, 40)
+    bridge!.handleMessage({ type: 'setResizeTarget', ref: { nodeId: BOX, occurrenceIndex: 0 }, proportional: false })
+    // The S handles hang 4px under an element at the bottom of the body —
+    // whenever the overlay root is laid out.
+    const chromeShown = () => {
+      const root = document.getElementById('studio-canvas-selection-overlay-root')
+      return root !== null && root.style.display !== 'none'
+    }
+    const descriptor = Object.getOwnPropertyDescriptor(document.body, 'scrollHeight')
+    Object.defineProperty(document.body, 'scrollHeight', { configurable: true, get: () => (chromeShown() ? 904 : 900) })
+    restoreScrollHeight = () => {
+      if (descriptor) Object.defineProperty(document.body, 'scrollHeight', descriptor)
+      else delete (document.body as { scrollHeight?: number }).scrollHeight
+    }
+    const dot = document.createElement('span')
+    document.body.appendChild(dot)
+    await sleep(0)
+    dot.remove()
+    await sleep(LIVE_FRAME_FIT_STRUCTURAL_DEBOUNCE_MS + 60)
+    const heights = posted.filter((m) => m.type === 'frame:resize').map((m) => m.height)
+    expect(heights.length).toBeGreaterThan(0)
+    expect(heights).not.toContain(904)
+    expect(chromeShown()).toBe(true)
+  })
+})

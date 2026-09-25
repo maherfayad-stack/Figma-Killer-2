@@ -517,7 +517,12 @@ function ringKey(nodeId: string, occurrenceIndex: number): string {
       frameFitPassesUsed += 1
       doc.body.style.height = `${fitted}px`
     }
+    // Chrome is not content (canvas-23): handles and the W×H badge hang past
+    // an element at the body's bottom edge. Hidden for the read, same task.
+    const chrome = overlayRoot?.isConnected ? overlayRoot : null
+    if (chrome) chrome.style.display = 'none'
     const height = doc.body.scrollHeight
+    if (chrome) chrome.style.display = ''
     if (height === lastReportedHeight) return
     lastReportedHeight = height
     postOutbound({ type: 'frame:resize', height })
