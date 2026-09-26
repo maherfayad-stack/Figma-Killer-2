@@ -11,16 +11,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### refactor-ckpt — split `agentCheckpoints.ts` under the 700-line module budget
-- **Agent:** server-engineer
-- **Stage:** PR open (draft), gates green.
-- **Branch:** `refactor/split-agent-checkpoints`, from trunk `e1dad32d`.
-- **Updated:** 2026-09-26
-- **Goal:** clear the trunk's one red, `module-size-budgets` (`agentCheckpoints.ts` was 789 lines).
-- **Done:** split by responsibility, behaviour identical. `agentCheckpointStore.ts` (on-disk layout, record schemas, no-follow capped reads, hash-verified blobs, turn lookup and pruning), `agentCheckpointRevert.ts` (`revertBlocker`, the CAS revert under the write lock and the agent write gate), and `agentCheckpoints.ts` (public entry: turn start, capture, list, diff; re-exports the revert and constants). No check changed; the pre-image-before-write order in the callers is untouched. Docs: `path-index.md`, `features/agent.md`.
-- **Landmines:** import only `agentCheckpoints.ts` from outside; the two siblings are internal.
-- **Next:** review and merge.
-
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -170,6 +160,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `refactor-ckpt` — agent checkpoints split into store / revert / entry modules (789 → under 700 lines), no behaviour or check changed; the trunk has no red gates left — #276 — 2026-09-25
 - `canvas-30` — P5-D part 2: SVG part stamps (removed inside the sanitizer, never by regex), svg-attr edit on the one allowlist, icon/.svg insert via the paste path, vector edit mode (points, corner/smooth), pen tool; security approved after the stored-XSS fix — #269 — 2026-09-25
 - `perf-16` — P6-B client: pages paint as they arrive with titled placeholders, board code loads with the editor (frames 1–2.3 s sooner), token extraction off the open path; warm first frame 5.3→4.5 s dev (300 ms target not met: one-update frame mount) — #271 — 2026-09-25
 - `perf-15` — P6-C: every audit budget is a gate (plus a production-build e2e pass); warm click→ring 62→47 ms prod, cold 109→69 ms, keystroke→paint 32→26 ms, Tier-2 posters 0/4→2/2; CanvasRoot compiled by the React Compiler again — #272 — 2026-09-25
@@ -179,7 +170,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 - `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
-- `canvas-33` — P5-G: loose layers on the empty board (FC-1..5), drop images on the board, decoder refuses layer files by default (only /save opts in); security approved — #260 — 2026-09-25
 
 ---
 
