@@ -672,6 +672,15 @@ name).
 
 ## Dropping a file from the operating system (D2 G15)
 
+**`.svg` files are written inline (P5-D SVG-5).** When every dropped file is an
+SVG and the drop is a plain insert, the plan says `inlineSvg` and each file goes
+through `canvasSvgInsert.ts`'s `insertSvgAtTarget` — the paste's own write
+(sanitised, `svgToJsxNode`, one subtree insert), an `<img>` only when too large
+to inline. ⌥ keeps the `<img>`, and so does a ⌘ (absolute) drop. On the empty
+board each becomes a loose layer whose root IS the `<svg>`. Assets → Icons uses
+the same insert: a click lands after the selection, a drag at the drop line;
+"Copy SVG" is on the icon's context menu.
+
 `useCanvasFileDrop` (mounted once at `CanvasRoot`, not per frame) plus
 `canvasFileDrop.ts` (the decision) plus a relay in
 `useIframeEventForwarding.ts`.
