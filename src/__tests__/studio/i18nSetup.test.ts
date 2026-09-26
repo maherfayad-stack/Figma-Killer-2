@@ -242,4 +242,31 @@ describe('setUpProjectI18n', () => {
     const keys = readTranslationCatalog(dir)?.entries.map((entry) => entry.key) ?? []
     expect(keys).toContain('page.profileVerified')
   })
+
+  it('never rewrites the vendored design-system folder, and reports it as one summary line rather than a per-string refusal', () => {
+    // Fixture is deliberately generic — a bare component, no ALM naming or
+    // tokens — proving the FOLDER exclusion, not anything specific to the real
+    // corpus this bug was found on.
+    const banner = 'export function Banner() {\n  return <p>Please wait</p>\n}\n'
+    write('design-system/components/Banner.jsx', banner)
+    write('pages/Page.tsx', 'export default function Page() {\n  return <Banner title="Profile verified" />\n}\n')
+
+    const report = setUpProjectI18n(dir)
+    expect(report.ok).toBe(true)
+    if (!report.ok) return
+
+    // The design system's own source is untouched byte-for-byte.
+    expect(read('design-system/components/Banner.jsx')).toBe(banner)
+
+    // Only the project's own page was rewritten.
+    expect(report.extracted).toBe(1)
+    expect(report.filesChanged).toBe(1)
+    expect(read('pages/Page.tsx')).toContain('title={t.page.profileVerified}')
+
+    // One summary line, not a per-string refusal, and not counted as a
+    // "genuine" failure — the panel filters this key out of its warning path.
+    const designSystemNote = report.failures.find((f) => f.key === 'design-system')
+    expect(designSystemNote?.message).toContain('design-system text is left to the library')
+    expect(report.failures.filter((f) => f.key === 'design-system')).toHaveLength(1)
+  })
 })

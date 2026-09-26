@@ -78,7 +78,7 @@ import { findConfigFile, hasDependency, readPackageJson, type PackageJsonShape }
 import { detectStyleToolchain } from './styleToolchainDetect'
 import { mergeStudioMeta, readStudioMeta } from './studioMeta'
 import { detectColorScheme } from './colorSchemeDetect'
-import { detectLocales } from './localeProbe'
+import { detectLocales, reconcileLocales } from './localeProbe'
 import { PROBE_VERSION } from './projectProfileSchema'
 import type { ProbeWarning, ProjectProfile } from './projectProfileSchema'
 
@@ -626,7 +626,11 @@ export function resolveProjectProfilePersisting(dir: string): ProjectProfile {
  * the install-dependent profile become knowable.
  */
 export function reprobeProjectProfile(dir: string): ProjectProfile {
-  const profile = probeProject(dir)
+  const previous = readStudioMeta(dir).profile
+  const probed = probeProject(dir)
+  const locales = reconcileLocales(previous?.locales, probed.locales)
+  const { locales: _probedLocales, ...rest } = probed
+  const profile: ProjectProfile = locales ? { ...rest, locales } : rest
   mergeStudioMeta(dir, { profile })
   return profile
 }
