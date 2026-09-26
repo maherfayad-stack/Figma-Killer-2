@@ -113,9 +113,8 @@ export function ImageSourceSection({ node, prop, value, onChange }: ImageSourceS
       releaseLocalPreview()
       setLocalPreview(null)
       pushToast({ kind: 'error', title: 'Image upload failed', body: getErrorMessage(err, 'Unknown upload error') })
-    } finally {
-      setUploading(false)
     }
+    setUploading(false)
   }
 
   function handleDrop(event: DragEvent<HTMLDivElement>) {

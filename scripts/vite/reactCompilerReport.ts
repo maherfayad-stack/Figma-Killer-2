@@ -37,17 +37,20 @@ function functionName(sourceLine: string, line: number): string {
   return `<anonymous:${line}>`
 }
 
-/** Compile counts and bailouts for one file (`path` absolute or cwd-relative). */
-export function compileReport(path: string): { compiled: number; bailouts: CompilerBailout[] } {
+/**
+ * The functions compiled (by name; `<anonymous>` when the compiler has none)
+ * and skipped in one file (`path` absolute or cwd-relative).
+ */
+export function compileReport(path: string): { compiled: string[]; bailouts: CompilerBailout[] } {
   const code = readFileSync(path, 'utf8')
-  if (!isReactCompilerInput(path, code)) return { compiled: 0, bailouts: [] }
+  if (!isReactCompilerInput(path, code)) return { compiled: [], bailouts: [] }
   const lines = code.split('\n')
   const bailouts: CompilerBailout[] = []
-  let compiled = 0
+  const compiled: string[] = []
   transformSync(
     code,
     reactCompilerBabelOptions(path, (event: LoggedEvent) => {
-      if (event.kind === 'CompileSuccess') compiled++
+      if (event.kind === 'CompileSuccess') compiled.push(event.fnName ?? '<anonymous>')
       if (event.kind !== 'CompileError' && event.kind !== 'PipelineError') return
       const line = event.fnLoc?.start.line ?? 0
       bailouts.push({

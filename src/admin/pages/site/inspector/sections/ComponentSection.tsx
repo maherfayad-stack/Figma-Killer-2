@@ -103,6 +103,26 @@ interface LocalSwapCandidate {
   sourceFile: string
 }
 
+/** The toast body after Duplicate. */
+function duplicatedMessage(newComponentName: string | undefined): string {
+  return `Created ${newComponentName ?? 'the copy'} and repointed this instance at it.`
+}
+
+/** The toast after a successful swap: what it changed about the call site's props. */
+function swappedToast(
+  componentName: string,
+  detail: { removedProps: string[]; unfilledRequiredProps: string[] } | undefined,
+): Parameters<typeof pushToast>[0] {
+  const notes: string[] = []
+  if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
+  if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
+  return {
+    kind: notes.length > 0 ? 'warning' : 'success',
+    title: `Swapped to ${componentName}`,
+    body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
+  }
+}
+
 export function ComponentSection() {
   const model = useSelectionModel()
   const { selectedNodeId, selectedNode } = model
@@ -153,9 +173,8 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
       if (!result.ok) setRefusal(explainDetachConstraint(result.reason, result.message))
     } catch (err) {
       pushToast({ kind: 'error', title: 'Detach failed', body: getErrorMessage(err, 'Unknown detach error') })
-    } finally {
-      setDetaching(false)
     }
+    setDetaching(false)
   }
 
   async function handleExtract() {
@@ -169,14 +188,13 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
         pushToast({
           kind: 'success',
           title: 'Duplicated',
-          body: `Created ${result.newComponentName ?? 'the copy'} and repointed this instance at it.`,
+          body: duplicatedMessage(result.newComponentName),
         })
       }
     } catch (err) {
       pushToast({ kind: 'error', title: 'Duplicate failed', body: getErrorMessage(err, 'Unknown error') })
-    } finally {
-      setExtracting(false)
     }
+    setExtracting(false)
   }
 
   // Every OTHER local component the catalog knows about — local-only
@@ -203,25 +221,16 @@ function ComponentSectionBody({ nodeId, node }: ComponentSectionBodyProps) {
         newComponentSource: 'local',
         newComponentFile: candidate.sourceFile,
       })
-      if (!result.ok) {
+      if (result.ok) {
+        pushToast(swappedToast(candidate.componentName, result.swapDetail))
+        setSwapOpen(false)
+      } else {
         pushToast({ kind: 'error', title: 'Swap refused', body: result.message })
-        return
       }
-      const detail = result.swapDetail
-      const notes: string[] = []
-      if (detail && detail.removedProps.length > 0) notes.push(`removed: ${detail.removedProps.join(', ')}`)
-      if (detail && detail.unfilledRequiredProps.length > 0) notes.push(`needs a value: ${detail.unfilledRequiredProps.join(', ')}`)
-      pushToast({
-        kind: notes.length > 0 ? 'warning' : 'success',
-        title: `Swapped to ${candidate.componentName}`,
-        body: notes.length > 0 ? notes.join(' · ') : 'No prop changes were needed.',
-      })
-      setSwapOpen(false)
     } catch (err) {
       pushToast({ kind: 'error', title: 'Swap failed', body: getErrorMessage(err, 'Unknown error') })
-    } finally {
-      setSwappingKey(null)
     }
+    setSwappingKey(null)
   }
 
   const query = swapQuery.trim().toLowerCase()

@@ -89,9 +89,7 @@ interface NodeRendererProps {
   nodeId: string
 }
 
-// React Compiler exception #2: memo() re-render bailout on a hot, recursive
-// per-node canvas renderer (O(N) critical path) — kept intentionally.
-export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererProps) {
+function NodeRenderer({ nodeId }: NodeRendererProps) {
   // The page this frame renders. `null` (no CanvasPageContext provider) means
   // "the active canvas document" — every CMS/VC frame. Board frames provide a
   // page id so this NodeRenderer resolves against that frame's own page.
@@ -337,7 +335,7 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       // PERF-6 — keyed by the node's CARRIED render key, not its id: a write
       // that renumbered this child's `rel:line:col` re-renders it in place
       // rather than remounting it (`nodeRenderKeys.ts`).
-      node.children.map((childId) => <NodeRenderer key={nodeRenderKey(contextPageId, childId)} nodeId={childId} />)
+      node.children.map((childId) => <MemoNodeRenderer key={nodeRenderKey(contextPageId, childId)} nodeId={childId} />)
     )
 
   const ComponentType = definition.component
@@ -603,7 +601,19 @@ export const NodeRenderer = memo(function NodeRenderer({ nodeId }: NodeRendererP
       )}
     </ErrorBoundary>
   )
-})
+}
+
+// React Compiler exception #2: memo() re-render bailout on a hot, recursive
+// per-node canvas renderer (O(N) critical path) — kept intentionally.
+//
+// A plain declaration wrapped here, not `memo(function NodeRenderer …)`: inside
+// a named function expression its own name binds to the UNWRAPPED function, so
+// the recursion above rendered every child without the bailout, and the React
+// Compiler (which cannot resolve that binding — "Expected a node for all
+// identifiers") skipped the whole renderer. The inner name stays
+// `NodeRenderer`: `reactRenderCounter.ts` counts renders by it.
+const MemoNodeRenderer = memo(NodeRenderer)
+export { MemoNodeRenderer as NodeRenderer }
 
 // ---------------------------------------------------------------------------
 // Loop iteration preview
@@ -654,7 +664,7 @@ function LoopIterationsPreview({ node, baseTemplateContext }: LoopIterationsPrev
             key={`${variantId}-${i}-${item.id}`}
             value={augmentedContext}
           >
-            <NodeRenderer nodeId={variantId} />
+            <MemoNodeRenderer nodeId={variantId} />
           </CanvasTemplateContext.Provider>
         )
       })}

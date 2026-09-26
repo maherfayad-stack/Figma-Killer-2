@@ -379,7 +379,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     if (!drag || drag.pointerId !== event.pointerId) return
     drag.lastClient = { x: event.clientX, y: event.clientY }
     drag.shift = event.shiftKey
-    frameRef.current ??= requestAnimationFrame(applyDrag)
+    frameRef.current = frameRef.current ?? requestAnimationFrame(applyDrag)
   }
 
   const finish = (event: ReactPointerEvent<SVGPathElement>, commit: boolean) => {

@@ -181,7 +181,7 @@ export function CanvasPenToolLayer({ transformLayerRef }: { transformLayerRef: R
 
   const schedule = (event: ReactPointerEvent<HTMLDivElement>) => {
     pendingRef.current = { client: { x: event.clientX, y: event.clientY }, shift: event.shiftKey, alt: event.altKey }
-    frameRef.current ??= requestAnimationFrame(flush)
+    frameRef.current = frameRef.current ?? requestAnimationFrame(flush)
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {

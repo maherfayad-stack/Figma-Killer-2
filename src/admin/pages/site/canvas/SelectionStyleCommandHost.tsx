@@ -22,6 +22,25 @@ import {
  */
 const alreadyRan = new WeakSet<SelectionStyleCommand>()
 
+/**
+ * Runs each command not run before, then settles the batch. A module function,
+ * not the effect body: the React Compiler cannot compile a loop inside `try`,
+ * and would skip the whole runner.
+ */
+function runCommandsOnce(commands: readonly SelectionStyleCommand[], ...context: Parameters<SelectionStyleCommand>) {
+  try {
+    for (const command of commands) {
+      if (alreadyRan.has(command)) continue
+      alreadyRan.add(command)
+      command(...context)
+    }
+  } catch (err) {
+    console.error('[SelectionStyleCommandHost] style command failed:', err)
+  } finally {
+    settleSelectionStyleCommands(commands)
+  }
+}
+
 export function SelectionStyleCommandHost() {
   const pending = usePendingSelectionStyleCommands()
   if (pending.length === 0) return null
@@ -41,18 +60,7 @@ function SelectionStyleCommandRunner({ commands }: { commands: readonly Selectio
   // makes must re-render before the browser paints, or the old value shows
   // for one frame between the two.
   useLayoutEffect(() => {
-    if (!ready) return
-    try {
-      for (const command of commands) {
-        if (alreadyRan.has(command)) continue
-        alreadyRan.add(command)
-        command(commit, model)
-      }
-    } catch (err) {
-      console.error('[SelectionStyleCommandHost] style command failed:', err)
-    } finally {
-      settleSelectionStyleCommands(commands)
-    }
+    if (ready) runCommandsOnce(commands, commit, model)
   }, [commands, ready, commit, model])
 
   return null

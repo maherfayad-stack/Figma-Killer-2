@@ -86,6 +86,7 @@ import {
   forwardRef,
   startTransition,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useRef,
   useState,
@@ -169,24 +170,25 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       // {@link IframeInteraction}.
       const isCapture = interaction === 'capture'
       const iframeRef = useRef<HTMLIFrameElement | null>(null)
-      const [iframeDoc, setIframeDoc] = useState<Document | null>(null)
+      // The iframe element travels WITH its document so render reads state,
+      // never `iframeRef.current` (the frame contexts need the element).
+      const [frameDocument, setFrameDocument] = useState<{ iframe: HTMLIFrameElement; doc: Document } | null>(null)
+      const iframeDoc = frameDocument?.doc ?? null
       const [overlayRoot, setOverlayRoot] = useState<HTMLDivElement | null>(null)
       const [adapter, setAdapter] = useState<FrameDocumentAdapter | null>(null)
       // Mount stage 3 — see this module's header. `false` until the injector
       // commit has landed and the transition scheduled below has run.
       const [treeMounted, setTreeMounted] = useState(false)
 
-    // `live-07` (STATE.md) — keeps the freshest `liveFrame` reachable from
-    // inside the construct effect below WITHOUT it being a dependency of
-    // that effect. `liveFrame` is a new object on every render where
-    // `nodeIdsInTreeOrder` changed (every structural resync re-parses and
-    // re-mints the active page's node id list), and the construct effect
-    // below must NOT re-run for that — only for a genuinely different
-    // frame/document. Assigning during render (not inside an effect) is the
-    // standard "always-current ref" pattern: it costs nothing and never
-    // triggers a re-render on its own.
-    const liveFrameRef = useRef(liveFrame)
-    liveFrameRef.current = liveFrame
+    // `live-07` (STATE.md) — the freshest `liveFrame`, readable from inside
+    // the construct effect below WITHOUT being a dependency of it.
+    // `liveFrame` is a new object on every render where `nodeIdsInTreeOrder`
+    // changed (every structural resync re-parses and re-mints the active
+    // page's node id list), and the construct effect must NOT re-run for
+    // that — only for a genuinely different frame/document. An effect event,
+    // not a ref assigned during render: the React Compiler refuses to compile
+    // a component that writes a ref in render.
+    const readLiveFrame = useEffectEvent(() => liveFrame)
 
     // `live-05` (STATE.md) — every canvas frame publishes a `FrameDocumentAdapter`,
     // constructed/disposed with its own lifecycle. `documentMode==='bridge'`
@@ -212,7 +214,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       if (documentMode === 'bridge') {
         const iframe = iframeRef.current
         const frameWindow = iframe?.contentWindow
-        const frame = liveFrameRef.current
+        const frame = readLiveFrame()
         if (!iframe || !frameWindow || !frame) {
           setAdapter(null)
           return
@@ -362,7 +364,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
       }
       iframeRef.current = iframe
       if (!iframe) {
-        setIframeDoc(null)
+        setFrameDocument(null)
         return
       }
       delete iframe.dataset.studioCanvasDocumentLoaded
@@ -376,7 +378,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         // Never portal the canvas tree into the short-lived initial about:blank
         // document. Module effects, media reads, and authored runtime scripts
         // must run once against the final srcDoc document only.
-        setIframeDoc(doc)
+        setFrameDocument((current) => (current?.doc === doc && current.iframe === iframe ? current : { iframe, doc }))
         iframe.dataset.studioCanvasDocumentLoaded = 'true'
       }
       // srcDoc often parses before the ref commits; otherwise its load event
@@ -565,7 +567,7 @@ export const IframeFrameSurface = forwardRef<IframeFrameSurfaceHandle, IframeFra
         {iframeDoc &&
           createPortal(
             <CanvasFrameContexts
-              frameElement={iframeRef.current}
+              frameElement={frameDocument?.iframe ?? null}
               adapter={adapter}
               axes={frameAxes}
               interaction={interaction}

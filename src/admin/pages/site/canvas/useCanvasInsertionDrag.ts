@@ -179,7 +179,7 @@ export function useCanvasInsertionDrag<TGhost>({
 
     const scheduleResolve = (clientX: number, clientY: number) => {
       pendingPoint = { x: clientX, y: clientY }
-      pendingFrame ??= window.requestAnimationFrame(applyPendingResolve)
+      pendingFrame = pendingFrame ?? window.requestAnimationFrame(applyPendingResolve)
     }
 
     const teardown = () => {

@@ -166,9 +166,8 @@ export function AddPagePickerMenu({
         title: 'Could not create page',
         body: getErrorMessage(err, 'Unknown page error'),
       })
-    } finally {
-      setBusy(false)
     }
+    setBusy(false)
   }
 
   function run(choice: AddPageChoice) {

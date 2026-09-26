@@ -139,7 +139,7 @@ export function CanvasDrawToolLayer({ tool, transformLayerRef }: CanvasDrawToolL
 
   const schedule = (event: ReactPointerEvent<HTMLDivElement>) => {
     pendingRef.current = { x: event.clientX, y: event.clientY, modifiers: { square: event.shiftKey, fromCenter: event.altKey } }
-    frameRef.current ??= requestAnimationFrame(flush)
+    frameRef.current = frameRef.current ?? requestAnimationFrame(flush)
   }
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {

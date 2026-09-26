@@ -50,6 +50,11 @@ function groupPresets(presets: DevicePreset[]): Map<string, DevicePreset[]> {
   return groups
 }
 const PRESET_GROUPS = groupPresets(DEVICE_PRESETS)
+
+// Loaded on first use (only "apply to all pages" saves a default). A module
+// function, because the React Compiler cannot compile a component that holds
+// an `import()` expression.
+const loadFrameDefaultsApi = () => import('@site/studio/frameDefaultsApi')
 function presetOptionValue(preset: DevicePreset): string {
   return `${preset.group}::${preset.name}`
 }
@@ -113,7 +118,7 @@ export function FrameBulkInspector() {
     applyWidthToAllFrames(width)
     setApplyingToAll(true)
     try {
-      const { saveFrameDefaults } = await import('@site/studio/frameDefaultsApi')
+      const { saveFrameDefaults } = await loadFrameDefaultsApi()
       // P3-A — the whole default, so writing it twice is harmless: a save that
       // got no answer is tried again quietly first.
       const dir = getStudioWorkspaceDir()
@@ -128,9 +133,8 @@ export function FrameBulkInspector() {
         body: 'Every frame on the board now has this width, but new pages will not start at it yet.',
         action: { label: 'Try again', onSelect: () => void handleApplyToAllPages() },
       })
-    } finally {
-      setApplyingToAll(false)
     }
+    setApplyingToAll(false)
   }
 
   const handleFitHeight = () => {

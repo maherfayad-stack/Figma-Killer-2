@@ -153,7 +153,7 @@ export function useInFrameMarquee({ enabled, overlayRoot, frameId }: InFrameMarq
         }
         moveEvent.preventDefault()
         pending = { x: moveEvent.clientX, y: moveEvent.clientY, deepest: moveEvent.altKey }
-        frame ??= requestAnimationFrame(apply)
+        frame = frame ?? requestAnimationFrame(apply)
       }
 
       const end = () => {

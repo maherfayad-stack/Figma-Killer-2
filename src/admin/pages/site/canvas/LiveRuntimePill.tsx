@@ -123,9 +123,8 @@ export function LiveRuntimePill() {
         body: getErrorMessage(err, 'Unknown error writing the trust tier'),
         dedupeKey: 'studio-trust-run-project',
       })
-    } finally {
-      setBusy(false)
     }
+    setBusy(false)
   }
 
   if (!live.capable) {

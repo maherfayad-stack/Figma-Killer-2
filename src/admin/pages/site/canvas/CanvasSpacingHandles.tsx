@@ -93,7 +93,7 @@ export function CanvasSpacingHandles({ nodeId, iframeDoc, target }: CanvasSpacin
       setGeometry(isSpacingLayout(display) ? readSpacingGeometry(iframeDoc, target, childIds) : null)
     }
     const schedule = () => {
-      frame ??= view.requestAnimationFrame(measure)
+      frame = frame ?? view.requestAnimationFrame(measure)
     }
     schedule()
     const Observer = (view as Window & { ResizeObserver?: typeof ResizeObserver }).ResizeObserver

@@ -172,7 +172,7 @@ export function useCanvasFileDrop({
         const rect = hintLayerRef.current?.getBoundingClientRect()
         hintOriginRef.current = rect ? { x: rect.left, y: rect.top } : null
       }
-      frameRef.current ??= requestAnimationFrame(runFrame)
+      frameRef.current = frameRef.current ?? requestAnimationFrame(runFrame)
     }
 
     const onDrop = (event: DragEvent) => {

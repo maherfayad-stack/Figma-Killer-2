@@ -302,7 +302,7 @@ export function useCanvasLayerPointer({
           drag.drop = { board: measureBoardDropSurfaces(transformRef?.current ?? null), frame: null }
         }
       }
-      drag.frame ??= requestAnimationFrame(runFrame)
+      drag.frame = drag.frame ?? requestAnimationFrame(runFrame)
     }
 
     const finish = (event: PointerEvent) => {
@@ -331,7 +331,7 @@ export function useCanvasLayerPointer({
         store.placeCanvasLayer(drag.primary.id, { ...target, copy })
         return
       }
-      store.moveCanvasLayers(current, `board:canvas-layer-move:${++gestureSerial}`)
+      store.moveCanvasLayers(current, `board:canvas-layer-move:${(gestureSerial += 1)}`)
       store.endBoardGesture()
     }
 
