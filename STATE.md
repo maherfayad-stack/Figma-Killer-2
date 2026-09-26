@@ -13,9 +13,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
-- **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
+- **Stage:** round complete (2026-09-26). Trunk `feat/canvas-excellence` is green end to end at `b817af58`: build, lint, every unit chunk (only the local-Bun-1.3.6 `studio-runtime-bundle-fresh` fails; fresh on 1.3.13), and the e2e budget slice plus detach (19 passed, 1 skipped). Awaiting owner dogfood, review and merge (#217 -> #218 -> main).
 - **Branch:** `feat/canvas-excellence`, the program trunk, cut from `chore/integrate-open-drafts` (`9fc88346`, PR #217). Every bundle PR targets this trunk.
-- **Updated:** 2026-09-23
+- **Updated:** 2026-09-26
 - **Goal:** the owner's 2026-09-23 ask: no lag, zero visible errors, Penpot/Figma gestures, design-pane spacing, the best possible assistant, image drag & drop, SVG draw/edit, component detach, a free canvas, and a docs cleanup. Ten Opus audits (`docs/audits/2026-09-23-studio-audit/`) were bundled into phases P0–P6 in `ROADMAP.md`.
 - **Owner decisions:**
   - archive the old plans;
@@ -33,7 +33,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
   - The P0-C freeze on STATE.md is over (#225 merged into the trunk). Bundle agents write their entry under `## Now` again, following `docs/agent-refs/handoff-protocol.md`.
   - The auditors' probe scripts were not committed. P1 recreates them as regression tests.
 - **Progress:** Phase 1 is merged into the trunk: P1-G #219, P1-C #220, P1-A #221, P1-B #222, P1-E1 #224, P1-E2 #223, P1-E3 #226, P1-H #228, P1-D #229, P1-F #230; P0 #225; P4-A #227, P4-B #231. At most 3 agents run at once, because of the owner's RAM (never run `server` tests as one process).
-- **Next:** Phase 2 is merged (P2-I #245: hover worst frame 169–183 → 21–33 ms, warm click → ring 292–440 → 78–85 ms; cold-click A/B showed no P2-A regression). Phase 2 exit gate: budgets pass; the owner dogfoods P2-F spacing and the P2-B/C/D/E gestures on `test4`. Running: P2-C2 bulk actions (OD-16), P3-C. Merged since the exit gate: P2-F #234, P2-A #235, P2-G #236, P2-D #237, P2-B #238, P2-H #239, P2-C #242, P2-E #243 (+ OD-15); P3-B #240, P3-A #244; P4-C #233, P4-D #241. Then P4-E, P3-C/D/E/F, P0-I. Owner: `CLAUDE.md`'s budget-spec list should name `canvas-feel-budgets.e2e.ts`; regenerate `runtimeBridgeBundle.ts` with `studio-runtime:sync` on an LF tree (bun 1.3.11).
+- **Next:** found-not-fixed, queued for a next round: live-frame file drop (needs a security design); right-anchored resize, guides and toggles in live frames; IX-23 grid-cell drops; group snap/rotate/Hug; pencil/line/arrow tools; the OD-7 flake; parser gaps (`.map` over `as const` arrays, tsconfig `paths` aliases, package imports resolving outside the project); security (`.mcp.json` approvals are keyed by name, so a pull can swap the command; share/trust routes skip the project write lock); the DET-3 eSIM re-measure. Merge hygiene: after merging a PR that changes `package.json`, run `bun install` on the trunk, and judge `bun run build` by its exit code.
 
 ### meta-19 — integration head: every open draft line merged into chore/integrate-open-drafts
 - **Agent:** integrator (general-purpose, own worktree) · **Updated:** 2026-09-23
