@@ -477,6 +477,7 @@ export async function tryServeStudio(
         sharedComponents,
         refusals,
         swapDetails,
+        detachDetails,
         createdStylesheets,
         touchedFiles,
         createdNodeIds,
@@ -514,6 +515,9 @@ export async function tryServeStudio(
         sharedComponents,
         refusals,
         swapDetails,
+        // P5-C (DET-5) — what each `detach` lost or would lose; the editor's
+        // pre-commit confirm reads it. `studioSaveRoute.test.ts` holds it.
+        detachDetails,
         createdStylesheets,
         touchedFiles: touchedFiles.map((file) => relative(dir, file).split(sep).join('/')),
         // `store-13`/`store-14` — the node ids this batch made and moved.

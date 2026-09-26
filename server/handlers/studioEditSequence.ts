@@ -58,6 +58,7 @@ import type { StudioEdit, StudioEditBatchOptions, StudioEditBatchResult, StudioE
 import { applyStudioEditBatch } from './studioWriteback'
 import { rememberSourceTexts } from './studio/sourceTextHistory'
 import { withProjectWriteLock } from './studio/projectWriteLock'
+import { recordUndoJournal } from './studio/undoJournal'
 
 /** The edit kinds a sequence may hold — each one's effect on every OTHER element is known. */
 const SEQUENCE_KINDS = new Set<StudioEdit['kind']>([
@@ -70,6 +71,12 @@ const SEQUENCE_KINDS = new Set<StudioEdit['kind']>([
   'wrap',
   'group',
   'ungroup',
+  // P5-C (DET-5) — a multi-selection detach: each call site is replaced by
+  // markup whose elements are the step's own (its `created` root), and every
+  // other element keeps its order. A fragment or non-JSX root reports no
+  // created element, so the follower cannot align the counts and a later
+  // step refuses the whole sequence — never a guess.
+  'detach',
 ])
 
 /** One JSX element as the order-follower sees it: where its tag name starts. */
@@ -121,6 +128,7 @@ function actedOnBefore(edit: StudioEdit, file: string, sourceFile: SourceFile, d
     edit.kind === 'move' ||
     edit.kind === 'reparent' ||
     edit.kind === 'delete' ||
+    edit.kind === 'detach' ||
     (edit.kind === 'transplant' && edit.copy !== true)
   if (removesTarget) {
     const range = unitRange(sourceFile, location.line, location.col)
@@ -212,6 +220,7 @@ function refused(edits: readonly StudioEdit[], refusals: StudioEditRefusal[], to
     sharedComponents: false,
     refusals,
     swapDetails: [],
+    detachDetails: [],
     createdStylesheets: [],
     promoteDetails: [],
     addSlotPropDetails: [],
@@ -267,9 +276,14 @@ export function applyStudioEditSequence(
   const created: { key: string; nodeId: string }[] = []
   const relocated = new Map<string, string>()
   const removed: StudioEditBatchResult['removed'] = []
-  // P3-F — a sequence is not a one-shot write: its undo is the gesture's own
-  // inverse, so its steps record no journal entry (they would be orphans).
+  // P3-F — a step records no journal entry of its own (it would be an
+  // orphan): a move, group or delete sequence's undo is the gesture's own
+  // inverse. A DETACH has no inverse but the journal, so a sequence holding
+  // one (P5-C, a multi-selection detach) is journaled ONCE, below, from
+  // `originals` — every file as it was before the first step, which is
+  // exactly what its ⌘Z has to put back.
   const stepOptions: StudioEditBatchOptions = { ...options, journal: undefined }
+  const detachDetails: StudioEditBatchResult['detachDetails'] = []
   const listArrays: StudioEditBatchResult['listArrays'] = []
   let sharedComponents = false
 
@@ -315,6 +329,7 @@ export function applyStudioEditSequence(
       ], [...touched, ...originals.keys()])
     }
     for (const entry of result.removed) removed.push({ ...entry, nodeId: edit.nodeId })
+    for (const entry of result.detachDetails) detachDetails.push({ ...entry, nodeId: edit.nodeId })
     for (const entry of result.listArrays) listArrays.push({ ...entry, nodeId: edit.nodeId })
 
     // Follow every id the sequence still cares about through this step.
@@ -378,6 +393,7 @@ export function applyStudioEditSequence(
     const after = existsSync(file) ? readFileSync(file, 'utf8').split('\n').length : -1
     if (after !== lineCountBefore.get(file)) shifted = true
   }
+  const undoToken = options.journal === true && edits.some((edit) => edit.kind === 'detach') ? recordUndoJournal(dir, originals) : null
   return {
     written: edits.length,
     skipped: 0,
@@ -385,6 +401,7 @@ export function applyStudioEditSequence(
     sharedComponents,
     refusals: [],
     swapDetails: [],
+    detachDetails,
     createdStylesheets: [],
     promoteDetails: [],
     addSlotPropDetails: [],
@@ -395,6 +412,7 @@ export function applyStudioEditSequence(
     fingerprints: [],
     retargeted: identity.retargeted,
     listArrays,
+    ...(undoToken ? { undoToken } : {}),
   }
 }
 
