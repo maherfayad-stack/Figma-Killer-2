@@ -407,6 +407,18 @@ The rules that keep it narrow:
   size-capped (8 MiB) and TypeBox-validated; every `rel` is re-derived through
   `canonicalSourceRel`, so an entry naming anything outside app source is
   `restore-unavailable`, never a write.
+- **All or none, even on failure.** A write that throws part-way puts back
+  the files already restored and refuses `restore-failed`; the entry survives
+  for a retry.
+- **Bounded, and not switch-off-able.** Pruning never removes the entry just
+  written, drops names stamped more than a day ahead (a planted journal or a
+  clock rollback would otherwise evict every new entry), and reads at most
+  1,000 directory names.
+- **One window it does not close.** Studio's writers all hold the project
+  write lock, but a process that doesn't (an external editor, dev-server
+  tooling) could land a change between the hash check and the write. That is
+  inherent to a filesystem compare-and-swap, and that actor already has write
+  access to the file.
 - **Bounded.** The newest 50 entries per project are kept. A write whose
   pre-image is over the cap, or not valid UTF-8, records nothing — its ⌘Z skips
   with a notice rather than restoring something close.

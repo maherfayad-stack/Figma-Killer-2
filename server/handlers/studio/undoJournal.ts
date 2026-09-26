@@ -58,10 +58,15 @@
  *
  * Single writer: every caller holds the project write lock
  * (`projectWriteLock.ts`), which is also what makes the hash check and the
- * write one step.
+ * write one step — for Studio's own writers. A process that does not take the
+ * lock (an external editor, a Tier-2 dev server's tooling) can still land a
+ * change in the microseconds between the hash check and the write, and that
+ * change would be overwritten. That window is inherent to a filesystem
+ * compare-and-swap without OS-level locks, and the actor already has local
+ * write access to the file; it is documented, not defended.
  */
 import { createHash, randomBytes } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from 'node:fs'
+import { existsSync, lstatSync, mkdirSync, opendirSync, readFileSync, unlinkSync } from 'node:fs'
 import { join, relative, sep } from 'node:path'
 import { isUnlinkedWorkspacePath } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
@@ -78,6 +83,12 @@ export const MAX_ENTRIES = 50
 
 /** The largest entry recorded or read back — every pre-image of one write together. */
 export const MAX_ENTRY_BYTES = 8 * 1024 * 1024
+
+/** A name stamped further ahead than this is not one this clock minted (a planted journal, or a clock rolled back). */
+const FUTURE_SLACK_MS = 24 * 60 * 60 * 1000
+
+/** The most directory entries one prune reads — a planted folder of junk names cannot make every write slow. */
+const MAX_PRUNE_SCAN = 1_000
 
 /** The most files one entry may name. A one-shot write touches one or two. */
 const MAX_FILES_PER_ENTRY = 32
@@ -180,7 +191,7 @@ export function recordUndoJournal(dir: string, preImage: UndoPreImage, created: 
   const path = entryPath(dir, token)!
   if (!isUnlinkedWorkspacePath(dir, path)) return null
   writeFileAtomic(path, json)
-  pruneUndoJournal(dir)
+  pruneUndoJournal(dir, token)
   return token
 }
 
@@ -209,13 +220,26 @@ export function undoJournalFiles(dir: string, token: string): string[] {
 
 export type UndoJournalRestore =
   | { ok: true; files: string[] }
-  | { ok: false; reason: 'restore-unavailable' | 'restore-stale'; message: string }
+  | { ok: false; reason: 'restore-unavailable' | 'restore-stale' | 'restore-failed'; message: string }
+
+/** Test seam: the file writes a restore makes, so a test can make one fail mid-restore. */
+export interface UndoJournalRestoreDeps {
+  readonly writeFile?: (path: string, text: string) => void
+  readonly removeFile?: (path: string) => void
+}
 
 /**
  * Put back what the write behind `token` changed — every file, or none. See
  * this module's doc for the compare-and-swap rule and what is re-validated.
+ *
+ * "Or none" holds through a failed write too: the bytes each file had when
+ * the check passed are kept, and a write that throws part-way puts every file
+ * already restored back to them before refusing `restore-failed`. The entry
+ * survives, so the same undo can be tried again.
  */
-export function restoreUndoJournal(dir: string, token: string): UndoJournalRestore {
+export function restoreUndoJournal(dir: string, token: string, deps: UndoJournalRestoreDeps = {}): UndoJournalRestore {
+  const writeFile = deps.writeFile ?? writeFileAtomic
+  const removeFile = deps.removeFile ?? unlinkSync
   const entry = readEntry(dir, token)
   const files = entry ? entryFiles(dir, entry) : null
   if (!entry || !files) {
@@ -225,10 +249,11 @@ export function restoreUndoJournal(dir: string, token: string): UndoJournalResto
       message: 'Studio no longer has what that change replaced, so it cannot be undone here. Nothing was written.',
     }
   }
+  const current: (Buffer | null)[] = []
   for (const [i, { rel, afterSha256 }] of entry.files.entries()) {
     const now = readBytes(files[i]!)
-    const current = now === null ? null : sha256(now)
-    if (current !== afterSha256) {
+    current.push(now)
+    if ((now === null ? null : sha256(now)) !== afterSha256) {
       return {
         ok: false,
         reason: 'restore-stale',
@@ -236,27 +261,78 @@ export function restoreUndoJournal(dir: string, token: string): UndoJournalResto
       }
     }
   }
-  for (const [i, { before }] of entry.files.entries()) {
-    const file = files[i]!
-    if (before === null) {
-      if (existsSync(file)) unlinkSync(file)
-    } else {
-      writeFileAtomic(file, before)
+  // Every path here passed `canonicalSourceRel(...) === rel`, which a link
+  // never does (its real path canonicalises differently). That equality is
+  // what makes `writeFileAtomic` — which writes THROUGH a symlink to its
+  // target — safe here: relax it and this becomes a write-through-link hole.
+  const restored: number[] = []
+  try {
+    for (const [i, { before }] of entry.files.entries()) {
+      const file = files[i]!
+      if (before === null) {
+        if (existsSync(file)) removeFile(file)
+      } else {
+        writeFile(file, before)
+      }
+      restored.push(i)
+    }
+  } catch (err) {
+    console.error('[studio:undoJournal] restore failed part-way, putting back what it changed:', err)
+    for (const i of restored) {
+      const was = current[i]!
+      try {
+        if (was === null) {
+          if (existsSync(files[i]!)) unlinkSync(files[i]!)
+        } else {
+          writeFileAtomic(files[i]!, was.toString('utf8'))
+        }
+      } catch (rollbackErr) {
+        console.error('[studio:undoJournal] could not put back', entry.files[i]!.rel, rollbackErr)
+      }
+    }
+    return {
+      ok: false,
+      reason: 'restore-failed',
+      message: `Studio could not write ${entry.files[restored.length]?.rel ?? 'a file'} back, so it left every file as it was.`,
     }
   }
   unlinkSync(entryPath(dir, token)!)
   return { ok: true, files }
 }
 
-/** Keep the newest {@link MAX_ENTRIES} entries (name order is creation order — see `mintToken`). Only regular files named like a token are ever touched. */
-export function pruneUndoJournal(dir: string): void {
+/**
+ * Keep the newest {@link MAX_ENTRIES} entries (name order is creation order —
+ * see `mintToken`), and never `keep`, the entry just written. Only regular
+ * files named like a token are ever touched, and at most
+ * {@link MAX_PRUNE_SCAN} names are read.
+ *
+ * A name stamped more than {@link FUTURE_SLACK_MS} ahead of now was not minted
+ * by this clock: a journal planted in a clone, or one left before a clock
+ * rollback. Kept, 50 of them would sort above every new entry and get each one
+ * pruned the moment it was written — undo switched off. They are removed.
+ */
+function pruneUndoJournal(dir: string, keep?: string): void {
   const folder = journalDir(dir)
   if (!existsSync(folder) || !isUnlinkedWorkspacePath(dir, folder)) return
-  const names = readdirSync(folder)
-    .filter((name) => name.endsWith('.json') && isUndoJournalToken(name.slice(0, -'.json'.length)))
-    .sort()
-    .reverse()
-  for (const name of names.slice(MAX_ENTRIES)) {
+  const futureStamp = Date.now() + FUTURE_SLACK_MS
+  const ours: string[] = []
+  const future: string[] = []
+  const handle = opendirSync(folder)
+  try {
+    for (let scanned = 0; scanned < MAX_PRUNE_SCAN; scanned += 1) {
+      const dirent = handle.readSync()
+      if (!dirent) break
+      const token = dirent.name.endsWith('.json') ? dirent.name.slice(0, -'.json'.length) : ''
+      if (!dirent.isFile() || !isUndoJournalToken(token) || token === keep) continue
+      ;(parseInt(token.slice(0, 12), 16) > futureStamp ? future : ours).push(dirent.name)
+    }
+  } finally {
+    handle.closeSync()
+  }
+  ours.sort().reverse()
+  // `keep` is one of the newest MAX_ENTRIES by definition, so the rest get one slot fewer.
+  const surplus = ours.slice(keep === undefined ? MAX_ENTRIES : MAX_ENTRIES - 1)
+  for (const name of [...future, ...surplus]) {
     const path = join(folder, name)
     if (lstatSync(path).isFile()) unlinkSync(path)
   }

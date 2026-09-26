@@ -148,6 +148,68 @@ describe('bounded', () => {
   })
 })
 
+describe('review of #274', () => {
+  /** A token-shaped name stamped `ms` since the epoch, as `mintToken` would write it. */
+  const stampedName = (ms: number, n: number) => `${ms.toString(16).padStart(12, '0')}${n.toString(16).padStart(20, '0')}.json`
+
+  it('nit 1 — future-stamped names cannot switch undo off: the new entry survives, the planted ones go', () => {
+    fs.mkdirSync(journalDir(), { recursive: true })
+    const future = Date.now() + 10 * 365 * 24 * 60 * 60 * 1000
+    for (let i = 0; i < MAX_ENTRIES; i++) fs.writeFileSync(path.join(journalDir(), stampedName(future, i)), '{}')
+    write('pages/Home.tsx', 'v1\n')
+
+    const token = journaledWrite({ 'pages/Home.tsx': 'v2\n' })
+    expect(token).not.toBeNull()
+    expect(entries()).toEqual([`${token}.json`])
+    expect(restoreUndoJournal(dir, token!).ok).toBe(true)
+    expect(read('pages/Home.tsx')).toBe('v1\n')
+  })
+
+  it('nit 1 — the entry just written is never the one pruned, even when every other name sorts above it', () => {
+    fs.mkdirSync(journalDir(), { recursive: true })
+    // Within the slack, so not "future" — but still stamped after anything this clock mints next.
+    const soon = Date.now() + 60 * 60 * 1000
+    for (let i = 0; i < MAX_ENTRIES; i++) fs.writeFileSync(path.join(journalDir(), stampedName(soon, i)), '{}')
+    write('pages/Home.tsx', 'v1\n')
+
+    const token = journaledWrite({ 'pages/Home.tsx': 'v2\n' })
+    expect(entries()).toContain(`${token}.json`)
+    expect(entries()).toHaveLength(MAX_ENTRIES)
+    expect(restoreUndoJournal(dir, token!).ok).toBe(true)
+  })
+
+  it('nit 2 — a folder full of junk names is read only so far, and journaling still works', () => {
+    fs.mkdirSync(journalDir(), { recursive: true })
+    for (let i = 0; i < 1_200; i++) fs.writeFileSync(path.join(journalDir(), `junk-${i}.txt`), '')
+    write('pages/Home.tsx', 'v1\n')
+    const token = journaledWrite({ 'pages/Home.tsx': 'v2\n' })
+    expect(restoreUndoJournal(dir, token!).ok).toBe(true)
+    expect(read('pages/Home.tsx')).toBe('v1\n')
+  })
+
+  it('nit 3 — a write that fails part-way puts back the files already restored, keeps the entry, and a retry works', () => {
+    write('pages/A.tsx', 'a1\n')
+    write('pages/B.tsx', 'b1\n')
+    const token = journaledWrite({ 'pages/A.tsx': 'a2\n', 'pages/B.tsx': 'b2\n' })!
+    let writes = 0
+    const failing = restoreUndoJournal(dir, token, {
+      writeFile: (file, text) => {
+        writes += 1
+        if (writes === 2) throw new Error('disk full')
+        fs.writeFileSync(file, text)
+      },
+    })
+    expect(failing).toMatchObject({ ok: false, reason: 'restore-failed' })
+    expect(read('pages/A.tsx')).toBe('a2\n')
+    expect(read('pages/B.tsx')).toBe('b2\n')
+    expect(entries()).toEqual([`${token}.json`])
+
+    expect(restoreUndoJournal(dir, token).ok).toBe(true)
+    expect(read('pages/A.tsx')).toBe('a1\n')
+    expect(read('pages/B.tsx')).toBe('b1\n')
+  })
+})
+
 describe('untrusted on read', () => {
   it('never lets a token become a path: anything but 32 hex digits is unavailable', () => {
     write('secret.json', '{"version":1}')
