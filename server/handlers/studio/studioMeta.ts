@@ -447,7 +447,7 @@ export type StudioMeta = Static<typeof StudioMetaSchema>
 /** The store path of this record (`.studio/meta.json`), for the one door `studioStore.ts`. */
 export const STUDIO_META_FILE = 'meta.json'
 
-/** `<dir>/.studio/meta.json` — exported so a cache keyed on what it reads (the preview shell's input stamp) names the same file. */
+/** `<dir>/.studio/meta.json` as a path — for a cache keyed on what it reads (the preview shell's input stamp) to NAME the same file; reading it is `readStudioMeta`'s job. */
 export function studioMetaFile(dir: string): string {
   return studioStorePath(dir, STUDIO_META_FILE)
 }

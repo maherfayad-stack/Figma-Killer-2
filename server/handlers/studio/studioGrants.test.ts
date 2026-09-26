@@ -1,6 +1,6 @@
 /**
  * `lesserGrants` — after a git verb, each grant is the lesser of what it was
- * before and what it is now (`studioGrants.ts`, rule 2).
+ * before and what it is now (`studioGrants.ts`).
  */
 import { describe, expect, it } from 'bun:test'
 import { lesserGrants } from './studioGrants'

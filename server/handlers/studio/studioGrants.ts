@@ -19,26 +19,25 @@
  *   `trust` back to `run-project` after the owner chose `static`, or approves
  *   a server by name, is granting itself code execution.
  *
- * The rules:
+ * On a clone none of it survives: `gitClone.ts` replaces the repository's
+ * `meta.json` outright, and removes its share state. (The zipball and upload
+ * imports drop every `.studio/` entry — `archiveIngest.ts`.) This module is
+ * the rule for everything AFTER that:
  *
- * 1. **A clone brings no grants** ({@link dropRepositoryGrants}): its share
- *    state is removed and its grant fields stripped, before Studio reports the
- *    project. (The zipball and upload imports never had the problem: they drop
- *    every `.studio/` entry — `archiveIngest.ts`.)
- * 2. **A git verb raises no grant** ({@link withStudioGrantsPinned}, wrapped
- *    around every Studio git verb by `gitOperations.ts`'s `withGitWriteLock`):
- *    the grants are read before the verb, and after it each one is put to the
- *    LESSER of before and after ({@link lesserGrants}). Not "exactly what it
- *    was": the trust and approval routes do not hold the project write lock,
- *    so an owner who lowers the tier while a long pull runs must keep that.
- *    What a verb can never do is leave a grant higher than it found it — a
- *    tier raised or a deleted `meta.json` (absent `trust` is the default,
- *    `run-project`), a server approved, a registered server's definition
- *    swapped under an approved name. Share state a verb touched in any way is
- *    dropped, every link with it — the server can no longer vouch for what
- *    any token would serve. `.studio/` is made link-free after the verb as it
- *    is after a clone (`stripStudioStoreLinks`), because a pulled
- *    `.studio -> elsewhere` would make every record read as absent.
+ * **A git verb raises no grant** ({@link withStudioGrantsPinned}, wrapped
+ * around every Studio git verb by `gitOperations.ts`'s `withGitWriteLock`):
+ * the grants are read before the verb, and after it each one is put to the
+ * LESSER of before and after ({@link lesserGrants}). Not "exactly what it
+ * was": the trust and approval routes do not hold the project write lock,
+ * so an owner who lowers the tier while a long pull runs must keep that.
+ * What a verb can never do is leave a grant higher than it found it — a
+ * tier raised or a deleted `meta.json` (absent `trust` is the default,
+ * `run-project`), a server approved, a registered server's definition
+ * swapped under an approved name. Share state a verb touched in any way is
+ * dropped, every link with it — the server can no longer vouch for what
+ * any token would serve. `.studio/` is made link-free after the verb as it
+ * is after a clone (`stripStudioStoreLinks`), because a pulled
+ * `.studio -> elsewhere` would make every record read as absent.
  *
  * A lowering shows in `git status` as a local change to `.studio/meta.json`
  * (or a deleted `shares.json`), and Studio will not pull over it until it is
@@ -121,17 +120,6 @@ export function lesserGrants(before: StudioMetaGrants, now: StudioMetaGrants): S
   return next
 }
 
-/**
- * Rule 1: remove every grant a freshly cloned repository brought — all share
- * state, and the grant fields of its `meta.json`. Call after
- * `stripStudioStoreLinks` and before anything reports the project.
- */
-export function dropRepositoryGrants(dir: string): void {
-  dropAllShareState(dir)
-  const meta = readStudioMeta(dir)
-  if (Object.keys(metaGrants(meta)).length > 0) writeStudioMeta(dir, withGrants(meta, {}))
-}
-
 /** The grants `dir` holds now. */
 export function pinStudioGrants(dir: string): StudioGrantPin {
   return { meta: metaGrants(readStudioMeta(dir)), shares: shareStateFingerprint(dir) }
@@ -144,7 +132,7 @@ export interface ReassertedGrants {
   readonly metaLowered: boolean
 }
 
-/** Rule 2's second half: lower `dir`'s grants to at most `pin`'s, and drop share state that changed since. Returns what it had to change. */
+/** The second half of {@link withStudioGrantsPinned}: lower `dir`'s grants to at most `pin`'s, and drop share state that changed since. Returns what it had to change. */
 export function reassertStudioGrants(dir: string, pin: StudioGrantPin): ReassertedGrants {
   const stripped = stripStudioStoreLinks(dir)
   const linksRemoved = stripped.rootReplaced || stripped.removed.length > 0
@@ -162,7 +150,7 @@ export function reassertStudioGrants(dir: string, pin: StudioGrantPin): Reassert
 }
 
 /**
- * Rule 2: run a git verb with the project's grants pinned — read before,
+ * Run a git verb with the project's grants pinned — read before,
  * lowered back to at most that after, whether the verb succeeded, failed or
  * stopped on a conflict.
  * Call inside the project write lock, so nothing else writes a grant between

@@ -28,7 +28,7 @@ import { REPO_ROOT, readSource, toRepoRelativePosix, walkSourceTree } from './he
 const ALLOWED: ReadonlyMap<string, string> = new Map([
   ['server/handlers/studio/studioStore.ts', 'The door itself.'],
   [
-    'server/handlers/studio/agentCheckpoints.ts',
+    'server/handlers/studio/agentCheckpointStore.ts',
     'Its own, stricter store: every directory from `.studio` down is lstat-checked, hard links are refused, and it distrusts its own files’ contents (review of #251).',
   ],
   [
@@ -36,7 +36,6 @@ const ALLOWED: ReadonlyMap<string, string> = new Map([
     'Its own signed store: every directory from `.studio` down is lstat-checked and every entry is HMAC-verified before use.',
   ],
   ['server/handlers/studio/projectWatch.ts', 'A watcher filter: which relative directory names the walk enters. It reads no store.'],
-  ['server/ai/mcp/outsideEditReload.ts', 'Classifies a changed relative path. It touches no file.'],
   ['server/handlers/studio/projectDuplicate.ts', 'A directory NAME kept in a copy filter. It reads no store.'],
 ])
 

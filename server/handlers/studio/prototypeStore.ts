@@ -45,7 +45,7 @@ import { readStudioStoreDocument, studioStorePath, writeStudioStoreFile } from '
 
 const PROTOTYPE_FILE = 'prototype.json'
 
-/** Absolute path of the prototype document — for a caller that must NAME it (a cache key), never to read or write it. */
+/** Absolute path of `.studio/prototype.json` — for a caller that must NAME it (the shell's input stamp); reading and writing go through `studioStore.ts`. */
 export function prototypeFilePath(dir: string): string {
   return studioStorePath(dir, PROTOTYPE_FILE)
 }

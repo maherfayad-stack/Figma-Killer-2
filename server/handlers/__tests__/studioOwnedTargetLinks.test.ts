@@ -15,7 +15,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test'
 import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as path from 'node:path'
-import { isStudioOwnedTargetUnlinked } from '../studioEditRouting'
+import { isStudioOwnedTargetUnlinked, studioEditLocation } from '../studioEditRouting'
 
 const LAYER = '.studio/canvas/clabcdefghij.tsx'
 
@@ -48,6 +48,12 @@ describe('isStudioOwnedTargetUnlinked', () => {
     fs.mkdirSync(path.join(dir, 'scratch', 'canvas'), { recursive: true })
     fs.symlinkSync(path.join(dir, 'scratch'), path.join(dir, '.studio'), 'junction')
     expect(isStudioOwnedTargetUnlinked(dir, LAYER)).toBe(false)
+  })
+
+  it('the editor’s own /save scope never decodes a layer id through a linked .studio/canvas', () => {
+    fs.mkdirSync(path.join(dir, '.studio'), { recursive: true })
+    fs.symlinkSync(path.join(dir, 'pages'), path.join(dir, '.studio', 'canvas'), 'junction')
+    expect(studioEditLocation(dir, `${LAYER}:1:1`, { canvasLayers: 'allow' })).toBeNull()
   })
 
   it('leaves the user’s own source to the user-source rule: an in-project link is not its business', () => {

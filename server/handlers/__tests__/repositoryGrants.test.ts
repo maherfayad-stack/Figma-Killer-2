@@ -2,14 +2,11 @@
  * `.studio/` state that GRANTS something never comes from a repository
  * (`studio/studioGrants.ts`).
  *
- * - A clone used to keep the repository's `.studio/shares.json` and its
- *   snapshots, so the original owner's share tokens — or tokens an attacker
- *   minted and committed — went live on this server, serving this user's board
- *   at `/share/<token>`.
- * - A pull (or any git verb) used to take `.studio/meta.json` as it came, so a
- *   commit upstream could raise the trust tier the owner had lowered to
- *   `static`, approve an MCP server to run, or delete `meta.json` outright —
- *   and an absent `trust` reads as the default tier, `run-project`.
+ * A pull (or any git verb) used to take `.studio/` as it came, so a commit
+ * upstream could raise the trust tier the owner had lowered to `static`,
+ * approve an MCP server to run, delete `meta.json` outright (an absent `trust`
+ * reads as the default tier, `run-project`), or commit share records whose
+ * tokens then served this user's board at `/share/<token>`.
  *
  * Everything runs against real git with a local bare repository standing in
  * for GitHub: no network, no credentials.
@@ -22,7 +19,7 @@ import { projectsRootDir } from '../studioProjects'
 import { clearGitCloneJobsForTest, cloneTargetDir, readGitCloneJob, startGitCloneJob } from '../studio/gitClone'
 import { pullRemote } from '../studio/gitSyncOperations'
 import { switchBranch } from '../studio/gitOperations'
-import { clearShareLookupMemo, findShareRecord, mintShareToken, resolveActiveShare } from '../studio/shareStore'
+import { clearShareLookupMemo, mintShareToken, resolveActiveShare } from '../studio/shareStore'
 import { readStudioMeta } from '../studio/studioMeta'
 
 async function git(cwd: string, args: string[]): Promise<number> {
@@ -116,21 +113,20 @@ describe('a clone brings no grants', () => {
     clearGitCloneJobsForTest()
   })
 
-  it("drops the repository's share records and snapshots, so its tokens never resolve here", async () => {
-    const token = mintShareToken()
+  // A regression guard, not a fail-first test: `gitClone.ts` already replaced
+  // the cloned `meta.json` outright. (Its share state is covered by the
+  // clone's own share cleanup, and tested there.)
+  it("keeps none of the repository's trust tier or MCP approvals", async () => {
     const source = makeDir('__grants_clone_src_')
     await git(source, ['init', '--initial-branch=main'])
     await configure(source)
     write(source, 'pages/Home.tsx', 'export default function Home() {\n  return <div>Hi</div>\n}\n')
     write(source, '.studio/meta.json', JSON.stringify(HOSTILE_META, null, 2))
-    writeShare(source, token)
     await commitAll(source, 'Initial commit')
     const bare = makeDir('studio-grants-clone-origin-', os.tmpdir())
     await git(bare, ['init', '--bare', '--initial-branch=main'])
     await git(source, ['remote', 'add', 'origin', bare])
     await git(source, ['push', '--set-upstream', 'origin', 'main'])
-    // The source project is on this server too; take it out of the share lookup so only the clone could answer.
-    fs.rmSync(path.join(source, '.studio'), { recursive: true, force: true })
 
     const remote = { owner: 'studio-test', repo: `grants-${path.basename(source).slice(-6)}`, url: bare, protocol: 'https' as const }
     const target = cloneTargetDir(remote)
@@ -143,11 +139,6 @@ describe('a clone brings no grants', () => {
       await Bun.sleep(50)
     }
     expect(readGitCloneJob(job.id)?.phase).toBe('done')
-
-    expect(fs.existsSync(path.join(target, '.studio', 'shares.json'))).toBe(false)
-    expect(fs.existsSync(path.join(target, '.studio', 'shares'))).toBe(false)
-    expect(findShareRecord(target, token)).toBeNull()
-    expect(resolveActiveShare(token)).toBeNull()
 
     const meta = readStudioMeta(target)
     expect(meta.trust).toBeUndefined()

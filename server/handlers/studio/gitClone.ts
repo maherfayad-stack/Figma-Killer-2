@@ -65,13 +65,6 @@
  * problem: it drops every `.studio/` entry (`archiveIngest.ts`), and an
  * archive entry lands as bytes, never as a link.
  *
- * ## A cloned `.studio/`: no grants
- *
- * Plain files stay, except the ones that GRANT something: the repository's
- * share records and snapshots (someone else's live `/share/<token>` links) and
- * the trust tier and MCP approvals in its `meta.json`. `dropRepositoryGrants`
- * removes them before the project is reported — see `studioGrants.ts`.
- *
  * ## Job shape
  *
  * Identical to `githubImportRoutes.ts`'s, deliberately: `POST` returns a
@@ -92,7 +85,6 @@ import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
 import { stripStudioStoreLinks } from './studioStore'
-import { dropRepositoryGrants } from './studioGrants'
 import type { SubprocessSpawnFn } from './subprocessRunner'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
@@ -237,17 +229,12 @@ async function runCloneJob(
       )
     }
 
-    // …and grant-free: a repository's share records are someone else's live
-    // tokens, and its trust tier and MCP approvals are not this owner's
-    // decisions (`studioGrants.ts`, rule 1).
-    dropRepositoryGrants(target)
-
     job.phase = 'probing'
 
     // Same aftermath as the zipball import, so both paths end on the same
     // summary screen. `writeProjectMeta` is safe to write unconditionally: the
-    // directory did not exist a moment ago, and it REPLACES the `meta.json`
-    // the repository shipped (whose grants are already gone, above).
+    // directory did not exist a moment ago, and it REPLACES any `meta.json`
+    // the repository shipped — trust tier and approved MCP servers included.
     writeProjectMeta(target, { displayName: remote.repo })
     try {
       mergeStudioMeta(target, { profile: probeProject(target) })

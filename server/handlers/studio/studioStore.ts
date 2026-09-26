@@ -34,12 +34,14 @@
  * - **Atomic on write.** `writeFileAtomic`: a crash or a reader mid-write never
  *   sees half a `meta.json`.
  *
- * `agentCheckpoints.ts` keeps its own, stricter store under
- * `.studio/agent-checkpoints/` (it distrusts its own files' contents too, and
- * refuses hard links); the free canvas's layer modules (`.studio/canvas/`) are
- * written by the writeback, which applies the same link rule
- * (`sourceFileWrite.ts`). `studio-store-single-door.test.ts` holds every
- * other module to this one.
+ * Two stores keep their own, stricter rules on top of the same link check:
+ * `agentCheckpointStore.ts` (`.studio/agent-checkpoints/`, which also refuses
+ * hard links and distrusts its own files' contents) and `parseCacheStore.ts`
+ * (`.studio/cache/parse/`, every entry HMAC-signed). The free canvas's layer
+ * modules (`canvasLayerFiles.ts`) and the restore journal (`undoJournal.ts`)
+ * go through this door; an edit to a layer module goes through the
+ * writeback, whose decoder applies the same rule (`isStudioOwnedTargetUnlinked`).
+ * `studio-store-single-door.test.ts` holds every other module to this one.
  */
 import {
   appendFileSync,
@@ -47,16 +49,19 @@ import {
   constants,
   lstatSync,
   mkdirSync,
+  opendirSync,
   openSync,
   readdirSync,
   readFileSync,
   rmdirSync,
   unlinkSync,
+  writeFileSync,
+  type Dir,
   type Dirent,
   type Stats,
 } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
-import { isUnlinkedWorkspacePath, writeFileAtomic } from '@core/page-parser'
+import { isUnlinkedWorkspacePath, pathEntryExists, writeFileAtomic } from '@core/page-parser'
 import { safeParseJson } from '@core/utils/jsonValidate'
 import type { Static, TSchema } from '@core/utils/typeboxHelpers'
 
@@ -154,12 +159,20 @@ function readableEntry(dir: string, rel: string): { abs: string; stat: Stats } |
   return { abs, stat }
 }
 
-/** The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent, not a file, or reached through a link. */
-export function readStudioStoreBytes(dir: string, rel: string): Buffer<ArrayBuffer> | null {
+/** A read's bound: a file larger than `maxBytes` reads as absent, and is never read into memory. */
+export interface StudioStoreReadOptions {
+  readonly maxBytes?: number
+}
+
+/** The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent, not a file, over `maxBytes`, or reached through a link. */
+export function readStudioStoreBytes(dir: string, rel: string, options: StudioStoreReadOptions = {}): Buffer<ArrayBuffer> | null {
   const entry = readableEntry(dir, rel)
   if (entry === null || !entry.stat.isFile()) return null
+  if (options.maxBytes !== undefined && entry.stat.size > options.maxBytes) return null
   try {
-    return readFileSync(entry.abs)
+    const bytes = readFileSync(entry.abs)
+    // Re-checked on what was read: the file can have grown since the `lstat`.
+    return options.maxBytes !== undefined && bytes.byteLength > options.maxBytes ? null : bytes
   } catch (err) {
     if (isMissing(err)) return null
     throw err
@@ -167,16 +180,22 @@ export function readStudioStoreBytes(dir: string, rel: string): Buffer<ArrayBuff
 }
 
 /** {@link readStudioStoreBytes} as UTF-8 text. For a store that is not one JSON document (a JSONL log). */
-export function readStudioStoreText(dir: string, rel: string): string | null {
-  return readStudioStoreBytes(dir, rel)?.toString('utf8') ?? null
+export function readStudioStoreText(dir: string, rel: string, options: StudioStoreReadOptions = {}): string | null {
+  return readStudioStoreBytes(dir, rel, options)?.toString('utf8') ?? null
 }
 
 /**
  * `.studio/<rel>` parsed and validated against `schema`; `fallback` when it is
- * absent, reached through a link, not JSON, or the wrong shape.
+ * absent, over `maxBytes`, reached through a link, not JSON, or the wrong shape.
  */
-export function readStudioStoreJson<T extends TSchema, F = Static<T>>(dir: string, rel: string, schema: T, fallback: F): Static<T> | F {
-  const raw = readStudioStoreText(dir, rel)
+export function readStudioStoreJson<T extends TSchema, F = Static<T>>(
+  dir: string,
+  rel: string,
+  schema: T,
+  fallback: F,
+  options: StudioStoreReadOptions = {},
+): Static<T> | F {
+  const raw = readStudioStoreText(dir, rel, options)
   if (raw === null || raw === '') return fallback
   const result = safeParseJson(raw, schema)
   return result.ok ? result.value : fallback
@@ -202,16 +221,31 @@ export function statStudioStoreFile(dir: string, rel: string): Stats | null {
 /**
  * The plain files and directories directly inside `.studio/<rel>`. A link in
  * the listing is left out; the directory itself absent or linked is `[]`.
+ * `scanLimit` bounds how many names are READ, so a folder planted with junk
+ * names cannot make the caller slow (the undo journal's prune).
  */
-export function listStudioStoreDir(dir: string, rel: string): Dirent[] {
+export function listStudioStoreDir(dir: string, rel: string, options: { scanLimit?: number } = {}): Dirent[] {
   const found = readableEntry(dir, rel)
   if (found === null || !found.stat.isDirectory()) return []
+  const limit = options.scanLimit ?? Number.POSITIVE_INFINITY
+  const out: Dirent[] = []
+  let handle: Dir
   try {
-    return readdirSync(found.abs, { withFileTypes: true }).filter((entry) => entry.isFile() || entry.isDirectory())
+    handle = opendirSync(found.abs)
   } catch (err) {
     if (isMissing(err)) return []
     throw err
   }
+  try {
+    for (let scanned = 0; scanned < limit; scanned += 1) {
+      const entry = handle.readSync()
+      if (!entry) break
+      if (entry.isFile() || entry.isDirectory()) out.push(entry)
+    }
+  } finally {
+    handle.closeSync()
+  }
+  return out
 }
 
 /** The path a write may use, with its folder made; throws {@link StudioStoreLinkError} before and after the `mkdir`. */
@@ -243,6 +277,27 @@ export function writeStudioStoreFile(dir: string, rel: string, content: string |
   const abs = writablePath(dir, rel)
   writeFileAtomic(abs, content)
   return abs
+}
+
+/**
+ * Create `.studio/<rel>` as a NEW file, creating its folders; throws when any
+ * entry is already at the name — a dangling link included, which a bare `wx`
+ * would follow on Windows — so a create never overwrites and a racing creator
+ * loses. Returns the absolute path.
+ */
+export function createStudioStoreFileExclusive(dir: string, rel: string, content: string): string {
+  const abs = writablePath(dir, rel)
+  if (pathEntryExists(abs)) throw new StudioStoreEntryExistsError()
+  writeFileSync(abs, content, { encoding: 'utf8', flag: 'wx' })
+  return abs
+}
+
+/** A create refused because something is already at the name. */
+export class StudioStoreEntryExistsError extends Error {
+  constructor() {
+    super('Something is already at that .studio name, so nothing was written.')
+    this.name = 'StudioStoreEntryExistsError'
+  }
 }
 
 /** {@link writeStudioStoreFile} of `value` as JSON — indented by two when `pretty`, with a trailing newline when `trailingNewline`. */
