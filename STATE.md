@@ -46,26 +46,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
-### canvas-41 — P5-B3: the remaining image items (IMG-5, IMG-6, IMG-10, IMG-11)
-- **Agent:** canvas-engineer · **Updated:** 2026-09-26 · **Branch:** `feat/images-remaining` → draft PR against `feat/canvas-excellence`
-- **Stage:** done, awaiting security-guard review of IMG-5 (`asset-drop-url`) and IMG-11 (`asset-prune`) — the attack surface is in the PR body.
-- **Goal:** ROADMAP P5-B items 8–11, plus two found-not-fixed items from #262.
-- **Done:**
-  - One intake: `ImageDropSource` (`file` | `url` | `project`, `imageDropShapes.ts`), landed ONLY through `studio/landImageSource.ts`; every image action and the free canvas take sources, never `File`s.
-  - IMG-5 (OD-13): `canvasDropIntake.ts` reads a drop — files first, else one link that SAYS image (dragged `<img src>`, or an image path); `data:image` is decoded client-side; a page link / `javascript:` / `file:` refuses with no request. `POST /admin/api/studio/asset-drop-url` fetches through `fetchRemoteBytes` (loopback forced off, 25 MB, MIME + sniff) and lands via the same home as `asset-drop`.
-  - IMG-6: Assets → Images (`ImagesSection.tsx`): pointer drag through `useCanvasInsertionDrag` (no HTML5 DnD), click = beside the selection; a `project` source is referenced, never uploaded.
-  - IMG-10 (OD-12): `assetImportConvention.ts` (strict majority, Next always public); `{ __assetImport: <workspace path> }` → `studioInsertAssetImports.ts` spells the specifier → `insertJsxElement` writes `import heroPng from …` + `src={heroPng}` in one splice (`jsxAssetImports.ts`; the bound form is a class so JSON cannot forge an identifier).
-  - IMG-11: `.studio/assets.json` ledger (`assetLedger.ts`, written by `landAssetBytes` on every file it CREATES); `GET asset-ledger` / `POST asset-prune` (`assetPrune.ts`) re-check everything at delete time; "Delete unused…" is always behind `alwaysConfirm`.
-  - Cheap: authored `alt` renders on the canvas `<img>` (`ImageEditor`); relative `url(./a.png)` in project CSS resolves in design frames (`studio-asset:` sentinel in `authoredCss`, `projectAssetUrl` → `path=`).
-- **Canvas files touched:** `canvas/canvasDropIntake.ts` (new), `canvasFileDrop.ts`, `canvasFileDragPreview.ts`, `canvasFrameDragRelay.ts`, `useCanvasFileDrop.ts`, `canvasImagePicker.ts`, `canvasProjectAssetUrl.ts`; `modules/base/image/ImageEditor.tsx`.
-- **Landmines:**
-  - The frame relay now RELAYS link drags (still cancels every drop in the frame first). Its dragover cannot read the URL (protected mode), so the chip shows "1 image" for any link; the drop is where a page link refuses. Do not make the relay read `getData` in `dragover` — it returns `''` there.
-  - `CSS_ASSET_SENTINEL` (browser) duplicates `@core/page-parser`'s `STUDIO_ASSET_SENTINEL` because that barrel is Node-only; `canvasCssRelativeUrl.test.ts` pins them equal. Only `authoredCss` is rewritten — a session-edited overlay rule (`mc-classes`) still carries the raw relative URL.
-  - `useProjectImageAssets` now REFETCHES on `invalidateProjectImageAssets()` (listener set); a landing that wrote a new file invalidates.
-  - The upload-progress painter sets `data-studio-uploading` IMPERATIVELY; an insert drop now clears it on every ghost once the landings settle (the P5-B multi-drop e2e caught real images still marked uploading after the trunk's reconcile work). Any new painter caller must clear too.
-  - `insertImagesAtTarget` (`canvasSelectionInsert.ts`, P5-A's) takes `ImageDropSource`s now; paste and ⇧K wrap their files.
-- **Next:** security-guard review; owner dogfood `canvas-41` (Pending dogfood).
-
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -181,6 +161,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `canvas-41` — P5-B3: URL drag from another tab (SSRF-guarded asset-drop-url), Assets → Images with drag/click insert, import-convention mode (OD-12), asset ledger + confirmed Delete unused (hash re-checked, bounded ledger read), relative CSS url() and alt kept in design frames; security approved — #275 — 2026-09-25
 - `store-22` — P3-F: one compare-and-swap restore journal for delete, detach, swap, extract and list-row delete; ⌘Z restores exact bytes (~35 ms) or refuses restore-stale; all-or-nothing multi-file restore; reinsert-source deleted; security approved — #274 — 2026-09-25
 - `refactor-ckpt` — agent checkpoints split into store / revert / entry modules (789 → under 700 lines), no behaviour or check changed; the trunk has no red gates left — #276 — 2026-09-25
 - `canvas-30` — P5-D part 2: SVG part stamps (removed inside the sanitizer, never by regex), svg-attr edit on the one allowlist, icon/.svg insert via the paste path, vector edit mode (points, corner/smooth), pen tool; security approved after the stored-XSS fix — #269 — 2026-09-25
@@ -190,7 +171,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
 - `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
-- `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 
 ---
 
