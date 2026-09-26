@@ -33,21 +33,24 @@
  * when the scan cannot finish inside its budget it says so, and the prune
  * refuses rather than deleting on a partial answer.
  *
- * Every read here is of the ledger's OWN path spelled exactly (a `.studio`
- * that is a link is refused); every path the ledger names is re-validated by
- * the prune before anything is touched (`assetPrune.ts`).
+ * The ledger itself is read and written through the `.studio` door
+ * (`studioStore.ts`: no link or hard link on the way, reads bounded, writes
+ * atomic). Every path the ledger NAMES is re-validated by the prune before
+ * anything is touched (`assetPrune.ts`).
  */
 import { createHash } from 'node:crypto'
-import { existsSync, lstatSync, mkdirSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { listWorkspaceFiles, realWorkspaceRel, resolveWorkspaceReadPath } from '@core/page-parser'
+import { listWorkspaceFiles, resolveWorkspaceReadPath } from '@core/page-parser'
 import { Type, type Static } from '@core/utils/typeboxHelpers'
-import { parseJsonWithFallback } from '@core/utils/jsonValidate'
-import { writeFileAtomic } from './atomicFileWrite'
+import { readStudioStoreJson, studioStoreProjectRel, writeStudioStoreJson } from './studioStore'
 import { canvasLayerFilePath, listCanvasLayerIds } from './canvasLayerFiles'
 
+/** The ledger's `.studio` store path (`studioStore.ts`). */
+const ASSET_LEDGER_FILE = 'assets.json'
+
 /** Workspace-relative path of the ledger. */
-export const ASSET_LEDGER_REL = '.studio/assets.json'
+export const ASSET_LEDGER_REL = studioStoreProjectRel(ASSET_LEDGER_FILE)
 
 /** Beyond this many entries the oldest are forgotten — which only ever makes a file un-prunable, never deleted. */
 export const MAX_ASSET_LEDGER_ENTRIES = 5000
@@ -56,7 +59,7 @@ export const MAX_ASSET_LEDGER_ENTRIES = 5000
  * The ledger is a FILE in the project, so a repository can ship a hostile
  * one (review of #275, N1). Every bound here is what keeps reading it cheap:
  * an entry that breaks one makes the whole ledger read as empty
- * (`parseJsonWithFallback`), which only ever makes files un-prunable.
+ * (`readStudioStoreJson`), which only ever makes files un-prunable.
  */
 const AssetLedgerEntrySchema = Type.Object({
   relPath: Type.String({ minLength: 1, maxLength: 1024 }),
@@ -77,22 +80,11 @@ export function sha256Hex(bytes: Uint8Array): string {
   return createHash('sha256').update(bytes).digest('hex')
 }
 
-/**
- * The ledger's absolute path, or `null` when writing or reading it would go
- * anywhere other than exactly `<dir>/.studio/assets.json` (a `.studio` that
- * is a link, a case variant, an escape).
- */
-function ledgerPath(dir: string): string | null {
-  const file = join(dir, ...ASSET_LEDGER_REL.split('/'))
-  return realWorkspaceRel(dir, file) === ASSET_LEDGER_REL ? file : null
-}
-
 export function readAssetLedger(dir: string): AssetLedgerEntry[] {
-  const file = ledgerPath(dir)
-  if (!file || !existsSync(file)) return []
+  // The door refuses a link or a hard link on the way and bounds the read;
+  // the schema's own bounds (above) keep a hostile ledger cheap after that.
   try {
-    if (!lstatSync(file).isFile()) return []
-    return parseJsonWithFallback(readFileSync(file, 'utf8'), AssetLedgerSchema, EMPTY_LEDGER).entries
+    return readStudioStoreJson(dir, ASSET_LEDGER_FILE, AssetLedgerSchema, EMPTY_LEDGER).entries
   } catch (err) {
     console.error('[studio:asset-ledger] could not read the ledger', err)
     return []
@@ -100,11 +92,9 @@ export function readAssetLedger(dir: string): AssetLedgerEntry[] {
 }
 
 export function writeAssetLedger(dir: string, entries: readonly AssetLedgerEntry[]): void {
-  const file = ledgerPath(dir)
-  if (!file) throw new Error('The asset ledger path is not writable.')
-  mkdirSync(join(dir, '.studio'), { recursive: true })
+  // Through the door: a link anywhere on the way throws `StudioStoreLinkError`, atomic otherwise.
   const ledger: AssetLedger = { version: 1, entries: entries.slice(-MAX_ASSET_LEDGER_ENTRIES) }
-  writeFileAtomic(file, `${JSON.stringify(ledger, null, 2)}\n`)
+  writeStudioStoreJson(dir, ASSET_LEDGER_FILE, ledger, { pretty: true, trailingNewline: true })
 }
 
 /**
