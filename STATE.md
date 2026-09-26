@@ -46,19 +46,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
-### canvas-39 — P5-A: one paste pipeline (IMG-4 base, SVG-5 clipboard part)
-- **Agent:** canvas-engineer · **Branch:** `feat/one-paste-pipeline` (from trunk `08c429f1`) · **Updated:** 2026-09-26
-- **Stage:** done, draft PR #270 against `feat/canvas-excellence`; security review requested (pasted SVG/HTML surface is listed in the PR body). Gates: build, lint, tsc clean; unit chunks green but the pre-existing 3; e2e `canvas-paste` 3/3 and P3-D's `structural-gestures-one-write` 3/3.
-- **Goal:** ⌘V driven by the `paste` event, bridged from every frame document; copies mark the OS clipboard so a paste tells "my layers" from "a newer image/SVG".
-- **Done:** `canvasClipboardBridge.ts` (listeners per document, keydown-armed `navigator.clipboard.read()` fallback, copy marker via `copy`/`cut` event else `clipboard.write`); `canvasClipboardData.ts` (marker, SVG sniff, `decideCanvasPaste`); `canvasPaste.ts`; `useCanvasClipboardBridge.ts`; `canvasSelectionInsert.ts` (⇧K's target + image insert, now shared); store `insertJsxSubtreeIntoPage` (`subtreeInsertActions.ts`, `gesturePage.ts`); `svgToJsxNode` refusals carry `reason` and a too-deep SVG now refuses instead of silently dropping parts.
-- **Canvas files touched:** `CanvasRoot.tsx`, `useCanvasNodeShortcuts.ts`, `useIframeEventForwarding.ts`, `canvasImagePicker.ts`, the five new canvas modules above; `spotlight/shortcutDispatch.ts` (+ its test).
-- **Decisions:** image paste = the drop's `dropImagesIntoPage` (no second pipeline); SVG ≤ 64 KB and within `svgToJsxNode`'s budget → ONE subtree insert, too large → `<img>` of the landed file, any other refusal stays a refusal; node paste still needs a selection (unchanged); palette/context-menu "Paste" stay layer-only.
-- **Landmines (events × keys):**
-  - ⌘C/⌘X/⌘V must NEVER `preventDefault` their keydown — that cancels the clipboard event. The spotlight's window CAPTURE listener used to run `layers.copy/cut/paste` on canvas surfaces with `preventDefault` BEFORE the node rung; they are now `COMPONENT_OWNED_SHORTCUTS`. Gated in `keybindings-single-dispatcher.test.ts`.
-  - The paste fallback relies on engines raising `paste` synchronously in the keydown's task (all do); a timer armed at keydown runs only when no event came. The annotation rung still `preventDefault`s ⌘V when the annotation clipboard is non-empty — that paste never reaches the bridge.
-  - Tier 2 bridge frames are cross-origin: their `paste` is never heard, and their relayed `key` messages are forgeable by project code, so ⌘V there pastes copied LAYERS only — never the async clipboard read (review #270 N1: `relayFrameKeyDown(…, { userGesture })` + `isUserGestureKeyEvent`). Any new capability unlocked by a key must check that predicate.
-- **Next:** SVG-5 proper (drop inline-vs-img, icon insert, `base.svg` ghost) consumes `insertJsxSubtreeIntoPage`. Owner dogfood: see the PR body.
-
 ## Blocked
 
 *One line per item: id · question · who decides · since.*
@@ -170,6 +157,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
 - `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
@@ -179,7 +167,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `store-20` — P6-A: a prop edit re-renders 1 node not 300, a move remounts 0 not 297, frames restyle 0 not 12; budget in bench:editor-store — #266 — 2026-09-25
 - `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
 - `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
-- `mcp-32` — P4-G: `studio_lint`, `studio_delegate` (per-turn caps 2 calls / 8 children / 150 rounds), model routing, short tool descriptions, run-project tools held in plan mode; security approved — #255 — 2026-09-25
 
 ---
 
