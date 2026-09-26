@@ -204,7 +204,19 @@ const BUDGETS: ChunkBudget[] = [
     // injected handler (`constraintActions.ts`'s `context.detachInstances`)
     // instead of the removed one-shot `detachInstance`. The confirm dialog
     // itself mounts in `AdminCanvasEditorBody`, not here. Measured 41,713 B.
-    maxBytes: 42_000,
+    //
+    // Raised 42.0 KB -> 42.9 KB for the `perf/compiler-covers-the-canvas` +
+    // `perf/frames-mount-one-by-one` merges (`fix/trunk-gates-after-perf-merges`).
+    // Audited against `d942376e` (trunk immediately before both merges,
+    // where this chunk measured 41,713 B — the P5-C number above): the +1,163 B
+    // is the React Compiler now compiling this shell's own eager components
+    // (`Toolbar`, `SaveStatusChip`, `RefusalDialog`, `ZoomControls`, …) instead
+    // of bailing out on them, so each gained its own small memo-cache
+    // (`useMemoCache`) prologue. `git diff --stat` between the two commits
+    // shows no new dependency entering this chunk — every touched file is a
+    // manual-memoization removal or a compiler-bailout-pattern fix, not a new
+    // import. Measured 42,876 B.
+    maxBytes: 43_000,
     rationale:
       'site route shell (current ~34 KB raw / ~12 KB gzipped). Must not ' +
       'pull the visual editor body, DnD, canvas, first-party modules, or ' +
@@ -234,7 +246,24 @@ const BUDGETS: ChunkBudget[] = [
     // against its own 39,400 cap, so none of it leaked forward of the
     // lazy boundary. ~18 KB of headroom left; the next raise should be
     // preceded by an audit of what is actually in this chunk.
-    maxBytes: 880_000,
+    //
+    // Raised 880,000 -> 935,000 for the `perf/compiler-covers-the-canvas` +
+    // `perf/frames-mount-one-by-one` merges (`fix/trunk-gates-after-perf-merges`).
+    // Audited against `d942376e` (trunk immediately before both merges, where
+    // this chunk measured 861,893 B — the Figma-feel wave 1 number above):
+    // +68,789 B (~8%). `git diff --stat d942376e c7c28090` touches ~40 files
+    // in `canvas/`, `inspector/`, and `panels/` and every one is either (a) a
+    // manual-memoization removal so the component compiles under the
+    // now-widened React Compiler coverage (each such component gains its own
+    // small `useMemoCache` prologue — that per-component overhead, repeated
+    // across dozens of now-compiled components, is the bulk of the growth),
+    // or (b) the new ~116-line `frameTreeMountQueue.ts`. Confirmed diffuse,
+    // not one accidental import: the gzip ratio barely moved (33.2% ->
+    // 33.8%), consistent with many small additions of similar shape rather
+    // than one dense new dependency, and neither `SitePage.tsx` nor
+    // `AdminCanvasEditorBody.tsx` themselves changed in that diff. Measured
+    // 930,682 B; ~4 KB headroom left on purpose — audit before raising again.
+    maxBytes: 935_000,
     rationale:
       'post-paint Site editor body (canvas + panels + modules + publisher). ' +
       'Current ~815 KB raw / ~271 KB gzipped after the 2026-09-14 P3/Track-L/R2 ' +
