@@ -1,8 +1,10 @@
 /**
  * The steps every agent-facing SOURCE write shares, in one place: the file
  * tools (`fileWriteTools.ts` — `studio_write_file`, `studio_edit_file`,
- * `studio_edit_files`) and the token codemod (`setTokensTool.ts` —
- * `studio_set_tokens`).
+ * `studio_edit_files`), the token codemod (`setTokensTool.ts` —
+ * `studio_set_tokens`) and the typed-edit batch (`editTools.ts` —
+ * `studio_apply_edits`, through {@link runAgentSourceEdits}, which puts each
+ * write the edit engine makes through these same steps before it lands).
  *
  * Split out of `fileWriteTools.ts` when the second writer arrived, because a
  * second copy of "read the target, check its hash, refuse a hard link, write,
@@ -18,7 +20,7 @@
  * the one image landing contract, with the target directory first put to the
  * same agent write gate and the landing held under the same lock (P4-E).
  */
-import { join } from 'node:path'
+import { join, relative, sep } from 'node:path'
 import { toolRefusal, type ToolRefusal } from '@core/ai'
 import type { ToolContext } from '../../../runtime/types'
 import { resolveToolProjectDir } from './resolveToolProjectDir'
@@ -33,7 +35,8 @@ import {
   type AgentFileTarget,
 } from '../../../../handlers/studio/agentFileAccess'
 import { appendTurnWrite } from '../../../../handlers/studio/turnWriteLog'
-import { writeFileAtomic } from '@core/page-parser'
+import { withSourceWriteHook, writeFileAtomic } from '@core/page-parser'
+import { StudioEditRefusalError } from '../../../../handlers/studioEditRefusals'
 import { DEFAULT_ASSET_TARGET_DIR, landAssetBytes } from '../../../../handlers/studio/assetLanding'
 import { assetSiteUrlResolver } from '../../../../handlers/studio/assetSiteUrl'
 import { withProjectWriteLock } from '../../../../handlers/studio/projectWriteLock'
@@ -153,13 +156,63 @@ function turnCheckpointKey(ctx: ToolContext): string | null {
  */
 export function afterWrites(dir: string, ctx: ToolContext, written: readonly AgentFileTarget[]): void {
   if (written.length === 0) return
+  recordAgentWrites(dir, ctx, written)
+  pushStudioDiskChange(dir, written.map((target) => target.rel))
+}
+
+/** The turn-log entry and the checkpoint post-image for every written file — the record half of {@link afterWrites}. */
+function recordAgentWrites(dir: string, ctx: ToolContext, written: readonly AgentFileTarget[]): void {
   const userKey = studioAgentUserKey(ctx.userId)
   const conversationKey = turnCheckpointKey(ctx)
   for (const target of written) {
     appendTurnWrite(dir, userKey, target.abs)
     if (conversationKey !== null) recordAgentPostImage(dir, userKey, conversationKey, target.abs)
   }
-  pushStudioDiskChange(dir, written.map((target) => target.rel))
+}
+
+/**
+ * Run an agent's batch through the typed-edit engine (`studio_apply_edits`)
+ * with every file it writes put through the SAME steps as the file tools, in
+ * the same order, BEFORE the bytes land (`@core/page-parser`'s
+ * `withSourceWriteHook`):
+ *
+ *  1. the agent write gate — `resolveAgentFilePath(dir, rel, 'write')`
+ *     (a host-executed file is `needs-user`, `.studio/` and friends are
+ *     `protected-path`);
+ *  2. the pre-write read every writer shares — {@link currentText} (a
+ *     directory, a hard link, a binary or oversized file is refused);
+ *  3. the content check — {@link checkContent}, which refuses a change that
+ *     ADDS a Tailwind `@plugin`/`@config`;
+ *  4. the turn checkpoint's pre-image — {@link checkpointBeforeWrite}.
+ *
+ * A refused write never lands: the hook throws a `StudioEditRefusalError`
+ * named after the refusal's code, and the batch reports it against that edit
+ * and carries on with the rest, as it does for every other refusal. After the
+ * batch, every file that WAS written gets its turn-log entry and post-image.
+ * The caller holds `withProjectWriteLock` and does its own reload push.
+ */
+export function runAgentSourceEdits<T>(dir: string, ctx: ToolContext, run: () => T): T {
+  const written = new Map<string, AgentFileTarget>()
+  const hook = (abs: string, text: string): void => {
+    const rel = relative(dir, abs).split(sep).join('/')
+    const target = resolveAgentFilePath(dir, rel, 'write')
+    if (!target.ok) throw refusedWrite(target.code, target.message, target.remedy)
+    const current = currentText(target, undefined)
+    if (isRefusal(current)) throw refusedWrite(current.code, current.message, current.remedy)
+    const denied = checkContent(text, target.rel, current.content)
+    if (denied) throw refusedWrite(denied.code, denied.message, denied.remedy)
+    checkpointBeforeWrite(dir, ctx, target, current.content === null ? { knownAbsent: true } : {})
+    written.set(target.abs, target)
+  }
+  try {
+    return withSourceWriteHook(hook, run)
+  } finally {
+    if (written.size > 0) recordAgentWrites(dir, ctx, [...written.values()])
+  }
+}
+
+function refusedWrite(code: string, message: string, remedy: string | undefined): StudioEditRefusalError {
+  return new StudioEditRefusalError(code, remedy ? `${message} ${remedy}` : message)
 }
 
 /** One file's planned rewrite: what it holds now and what it will hold. */

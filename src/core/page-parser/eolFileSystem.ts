@@ -53,7 +53,7 @@
  */
 import { Project, type FileSystemHost, type RuntimeDirEntry } from 'ts-morph'
 import { applyLineEnding, detectLineEnding, toLf, LF, type LineEnding } from '@core/utils/lineEndings'
-import { writeFileAtomic } from './atomicFileWrite'
+import { writeSourceFile } from './sourceWriteHook'
 
 /**
  * ts-morph does not export `RealFileSystemHost`, so the only supported way to
@@ -77,7 +77,7 @@ function getRealFileSystem(): FileSystemHost {
 export class EolPreservingFileSystem implements FileSystemHost {
   readonly #inner: FileSystemHost
   readonly #endings = new Map<string, LineEnding>()
-  /** True for the real disk (no `inner` given): writes then go through `writeFileAtomic`. */
+  /** True for the real disk (no `inner` given): writes then go through `writeSourceFile`. */
   readonly #writesToDisk: boolean
 
   constructor(inner?: FileSystemHost) {
@@ -124,14 +124,14 @@ export class EolPreservingFileSystem implements FileSystemHost {
   }
 
   /**
-   * On the real disk, the file is replaced in one step (`writeFileAtomic`):
+   * On the real disk, the file is replaced in one step (`writeSourceFile`: atomic, and shown first to an agent batch's write hook):
    * every codemod's `saveSync` lands here, and a crash, an OOM kill or the
    * P1-D watcher reading mid-write must never see half a page. ts-morph has
    * already made the parent directory by the time this runs.
    */
   writeFileSync(filePath: string, fileText: string): void {
     const text = applyLineEnding(fileText, this.lineEndingFor(filePath))
-    if (this.#writesToDisk) writeFileAtomic(filePath, text)
+    if (this.#writesToDisk) writeSourceFile(filePath, text)
     else this.#inner.writeFileSync(filePath, text)
   }
 

@@ -9,7 +9,7 @@
  * no path resolution, no knowledge of a workspace. `studioCssWriteback.ts`
  * owns all four of those things and runs them BEFORE dispatching here, so the
  * containment guard, the compiled-stylesheet check, and the actual
- * `writeFileAtomic` happen in exactly one place for every op regardless of which
+ * `writeSourceFile` happen in exactly one place for every op regardless of which
  * module implements it. The dependency therefore runs one way, which is also
  * what keeps `no-circular-dependencies.test.ts` green.
  *

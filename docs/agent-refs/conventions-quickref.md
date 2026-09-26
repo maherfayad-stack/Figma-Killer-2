@@ -185,10 +185,18 @@ Studio reads and writes the user's repo. Every path is untrusted.
   outside the door. A clone strips links from the repo's `.studio/` before
   Studio writes a record (`gitClone.ts`, `stripStudioStoreLinks`).
 - **Replacing a file's contents is `writeFileAtomic`** (`@core/page-parser`):
-  temp file, then rename. The writeback gets it through the disk-backed
-  `EolPreservingFileSystem` every codemod's `saveSync` lands in, and CSS
-  writeback calls it directly. A new file that must not race is still an
+  temp file, then rename. A new file that must not race is still an
   exclusive create (`wx`).
+- **The edit engine writes the user's source through `writeSourceFile` /
+  `createSourceFileExclusive`** (`@core/page-parser`'s `sourceWriteHook.ts`),
+  never `fs` directly: the disk-backed `EolPreservingFileSystem` (every
+  codemod's `saveSync`), CSS writeback and the component copy. An AGENT's
+  batch (`studio_apply_edits`) runs inside `runAgentSourceEdits`
+  (`agentWriteSupport.ts`), which shows each write to the same steps the file
+  tools take, BEFORE it lands: the agent write gate, `currentText`,
+  `checkContent` (no added Tailwind `@plugin`/`@config`), the checkpoint
+  pre-image; then the turn log. A refused write is a named per-edit refusal
+  (`needs-user`, `protected-path`, …). Never add a second check beside it.
 - **A secret file on disk goes through `privateTempDir.ts`**, never
   `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
   `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,

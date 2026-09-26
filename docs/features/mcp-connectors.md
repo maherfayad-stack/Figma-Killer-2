@@ -144,7 +144,12 @@ polled install job). Requires `studio.write`.
 `studio_apply_edits` (a batch of `StudioEdit`s through `applyStudioEditBatch` —
 the SAME engine `POST /admin/api/studio/save` runs, extracted into
 `server/handlers/studioWriteback.ts` so there is exactly one ordering/dedup/
-shift-detection implementation), `studio_set_frames` (bulk `.studio/boards.json`
+shift-detection implementation). An agent's batch
+runs inside `runAgentSourceEdits` (`agentWriteSupport.ts`): every file the
+engine writes first passes the same agent write gate, content check (no added
+Tailwind `@plugin`/`@config`) and turn checkpoint as the file tools, and is
+logged in the turn log after; a refused write is a per-edit `needs-user` or
+`protected-path` refusal and never lands. Also: `studio_set_frames` (bulk `.studio/boards.json`
 geometry), `studio_codemod` (dispatches `rename-tag`/`set-import-specifier` to
 the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
 `detach`/`swap`/`extract-component`). `studio_create_page` (9.1, above) rounds
