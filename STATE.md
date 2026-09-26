@@ -48,7 +48,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### sec-25 — Studio's own records never follow a link: one `.studio` door, a link-free clone, an atomic writeback
 - **Agent:** security-guard · **Branch:** `fix/studio-stores-never-follow-links` (off trunk `69397b64`) · **Updated:** 2026-09-25
-- **Stage:** done, draft PR against `feat/canvas-excellence`; a separate security re-review follows. Long form (threat | fix | test table, the full checklist) is the PR body.
+- **Stage:** done, draft PR #277 against `feat/canvas-excellence`; a separate security re-review follows. Long form (threat | fix | test table, the full checklist) is the PR body.
 - **Goal:** close three "Found, not fixed" items: `.studio` stores read/written with plain fs and no link check; a clone keeps the repo's own `.studio/` (links included); the page/CSS writeback is not atomic. Plus: P5-G's `.studio/canvas/*.tsx` must follow the same rule.
 - **Done:**
   - `server/handlers/studio/studioStore.ts` — the ONE door to `.studio/`. Refuses a link anywhere from `.studio` down (read = absent, write = `StudioStoreLinkError`), validates reads (TypeBox, or the store's own `@core` parser), writes via `writeFileAtomic`. Every store moved onto it: meta, boards (one owner now, `boardGeometry.ts`; three duplicate readers deleted), comments, prototype, shares + snapshots, framework, fonts, variables, references, variants, install job, thumbnail, agent turn log, turn-write log, page verification, design-system and shell manifests, the component-bundle, style and design-system-digest caches. Gate: `studio-store-single-door.test.ts` (no `.studio` literal outside the door + 6 named exceptions).
