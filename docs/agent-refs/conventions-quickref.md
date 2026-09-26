@@ -191,12 +191,22 @@ Studio reads and writes the user's repo. Every path is untrusted.
   `createSourceFileExclusive`** (`@core/page-parser`'s `sourceWriteHook.ts`),
   never `fs` directly: the disk-backed `EolPreservingFileSystem` (every
   codemod's `saveSync`), CSS writeback and the component copy. An AGENT's
-  batch (`studio_apply_edits`) runs inside `runAgentSourceEdits`
+  batch (`studio_apply_edits`) or codemod (`studio_codemod`, under the project
+  write lock, its call site gated before any verb runs) runs inside
+  `runAgentSourceEdits`
   (`agentWriteSupport.ts`), which shows each write to the same steps the file
   tools take, BEFORE it lands: the agent write gate, `currentText`,
   `checkContent` (no added Tailwind `@plugin`/`@config`), the checkpoint
   pre-image; then the turn log. A refused write is a named per-edit refusal
   (`needs-user`, `protected-path`, …). Never add a second check beside it.
+- **A repository never supplies a grant.** Share records, the trust tier and
+  MCP approvals/registered servers are `.studio` state a pull, a branch switch
+  or a conflict resolved to "theirs" can bring. Every Studio git verb runs in
+  `withGitWriteLock`, which pins them (`studioGrants.ts`): afterwards each
+  grant is the lesser of before and after, share state the verb touched is
+  dropped, and `.studio/` is made link-free. A new grant field goes in
+  `STUDIO_META_GRANT_FIELDS`; a new tree-changing git verb goes through
+  `withGitWriteLock`.
 - **A secret file on disk goes through `privateTempDir.ts`**, never
   `mkdirSync({ mode })` + `chmodSync` — `chmod` decides nothing on Windows.
   `createPrivateTempDir` / `ensurePrivateDirectory` for the directory,

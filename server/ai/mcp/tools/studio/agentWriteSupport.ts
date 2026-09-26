@@ -2,9 +2,11 @@
  * The steps every agent-facing SOURCE write shares, in one place: the file
  * tools (`fileWriteTools.ts` — `studio_write_file`, `studio_edit_file`,
  * `studio_edit_files`), the token codemod (`setTokensTool.ts` —
- * `studio_set_tokens`) and the typed-edit batch (`editTools.ts` —
- * `studio_apply_edits`, through {@link runAgentSourceEdits}, which puts each
- * write the edit engine makes through these same steps before it lands).
+ * `studio_set_tokens`), the typed-edit batch (`editTools.ts` —
+ * `studio_apply_edits`) and the structural codemods (`editTools.ts` —
+ * `studio_codemod`); the last two through {@link runAgentSourceEdits}, which
+ * puts each write the edit engine makes through these same steps before it
+ * lands.
  *
  * Split out of `fileWriteTools.ts` when the second writer arrived, because a
  * second copy of "read the target, check its hash, refuse a hard link, write,
@@ -185,8 +187,8 @@ function recordAgentWrites(dir: string, ctx: ToolContext, written: readonly Agen
  *     ADDS a Tailwind `@plugin`/`@config`;
  *  4. the turn checkpoint's pre-image — {@link checkpointBeforeWrite}.
  *
- * A refused write never lands: the hook throws a `StudioEditRefusalError`
- * named after the refusal's code, and the batch reports it against that edit
+ * A refused write never lands: the hook throws an {@link AgentWriteRefusedError}
+ * (a `StudioEditRefusalError` named after the refusal's code), and the batch reports it against that edit
  * and carries on with the rest, as it does for every other refusal. After the
  * batch, every file that WAS written gets its turn-log entry and post-image.
  * The caller holds `withProjectWriteLock` and does its own reload push.
@@ -196,11 +198,11 @@ export function runAgentSourceEdits<T>(dir: string, ctx: ToolContext, run: () =>
   const hook = (abs: string, text: string): void => {
     const rel = relative(dir, abs).split(sep).join('/')
     const target = resolveAgentFilePath(dir, rel, 'write')
-    if (!target.ok) throw refusedWrite(target.code, target.message, target.remedy)
+    if (!target.ok) throw new AgentWriteRefusedError(toolRefusal(target.code, target.message, { remedy: target.remedy }))
     const current = currentText(target, undefined)
-    if (isRefusal(current)) throw refusedWrite(current.code, current.message, current.remedy)
+    if (isRefusal(current)) throw new AgentWriteRefusedError(current)
     const denied = checkContent(text, target.rel, current.content)
-    if (denied) throw refusedWrite(denied.code, denied.message, denied.remedy)
+    if (denied) throw new AgentWriteRefusedError(denied)
     checkpointBeforeWrite(dir, ctx, target, current.content === null ? { knownAbsent: true } : {})
     written.set(target.abs, target)
   }
@@ -211,8 +213,20 @@ export function runAgentSourceEdits<T>(dir: string, ctx: ToolContext, run: () =>
   }
 }
 
-function refusedWrite(code: string, message: string, remedy: string | undefined): StudioEditRefusalError {
-  return new StudioEditRefusalError(code, remedy ? `${message} ${remedy}` : message)
+/**
+ * A write {@link runAgentSourceEdits} refused before it landed. Still a
+ * `StudioEditRefusalError` named after the refusal's code, so the typed-edit
+ * batch reports it against its edit like any other refusal; it also carries
+ * the whole {@link ToolRefusal}, so a single-write caller (`studio_codemod`)
+ * hands the agent the same refusal the file tools would have.
+ */
+export class AgentWriteRefusedError extends StudioEditRefusalError {
+  readonly refusal: ToolRefusal
+  constructor(refusal: ToolRefusal) {
+    super(refusal.code, refusal.remedy ? `${refusal.message} ${refusal.remedy}` : refusal.message)
+    this.name = 'AgentWriteRefusedError'
+    this.refusal = refusal
+  }
 }
 
 /** One file's planned rewrite: what it holds now and what it will hold. */
