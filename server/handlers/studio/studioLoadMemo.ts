@@ -75,7 +75,7 @@ import { readStudioStoreText, studioStoreProjectRel } from './studioStore'
 import { STUDIO_META_FILE } from './studioMeta'
 import { listWorkspaceFiles } from '@core/page-parser'
 import { canvasLayerRelPath } from '@core/studio-board'
-import { listCanvasLayerIds } from './canvasLayerFiles'
+import { canvasLayerFilePath, listCanvasLayerIds } from './canvasLayerFiles'
 import { digestOf, fileStamp, stampsUnchanged } from './loadDigest'
 import { onLoadedProjectEvicted, retainLoadedProject } from './loadedProjects'
 import type { StudioLoadResult } from './studioLoadContract'
@@ -164,7 +164,8 @@ export function workspaceLoadFingerprint(dir: string): string {
   // page file does, so each one is stamped explicitly, the way meta.json is.
   for (const id of listCanvasLayerIds(dir)) {
     const rel = canvasLayerRelPath(id)
-    parts.push(`${rel}:${fileStamp(join(dir, ...rel.split('/')))}`)
+    const absFile = canvasLayerFilePath(dir, id)
+    parts.push(`${rel}:${absFile === null ? 'linked' : fileStamp(absFile)}`)
   }
   return digestOf(parts)
 }

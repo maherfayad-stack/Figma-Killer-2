@@ -56,6 +56,7 @@
  */
 import { createHash, randomUUID } from 'node:crypto'
 import sharp from 'sharp'
+import { DESIGN_REFERENCE_MAX_BYTES } from '@core/ai'
 import { DESIGN_REFERENCE_STORE_DIR, landDesignReferenceBytes, sniffImageExtension } from './assetLanding'
 import { readStudioStoreBytes, readStudioStoreJson, removeStudioStoreEntry, writeStudioStoreJson } from './studioStore'
 import {
@@ -300,7 +301,7 @@ export function getMostRecentDesignReference(dir: string): DesignReference | nul
 export function readDesignReferenceBytes(dir: string, reference: DesignReference): Uint8Array | null {
   if (!REFERENCE_ID_PATTERN.test(reference.id) || !isDesignReferenceExt(reference.ext)) return null
   try {
-    const bytes = readStudioStoreBytes(dir, referenceBytesFile(reference))
+    const bytes = readStudioStoreBytes(dir, referenceBytesFile(reference), { maxBytes: DESIGN_REFERENCE_MAX_BYTES })
     return bytes === null ? null : new Uint8Array(bytes)
   } catch {
     return null

@@ -307,9 +307,26 @@ export function revokeShareRecord(dir: string, token: string, now: string): Shar
   return existing
 }
 
-/** Remove a share's snapshot directory. Idempotent; never throws on a missing directory. */
+/**
+ * Remove a share's snapshot directory. Idempotent: a missing directory is not
+ * an error. Throws `StudioStoreLinkError` when the share folder, or anything
+ * above it in `.studio`, is a link — nothing is removed then, and the revoke
+ * route answers its generic failure rather than delete through the link.
+ */
 export function deleteShareSnapshot(dir: string, token: string): void {
   const rel = snapshotStoreDir(token)
   if (rel === null) return
   removeStudioStoreEntry(dir, rel, { recursive: true })
+}
+
+/**
+ * Drop every share record and snapshot a project carries — for a project that
+ * just arrived from somewhere else (`gitClone.ts`). A share token is a bearer
+ * capability THIS server minted; one that came with a repository is a token
+ * its author knows. Never follows a link (`removeStudioStoreEntry`); the
+ * clone's links are stripped before this runs.
+ */
+export function dropShareState(dir: string): void {
+  removeStudioStoreEntry(dir, SHARES_FILE)
+  removeStudioStoreEntry(dir, 'shares', { recursive: true })
 }

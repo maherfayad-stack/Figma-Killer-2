@@ -61,7 +61,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:**
   - **P5-G merge (PR #260):** its `canonicalSourceRel(dir, rel, scope)` must keep the `isStudioOwnedTargetUnlinked` call, and `canvasLayerFiles.ts` should move onto `studioStore.ts` (or join the gate's exception list with a reason) — the gate fails on its `.studio` path otherwise. Both PRs edit `studioEditRouting.ts`.
   - A linked store now makes the write route answer the generic 500 (nothing echoed); the message names the fix, only the log shows it.
-- **Found, not fixed:** a clone adopts the repo's plain `shares.json` (planted share tokens); `git pull` can bring a new `.studio/meta.json` (links are refused, contents are not); `translationWrite.ts`/`extractStringsToDictionary.ts` still write non-atomically; `studio_codemod` still bypasses the agent write steps (no gate, turn log or checkpoint).
+- **Review nits (APPROVE-WITH-NITS) fixed:** a clone now drops `shares.json`/`shares/`; the door refuses hard links and bounds reads (32 MiB); the gate scans template parts, backslashes, `src/core` and polices `studioStorePath` + core `.studio` names; agent-gate test covers text/prop/svg-attr/list-item/restore/canvas-layer.
+- **Found, not fixed:** `git pull` can bring a new `.studio/meta.json` (links are refused, contents are not); `translationWrite.ts`/`extractStringsToDictionary.ts` still write non-atomically; `studio_codemod` still bypasses the agent write steps (no gate, turn log or checkpoint).
 - **Next:** security re-review; orchestrator reconciles with #260.
 
 ## Blocked

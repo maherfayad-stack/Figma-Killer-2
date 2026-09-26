@@ -23,6 +23,11 @@
  *   out, so it never does. A READ through one answers "absent" (and logs once);
  *   a WRITE throws {@link StudioStoreLinkError}, never lands anywhere else,
  *   and never echoes a path.
+ *   Names are compared case-folded (`comparableWorkspaceRel`), so on a
+ *   case-sensitive disk `.studio/meta.json -> META.JSON` counts as unlinked;
+ *   its target is then another `.studio` entry of the same project, which the
+ *   repository already controls, so nothing escapes. A hard-linked FILE is
+ *   refused too (`nlink > 1`), on read and on append.
  * - **Names are Studio's, not the caller's.** A store path is `/`-separated
  *   segments of `[A-Za-z0-9_-]` plus inner dots — no `..`, no separators, no
  *   drive letters, no trailing dot or space (Windows opens `meta.json.` as
@@ -152,27 +157,50 @@ function readableEntry(dir: string, rel: string): { abs: string; stat: Stats } |
     if (isMissing(err)) return null
     throw err
   }
-  if (!isUnlinkedWorkspacePath(dir, abs)) {
+  // A hard link is another name for a file that may live anywhere on the same
+  // volume (`~/.ssh/id_rsa`), and no realpath shows it. No import path can
+  // deliver one today (git cannot, the zipball drops `.studio`), so this is
+  // the same "never through another name" rule as the link check, for free.
+  if (!isUnlinkedWorkspacePath(dir, abs) || (!stat.isDirectory() && stat.nlink > 1)) {
     logRefusedRead(dir, rel)
     return null
   }
   return { abs, stat }
 }
 
-/** A read's bound: a file larger than `maxBytes` reads as absent, and is never read into memory. */
+/**
+ * The largest `.studio` file a read will load unless the caller names its own
+ * bound. Every store record is a few KB to a few MB; a repository shipping a
+ * multi-GB `boards.json` must not be read whole into this process's memory.
+ */
+export const STUDIO_STORE_DEFAULT_MAX_BYTES = 32 * 1024 * 1024
+
+/** A read's bound: a file larger than `maxBytes` (default {@link STUDIO_STORE_DEFAULT_MAX_BYTES}) reads as absent, and is never read into memory. */
 export interface StudioStoreReadOptions {
   readonly maxBytes?: number
 }
 
-/** The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent, not a file, over `maxBytes`, or reached through a link. */
+/**
+ * The bytes of a plain file at `.studio/<rel>`, or `null` when it is absent,
+ * not a file, over the size bound, hard-linked, or reached through a link.
+ *
+ * Known residual: the checks run on the NAME and the read opens it again, so
+ * a concurrent local process that swaps a link in between those two steps
+ * wins that one read. Nothing that arrives with a repository can do that — it
+ * takes a process already running on this machine as this user, which could
+ * read the target itself. Closing it would mean an `O_NOFOLLOW` open plus an
+ * inode compare (the `agentCheckpointStore.ts` pattern), which Windows has no
+ * flag for.
+ */
 export function readStudioStoreBytes(dir: string, rel: string, options: StudioStoreReadOptions = {}): Buffer<ArrayBuffer> | null {
+  const maxBytes = options.maxBytes ?? STUDIO_STORE_DEFAULT_MAX_BYTES
   const entry = readableEntry(dir, rel)
   if (entry === null || !entry.stat.isFile()) return null
-  if (options.maxBytes !== undefined && entry.stat.size > options.maxBytes) return null
+  if (entry.stat.size > maxBytes) return null
   try {
     const bytes = readFileSync(entry.abs)
     // Re-checked on what was read: the file can have grown since the `lstat`.
-    return options.maxBytes !== undefined && bytes.byteLength > options.maxBytes ? null : bytes
+    return bytes.byteLength > maxBytes ? null : bytes
   } catch (err) {
     if (isMissing(err)) return null
     throw err
@@ -319,6 +347,13 @@ export function writeStudioStoreJson(
  */
 export function appendStudioStoreText(dir: string, rel: string, text: string): void {
   const abs = writablePath(dir, rel)
+  // An append writes IN PLACE, so a hard-linked name would write through to
+  // the other name's file. (Every other write renames over the name instead.)
+  try {
+    if (lstatSync(abs).nlink > 1) throw new StudioStoreLinkError()
+  } catch (err) {
+    if (!isMissing(err)) throw err
+  }
   const noFollow = constants.O_NOFOLLOW
   if (noFollow === undefined) {
     appendFileSync(abs, text, 'utf8')

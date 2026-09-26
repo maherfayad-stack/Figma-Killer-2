@@ -65,6 +65,10 @@
  * problem: it drops every `.studio/` entry (`archiveIngest.ts`), and an
  * archive entry lands as bytes, never as a link.
  *
+ * Share state is the one committed record that is dropped outright:
+ * `shares.json` and `shares/` hold bearer tokens this server minted, so a
+ * cloned one is a token its author knows (`dropShareState`).
+ *
  * ## Job shape
  *
  * Identical to `githubImportRoutes.ts`'s, deliberately: `POST` returns a
@@ -85,6 +89,7 @@ import { assertWithinWorkspace, clientSafeGitError, runGit, GIT_NETWORK_TIMEOUT_
 import { probeProject } from './projectProbe'
 import { mergeStudioMeta } from './studioMeta'
 import { stripStudioStoreLinks } from './studioStore'
+import { dropShareState } from './shareStore'
 import type { SubprocessSpawnFn } from './subprocessRunner'
 import { isRealpathStrictlyInsideAllowingMissing } from './workspacePackageResolve'
 
@@ -228,6 +233,11 @@ async function runCloneJob(
         `[studio/gitClone] removed links from the cloned repository's .studio folder (${stripped.rootReplaced ? 'the folder itself' : `${stripped.removed.length} entr${stripped.removed.length === 1 ? 'y' : 'ies'}`})`,
       )
     }
+    // Share tokens are capabilities THIS server mints. One that arrived in a
+    // repository is a token the repository's author knows: kept, it would
+    // resolve on the public share route at once, and "Update" would photograph
+    // this user's board into it.
+    dropShareState(target)
 
     job.phase = 'probing'
 

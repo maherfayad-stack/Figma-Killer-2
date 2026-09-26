@@ -45,7 +45,7 @@
  * per-(user, turn) by construction.
  */
 import { createHash } from 'node:crypto'
-import { listStudioStoreDir, studioStorePath } from './studioStore'
+import { listStudioStoreDir } from './studioStore'
 
 /**
  * The key used when no user is known: a hook spawned before this env var
@@ -81,11 +81,6 @@ const AGENT_CACHE_ROOT = 'cache/agent'
 /** `cache/agent/<userKey>` — the per-account `.studio` store folder for this project's disposable agent caches (`studioStore.ts`). */
 export function agentCacheStoreDir(userKey: string): string {
   return `${AGENT_CACHE_ROOT}/${userKey}`
-}
-
-/** `<dir>/.studio/cache/agent/<userKey>` as an absolute path — for a caller that must NAME it; reading and writing go through `studioStore.ts`. */
-export function agentCacheDir(dir: string, userKey: string): string {
-  return studioStorePath(dir, agentCacheStoreDir(userKey))
 }
 
 /**

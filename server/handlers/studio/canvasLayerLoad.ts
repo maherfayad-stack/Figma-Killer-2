@@ -23,9 +23,8 @@
  * Tier 0 parses; nothing here runs the module. The discovery is
  * `canvasLayerFiles.ts`'s, which refuses a `.studio/canvas` that is a link.
  */
-import { join } from 'node:path'
 import { canvasLayerPageId, canvasLayerRelPath, type CanvasLayerId } from '@core/studio-board'
-import { listCanvasLayerIds } from './canvasLayerFiles'
+import { canvasLayerFilePath, listCanvasLayerIds } from './canvasLayerFiles'
 import { parseRouteFileThroughCache, type RouteParseContext } from './routeEntryParse'
 import type { RoutePageEntry } from './routePageEntry'
 
@@ -49,8 +48,11 @@ export function buildCanvasLayerEntries(dir: string, context: RouteParseContext)
   const entries: CanvasLayerRouteEntry[] = []
   for (const layerId of listCanvasLayerIds(dir)) {
     const relFile = canvasLayerRelPath(layerId)
+    // The path the store door approved (no link on the way), never a raw join.
+    const absFile = canvasLayerFilePath(dir, layerId)
+    if (absFile === null) continue
     try {
-      const outcome = parseRouteFileThroughCache(context, canvasLayerCacheRoute(layerId), join(dir, ...relFile.split('/')))
+      const outcome = parseRouteFileThroughCache(context, canvasLayerCacheRoute(layerId), absFile)
       const pageId = canvasLayerPageId(layerId)
       entries.push({
         layerId,
