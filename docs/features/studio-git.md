@@ -288,6 +288,16 @@ one.
   it sits behind the same danger-styled confirmation `restore` uses. It is
   narrower than it looks: the pull refused to start over a dirty tree, so there
   is no uncommitted work for an abort to discard.
+- **No git verb raises a grant.** A pull, a branch switch or a conflict
+  resolved to "theirs" can bring any file the repository tracks, including
+  `.studio/meta.json` and `.studio/shares.json`. `withGitWriteLock` runs every
+  verb with the grants pinned (`studioGrants.ts`): afterwards the trust tier,
+  MCP approvals and registered MCP servers are each the LESSER of what they
+  were before and what the verb left (a deleted `meta.json` does not fall back
+  to the default tier), share state the verb touched is dropped with every
+  link in it, and `.studio/` is made link-free. A lowering shows in `git status`
+  as a local change to `.studio/meta.json`; Studio will not pull again until it
+  is committed or discarded, which is the honest place for the user to see it.
 - **One writer at a time, per project.** See below.
 
 ### The project write lock

@@ -152,7 +152,10 @@ logged in the turn log after; a refused write is a per-edit `needs-user` or
 `protected-path` refusal and never lands. Also: `studio_set_frames` (bulk `.studio/boards.json`
 geometry), `studio_codemod` (dispatches `rename-tag`/`set-import-specifier` to
 the shipped `@core/ast-codemods`, plus the WS-4 instance-model verbs
-`detach`/`swap`/`extract-component`). `studio_create_page` (9.1, above) rounds
+`detach`/`swap`/`extract-component`; every verb runs under the project write
+lock inside `runAgentSourceEdits`, the same steps as `studio_apply_edits`, with
+the call site put to the agent write gate before any verb runs so
+`extract-component` never leaves its copy behind on a refusal). `studio_create_page` (9.1, above) rounds
 out the write surface with the one operation none of these three cover:
 scaffolding a brand-new page file.
 
