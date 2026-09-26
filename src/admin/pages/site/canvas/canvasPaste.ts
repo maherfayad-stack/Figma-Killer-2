@@ -9,34 +9,22 @@
  *   - RASTER IMAGES: `insertImagesAtTarget`, which is the OS file drop's own
  *     write (`dropImagesIntoPage`, P5-B): the asset landing, one insert of N
  *     siblings, the ghost, the size clamp. No second image pipeline;
- *   - SVG: `svgToJsxNode` (sanitised by P5-D part 1's `sanitizeSvg` before a
- *     node is read) and ONE subtree insert, when it fits as source; when it is
- *     too big to inline, the drop's image path again, as an `<img>` of the
- *     landed file (whose bytes the server's `sanitizeSvgBytes` cleans). Any
- *     other refusal — malformed, unsafe, a remote reference — stays a refusal:
- *     writing the same bytes somewhere else would not make them acceptable.
+ *   - SVG: `insertSvgAtTarget` (`canvasSvgInsert.ts`, shared with the icon
+ *     insert and the `.svg` drop): one subtree insert when it fits as source,
+ *     an `<img>` of the landed file when it is too big, a refusal otherwise.
  *
  * Images and SVGs land where ⇧K's images land (`canvasSelectionInsert.ts`):
  * after the selected layer, else at the end of the active frame's root.
  */
 import { pushToast } from '@ui/components/Toast'
 import { useEditorStore } from '@site/store/store'
-import { svgToJsxNode } from '@site/studio/svgToJsxNode'
 import { decideCanvasPaste, type ClipboardSnapshot, type ClipboardSvgSource } from './canvasClipboardData'
 import { insertImagesAtTarget, readSelectionInsertTarget, type SelectionInsertTarget } from './canvasSelectionInsert'
+import { insertSvgAtTarget } from './canvasSvgInsert'
 
 type InsertTarget = Extract<SelectionInsertTarget, { ok: true }>
 
 const PASTE_TITLE = 'Cannot paste that'
-
-/**
- * Markup longer than this is not even offered to the converter: it lands as
- * an image file. The parser's own ceiling for an inline `<svg>`
- * (`inlineSvg.ts`'s `MAX_MARKUP_LENGTH`) is 64 KB, and a subtree written past
- * it would come back from the resync LOCKED — so this is the size at which
- * inlining stops being honest, not a taste.
- */
-export const INLINE_SVG_MAX_CHARS = 64 * 1024
 
 export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
   const state = useEditorStore.getState()
@@ -56,7 +44,7 @@ export function runCanvasPaste(snapshot: ClipboardSnapshot): void {
     }
     case 'svg': {
       const target = targetOrExplain()
-      if (target) void pasteSvg(decision.source, target)
+      if (target) void insertSvgAtTarget(decision.source, target, { undoLabel: 'Paste SVG', refusalTitle: 'Cannot paste that SVG' })
       return
     }
     case 'none':
@@ -86,57 +74,4 @@ function targetOrExplain(): InsertTarget | null {
   if (target.ok) return target
   pushToast({ kind: 'warning', title: PASTE_TITLE, body: target.message, location: 'site-editor' })
   return null
-}
-
-async function pasteSvg(source: ClipboardSvgSource, target: InsertTarget): Promise<void> {
-  // An oversized SVG FILE goes straight to the file route: it is never read
-  // into memory just to be measured (review #270, N4).
-  if (source.kind === 'file' && source.file.size > INLINE_SVG_MAX_CHARS) {
-    landSvgAsImage(source.file, target)
-    return
-  }
-  let markup: string
-  try {
-    markup = source.kind === 'text' ? source.markup : await source.file.text()
-  } catch (err) {
-    console.error('[canvas-paste] reading the pasted SVG failed:', err)
-    pushToast({
-      kind: 'warning',
-      title: PASTE_TITLE,
-      body: 'Studio could not read the SVG on the clipboard. Copy it again, or drop the file onto a frame.',
-      location: 'site-editor',
-    })
-    return
-  }
-
-  if (markup.length <= INLINE_SVG_MAX_CHARS) {
-    const converted = svgToJsxNode(markup)
-    if (converted.ok) {
-      useEditorStore.getState().insertJsxSubtreeIntoPage({
-        pageId: target.pageId,
-        parentId: target.parentId,
-        index: target.index,
-        node: converted.node,
-        undoLabel: 'Paste SVG',
-      })
-      return
-    }
-    if (converted.reason !== 'too-large') {
-      pushToast({ kind: 'warning', title: 'Cannot paste that SVG', body: converted.message, location: 'site-editor' })
-      return
-    }
-  }
-
-  landSvgAsImage(source.kind === 'file' ? source.file : new File([markup], 'pasted.svg', { type: 'image/svg+xml' }), target)
-}
-
-/** An SVG too large to inline: the file lands through the drop's image path, as an `<img>`. */
-function landSvgAsImage(file: File, target: InsertTarget): void {
-  pushToast({
-    kind: 'info',
-    title: 'Large SVG added as an image',
-    body: 'It is too big to write into your source as inline SVG, so it was saved to your project and added as an <img>.',
-    location: 'site-editor',
-  })
-  insertImagesAtTarget(target, [file])
 }

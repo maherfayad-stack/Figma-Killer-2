@@ -16,7 +16,8 @@
  * points. Where it lands is decided by the FIRST click, the way the box tools
  * decide at the press: inside a frame, the new `<svg>` is inserted in flow at
  * the same drop target an insertion drag shows (`resolveCanvasPointerInsertionDrop`)
- * — the honest position in a React tree, like R / O; on the empty board it
+ * — the honest position in a React tree, like R / O — through P5-A's
+ * `insertJsxSubtreeIntoPage`, the pasted SVG's own write; on the empty board it
  * becomes a loose layer on the free canvas at the drawn position (OD-14, and
  * OD-10's D1 superseded by it). The tool puts itself away after a path.
  *
@@ -34,12 +35,6 @@ import { createPortal } from 'react-dom'
 import type { Point } from '@core/vector'
 import { pushToast } from '@ui/components/Toast'
 import { lookupCanvasPageById, selectActiveCanvasPage, useEditorStore } from '@site/store/store'
-import { commitStudioInsert } from '@site/studio/studioStructuralCommits'
-import {
-  STRUCTURAL_REFUSAL_TITLE,
-  planSourceInsert,
-  presentStructuralRefusal,
-} from '@site/store/slices/site/structuralSourceEdits'
 import { beginInsertionDragSnapshotSession, type InsertionDragSnapshotSession } from './canvasInsertionDragSnapshot'
 import { resolveCanvasPointerInsertionDrop, type CanvasPointerInsertionDrop } from './canvasInsertionDrop'
 import { clientToBoardPoint, findBoardOrigin } from './BoardCanvasLayer/canvasLayerGeometry'
@@ -146,21 +141,19 @@ export function CanvasPenToolLayer({ transformLayerRef }: { transformLayerRef: R
       }
       return
     }
-    if (drop.pageId !== selectActiveCanvasPage(store)?.id) store.openPageInCanvas(drop.pageId)
+    // P5-A's subtree insert: ONE `insert` whose children carry the path, into
+    // the NAMED page (it activates it), queued behind a structural write
+    // already on the wire, refusing by name where the container cannot take it.
     const page = store.site ? lookupCanvasPageById(store.site, drop.pageId) : null
-    if (!page) return
-    const plan = planSourceInsert(page, drop.location.parentId, drop.location.index)
-    if (!plan.ok) {
-      presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {
-        ...(plan.nodeId ? { nodeId: plan.nodeId } : {}),
-        getState: useEditorStore.getState,
-        set: useEditorStore.setState,
-      })
-      return
-    }
-    if (!plan.commit) return
-    useEditorStore.getState().setActiveBreakpoint(drop.breakpointId)
-    void commitStudioInsert({ ...plan.commit, name: 'svg', props: element.props, children, undoLabel: 'Draw path' })
+    const appendAt = page?.nodes[drop.location.parentId]?.children.length ?? 0
+    store.setActiveBreakpoint(drop.breakpointId)
+    store.insertJsxSubtreeIntoPage({
+      pageId: drop.pageId,
+      parentId: drop.location.parentId,
+      index: drop.location.index ?? appendAt,
+      node: { name: 'svg', props: element.props, children },
+      undoLabel: 'Draw path',
+    })
   }
 
   const flush = () => {
