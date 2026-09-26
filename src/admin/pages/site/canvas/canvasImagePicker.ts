@@ -24,6 +24,7 @@ import type { NodeTree, PageNode } from '@core/page-tree'
 import { resolveSourceContainer } from '@core/page-tree'
 import { useEditorStore } from '@site/store/store'
 import { IMAGE_DROP_TITLE } from '@site/store/slices/site/imageDropActions'
+import type { ImageDropSource } from '@site/store/slices/site/imageDropShapes'
 import { findRenderedCanvasElements } from './canvasNodeLookup'
 import { looksLikeImage } from './canvasFileDrop'
 import { measureDropContainer } from './canvasImageDropPlacement'
@@ -96,8 +97,24 @@ export function pickImagesIntoSelection(): void {
 function insertPickedImages(target: Extract<PickedImageTarget, { ok: true }>, picked: readonly File[]): void {
   const files = picked.filter((file) => looksLikeImage(file.type))
   if (files.length === 0) return
+  insertImageSources(
+    { pageId: target.pageId, parentId: target.parentId, index: target.index },
+    files.map((file) => ({ kind: 'file', file })),
+  )
+}
+
+/**
+ * Insert images at a known position — the picker's (beside the selection)
+ * and the Assets panel's Images section (IMG-6: a card's drop line, or the
+ * selection for a click). The same write a drop makes, with the same width
+ * clamp: the container's content box, read once from its rendered element.
+ */
+export function insertImageSources(
+  target: { pageId: string; parentId: string; index: number | undefined },
+  sources: readonly ImageDropSource[],
+): void {
+  if (sources.length === 0) return
   const tree = useEditorStore.getState().site?.pages.find((page) => page.id === target.pageId) ?? null
-  // The same width clamp a drop gets: the container's content box, read once.
   const container = tree ? resolveSourceContainer(tree, target.parentId) : null
   const rendered = container?.ok ? findRenderedCanvasElements(container.node.id)[0] : undefined
   const box = rendered && container?.ok ? measureDropContainer(rendered.element.ownerDocument, container.node.id) : null
@@ -105,7 +122,7 @@ function insertPickedImages(target: Extract<PickedImageTarget, { ok: true }>, pi
     pageId: target.pageId,
     parentId: target.parentId,
     index: target.index,
-    files,
+    sources,
     maxWidth: box ? box.contentWidth : null,
     absolute: null,
     paintProgress: paintCanvasUploadProgress,

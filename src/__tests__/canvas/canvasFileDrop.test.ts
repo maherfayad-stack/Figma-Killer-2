@@ -24,6 +24,7 @@ import {
   type CanvasFileDropModifiers,
 } from '@site/canvas/canvasFileDrop'
 import type { DropContainerBox } from '@site/canvas/canvasImageDropPlacement'
+import type { LandableImageSource } from '@site/store/slices/site/imageDropShapes'
 import {
   registerCanvasDropSurface,
   unregisterCanvasDropSurface,
@@ -96,6 +97,11 @@ function mountFrame(pageId: string | null): void {
   })
 }
 
+/** The names of a plan's file sources, in order. */
+function fileNames(sources: readonly LandableImageSource[]): string[] {
+  return sources.map((source) => (source.kind === 'file' ? source.file.name : source.url))
+}
+
 function imageFile(name = 'photo.png', type = 'image/png'): File {
   return new File([new Uint8Array([1, 2, 3])], name, { type })
 }
@@ -109,7 +115,7 @@ afterEach(() => {
 
 
 function plan(files: File[], point = { x: 100, y: 100 }, modifiers: CanvasFileDropModifiers = NO_DROP_MODIFIERS) {
-  return planCanvasFileDrop({ files, point, modifiers, transform: null, readPage })
+  return planCanvasFileDrop({ intake: { kind: 'files', files }, point, modifiers, transform: null, readPage })
 }
 
 describe('looksLikeImage — a courtesy check, never the gate', () => {
@@ -138,7 +144,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     expect(result.action.kind).toBe('insert')
     if (result.action.kind !== 'insert') return
     expect(result.action.target.parentId).toBe(MAIN)
-    expect(result.files.map((file) => file.name)).toEqual(['photo.png'])
+    expect(fileNames(result.sources)).toEqual(['photo.png'])
   })
 
   it('P5-B IMG-2 — three files are ONE plan that inserts all three, in drop order', () => {
@@ -149,7 +155,7 @@ describe('planCanvasFileDrop — a good drop', () => {
     expect(result.ok).toBe(true)
     if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
     expect(result.action.kind).toBe('insert')
-    expect(result.files.map((file) => file.name)).toEqual(['a.png', 'b.jpg', 'c.webp'])
+    expect(fileNames(result.sources)).toEqual(['a.png', 'b.jpg', 'c.webp'])
     expect(result.skipped).toEqual([])
   })
 
@@ -159,7 +165,7 @@ describe('planCanvasFileDrop — a good drop', () => {
 
     expect(result.ok).toBe(true)
     if (!result.ok || result.kind !== 'frame') throw new Error('expected a frame plan')
-    expect(result.files.map((file) => file.name)).toEqual(['a.png'])
+    expect(fileNames(result.sources)).toEqual(['a.png'])
     expect(result.skipped.map((file) => file.name)).toEqual(['report.pdf'])
   })
 })
@@ -272,7 +278,7 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
   it('puts the image on the free canvas when the empty board is a Studio board (P5-G)', () => {
     mountFrame('home')
     const plan = planCanvasFileDrop({
-      files: [imageFile()],
+      intake: { kind: 'files', files: [imageFile()] },
       point: { x: 900, y: 400 },
       transform: null,
       readPage,
@@ -289,7 +295,7 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
   it('takes every image of a multi-file drop onto the free canvas, whatever keys are held, and names the rest (P5-G + P5-B)', () => {
     mountFrame('home')
     const plan = planCanvasFileDrop({
-      files: [imageFile('a.png'), imageFile('notes.pdf', 'application/pdf'), imageFile('b.jpg', 'image/jpeg')],
+      intake: { kind: 'files', files: [imageFile('a.png'), imageFile('notes.pdf', 'application/pdf'), imageFile('b.jpg', 'image/jpeg')] },
       point: { x: 900, y: 400 },
       transform: null,
       readPage,
@@ -298,14 +304,14 @@ describe('planCanvasFileDrop — refusals, all decided before the network', () =
     })
 
     if (!plan.ok || plan.kind !== 'canvas') throw new Error('expected a free-canvas plan')
-    expect(plan.files.map((file) => file.name)).toEqual(['a.png', 'b.jpg'])
+    expect(fileNames(plan.sources)).toEqual(['a.png', 'b.jpg'])
     expect(plan.skipped.map((file) => file.name)).toEqual(['notes.pdf'])
   })
 
   it('still puts the image in the frame under the pointer when there is one', () => {
     mountFrame('home')
     const plan = planCanvasFileDrop({
-      files: [imageFile()],
+      intake: { kind: 'files', files: [imageFile()] },
       point: { x: 100, y: 100 },
       transform: null,
       readPage,

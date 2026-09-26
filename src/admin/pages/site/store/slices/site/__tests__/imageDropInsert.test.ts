@@ -111,7 +111,7 @@ function drop(files: File[], overrides: Partial<Parameters<ReturnType<typeof use
     pageId: 'about',
     parentId: ABOUT_MAIN,
     index: 0,
-    files,
+    sources: files.map((file) => ({ kind: 'file' as const, file })),
     maxWidth: null,
     absolute: null,
     ...overrides,
@@ -284,5 +284,98 @@ describe('dropImagesIntoPage — refusals write nothing', () => {
     expect(xhr.requests).toHaveLength(0)
     expect(posted).toHaveLength(0)
     expect(useEditorStore.getState().structuralRefusalDialog).toBeNull()
+  })
+})
+
+/**
+ * P5-B3 — the other two ways an image arrives (IMG-5's dragged URL, IMG-6's
+ * project file) and the import convention (IMG-10). Every one lands through
+ * `landImageSource` and ends in the SAME single insert.
+ */
+describe('dropImagesIntoPage — every source, one insert (P5-B3)', () => {
+  /** The save route stub, plus an `asset-drop-url` answer. */
+  function stubUrlRoute(answer: (url: string) => Record<string, unknown>): { urls: string[] } {
+    const urls: string[] = []
+    const save = globalThis.fetch
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      if (url.includes('/admin/api/studio/asset-drop-url')) {
+        const body = JSON.parse(String(init?.body ?? '{}')) as { url: string }
+        urls.push(body.url)
+        return new Response(JSON.stringify(answer(body.url)), { status: 200, headers: { 'content-type': 'application/json' } })
+      }
+      return save(input, init)
+    }) as typeof fetch
+    return { urls }
+  }
+
+  it('IMG-10 — names the file it writes into, so the server can read its convention', async () => {
+    drop([png('photo.png')])
+    await settle()
+    expect(xhr.requests[0]!.body.get('pageRel')).toBe('pages/About.tsx')
+  })
+
+  it('IMG-10 — an import landing is written as __assetImport, never as a src string', async () => {
+    landing = (name) => ({
+      status: 200,
+      body: { ok: true, mode: 'import', relPath: `src/assets/${name}`, width: 100, height: 50, deduped: false },
+    })
+    drop([png('hero.png')])
+    await settle()
+    expect(posted[0]!.edits[0]!.props).toEqual({ src: { __assetImport: 'src/assets/hero.png' }, alt: 'hero', width: 100, height: 50 })
+  })
+
+  it('IMG-5 — a dragged URL is fetched by the SERVER, and lands as one insert', async () => {
+    const route = stubUrlRoute(() => ({
+      ok: true,
+      mode: 'public',
+      relPath: 'public/cat.png',
+      src: '/cat.png',
+      width: 800,
+      height: 600,
+      deduped: false,
+    }))
+    useEditorStore.getState().dropImagesIntoPage({
+      pageId: 'about',
+      parentId: ABOUT_MAIN,
+      index: 0,
+      sources: [{ kind: 'url', url: 'https://cdn.example.com/photos/cat.png' }],
+      maxWidth: null,
+      absolute: null,
+    })
+    await settle()
+    expect(route.urls).toEqual(['https://cdn.example.com/photos/cat.png'])
+    expect(xhr.requests).toHaveLength(0)
+    expect(posted[0]!.edits[0]!.props).toEqual({ src: '/cat.png', alt: 'cat', width: 800, height: 600 })
+  })
+
+  it('IMG-6 — a project file in public/ is REFERENCED by its literal: nothing uploaded, nothing fetched', async () => {
+    const route = stubUrlRoute(() => ({}))
+    useEditorStore.getState().dropImagesIntoPage({
+      pageId: 'about',
+      parentId: ABOUT_MAIN,
+      index: 0,
+      sources: [{ kind: 'project', relPath: 'public/brand/logo.svg', src: '/brand/logo.svg', buildSafe: true, width: null, height: null }],
+      maxWidth: null,
+      absolute: null,
+    })
+    await settle()
+    expect(xhr.requests).toHaveLength(0)
+    expect(route.urls).toEqual([])
+    expect(posted[0]!.edits[0]!.props).toEqual({ src: '/brand/logo.svg', alt: 'logo' })
+  })
+
+  it('IMG-6 — a project file the build does not serve is written as an import, sized from its thumbnail', async () => {
+    useEditorStore.getState().dropImagesIntoPage({
+      pageId: 'about',
+      parentId: ABOUT_MAIN,
+      index: 0,
+      sources: [{ kind: 'project', relPath: 'src/assets/team.jpg', src: '/src/assets/team.jpg', buildSafe: false, width: 1200, height: 800 }],
+      maxWidth: 600,
+      absolute: null,
+    })
+    await settle()
+    expect(xhr.requests).toHaveLength(0)
+    expect(posted[0]!.edits[0]!.props).toEqual({ src: { __assetImport: 'src/assets/team.jpg' }, alt: 'team', width: 600, height: 400 })
   })
 })

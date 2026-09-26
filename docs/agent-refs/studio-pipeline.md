@@ -579,7 +579,7 @@ reformats an untouched sibling is a defect.
 
 **The four that CREATE also say where (`store-13`).** `insertJsxElement`,
 `duplicateJsxElement`, `wrapJsxElement` and `wrapJsxElements` return
-`created: { line, col } | null` alongside `ok: true` (`insertJsxElement` returns a LIST, `created: { line, col }[]` — P5-B IMG-2's `siblings` write a RUN of new elements after the first in the same splice, and every one is reported in order, all or none) — the new element's own
+`created: { line, col } | null` alongside `ok: true` (`insertJsxElement` returns a LIST, `created: { line, col }[]` — P5-B IMG-2's `siblings` write a RUN of new elements after the first in the same splice, and every one is reported in order, all or none; P5-B3 IMG-10's `{ __assetImport: '<workspace path>' }` direct prop value writes `prop={heroPng}` plus `import heroPng from '<specifier>'` in that same splice — the server contains the path and spells the specifier from the file being written (`studioInsertAssetImports.ts`), refuses it in a Next.js project, and the codemod binds a free name through `planImportBindings`; any other codemod, or a nested ref, refuses `asset-import`) — the new element's own
 tag-name position, derived from the byte range they spliced
 (`createdJsxLocation.ts`) and then VERIFIED by re-locating an element there in
 the re-parsed file. `null` means "written, but the position could not be

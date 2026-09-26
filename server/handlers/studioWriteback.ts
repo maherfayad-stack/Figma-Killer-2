@@ -71,6 +71,7 @@ import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
 import { snapshotImportsBeforeRemoval } from './studioBatchImportPrune'
+import { resolveInsertAssetImports } from './studioInsertAssetImports'
 import { relativeImportSpecifier, resolveClassNameTokens, resolveContainedRefPath } from './studioEditTargets'
 import {
   applySlotEdit,
@@ -354,9 +355,13 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       const siblings = ('siblingNodeIds' in edit ? edit.siblingNodeIds : [])
         .map((nodeId) => studioEditLocation(dir, nodeId, scope))
         .filter((location): location is StudioEditLocation => location !== null && location.rel === target.rel)
+      // IMG-10 — an insert's image imports name workspace FILES; the specifier
+      // is spelled here, from the file being written, after the path guard.
+      const assets = edit.kind === 'insert' ? resolveInsertAssetImports(dir, target.rel, edit) : null
+      if (assets && !assets.ok) throw new StudioEditRefusalError(assets.reason, assets.message)
       const result = applyStructuralEdit(
         loc,
-        edit,
+        assets ? assets.value : edit,
         anchor && anchor.rel === target.rel ? anchor : null,
         destination && destination.rel === target.rel ? destination : null,
         // The workspace-relative path of the file being written — what a

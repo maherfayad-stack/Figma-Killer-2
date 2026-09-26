@@ -26,13 +26,20 @@
  *
  * ## Response
  *
- * `{ ok: true, mode: 'public', relPath, src, width, height, deduped }`.
- * `mode` is the discriminant for the import convention (IMG-10), which will
- * add `{ mode: 'import', relPath, width, height, deduped }` with no `src`: a
- * client that reads `src` without checking `mode` will stop compiling then,
- * which is the point. `width`/`height` are the intrinsic size from the header
- * bytes, or `null`. `deduped` is true when the bytes already sat in `public/`
- * and that file was reused.
+ * `{ ok: true, mode: 'public', relPath, src, width, height, deduped }`, or —
+ * when the drop names the file it is written into (`pageRel`) and that file
+ * IMPORTS its images (IMG-10, OD-12, `assetImportConvention.ts`) —
+ * `{ ok: true, mode: 'import', relPath, width, height, deduped }` with no
+ * `src`: the file landed beside the images that file already imports, and
+ * the insert writes `src={__assetImport}`, whose import the server spells.
+ * `width`/`height` are the intrinsic size from the header bytes, or `null`.
+ * `deduped` is true when the bytes already sat there and that file was
+ * reused.
+ *
+ * `asset-drop-url` (`assetDropUrl.ts`, IMG-5) answers the same body for an
+ * image the SERVER fetched: {@link resolveDroppedAssetHome} and
+ * {@link landDroppedBytes} are shared, so a dragged URL lands exactly where a
+ * dropped file would.
  *
  * ## Replay
  *
@@ -112,6 +119,7 @@ import { resolveAppRoot } from './appRoot'
 import { withIdempotentReplay } from './idempotentReplay'
 import type { StudioSessionRuntime } from './routeGate'
 import { resolveProjectProfile } from './projectProbe'
+import { readImageConvention } from './assetImportConvention'
 import type { ProjectFramework } from './projectProfileSchema'
 
 /**
@@ -144,22 +152,32 @@ const AssetDropFieldsSchema = Type.Object({
   // a client that has not overridden the active workspace still writes into
   // the right project.
   dir: Type.Optional(Type.String()),
+  // IMG-10 — the workspace-relative source file the image is about to be
+  // written into. Only READ (for its import convention), never written, and
+  // contained by `readImageConvention` before it is opened.
+  pageRel: Type.Optional(Type.String({ maxLength: 1024 })),
 })
 
 export type AssetDropHome =
-  | { ok: true; absolute: string; relToProject: string }
+  | { ok: true; mode: 'public' | 'import'; relToProject: string }
   | { ok: false; error: string }
 
 /**
  * Where a dropped asset lands in THIS project, or why it cannot land at all.
  *
- * Pure apart from an `existsSync` and, for a framework that declares the
- * convention, one `mkdirSync`. Exported for its own test: "which directory,
- * and when is it created" is the whole product decision on this route, and it
- * is not observable through the HTTP shell.
+ * With a `pageRel` whose file imports its images (`assetImportConvention.ts`)
+ * the answer is that file's image folder, `mode: 'import'`. Otherwise it is
+ * `public/` — pure apart from an `existsSync` and, for a framework that
+ * declares the convention, one `mkdirSync`. Exported for its own test:
+ * "which directory, and when is it created" is the whole product decision on
+ * this route, and it is not observable through the HTTP shell.
  */
-export function resolveDroppedAssetHome(dir: string): AssetDropHome {
+export function resolveDroppedAssetHome(dir: string, pageRel?: string): AssetDropHome {
   const profile = resolveProjectProfile(dir)
+  if (pageRel) {
+    const convention = readImageConvention(dir, pageRel, profile.framework)
+    if (convention.mode === 'import') return { ok: true, mode: 'import', relToProject: convention.targetDir }
+  }
   // `resolveAppRoot`, never `profile.appRoot` rejoined by hand: `.studio/
   // meta.json` is a file the user (or an imported repo) can hand-edit, and
   // that helper is the one place the cached value is real-path containment-
@@ -177,7 +195,7 @@ export function resolveDroppedAssetHome(dir: string): AssetDropHome {
   // from disagreeing in the first place rather than relying on that.)
   const relToProject = relative(resolve(dir), absolute).split(sep).join('/')
 
-  if (existsSync(absolute)) return { ok: true, absolute, relToProject }
+  if (existsSync(absolute)) return { ok: true, mode: 'public', relToProject }
 
   if (!FRAMEWORKS_WITH_PUBLIC_DIR.has(profile.framework)) {
     return {
@@ -188,21 +206,49 @@ export function resolveDroppedAssetHome(dir: string): AssetDropHome {
   }
 
   mkdirSync(absolute, { recursive: true })
-  return { ok: true, absolute, relToProject }
+  return { ok: true, mode: 'public', relToProject }
 }
 
-/**
- * The `200` body. `mode` is the discriminant IMG-10's import convention joins
- * (see the module doc's "Response" section).
- */
-export interface AssetDropPublicResponse {
-  ok: true
-  mode: 'public'
+interface LandingFields {
   relPath: string
-  src: string
   width: number | null
   height: number | null
   deduped: boolean
+}
+
+/** The `200` body, discriminated by `mode` (see the module doc's "Response" section). */
+export type AssetDropResponse =
+  | ({ ok: true; mode: 'public'; src: string } & LandingFields)
+  | ({ ok: true; mode: 'import' } & LandingFields)
+
+/**
+ * Land `bytes` at `home` and build the `200` body — or the error response.
+ * Shared by `asset-drop` (bytes the browser sent) and `asset-drop-url` (bytes
+ * the server fetched), so the two can never disagree about where an image
+ * lands or what URL it is written with. `bytes` are untrusted either way: the
+ * sniff, the SVG sanitiser and the containment check are `landAssetBytes`'s.
+ */
+export function landDroppedBytes(
+  dir: string,
+  home: Extract<AssetDropHome, { ok: true }>,
+  bytes: Uint8Array,
+  filenameHint: string,
+): Response {
+  const landed = landAssetBytes(dir, home.relToProject, bytes, filenameHint)
+  if (!landed.ok) return badRequest(landed.error)
+  const fields: LandingFields = { relPath: landed.relPath, width: landed.width, height: landed.height, deduped: landed.deduped }
+  if (home.mode === 'import') return jsonResponse({ ok: true, mode: 'import', ...fields } satisfies AssetDropResponse)
+
+  // The home IS `<appRoot>/public`, so the rule must call it build-safe. If
+  // it ever does not, the two halves disagree about the app root, and
+  // writing a dev-only URL into the user's source would be the exact bug
+  // this route exists to prevent: refuse instead.
+  const url = assetSiteUrlResolver(dir)(landed.relPath)
+  if (url === null || !url.buildSafe) {
+    console.error('[studio:asset-drop] landed outside the public root', landed.relPath)
+    return jsonResponse({ error: 'Studio could not work out the public URL of the image it just saved.' }, { status: 500 })
+  }
+  return jsonResponse({ ok: true, mode: 'public', src: url.src, ...fields } satisfies AssetDropResponse)
 }
 
 export interface AssetDropDeps {
@@ -239,8 +285,10 @@ async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Resp
     const form = await readFormDataWithLimit(req, MAX_ASSET_DROP_BYTES)
 
     const dirRaw = form.get('dir')
+    const pageRelRaw = form.get('pageRel')
     const parsed = safeParseValue(AssetDropFieldsSchema, {
       dir: typeof dirRaw === 'string' ? dirRaw : undefined,
+      pageRel: typeof pageRelRaw === 'string' ? pageRelRaw : undefined,
     })
     if (!parsed.ok) return badRequest('invalid asset-drop body')
 
@@ -257,33 +305,10 @@ async function landDroppedAsset(req: Request, deps: AssetDropDeps): Promise<Resp
     const resolveDir = deps.resolveDir ?? resolveProjectDir
     const dir = resolveDir(parsed.value.dir)
 
-    const home = resolveDroppedAssetHome(dir)
+    const home = resolveDroppedAssetHome(dir, parsed.value.pageRel)
     if (!home.ok) return jsonResponse({ error: home.error }, { status: 409 })
 
-    const bytes = new Uint8Array(await file.arrayBuffer())
-    const landed = landAssetBytes(dir, home.relToProject, bytes, file.name)
-    if (!landed.ok) return badRequest(landed.error)
-
-    // The home IS `<appRoot>/public`, so the rule must call it build-safe. If
-    // it ever does not, the two halves disagree about the app root, and
-    // writing a dev-only URL into the user's source would be the exact bug
-    // this route exists to prevent: refuse instead.
-    const url = assetSiteUrlResolver(dir)(landed.relPath)
-    if (url === null || !url.buildSafe) {
-      console.error('[studio:asset-drop] landed outside the public root', landed.relPath)
-      return jsonResponse({ error: 'Studio could not work out the public URL of the image it just saved.' }, { status: 500 })
-    }
-
-    const body: AssetDropPublicResponse = {
-      ok: true,
-      mode: 'public',
-      relPath: landed.relPath,
-      src: url.src,
-      width: landed.width,
-      height: landed.height,
-      deduped: landed.deduped,
-    }
-    return jsonResponse(body)
+    return landDroppedBytes(dir, home, new Uint8Array(await file.arrayBuffer()), file.name)
   } catch (err) {
     rethrowProjectDirRefusal(err)
     console.error('[studio]', err)

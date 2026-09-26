@@ -74,6 +74,7 @@
  * the file is the project's, not Studio's, and must never act as a document
  * on this origin. That is what keeps an SVG inert when opened directly.
  */
+import { posix } from 'node:path'
 import { STUDIO_ASSET_SENTINEL, resolveWorkspaceReadPath } from '@core/page-parser'
 import type { Page } from '@core/page-tree'
 import { inertFileResponse, isEmbeddableMediaPath, serveStaticFile } from '../static'
@@ -164,4 +165,45 @@ export function rewriteStudioAssetSentinels(page: Page, dir: string): void {
       }
     }
   }
+}
+
+/** `url(…)` with a plain quoted or bare body — an escaped body is left for the browser, which is where it was before. */
+const CSS_URL_PLAIN = /url\(\s*(?:"([^"\\\n]*)"|'([^'\\\n]*)'|([^)"'\s\\]*))\s*\)/gi
+
+/** A URL with a scheme (`https:`, `data:`), a site-root or protocol-relative path, or a fragment: not relative to the sheet. */
+const NOT_SHEET_RELATIVE = /^(?:[a-zA-Z][a-zA-Z0-9+.-]*:|\/|#)/
+
+/**
+ * P5-B3 — every RELATIVE `url(./bg.png)` in a project stylesheet, as the
+ * `studio-asset:<workspace-rel>` sentinel of the file it names.
+ *
+ * The project's own bundler resolves `url(./bg.png)` in `src/styles/app.css`
+ * to `src/styles/bg.png`. A design frame cannot: its stylesheet is injected
+ * as text into an `about:srcdoc` document on the admin origin, where a
+ * relative URL resolves against the admin page and 404s (found by P5-B2,
+ * #262). The sheet's path is known only HERE, when the text is read, so this
+ * is where the reference is pinned to a file; the canvas turns the sentinel
+ * into its project-asset route (`canvasProjectAssetUrl.ts`), exactly as it
+ * does an imported image's. Only the canvas copy of the CSS
+ * (`StudioStyles.authoredCss`) is rewritten — never the user's file, never a
+ * publish. A reference that climbs out of the project, or carries a
+ * character that would need escaping in a CSS string, is left as written.
+ */
+export function relativeCssUrlsToAssetSentinels(css: string, sheetRel: string): string {
+  if (!/url\(/i.test(css)) return css
+  const sheetDir = posix.dirname(sheetRel)
+  return css.replace(CSS_URL_PLAIN, (whole, doubleQuoted?: string, singleQuoted?: string, bare?: string) => {
+    const raw = (doubleQuoted ?? singleQuoted ?? bare ?? '').trim()
+    if (raw === '' || NOT_SHEET_RELATIVE.test(raw)) return whole
+    const pathPart = raw.split(/[?#]/)[0]!
+    let decoded: string
+    try {
+      decoded = decodeURIComponent(pathPart)
+    } catch {
+      return whole
+    }
+    const rel = posix.normalize(posix.join(sheetDir, decoded))
+    if (rel === '.' || rel === '..' || rel.startsWith('../') || /["\\\n\r]/.test(rel)) return whole
+    return `url("${STUDIO_ASSET_SENTINEL}${rel}")`
+  })
 }

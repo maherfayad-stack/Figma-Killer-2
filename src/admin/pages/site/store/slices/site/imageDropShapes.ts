@@ -31,14 +31,67 @@ export interface AbsoluteImagePlacement {
   top: number
 }
 
+/**
+ * Where one dropped image comes from — every intake reduced to one shape
+ * (audit 07 §A.2: "one intake function turns every source into one list, then
+ * one landing call, then one placement"). The store's actions and the free
+ * canvas land every kind through `landImageSource` (`studio/landImageSource.ts`)
+ * and never branch on how the image arrived after that.
+ *
+ *   - `file` — bytes from the operating system (a drop, the ⇧K picker), or a
+ *     `data:image/…` URL a browser handed over, decoded to a `File` client-side
+ *     so the server never parses `data:`.
+ *   - `url` — an http(s) image dragged out of another browser tab (IMG-5,
+ *     OD-13). The SERVER fetches it, through the SSRF guard; the browser never
+ *     does.
+ *   - `project` — a file already in the project, dragged from the Assets
+ *     panel's Images section (IMG-6). Nothing is uploaded: the insert only
+ *     references it.
+ */
+export type ImageDropSource =
+  | { kind: 'file'; file: File }
+  | { kind: 'url'; url: string }
+  | {
+      kind: 'project'
+      /** Workspace-relative POSIX path. */
+      relPath: string
+      /** The URL the project's own site serves it at (`assetSiteUrl.ts`), `null` when nothing does. */
+      src: string | null
+      /** True when a production build serves `src`, not only the dev server. */
+      buildSafe: boolean
+      /** Intrinsic size, when the panel's thumbnail already knew it; `null` = unknown. */
+      width: number | null
+      height: number | null
+    }
+
+/** The sources that bring NEW bytes (a replace or a background has to land something). */
+export type LandableImageSource = Extract<ImageDropSource, { kind: 'file' | 'url' }>
+
+/**
+ * The name a source is called by — the base of its `alt` and of every toast
+ * that mentions it. A URL is named by the last segment of its path, which is
+ * what the browser tab it came from showed; a project file by its own name.
+ */
+export function imageSourceName(source: ImageDropSource): string {
+  if (source.kind === 'file') return source.file.name
+  if (source.kind === 'project') return source.relPath.slice(source.relPath.lastIndexOf('/') + 1)
+  try {
+    const path = new URL(source.url).pathname
+    const last = decodeURIComponent(path.slice(path.lastIndexOf('/') + 1))
+    return last.length > 0 ? last : 'image'
+  } catch {
+    return 'image'
+  }
+}
+
 /** Everything an image INSERT drop carries from the canvas to the store. */
 export interface ImageDropRequest {
   pageId: string
-  /** The container and index the drop line showed. */
+  /** The container and index the drop line showed; `undefined` appends. */
   parentId: string
-  index: number
+  index: number | undefined
   /** The images, in drop order. */
-  files: readonly File[]
+  sources: readonly ImageDropSource[]
   /** The container's content-box width (CSS px) the intrinsic size is clamped to; `null` = do not clamp. */
   maxWidth: number | null
   /** ⌘-drop: the absolute placement in the container's space; `null` for a flow drop. */

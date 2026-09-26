@@ -14,6 +14,7 @@ import { isSafeIntrinsicTagName, VOID_HTML_ELEMENTS } from '@core/utils/htmlTags
 import type { JsonDataValue } from '@core/utils/jsonData'
 import type { JsxChildRangeReason } from './jsxChildRange'
 import type { ImportRequirement } from './jsxImportEdits'
+import { BoundAssetImport, isAssetImportRef, type AssetImportRef } from './jsxAssetImports'
 
 /**
  * A prop written onto the new element.
@@ -41,7 +42,13 @@ import type { ImportRequirement } from './jsxImportEdits'
  * the same `validateSubtree` tag-safety gate — so nothing here can splice
  * arbitrary text into a user's file.
  */
-export type InsertableJsxPropValue = JsonDataValue | JsxPropElement | InsertableJsxPropValue[] | { [key: string]: InsertableJsxPropValue }
+export type InsertableJsxPropValue =
+  | JsonDataValue
+  | JsxPropElement
+  | AssetImportRef
+  | BoundAssetImport
+  | InsertableJsxPropValue[]
+  | { [key: string]: InsertableJsxPropValue }
 
 /**
  * A React element in PROP position, tagged so it cannot be confused with the
@@ -111,6 +118,7 @@ export type InsertJsxRefusalReason =
   | 'binding-conflict'
   | 'unsafe-tag'
   | 'void-element-children'
+  | 'asset-import'
 
 export interface InsertJsxRefusal {
   reason: InsertJsxRefusalReason
@@ -142,6 +150,13 @@ const PLAIN_OBJECT_KEY = /^[A-Za-z_$][\w$]*$/
  * escaping, which is the part that must not be hand-rolled.
  */
 function jsxExpressionLiteral(value: InsertableJsxPropValue, unit: string): string {
+  if (value instanceof BoundAssetImport) return value.local
+  if (isAssetImportRef(value)) {
+    // `validateSubtree` refuses an unbound ref before any render; reaching
+    // here means a caller skipped it, and writing the object literal would
+    // put `{ __assetImport: … }` into someone's file.
+    throw new Error('An image import reached the renderer without being bound to a name.')
+  }
   if (isJsxPropElement(value)) return renderJsxNode(value.__jsx, unit)
   if (Array.isArray(value)) {
     const items = value.map((item) => jsxExpressionLiteral(item, unit))
@@ -226,6 +241,7 @@ function* walkSubtree(node: InsertJsxNode): Generator<InsertJsxNode> {
 
 /** Every {@link JsxPropElement} nested anywhere inside one prop value. */
 function* walkPropElements(value: InsertableJsxPropValue): Generator<InsertJsxNode> {
+  if (value instanceof BoundAssetImport || isAssetImportRef(value)) return
   if (isJsxPropElement(value)) {
     yield* walkSubtree(value.__jsx)
     return
@@ -299,6 +315,17 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
       )
     }
 
+    // IMG-10 — an image import is written only by `insertJsxElement`, which
+    // binds every direct-prop ref before it validates. One still unbound here
+    // is nested where no import can be spelled, or was sent to a codemod that
+    // writes no imports for it.
+    if (Object.values(node.props ?? {}).some((value) => value !== undefined && containsUnboundAssetImport(value))) {
+      return refuse(
+        'asset-import',
+        'An image import can only be written as a prop of an element being inserted, so this write was refused.',
+      )
+    }
+
     const hasContent = children !== undefined && (typeof children === 'string' || children.length > 0)
     if (hasContent && VOID_HTML_ELEMENTS.has(name.toLowerCase())) {
       return refuse(
@@ -308,6 +335,16 @@ export function validateSubtree(root: InsertJsxNode): { ok: false; refusal: Inse
     }
   }
   return undefined
+}
+
+/** Whether an unbound {@link AssetImportRef} sits anywhere inside one prop value. */
+function containsUnboundAssetImport(value: InsertableJsxPropValue): boolean {
+  if (value instanceof BoundAssetImport) return false
+  if (isAssetImportRef(value)) return true
+  if (isJsxPropElement(value)) return false // its own props are walked as a node of the subtree
+  if (Array.isArray(value)) return value.some(containsUnboundAssetImport)
+  if (value !== null && typeof value === 'object') return Object.values(value).some(containsUnboundAssetImport)
+  return false
 }
 
 /**

@@ -520,7 +520,9 @@ not land is taken back".
 **Two gestures write SOMEONE ELSE'S page, named explicitly.** `transplantNodes`
 (D2 G3 — a drag that crossed a board frame) and the image-drop actions
 (`dropImagesIntoPage`/`replaceImageInPage`/`setBackgroundImageInPage`, D2 G15
-+ P5-B — image files dropped from the OS) take their page id as an argument
++ P5-B — image files dropped from the OS; since P5-B3 any `ImageDropSource`:
+a file, a URL dragged from another tab, or a project file from the Assets
+panel, each landed through `landImageSource` and nothing else) take their page id as an argument
 instead of trusting `activePageId`, and none goes through `mutateActiveTree`.
 A cross-frame drag ACTIVATES the destination frame on the way
 (`openPageInCanvas` fires from `onPointerDownCapture`), so by commit time the

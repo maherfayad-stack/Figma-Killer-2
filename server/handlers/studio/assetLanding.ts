@@ -5,7 +5,10 @@
  * Every caller converges here:
  *   - `assetDrop.ts` (`POST /admin/api/studio/asset-drop`): a file dropped on
  *     a frame or picked in the inspector, landed in the server-derived
- *     `public/` so it can back a literal `src`.
+ *     `public/` so it can back a literal `src` — or, when the page it is
+ *     dropped into imports its images, beside them (IMG-10). Its twin
+ *     `assetDropUrl.ts` lands an image the server fetched from a URL dragged
+ *     out of another tab (IMG-5) through the same home.
  *   - `assetUpload.ts` (`POST /admin/api/studio/asset-upload`) — bytes come
  *     from a multipart upload the browser has already read into memory.
  *   - `extractReferenceAsset.ts` (`studio_extract_reference_asset`): a crop of
@@ -26,7 +29,10 @@
  * (`readDesignReferenceBytes` re-derives it; removal deletes it), so two
  * references must never share one file. Every success also reports the
  * intrinsic `width` /
- * `height` read from the header (`imageDimensions.ts`).
+ * `height` read from the header (`imageDimensions.ts`). Every file a landing
+ * CREATES (not a dedupe, not a design reference) is recorded in the asset
+ * ledger (`assetLedger.ts`, IMG-11), which is what lets an explicit "delete
+ * unused" offer it later — and only it.
  *
  * Every input here is adversarial regardless of caller: the target directory
  * may not exist yet, the declared filename is never trusted, and the actual
@@ -59,6 +65,7 @@ import { closeSync, lstatSync, mkdirSync, openSync, readSync, readdirSync, write
 import { isWorkspaceWritablePath, pathEntryExists, realWorkspaceRel } from '@core/page-parser'
 import { sanitizeSvgBytes } from '../cms/svgSanitize'
 import { readImageDimensions } from './imageDimensions'
+import { recordLandedAsset } from './assetLedger'
 
 /** Where a bare (no `targetDir`) asset write lands — the conventional home for local images in a Vite/CRA-shaped repo. */
 export const DEFAULT_ASSET_TARGET_DIR = 'src/assets'
@@ -393,5 +400,10 @@ function landIntoDir(
   }
   if (finalPath === null) return { ok: false, error: 'No free file name is left for this asset.' }
 
-  return { ok: true, relPath: toRelPath(finalPath), deduped: false, width, height }
+  const relPath = toRelPath(finalPath)
+  // IMG-11 — a file Studio CREATED goes in the ledger, which is what lets an
+  // explicit "delete unused" offer it later. A design reference is Studio's
+  // own state and is never offered; a dedupe above wrote nothing new.
+  if (options.dedupe) recordLandedAsset(dir, relPath, finalBytes)
+  return { ok: true, relPath, deduped: false, width, height }
 }

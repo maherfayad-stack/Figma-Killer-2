@@ -85,6 +85,7 @@ import { IMPORTED_RULE_ID_PREFIX, IMPORTED_RULE_TIMESTAMP, type ConditionDef, ty
 import { cssToStyleRules, type ImportWarning } from '@core/siteImport'
 import { collectEntryStylesheets, collectPageStylesheets } from '@core/studio-sync/collectPageStylesheets'
 import type { PageStylesheet } from '@core/studio-sync/pageStylesheet'
+import { relativeCssUrlsToAssetSentinels } from './studioAsset'
 
 /** Guard against a pathological vendored bundle being pulled in as "the page's CSS". */
 const MAX_STYLESHEET_BYTES = 2 * 1024 * 1024
@@ -336,7 +337,9 @@ export async function loadStudioStyles(
    * understands, so mapping one would let a save silently corrupt it.
    */
   const mergeParsedCss = (cssText: string, sourceFile?: string): void => {
-    authoredCssParts.push(cssText)
+    // P5-B3 — the canvas copy pins each relative `url()` to the file it names
+    // (`relativeCssUrlsToAssetSentinels`); the registry below keeps the text.
+    authoredCssParts.push(sourceFile ? relativeCssUrlsToAssetSentinels(cssText, sourceFile) : cssText)
     const parsed = cssToStyleRules(cssText, { sheetConstructor: SheetCtor })
     for (const condition of parsed.conditions) conditionsById.set(condition.id, condition)
     warnings.push(...parsed.warnings)

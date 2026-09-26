@@ -73,6 +73,7 @@ import {
 } from './createdJsxLocation'
 import { resolveChildPlacement } from './jsxChildPlacement'
 import { planImportBindings, resolveImportEdits, type ImportRequirement } from './jsxImportEdits'
+import { bindAssetImports, collectAssetImports } from './jsxAssetImports'
 import {
   collectSubtreeImports,
   indentBlock,
@@ -98,7 +99,12 @@ export interface InsertJsxElementParams {
   position?: 'before' | 'after'
   /** Tag name of the new element — a component (`Button`) with an `importSpecifier`, an intrinsic tag (`div`) without one. */
   name: string
-  /** Props written onto the new element. Entries whose value is `undefined` are skipped. */
+  /**
+   * Props written onto the new element. Entries whose value is `undefined` are
+   * skipped. A direct value `{ __assetImport: './assets/hero.png' }` (IMG-10)
+   * writes `prop={heroPng}` AND `import heroPng from './assets/hero.png'` in
+   * the same splice — see `jsxAssetImports.ts`.
+   */
   props?: Record<string, InsertableJsxPropValue | undefined>
   /**
    * Module the tag name is imported from, e.g. `@alm-design/design-system`.
@@ -176,10 +182,28 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     ...(params.siblings ?? []),
   ]
 
+  // IMG-10 — every image import the run's props ask for (`src={__assetImport}`)
+  // joins the component imports below, so ONE binding plan names them all and
+  // nothing the file already declares is shadowed.
+  const assets = collectAssetImports(run)
+  if (!assets.ok) {
+    return refuse('asset-import', `"${assets.specifier}" is not an image path Studio will write as an import.`)
+  }
+
+  // Only a component name can collide: an intrinsic tag is a string to JSX,
+  // never a reference to a binding, so a local `const div = …` is irrelevant
+  // to `<div />`. Every component in the run, not just the root, is bound to
+  // a local name that shadows nothing (WB-19), and written by that name.
+  const required = new Map<string, ImportRequirement>()
+  for (const node of run) for (const [local, requirement] of collectSubtreeImports(node)) required.set(local, requirement)
+  for (const [local, requirement] of assets.required) required.set(local, requirement)
+  const bindings = planImportBindings(sourceFile, required)
+  const bound = run.map((node) => bindAssetImports(node, assets.nameFor, bindings.localName))
+
   // Validated for the WHOLE run before a single byte is written — a refusal
   // three levels down, or in the third sibling, must leave the file
   // untouched, not half-built.
-  for (const node of run) {
+  for (const node of bound) {
     const invalid = validateSubtree(node)
     if (invalid) return invalid
   }
@@ -192,14 +216,7 @@ export function insertJsxElement(params: InsertJsxElementParams): InsertJsxEleme
     )
   }
 
-  // Only a component name can collide: an intrinsic tag is a string to JSX,
-  // never a reference to a binding, so a local `const div = …` is irrelevant
-  // to `<div />`. Every component in the run, not just the root, is bound to
-  // a local name that shadows nothing (WB-19), and written by that name.
-  const required = new Map<string, ImportRequirement>()
-  for (const node of run) for (const [local, requirement] of collectSubtreeImports(node)) required.set(local, requirement)
-  const bindings = planImportBindings(sourceFile, required)
-  const renamed = run.map((node) => renameSubtreeComponents(node, bindings.localName))
+  const renamed = bound.map((node) => renameSubtreeComponents(node, bindings.localName))
 
   const verbatim = verbatimSourceText(sourceFile, file)
   if (verbatim === null) {

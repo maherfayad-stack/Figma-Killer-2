@@ -79,10 +79,15 @@ export const ImageEditor: React.FC<ModuleComponentProps<ImageStoredProps>> = ({ 
     )
   }
 
-  // Alt text: library asset is the single source of truth. Matches the
-  // published-render behaviour so the canvas preview never disagrees
-  // with the published HTML. Edit alt via the Media viewer.
-  const alt = responsive?.libraryAlt ?? ''
+  // Alt text: what the SOURCE says first. A Studio page's `<img alt="Hero">`
+  // is parsed onto `props.alt`, and the canvas must render the element the
+  // file declares — rendering `alt=""` over it (the old behaviour) told a
+  // screen reader, and the accessibility audit, that an image the user
+  // described was decorative. A CMS image has no authored `alt` prop; its
+  // library asset stays the source of truth there, matching the published
+  // HTML. Placed after `htmlAttrs` below, so it wins over a stray copy too.
+  const authoredAlt = (props as { alt?: unknown }).alt
+  const alt = typeof authoredAlt === 'string' ? authoredAlt : (responsive?.libraryAlt ?? '')
   const htmlAttrs = htmlAttributesForReact(props.htmlAttributes)
 
   // No resolved asset yet (cache loading, external URL, or row missing).
