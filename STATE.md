@@ -47,7 +47,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
 ### perf-15 — P6-C: the remaining budgets, and the fixes they forced
-- **Agent:** perf-hunter · **Branch:** `perf/remaining-budgets` · draft PR (base `feat/canvas-excellence`), long form + every run in the body · **Updated:** 2026-09-26
+- **Agent:** perf-hunter · **Branch:** `perf/remaining-budgets` · draft PR #272 (base `feat/canvas-excellence`), long form + every run in the body · **Updated:** 2026-09-26
 - **Stage:** PR open (draft). Budgets calibrated and enforced; gates in the PR body.
 - **Budgets added** (browser: `canvas-edit-budgets.e2e.ts`, `live-frame-budgets.e2e.ts`, both now in the `e2e-budgets` slice; server: `bench:studio-load`): keystroke → paint (inspector + inline), ⌘D re-render count + time, no long task after a post-edit click, memory (heap + detached documents), first frame interactive warm, `/load` on 1,000 files (warm median + event-loop block), a booted Tier-2 JS-animated frame (fit resets/s). CI runs the `@production-bundle` tests a second time against `vite build` + `vite preview` (`E2E_VITE_MODE=preview`, new).
 
