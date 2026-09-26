@@ -91,7 +91,10 @@ test.describe('P3-F — a delete is undone by the undo journal', () => {
     const content = canvasContentFrame(frame)
 
     const badgeId = sourceNodeId(HOME_PAGE, HOME, 'Badge', 1)
-    const badge = content.locator(`[data-node-id="${badgeId}"]`).first()
+    // A call site has no element of its own: what renders is the component's
+    // markup under composite ids (`<call site>~<inner>`), and a click on it
+    // selects the outermost instance — the call site (P2-B).
+    const badge = content.locator(`[data-node-id^="${badgeId}~"]`).first()
     await panIntoView(page, canvasRoot, badge, 80)
     await clickInFrame(page, badge)
     await expect
@@ -125,7 +128,7 @@ test.describe('P3-F — a delete is undone by the undo journal', () => {
     const undoMs = await msUntil(() => read(HOME) === HOME_PAGE, undoAt)
     test.info().annotations.push({ type: 'measured', description: `⌘Z after delete → restored bytes on disk: ${Math.round(undoMs)} ms` })
     expect(undoMs, `⌘Z took ${Math.round(undoMs)} ms to put the bytes back`).toBeLessThan(UNDO_BUDGET_MS)
-    await expect(content.locator(`[data-node-id="${badgeId}"]`).first(), 'the restored element never came back on the canvas').toBeVisible({
+    await expect(content.locator(`[data-node-id^="${badgeId}~"]`).first(), 'the restored element never came back on the canvas').toBeVisible({
       timeout: 30_000,
     })
     expect(journalEntries(), 'the restored entry was not consumed').toHaveLength(0)
