@@ -75,7 +75,7 @@
  * `agentCheckpointRevert.ts` the revert; both are internal, and everything
  * outside the module imports from here.
  */
-import { readFileSync, writeFileSync } from 'node:fs'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { isSecretBearingFileName } from '@core/page-parser'
 import { contentHash, nonTextReason } from './agentFileAccess'

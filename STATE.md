@@ -11,6 +11,16 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
+### refactor-ckpt — split `agentCheckpoints.ts` under the 700-line module budget
+- **Agent:** server-engineer
+- **Stage:** PR open (draft), gates green.
+- **Branch:** `refactor/split-agent-checkpoints`, from trunk `e1dad32d`.
+- **Updated:** 2026-09-26
+- **Goal:** clear the trunk's one red, `module-size-budgets` (`agentCheckpoints.ts` was 789 lines).
+- **Done:** split by responsibility, behaviour identical. `agentCheckpointStore.ts` (on-disk layout, record schemas, no-follow capped reads, hash-verified blobs, turn lookup and pruning), `agentCheckpointRevert.ts` (`revertBlocker`, the CAS revert under the write lock and the agent write gate), and `agentCheckpoints.ts` (public entry: turn start, capture, list, diff; re-exports the revert and constants). No check changed; the pre-image-before-write order in the callers is untouched. Docs: `path-index.md`, `features/agent.md`.
+- **Landmines:** import only `agentCheckpoints.ts` from outside; the two siblings are internal.
+- **Next:** review and merge.
+
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
