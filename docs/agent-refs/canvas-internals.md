@@ -1551,10 +1551,45 @@ a component in a live frame selected the element inside it.
 | Overlay coordinate conversion across zoom | `canvasSelectionOverlayPositioning.ts` | render rings inside the iframe |
 | A permanent rAF loop per mounted frame while anything is selected | `BreakpointSelectionOverlay.tsx` | **fixed (S4)** — `overlayMeasureScheduler.ts`, below |
 | Frames mount all iframes once the doc is in the store | `CanvasTransformLayer.tsx` | virtualize iframe mounting; frozen poster for offscreen frames |
+| Every on-screen frame's node-tree mount was its own `startTransition`, but React groups all pending transition lanes into ONE commit — ten frames committed together, 1.3–1.9 s after their shells | `IframeFrameSurface.tsx` | **fixed (perf-17)** — `frameTreeMountQueue.ts`, below |
 | React re-render per pointermove during pan | `useCanvas.ts` | write `transform` to a ref, commit on pointerup |
 | Every store `set()` runs every mounted `NodeRenderer`'s selectors; hover was a `set()` per crossing | `NodeRenderer.tsx`, `selectionSlice.ts` | **fixed (P2-I)** — hover is off the store, selection is a keyed read, see "Per-node reads" below |
 | A poster rasterized under the user after every edit | `useFramePosterCapture.ts` | **fixed (P2-I)** — refresh only once the frame leaves the screen; the busy listeners run in every frame |
 | A post-write re-read re-rendered every node of the page, remounted every renumbered node, and restyled every mounted frame | `lifecycleActions.ts` `patchPages`, `NodeRenderer.tsx` child keys, `ClassStyleInjector.tsx` | **fixed (P6-A, PERF-6)** — deep-equal nodes/rules keep their objects; moved nodes keep their React key (`nodeRenderKeys.ts`). See `editor-store.md`'s `patchPages` |
+
+### Frame trees mount one at a time, centre first (perf-17)
+
+`frameTreeMountQueue.ts` (`src/admin/pages/site/canvas/`) gates each frame's
+node-tree `startTransition` behind a single module-scoped grant: only the
+holder's tree renders; every other frame's shell sits mounted (header, body,
+poster) but has not yet asked React to render its content. The holder releases
+on commit or unmount, and the next grant goes to whichever waiting frame's
+element is closest to the viewport centre right then (a pan while frames are
+still queued re-orders what's left) — "the frame you are looking at" paints
+first, not first-requested. No timer, no `rAF`, no idle-callback staging: a
+grant is synchronous on request or release, so nothing can strand a frame as a
+skeleton in a backgrounded tab or a headless runner (see the Hard rules note
+in `PROJECT-BRIEF.md` about the RAF→setTimeout→requestIdleCallback chain this
+repo already removed once for exactly that failure mode).
+
+Companion fixes landed alongside it: concurrent `studio/load` requests for the
+same project dedupe onto one in-flight promise (`studioLoadMemo.ts`), token
+extraction memoizes on the parsed site rather than re-walking it per request
+(`tokenExtractMemo.ts`), and `.studio/framework.json`/`fonts.json` writes are
+skipped when the serialized value is byte-identical to what's on disk
+(`writeStudioStoreJsonIfChanged` in `studioFramework.ts`) — every project open
+was posting the token-extraction merge, which is a no-op once the framework is
+populated, and rewrote the sidecar anyway.
+
+Measured on the 40×300 corpus (`studio-board-load.e2e.ts`, warm open, first
+frame painted): trunk (all ten visible frames committing together) 2695 /
+2906 ms; queued one-at-a-time, several samples on the same shared machine,
+2161 / 2216 / 2395 / 2908 ms. `BUDGET_WARM_FIRST_FRAME_MS` tightened from
+6000 to 4000 (~20% over the worst observed "after" sample, rounded up for
+headroom) — see the test file's own doc comment for the full numbers and why
+a busy sample can erase the gain on its own; the ORDER assertion in the same
+test (first frame paints alone, not together with the rest) is what actually
+pins the mechanism regardless of machine noise.
 
 ### Per-node reads (P2-I) — what a `NodeRenderer` may subscribe to
 

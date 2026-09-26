@@ -34,12 +34,19 @@ import { removeFixtureProject, type FixtureProject } from './helpers/studioFixtu
 /**
  * Warm open → first frame painted. Before P6-B (trunk `ef23f78a`) this was
  * 5315 / 5602 ms on the calibration machine (Windows, eight agents' load);
- * with it, 4296 / 4669 / 5053 ms. Set about 20 % over the worst "after". On a
- * machine this loaded it does NOT separate before from after on its own — the
- * noise is as wide as the gain — which is what the ORDER budget below is for;
- * this one fails a new second-long wait on top of today's open.
+ * with it, 4296 / 4669 / 5053 ms.
+ *
+ * `frames-mount-one-by-one` (perf-17) re-measured on top of that trunk, same
+ * corpus, same machine, on the SAME shared machine other agents' e2e runs were
+ * also loading: trunk (all ten visible frames committing together) 2695 /
+ * 2906 ms; this branch (frames mounting one at a time, centre first) 2161 /
+ * 2216 / 2908 ms. The improvement (~500 ms on a quiet sample) is real but on a
+ * busy sample the noise erases it — matches the note below about a machine
+ * this loaded not separating before from after on its own; the ORDER budget
+ * is what actually pins the mechanism. Tightened from 6000 to 20 % over the
+ * worst "after" sample (2908 → ~3490), rounded up for headroom.
  */
-const BUDGET_WARM_FIRST_FRAME_MS = 6_000
+const BUDGET_WARM_FIRST_FRAME_MS = 4_000
 
 /**
  * perf-17 — an ORDER budget, like the one below: when the first frame paints,
