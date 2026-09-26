@@ -33,7 +33,7 @@ import {
   type StructuralInverseTemplate,
   type StructuralWriteOutcome,
 } from './structuralUndoPlan'
-import type { InsertPropValue, SlotJsxNode } from './studioSaveRequests'
+import type { InsertPropValue, SlotJsxNode, StudioSaveResponse } from './studioSaveRequests'
 
 /**
  * P3-D — ONE gesture written as several edits applied IN ORDER, each against
@@ -346,6 +346,51 @@ export async function commitStudioUngroup(
               'That container carried styling of its own (a class, an inline style or an id), and Studio can only write a plain container back around its children — undoing it here would silently drop what it carried. Use your editor’s undo or `git` to bring it back.',
           },
     },
+  })
+}
+
+/**
+ * P5-C (DET-5) — the user's Detach: one call site, or a multi-selection
+ * written as ONE `sequence` (each detach against the file the previous one
+ * left, all or nothing). Resolves with the server's answer — its refusals and
+ * `detachDetails`, which `detachInstances` presents itself (`quiet`) — or
+ * `null` when no answer came back (already reported).
+ *
+ * Selects what the write created: the markup that replaced each call site.
+ * ⌘Z is the undo journal's `restore` — one entry for the whole gesture.
+ */
+export async function commitStudioDetach(
+  edits: readonly StructuralEditPayload[],
+  label: string,
+): Promise<StudioSaveResponse | null> {
+  let answer: StudioSaveResponse | null = null
+  await commitStructural(edits, 'Detach refused', {
+    undo: { label, template: { kind: 'restore-journal' } },
+    select: 'created',
+    quiet: true,
+    ...(edits.length > 1 ? { sequence: true as const } : {}),
+    onAnswer: (received) => {
+      answer = received
+    },
+  })
+  return answer
+}
+
+/**
+ * P5-C (DET-7) — "Expose as prop": the literal of an element inside a
+ * component becomes an optional prop whose default is that literal, so every
+ * other instance renders as before. Two files (the component and this call
+ * site), one undo-journal entry: ⌘Z restores both. `onLanded` runs once the
+ * board has re-read them.
+ */
+export async function commitStudioExposeProp(
+  edit: { kind: 'expose-prop'; nodeId: string; target: { kind: 'text' }; propName: string },
+  label: string,
+  onLanded?: () => void,
+): Promise<void> {
+  await commitStructural([edit], 'Could not make that a prop', {
+    undo: { label, template: { kind: 'restore-journal' } },
+    ...(onLanded ? { onLanded } : {}),
   })
 }
 

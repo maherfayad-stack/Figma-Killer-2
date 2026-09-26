@@ -166,6 +166,16 @@ function isLocallyBound(reference: Node, name: string, root: Node): boolean {
  */
 export type BindingKind = 'local' | 'module' | 'none'
 
+/**
+ * The node whose scope binds `name` at `position` — the `Block`, function or
+ * loop that declares it — or `undefined` when nothing in the file does (a
+ * global, or nothing at all). DET-3's gate asks it which component a moved
+ * hook's binding landed in; `bindingKindAt` is the coarse form of the same walk.
+ */
+export function bindingScopeAt(position: Node, name: string, sourceFile: SourceFile): Node | undefined {
+  return findBindingScope(position, name, sourceFile)
+}
+
 export function bindingKindAt(position: Node, name: string, sourceFile: SourceFile): BindingKind {
   const scope = findBindingScope(position, name, sourceFile)
   if (scope && !Node.isSourceFile(scope)) return 'local'

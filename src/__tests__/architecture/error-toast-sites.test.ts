@@ -62,7 +62,7 @@ const ALLOWED_ERROR_TOAST_SITES: ReadonlyMap<string, number> = new Map([
   // not delete — an operation they asked for that failed.
   ['admin/pages/site/panels/AssetsPanel/UnusedImagesFooter.tsx', 1],
   // Inspector: explicit detach/swap/export/copy actions.
-  ['admin/pages/site/inspector/sections/ComponentSection.tsx', 5],
+  ['admin/pages/site/inspector/sections/ComponentSection.tsx', 2],
   ['admin/pages/site/inspector/sections/ExportSection.tsx', 4],
   ['admin/pages/site/panels/InspectPanel/InspectPanel.tsx', 2],
   ['admin/pages/site/panels/PropertiesPanel/ImageSourcePicker.tsx', 1],

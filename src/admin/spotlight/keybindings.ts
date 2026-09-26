@@ -103,6 +103,8 @@
  *              |                             |                                 | what the user toggles is the pull
  *   ⌘⇧'        | snap to guides              | snap to objects + equal spacing | P5-F. The ruler-guide half of
  *              |                             | on / off                        | Penpot's ⌘⇧G is ⌘' here (⌘⇧G ungroups)
+ *   ⌘⌥B        | (unbound; Penpot's detach   | detach instance (P5-C, DET-5)   | Figma's. Penpot's ⌘⇧K is not
+ *              | component is ⌘⇧K)           |                                 | bound: one key per verb
  */
 
 import { GESTURE_KEYBINDINGS } from './keybindingGestures'

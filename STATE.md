@@ -46,6 +46,21 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - **Landmines:** two different entries are both `perf-10` (#195 and #196); cite them by title. `04f92846` commits Studio's generated prototype shell into `__board-perf-fixture` and edits `test4`: owner to decide whether to revert it.
 - **Next:** once #217 merges, close #192, #195 and #198–#210 as included.
 
+### parser-19 — P5-C detach: one action, context hooks move, class-join fold, expose as prop (DET-2/3/5/6/7)
+- **Agent:** parser-surgeon · **Branch:** `feat/detach-instances` (from trunk `cabadf7c`, trunk `9f746500` merged) · **Stage:** draft PR #279 open, awaiting owner dogfood · **Updated:** 2026-09-26
+- **Scope (parser/codemod files):** `src/core/ast-codemods/{detachComponent,detachPlanner,detachNames,detachHooks (new),detachClassNameFold (new),exposeLiteralAsProp (new),componentPropSignature (new),addSlotPropToComponent,subtreeFreeVariables,index}.ts`, `src/core/page-parser/{staticEvalCalls,index}.ts`, `src/core/page-tree/{sourceNodeId,index}.ts`. Server: `studioEditSchemas`, `studioWriteback`, `studioEditSequence`, `studioEditRouting`, `studioBatchUndoJournal`, `studio.ts`. Client: `store/slices/site/{instanceActions,instanceDetachTypes}.ts` (new), `DetachConfirmDialog` (new), ComponentSection, LayerNodeContextMenu, constraintActions, ConstraintActionButtons, SharedComponentNotice, keybindingLayerCommands (⌘⌥B), layerArrange, commit engine (`onAnswer`).
+- **DET-2** was already shipped by P1-E (spread/rest tests exist); nothing new.
+- **Decisions (per new resolution):**
+  - DET-3 moved hook: no lock, no `codeProps` (a codemod, not a parse resolution); no `origin` — the markup READS a binding, nothing is baked. Detector: `isContextReaderHook` = Tier B's `findUseContextArgument` + "no other hook in the body".
+  - DET-6 fold: writes a literal ONLY when every part is a literal after substitution (template, or `clsx`/`classnames` from their packages). `cn` never (twMerge). A binding part never.
+  - DET-7 expose: the new prop's default IS the old literal, so no other instance changes; call site = the id's HEAD via `callSitePosition`, depth exactly 1 (`inlineDepth`), both files through `studioEditLocation`.
+  - Loss confirm is server-decided (`dryRun: 'if-lossy'|'always'`, `detachDetails`), one round trip for a plain detach. Multi-detach = one server `sequence` (`detach` is now a sequence kind) journaled ONCE from `originals`; only a detach-holding sequence journals.
+  - Nested instance (composite id): OD-7 detach-outer-then-inner with `componentCopy: false` (a copy fallback would loop).
+- **Tests (each proven to fail before):** `detachHooksAndLosses.test.ts` (14 of 18 fail before; the 4 passing are refusal/no-fold guards), `exposeLiteralAsProp.test.ts`, addSlot rest case, `studioDetachWrites.test.ts` + save-route case (6/6), `studioExposePropWrites.test.ts`, `instanceActions.test.ts` + `detachInstanceSurfaces.test.tsx` + updated componentSection/RefusalDialog (22 fail before), `sharedComponentNotice.test.tsx`, e2e `detach-instance-undo.e2e.ts` (both fail before).
+- **Landmines (not in studio-import.md before this PR — now added there):** `addSlotPropToComponent` appended the new binding AFTER `...rest` (wrote an unparsable file); `sourceFile.insertText` forgets EVERY node, so a shared signature helper must `replaceWithText` its own node; `getStart()` of a node after a whole-file `replaceWithText` throws — read positions first.
+- **Owed:** eSIM corpus re-measure after DET-3 (corpus not on this machine; available corpora have no hooks — numbers in studio-import.md). `studio-scribe`: nothing left to fold beyond this entry.
+- **Next:** owner dogfood (checklist in the PR body), then merge into the trunk.
+
 ### sec-26 — a repository never supplies a grant; `studio_codemod` takes the agent write steps
 - **Agent:** security-guard · **Branch:** `fix/cloned-projects-bring-no-live-state` (off trunk `cabadf7c`, #277 merged in at `2b33e161`) · **Updated:** 2026-09-26
 - **Stage:** done, draft PR #278 against `feat/canvas-excellence` (stacked on #277); a separate security review follows. The threat | fix | test table is the PR body. Gates on `3d0a9f17`: build and lint pass; tests 16,259 pass, 2 arch fail, neither from this branch. The first is runtime-bundle freshness, stale on the trunk since P3-F `d61187ee` changed `listRowSource.ts`. The second is the `SitePage-*.js` budget, 14 B over; that comes from the #277 + trunk merge, since this branch's own commits touch no `src/`.
@@ -86,6 +101,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-43` · `/admin/site` on `test4` · select a text element: props block ends in 8px + a hairline, 12px between sections, one Effects section; the ClassPicker fade only while scrolled. Script: the `panel-43` entry in the archive
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry in the archive
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
+
+**Detach (P5-C)**
+- `parser-19` · `/admin/site` on a copy of `test4` with a local component · select an instance, ⌘⌥B: no dialog, markup in place, ⌘Z restores; a component with an early `return` asks first; right-click "Detach instance"; "Make the text a prop" on an inner text. Script: the PR body
 
 **SVG (P5-D)**
 - `canvas-30` · `/admin/site` on a copy of `test4` with an inline icon svg, zoom 100% / 25% / 400%, 1 frame · double-click the svg → anchors on its points at ~8 px; drag one → one `POST /save`, only that segment changes in the `.tsx`, ⌘Z restores it byte-for-byte; P + clicks + ⏎ inside the frame → one new `<svg stroke="currentColor">`. Script: the PR body

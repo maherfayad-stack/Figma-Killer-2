@@ -541,6 +541,8 @@ export const STRUCTURAL_REFUSAL_TITLE = {
    * regardless, so one refusal vocabulary reaches the user.
    */
   freeMove: 'Cannot place this by hand',
+  /** P5-C — the Detach verb (`instanceActions.ts`): a refusal names why this instance's markup can't be written in place. */
+  detach: 'Detach refused',
 } as const
 
 /**
@@ -627,7 +629,10 @@ export function presentStructuralRefusal(
   },
 ): void {
   const openSourceContext = context.getState
-    ? { openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin) }
+    ? {
+        openSource: (origin: Parameters<typeof openSourceFile>[1]) => openSourceFile(context.getState!(), origin),
+        detachInstances: (nodeIds: readonly string[]) => context.getState!().detachInstances(nodeIds),
+      }
     : {}
 
   const openDialog = (): void => {

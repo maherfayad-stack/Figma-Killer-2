@@ -1,9 +1,10 @@
 /**
  * journaledUndo — the undo entry for an instance rewrite the Properties panel
- * posts on its own (detach, swap, extract), outside `commitStructural`
- * (DET-4, P3-F).
+ * posts on its own (swap, extract), outside `commitStructural` (DET-4, P3-F).
+ * A detach is not one of them any more: P5-C's `detachInstances` commits it
+ * through `commitStructural` with the same `restore-journal` template.
  *
- * Those three used to push NO entry: ⌘Z after a detach silently undid
+ * Those used to push NO entry: ⌘Z after a detach silently undid
  * whatever came before it, and the rewrite itself could only be taken back
  * with `git`. Their undo is the server's undo journal — the write's own
  * `undoToken`, posted back as a `restore`.

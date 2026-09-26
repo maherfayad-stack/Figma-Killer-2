@@ -7,7 +7,7 @@
  * against temp fixture files without a full Request/Response round trip.
  *
  * The WIRE SHAPE (`StudioEditSchema`/`StudioEdit` — `kind: 'prop' | 'text' |
- * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'svg-attr' | 'detach' | 'swap' | 'restore' | 'move' |
+ * 'style' | 'class' | 'literal' | 'tag' | 'asset' | 'svg-attr' | 'detach' | 'expose-prop' | 'swap' | 'restore' | 'move' |
  * 'delete' | 'insert' | 'duplicate' | 'wrap' | 'group' | 'ungroup' |
  * 'reparent' | 'transplant' | 'insert-slot' |
  * 'promote-component' | 'add-slot-prop' | 'css'`) lives in
@@ -55,6 +55,7 @@ import {
   createModuleImportPlan,
   createProject,
   detachComponentInstance,
+  exposeLiteralAsProp,
   setImportSpecifier,
   setJsxClassName,
   setJsxProp,
@@ -67,7 +68,7 @@ import {
   syncProjectWithDisk,
   type ModuleImportPlan,
 } from '@core/ast-codemods'
-import type { SourceFingerprintExpectations } from '@core/page-tree'
+import { callSitePosition, inlineDepth, type SourceFingerprintExpectations } from '@core/page-tree'
 import type { Project } from 'ts-morph'
 import { applyCssEdit } from './studioCssWriteback'
 import { withProjectWriteLock } from './studio/projectWriteLock'
@@ -98,6 +99,7 @@ import {
   type StudioEditBatchResult,
   type StudioEditRefusal,
   type StudioEditSwapDetail,
+  type StudioDetachDetail,
 } from './studioEditSchemas'
 import {
   refusalFor,
@@ -322,9 +324,35 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass
       // (`studioBatchImportPrune.ts`); ⌘Z is the undo journal's `restore`.
-      const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
+      const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false, ...(edit.dryRun ? { dryRun: edit.dryRun } : {}) })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true, ...(result.created ? { created: [result.created] } : {}) }
+      const { written, lossy, branchNote, movedHooks, perRow } = result
+      const detachDetail = { written, lossy, movedHooks, perRow, ...(branchNote ? { branchNote } : {}) }
+      return { applied: written, detachDetail, ...(result.created ? { created: [result.created] } : {}) }
+    }
+    case 'expose-prop': {
+      // P5-C (DET-7) — two files: the component (this id's tail, `loc`) and
+      // the ONE call site (its head). One level deep only: a deeper element's
+      // nearest call site sits in a shared component's own file.
+      if (inlineDepth(edit.nodeId) !== 1) {
+        throw new StudioEditRefusalError('not-in-component', 'Only an element of a component placed directly on this page can become a prop of that component.')
+      }
+      const callSite = studioEditLocation(dir, callSitePosition(edit.nodeId), scope)
+      if (!callSite) return { applied: false, unwritable: 'no-source-location' }
+      const result = exposeLiteralAsProp({
+        callSiteFile: join(dir, callSite.rel),
+        callSiteLine: callSite.line,
+        callSiteCol: callSite.col,
+        elementFile: loc.file,
+        line: loc.line,
+        col: loc.col,
+        workspaceRoot: dir,
+        target: edit.target,
+        propName: edit.propName,
+        ...(edit.value !== undefined ? { value: edit.value } : {}),
+      })
+      if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
+      return { applied: true }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -429,6 +457,7 @@ export function applyStudioEditBatch(
   let written = 0
   const refusals: StudioEditRefusal[] = identity.moved.map((entry) => entry.refusal)
   const swapDetails: (StudioEditSwapDetail & { nodeId: string })[] = []
+  const detachDetails: (StudioDetachDetail & { nodeId: string })[] = []
   const createdStylesheets: { nodeId: string; file: string }[] = []
   const promoteDetails: (StudioPromoteComponentDetail & { nodeId: string })[] = []
   const addSlotPropDetails: (StudioAddSlotPropDetail & { nodeId: string })[] = []
@@ -458,7 +487,8 @@ export function applyStudioEditBatch(
     try {
       const outcome = applyStudioEdit(dir, edit, { moduleImports, project, scope })
       if (outcome.addSlotPropDetail) addSlotPropDetails.push({ nodeId: edit.nodeId, ...outcome.addSlotPropDetail })
-      if (isSlotPreviewOutcome(outcome)) {
+      if (outcome.detachDetail) detachDetails.push({ nodeId: edit.nodeId, ...outcome.detachDetail })
+      if (isSlotPreviewOutcome(outcome) || outcome.detachDetail?.written === false) {
         // E2.2 — a deliberate `add-slot-prop` preview: `ok`, nothing written,
         // not a failure. Neither counter moves; `addSlotPropDetails` above
         // already carries the blast radius the caller asked to see.
@@ -555,6 +585,7 @@ export function applyStudioEditBatch(
     sharedComponents,
     refusals: asSent(refusals),
     swapDetails: asSent(swapDetails),
+    detachDetails: asSent(detachDetails),
     createdStylesheets: asSent(createdStylesheets),
     promoteDetails: asSent(promoteDetails),
     addSlotPropDetails: asSent(addSlotPropDetails),

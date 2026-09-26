@@ -16,6 +16,7 @@ import type { StructuralCommitRollback } from '@site/store/slices/site/structura
 import { isUnreachableFailure } from '@core/http'
 import type { CanvasLayerPlacementChange } from '@core/studio-board'
 import type { PendingStructuralHistory } from './pendingStructuralOutcome'
+import type { StudioSaveResponse } from './studioSaveRequests'
 import { beginStructuralCommit, endStructuralCommit } from './structuralCommitQueue'
 import {
   resolveStructuralInverse,
@@ -95,6 +96,14 @@ export interface StructuralCommitOptions {
   onLanded?: (outcome: StructuralWriteOutcome) => void
   /** P3-D (OD-7) — say nothing when the write is refused: the caller has its own answer (the refusal dialog). */
   quiet?: true
+  /**
+   * P5-C — handed the server's answer as soon as it arrives (again for the
+   * one silent re-plan after `element-moved`, so the last call is the one
+   * that counts). `detachInstances` reads its refusals and `detachDetails`
+   * from it: a detach held back by its `dryRun` wrote nothing, and is
+   * neither a refusal nor a landed write.
+   */
+  onAnswer?: (answer: StudioSaveResponse) => void
 }
 
 /**
@@ -161,6 +170,7 @@ async function commitStructuralBody(
 
   try {
     const result = await postEditsRetryingUnreachable(edits, identities, options.sequence ? { sequence: true } : {})
+    options.onAnswer?.(result)
     // `element-moved` is never toasted here — it is recovered from below.
     const moved = elementMovedNodeIds(result.refusals)
     const refusals = (result.refusals ?? []).filter((refusal) => !moved.has(refusal.nodeId))

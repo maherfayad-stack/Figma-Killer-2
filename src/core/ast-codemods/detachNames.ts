@@ -20,8 +20,12 @@ import { freeReferenceNames } from './subtreeFreeVariables'
 import { fail, isImportBinding, isTopLevelDeclaration } from './detachSource'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 
-/** How a name in the detached markup must bind in the page: as it did at the call site, to a module-scope binding, or to nothing (a global). */
-export type Expectation = 'call-site' | 'module' | 'global'
+/**
+ * How a name in the detached markup must bind in the page: as it did at the
+ * call site, to a module-scope binding, to nothing (a global), or — DET-3 — to
+ * a context reader's result at the top of the enclosing component (`hook`).
+ */
+export type Expectation = 'call-site' | 'module' | 'global' | 'hook'
 
 export interface PendingImport {
   request: ImportRequest
@@ -134,8 +138,13 @@ export class DetachNameResolver {
     return planned.local
   }
 
-  /** Whether a NEW top-level import may be named `local` without changing what anything else in the page — or in the markup — means. */
-  private isNameAvailable(local: string, originalName: string): boolean {
+  /** Holds `local` for a binding the plan will write, so no later import or hook binding takes it. */
+  reserve(local: string): void {
+    this.reserved.add(local)
+  }
+
+  /** Whether a NEW binding may be named `local` without changing what anything else in the page — or in the markup — means. */
+  isNameAvailable(local: string, originalName: string): boolean {
     if (this.reserved.has(local) || this.pageTopLevel.has(local) || this.pageFreeNames.has(local)) return false
     if (local !== originalName && this.fnIdentifierNames.has(local)) return false
     return !this.declaredInPage(this.callSiteScope.get(local))

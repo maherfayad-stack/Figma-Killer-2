@@ -978,6 +978,12 @@ The rules the ladder replaced prose with:
   `event.code` (⌥A is `'å'` on a Mac). ⌘C / ⌘V reject ⌥ since then: before,
   Ctrl+Alt+V pasted a layer AND a style. The right-click menu and the palette
   run the same functions (`layerCommands.ts`, `layerAlign.ts`).
+- **Detach instance (P5-C):** ⌘⌥B / Ctrl+Alt+B (`layers.detachInstance`, the
+  same `node` rung) calls the store's ONE `detachInstances` action
+  (`store/slices/site/instanceActions.ts`) — the Component section's button,
+  the right-click menu ("Detach instance", shown only when every target is an
+  instance), the palette and the refusal remedy call it too. It confirms only
+  when something is lost (`DetachConfirmDialog`).
 - `canvas.moveSelection` is the only bare-arrow binding in the registry and it
   is scoped by **what is selected**, never globally. Three rungs read it:
   notes/docs (`annotation`), the selected layer (`node`,

@@ -51,6 +51,11 @@
  * refusal toast and every other refusal surface share, so the wording and the
  * ways forward cannot drift between them.
  *
+ * P5-C (DET-5) — "Detach instance" when every target is a component
+ * instance: the store's one `detachInstances` action, the same call as the
+ * Component section's button and ⌘⌥B. A package instance's item is disabled
+ * with the reason. The canvas's menu is this component too.
+ *
  * P5-E (UX-22, IX-27) — every item with a key shows it, right-aligned, read
  * from the keybinding registry (`shortcutLabelFor`), and the arrange block
  * (`LayerArrangeMenuItems`: Group, Ungroup, Lock, front / back, flex layout,
@@ -87,6 +92,7 @@ import { AppGridPlusGlyphIcon } from 'pixel-art-icons/icons/app-grid-plus-glyph'
 import { BoxStackSolidIcon } from 'pixel-art-icons/icons/box-stack-solid'
 import { CodeIcon } from 'pixel-art-icons/icons/code'
 import { BoxSolidIcon } from 'pixel-art-icons/icons/box-solid'
+import { Copy2SolidIcon } from 'pixel-art-icons/icons/copy-2-solid'
 import { LayoutSolidIcon } from 'pixel-art-icons/icons/layout-solid'
 import { EyeSolidIcon } from 'pixel-art-icons/icons/eye-solid'
 import { isNarrowEditorChromeViewport } from '@site/layout/responsiveChrome'
@@ -278,6 +284,15 @@ export function LayerNodeContextMenu({
     onClose()
   }
 
+  // P5-C — offered only when every target is an instance; a package one can't be detached yet.
+  const instanceTargets = targetIds.map((id) => activePage?.nodes[id]).filter((node) => node?.moduleId === 'studio.instance')
+  const canDetach = !lockedSlotInstance && targetIds.length > 0 && instanceTargets.length === targetIds.length
+  const detachBlockedByPackage = instanceTargets.some((node) => (node?.props as { source?: unknown } | undefined)?.source === 'package')
+  const dispatchDetach = () => {
+    void useEditorStore.getState().detachInstances(targetIds)
+    onClose()
+  }
+
   const hideActionTargetIds = targetIds.filter((id) => id !== activePage?.rootNodeId)
   const canToggleHidden = !lockedSlotInstance && hideActionTargetIds.length > 0
   const shouldHideSelection = hideActionTargetIds.some((id) => !activePage?.nodes[id]?.hidden)
@@ -449,6 +464,19 @@ export function LayerNodeContextMenu({
             <ContextMenuItem onClick={dispatchComponentize}>
               <span aria-hidden="true"><BoxSolidIcon size={13} /></span>
               Componentize
+            </ContextMenuItem>
+          )}
+
+          {canDetach && (
+            <ContextMenuItem
+              onClick={dispatchDetach}
+              shortcut={shortcutLabelFor('layers.detachInstance')}
+              disabled={detachBlockedByPackage}
+              tooltip={detachBlockedByPackage ? 'Package components cannot be detached yet' : undefined}
+              data-testid="layer-menu-detach-instance"
+            >
+              <span aria-hidden="true"><Copy2SolidIcon size={13} /></span>
+              {isMulti ? 'Detach instances' : 'Detach instance'}
             </ContextMenuItem>
           )}
 
