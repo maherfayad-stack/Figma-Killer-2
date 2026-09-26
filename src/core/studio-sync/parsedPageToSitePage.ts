@@ -318,6 +318,8 @@ export function parsedPageToSitePage(parsed: ParsedPage, opts: ParsedPageToSiteP
       // not a lock: the properties panel warns that an edit here rewrites that
       // component's file and so lands on every instance of it.
       ...(node.fromComponent ? { fromComponent: node.fromComponent } : {}),
+      // OD-8 — a `.map` row root's array element, straight copy. See `PageNode.listRow`.
+      ...(node.listRow ? { listRow: node.listRow } : {}),
     }
   }
 

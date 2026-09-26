@@ -6,6 +6,7 @@
  * identifier start — the character immediately after `<`.
  */
 import type { ValueOrigin } from './staticEvalTypes'
+import type { ListRowSource } from '@core/page-tree'
 import type { ArrowFunction, FunctionDeclaration, FunctionExpression, MethodDeclaration } from 'ts-morph'
 
 /**
@@ -390,6 +391,14 @@ export interface ParsedNode {
    * INNERMOST component's name — that is the file an edit actually writes to.
    */
   fromComponent?: string
+  /**
+   * OD-8 — on a `.map` row's ROOT node only: the array literal element this
+   * row renders (the array's own `[` position, the index, the length, how the
+   * row's `key` reads its item), or why the array is not one Studio can edit
+   * here. Written by `staticLoopExpansion.ts`'s `listRowSourceFor`; what makes
+   * a row's reorder, delete and duplicate a write to the array.
+   */
+  listRow?: ListRowSource
   /**
    * WS-4.2 — present on a component CALL SITE that `inlineLocalComponents`
    * successfully expanded. Turns this node into the "instance" fragment

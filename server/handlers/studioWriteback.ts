@@ -79,6 +79,7 @@ import {
   type StudioPromoteComponentDetail,
 } from './studioSlotWriteback'
 import { applyStructuralEdit, applyTransplantEdit } from './studioStructuralWriteback'
+import { applyListItemEdit } from './studioListItemWriteback'
 import { applyCanvasLayerEdit, isCanvasLayerEdit } from './studioCanvasLayerWriteback'
 import { createCanvasLayerScope } from './studioCanvasLayerScope'
 import { createSyntaxGuard } from './studioSyntaxGuard'
@@ -375,8 +376,15 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
         applied: true,
         ...(result.created === undefined ? {} : { created: result.created }),
         ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
-        ...(result.removed === undefined ? {} : { removed: result.removed }),
+        ...(result.removed === undefined ? {} : { removed: [result.removed] }),
       }
+    }
+    case 'list-item': {
+      // OD-8 — `loc` is the array literal's `[`, not an element: a `.map`
+      // row's reorder/delete/duplicate/paste rewrites the array it iterates.
+      const result = applyListItemEdit(loc, edit, project)
+      if (!result.ok) throw new StudioEditRefusalError(result.reason, result.message)
+      return { applied: true, ...(result.removed.length > 0 ? { removed: result.removed } : {}) }
     }
     case 'detach': {
       // P3-D (OD-7) — the import is retired by this batch's prune pass (see
@@ -385,7 +393,7 @@ function dispatchStudioEdit(dir: string, edit: StudioEdit, moduleImports: Module
       // whole of ⌘Z (`reinsert-detached`).
       const result = detachComponentInstance({ ...loc, workspaceRoot: dir, retireImport: false })
       if (!result.ok) throw new StudioEditRefusalError(result.refusal.reason, result.refusal.message)
-      return { applied: true, ...(result.created ? { created: [result.created] } : {}), removed: result.removed }
+      return { applied: true, ...(result.created ? { created: [result.created] } : {}), removed: [result.removed] }
     }
     case 'swap': {
       const result = swapComponentInstance({
@@ -500,6 +508,8 @@ export function applyStudioEditBatch(
   // edit's own `nodeId` so a caller can pair a `removed` entry with the edit
   // that produced it.
   const removed: (DeletedJsxText & { nodeId: string })[] = []
+  // OD-8 — each written `list-item` edit's array, pinned from the file's end.
+  const listArrayPositions: { nodeId: string; position: CreatedNodePosition[] }[] = []
   // WB-24 — no edit writes into a file that does not parse (`studioSyntaxGuard.ts`).
   const syntaxRefusal = createSyntaxGuard(dir, scope)
   const canvasLayerScope = createCanvasLayerScope(options.canvasLayers, identifyLayerTarget) // P5-G — agents never write loose layers
@@ -532,7 +542,13 @@ export function applyStudioEditBatch(
         if (outcome.swapDetail) swapDetails.push({ nodeId: edit.nodeId, ...outcome.swapDetail })
         if (outcome.createdStylesheet) createdStylesheets.push({ nodeId: edit.nodeId, ...outcome.createdStylesheet })
         if (outcome.promoteDetail) promoteDetails.push({ nodeId: edit.nodeId, ...outcome.promoteDetail })
-        if (outcome.removed) removed.push({ nodeId: edit.nodeId, ...outcome.removed })
+        for (const text of outcome.removed ?? []) removed.push({ nodeId: edit.nodeId, ...text })
+        const array = edit.kind === 'list-item' ? studioEditLocation(dir, edit.nodeId, scope) : null
+        if (array) {
+          const position: CreatedNodePosition[] = []
+          recordCreatedPosition(position, dir, edit.nodeId, array, scope)
+          listArrayPositions.push({ nodeId: edit.nodeId, position })
+        }
         const identity = fingerprintAfterWrite(dir, edit, project, scope)
         if (identity) fingerprints.push(identity)
       } else {
@@ -616,6 +632,9 @@ export function applyStudioEditBatch(
     retargeted: identity.retargeted,
     createdNodeIds: resolveCreatedNodeIds(createdPositions, lineCountAfter),
     relocatedNodeIds: resolveCreatedNodeIds(relocatedPositions, lineCountAfter),
+    listArrays: listArrayPositions.flatMap(({ nodeId, position }) =>
+      resolveCreatedNodeIds(position, lineCountAfter).map((to) => ({ nodeId: sentId.get(nodeId) ?? nodeId, to })),
+    ),
   }
 }
 

@@ -336,6 +336,7 @@ second page to read a dictionary never records the module behind it.
 | **An expression is joined, never overwritten** (P3-C, WB-17/WB-18) | `style={s}` → `{{ ...s, k: v }}`, a key after a spread wins; a class ADD to `className={expr}` → `cn(expr, "a")` or `` `a ${expr || ''}` `` (tokens first, so the parser's static prefix keeps them). A REMOVE from an expression still refuses — no text holds the token |
 | **A missing import is added AFTER the batch** (P3-C, WB-18/WB-19) | A CSS-Module binding is reserved in a `ModuleImportPlan` and imported after the last edit (an import line mid-batch would move every pending `line:col`). A component name the file already uses is imported under an alias (`{ Button as Button2 }`, `planImportBindings`), never refused |
 | **A `.map` row's style and class write its row template** (P3-C, OD-8, `loopTemplateNodeId`) | One JSX site renders every row; the owner decided restyling a row restyles the list. Told before (`list-row` notice) and after ("Applied to all N rows"), page re-read after. Its text writes its own array element; its attributes stay read-only |
+| **A `.map` row's reorder / delete / duplicate / paste write its ARRAY** (P3-D2, OD-8, `kind: 'list-item'`) | The parser stamps each row root with its array element (`PageNode.listRow`); `listRowPlans.ts` turns the gesture into ONE `list-item` edit on the literal's `[` (`editListItems`), or a `list-row` refusal naming why (imported, computed, prop, spread, nested, several roots, shared component). No optimistic tree change (a row id is its index); `listRowRemap.ts` re-addresses gestures queued behind the write. See `studio-import.md` → "A `.map` row's structure is written to its array" |
 | **Reload only when `written > 0`** | A reload re-parses and replaces the document. With zero writes it overwrites the user's in-memory edit — the change reverted itself ~2 s after typing |
 | **A reload is NARROW by default** | `shifted`/`sharedComponents` used to mean a full `loadSite()`; on an App Router board, shared layout chrome makes `sharedComponents` the common case, so every save reparsed all forty pages. `resyncBoardAfterWrite` (`studioBoardResync.ts`) asks `/reload-scope` which pages the touched files feed and patches only those. It widens whenever it cannot prove the scope — narrowing may never UNDER-reload |
 | **A save's resync runs LAST** | It rewrites the same diff baselines `saveSite` advances after its POST; running it inline lets the save's own commit overwrite the fresh disk baseline with the pre-reload document |
@@ -464,7 +465,7 @@ from the node id and `lockReason` alone:
 
 | Refusal | Because |
 |---|---|
-| `list-row` | a `.map` row — one piece of JSX renders every row |
+| `list-row` | a `.map` row — one piece of JSX renders every row. A row ROOT's reorder/delete/duplicate/paste write its array instead (OD-8); what still refuses is a gesture the array cannot express, a node inside a row, or an array not written in this file |
 | `shared-component` | an inlined id — the markup is in the component's own file, so a move there moves every instance |
 | `route-chrome` | a Next `layout`/`template` — one file, many frames |
 | `code-placed` | the parser recorded a structural `lockReason` |

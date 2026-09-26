@@ -64,6 +64,7 @@
  */
 import { pushToast } from '@ui/components/Toast'
 import { captureIdentities, relocateCapturedIds } from './sourceIdentity'
+import { listRowRemapGeneration, remapListRowId } from './listRowRemap'
 
 /**
  * How many gestures may wait behind the one on the wire.
@@ -153,6 +154,9 @@ export function deferWhileStructuralCommitInFlight(
     return true
   }
   const identities = captureIdentities(nodeIds)
+  // OD-8 — a `.map` row id is a position; a list write since may have moved
+  // the row it named (`listRowRemap.ts`).
+  const rowGeneration = listRowRemapGeneration()
   deferred.push(() => {
     const relocated = relocateCapturedIds(identities, nodeIds)
     if (!relocated) {
@@ -164,7 +168,7 @@ export function deferWhileStructuralCommitInFlight(
       })
       return
     }
-    gesture((nodeId) => relocated.get(nodeId) ?? nodeId)
+    gesture((nodeId) => remapListRowId(relocated.get(nodeId) ?? nodeId, rowGeneration))
   })
   return true
 }

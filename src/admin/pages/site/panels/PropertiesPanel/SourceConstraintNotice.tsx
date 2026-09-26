@@ -101,6 +101,14 @@ interface SourceConstraintNoticeProps {
    */
   hasWritableLocation: boolean
   /**
+   * OD-8 — the array this `.map` row ROOT is an element of, when it is one
+   * Studio can edit (`listRowArrayOf`). Such a row is not structurally locked
+   * (its place is written through the array), but the row-template facts
+   * still apply, so the notice still speaks — and says where a reorder,
+   * duplicate or delete goes.
+   */
+  listRowArray?: { source: string; index: number }
+  /**
    * The structural refusal, dressed as an `EditConstraint` by the caller —
    * `null`/`undefined` when `lockReason` is absent (there is nothing to
    * dress). Supplies the real remedy buttons below the bespoke prose; see
@@ -133,8 +141,10 @@ export function SourceConstraintNotice({
   nodeId,
   writeTargetReason,
   writeTargetNote,
+  listRowArray,
 }: SourceConstraintNoticeProps) {
-  const structural = lockReason !== undefined
+  const structural = lockReason !== undefined || listRowArray !== undefined
+  const heading = lockReason ?? (listRowArray ? `Item ${listRowArray.index + 1} of ${listRowArray.source}` : '')
   const writeRefused = !structural && textOrigin === undefined && writeTargetReason !== undefined
   const noteOnly = !structural && !writeRefused && textOrigin === undefined && writeTargetNote !== undefined
 
@@ -169,7 +179,7 @@ export function SourceConstraintNotice({
               : 'write-target-note'
       }
     >
-      {structural || writeRefused ? (
+      {lockReason !== undefined || writeRefused ? (
         <LockSolidIcon size={14} className={styles.icon} />
       ) : (
         <CodeIcon size={14} className={styles.icon} />
@@ -178,7 +188,7 @@ export function SourceConstraintNotice({
         <p className={styles.text}>
           {structural ? (
             <>
-              <strong>{lockReason}</strong>.{' '}
+              <strong>{heading}</strong>.{' '}
               {hasWritableLocation ? (
                 <>
                   This element can&apos;t be moved or deleted from here, but its own values are
@@ -186,6 +196,11 @@ export function SourceConstraintNotice({
                 </>
               ) : (
                 <>
+                  {listRowArray ? (
+                    <>
+                      Moving, duplicating or deleting this row edits <strong>{listRowArray.source}</strong>.{' '}
+                    </>
+                  ) : null}
                   One piece of source renders every row of this list, so a style or class change here
                   is written to that source and applies to all of them. Its other values stay
                   read-only.
