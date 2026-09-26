@@ -18,7 +18,7 @@
  * source. All-or-nothing: applying the writable half of a selection leaves the
  * canvas showing a tree the files do not describe.
  */
-import { deleteNode, type NodeTree, type PageNode } from '@core/page-tree'
+import { deleteNode, planListRowRemove, type NodeTree, type PageNode } from '@core/page-tree'
 import { broadcastOptimisticDelete } from '@site/canvas/frameAdapter/optimisticStructuralBroadcast'
 import { commitStudioDelete } from '@site/studio/studioStructuralCommits'
 import type { StructuralInverseTemplate } from '@site/studio/structuralUndoPlan'
@@ -30,6 +30,7 @@ import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommi
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDelete, presentStructuralRefusal } from './structuralSourceEdits'
 import { captureDeleteOrigin, tagStructuralGesture, type StructuralHistoryDeleteOrigin } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
+import { writeListRowPlan } from './listRowSourceWrites'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 /**
@@ -125,9 +126,14 @@ export function createDeleteNodesAction(helpers: SiteSliceHelpers): SiteSlice['d
 
     // Each id is looked up in its own page, not only in the active tree — a
     // board selection can span frames.
-    const plan = planSourceDelete(
-      nodeIds.map((id) => target.tree.nodes[id] ?? cur.site?.pages.find((page) => page.nodes[id])?.nodes[id]),
-    )
+    const nodes = nodeIds.map((id) => target.tree.nodes[id] ?? cur.site?.pages.find((page) => page.nodes[id])?.nodes[id])
+    // OD-8 — `.map` rows are removed from their array, in one write.
+    const rows = planListRowRemove(nodes.filter((node): node is PageNode => node !== undefined))
+    if (rows) {
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.delete, { get, set })
+      return
+    }
+    const plan = planSourceDelete(nodes)
     if (!plan.ok) {
       const refusedNodeId = plan.nodeId
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.delete, plan.constraint, {

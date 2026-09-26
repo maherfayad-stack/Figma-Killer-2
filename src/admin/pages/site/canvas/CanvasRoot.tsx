@@ -94,11 +94,8 @@ const TemplateModeControl = lazy(() =>
 )
 
 /**
- * Stable empty-breakpoints sentinel — used as the `?? fallback` in the
- * breakpoints selector so that `Object.is(prev, next)` returns `true` when
- * the site is null, preventing useSyncExternalStore from entering an
- * infinite re-render loop.  Never use `?? []` inline in a useEditorStore
- * selector — a new array literal has a new identity on every call.
+ * Stable `?? fallback` for the breakpoints selector: an inline `?? []` is a new
+ * array per call, and useSyncExternalStore would re-render forever on it.
  */
 const EMPTY_BREAKPOINTS: Breakpoint[] = []
 
@@ -106,7 +103,9 @@ interface CanvasRootProps {
   editable?: boolean
 }
 
-export function CanvasRoot({ editable = true }: CanvasRootProps) {
+// `props`, not `{ editable = true }`: see compiled-hot-components.test.ts.
+export function CanvasRoot(props: CanvasRootProps) {
+  const editable = props.editable ?? true
   const transformLayerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLDivElement>(null)
 
@@ -292,7 +291,7 @@ export function CanvasRoot({ editable = true }: CanvasRootProps) {
         lastCenteredKeyRef.current = centerKey
         return
       }
-      if (attempts++ >= MAX_ATTEMPTS) return
+      if ((attempts += 1) > MAX_ATTEMPTS) return // not `++`: see compiled-hot-components.test.ts
       timerId = setTimeout(tryCenter, RETRY_MS)
     }
     tryCenter()

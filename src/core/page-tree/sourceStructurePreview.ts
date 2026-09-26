@@ -26,6 +26,8 @@ import {
   refuseStructuralEdit,
   type StructuralRefusal,
 } from './sourceStructure'
+import { planListRowMove, type ListRowEditPlan } from './listRowPlans'
+import { isListRowNodeId } from './listRowSource'
 import type { PageNode } from './pageNode'
 import type { NodeTree } from './treeSchema'
 
@@ -62,7 +64,17 @@ export interface StructuralMoveCommit {
  * CMS tree, or a move that turned out to change no order).
  */
 export type StructuralMovePreview =
-  | { ok: true; commit: StructuralMoveCommit | null }
+  | {
+      ok: true
+      commit: StructuralMoveCommit | null
+      /**
+       * OD-8 — the move is a reorder of `.map` rows, written to their ARRAY
+       * (`listRowPlans.ts`), never to the JSX: `commit` is `null` and this is
+       * the write. A caller that mutates the tree on `commit === null` must
+       * check this first.
+       */
+      listRow?: ListRowEditPlan
+    }
   | { ok: false; refusal: StructuralRefusal }
 
 /**
@@ -119,6 +131,16 @@ export function previewStructuralMove(
   // A stale drop target — the mutation itself already throws or no-ops on
   // this; inventing a refusal for it would explain the wrong thing.
   if (!node || !newParent) return { ok: true, commit: null }
+
+  // OD-8 — rows move by rewriting their array's order, one write for the
+  // whole gesture (several rows included), or refuse naming why.
+  // A row gesture never falls through to the JSX rules below: an order that
+  // did not change (`null`) writes nothing.
+  if (nodeIds.some(isListRowNodeId)) {
+    const listRow = planListRowMove(tree, nodeIds, newParentId, newIndex)
+    if (!listRow) return { ok: true, commit: null }
+    return listRow.ok ? { ok: true, commit: null, listRow } : { ok: false, refusal: listRow.refusal }
+  }
 
   // P3-D — several elements are several single-element moves, each asked
   // against the tree the previous one leaves (`moveSequence.ts`). The answer

@@ -260,7 +260,7 @@ function resolveReinsertPlacement(
  * `null` for an empty list, so the caller can skip it entirely rather than
  * carry a zero-length edit through the splice arithmetic.
  */
-function buildImportReinsertEdit(sourceFile: SourceFile, verbatim: string, imports: readonly string[]): TextEdit | null {
+export function buildImportReinsertEdit(sourceFile: SourceFile, verbatim: string, imports: readonly string[]): TextEdit | null {
   if (imports.length === 0) return null
   const lines = imports.map((text) => `${text}\n`).join('')
   const declarations = sourceFile.getImportDeclarations()
@@ -308,7 +308,7 @@ function isJsxContentOnly(text: string): boolean {
 }
 
 /** Whether `text` parses, on its own, as exactly one `ImportDeclaration` — never trusted merely because the client sent it. */
-function parsesAsOneImportDeclaration(text: string): boolean {
+export function parsesAsOneImportDeclaration(text: string): boolean {
   const scratch = new Project({ useInMemoryFileSystem: true, skipAddingFilesFromTsConfig: true })
   const sourceFile = scratch.createSourceFile('reinsert-import-check.tsx', text)
   const statements = sourceFile.getStatements()

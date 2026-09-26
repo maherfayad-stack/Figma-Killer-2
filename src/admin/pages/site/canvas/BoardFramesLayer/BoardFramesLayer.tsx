@@ -73,11 +73,11 @@
  * holds (`framePool.ts`) — leaving the viewport no longer throws a document
  * away, so panning back to where you just were costs nothing at all.
  * Eviction is least-recently-on-screen, and the budget is the ONE thing that
- * varies: `framePoolBudget('portal', n)` for the same-origin `srcDoc` frames
- * every Tier 0/1 board renders, `framePoolBudget('live', n)` for the Tier-2
- * (`trust === 'run-project'`) frames whose `LiveBoardFrame` is a fallback
- * document AND a cross-origin bridge iframe against a real dev-server
- * process. There is one pool, one retention list and one budget per render —
+ * varies: `framePoolBudget('live', n)` once a Tier-2 board's dev server is
+ * READY and its frames are cross-origin documents against a real dev-server
+ * process, `framePoolBudget('portal', n)` for every other frame — a Tier 0/1
+ * board's `srcDoc` frames, and a Tier-2 board's frames while its dev server is
+ * booting, failed or stopped, when each one is its same-origin fallback. There is one pool, one retention list and one budget per render —
  * see `framePool.ts` for why there used to be two, and what each budget is
  * measured against.
  *
@@ -135,6 +135,8 @@ import { FRAME_VIEWPORT_MARGIN, isFrameOnScreen } from './frameVirtualization'
 import { nextFramePool, sameFramePool, type FrameMountCost } from './framePool'
 import { resolveFramesWithPages } from './resolveFramesWithPages'
 import { getStudioTrustTier, subscribeStudioTrustTier } from '@site/studio/studioProjectTrust'
+import { useDevServerReadiness } from '@site/studio/useDevServerReadiness'
+import { useAdminUi } from '@admin/state/adminUi'
 import { useMarqueeSelection } from './useMarqueeSelection'
 import { BoardFrameView } from './BoardFrameView'
 import styles from './BoardFramesLayer.module.css'
@@ -218,13 +220,20 @@ export function BoardFramesLayer() {
   // it needs.
   const [retention, setRetention] = useState<FrameRetention>(INITIAL_RETENTION)
   // What one mounted frame costs on this board, and therefore how big the
-  // pool may be. A Tier-2 frame is a `LiveBoardFrame`: a fallback document
-  // AND a cross-origin bridge iframe against a real dev-server process, so it
-  // gets the capped `'live'` budget; every other board's frames are cheap
-  // same-origin portal frames. This is the ONLY place the trust tier touches
-  // mounting.
+  // pool may be. A Tier-2 frame whose dev server is READY is a cross-origin
+  // document against a real dev-server process, so it gets the capped
+  // `'live'` budget. Until then — booting, failed, or never started — a
+  // Tier-2 frame is its same-origin fallback, exactly what a Tier 0/1 frame
+  // is, and gets the portal budget with its headroom. That headroom is what
+  // keeps a departed frame mounted long enough to be rasterized into its
+  // poster (`useFramePosterCapture`); under the live budget a frame leaving
+  // a full screen was evicted on the spot, so a Tier-2 board whose server was
+  // not up never got a poster at all (P6-C). This is the ONLY place the trust
+  // tier touches mounting.
   const trust = useSyncExternalStore(subscribeStudioTrustTier, getStudioTrustTier, getStudioTrustTier)
-  const frameCost: FrameMountCost = trust === 'run-project' ? 'live' : 'portal'
+  const projectDir = useAdminUi((s) => s.studioProject?.dir ?? null)
+  const devServer = useDevServerReadiness(projectDir)
+  const frameCost: FrameMountCost = trust === 'run-project' && devServer.phase === 'ready' ? 'live' : 'portal'
 
   // Resolved frames + the viewport intersection test, hoisted ABOVE this
   // component's `hasActiveBoard` early return because the retention effect
@@ -245,8 +254,8 @@ export function BoardFramesLayer() {
       ),
     )
     .map(({ frame }) => frame.id)
-  // Tagged with the cost too: auto-promotion to Tier 2 (and its Undo) can
-  // flip the budget under a board that has not panned at all, and the pool
+  // Tagged with the cost too: a trust change, or the dev server coming up,
+  // flips the budget under a board that has not panned at all, and the pool
   // has to be recomputed when it does.
   const poolKey = `${frameCost}:${onScreenFrameIds.join('|')}`
 

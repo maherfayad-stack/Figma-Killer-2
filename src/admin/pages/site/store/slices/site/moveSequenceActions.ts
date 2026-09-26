@@ -34,6 +34,7 @@ import {
   invertMoveSequence,
   moveNodes,
   moveOnScratch,
+  planListRowMoveSequence,
   planSiblingSteps,
   type SequencedMove,
   type SiblingStepRefusal,
@@ -48,6 +49,7 @@ import { broadcastOptimisticMove } from '@site/canvas/frameAdapter/optimisticStr
 import { STRUCTURAL_REFUSAL_TITLE, planSourceMove, presentStructuralRefusal } from './structuralSourceEdits'
 import { tagStructuralGesture } from './structuralHistory'
 import { trackStructuralTreeCommit } from './structuralCommitRollback'
+import { writeListRowPlan } from './listRowSourceWrites'
 import type { SiteSlice, SiteSliceHelpers } from './types'
 
 type MoveSequenceActions = Pick<SiteSlice, 'stepSiblings' | 'moveNodesInSequence'>
@@ -131,6 +133,13 @@ export function createMoveSequenceActions(
       }
       const tree = readTree()
       if (!tree) return
+      // OD-8 — `.map` rows: the order the whole sequence leaves, written to
+      // their array in one write (a grid-row step and a multi-row drag alike).
+      const rows = planListRowMoveSequence(tree, moves)
+      if (rows) {
+        writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.move, { get, set })
+        return
+      }
       // Every step against the tree the steps before it leave — all or
       // nothing, decided before the real tree changes.
       const scratch = createScratchTree(tree)

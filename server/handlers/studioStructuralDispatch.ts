@@ -118,7 +118,7 @@ export function dispatchStructuralEdit(
         applied: true,
         ...(result.created === undefined ? {} : { created: result.created }),
         ...(result.relocated === undefined ? {} : { relocated: result.relocated }),
-        ...(result.removed === undefined ? {} : { removed: result.removed }),
+        ...(result.removed === undefined ? {} : { removed: [result.removed] }),
       }
     }
   }

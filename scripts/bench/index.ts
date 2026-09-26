@@ -40,6 +40,7 @@ import { browserBench } from './benches/browser'
 import { snapshotTokensBench } from './benches/snapshot-tokens'
 import { agentTurnBench } from './benches/agent-turn'
 import { agentModelsBench } from './benches/agent-models'
+import { studioLoadBench } from './benches/studio-load'
 import { studioBoardBench } from './studioBoard.bench'
 
 const REPO_ROOT = resolve(import.meta.dir, '../..')
@@ -65,6 +66,7 @@ const DEFAULT_BENCHES: readonly BenchModule[] = [
   footprintBench,
   healthBench,
   agentTurnBench,
+  studioLoadBench,
 ]
 
 const ALL_BENCHES: readonly BenchModule[] = [

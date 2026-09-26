@@ -4,11 +4,12 @@
  * is the one writer that has to find its SOURCE on the board before it can
  * plan a write, which none of the others do.
  */
-import { decodeSourceNodeId, describeStructuralRefusal, isSourceDerivedNodeId, type NodeTree, type PageNode } from '@core/page-tree'
+import { decodeSourceNodeId, describeStructuralRefusal, isSourceDerivedNodeId, planListRowCopyTo, type NodeTree, type PageNode } from '@core/page-tree'
 import { commitStudioDuplicateTo } from '@site/studio/studioStructuralCommits'
 import { deferWhileStructuralCommitInFlight } from '@site/studio/structuralCommitQueue'
 import { findUniqueLocation } from '@site/studio/sourceIdentity'
 import { STRUCTURAL_REFUSAL_TITLE, planSourceDuplicateTo, planSourceInsert, presentStructuralRefusal } from './structuralSourceEdits'
+import { writeListRowPlan } from './listRowSourceWrites'
 import type { SiteSliceHelpers } from './types'
 
 /** What a paste needs from the clipboard: its roots, and the snapshot that records who each one was (`sourceFingerprint`). */
@@ -112,6 +113,13 @@ export function createStudioPasteWrite(
       return true
     }
 
+    // OD-8 — copied `.map` rows are pasted into their own list's array.
+    const rowNodes = (sources as string[]).map(nodeOnBoard).filter((node): node is PageNode => node !== undefined)
+    const rows = planListRowCopyTo(tree, rowNodes, parentId, index ?? Number.MAX_SAFE_INTEGER)
+    if (rows) {
+      writeListRowPlan(rows, STRUCTURAL_REFUSAL_TITLE.insert, { get, set })
+      return true
+    }
     const plan = planSourceDuplicateTo(tree, sources as string[], parentId, index ?? Number.MAX_SAFE_INTEGER, nodeOnBoard)
     if (!plan.ok) {
       presentStructuralRefusal(STRUCTURAL_REFUSAL_TITLE.insert, plan.constraint, {

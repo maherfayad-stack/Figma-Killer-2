@@ -181,6 +181,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `perf-15` — P6-C: every audit budget is a gate (plus a production-build e2e pass); warm click→ring 62→47 ms prod, cold 109→69 ms, keystroke→paint 32→26 ms, Tier-2 posters 0/4→2/2; CanvasRoot compiled by the React Compiler again — #272 — 2026-09-25
+- `P3-D2` — P3-D2: drag, ⌥↑/↓, grid-row ↑/↓, ⌘D, ⌥-drag and paste on a .map row write the array literal (comments and commas kept, unique copy keys, one undo); honest refusals for non-literal arrays — #273 — 2026-09-25
 - `canvas-39` — P5-A: ⌘V from the paste event in every frame, copy marker with copiedAt, image paste through the drop pipeline, SVG paste through sanitizeSvg; live-frame keys can never arm clipboard.read; security approved — #270 — 2026-09-25
 - `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
@@ -189,8 +191,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-33` — P5-G: loose layers on the empty board (FC-1..5), drop images on the board, decoder refuses layer files by default (only /save opts in); security approved — #260 — 2026-09-25
 - `perf-14` — shell: build-tool configs out of the ts program (288 → 86 files), cold load ~3.4 → ~1 s, warm 23 → 3 ms, prototype shell once per project — #267 — 2026-09-25
 - `store-20` — P6-A: a prop edit re-renders 1 node not 300, a move remounts 0 not 297, frames restyle 0 not 12; budget in bench:editor-store — #266 — 2026-09-25
-- `perf-13` — P6-B: restart 2.8 s → 0.65 s, warm /load 55 → 18 ms on 40 pages; page edit and cold at baseline (prewarm builds the program, deferred cache writes) — #263 — 2026-09-25
-- `canvas-34` — P5-B2: dropped and every literal public/ image loads in design frames via the hardened asset route (`url=`), media-only MIME gate, normalized rewrite; security approved — #262 — 2026-09-25
 
 ---
 

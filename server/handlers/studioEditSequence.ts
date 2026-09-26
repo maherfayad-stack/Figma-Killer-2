@@ -223,6 +223,7 @@ function refused(edits: readonly StudioEdit[], refusals: StudioEditRefusal[], to
     prunedImports: [],
     fingerprints: [],
     retargeted: [],
+    listArrays: [],
   }
 }
 
@@ -269,6 +270,7 @@ export function applyStudioEditSequence(
   const relocated = new Map<string, string>()
   const removed: StudioEditBatchResult['removed'] = []
   const prunedImports: StudioEditBatchResult['prunedImports'] = []
+  const listArrays: StudioEditBatchResult['listArrays'] = []
   let sharedComponents = false
 
   const restore = (): void => {
@@ -314,6 +316,7 @@ export function applyStudioEditSequence(
     }
     for (const entry of result.removed) removed.push({ ...entry, nodeId: edit.nodeId })
     prunedImports.push(...result.prunedImports)
+    for (const entry of result.listArrays) listArrays.push({ ...entry, nodeId: edit.nodeId })
 
     // Follow every id the sequence still cares about through this step.
     const placed = [...result.relocatedNodeIds, ...result.createdNodeIds]
@@ -393,6 +396,7 @@ export function applyStudioEditSequence(
     prunedImports,
     fingerprints: [],
     retargeted: identity.retargeted,
+    listArrays,
   }
 }
 

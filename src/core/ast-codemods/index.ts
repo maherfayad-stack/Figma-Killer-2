@@ -98,6 +98,8 @@ export type {
   DeleteJsxRefusalReason,
 } from './deleteJsxElement'
 export { reinsertJsxSource } from './reinsertJsxSource'
+export { editListItems } from './editListItems'
+export type { EditListItemsParams, EditListItemsResult, ListItemRefusal, ListItemRefusalReason } from './editListItems'
 export type {
   ReinsertJsxRefusal,
   ReinsertJsxRefusalReason,

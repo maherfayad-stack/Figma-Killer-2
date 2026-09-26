@@ -36,6 +36,8 @@
  * | transplant (move) | `transplant` back to the parent it left |
  * | transplant (copy) | `delete` the copy it created |
  * | delete | `reinsert-source` each element back where it was |
+ * | a `.map` row's reorder / copy (OD-8) | the inverse `list-item` edit, known at gesture time |
+ * | a `.map` row's delete (OD-8) | `list-item` insert of the elements' own texts, from `removed` |
  *
  * That is why a codemod reporting the ids it CREATED (`store-13`) and the ids
  * it RELOCATED are both preconditions for undo: the inverse cannot be written
@@ -144,6 +146,19 @@ export type StructuralInverseTemplate =
       kind: 'known'
       inverse: StructuralEditPayload[]
     }
+  | {
+      /**
+       * OD-8 — the inverse of a `.map` row delete, which removed ARRAY
+       * ELEMENTS (`list-item` remove): each element's own text goes back at
+       * its index. `nodeId` is the array literal's `[` — the same before and
+       * after, since every write lands inside it — and `length` is how many
+       * elements the remove left.
+       */
+      kind: 'list-item-restore'
+      nodeId: string
+      length: number
+      at: number[]
+    }
   | { kind: 'unsupported'; message: string }
   // ── P5-G, the free canvas ────────────────────────────────────────────────
   /** A layer this gesture made (a create, a lifted COPY): delete its module. Known at gesture time — the layer id is minted by the client. */
@@ -181,6 +196,8 @@ export interface StructuralWriteOutcome {
   removed: readonly StructuralRemovedText[]
   /** `store-15` — every file whose import a `delete`'s prune pass removed. Empty when nothing was pruned. */
   prunedImports: readonly StructuralPrunedImports[]
+  /** OD-8 — where each `list-item` edit's array literal is after the write (`nodeId` as sent, `to` now). */
+  listArrays: readonly { nodeId: string; to: string }[]
 }
 
 /**
@@ -231,6 +248,23 @@ export function resolveStructuralInverse(
       // tree as it is when ⌘Z is pressed. Appending is the honest fallback the
       // wire already gives a missing anchor.
       return [{ kind: 'transplant', nodeId: moved, parentNodeId: template.parentNodeId }]
+    }
+    case 'list-item-restore': {
+      // All or nothing, `reinsert-deleted`'s rule: the texts come back in the
+      // remove's own ascending order, one per index, or not at all.
+      const texts = outcome.removed.filter((entry) => entry.nodeId === template.nodeId).map((entry) => entry.text)
+      if (texts.length !== template.at.length) return null
+      const imports = outcome.prunedImports.find((entry) => entry.file === fileOfNodeId(template.nodeId))?.declarations ?? []
+      // The array's `[` as the write left it: the prune above may have moved it.
+      const array = outcome.listArrays.find((entry) => entry.nodeId === template.nodeId)?.to ?? template.nodeId
+      return [
+        {
+          kind: 'list-item',
+          nodeId: array,
+          length: template.length,
+          op: { kind: 'insert', at: [...template.at], texts, ...(imports.length > 0 ? { imports: [...imports] } : {}) },
+        },
+      ]
     }
     case 'reinsert-detached': {
       const [inlined] = outcome.createdNodeIds
@@ -344,7 +378,9 @@ const NODE_ID_FIELDS = ['anchorNodeId', 'parentNodeId'] as const
  * `element-moved` when that position now holds something else.
  */
 export function addressesSourceLiteral(edit: StructuralEditPayload): boolean {
-  return edit.kind === 'asset'
+  // OD-8 — a `list-item` edit names an ARRAY LITERAL's `[`, never a node; the
+  // codemod's own `length` check is its guard.
+  return edit.kind === 'asset' || edit.kind === 'list-item'
 }
 
 /** Every node id one edit payload names, `nodeId` first — the order a reader would look for them. */
