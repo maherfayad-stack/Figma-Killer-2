@@ -13,7 +13,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 ### store-22 — P3-F real delete undo: one compare-and-swap undo journal (ERR-2, DET-4)
 - **Agent:** store-engineer (P3-F bundle) · **Branch:** `feat/delete-undo-journal` off trunk `08c429f1` · **Updated:** 2026-09-26
-- **Stage:** done, draft PR against `feat/canvas-excellence`; a security review follows. Long form in the PR body.
+- **Stage:** done, draft PR #274 against `feat/canvas-excellence`; a security review follows. Long form in the PR body. Gates: build + lint clean, suite green bar pre-existing; e2e passes (⌘Z → bytes 43 ms).
 - **Goal:** ⌘Z after delete, detach, swap or extract restores the file byte for byte, or refuses honestly. One mechanism, not an inverse codemod per verb.
 - **Slices touched:** `site` only (history entries). No new state, no new selector.
 - **Mutations / history:**
