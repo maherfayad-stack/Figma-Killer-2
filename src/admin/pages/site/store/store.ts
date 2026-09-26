@@ -23,6 +23,7 @@ import { createBoardSlice } from './slices/boardSlice'
 import { createCommentsSlice } from './slices/commentsSlice'
 import { createPrototypeSlice } from './slices/prototypeSlice'
 import { createCanvasLayerSlice } from './slices/canvasLayerSlice'
+import { createStreamedLoadSlice } from './slices/streamedLoadSlice'
 import { selectActiveBoard } from './slices/boardSelectors'
 import { createLocalizedPageSlice, localizedPageKey } from './slices/localizedPageSlice'
 import { bindPluginRuntimeStoreApi } from '@core/plugins/runtime'
@@ -97,6 +98,7 @@ export const useEditorStore = create<EditorStore>()(
           ...createCommentsSlice(...args),
           ...createPrototypeSlice(...args),
           ...createCanvasLayerSlice(...args),
+          ...createStreamedLoadSlice(...args),
           ...createLocalizedPageSlice(...args),
         }),
         { enableAutoFreeze: true },

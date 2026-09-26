@@ -219,6 +219,9 @@ export function createLifecycleActions({
           historySurvivesReload(state._historyFuture, knownNodeIds)
 
         state.site = { ...site, packageJson, runtime: siteRuntime }
+        // P6-B — a whole document replaces whatever a streamed load still had
+        // on its way (`streamedLoadSlice.ts` re-marks them when this load IS one).
+        if (state.pendingPages.length > 0) state.pendingPages = []
         state.packageJson = packageJson
         state.siteRuntime = siteRuntime
         // Default to the home page (slug `index`) so the editor opens on `/`
@@ -290,6 +293,7 @@ export function createLifecycleActions({
       clearNodeRenderKeys()
       set((state) => {
         state.site = null
+        if (state.pendingPages.length > 0) state.pendingPages = []
         state.packageJson = clonePackageJson(DEFAULT_SITE_PACKAGE_JSON)
         state.siteRuntime = cloneSiteRuntimeConfig(DEFAULT_SITE_RUNTIME)
         state.activePageId = null

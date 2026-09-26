@@ -263,7 +263,7 @@ jobs:
       - name: Run the budget specs
         run: |
           specs=""
-          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
+          for spec in tests/e2e/studio-board-perf.e2e.ts tests/e2e/studio-board-load.e2e.ts tests/e2e/canvas-feel-budgets.e2e.ts tests/e2e/canvas-edit-budgets.e2e.ts tests/e2e/live-frame-budgets.e2e.ts tests/e2e/inspector-panel-measurement.e2e.ts tests/e2e/inspector-height.e2e.ts tests/e2e/studio-feel.e2e.ts; do
             if [ -f "$spec" ]; then
               specs="$specs $spec"
             else

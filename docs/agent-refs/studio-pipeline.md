@@ -66,11 +66,26 @@ GET /admin/api/studio/load?dir=<abs>            server/handlers/studio.ts
         7. loadStudioStyles — .css → StyleRule   studioCss.ts
         8. parsedPageToSitePage()                studio-sync/
         9. rewriteStudioAssetSentinels()         → /admin/api/studio/asset URLs
-   → editor store  →  board frames  →  iframes
+   → ?stream=1: one meta line (registries + `pageList`), then one line per
+     page in viewport order (`studio/loadPriority.ts`), each with its `index`
+   → editor store, AS THE PAGES ARRIVE on a first open (P6-B:
+     `studio/studioProjectLoad.ts` → `streamedLoadSlice.ts`; a frame whose
+     page is still on the wire paints `PendingBoardFrame`)
+   → board frames  →  iframes
 
-Independently, the CLIENT (`fsCodemodAdapter.ts`'s `loadSite`) calls
-`POST /admin/api/studio/tokens` (`tokens-01`, `studio/tokenExtract.ts`) right
-after `GET /admin/api/studio/framework` — reads `:root` custom properties out
+The stream is shaped per page, but the COMPUTE behind it is whole-project: the
+style registry's class ids are last-wins across every page's stylesheets in
+page order, so no page line can leave before every route is parsed. A cold
+load's first line waits for the whole parse; streaming buys the board painting
+the first pages while the rest are still being sent, parsed and validated.
+
+Beside the load, the CLIENT (`studioProjectLoad.ts`) reads
+`GET /admin/api/studio/framework` (started together with `/load`; the open
+document's framework), and AFTER it — unwaited, adopted when it lands as part
+of the read (`adoptLoadedFramework`), P6-B — calls
+`POST /admin/api/studio/tokens` (`tokens-01`, `studio/tokenExtract.ts`), which
+costs the server 150–600 ms per open and, run beside `/load`, held its first
+byte back by as much. The extraction reads `:root` custom properties out
 of the SAME `compileProjectStyles` output step 6.5 already produced (falling
 back to a static Tailwind-theme read, then vendor package CSS), classifies
 them into `FrameworkColorToken`/`FrameworkSpacingGroup`/

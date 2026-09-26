@@ -144,7 +144,7 @@ describe('saveSite → narrow board resync', () => {
             authoredCss: '',
             trust: 'static',
             paletteHiddenModuleIds: [],
-            pageCount: pages.length,
+            pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })),
           },
           ...pages.map((page, index) => ({ kind: 'page', page, index })),
         ]

@@ -97,7 +97,7 @@ describe('studioLoadStreamLines — P6-B viewport order', () => {
         paletteHiddenModuleIds: [], missingPageIds: undefined,
       })) lines.push(line)
 
-      expect(lines[0]).toMatchObject({ kind: 'meta', pageCount: 4 })
+      expect(lines[0]).toMatchObject({ kind: 'meta', pageList: pages.map(({ id, slug, title }) => ({ id, slug, title })) })
       const pageLines = lines.slice(1).map((line) => [(line.page as Page).id, line.index])
       expect(pageLines).toEqual([['d', 3], ['b', 1], ['c', 2], ['a', 0]])
     } finally {
