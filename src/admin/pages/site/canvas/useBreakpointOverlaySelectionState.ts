@@ -48,7 +48,7 @@ export function idsRenderedByFramePage(
 }
 
 /** One id's answer to {@link idsRenderedByFramePage} — no allocation, for the per-store-change hover read. */
-function framePageCanRender(
+export function framePageCanRender(
   nodeIdToPageIds: ReadonlyMap<string, readonly string[]>,
   id: string,
   framePageId: string | null,

@@ -1,8 +1,9 @@
 /**
  * LiveBoardFrame — L8 Phase A (`perf-06`, STATE.md).
  *
- * Proves the three-way not-ready/ready render fork the design specifies:
- * poster cached, no poster cached, and the real `ready` swap — driven by a
+ * Proves the not-ready/ready render fork: the fallback with no poster, the
+ * fallback with its cached poster painted over it until its tree commits,
+ * and the real `ready` swap — driven by a
  * REAL `BridgeFrameAdapter` constructed by the real `IframeFrameSurface`
  * (only `useLiveOrigin`/`useDevServerReadiness` are stubbed, so this proves
  * the actual wiring, not a mocked stand-in for it).
@@ -109,7 +110,12 @@ describe('LiveBoardFrame — not-ready render fork', () => {
     })
   })
 
-  it('poster cached: shows the poster instead of a second live portal render', async () => {
+  it('poster cached: the poster is painted OVER the clickable fallback, never instead of it (P6-C)', async () => {
+    // A frame whose poster was captured while it sat in the pool comes back
+    // on screen with that poster cached. It used to render the poster ALONE —
+    // a picture with no frame under it, which nothing could select until the
+    // dev server reported ready, and on a board whose server could not start,
+    // never.
     const page = makePage({ id: 'sms' })
     setFramePoster(page, WIDTH, 'data:image/png;base64,AAAA')
 
@@ -124,9 +130,16 @@ describe('LiveBoardFrame — not-ready render fork', () => {
       />,
     )
 
-    expect(container.querySelector('[data-testid="board-frame-poster"]')).not.toBeNull()
-    // No SECOND portal render underneath the poster.
-    expect(container.querySelector('iframe[srcdoc]')).toBeNull()
+    // The real, interactive fallback is mounted, and the poster is never a
+    // standalone placeholder in its place. (It is an overlay until the
+    // fallback's tree commits — which `render`'s `act` has usually already
+    // flushed here, so only its eventual absence is asserted.)
+    expect(container.querySelector('iframe[srcdoc]')).not.toBeNull()
+    expect(container.querySelector('[data-testid="board-frame-poster"]')).toBeNull()
+    await waitFor(() => {
+      expect(container.querySelector('[data-testid="board-frame-poster-overlay"]')).toBeNull()
+    })
+    expect(container.querySelector('iframe[srcdoc]')).not.toBeNull()
 
     const bridgeContainer = container.querySelector('[data-testid="live-board-frame-bridge"]')
     expect(bridgeContainer?.hasAttribute('hidden')).toBe(true)

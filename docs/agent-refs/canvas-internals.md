@@ -1519,6 +1519,54 @@ formula deliberately omits `CanvasTransformLayer`'s 80px `top`/`left` offset**
 anything that needs to be pixel-exact (a ruler tick, a measurement HUD); see
 `CanvasRulers/rulerGeometry.ts` for the corrected formula and why.
 
+### What a click and a keystroke re-render (P6-C)
+
+`canvas-edit-budgets.e2e.ts` and `canvas-feel-budgets.e2e.ts` put numbers on a
+click and a keystroke on the 40 × 300 board; `tests/e2e/helpers/reactRenderCounter.ts`
+counts which components rendered (a minimal DevTools hook — no product code).
+What it found, and the rule each finding became:
+
+- **An action hook reads state when it acts, never subscribes to it.**
+  `useInsertModule`, `useInsertInserterItem` and `useCanvasInsertionDrag`
+  subscribed to the selection and the active page — values they read only when
+  something is inserted — so every panel that offers insertion (the Assets
+  panel: 46 cards, ~130 buttons and tooltips) re-rendered on every click and
+  every keystroke. They read `useEditorStore.getState()` at call time now;
+  `useModuleInsertionContext` subscribes to four primitives. Gated by
+  `assetsPanelRenderScope.test.tsx`.
+- **A store write that changes nothing notifies nobody** (`store/skipUnchangedSets.ts`).
+  An object partial always made a new state object, so `set({ focusedPanel })`
+  with the current value swept every mounted `NodeRenderer`'s selectors — a
+  canvas click made two such writes, ~8–10 ms each in production.
+- **Per-frame chrome reads per-frame answers.** Every mounted frame runs
+  `BreakpointSelectionOverlay`, `ClassStyleInjector` and the tree-ladder hook.
+  The ladder reads the active page (a new object after every keystroke) only
+  while Alt is held — subscribed unconditionally it re-rendered all 9 frames'
+  chrome per keystroke (measured 9 → 0). The forced-state preview is its own
+  component, scoped to the frame that renders the selected node
+  (`ClassStyleInjector` renders per click 9 → 0).
+- **An overlay write that changes nothing is skipped** (`PortalFrameAdapter.applyOverlay`):
+  reassigning a `<style>`'s text re-parses it and invalidates style for the
+  whole frame document even when the text is identical. Measured: 3 identical
+  rewrites per keystroke → 0.
+- **The hot components must actually be compiled.** The React Compiler
+  silently skips a function it cannot lower — with this repo's
+  `babel-plugin-react-compiler` 1.0 on Babel 8, a default inside a
+  destructured parameter (`{ editable = true }`) is enough — and nothing fails.
+  `CanvasRoot` was skipped, so its context values were rebuilt on every
+  render and every frame's selection chrome re-rendered on every click and
+  keystroke. `compiled-hot-components.test.ts` compiles the hot files with the
+  exact Vite pipeline and fails naming the reason. `NodeRenderer`,
+  `BreakpointFrame`, `IframeFrameSurface` and `BreakpointSelectionOverlay`
+  still do not compile (see that test's header).
+
+Measured on the 40 × 300 board (dev build / production bundle,
+`E2E_VITE_MODE=preview`): warm click → ring (mean) 144 → 75 ms / 61.6 → 47.1 ms;
+inspector keystroke → canvas paint (median) 115 → 42 ms / 32 → 26 ms; cold
+click → ring 253 → 216 ms / 109 → 69 ms. WS-5.6's 32 ms click target is **not
+met** in production; `canvas-feel-budgets.e2e.ts`'s warm-click docblock lists
+what is left in a click.
+
 ### Mounting a frame (S1) — what a mount actually costs, measured
 
 `perf-01` recorded "a zoom that mounts frames costs 290–337 ms in one frame"
@@ -1579,13 +1627,26 @@ there is one policy, parameterised by what a frame **costs**:
 
 | `FrameMountCost` | A mounted frame is | Budget |
 |---|---|---|
-| `'portal'` (Tier 0/1) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
-| `'live'` (Tier 2) | `LiveBoardFrame`: a Tier-0 fallback document **and** a cross-origin bridge iframe against a real dev-server process — two documents until it reports ready | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
+| `'portal'` (Tier 0/1, and Tier 2 until its dev server is ready) | one same-origin `srcDoc` iframe, ~12 ms to create | `max(8, onScreen + 4)` — a floor with headroom |
+| `'live'` (Tier 2, dev server ready) | `LiveBoardFrame`: a cross-origin bridge iframe against a real dev-server process (plus its fallback until that frame reports ready) — measured ~0.85 MB of heap, one document and ~110 DOM nodes per small frame (`docs/audits/2026-09-13-live-frame-memory-baseline.md`) | `max(onScreen, 8)` — a ceiling only the visible set may exceed |
 
-The cost is derived from the trust tier in `BoardFramesLayer` and **nowhere
-else**; the tier no longer reaches mounting at all. One retention list, one
-`useState`, one budget per render. Switching tier (Tier-2 auto-promotion, or
-its Undo) is part of the retention key, so the pool resizes without a pan.
+The cost is derived from the trust tier **and the dev server's readiness** in
+`BoardFramesLayer` and **nowhere else**; the tier no longer reaches mounting at
+all. One retention list, one `useState`, one budget per render. A trust change,
+or the dev server coming up, is part of the retention key, so the pool resizes
+without a pan.
+
+**Why readiness and not just the tier (P6-C).** Until its dev server is ready
+a Tier-2 frame IS its same-origin fallback (the bridge iframe has nothing to
+load), and the portal headroom is the only window in which a departed frame
+can be rasterized into its poster — capture runs only for a frame that is off
+screen and still pooled (P2-I). Under the live budget a frame leaving a full
+screen was evicted on the spot, so a Tier-2 board whose server was booting,
+failed or could not start (no `node_modules`) never got a poster: `perf-01`
+read 0/4. And `LiveBoardFrame` paints a cached poster OVER its clickable
+fallback until the fallback's tree commits — never INSTEAD of it; it used to
+replace it, so a frame panned away from and back to became a picture nothing
+could select until the server reported ready.
 
 `resolveFrameMount({ isOnScreen, isPooled })` is the single per-frame answer,
 returning `{ mounted, reason }` where `reason` is `on-screen` / `pooled` /

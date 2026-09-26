@@ -102,8 +102,6 @@ export function useCanvasInsertionDrag<TGhost>({
   onDrop,
   onDraggingChange,
 }: UseCanvasInsertionDragOptions<TGhost>) {
-  const canvasPage = useEditorStore(selectActiveCanvasPage)
-  const setActiveBreakpoint = useEditorStore((s) => s.setActiveBreakpoint)
   const [drag, setDrag] = useState<CanvasInsertionDragState<TGhost> | null>(null)
   // A drag ends on the same pointerup that would otherwise fire a click on the
   // button it started from — which would insert a SECOND copy, at the default
@@ -124,6 +122,11 @@ export function useCanvasInsertionDrag<TGhost>({
   const startDrag = (event: ReactPointerEvent<HTMLElement>, ghost: TGhost, label: string) => {
     if (event.button !== 0) return
 
+    // The page the drag starts over, read now rather than subscribed: every
+    // panel that offers a draggable item (the Assets panel, the notch) would
+    // otherwise re-render on every keystroke, which makes a new page object,
+    // for a value only a drag reads (P6-C).
+    const canvasPage = selectActiveCanvasPage(useEditorStore.getState())
     const startX = event.clientX
     const startY = event.clientY
     let lastPoint = { clientX: startX, clientY: startY }
@@ -231,7 +234,7 @@ export function useCanvasInsertionDrag<TGhost>({
       if (resolved.pageId !== canvasPage?.id) {
         useEditorStore.getState().openPageInCanvas(resolved.pageId)
       }
-      if (onDrop(ghost, resolved.location)) setActiveBreakpoint(resolved.breakpointId)
+      if (onDrop(ghost, resolved.location)) useEditorStore.getState().setActiveBreakpoint(resolved.breakpointId)
     }
 
     const cancel = () => {
