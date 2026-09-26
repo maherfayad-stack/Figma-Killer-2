@@ -27,6 +27,7 @@ import { useEditorStore } from '@site/store/store'
 import { presentedElementForNode } from './canvasNodeLookup'
 import { findNodeById } from './InPlaceInspector/findNodeById'
 import { RESIZE_HANDLE_ATTR, RESIZE_HANDLES, RESIZE_SIZE_BADGE_ATTR } from '@core/studio-runtime'
+import { useVectorEditTarget } from './BoardVectorLayer/vectorEditState'
 import { canOfferResize } from './resizeOffer'
 import { useElementResizeDrag } from './useElementResizeDrag'
 import { CanvasSpacingHandles } from './CanvasSpacingHandles'
@@ -60,7 +61,10 @@ export function CanvasResizeHandles({ nodeId, iframeDoc, onFrameReady }: CanvasR
   // and the tick runs 60 times a second.
   const target = iframeDoc ? presentedElementForNode(iframeDoc, nodeId) : null
   const display = target ? (iframeDoc?.defaultView?.getComputedStyle(target).display ?? '') : ''
-  const sizeable = canOfferResize({
+  // P5-D — while this svg's POINTS are being edited, a drag on it means a
+  // point; its box handles would compete for the same presses.
+  const editingPoints = useVectorEditTarget()?.hostNodeId === nodeId
+  const sizeable = !editingPoints && canOfferResize({
     moduleId: node?.moduleId ?? null,
     hasOwnElement: target !== null,
     display,

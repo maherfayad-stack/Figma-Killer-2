@@ -1190,8 +1190,15 @@ away.
   `beginCanvasGesture()`, and on `pointerup` posts ONE `svg-attr`
   (`svgPartCommits.ts`, a `known` structural inverse = one undo entry). A write
   that does not land restores the old `d`. Arrow nudges are one write per burst
-  (400 ms after the last press). Delete is claimed by the rung (it would
-  otherwise delete the whole svg); removing an anchor is a follow-up.
+  (400 ms after the last press).
+- **Point edits that change the segment list** (`@core/vector`'s `pathEdit`:
+  splice the source, restore every later segment's absolute geometry, minimal
+  re-emit): double-click the outline adds a point by an exact split (a 12 px
+  transparent stroke per part is the target), Delete / Backspace remove the
+  selected point (its neighbours join; always claimed, or the `node` rung
+  would delete the svg), double-click a point toggles corner ⇄ smooth. Each is
+  one `svg-attr`. The svg's resize handles stand down while its points are
+  edited (`CanvasResizeHandles`).
 
 ## Inline text editing
 
