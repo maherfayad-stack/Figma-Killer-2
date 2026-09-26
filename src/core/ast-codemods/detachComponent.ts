@@ -43,7 +43,11 @@
  *
  *  - `package-component` / `unresolvable` / `not-a-component` — the call
  *    target is not a local component with a readable declaration.
- *  - `uses-hooks` — a hook needs a component to mount in.
+ *  - `uses-hooks` — a hook that holds state or runs effects needs a component
+ *    to mount in. A CONTEXT READER (`useLanguage()`, `useContext(Ctx)`) is
+ *    not refused: its call moves to the top of the component that encloses
+ *    the call site (DET-3, `detachHooks.ts`) — unless there is no such
+ *    component (a module-level JSX const), which refuses.
  *  - `maps-over-props` — the JSX `.map`s over one of its own props: inlining
  *    one static copy would drop that data-drivenness.
  *  - `unsupported-params` — an undestructured `props`, a nested destructure,
@@ -80,10 +84,11 @@ import { findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElem
 import { createWorkspaceProject, getReturnedJsxRoots, type FunctionLike } from '@core/page-parser'
 import { resolveComponentCallSite } from './resolveComponentCallSite'
 import { applyImportBinding, mirrorSideEffectImports, removeImportIfLastUsage } from './importReconcile'
-import { analyzeFreeVariables, bindingKindAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
+import { analyzeFreeVariables, bindingKindAt, bindingScopeAt, freeVariablesOutOfScopeAt } from './subtreeFreeVariables'
 import { introducesSyntaxErrors } from './syntaxRegression'
 import { DetachRefusalSignal, fail, readParamTable, type DetachRefusalReason } from './detachSource'
 import { DetachPlanner, type DetachPlan } from './detachPlanner'
+import { enclosingFunctionComponent, readComponentHooks, rendersPerRow, type PageTextEdit } from './detachHooks'
 import type { CreatedJsxLocation } from './createdJsxLocation'
 
 export type { DetachRefusalReason } from './detachSource'
@@ -103,6 +108,13 @@ export interface DetachComponentParams {
    * which retires every import the batch's removals orphaned in one place.
    */
   retireImport?: boolean
+  /**
+   * P5-C (DET-5) — run everything, gate included, and write nothing:
+   * `'always'` (a preview of what a detach would do), or `'if-lossy'` — write
+   * only when nothing is lost ({@link DetachSuccess.lossy}), so the editor can
+   * ask first. The answer says which happened (`written`).
+   */
+  dryRun?: 'always' | 'if-lossy'
 }
 
 
@@ -114,8 +126,21 @@ export interface DetachRefusal {
 
 export interface DetachSuccess {
   ok: true
+  /** `false` when `dryRun` held the write back: the plan passed every check, and nothing changed on disk. */
+  written: boolean
+  /**
+   * P5-C — whether this detach loses something the user should agree to
+   * first: other rendered states (`branchNote`), a context hook written into
+   * the enclosing component (`movedHooks`), or a call site that renders once
+   * per `.map` row (`perRow` — the one piece of JSX every row shares).
+   */
+  lossy: boolean
   /** Set when the component had more than one JSX-bearing return/branch — which one got inlined. */
   branchNote?: string
+  /** DET-3 — the hooks a NEW call was written for at the top of the enclosing component (a reused binding is not listed). */
+  movedHooks: string[]
+  /** The call site sits inside a `.map(…)` callback, so the detached markup renders in every row. */
+  perRow: boolean
   /**
    * P3-D (OD-7) — the inlined root's own tag-name `line:col` in the page after
    * the write: the id the parser mints for what replaced the call site.
@@ -131,26 +156,10 @@ export interface DetachFailure {
 
 export type DetachResult = DetachSuccess | DetachFailure
 
-const HOOK_CALL_RE = /^use[A-Z0-9]/
-
 function refuse(reason: DetachRefusalReason, message: string): DetachFailure {
   return { ok: false, refusal: { reason, message } }
 }
 
-
-/** True if `fn`'s body calls anything shaped like a hook, anywhere (including inside a nested callback — a hook cannot legally be called there either, but the point here is just "this body is not a pure markup function"). */
-function usesHooks(fn: FunctionLike): string | undefined {
-  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const expr = call.getExpression()
-    const name = Node.isIdentifier(expr)
-      ? expr.getText()
-      : Node.isPropertyAccessExpression(expr)
-        ? expr.getName()
-        : undefined
-    if (name && HOOK_CALL_RE.test(name)) return name
-  }
-  return undefined
-}
 
 /** Root identifier of a (possibly chained) member/element access — `items` for `items.map`, `props.items` for `props.items.map`. */
 function rootIdentifier(expr: Node): string | undefined {
@@ -251,6 +260,12 @@ function gateInsertedMarkup(inserted: Node, page: SourceFile, plan: DetachPlan):
     if (kinds.has('global') && now !== 'none') {
       fail('name-collision', `The detached markup reads the global \`${name}\`, which the page shadows at that position.`)
     }
+    if (kinds.has('hook')) {
+      const component = enclosingFunctionComponent(inserted)
+      if (!component || bindingScopeAt(inserted, name, page) !== component.getBody()) {
+        fail('name-collision', `The detached markup's \`${name}\` would not bind to the hook call written at the top of the page's component.`)
+      }
+    }
   }
   for (const name of freeVariablesOutOfScopeAt(inserted, inserted, page)) {
     const kinds = plan.expected.get(name)
@@ -303,11 +318,6 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
   const { target, fn } = resolved.result
 
-  const hook = usesHooks(fn)
-  if (hook) {
-    return refuse('uses-hooks', `${identifier} uses ${hook} — detach can't inline a component that uses hooks.`)
-  }
-
   const { childrenParam, params: paramBindings, hasUndestructuredParam } = buildParamBindings(fn)
   if (hasUndestructuredParam) {
     return refuse(
@@ -333,15 +343,23 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
   }
 
   const original = sourceFile.getFullText()
+  const perRow = rendersPerRow(opening, enclosingFunctionComponent(opening))
   let inserted: Node
+  let plan: DetachPlan
   try {
-    const plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier).plan()
+    const hooks = readComponentHooks(fn, identifier)
+    plan = new DetachPlanner(project, sourceFile, target.sourceFile, fn, chosen.expr, opening, identifier, hooks).plan()
     // Everything below writes the page IN MEMORY only; any refusal restores
-    // `original` and nothing reaches the disk.
+    // `original` and nothing reaches the disk. The hook edits and the call
+    // site are one splice of the ORIGINAL text — both were planned against
+    // it — and the markup is found again by where the splice put it.
     const site = Node.isJsxSelfClosingElement(opening) ? opening : opening.getParentOrThrow()
+    const siteEdit: PageTextEdit = { pos: site.getStart(), remove: site.getWidth(), text: plan.siteText }
+    sourceFile.replaceWithText(spliceEdits(original, [...plan.pageEdits, siteEdit]))
+    const insertedStart = siteEdit.pos + shiftBefore(plan.pageEdits, siteEdit.pos)
+    inserted = nodeSpanning(sourceFile, insertedStart, insertedStart + plan.siteText.length)
     for (const pending of plan.imports) applyImportBinding(sourceFile, pending.request, pending.local)
     if (target.sourceFile !== sourceFile) mirrorSideEffectImports(sourceFile, target.sourceFile)
-    inserted = site.replaceWithText(plan.siteText)
     gateInsertedMarkup(inserted, sourceFile, plan)
     // Only now — after the call site's own tag reference is actually gone
     // from the tree — is "does anything else in the file still reference
@@ -356,6 +374,20 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
     throw err
   }
 
+  const lossy = hadAlternatives || plan.movedHooks.length > 0 || perRow
+  const findings = {
+    lossy,
+    movedHooks: plan.movedHooks,
+    perRow,
+    ...(hadAlternatives
+      ? { branchNote: `${identifier} has more than one rendered state — the currently-shown one was inlined.` }
+      : {}),
+  }
+  if (params.dryRun === 'always' || (params.dryRun === 'if-lossy' && lossy)) {
+    sourceFile.replaceWithText(original)
+    return { ok: true, written: false, created: null, ...findings }
+  }
+
   sourceFile.saveSync()
 
   const tagName = Node.isJsxElement(inserted)
@@ -365,11 +397,35 @@ export function detachComponentInstance(params: DetachComponentParams): DetachRe
       : null
   const at = tagName ? sourceFile.getLineAndColumnAtPos(tagName.getStart()) : null
 
-  return {
-    ok: true,
-    created: at ? { line: at.line, col: at.column } : null,
-    ...(hadAlternatives
-      ? { branchNote: `${identifier} has more than one rendered state — the currently-shown one was inlined.` }
-      : {}),
+  return { ok: true, written: true, created: at ? { line: at.line, col: at.column } : null, ...findings }
+}
+
+/** `text` with every edit applied — right to left, so each `pos` still means the original offset; two at one offset keep their order. */
+function spliceEdits(text: string, edits: readonly PageTextEdit[]): string {
+  const ordered = edits
+    .map((edit, index) => ({ edit, index }))
+    .sort((a, b) => b.edit.pos - a.edit.pos || b.edit.remove - a.edit.remove || b.index - a.index)
+  let out = text
+  for (const { edit } of ordered) out = out.slice(0, edit.pos) + edit.text + out.slice(edit.pos + edit.remove)
+  return out
+}
+
+/** How far the edits in front of `pos` (an insertion AT it included) move it. */
+function shiftBefore(edits: readonly PageTextEdit[], pos: number): number {
+  let shift = 0
+  for (const edit of edits) if (edit.pos < pos || (edit.pos === pos && edit.remove === 0)) shift += edit.text.length - edit.remove
+  return shift
+}
+
+/** The outermost node spanning exactly `[start, end)` — the markup a splice wrote there. */
+function nodeSpanning(sourceFile: SourceFile, start: number, end: number): Node {
+  let node: Node | undefined = sourceFile.getDescendantAtPos(start)
+  while (node && !(node.getStart() === start && node.getEnd() >= end)) node = node.getParent()
+  while (node) {
+    const parent: Node | undefined = node.getParent()
+    if (!parent || Node.isSourceFile(parent) || parent.getStart() !== start || parent.getEnd() !== end) break
+    node = parent
   }
+  if (!node || node.getEnd() !== end) throw new Error('[detachComponent] the detached markup could not be found where it was written.')
+  return node
 }

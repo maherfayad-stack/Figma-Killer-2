@@ -208,6 +208,36 @@ function extractUseContextArg(expr: Node): Node | undefined {
   return n.getArguments()[0]
 }
 
+/** A hook-shaped callee name: `useX`, `React.useX`. */
+const HOOK_NAME_RE = /^use[A-Z0-9]/
+
+/** The hooks a context reader's body may call besides the `useContext` it reads: `useMemo` of what it read (Tier B unwraps exactly that). */
+const CONTEXT_READER_HOOKS: ReadonlySet<string> = new Set(['useContext', 'useMemo'])
+
+/**
+ * DET-3 — whether `fn` is a CONTEXT READER: a custom hook whose value is what
+ * a `useContext` returns, the shape Tier B's provider trace already recognises
+ * (`findUseContextArgument`: `useContext(Ctx)` as a `const` initializer or the
+ * returned expression), asked one question more strictly — no hook besides
+ * `useContext` and a `useMemo` of it is called anywhere in its body.
+ *
+ * A context reader returns the same value to every component under one
+ * provider, so the detach codemod may move its call from a component into the
+ * component that encloses the call site without changing what renders. Any
+ * other hook holds state or runs effects, and moving it would change
+ * behaviour — this answers `false` for all of them. Nothing is called; this
+ * reads the body's call shapes.
+ */
+export function isContextReaderHook(fn: FunctionLike): boolean {
+  if (!findUseContextArgument(fn)) return false
+  for (const call of fn.getDescendantsOfKind(SyntaxKind.CallExpression)) {
+    const callee = call.getExpression()
+    const name = Node.isIdentifier(callee) ? callee.getText() : Node.isPropertyAccessExpression(callee) ? callee.getName() : undefined
+    if (name !== undefined && HOOK_NAME_RE.test(name) && !CONTEXT_READER_HOOKS.has(name)) return false
+  }
+  return true
+}
+
 function resolveContextDeclaration(ctxExpr: Node): Node | undefined {
   if (!Node.isIdentifier(ctxExpr)) return undefined
   const name = ctxExpr.getText()

@@ -26,6 +26,8 @@ import type { FunctionLike } from '@core/page-parser'
 import type { JsxOpeningLikeElement } from './locateJsxElement'
 import { bindingKindAt, freeReferenceNames, isReferenceIdentifier, tagReferenceRoot, type BindingKind } from './subtreeFreeVariables'
 import { DetachNameResolver, type Expectation, type PendingImport } from './detachNames'
+import { DetachHookPlan, type ComponentHook, type PageTextEdit } from './detachHooks'
+import { foldClassName, readFoldPart } from './detachClassNameFold'
 import {
   INTRINSIC_TAG_RE,
   NO_NAMES,
@@ -57,6 +59,7 @@ type Ref =
   | { kind: 'param'; entry: ParamEntry }
   | { kind: 'rest' }
   | { kind: 'local'; decl: VariableDeclaration }
+  | { kind: 'hook'; decl: Node }
   | { kind: 'outer'; symbol: MorphSymbol | undefined; decl: Node | undefined }
 
 /** One piece of the component's source being rewritten: the chosen JSX root, or a default/initializer inlined into it. */
@@ -71,8 +74,11 @@ export interface DetachPlan {
   imports: PendingImport[]
   expected: Map<string, Set<Expectation>>
   callSiteKinds: Map<string, BindingKind>
+  /** DET-3 — edits to the enclosing component (a moved hook call, a key added to a reused pattern), in the page's ORIGINAL coordinates. */
+  pageEdits: PageTextEdit[]
+  /** DET-3 — hooks a NEW call was written for; what a pre-commit confirm names. */
+  movedHooks: string[]
 }
-
 
 // ---------------------------------------------------------------------------
 // The planner — reads, decides, refuses; never writes
@@ -85,6 +91,7 @@ export class DetachPlanner {
   private readonly callSite: CallSite
   private readonly fnIdentifierNames: Set<string>
   private readonly names: DetachNameResolver
+  private readonly hooks: DetachHookPlan
   private readonly refCache = new Map<Node, Ref>()
   private readonly paramCache = new Map<ParamEntry, Value>()
   private readonly inProgress = new Set<Node>()
@@ -104,6 +111,7 @@ export class DetachPlanner {
     root: Node,
     opening: JsxOpeningLikeElement,
     componentName: string,
+    hooks: readonly ComponentHook[],
   ) {
     this.page = page
     this.componentFile = componentFile
@@ -116,6 +124,7 @@ export class DetachPlanner {
     this.callSite = readCallSite(opening)
     this.fnIdentifierNames = new Set(fn.getDescendantsOfKind(SyntaxKind.Identifier).map((id) => id.getText()))
     this.names = new DetachNameResolver(this.checker, page, componentFile, componentName, opening, this.fnIdentifierNames)
+    this.hooks = new DetachHookPlan(hooks, page, opening, this.names, componentName)
   }
 
   plan(): DetachPlan {
@@ -141,7 +150,9 @@ export class DetachPlanner {
     for (const [name, kinds] of this.names.expected) {
       if (kinds.has('call-site')) callSiteKinds.set(name, bindingKindAt(this.callSite.site, name, this.page))
     }
-    return { siteText: text, imports: this.names.imports, expected: this.names.expected, callSiteKinds }
+    this.hooks.finish()
+    const { edits: pageEdits, movedHooks } = this.hooks
+    return { siteText: text, imports: this.names.imports, expected: this.names.expected, callSiteKinds, pageEdits, movedHooks }
   }
 
   // --- call-site values ----------------------------------------------------
@@ -197,6 +208,7 @@ export class DetachPlanner {
     if (this.params.nested.has(decl)) {
       fail('unsupported-params', `${this.componentName} reads \`${name}\` out of a nested destructure, which detach can't substitute from the call site.`)
     }
+    if (this.hooks.owns(decl)) return { kind: 'hook', decl }
     if (Node.isParameterDeclaration(decl)) {
       fail('unsupported-params', `${this.componentName} reads \`${name}\`, a parameter other than its props, which a call site does not pass.`)
     }
@@ -284,6 +296,7 @@ export class DetachPlanner {
   private siteValueFor(site: Node, ref: Ref, unit: Unit): Value {
     if (ref.kind === 'param') return this.paramValue(ref.entry)
     if (ref.kind === 'local') return this.localValue(ref.decl, site, unit)
+    if (ref.kind === 'hook') return this.hooks.value(ref.decl)
     throw new Error('[detachComponent] siteValueFor called for a non-substitutable reference')
   }
 
@@ -291,7 +304,7 @@ export class DetachPlanner {
   private siteValue(expr: Node, unit: Unit): Value | undefined {
     if (Node.isIdentifier(expr) && isReferenceIdentifier(expr)) {
       const ref = this.classify(expr, unit)
-      if (ref.kind === 'param' || ref.kind === 'local') return this.siteValueFor(expr, ref, unit)
+      if (ref.kind === 'param' || ref.kind === 'local' || ref.kind === 'hook') return this.siteValueFor(expr, ref, unit)
       if (ref.kind === 'rest') {
         fail('spread-ambiguous', `${this.componentName} passes its whole \`...${expr.getText()}\` along, which detach can't split into this call site's attributes.`)
       }
@@ -417,6 +430,11 @@ export class DetachPlanner {
       if (key && name === 'key') return // the call site's key is the one React sees
       const initializer = property.getInitializer()
       const inner = initializer && Node.isJsxExpression(initializer) ? initializer.getExpression() : undefined
+      const folded = inner && (name === 'className' || name === 'class') ? foldClassName(inner, (part) => readFoldPart(part, () => this.siteValue(part, unit))) : undefined
+      if (folded !== undefined && isJsxAttributeSafe(folded)) {
+        items.push({ name, text: `${name}="${folded}"`, separator })
+        return
+      }
       const value = inner ? this.siteValue(inner, unit) : undefined
       if (!value || !inner) {
         items.push({ name, text: this.renderNode(property, unit), separator })
@@ -467,7 +485,7 @@ export class DetachPlanner {
       unit.free.add(rendered)
     } else if (ref.kind === 'rest') {
       fail('spread-ambiguous', `${this.componentName} renders a tag out of its \`...${rootName}\`, which detach can't resolve.`)
-    } else if (ref.kind === 'local') {
+    } else if (ref.kind === 'local' || ref.kind === 'hook') {
       fail(
         'body-local',
         `${this.componentName} renders <${tag.getText()}> from \`${rootName}\`, a value its body computes — a tag name can't be written as that expression. Duplicate the component and edit the copy instead.`,
