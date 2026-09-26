@@ -377,6 +377,24 @@ export async function commitStudioDetach(
 }
 
 /**
+ * P5-C (DET-7) — "Expose as prop": the literal of an element inside a
+ * component becomes an optional prop whose default is that literal, so every
+ * other instance renders as before. Two files (the component and this call
+ * site), one undo-journal entry: ⌘Z restores both. `onLanded` runs once the
+ * board has re-read them.
+ */
+export async function commitStudioExposeProp(
+  edit: { kind: 'expose-prop'; nodeId: string; target: { kind: 'text' }; propName: string },
+  label: string,
+  onLanded?: () => void,
+): Promise<void> {
+  await commitStructural([edit], 'Could not make that a prop', {
+    undo: { label, template: { kind: 'restore-journal' } },
+    ...(onLanded ? { onLanded } : {}),
+  })
+}
+
+/**
  * P3-D (OD-7) — detach ONE call site so that a structural gesture on the
  * markup inside a shared component applies to this instance only. Resolves
  * with what the write reported once the board has re-read it, or `null` when

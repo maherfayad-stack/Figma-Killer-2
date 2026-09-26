@@ -258,6 +258,28 @@ const DetachEditSchema = Type.Object({
 })
 
 /**
+ * P5-C (DET-7) — "Expose as prop": the literal `target` of an element inside
+ * a component's markup becomes an optional prop of that component whose
+ * default IS the literal (`exposeLiteralAsProp`), so every other instance
+ * renders byte-identical; `value`, when given, is written at this one call
+ * site. `nodeId` is the element's inlined id, exactly one call site deep
+ * (`page~component:line:col`) — the call site is its head, and the codemod
+ * checks the element really is that component's. Two files, one gesture,
+ * journaled (⌘Z is `restore`).
+ */
+const ExposePropEditSchema = Type.Object({
+  kind: Type.Literal('expose-prop'),
+  nodeId: Type.String(),
+  target: Type.Union([
+    Type.Object({ kind: Type.Literal('text') }),
+    Type.Object({ kind: Type.Literal('attribute'), name: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$:-]*$', maxLength: 64 }) }),
+    Type.Object({ kind: Type.Literal('style'), property: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$-]*$', maxLength: 64 }) }),
+  ]),
+  propName: Type.String({ pattern: '^[A-Za-z_$][A-Za-z0-9_$]*$', maxLength: 64 }),
+  value: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean()])),
+})
+
+/**
  * One "swap this instance for a different component" writeback (WS-4.5) —
  * `swapComponentInstance`. `newComponentFile` is a workspace-relative POSIX
  * path when `newComponentSource` is `'local'`, or a bare package specifier
@@ -300,6 +322,7 @@ export const StudioEditSchema = Type.Union([
   TagEditSchema,
   AssetEditSchema,
   DetachEditSchema,
+  ExposePropEditSchema,
   SwapEditSchema,
   RestoreEditSchema,
   ...StructuralEditSchemas,

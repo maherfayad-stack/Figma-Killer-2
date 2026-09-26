@@ -167,6 +167,9 @@ export type {
 export { collectSlotChildCandidates, listSlotChildCandidates, suggestSlotNames, SOLE_SLOT_DEFAULT_NAME } from './subtreeSlotChildren'
 export type { ListSlotChildCandidatesParams, ResolvedSlotChildCandidate, SlotChildCandidate, SlotChildCandidateKind } from './subtreeSlotChildren'
 export { addSlotPropToComponent } from './addSlotPropToComponent'
+// P5-C (DET-7) — "Expose as prop": a literal in a component becomes an optional prop whose default is that literal.
+export { exposeLiteralAsProp } from './exposeLiteralAsProp'
+export type { ExposeLiteralAsPropParams, ExposeLiteralAsPropResult, ExposeLiteralRefusalReason, ExposeTarget } from './exposeLiteralAsProp'
 export type {
   AddSlotPropRefusal,
   AddSlotPropRefusalReason,

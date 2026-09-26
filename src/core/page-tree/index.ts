@@ -24,6 +24,7 @@ export {
   callSitePosition,
   decodeSourceNodeId,
   hasWritableSourceLocation,
+  inlineDepth,
   isInlinedNodeId,
   isRouteChromeNodeId,
   isSourceDerivedNodeId,

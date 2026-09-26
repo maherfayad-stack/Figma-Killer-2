@@ -10,8 +10,9 @@
  * ## Which writes are journaled
  *
  * {@link isJournaled}: the one-shot rewrites whose undo no other edit kind
- * can express — `delete`, `detach`, `swap`, `promote-component` (extract a
- * subtree into a new component), and a `list-item` remove (OD-8: a `.map`
+ * can express — `delete`, `detach`, `expose-prop` (P5-C: a component AND its
+ * call site), `swap`, `promote-component` (extract a subtree into a new
+ * component), and a `list-item` remove (OD-8: a `.map`
  * row's delete cuts array elements whose bytes no op carries back). A batch holding any of them records ONE
  * entry covering every file the batch changed, so one gesture is one token,
  * however many elements a multi-select delete removed and across however
@@ -34,7 +35,7 @@ import type { StudioEdit, StudioEditApplyOutcome, StudioEditBatchOptions, Studio
 import { captureUndoPreImage, recordUndoJournal, restoreUndoJournal, undoJournalFiles } from './studio/undoJournal'
 
 /** The kinds a journaled batch records a pre-image for. */
-const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'swap', 'promote-component'])
+const JOURNALED_KINDS = new Set<StudioEdit['kind']>(['delete', 'detach', 'expose-prop', 'swap', 'promote-component'])
 
 function isJournaled(edit: StudioEdit): boolean {
   return JOURNALED_KINDS.has(edit.kind) || (edit.kind === 'list-item' && edit.op.kind === 'remove')

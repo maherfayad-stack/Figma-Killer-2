@@ -21,7 +21,7 @@
  */
 import { join } from 'node:path'
 import { INLINE_ID_SEPARATOR, realWorkspaceRel, unwritableWorkspaceSegment } from '@core/page-parser'
-import { isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
+import { callSitePosition, isInlinedNodeId, isRouteChromeNodeId } from '@core/page-tree'
 import { CANVAS_LAYER_REL_PATTERN } from '@core/studio-board'
 import { cssCreateImportTarget } from './studioCssWriteback'
 import { collapseSameTargetEdits, type DedupedStudioEdit } from './studioEditMerge'
@@ -471,6 +471,12 @@ export function studioEditsTouchedFiles(
     if (edit.kind === 'transplant') {
       const destination = studioEditFile(dir, edit.parentNodeId, scope)
       if (destination) touchedFiles.add(destination)
+    }
+    // P5-C (DET-7) — "Expose as prop" writes the component (`edit.nodeId`'s
+    // tail) AND the one call site (its head).
+    if (edit.kind === 'expose-prop') {
+      const callSite = studioEditFile(dir, callSitePosition(edit.nodeId), scope)
+      if (callSite) touchedFiles.add(callSite)
     }
     // P5-G — a loose layer's module, and the page a `canvas-layer-place` lands in.
     for (const file of canvasLayerTouchedFiles(dir, edit, (id) => studioEditLocation(dir, id, scope))) touchedFiles.add(file)
