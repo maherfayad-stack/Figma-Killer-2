@@ -88,7 +88,7 @@ export function fileFromImageDataUrl(dataUrl: string): DroppedImageIntake {
   if (estimated > MAX_DATA_URL_IMAGE_BYTES) {
     return refusedLink('That image is too large', `The image is larger than the ${MAX_DATA_URL_IMAGE_BYTES / (1024 * 1024)} MB limit.`)
   }
-  let bytes: Uint8Array
+  let bytes: Uint8Array<ArrayBuffer>
   try {
     if (base64) {
       const binary = atob(payload.replace(/\s+/g, ''))

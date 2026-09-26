@@ -38,7 +38,10 @@ export interface AssetImportRef {
 
 /** An image import already bound to a local name. Produced only by {@link bindAssetImports}. */
 export class BoundAssetImport {
-  constructor(readonly local: string) {}
+  readonly local: string
+  constructor(local: string) {
+    this.local = local
+  }
 }
 
 /**

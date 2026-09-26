@@ -101,9 +101,6 @@ export type MoveJsxRefusalReason =
   | 'not-a-container'
   | 'into-own-descendant'
   | 'out-of-scope'
-  | 'binding-conflict'
-  | 'unsafe-tag'
-  | 'void-element-children'
 
 export interface MoveJsxRefusal {
   reason: MoveJsxRefusalReason
