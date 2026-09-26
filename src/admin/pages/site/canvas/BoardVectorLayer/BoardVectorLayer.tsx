@@ -40,7 +40,18 @@
  * frame, where it selects — which, unless it selects this same svg, leaves.
  */
 import { useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type PointerEvent as ReactPointerEvent } from 'react'
-import { moveAnchor, moveHandle, serializePathModel, type PathModel, type Point } from '@core/vector'
+import {
+  createPathModel,
+  insertAnchor,
+  moveAnchor,
+  moveHandle,
+  parsePathData,
+  removeAnchor,
+  serializePathModel,
+  toggleAnchorSmooth,
+  type PathModel,
+  type Point,
+} from '@core/vector'
 import { pushToast } from '@ui/components/Toast'
 import { cn } from '@ui/cn'
 import { lookupCanvasPageById, useEditorStore } from '@site/store/store'
@@ -49,6 +60,7 @@ import { beginCanvasGesture, endCanvasGesture } from '../canvasGesture'
 import { clientToBoardPoint, findBoardOrigin, type BoardOrigin } from '../BoardCanvasLayer/canvasLayerGeometry'
 import { exitVectorEdit, useVectorEditTarget, type VectorEditTarget } from './vectorEditState'
 import { resolveVectorHost, type VectorPart } from './vectorEditParts'
+import { nearestSegmentPoint } from './vectorSegmentHit'
 import {
   affineTransformAttribute,
   anchorHandles,
@@ -72,6 +84,14 @@ const HIT_HALF_PX = 8
 /** Screen px the pointer travels before a press on an anchor is a drag. */
 const DRAG_THRESHOLD_PX = 3
 
+/** What a refused point edit says, by the gesture's undo label. */
+const POINT_EDIT_REFUSED: Readonly<Record<string, string>> = {
+  'Delete point': 'A path needs at least two points, and an arc cannot lose one here. Delete the whole graphic instead, or change it in the code.',
+  'Toggle point': 'This point cannot switch between corner and smooth (it starts a path, or sits next to an arc).',
+  'Add point': 'A point cannot be added on an arc here. Change it in the code.',
+}
+
+// allowed: non-icon SVG (geometric overlay) — the anchors and handles of vector edit mode.
 export function BoardVectorLayer() {
   const target = useVectorEditTarget()
   if (!target) return null
@@ -112,6 +132,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
   const partsRef = useRef<VectorPart[]>([])
   const svgRef = useRef<SVGSVGElement | null>(null)
   const outlineRefs = useRef<(SVGPathElement | null)[]>([])
+  const outlineHitRefs = useRef<(SVGPathElement | null)[]>([])
   const anchorsRef = useRef<SVGPathElement | null>(null)
   const activeRef = useRef<SVGPathElement | null>(null)
   const handleLinesRef = useRef<SVGPathElement | null>(null)
@@ -171,6 +192,8 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     const part = sel ? partsRef.current[sel.part] : undefined
     const outline = sel ? outlineRefs.current[sel.part] : null
     if (part && outline) outline.setAttribute('d', part.d)
+    const outlineHit = sel ? outlineHitRefs.current[sel.part] : null
+    if (part && outlineHit) outlineHit.setAttribute('d', part.d)
     const anchor = part && sel ? part.model.segments[sel.segment]?.to : undefined
     activeRef.current?.setAttribute('d', part && anchor ? squaresPathData([applyAffine(part.toBoard, anchor)], half(ANCHOR_HALF_PX)) : '')
     const handles = selectedHandles()
@@ -180,17 +203,23 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
 
   /** Everything, from the parts as they stand. */
   const paint = () => {
+    const controlPoints: Point[] = []
     partsRef.current.forEach((part, index) => {
-      const outline = outlineRefs.current[index]
-      if (!outline) return
-      outline.setAttribute('d', part.d)
-      outline.setAttribute('transform', affineTransformAttribute(part.toBoard))
+      for (const el of [outlineRefs.current[index], outlineHitRefs.current[index]]) {
+        el?.setAttribute('d', part.d)
+        el?.setAttribute('transform', affineTransformAttribute(part.toBoard))
+      }
+      // Every control point too: a curve lies inside its control points' hull,
+      // so the fitted box covers the outline's double-click target.
+      for (const seg of part.model.segments) {
+        for (const p of [seg.c1, seg.c2]) if (p) controlPoints.push(applyAffine(part.toBoard, p))
+      }
     })
     const anchors = anchorBoards()
     anchorsRef.current?.setAttribute('d', squaresPathData(anchors.map((a) => a.board), half(ANCHOR_HALF_PX)))
     const hits = [...anchors.map((a) => a.board), ...selectedHandles().map((h) => h.board)]
     hitRef.current?.setAttribute('d', squaresPathData(hits, half(HIT_HALF_PX)))
-    fitToPoints(hits)
+    fitToPoints([...hits, ...controlPoints])
     paintActive()
   }
 
@@ -374,11 +403,63 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
     paintRef.current()
   }
 
+  /**
+   * A point edit that changes the segment list (add / remove / corner ⇄
+   * smooth, `@core/vector`'s `pathEdit`): shown at once, written as ONE
+   * `svg-attr`, and `select` is the anchor to select afterwards.
+   */
+  const applyPointEdit = (index: number, nextD: string | null, label: string, select: VectorSelection | null) => {
+    const part = partsRef.current[index]
+    if (!part) return
+    const parsed = nextD === null ? null : parsePathData(nextD)
+    if (nextD === null || !parsed?.ok) {
+      pushToast({ kind: 'warning', title: 'Cannot edit points', body: POINT_EDIT_REFUSED[label] ?? 'Studio cannot make that change to this path.', location: 'site-editor' })
+      return
+    }
+    const startModel = part.model
+    const startD = part.d
+    part.model = createPathModel(parsed.path)
+    part.d = nextD
+    part.element.setAttribute('d', nextD)
+    selectionRef.current = select
+    setSelection(select)
+    paintRef.current()
+    commitPart(index, startModel, startD, label)
+  }
+
+  const removeSelectedAnchor = (): boolean => {
+    const sel = selectionRef.current
+    const part = sel ? partsRef.current[sel.part] : undefined
+    if (!sel || !part) return false
+    applyPointEdit(sel.part, removeAnchor(part.model, sel.segment, part.decimals), 'Delete point', null)
+    return true
+  }
+
+  /** Double-click an anchor: corner ⇄ smooth (Penpot's make-corner / make-curve). */
+  const onAnchorDoubleClick = () => {
+    const sel = selectionRef.current
+    const part = sel ? partsRef.current[sel.part] : undefined
+    if (!sel || !part) return
+    applyPointEdit(sel.part, toggleAnchorSmooth(part.model, sel.segment, part.decimals), 'Toggle point', sel)
+  }
+
+  /** Double-click the outline: a new anchor exactly on the curve, which does not change shape. */
+  const onOutlineDoubleClick = (index: number, clientX: number, clientY: number) => {
+    const part = partsRef.current[index]
+    const origin = findBoardOrigin()
+    if (!part || !origin) return
+    const board = clientToBoardPoint({ x: clientX, y: clientY }, origin, origin.zoom)
+    const hit = nearestSegmentPoint(part.model, applyAffine(part.toLocal, board))
+    if (!hit || hit.t <= 0.001 || hit.t >= 0.999) return
+    applyPointEdit(index, insertAnchor(part.model, hit.segment, hit.t, part.decimals), 'Add point', { part: index, segment: hit.segment })
+  }
+
   useVectorEditKeys({
     selectionRef,
     readPart: (index) => partsRef.current[index],
     previewPart,
     commitPart,
+    removeSelectedAnchor,
   })
 
   return (
@@ -390,6 +471,17 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
           ref={(el) => {
             outlineRefs.current[index] = el
           }}
+        />
+      ))}
+      {partKeys.map((key, index) => (
+        <path
+          key={`${key}-hit`}
+          className={styles.outlineHit}
+          data-vector-outline-hit={key}
+          ref={(el) => {
+            outlineHitRefs.current[index] = el
+          }}
+          onDoubleClick={(event) => onOutlineDoubleClick(index, event.clientX, event.clientY)}
         />
       ))}
       <path ref={handleLinesRef} className={styles.handleLines} />
@@ -404,6 +496,7 @@ function VectorEditOverlay({ target }: { target: VectorEditTarget }) {
         onPointerMove={onPointerMove}
         onPointerUp={(event) => finish(event, true)}
         onPointerCancel={(event) => finish(event, false)}
+        onDoubleClick={onAnchorDoubleClick}
       />
     </svg>
   )

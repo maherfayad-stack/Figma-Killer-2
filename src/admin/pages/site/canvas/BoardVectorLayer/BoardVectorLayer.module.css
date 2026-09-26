@@ -72,6 +72,16 @@
     vector-effect: non-scaling-stroke;
 }
 
+/* The outline's double-click target (add a point): a transparent 12 px stroke. */
+.outlineHit {
+    fill: none;
+    stroke: transparent;
+    stroke-width: 12;
+    vector-effect: non-scaling-stroke;
+    pointer-events: stroke;
+    cursor: copy;
+}
+
 /* Transparent, larger squares over every anchor and visible handle. */
 .hit {
     fill: transparent;
@@ -84,6 +94,9 @@
 /* Space held (or the hand tool): the pan owns the pointer. */
 :global(html[data-studio-canvas-parent-space-pan='1']) .hit,
 :global(html[data-studio-canvas-iframe-space-pan='1']) .hit,
-:global(html[data-studio-canvas-hand-tool='1']) .hit {
+:global(html[data-studio-canvas-hand-tool='1']) .hit,
+:global(html[data-studio-canvas-parent-space-pan='1']) .outlineHit,
+:global(html[data-studio-canvas-iframe-space-pan='1']) .outlineHit,
+:global(html[data-studio-canvas-hand-tool='1']) .outlineHit {
     pointer-events: none;
 }

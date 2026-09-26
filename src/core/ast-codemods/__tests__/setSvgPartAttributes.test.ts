@@ -142,11 +142,11 @@ describe('setSvgPartAttributes', () => {
   it('refuses handlers, remote references and non-fragment hrefs through the shared rule', () => {
     const { file, source } = fixture()
     for (const [set, reason] of [
-      [{ onClick: 'alert(1)' }, 'svg-attr-name'],
+      [{ onClick: 'steal()' }, 'svg-attr-name'],
       [{ dangerouslySetInnerHTML: 'x' }, 'svg-attr-name'],
       [{ style: 'fill:red' }, 'svg-attr-name'],
       [{ fill: 'url(https://evil.example/p)' }, 'svg-attr-value'],
-      [{ href: 'javascript:alert(1)' }, 'svg-attr-value'],
+      [{ href: 'javascript:steal()' }, 'svg-attr-value'],
     ] as const) {
       expect(run(file, source, { set })).toMatchObject({ ok: false, reason })
     }

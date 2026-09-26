@@ -53,7 +53,7 @@ describe('svgAttributeWriteRefusal — one rule for every SVG attribute write', 
 
   it('refuses a reference out of the SVG and a remote fetch', () => {
     for (const [name, value] of [
-      ['href', 'javascript:alert(1)'], ['href', 'https://evil.example/x.svg#a'], ['xlinkHref', 'data:image/svg+xml,<svg/>'],
+      ['href', 'javascript:steal()'], ['href', 'https://evil.example/x.svg#a'], ['xlinkHref', 'data:image/svg+xml,<svg/>'],
       ['href', ' #a'], ['fill', 'url(https://evil.example/p)'], ['filter', 'url(//evil.example/f)'],
       ['mask', 'image-set("x.png" 1x)'], ['fill', 'u\\72l(https://evil.example)'],
     ] as const) {

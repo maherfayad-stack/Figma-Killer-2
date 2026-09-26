@@ -218,6 +218,43 @@ describe('vector edit mode', () => {
     expect((saves[0] as { edits: { set: unknown }[] }).edits[0]!.set).toEqual({ d: 'M0 0L35 0L10 10' })
   })
 
+  it('Delete removes the selected anchor (its neighbours join) as ONE write', async () => {
+    const { hit } = enter()
+    renderHook(() => useEditorKeyDispatcher())
+    await act(async () => {
+      fireEvent.pointerDown(hit, { pointerId: 1, button: 0, clientX: 130, clientY: 70 })
+      fireEvent.pointerUp(hit, { pointerId: 1, clientX: 130, clientY: 70 })
+    })
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(saves).toHaveLength(1)
+    expect((saves[0] as { edits: { set: unknown }[] }).edits[0]!.set).toEqual({ d: 'M0 0 L10 10' })
+  })
+
+  it('double-clicking an anchor makes it smooth; double-clicking the outline adds a point on it', async () => {
+    const { hit } = enter()
+    await act(async () => {
+      fireEvent.pointerDown(hit, { pointerId: 1, button: 0, clientX: 130, clientY: 70 })
+      fireEvent.pointerUp(hit, { pointerId: 1, clientX: 130, clientY: 70 })
+      fireEvent.doubleClick(hit, { clientX: 130, clientY: 70 })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(saves).toHaveLength(1)
+    const smooth = (saves[0] as { edits: { set: { d: string } }[] }).edits[0]!.set.d
+    expect(smooth).toBe('M0 0 C0 0 7.64 -2.36 10 0 C12.36 2.36 10 10 10 10')
+
+    const outline = hit.ownerDocument.querySelector('[data-vector-outline-hit]') as SVGPathElement
+    await act(async () => {
+      // Local (5, 0): halfway along the first edge, in board px (120, 70).
+      fireEvent.doubleClick(outline, { clientX: 120, clientY: 70 })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+    })
+    expect(saves).toHaveLength(2)
+    expect((saves[1] as { edits: { set: { d: string } }[] }).edits[0]!.set.d).toBe('M0 0 L5 0 L10 0L10 10')
+  })
+
   it('leaves the mode when something else is selected', () => {
     enter()
     act(() => {

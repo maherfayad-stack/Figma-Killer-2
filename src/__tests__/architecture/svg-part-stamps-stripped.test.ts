@@ -26,6 +26,9 @@ const KEEPS_STAMPS: Readonly<Record<string, string>> = {
   'src/modules/base/svg/SvgEditor.tsx': 'canvas render',
   // Only asks whether a node carries markup at all.
   'server/handlers/studio/moduleMapping.ts': 'presence check',
+  // Vector edit mode reads the stamps to address its writes (and re-measures when the markup changes).
+  'src/admin/pages/site/canvas/BoardVectorLayer/BoardVectorLayer.tsx': 'vector edit mode',
+  'src/admin/pages/site/canvas/BoardVectorLayer/vectorEditEntry.ts': 'vector edit mode entry',
 }
 
 /** Exits that take the markup some other way than `props.svg`, pinned by name. */

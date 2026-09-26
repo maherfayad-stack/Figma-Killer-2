@@ -9,10 +9,10 @@
  *     into the path's own user space. A burst of presses is ONE write, posted
  *     `NUDGE_COMMIT_MS` after the last (Penpot's `move-selected` debounce):
  *     holding an arrow down must not queue a save per repeat.
- *   - Delete / Backspace are CLAIMED and do nothing yet. Without the claim the
- *     `node` rung below would delete the whole svg the user is editing the
- *     points of. Removing an anchor is a follow-up (it needs a segment merge
- *     in `@core/vector`).
+ *   - Delete / Backspace remove the selected anchor (`@core/vector`'s
+ *     `removeAnchor`: its neighbours join). They are CLAIMED even with no
+ *     anchor selected: the `node` rung below would otherwise delete the whole
+ *     svg the user is editing the points of.
  *
  * ⌘Z is deliberately NOT claimed: every drag and nudge is already a real,
  * undoable source write, so the global undo is the right one — after flushing
@@ -58,9 +58,11 @@ export interface VectorEditKeysInput {
   /** Show `model` on the part: the overlay and the real element (the layer owns the parts). */
   previewPart: (part: number, model: PathModel) => void
   commitPart: (part: number, startModel: PathModel, startD: string, label: string) => void
+  /** Remove the selected anchor; `false` when none is selected. */
+  removeSelectedAnchor: () => boolean
 }
 
-export function useVectorEditKeys({ selectionRef, readPart, previewPart, commitPart }: VectorEditKeysInput): void {
+export function useVectorEditKeys({ selectionRef, readPart, previewPart, commitPart, removeSelectedAnchor }: VectorEditKeysInput): void {
   const burstRef = useRef<NudgeBurst | null>(null)
 
   const flushNudge = () => {
@@ -111,6 +113,8 @@ export function useVectorEditKeys({ selectionRef, readPart, previewPart, commitP
       }
       if (event.key === 'Delete' || event.key === 'Backspace') {
         event.preventDefault()
+        flushNudge()
+        removeSelectedAnchor()
         return true
       }
       const arrow = ARROWS[event.key]
