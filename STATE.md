@@ -11,32 +11,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 8 entries. Only work that is not yet merged into the trunk `feat/canvas-excellence`.*
 
-### store-22 — P3-F real delete undo: one compare-and-swap undo journal (ERR-2, DET-4)
-- **Agent:** store-engineer (P3-F bundle) · **Branch:** `feat/delete-undo-journal` off trunk `08c429f1` · **Updated:** 2026-09-26
-- **Stage:** done, draft PR #274 against `feat/canvas-excellence`; a security review follows. Long form in the PR body. Gates: build + lint clean, suite green bar pre-existing; e2e passes (⌘Z → bytes 43 ms).
-- **Goal:** ⌘Z after delete, detach, swap or extract restores the file byte for byte, or refuses honestly. One mechanism, not an inverse codemod per verb.
-- **Slices touched:** `site` only (history entries). No new state, no new selector.
-- **Mutations / history:**
-  - `deleteNode`/`deleteNodes`/OD-7 detach tag a `source` entry with the new template `restore-journal`; `fill` resolves it from the outcome's `undoToken` into ONE `{kind:'restore', token}`. Null coalesce key (a structural gesture never coalesces).
-  - Panel Detach/Swap/Duplicate (`studio/journaledUndo.ts`) now `push` an entry. Before this, they pushed none, and ⌘Z undid something older. Redo re-posts detach/swap; Duplicate's redo skips with a notice.
-  - Removed: `reinsert-deleted`/`reinsert-detached` templates, `captureDeleteOrigin`, `prunedImports` on the outcome.
-- **Server:**
-  - `studio/undoJournal.ts` records `.studio/undo-journal/<token>.json` = `{rel, before, afterSha256}[]`.
-  - `studioBatchUndoJournal.ts` wires it into the batch. Only `journal: true` batches (the editor's `/save`) record it and accept `restore`.
-  - A restore is compare-and-swap: all files or none, else `restore-stale`, naming the file.
-  - `/extract-component` journals too, and now takes the project write lock.
-  - The `reinsert-source` kind and `reinsertJsxSource.ts` are deleted.
-  - Merged trunk `00fb0680`: a `.map` row delete (P3-D2, `list-item` remove) is journaled too, so its ⌘Z is a `restore`. The `list-item` `insert` op, the `list-item-restore` template and the `not-data`/`invalid-import` checks that existed only for that undo are retired.
-- **Decisions:**
-  - One token per batch, not per edit.
-  - The OD-7 copy fallback keeps its swap-back undo: a restore would refuse whenever the linked replay's undo is not byte-exact.
-  - Sequences never journal.
-- **Landmines:**
-  - The `/save` route lists response fields by hand. `undoToken` is forwarded there, and `studioSaveRoute.test.ts` holds it.
-  - The journal is not yet behind sech2's `.studio` store door (not in the trunk). It uses `isUnlinkedWorkspacePath` + `writeFileAtomic` directly. Move it when sech2 lands.
-  - P5-C (detach) reuses `restore-journal`. Do not reintroduce a bytes-carrying inverse.
-- **Next:** security review. P5-G's `canvas-layer-restore` still carries module bytes over the wire and should move onto this journal (found, not fixed).
-
 ### meta-18 — the canvas excellence program: 10 audits, one ROADMAP.md, and the trunk `feat/canvas-excellence`
 - **Agent:** orchestrator (main session)
 - **Stage:** executing. The owner answered on 2026-09-23 (`ROADMAP.md` §2) and re-confirmed the standing authorization.
@@ -186,6 +160,7 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `store-22` — P3-F: one compare-and-swap restore journal for delete, detach, swap, extract and list-row delete; ⌘Z restores exact bytes (~35 ms) or refuses restore-stale; all-or-nothing multi-file restore; reinsert-source deleted; security approved — #274 — 2026-09-25
 - `refactor-ckpt` — agent checkpoints split into store / revert / entry modules (789 → under 700 lines), no behaviour or check changed; the trunk has no red gates left — #276 — 2026-09-25
 - `canvas-30` — P5-D part 2: SVG part stamps (removed inside the sanitizer, never by regex), svg-attr edit on the one allowlist, icon/.svg insert via the paste path, vector edit mode (points, corner/smooth), pen tool; security approved after the stored-XSS fix — #269 — 2026-09-25
 - `perf-16` — P6-B client: pages paint as they arrive with titled placeholders, board code loads with the editor (frames 1–2.3 s sooner), token extraction off the open path; warm first frame 5.3→4.5 s dev (300 ms target not met: one-update frame mount) — #271 — 2026-09-25
@@ -195,7 +170,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `canvas-40` — P5-F: snap to guides and equal spacing with toggles (one engine in @core/studio-runtime, loose layers too), multi-select resize and free move, double-click edge to Hug, rotation via CSS rotate, opacity keys, flips, board-draw tool — #268 — 2026-09-25
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
-- `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
 
 ---
 
