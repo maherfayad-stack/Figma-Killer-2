@@ -44,6 +44,7 @@ import { readTranslationCatalog } from '../../handlers/studio/translationCatalog
 import { writeTranslationEntry } from '../../handlers/studio/translationWrite'
 import { resolveDriver } from '../drivers'
 import { readCredentialForUser, resolveCredentialForDriver } from '../credentials/store'
+import type { AiResolvedCredential } from '../drivers/types'
 import { getDefault } from '../defaults/store'
 import { AiOneShotError, runOneShotCompletion } from '../oneShot'
 import { parseTranslationReply, type TranslationReply } from '../translationReply'
@@ -161,13 +162,25 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
   const record = await readCredentialForUser(db, user.id, fallback.credentialId)
   if (!record) return jsonResponse({ error: 'The configured AI credential is no longer accessible.' }, { status: 409 })
 
-  let resolved
+  let resolved: AiResolvedCredential
   try {
     resolved = await resolveCredentialForDriver(record)
   } catch (err) {
     rethrowProjectDirRefusal(err)
     return jsonResponse({ error: err instanceof Error ? err.message : 'Credential resolution failed.' }, { status: 409 })
   }
+
+  // Captured as their own `const`s, fixed at THIS narrowed point, rather than
+  // read through `record`/`fallback`/`body`/`user` inside `callModel` below —
+  // a nested function reading a captured `const` does not inherit the outer
+  // scope's control-flow narrowing (TS treats the closure as possibly running
+  // at a point where the type could differ, even though it provably cannot
+  // here), so `record.providerId` etc. re-widen to include `null`.
+  const providerId = record.providerId
+  const modelId = fallback.modelId
+  const targetLocale = body.targetLocale
+  const userId = user.id
+  const userCapabilities = user.capabilities
 
   /** One model call for `entries`, translated and parsed — or the Response to hand straight back. */
   async function callModel(
@@ -179,16 +192,16 @@ async function handle(req: Request, db: DbClient): Promise<Response> {
     let raw: string
     try {
       raw = await runOneShotCompletion({
-        driver: resolveDriver(record.providerId),
+        driver: resolveDriver(providerId),
         credentials: resolved,
-        modelId: fallback.modelId,
-        instructions: instructionsFor(body.targetLocale, sourceLocale),
+        modelId,
+        instructions: instructionsFor(targetLocale, sourceLocale),
         userMessage: JSON.stringify(source, null, 2),
         signal: req.signal,
         toolContextBase: {
           db,
-          userId: user.id,
-          capabilities: user.capabilities,
+          userId,
+          capabilities: userCapabilities,
           conversationId: 'translate-content',
           snapshot: null,
         },
