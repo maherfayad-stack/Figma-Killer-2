@@ -5,8 +5,13 @@ One line per archived `STATE.md` entry, across every file in this folder: `date 
 
 Two different entries sometimes share an id (for example the two `perf-10` entries of 2026-09-19 and 2026-09-20). Tell them apart by date and title, and cite them by title.
 
-## `2026-09.md` — 272 entries, archived 2026-09-23, newest first
+## `2026-09.md` — 277 entries, archived 2026-09-23, newest first
 
+- 2026-09-25 · `perf-18` · Frames mount one by one (PR #281) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `perf-17` · Compiler covers the canvas (PR #280) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `sec-27` · Security review of #278 (PR #278) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `sec-26` · A repository never supplies a grant (PR #278) · [`2026-09.md`](2026-09.md)
+- 2026-09-25 · `parser-19` · P5-C detach (PR #279) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `sec-25` · Security round 2: .studio door (PR #277) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `canvas-41` · P5-B3: remaining image items (PR #275) · [`2026-09.md`](2026-09.md)
 - 2026-09-25 · `store-22` · P3-F: real delete undo (restore journal) (PR #274) · [`2026-09.md`](2026-09.md)
