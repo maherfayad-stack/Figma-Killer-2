@@ -10,7 +10,7 @@
  * them — `setStringLiteral` (dictionary and call-site literals), `setJsxText`
  * and `setJsxStyle`.
  */
-import { Node, type SourceFile } from 'ts-morph'
+import { Node, type JsxAttribute, type SourceFile } from 'ts-morph'
 
 export type Quote = '"' | "'"
 
@@ -65,4 +65,22 @@ export function jsxAttributeSpelling(value: string, quote: Quote): string {
     if (!value.includes(other)) return `${other}${value}${other}`
   }
   return `{${jsStringSpelling(value, quote)}}`
+}
+
+/**
+ * The initializer text for one JSX attribute write (quotes/braces included).
+ * A string is spelled the way JSX spells an attribute ({@link
+ * jsxAttributeSpelling}): raw, in the quote the attribute already used — so
+ * `title='a'` stays single-quoted (WB-10's rule) — and a container only for
+ * what raw attribute text cannot say. A number or boolean is `{value}`.
+ * Shared by `setJsxProp` and `setSvgPartAttributes`.
+ */
+export function jsxAttributeInitializerText(value: string | number | boolean, quote: Quote): string {
+  return typeof value === 'string' ? jsxAttributeSpelling(value, quote) : `{${value}}`
+}
+
+/** The quote an attribute's existing string value is written in, or JSX's usual double quote. */
+export function jsxAttributeQuote(attribute: JsxAttribute | undefined): Quote {
+  const initializer = attribute?.getInitializer()
+  return initializer && Node.isStringLiteral(initializer) ? quoteOf(initializer) : '"'
 }

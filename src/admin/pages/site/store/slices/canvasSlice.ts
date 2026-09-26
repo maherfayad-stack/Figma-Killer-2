@@ -63,6 +63,10 @@ type CanvasView = 'design' | 'live'
  *   itself away after one draw, like Figma's; V, Escape or the same key again
  *   put it away sooner. See `canvas/canvasDrawTool.ts`.
  *
+ * - a VECTOR tool (P5-D, SVG-7) — P arms the pen: clicks place corner points,
+ *   a drag places a smooth one, and ⏎ / Escape / clicking the first point
+ *   finish the path as one new inline `<svg>` (`CanvasPenToolLayer.tsx`).
+ *
  * Deliberately NOT merged with `commentToolActive`: commenting is available to
  * a read-only reviewer and is a different kind of arming (it consumes the next
  * click), while these change what an ordinary drag means.
@@ -79,7 +83,8 @@ export interface BoardDrawRequest {
   clientX: number
   clientY: number
 }
-export type CanvasTool = 'move' | 'hand' | 'scale' | DrawTool
+export type VectorTool = 'pen'
+export type CanvasTool = 'move' | 'hand' | 'scale' | DrawTool | VectorTool
 
 interface CanvasSlice {
   zoom: number

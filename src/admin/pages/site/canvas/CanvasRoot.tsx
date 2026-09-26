@@ -69,7 +69,7 @@ import { useBoardFrameNudge } from './useBoardFrameNudge'
 import { useCanvasToolShortcuts } from './useCanvasToolShortcuts'
 import { useCanvasLayerCommandKeys } from './useCanvasLayerCommandKeys'
 import { useCreatedNodeFollowUp } from './createdNodeFollowUp'
-import { isDrawTool } from './canvasDrawTool'
+import { isArmedTool } from './canvasDrawTool'
 import { SelectionStyleCommandHost } from './SelectionStyleCommandHost'
 import { useCanvasHandTool } from './useCanvasHandTool'
 import { useCanvasFileDrop } from './useCanvasFileDrop'
@@ -85,10 +85,9 @@ const VisualComponentModeControl = lazy(() =>
   import('./VisualComponentModeControl').then((module) => ({ default: module.default })),
 )
 
-// P5-E — mounted only while a draw tool is armed, so it loads on first arming
-// rather than with the editor body.
-const CanvasDrawToolLayer = lazy(() =>
-  import('./CanvasDrawToolLayer').then((m) => ({ default: m.CanvasDrawToolLayer })),
+// P5-E / P5-D — mounted only while a draw tool or the pen is armed (loaded on first arming).
+const CanvasArmedToolLayer = lazy(() =>
+  import('./CanvasArmedToolLayer').then((m) => ({ default: m.CanvasArmedToolLayer })),
 )
 const TemplateModeControl = lazy(() =>
   import('./TemplateModeControl').then((module) => ({ default: module.default })),
@@ -413,7 +412,7 @@ export function CanvasRoot(props: CanvasRootProps) {
   // follow-up that opens a drawn text or lays out a ⇧A group once it lands.
   useCanvasLayerCommandKeys(editable, isLive)
   useCreatedNodeFollowUp()
-  const armedDrawTool = useEditorStore((s) => (isDrawTool(s.canvasTool) ? s.canvasTool : null))
+  const armedDrawTool = useEditorStore((s) => (isArmedTool(s.canvasTool) ? s.canvasTool : null))
 
   // Not a key scope: mirrors the latched hand tool onto the shared space-pan
   // flag, which is what every pan-aware surface already reads.
@@ -633,7 +632,7 @@ export function CanvasRoot(props: CanvasRootProps) {
               inspector's own write target (renders nothing while idle). */}
           {!isLive && editable && armedDrawTool && (
             <Suspense fallback={null}>
-              <CanvasDrawToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
+              <CanvasArmedToolLayer tool={armedDrawTool} transformLayerRef={transformLayerRef} />
             </Suspense>
           )}
           {!isLive && editable && <SelectionStyleCommandHost />}

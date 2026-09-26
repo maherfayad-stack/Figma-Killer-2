@@ -117,6 +117,8 @@ export interface GestureProfile {
   frames: number
   worstFrameMs: number
   meanFrameMs: number
+  /** 95th-percentile frame interval — P5-D's SVG-9 budget reads this (≤ 16.7 ms). */
+  p95FrameMs: number
   framesOver20ms: number
   /** Mutations observed INSIDE the frames layer — the React re-render signal. */
   layerMutations: number
@@ -201,6 +203,7 @@ export async function profileGesture(
       frames: intervals.length,
       worstFrameMs: intervals.length > 0 ? Math.max(...intervals) : 0,
       meanFrameMs: intervals.length > 0 ? total / intervals.length : 0,
+      p95FrameMs: intervals.length > 0 ? [...intervals].sort((a, b) => a - b)[Math.min(intervals.length - 1, Math.floor(intervals.length * 0.95))]! : 0,
       framesOver20ms: intervals.filter((n) => n > 20).length,
       layerMutations: state.layerMutations,
       transformWrites: state.transformWrites,

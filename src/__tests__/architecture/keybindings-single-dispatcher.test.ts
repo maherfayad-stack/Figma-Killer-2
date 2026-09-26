@@ -246,6 +246,6 @@ describe('Canvas keyboard — ladder order', () => {
     const match = src.match(/EDITOR_KEY_SCOPE_ORDER = \[([^\]]+)\]/)
     expect(match).not.toBeNull()
     const ids = [...match![1]!.matchAll(/'([a-z-]+)'/g)].map((m) => m[1])
-    expect(ids).toEqual(['inline-edit', 'prototype-link', 'annotation', 'node', 'board', 'global'])
+    expect(ids).toEqual(['inline-edit', 'vector-edit', 'prototype-link', 'annotation', 'node', 'board', 'global'])
   })
 })
