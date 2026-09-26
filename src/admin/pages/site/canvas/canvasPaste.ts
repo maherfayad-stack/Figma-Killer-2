@@ -18,7 +18,7 @@
  */
 import { pushToast } from '@ui/components/Toast'
 import { useEditorStore } from '@site/store/store'
-import { decideCanvasPaste, type ClipboardSnapshot, type ClipboardSvgSource } from './canvasClipboardData'
+import { decideCanvasPaste, type ClipboardSnapshot } from './canvasClipboardData'
 import { insertImagesAtTarget, readSelectionInsertTarget, type SelectionInsertTarget } from './canvasSelectionInsert'
 import { insertSvgAtTarget } from './canvasSvgInsert'
 
