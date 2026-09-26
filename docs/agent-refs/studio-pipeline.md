@@ -700,11 +700,13 @@ location, same file as the host's id tail) and, when non-empty,
 literals per `isLiteralJsxAttribute` — the SAME predicate `setJsxProp` refuses
 with; `*` for a spread). Stamp bytes do not count against the 64 KB cap.
 
-- **Stamps never leave Studio.** Every exit calls `@core/vector`'s
-  `stripSvgPartStamps` — the publisher's `base.svg` render, SVG export
-  (`nodeExportModel.ts`), `SvgControl`, the agent's node search — gated by
-  `svg-part-stamps-stripped.test.ts` (every reader of `props.svg` strips or is
-  allowlisted with a reason; only the canvas render keeps them).
+- **Stamps never leave Studio, and are never removed by a regex.** The default
+  `sanitizeSvg` profile FORBIDS both stamp attributes, so the publisher
+  (`escapeProps`), SVG export (`nodeExportModel.ts`) and `SvgControl` drop them
+  on the DOM; only the canvas render passes `keepPartStamps: true`. Security
+  review #269 B1: a string strip run AFTER sanitizing matched a look-alike
+  stamp inside `<text>` and made sanitized markup a live `<img onerror>`.
+  Gated by `svg-part-stamps-stripped.test.ts`.
 - **Writes land through `svg-attr`** (`studioSvgWriteback.ts` →
   `setSvgPartAttributes`): `nodeId` = the host svg, `part` = the stamp (`''` =
   the host), `partTag` = the tag as read, `set`/`remove` JSX names. Server-side

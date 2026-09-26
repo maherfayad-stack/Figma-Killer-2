@@ -22,11 +22,14 @@
  * DOM needs it anyway — `target.closest('[data-studio-svg-part]')` is the hit
  * test.
  *
- * Stamps are Studio's bookkeeping, so they are STRIPPED wherever markup leaves
- * Studio (SVG export, the property control's copy, the publisher, agent
- * reads): {@link stripSvgPartStamps}, gated by
- * `svg-part-stamps-stripped.test.ts`. The root `<svg>` is never stamped: its
- * location is its node id, and a part of `''` names it.
+ * Stamps are Studio's bookkeeping, so they never leave Studio: the default
+ * `sanitizeSvg` profile (publish, export, the property control) FORBIDS both
+ * attributes, removing them on the DOM; only the canvas render asks to keep
+ * them. There is deliberately no string strip — a regex over serialized
+ * markup deleted across a tag boundary and made sanitized markup live
+ * (review #269 B1). Gated by `svg-part-stamps-stripped.test.ts`. The root
+ * `<svg>` is never stamped: its location is its node id, and a part of `''`
+ * names it.
  */
 
 export const SVG_PART_ATTRIBUTE = 'data-studio-svg-part'
@@ -38,16 +41,6 @@ export const SVG_SPREAD_CODE = '*'
 /** Whether an attribute name is one of the stamps (a user may not author them: they would collide). */
 export function isSvgPartStampAttribute(name: string): boolean {
   return name === SVG_PART_ATTRIBUTE || name === SVG_CODE_ATTRIBUTE
-}
-
-const STAMP_PATTERN = /\sdata-studio-svg-(?:part|code)="[^"]*"/g
-
-/**
- * `markup` with every stamp removed. Exact for markup the parser produced (its
- * attribute values are always double-quoted and escaped), and idempotent.
- */
-export function stripSvgPartStamps(markup: string): string {
-  return markup.includes('data-studio-svg-') ? markup.replace(STAMP_PATTERN, '') : markup
 }
 
 /** A part location as stamped. */

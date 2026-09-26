@@ -2,22 +2,10 @@ import { describe, expect, it } from 'bun:test'
 import {
   parseSvgCodeAttributes,
   parseSvgPartLocation,
-  stripSvgPartStamps,
   svgAttributeWriteRefusal,
 } from '@core/vector'
 
 describe('svgPartStamps', () => {
-  const stamped =
-    '<svg viewBox="0 0 8 8"><g data-studio-svg-part="4:8"><path data-studio-svg-part="5:10" data-studio-svg-code="d,fill" d="M0 0"/></g></svg>'
-
-  it('strips every stamp and nothing else, idempotently', () => {
-    const clean = '<svg viewBox="0 0 8 8"><g><path d="M0 0"/></g></svg>'
-    expect(stripSvgPartStamps(stamped)).toBe(clean)
-    expect(stripSvgPartStamps(clean)).toBe(clean)
-    // A user's own data attribute is theirs.
-    expect(stripSvgPartStamps('<svg data-studio-x="1"></svg>')).toBe('<svg data-studio-x="1"></svg>')
-  })
-
   it('parses a part location strictly', () => {
     expect(parseSvgPartLocation('12:7')).toEqual({ line: 12, col: 7 })
     for (const bad of ['', '0:1', '1:0', '1', '1:2:3', ' 1:2', '1:2 ', 'a:b', '-1:2']) {
@@ -44,6 +32,7 @@ describe('svgAttributeWriteRefusal — one rule for every SVG attribute write', 
 
   it('refuses handlers, namespaces, React plumbing, stamps and malformed names', () => {
     for (const name of [
+      'xmlBase', 'xmlnsXlink', 'xmlLang',
       'onClick', 'onload', 'ONLOAD', 'xmlns', 'xmlns:xlink', 'style', 'dangerouslySetInnerHTML', 'ref', 'key',
       'children', 'data-studio-svg-part', 'data-studio-svg-code', 'xlink:href', 'a b', '1x', '', 'd"',
     ]) {

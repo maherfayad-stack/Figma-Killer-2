@@ -27,7 +27,9 @@ import {
   type ParsedNode,
   type ParsedPage,
 } from '@core/page-parser'
-import { stripSvgPartStamps } from '@core/vector'
+
+/** Test-only: read a stamped parse without its stamps (never used on markup that leaves Studio). */
+const withoutStamps = (markup: string): string => markup.replace(/ data-studio-svg-(?:part|code)="[^"]*"/g, '')
 
 let tmpDir: string
 
@@ -243,7 +245,7 @@ describe('an inline <svg> written as JSX', () => {
   // These cases are about the graphic; the part stamps have their own block below.
   const svgOf = (page: ParsedPage): string | undefined => {
     const node = Object.values(page.nodes).find((n) => n.name === 'svg')
-    return typeof node?.props.svg === 'string' ? stripSvgPartStamps(node.props.svg) : undefined
+    return typeof node?.props.svg === 'string' ? withoutStamps(node.props.svg) : undefined
   }
 
   it('converts React attribute names to real markup attribute names', () => {
@@ -467,7 +469,7 @@ describe('SVG-3: an inline <svg> stamps each inner element with where it is writ
 
     const node = svgNode(parse('pages/Big.jsx'))
     const markup = String(node.props.svg)
-    expect(stripSvgPartStamps(markup).length).toBeLessThan(64 * 1024)
+    expect(withoutStamps(markup).length).toBeLessThan(64 * 1024)
     expect(markup.length).toBeGreaterThan(64 * 1024)
     expect(node.locked).toBe(false)
   })

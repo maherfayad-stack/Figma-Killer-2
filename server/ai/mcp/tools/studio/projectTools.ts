@@ -24,7 +24,6 @@
  */
 import { Type } from '@core/utils/typeboxHelpers'
 import { toolRefusal } from '@core/ai'
-import { stripSvgPartStamps } from '@core/vector'
 import type { AiTool, ToolContext } from '../../../runtime/types'
 import {
   listStudioProjects,
@@ -292,8 +291,7 @@ const findNodesTool: AiTool = {
         const classNames = (node.classIds ?? []).map((id) => styleRules[id]?.name ?? id)
         if (className && !classNames.some((name) => name.includes(className))) continue
         if (text) {
-          // SVG-3 — an agent searching text must not match Studio's own part stamps.
-          const haystack = stripSvgPartStamps(JSON.stringify(node.props ?? {}))
+          const haystack = JSON.stringify(node.props ?? {})
           if (!haystack.toLowerCase().includes(text.toLowerCase())) continue
         }
         if (lockedOnly && !node.lockReason) continue

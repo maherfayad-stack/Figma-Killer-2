@@ -157,7 +157,7 @@ export function setSvgPartAttributes(params: SetSvgPartAttributesParams): SetSvg
   }
   const removals: JsxAttribute[] = []
   for (const name of params.remove ?? []) {
-    if (name in params.set) continue
+    if (Object.hasOwn(params.set, name)) continue
     const refusal = svgAttributeWriteRefusal(name, '')
     if (refusal?.reason === 'svg-attr-name') return refuse(refusal.reason, refusal.message)
     const existing = namedAttribute(part, name)

@@ -31,6 +31,11 @@ export function isSvgAttributeNeverWritten(markupName: string): boolean {
   return name === 'xmlns' || name.startsWith('xmlns:') || name.startsWith('on')
 }
 
+/** JSX spellings of XML-namespace attributes (`xmlBase`, `xmlLang`, `xmlSpace`, `xmlnsXlink`): never written by an `svg-attr` edit (review #269 N1). */
+function isXmlNamespaceJsxName(jsxName: string): boolean {
+  return /^xml/i.test(jsxName)
+}
+
 /** Attributes whose value is text for people (`aria-label`, `data-*`), never a CSS value to vet. */
 export function isSvgTextAttribute(name: string): boolean {
   return name.startsWith('aria-') || name.startsWith('data-')
@@ -79,7 +84,7 @@ function markupSpelling(jsxName: string): string {
  * `jsxName` is the JSX spelling (`strokeWidth`), as it appears in source.
  */
 export function svgAttributeWriteRefusal(jsxName: string, value: string | number): SvgAttributeWriteRefusal | null {
-  if (!JSX_ATTRIBUTE_NAME.test(jsxName) || REACT_RESERVED_NAMES.has(jsxName) || isSvgPartStampAttribute(jsxName)) {
+  if (!JSX_ATTRIBUTE_NAME.test(jsxName) || REACT_RESERVED_NAMES.has(jsxName) || isSvgPartStampAttribute(jsxName) || isXmlNamespaceJsxName(jsxName)) {
     return { reason: 'svg-attr-name', message: `"${jsxName.slice(0, 60)}" is not an SVG attribute Studio can write.` }
   }
   const markup = markupSpelling(jsxName)

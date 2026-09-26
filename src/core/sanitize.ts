@@ -28,7 +28,14 @@
  */
 
 import DOMPurify, { type Config } from 'dompurify'
-import { cssValueLoadsExternalResource, isSvgFragmentReference, svgStyleLoadsExternalResource, type SvgStyleChildNode } from '@core/vector'
+import {
+  SVG_CODE_ATTRIBUTE,
+  SVG_PART_ATTRIBUTE,
+  cssValueLoadsExternalResource,
+  isSvgFragmentReference,
+  svgStyleLoadsExternalResource,
+  type SvgStyleChildNode,
+} from '@core/vector'
 
 type DOMPurifyHookNode = {
   tagName?: string
@@ -421,7 +428,7 @@ export function isRichtextPropKey(key: string): boolean {
  * remote document can carry script, and with its `href` limited to a fragment
  * of THIS document it cannot.
  */
-const SVG_CONFIG: Config = {
+const SVG_CANVAS_CONFIG: Config = {
   USE_PROFILES: { svg: true, svgFilters: true },
   ADD_TAGS: ['use'],
   // Defence in depth — DOMPurify's svg profile already excludes these, but be
@@ -433,6 +440,20 @@ const SVG_CONFIG: Config = {
 }
 
 /**
+ * The DEFAULT profile: the canvas one, plus the parser's SVG part stamps
+ * (`data-studio-svg-part` / `-code`, P5-D SVG-3) removed as ATTRIBUTES, by the
+ * sanitizer, on the DOM. Every exit (publish, export, the property control's
+ * preview) gets them removed this way — never by editing the serialized markup
+ * afterwards. Security review #269 B1: a regex strip run AFTER sanitizing
+ * matched a look-alike stamp inside `<text>`, deleted across a tag boundary,
+ * and turned sanitized markup into a live `<img onerror>`.
+ */
+const SVG_CONFIG: Config = {
+  ...SVG_CANVAS_CONFIG,
+  FORBID_ATTR: ['xlink:href', 'href', SVG_PART_ATTRIBUTE, SVG_CODE_ATTRIBUTE],
+}
+
+/**
  * Sanitise an inline-SVG markup string for safe inclusion in published HTML
  * and the editor canvas. Returns `''` when no DOMPurify runtime is available
  * (one-off scripts) — the browser and the Bun publish server both configure
@@ -441,8 +462,11 @@ const SVG_CONFIG: Config = {
  * Call at every write path that stores an SVG prop (editor onChange, importer)
  * AND at the publisher boundary (`escapeProps`), per the "never trust the UI"
  * rule that governs richtext.
+ *
+ * Removes Studio's SVG part stamps unless `keepPartStamps` (the canvas render
+ * only). Its output is final: nothing may edit it with string surgery.
  */
-export function sanitizeSvg(value: unknown): string {
+export function sanitizeSvg(value: unknown, options: { keepPartStamps?: boolean } = {}): string {
   const str = String(value ?? '')
   if (!str.trim()) return ''
 
@@ -455,7 +479,9 @@ export function sanitizeSvg(value: unknown): string {
 
   sanitizingSvg = true
   try {
-    return sanitizeToFixpoint(purifier, str, SVG_CONFIG)
+    // Only the canvas render keeps the stamps: they are its hit test and the
+    // address of every vector write (`SvgEditor.tsx`).
+    return sanitizeToFixpoint(purifier, str, options.keepPartStamps ? SVG_CANVAS_CONFIG : SVG_CONFIG)
   } finally {
     sanitizingSvg = false
   }

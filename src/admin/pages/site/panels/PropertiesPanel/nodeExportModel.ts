@@ -41,7 +41,7 @@
  */
 import type { CSSPropertyBag, PageNode } from '@core/page-tree'
 import { camelToKebabCssProperty } from '@core/css-codemods'
-import { stripSvgPartStamps } from '@core/vector'
+import { sanitizeSvg } from '@core/sanitize'
 import type { PropertyProvenance } from './stylePropertyProvenance'
 
 // ---------------------------------------------------------------------------
@@ -195,8 +195,10 @@ function isSvgSource(src: string): boolean {
  */
 export function resolveNodeSvgExport(node: Pick<PageNode, 'moduleId' | 'props'>): NodeSvgExport {
   const rawMarkup = node.props.svg
-  // SVG-3 — the parser's part stamps are Studio bookkeeping, not the user's graphic.
-  const markup = typeof rawMarkup === 'string' ? stripSvgPartStamps(rawMarkup).trim() : ''
+  // SVG-3 — the parser's part stamps are Studio bookkeeping, not the user's
+  // graphic: the sanitizer removes them as attributes (never a regex on the
+  // markup — review #269 B1), and an export is sanitized like a publish.
+  const markup = typeof rawMarkup === 'string' ? sanitizeSvg(rawMarkup).trim() : ''
   if (markup.startsWith('<svg')) return { ok: true, source: 'inline', markup }
 
   // A `base.svg` node with no usable markup is the parser's own refusal
