@@ -321,7 +321,7 @@ patches:
 | gesture | undo | redo |
 |---|---|---|
 | `move` (canvas body drag, layers-panel drag, reorder + reparent) | re-issues `moveNodes` back to the captured pre-move `(parentId, index)` — re-planned against the live tree, so it rides every refusal gate and writes to source once | re-issues the original move |
-| `source` (`store-14`/`store-15`/P3-F) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop, **delete**, and the Properties panel's **detach / swap / extract** | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
+| `source` (`store-14`/`store-15`/P3-F) — insert, duplicate, wrap, group, ungroup, paste, cross-frame transplant, OS image drop, **delete**, **detach** (P5-C's one `detachInstances` action, a multi-selection included), **expose as prop** (P5-C), and the Properties panel's **swap / extract** | posts the INVERSE EDITS through the same `/save` route the gesture used (`commitStudioStructuralReissue`) | re-posts the gesture's own `forward` edits |
 
 ### The `source` gesture — the family whose undo is a WRITE
 
@@ -368,7 +368,7 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | ungroup | `group` the children it released, into the same container |
 | transplant (move) | `transplant` back to the parent it left |
 | transplant (copy) | `delete` the copy it created |
-| delete / detach / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
+| delete / detach / expose-prop / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
 | vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
 | pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
 
@@ -435,11 +435,23 @@ The rules that keep it narrow:
 - **Not in git.** `.studio/` is outside Studio's commit staging, and
   `.studio/undo-journal/` is in this repo's `.gitignore`.
 
-The Properties panel's Detach, Swap and Duplicate-as-copy post outside
+The Properties panel's Swap and Duplicate-as-copy post outside
 `commitStructural`, so they push their own entry the moment the response lands
 (`studio/journaledUndo.ts`): the inverse names no element, so there is nothing
 for the re-read to resolve first. Duplicate has no `/save` edit to re-post, so
 its redo says it cannot.
+
+**Detach (P5-C) goes through `commitStructural`** (`commitStudioDetach`), from
+the ONE store action every surface calls (`instanceActions.ts`). A
+multi-selection detach is one server `sequence` (each detach written against
+the file the previous one left, all or nothing), and the sequence records ONE
+journal entry from its pre-images, so one ⌘Z restores every call site. A
+detach the server held back with its `dryRun` (it would lose other states, a
+moved hook or every row) wrote nothing and pushes nothing; the confirmed
+re-post is the entry. Redo re-posts the gesture's `forward` edits — for a
+confirmed detach, without the `dryRun`. "Expose as prop" (`expose-prop`)
+writes two files (the component and its one call site) in one journaled
+batch, one entry.
 
 Because the inverse addresses elements the write had not made yet (or, for
 `delete`, discarded bytes the write had not yet reported), the gesture records
