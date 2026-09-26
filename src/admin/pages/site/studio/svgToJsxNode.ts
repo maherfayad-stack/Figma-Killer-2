@@ -76,7 +76,13 @@
  * skipped during it. Every rewrite above runs on the sanitised document.
  */
 import { sanitizeSvg } from '@core/sanitize'
-import { cssValueLoadsExternalResource, isSvgFragmentReference, markupToJsxAttributeName } from '@core/vector'
+import {
+  cssValueLoadsExternalResource,
+  isSvgAttributeNeverWritten,
+  isSvgFragmentReference,
+  isSvgTextAttribute,
+  markupToJsxAttributeName,
+} from '@core/vector'
 import type { JsonDataValue } from '@core/utils/jsonData'
 import type { SlotJsxNode } from './studioSaveRequests'
 import {
@@ -109,16 +115,6 @@ export type SvgToJsxRefusalReason = 'too-large' | 'refused'
 export type SvgToJsxResult =
   | { ok: true; node: SlotJsxNode }
   | { ok: false; reason: SvgToJsxRefusalReason; message: string }
-
-/**
- * Attributes dropped rather than translated. `xmlns` declarations are XML
- * plumbing React neither needs nor accepts on a child element, and an
- * `on*` handler cannot survive as a JSX string attribute even if DOMPurify
- * had left one behind.
- */
-function isDroppedAttribute(name: string): boolean {
-  return name === 'xmlns' || name.startsWith('xmlns:') || /^on/i.test(name)
-}
 
 /** Attributes whose value is a whitespace-separated list of element ids, with no `#`. */
 const ID_LIST_ATTRIBUTES: ReadonlySet<string> = new Set(['aria-labelledby', 'aria-describedby'])
@@ -236,10 +232,6 @@ function remoteReferenceRefusal(where: string, value: string): string {
   return `That SVG loads something from outside itself (${where}: ${shown}), and Studio will not write a remote reference into your source. Remove it from the file and try again.`
 }
 
-/** Attributes whose value is text for people, never a CSS value to vet. */
-function isTextAttribute(name: string): boolean {
-  return name.startsWith('aria-') || name.startsWith('data-')
-}
 
 function convertElement(element: Element, depth: number, context: ConversionContext): SlotJsxNode | undefined {
   if (depth > MAX_DEPTH) {
@@ -252,7 +244,7 @@ function convertElement(element: Element, depth: number, context: ConversionCont
   const classNames = (element.getAttribute('class') ?? '').split(/\s+/).filter(Boolean)
   const props: Record<string, JsonDataValue> = {}
   for (const attr of Array.from(element.attributes)) {
-    if (isDroppedAttribute(attr.name) || attr.name === 'style') continue
+    if (isSvgAttributeNeverWritten(attr.name) || attr.name === 'style') continue
     if (FRAGMENT_ATTRIBUTES.has(attr.name)) {
       // Fragment-only, and always spelled `href`: `xlink:href` gives way to a
       // plain `href` on the same element rather than writing both.
@@ -268,7 +260,7 @@ function convertElement(element: Element, depth: number, context: ConversionCont
       if (kept.length > 0) props[jsxName] = kept.join(' ')
       continue
     }
-    if (!isTextAttribute(attr.name) && cssValueLoadsExternalResource(attr.value)) {
+    if (!isSvgTextAttribute(attr.name) && cssValueLoadsExternalResource(attr.value)) {
       context.refusal ??= remoteReferenceRefusal(attr.name, attr.value)
       continue
     }

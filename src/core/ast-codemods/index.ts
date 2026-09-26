@@ -30,6 +30,12 @@ export { setImportSpecifier, ImportSpecifierTargetError } from './setImportSpeci
 export type { SetImportSpecifierParams } from './setImportSpecifier'
 export { rewriteImportSpecifier } from './rewriteImportSpecifier'
 export type { RewriteImportSpecifierParams, RewriteImportSpecifierResult } from './rewriteImportSpecifier'
+export { setSvgPartAttributes } from './setSvgPartAttributes'
+export type {
+  SetSvgPartAttributesParams,
+  SetSvgPartAttributesResult,
+  SvgPartAttributesRefusalReason,
+} from './setSvgPartAttributes'
 export { setJsxTagName, JsxTagNameTargetError } from './setJsxTagName'
 export type { SetJsxTagNameParams } from './setJsxTagName'
 export { moveJsxElement } from './moveJsxElement'

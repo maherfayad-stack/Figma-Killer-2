@@ -41,6 +41,10 @@
  * (`BoardCanvasLayerChrome`) mount right after the frames, so a selected loose
  * layer's ring shows even where a frame covers it.
  *
+ * P5-D — `BoardVectorLayer` (vector edit mode's anchors and handles) mounts
+ * right after the frames too: it draws over the graphic it edits, and renders
+ * `null` unless an svg is in edit mode.
+ *
  * `BoardCommentsLayer` mounts LAST of all. A review pin has to stay clickable
  * over frames, notes, docs, snap guides, ruler guides and flow connectors
  * alike — it is the only thing on the board that is ABOUT the board rather
@@ -57,6 +61,7 @@ import { RulerGuidesLayer } from './RulerGuidesLayer/RulerGuidesLayer'
 import { BoardFlowLayer } from './BoardFlowLayer/BoardFlowLayer'
 import { BoardPrototypeLayer } from './BoardPrototypeLayer/BoardPrototypeLayer'
 import { BoardCommentsLayer } from './BoardCommentsLayer/BoardCommentsLayer'
+import { BoardVectorLayer } from './BoardVectorLayer/BoardVectorLayer'
 
 export function StudioBoardLayers() {
   return (
@@ -64,6 +69,7 @@ export function StudioBoardLayers() {
       <BoardCanvasLayer />
       <BoardFramesLayer />
       <BoardCanvasLayerChrome />
+      <BoardVectorLayer />
       <BoardNotesLayer />
       <BoardDocsLayer />
       <BoardGuidesLayer />

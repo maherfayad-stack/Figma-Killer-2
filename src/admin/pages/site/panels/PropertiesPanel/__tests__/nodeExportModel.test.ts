@@ -98,15 +98,16 @@ describe('row labels and file names', () => {
 })
 
 describe('resolveNodeSvgExport — the honest-vector decision', () => {
-  it('serves the parser’s own markup for an inline <svg>', () => {
+  it('serves the parser’s own markup for an inline <svg>, sanitized like a publish (stamps dropped as attributes)', () => {
     const result = resolveNodeSvgExport({
       moduleId: 'base.svg',
-      props: { svg: '  <svg viewBox="0 0 10 10"><circle r="4" /></svg>  ' },
+      props: { svg: '  <svg viewBox="0 0 10 10"><circle data-studio-svg-part="3:5" r="4" /><text>a data-studio-svg-part="b"</text></svg>  ' },
     })
+    // Review #269 N2: the user's text that merely LOOKS like a stamp is kept verbatim.
     expect(result).toEqual({
       ok: true,
       source: 'inline',
-      markup: '<svg viewBox="0 0 10 10"><circle r="4" /></svg>',
+      markup: '<svg viewBox="0 0 10 10"><circle r="4"></circle><text>a data-studio-svg-part="b"</text></svg>',
     })
   })
 

@@ -87,6 +87,9 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `panel-44` · `/admin/site` on `test4` · select a component instance: one "<Name> · Local" row with icon Detach/Swap under Measures, props visible even with no class, Esc reverts a text prop, hidden under multi-select. Script: the `panel-44` entry in the archive
 - `panel-45` · `/admin/site` on `test4`, dark AND light · field hover lifts, Layers keyboard ring + selected ≠ hovered, forceOpen headers are plain titles, notice cards on the 12px gutter, skeletons on first open. Script: the `panel-45` entry in the archive
 
+**SVG (P5-D)**
+- `canvas-30` · `/admin/site` on a copy of `test4` with an inline icon svg, zoom 100% / 25% / 400%, 1 frame · double-click the svg → anchors on its points at ~8 px; drag one → one `POST /save`, only that segment changes in the `.tsx`, ⌘Z restores it byte-for-byte; P + clicks + ⏎ inside the frame → one new `<svg stroke="currentColor">`. Script: the PR body
+
 **Images (P5)**
 - `canvas-28` · `/admin/site` on `test4`, Design view, 100% · drop 3 images on a frame (ghosts fill, one ⌘Z removes all), onto an `<img>` (replace), with ⇧ (background) and ⌘ (at the pointer); ⌘K → Insert image…. Script: the `canvas-28` entry
 - `canvas-29` · `/admin/site` on `test4`, SMS, 100% · R-drag draws a box of the drawn size; T-click types; padding/gap bands (⇧ pair, ⌥ all four); ⌥A/⌥D/⌥W align; ⇧A; ⌘⌥C/⌘⌥V; ⌘⇧]; right-click "Select layer"; ⇧K opens the picker. Script: the PR body
@@ -183,6 +186,8 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 
 *At most 10 one-liners, newest first: ids — what — PR — date. Everything here is merged into the trunk; full entries are in [`docs/state-archive/2026-09.md`](docs/state-archive/2026-09.md).*
 
+- `refactor-ckpt` — agent checkpoints split into store / revert / entry modules (789 → under 700 lines), no behaviour or check changed; the trunk has no red gates left — #276 — 2026-09-25
+- `canvas-30` — P5-D part 2: SVG part stamps (removed inside the sanitizer, never by regex), svg-attr edit on the one allowlist, icon/.svg insert via the paste path, vector edit mode (points, corner/smooth), pen tool; security approved after the stored-XSS fix — #269 — 2026-09-25
 - `perf-16` — P6-B client: pages paint as they arrive with titled placeholders, board code loads with the editor (frames 1–2.3 s sooner), token extraction off the open path; warm first frame 5.3→4.5 s dev (300 ms target not met: one-update frame mount) — #271 — 2026-09-25
 - `perf-15` — P6-C: every audit budget is a gate (plus a production-build e2e pass); warm click→ring 62→47 ms prod, cold 109→69 ms, keystroke→paint 32→26 ms, Tier-2 posters 0/4→2/2; CanvasRoot compiled by the React Compiler again — #272 — 2026-09-25
 - `P3-D2` — P3-D2: drag, ⌥↑/↓, grid-row ↑/↓, ⌘D, ⌥-drag and paste on a .map row write the array literal (comments and commas kept, unique copy keys, one undo); honest refusals for non-literal arrays — #273 — 2026-09-25
@@ -191,8 +196,6 @@ Protocol: [`docs/agent-refs/handoff-protocol.md`](docs/agent-refs/handoff-protoc
 - `store-21` — P3-D: cross-frame paste and moves write instead of refusing, ⌘Z after a cross-frame paste works, OD-7 fallback undoes in one ⌘Z; import prune moved to studioBatchImportPrune.ts — #250 — 2026-09-25
 - `canvas-38` — P5-D part 1: SVG-0/1/2, inline SVG on the canvas; sanitizer T3 bypass (mid-tree HEAD/BODY) and remote <style> loads closed; hover ring follows the target; security approved after 3 rounds — #264 — 2026-09-25
 - `canvas-37` — live frames: resize, snap, rollback, double-click and hover parity; optimistic.text runtime half removed — #265 — 2026-09-25
-- `canvas-33` — P5-G: loose layers on the empty board (FC-1..5), drop images on the board, decoder refuses layer files by default (only /save opts in); security approved — #260 — 2026-09-25
-- `perf-14` — shell: build-tool configs out of the ts program (288 → 86 files), cold load ~3.4 → ~1 s, warm 23 → 3 ms, prototype shell once per project — #267 — 2026-09-25
 
 ---
 

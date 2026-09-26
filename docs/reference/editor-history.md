@@ -369,6 +369,16 @@ Where the protocol can say it, the inverse is an ordinary edit:
 | transplant (move) | `transplant` back to the parent it left |
 | transplant (copy) | `delete` the copy it created |
 | delete / detach / swap / extract, a `.map` row's delete (OD-8) | `restore` the undo-journal entry the write recorded (P3-F) |
+| vector drag / nudge (P5-D) | `svg-attr` on the same part carrying the previous literals, `remove` for the attributes that were absent — a `known` template, fixed at gesture time (`svgPartCommits.ts`) |
+| pen path (P5-D) | `delete` the `<svg>` it created (an `insert`); on the empty board, the free canvas's own layer delete |
+
+**`svg-attr`'s inverse is KNOWN, not a template to fill.** A vector gesture
+rewrites attributes of an element that already exists, at a position the write
+does not move, so the previous values are the whole inverse. The part's
+`line:col` is not a node id and is NOT re-addressed by
+`remapStructuralEditIds`: a step whose part moved (an external edit inside the
+graphic) refuses `element-moved` server-side (the `partTag` check) and is
+skipped like any stale step.
 
 ### The undo journal — the one-shot writes (P3-F: ERR-2, DET-4)
 

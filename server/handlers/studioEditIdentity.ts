@@ -88,6 +88,9 @@ export interface ResolvedEditIdentities {
   retargeted: RetargetedEdit[]
 }
 
+const SVG_PART_MOVED_MESSAGE =
+  'The file changed since the board read it, and this graphic moved, so nothing was written.'
+
 /** `edit` with every node id it names passed through `rename`. */
 function readdressEdit(edit: StudioEdit, rename: (nodeId: string) => string): StudioEdit {
   if (edit.kind === 'css') return edit
@@ -167,6 +170,13 @@ export function resolveEditIdentities(
       moved.push({ edit, refusal: refusalFor(edit, ELEMENT_MOVED_REASON, refusal) })
       continue
     }
+    // P5-D — an `svg-attr` edit's PART is a second position the host id does
+    // not carry. Re-addressing the host would leave the part pointing at the
+    // old layout, so a moved graphic refuses and the board re-reads instead.
+    if (renames.size > 0 && edit.kind === 'svg-attr') {
+      moved.push({ edit, refusal: refusalFor(edit, ELEMENT_MOVED_REASON, SVG_PART_MOVED_MESSAGE) })
+      continue
+    }
     for (const [from, to] of renames) renamed.set(from, to)
     runnable.push(renames.size > 0 ? readdressEdit(edit, (nodeId) => renames.get(nodeId) ?? nodeId) : edit)
   }
@@ -174,7 +184,7 @@ export function resolveEditIdentities(
 }
 
 /** The edit kinds whose write changes the bytes a fingerprint covers without moving the target — see this module's doc. */
-const IDENTITY_CHANGING_VALUE_KINDS = new Set<StudioEdit['kind']>(['prop', 'text', 'style', 'class', 'tag', 'literal', 'asset'])
+const IDENTITY_CHANGING_VALUE_KINDS = new Set<StudioEdit['kind']>(['prop', 'text', 'style', 'class', 'tag', 'literal', 'asset', 'svg-attr'])
 
 /**
  * The target's fingerprint right after `edit` wrote it, or `null` for a kind

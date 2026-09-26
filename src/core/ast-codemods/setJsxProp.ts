@@ -16,9 +16,10 @@
  * the codemod refuses by name — `JsxPropTargetError`, reason
  * `binding-overwrite` — rather than trusting that no caller ever asks.
  */
-import { Node, Project, SyntaxKind, type JsxAttribute } from 'ts-morph'
+import { Node, Project } from 'ts-morph'
+import { isLiteralJsxAttribute } from '@core/page-parser'
 import { createProject, findJsxElementAtLocationOrThrow, loadSourceFile } from './locateJsxElement'
-import { jsxAttributeSpelling, quoteOf, type Quote } from './stringSpelling'
+import { jsxAttributeInitializerText, jsxAttributeQuote } from './stringSpelling'
 
 export interface SetJsxPropParams {
   file: string
@@ -63,44 +64,6 @@ export class JsxPropTargetError extends Error {
   }
 }
 
-/** A string, template-without-substitutions, number, signed number or boolean — the only initializers a literal write may replace. */
-function hasLiteralInitializer(attribute: JsxAttribute): boolean {
-  const initializer = attribute.getInitializer()
-  if (!initializer || Node.isStringLiteral(initializer)) return true
-  if (!Node.isJsxExpression(initializer)) return false
-  let expression = initializer.getExpression()
-  while (expression && Node.isParenthesizedExpression(expression)) expression = expression.getExpression()
-  if (!expression) return false
-  if (Node.isPrefixUnaryExpression(expression)) {
-    const operand = expression.getOperand()
-    return Node.isNumericLiteral(operand) &&
-      (expression.getOperatorToken() === SyntaxKind.MinusToken || expression.getOperatorToken() === SyntaxKind.PlusToken)
-  }
-  return (
-    Node.isStringLiteral(expression) ||
-    Node.isNoSubstitutionTemplateLiteral(expression) ||
-    Node.isNumericLiteral(expression) ||
-    Node.isTrueLiteral(expression) ||
-    Node.isFalseLiteral(expression)
-  )
-}
-
-/**
- * A string is spelled the way JSX spells an attribute (`stringSpelling.ts`):
- * raw, in the quote the attribute already used — so `title='a'` stays
- * single-quoted (WB-10's rule, for props) — and a container only for what raw
- * attribute text cannot say (both quotes, a line break, a decodable entity).
- */
-function buildInitializerText(value: string | number | boolean, quote: Quote): string {
-  return typeof value === 'string' ? jsxAttributeSpelling(value, quote) : `{${value}}`
-}
-
-/** The quote an attribute's existing string value is written in, or JSX's usual double quote. */
-function attributeQuote(attribute: JsxAttribute | undefined): Quote {
-  const initializer = attribute?.getInitializer()
-  return initializer && Node.isStringLiteral(initializer) ? quoteOf(initializer) : '"'
-}
-
 export function setJsxProp(params: SetJsxPropParams): void {
   const { file, line, col, prop, value } = params
   const project = params.project ?? createProject()
@@ -108,13 +71,13 @@ export function setJsxProp(params: SetJsxPropParams): void {
   const element = findJsxElementAtLocationOrThrow(sourceFile, file, line, col)
 
   const existingAttribute = element.getAttribute(prop)
-  const initializerText = buildInitializerText(
+  const initializerText = jsxAttributeInitializerText(
     value,
-    attributeQuote(existingAttribute && Node.isJsxAttribute(existingAttribute) ? existingAttribute : undefined),
+    jsxAttributeQuote(existingAttribute && Node.isJsxAttribute(existingAttribute) ? existingAttribute : undefined),
   )
 
   if (existingAttribute && Node.isJsxAttribute(existingAttribute)) {
-    if (!hasLiteralInitializer(existingAttribute)) {
+    if (!isLiteralJsxAttribute(existingAttribute)) {
       throw new JsxPropTargetError(
         `"${prop}" is set from code here (${existingAttribute.getInitializer()?.getText() ?? ''}), not a literal, so writing a value would replace that code and delete the binding. Change it in the code, or edit the value it reads.`,
         `${file}:${line}:${col}`,
